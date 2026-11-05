@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -266,6 +267,37 @@ def test_the_command_line(server, monkeypatch):
     assert seen[0][0] == Path("C:\\b.zip") and seen[0][1]["dry_run"] is True
     assert seen[1][0] == "back" and seen[1][1]["yes"] is True
     assert cli.main(["server-update"]) == 2  # neither a bundle nor --back
+
+
+def test_the_task_server_update_stops_and_starts_is_never_server_jsons(server, monkeypatch):
+    """B-1586: server.json is in the data folder, which the service's account can write (B-1500). server-update took
+    the task's name from it, so the administrator's schtasks queried, ended and ran whatever task it named (Windows'
+    Defrag task). It names the task as ``service install|start|stop`` do: the command line's, else "AP Coder"."""
+    service.write_config(server["data"], task_name="\\Microsoft\\Windows\\Defrag\\ScheduledDefrag")
+    ran: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        ran.append([str(c) for c in cmd])
+        return subprocess.CompletedProcess(cmd, 0, "Status: Ready\n", "")
+
+    monkeypatch.setattr(service, "WINDOWS", True)
+    monkeypatch.setattr(service, "run_command", run)
+    monkeypatch.setattr(service, "dashboard_stopped", lambda data, settings, wait=45.0: True)
+    # The service's own Server (no fake one given), with the new folder's setup, its checks and the dashboard
+    # answering stood in for.
+    monkeypatch.setattr(server_update.Server, "set_up", lambda self, folder: True)
+    monkeypatch.setattr(server_update.Server, "migrate", lambda self, folder, db: True)
+    monkeypatch.setattr(server_update.Server, "self_check", lambda self, folder: (True, "Self-check OK"))
+    monkeypatch.setattr(server_update.Server, "up", lambda self, folder: True)
+    bundle = _bundle(server["tmp"])
+    assert _install(bundle, server["data"], server["db"]) == 0
+    assert server_update.go_back(server["data"], server["db"], yes=True) == 0
+    assert {cmd[1] for cmd in ran} == {"/query", "/end", "/run"}
+    assert {cmd[cmd.index("/tn") + 1] for cmd in ran} == {"AP Coder"}
+    ran.clear()  # another task only when the command line names it
+    sha = server_update.file_sha256(bundle)
+    assert cli.main(["server-update", str(bundle), "--sha256", sha, "--dry-run", "--task-name", "AP Coder test"]) == 0
+    assert ran == [["schtasks", "/query", "/tn", "AP Coder test"]]
 
 
 # --- The security review (D-101) --------------------------------------------------------------------------------------
