@@ -435,3 +435,28 @@ def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_
     assert seen(category=category)[2] == ["Office"]
     category.update((gl, "Travel") for gl in list(category))
     assert seen(category=category)[2] == ["Travel"]
+
+
+def test_each_vendors_lesson_counts_follow_the_coding_memory_and_its_vendor_list_row_is_read_afresh(
+    tmp_path, ground_truth
+):
+    """Vendors, Statements and the JD Edwards worksheet (``vendor_summaries``): each vendor's lesson counts, kept on
+    ``changes/lessons``; its row of the vendor list, read by its key each time."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    invoice = _invoice(other, tmp_path, ground_truth, "L-1")
+    key = store.get_invoice(invoice)["vendor_key"]
+
+    def row() -> tuple:
+        (found,) = [r for r in store.vendor_summaries() if r["vendor_key"] == key]
+        return found["lessons"], found["accuracy"], found["status"], found["notes"]
+
+    assert row() == (0, None, "active", "")
+    other.approve_invoice(invoice, {**ground_truth, "invoice_number": "L-1"}, "Jordan Lee")
+    lines = len(ground_truth["line_items"])
+    assert row() == (lines, 1.0, "active", "")
+    _plain(store, "UPDATE feedback SET outcome = 'corrected' WHERE rowid = (SELECT MIN(rowid) FROM feedback)")
+    assert row() == (lines, (lines - 1) / lines, "active", "")
+    _plain(store, "DELETE FROM feedback")
+    assert row() == (0, None, "active", "")
+    other.save_vendor(key, ground_truth["vendor_name"], "on_hold", notes="Call first", actor="Jordan Lee")
+    assert row() == (0, None, "on_hold", "Call first")
