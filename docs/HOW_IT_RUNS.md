@@ -427,8 +427,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
   `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its
-  own: the vendors asked most recently, at most 20,000 rows and 4,096 vendors, about 20 MB; stamped by `summary_id` and
-  `changes/vendor/<key>`). The page pictures are not kept in a server worker's memory: they are drawn once into the
+  own: the vendors asked most recently, at most 50,000 rows and 4,096 vendors, about 50 MB, one vendor up to half the
+  rows, a bigger one read once a page; stamped by `summary_id` and `changes/vendor/<key>`). The page pictures are not kept in a server worker's memory: they are drawn once into the
   data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
 
 ## 9. The data folder and everything AP Coder writes

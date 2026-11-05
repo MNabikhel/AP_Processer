@@ -270,7 +270,7 @@ def test_pages_asking_one_name_for_different_things_work_them_out_at_once(tmp_pa
         thread.join(5)
     assert together
     for n in range(2 * summary_module.COMPUTING_KEPT):
-        store.summary_memo("received_not_invoiced", lambda: n, changes="purchase_orders", asked=n)
+        store.summary_memo("received_not_invoiced", lambda n=n: n, changes="purchase_orders", asked=n)
     assert len(summary_module._COMPUTING) <= summary_module.COMPUTING_KEPT + 1
 
 
@@ -407,7 +407,8 @@ def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_
     with sqlite3.connect(store.path) as conn:
         for key, count in (("small 1", 1), ("small 2", 2), ("half", 5), ("big", 6)):
             conn.executemany("INSERT INTO invoices (source_path, file_name, status, created_at, vendor_key, "
-                             "vendor_name) VALUES ('x', 'x', 'review', ?, ?, ?)", [(NOW, key, key.title())] * count)  # fmt: skip
+                             "vendor_name) VALUES ('x', 'x', 'review', ?, ?, ?)",
+                             [(NOW, key, key.title())] * count)  # fmt: skip
     for key in ("small 1", "small 2", "big"):
         store.vendor_invoices(key)
     kept = vendors_module._VENDOR_ROWS

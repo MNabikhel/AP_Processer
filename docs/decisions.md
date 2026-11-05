@@ -671,7 +671,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       with `events`, the count of the events of that action; with `changes`, a count the triggers keep
       (`changes/<kind>`); and `asked`, what the answer is for (a list's invoices, the vendors asked), compared with ==.
     - The latest answer of each name is kept, 64 at most a process. One page works an answer out; the others asking
-      meanwhile wait for it (`MEMO_WAIT`, then work it out themselves). The answer is shared: read it, don't change it.
+      the same meanwhile (the name and `asked`) wait for it (`MEMO_WAIT`, then work it out themselves). Another ask of
+      the name works its own out alongside (B-1722: three Month-end periods took 0.5 + 1.0 + 1.5 s, now 0.5 s each);
+      the locks no page holds are let go past `COMPUTING_KEPT` (256). The answer is shared: read it, don't change it.
     - **Only what is committed is kept.** `conn.in_transaction` is read with the stamp. Inside a write under way the
       stamp counts that write's own changes and the answer reads them, and the write may yet be undone: a later
       change, by anyone, would bring the count back to the same number. There the answer is worked out afresh, neither
@@ -699,6 +701,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - The restore makes ours again in its private copy (`_own_triggers`, after the read-only check, before
       `source.backup(target)`), so the SQL a backup gave them never runs, not even on another worker's change while
       the restore goes on. A backup where one of ours can't be made (its table missing) is refused.
+    - The copy is the database for minutes before its migration (the data folder's files are copied first), the
+      workers answering. So it also gets the counts' triggers whose tables it has (`make_triggers(counts=True)`; a
+      backup made before D-159 has none) and a new `summary_id`: a change meanwhile is counted, and no answer kept
+      before is taken when a count comes back to its number. The migration gives it another `summary_id` (B-1720).
     - **Going back:** a version before this one refuses the backups made by this one (they hold triggers it doesn't
       know), and keeps those triggers in its database. `server-update --back` restores the pre-update backup, made by
       the older version (`docs/SERVER.md` §11, `docs/UPGRADING.md`).
@@ -729,7 +735,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
         of 0.2-0.37 s; 0.33-0.46 MB each, 11.7 MB for 32 (the bench's 9,830 patterns of 167 words);
       - kept for 32 vendors and 60,000 of their lessons per process (`PAST_KEPT`, `PAST_ROWS_KEPT`), the latest used
         always; the store keeps those lessons the same way (`_PAST_MEMORY`, 2 vendors before): 1.3 KB a lesson, 78 MB
-        at 60,000. Once the shared rows are others, the memories extended from the older ones are let go.
+        at 60,000. A memory extended from the shared rows lets go of every one extended from others: each holds all
+        of its shared rows' memory (61.6 MB at 50,000 lessons), and 32 vendors asked between approvals kept 681 MB
+        (B-1719; 45.6 MB now).
     - **A line's suggestions** (`_Memory.said`): with the memory and the reference data they came from; 1,024 per
       memory, the latest used last, about 2.4 KB each. Callers get copies.
   - **Measured** (the 100k seed read-only, an `immutable=1` URI; one process, CPU, medians of 20, the checks and the
@@ -797,11 +805,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     is `{state, poll, tag, same}`, without it, and nothing is drawn again (the same answer each time: `poll` waits
     longer).
   - **Each vendor's invoices:** `Store.vendor_invoices` kept per process for the vendors asked most recently, its own
-    cache (not `summary_memo`): at most `VENDOR_ROWS_KEPT` (20,000 rows, about 20 MB) and `VENDOR_KEYS_KEPT` (4,096
-    vendors: review 2b item 4, each name typed is asked for, most with no invoices), with a running row total; a vendor
-    of more rows than the cap alone is not kept. Stamped by `summary_id` and `changes/vendor/<key>` (D-159's triggers;
-    a check's confidence is not listed). Read inside a write under way: afresh, not kept. Each caller gets rows of its
-    own. The rows no longer carry `adjusted_confidence`/`requires_review` (read by nothing).
+    cache (not `summary_memo`): at most `VENDOR_ROWS_KEPT` (50,000 rows: about 1 KB a row, 50 MB) and
+    `VENDOR_KEYS_KEPT` (4,096 vendors: review 2b item 4, each name typed is asked for, most with no invoices), with a
+    running row total. One vendor is kept up to half the cap, so it never empties it of the others (B-1721); one of
+    more rows is read once in a page's session instead (`_session_memo`: the check's two calls). Stamped by
+    `summary_id` and `changes/vendor/<key>` (D-159's triggers; a check's confidence is not listed). Read inside a write
+    under way: afresh, not kept. Each caller gets rows of its own. The rows no longer carry
+    `adjusted_confidence`/`requires_review` (read by nothing).
+    - **The cap** (B-1721, measured on the 300,000-invoice seed, read-only): its biggest vendor has 23,174 invoices,
+      kept in 23.9 MB (1,031 bytes a row; 924 for one of 12,611), read in 1.2 s on a busy machine, each caller's copy
+      21 ms. Its check's two calls: 2 × 1.2 s each check under the 20,000 cap (never kept), about 45 ms once kept.
   - **Measured** (100k database, read-only; one process's CPU, medians; before: 7d13f0b, where A1, A2, W2c and W2d
     are merged; after: D-160 on it):
     - the page: 3.64 MB → 332 KB; the same invoice again 2,391 → 1,302 ms, four vendors in turn 1,724 → 870 ms.
@@ -952,7 +965,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Read without waste:**
     - `jde.resolve_an8` reads the vendor IDs without copying them for each invoice or vendor;
     - Learning → Coding accuracy counts the approvals with SQLite (`insights.approval_counts`, as Activity);
-    - Settings → Data counts the invoices folder with `os.scandir`;
+    - Settings → Data counts the invoices folder with `os.scandir` (0 for one it can't list, B-1723);
     - `vendor_summaries` reads only the listed vendors' rows of the vendor list;
     - `clean_fields_needed` (a pure search, asked twice a vendor) is cached.
   - **What stays true:** a kept answer is what reading again gives (a two-Store test each,
