@@ -15,6 +15,7 @@ import math
 from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
@@ -24,7 +25,7 @@ from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
 from ap_coder.web import minimd
-from ap_coder.web.core import done, get_store, jobs, page_router, posted_form, refuse, reviewer
+from ap_coder.web.core import done, get_store, jobs, one_connection, page_router, posted_form, refuse, reviewer
 from ap_coder.web.files import TOO_BIG, XLSX, SheetError, download, read_capped, read_csv, read_excel
 
 router = page_router()  # each plain handler: one connection a request
@@ -157,8 +158,13 @@ def copy(js: jde.JdeSettings) -> jde.JdeSettings:
 
 @router.post("/settings/jde")
 async def save_general(request: Request) -> JSONResponse:
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_general, request, form)
+
+
+@one_connection
+def _save_general(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
 
     def text(name: str) -> str:
         return str(form.get(name) or "").strip()
@@ -198,8 +204,13 @@ async def save_general(request: Request) -> JSONResponse:
 
 @router.post("/settings/jde/gl-map")
 async def save_gl_map(request: Request) -> JSONResponse:
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_gl_map, request, form)
+
+
+@one_connection
+def _save_gl_map(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     columns = {name: [str(v).strip() for v in form.getlist(name)] for name, _, _ in GL_COLUMNS}
     count = len(columns["gl_code"])
     if any(len(values) != count for values in columns.values()):
@@ -233,13 +244,18 @@ async def import_gl_map(
     file: UploadFile = File(...),  # noqa: B008
     replace: str = Form(""),
 ) -> JSONResponse:
-    store = get_store(request)
     name = file.filename or ""
     if not name.lower().endswith((".csv", ".xlsx", ".xls")):
         return refuse("Upload a CSV or Excel file (GL code, Cost center, BU, Object, Subsidiary).")
     content = await read_capped(file)  # never read whole, however large (B-1401)
     if content is None:
         return refuse(TOO_BIG)
+    return await run_in_threadpool(_import_gl_map, request, name, content, replace)
+
+
+@one_connection
+def _import_gl_map(request: Request, name: str, content: bytes, replace: str) -> JSONResponse:
+    store = get_store(request)
     try:
         records = read_sheet(name, content)
     except SheetError as exc:  # already a whole sentence
@@ -259,8 +275,13 @@ async def import_gl_map(
 
 @router.post("/settings/jde/tax-map")
 async def save_tax_map(request: Request) -> JSONResponse:
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_tax_map, request, form)
+
+
+@one_connection
+def _save_tax_map(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     new = copy(jde.load(store))
     provinces = [str(p) for p in form.getlist("province")]
     areas = [str(a).strip().upper() for a in form.getlist("tax_area")]
@@ -282,8 +303,13 @@ async def save_terms(request: Request) -> JSONResponse:
     """The payment terms table (D-91): each row's terms are kept by what they mean ("30 days" and "N30" are "Net 30"),
     so two rows meaning the same are refused, as are terms AP Coder can't read; a row without terms or a code is
     dropped. ``default_terms_code``: the code for terms not in the table (blank: E1 takes the supplier's own)."""
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_terms, request, form)
+
+
+@one_connection
+def _save_terms(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     terms = [str(t).strip() for t in form.getlist("terms")]
     codes = [str(c).strip().upper() for c in form.getlist("terms_code")]
     if len(terms) != len(codes):
@@ -313,8 +339,13 @@ async def save_terms(request: Request) -> JSONResponse:
 
 @router.post("/settings/jde/an8")
 async def save_an8(request: Request) -> JSONResponse:
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_an8, request, form)
+
+
+@one_connection
+def _save_an8(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
     vendors = [str(v).strip() for v in form.getlist("vendor")]
     numbers = [str(a).strip() for a in form.getlist("an8")]
     if len(vendors) != len(numbers):
@@ -343,10 +374,15 @@ def jde_worksheet_download(request: Request) -> Response:
 @router.post("/settings/jde/worksheet")
 async def jde_worksheet_import(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
     """Apply the JDE team's answers; say what changed and what could not be used."""
-    store = get_store(request)
     content = await file.read(10_000_001)
     if len(content) > 10_000_000:
         return refuse("This file is larger than 10 MB: it is not AP Coder's worksheet.")
+    return await run_in_threadpool(_jde_worksheet_import, request, content)
+
+
+@one_connection
+def _jde_worksheet_import(request: Request, content: bytes) -> JSONResponse:
+    store = get_store(request)
     result = jde_worksheet.read(content, jde.load(store))
     if not result.changes and result.problems:
         return refuse(" ".join(result.problems[:5]))
@@ -372,8 +408,13 @@ SYNC_JOB = "jde-sync"
 @router.post("/settings/jde/api")
 async def save_api(request: Request) -> JSONResponse:
     """Save the AIS connection; the password only when one is typed (it goes to the .env, never the database)."""
-    store = get_store(request)
     form = await posted_form(request)
+    return await run_in_threadpool(_save_api, request, form)
+
+
+@one_connection
+def _save_api(request: Request, form: Any) -> JSONResponse:
+    store = get_store(request)
 
     def text(name: str) -> str:
         return str(form.get(name) or "").strip()

@@ -136,6 +136,7 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     test_pages = _teach_self_test(fake)
     server = Server(data, out / "server.log", a.workers, _server_env(fake, parallel, a))
     report: dict[str, Any] = {}
+    run: Run | None = None
     try:
         server.start()
         client = Client(server.base)
@@ -154,6 +155,8 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     finally:
         server.stop()
         fake.stop()
+        if run is not None:
+            run.db.close()  # Windows deletes no file still open: the data folder stayed behind (B-1681)
         if (data / "logs").is_dir():  # the server's own logs outlive the data folder: they say what went wrong
             shutil.copytree(data / "logs", out / "server-logs", dirs_exist_ok=True)
         if not a.keep:
@@ -208,7 +211,8 @@ def _server_env(fake: FakeModel, parallel: int, a: argparse.Namespace) -> dict[s
     env = {k: v for k, v in os.environ.items() if not k.startswith("AP_")}  # nothing of this computer's AP Coder
     env.update({"BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1", "AP_LLM_BASE_URL": fake.base_url,
                 "AP_LLM_PARALLEL": str(parallel), "PYTHONUNBUFFERED": "1",
-                "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"})  # fmt: skip
+                "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+                "AP_STACK_DUMP_SECONDS": "60"})  # fmt: skip  # where the background process waits, if it seems stuck
     if not a.no_scale_timeouts and a.time_scale < 1:
         env["AP_LLM_TIMEOUT_SECONDS"] = str(round(max(30.0, 600 * a.time_scale)))
         env["AP_PAGE_READER_TIMEOUT_SECONDS"] = str(round(max(30.0, 1200 * a.time_scale)))
@@ -756,6 +760,11 @@ class Reader:
     def __init__(self, db: Path) -> None:
         self.db = db
         self._conn: sqlite3.Connection | None = None
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
     def _rows(self, sql: str, args: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         if self._conn is None:

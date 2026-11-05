@@ -358,7 +358,13 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  runs; the newest 14 are kept.
+  - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
+    during the working day. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
+    during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
+  - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
+    to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
+  - Plan the disk for 14 daily copies of the database, plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
   *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
   made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
   restorable whole (D-143):

@@ -15,6 +15,7 @@ from dataclasses import fields
 from typing import Any
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.core import ui
@@ -22,7 +23,7 @@ from ap_coder.core.store import APPROVED
 from ap_coder.erp.insights import AS_CODED, Assumptions, as_coded_note, compute, operations, report_html
 from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
-from ap_coder.web.core import done, get_store, page_router, posted_form, refuse, render, reviewer
+from ap_coder.web.core import done, get_store, one_connection, page_router, posted_form, refuse, render, reviewer
 from ap_coder.web.files import download
 
 router = page_router()  # each plain handler: one connection a request
@@ -211,6 +212,11 @@ def insights_business_case(request: Request) -> Response:
 @router.post("/insights/assumptions")
 async def insights_assumptions(request: Request) -> JSONResponse:
     form = await posted_form(request)
+    return await run_in_threadpool(_save_assumptions, request, form)
+
+
+@one_connection
+def _save_assumptions(request: Request, form: Any) -> JSONResponse:
     values: dict[str, Any] = {}
     for f in fields(Assumptions):
         label = LABELS[f.name][0]

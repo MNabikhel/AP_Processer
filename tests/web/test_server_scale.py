@@ -703,3 +703,117 @@ def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_da
     finally:
         logging.getLogger("ap_coder").removeHandler(handler)
         handler.close()
+
+
+def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_thread_s_stack(tmp_path, monkeypatch):
+    """Windows CI: the page reader's self-test waited 11 minutes on something no log line names, and no signal can
+    ask a Windows process where it is. With AP_STACK_DUMP_SECONDS set (a bench, or IT on a developer's word), the
+    background process writes every thread's stack to logs/background-stacks.log that often; unset, never."""
+    import faulthandler
+    import time
+
+    from ap_coder.web import server
+
+    monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
+    assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
+    monkeypatch.setenv(server.STACK_DUMP_ENV, "0.2")
+    handle = server.stack_dumps(tmp_path / "logs")
+    try:
+        path = tmp_path / "logs" / server.STACK_DUMP_LOG
+        deadline = time.monotonic() + 10
+        while "test_server_scale.py" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert "test_server_scale.py" in path.read_text(encoding="utf-8")  # this test's own frame, as it waits
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        handle.close()
+
+
+def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_close(tmp_path):
+    """Windows CI: the page reader's self-test sat 11 minutes in ``import numpy`` and went on 4 s after the server
+    stopped. The thread waiting for its input to close (how the server stops it) kept a read pending on the pipe,
+    and Windows blocks ``GetFileType`` on a pipe with a read pending, which every DLL that starts its own C runtime
+    calls as it loads: on the company server, the self-test, each scan and OCR would wait until the server stopped.
+    The library loads at once, and the process still stops when its input closes (on every system)."""
+    import subprocess
+    import sys
+    import time
+
+    script = (
+        "import threading, time, sys\n"
+        "from ap_coder.web import server\n"
+        "closed = threading.Event()\n"
+        "threading.Thread(target=server.until_input_closes, args=(closed.set,), daemon=True).start()\n"
+        "time.sleep(1.0)\n"  # the wait for the input is under way before the library loads
+        "assert 'numpy' not in sys.modules\n"
+        "import numpy\n"
+        "print('loaded', flush=True)\n"
+        "assert closed.wait(30), 'the input closed and nobody noticed'\n"
+        "print('stopped', flush=True)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)  # fmt: skip
+    try:
+        started = time.monotonic()
+        assert proc.stdout.readline().strip() == "loaded"
+        assert time.monotonic() - started < 30  # not waiting for the input to close
+        proc.stdin.write("anything the server sends is read and dropped\n")
+        proc.stdin.flush()
+        time.sleep(0.5)
+        assert proc.poll() is None  # input, but not closed: still running
+        proc.stdin.close()
+        assert proc.stdout.readline().strip() == "stopped"
+        assert proc.wait(15) == 0
+    finally:
+        proc.kill()
+
+
+# --- B-1660: a long import holds up no other request of its web worker -------------------------------------------
+
+
+def test_a_long_import_does_not_hold_up_the_other_requests_of_its_web_worker(store, monkeypatch):
+    """A web worker answers every ``async`` handler on its one event loop: the ERP register's import (600,000 rows at
+    a large company) made its store calls there, so every other request to that worker (pages, polls, logins) waited
+    until it was done. Its work now runs on a threadpool thread, as the review screen's Check does: a page asked for
+    while the import is in its store call is answered before that call ends."""
+    import httpx
+
+    from ap_coder.core.store import Store
+    from ap_coder.web.app import create_app
+    from tests.webclient import PAGE, web_settings
+
+    inside, ended = threading.Event(), threading.Event()
+    real = Store.import_erp_register
+
+    def import_slowly(self, *args, **kwargs):
+        inside.set()
+        time.sleep(1.5)  # the store call of a long import
+        ended.set()
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "import_erp_register", import_slowly)
+    app = create_app(web_settings(), store, start_reader=False, background=False)
+    sheet = b"Supplier,Doc No,Amount\nAcme Ltd,A-1,100.00\n"
+    columns = {"col_vendor_name": "Supplier", "col_invoice_number": "Doc No", "col_total": "Amount"}
+
+    async def both() -> tuple[bool, httpx.Response, httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            upload = await client.post("/exports/register/upload", files={"file": ("erp.csv", sheet, "text/csv")},
+                                       headers=PAGE)  # fmt: skip
+            token = httpx.URL(upload.json()["redirect"]).params["register"]
+            importing = asyncio.create_task(
+                client.post("/exports/register/import", data={"file": token, **columns}, headers=PAGE)
+            )
+            for _ in range(500):  # until the import is in its store call
+                if inside.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            page = await client.get("/healthz")
+            answered_meanwhile = not ended.is_set()
+            return answered_meanwhile, page, await importing
+
+    answered_meanwhile, page, imported = asyncio.run(both())
+    assert page.status_code == 200 and imported.status_code == 200, imported.text
+    assert store.erp_register_count() == 1
+    assert answered_meanwhile, "the page waited for the import's store call to end"

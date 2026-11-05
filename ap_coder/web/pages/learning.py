@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from markupsafe import Markup
 
@@ -44,6 +45,7 @@ from ap_coder.web.core import (
     done,
     get_settings,
     get_store,
+    one_connection,
     page_router,
     posted_form,
     reference_or_none,
@@ -633,6 +635,11 @@ async def memory_forget(request: Request) -> JSONResponse:
         ids = []
     if not ids:
         return refuse("Tick the lines to forget first.")
+    return await run_in_threadpool(_memory_forget, request, ids)
+
+
+@one_connection
+def _memory_forget(request: Request, ids: list[int]) -> JSONResponse:
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
     return done(request, "/learning#memory", f"Forgot {ui.plural(n or len(ids), 'line')} from the coding memory.")
 
@@ -645,6 +652,11 @@ async def history_upload(request: Request, file: UploadFile = File(...)) -> JSON
     content = await read_capped(file)  # never read whole, however large (B-1401)
     if content is None:
         return refuse(TOO_BIG)
+    return await run_in_threadpool(_history_upload, request, name, content)
+
+
+@one_connection
+def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse:
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
@@ -661,6 +673,11 @@ def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list
 @router.post("/learning/history/teach")
 async def history_teach(request: Request) -> JSONResponse:
     form = await posted_form(request)
+    return await run_in_threadpool(_history_teach, request, form)  # years of ERP lines at once
+
+
+@one_connection
+def _history_teach(request: Request, form: Any) -> JSONResponse:
     token = str(form.get("token") or "")
     upload = get_upload(token)
     if upload is None:

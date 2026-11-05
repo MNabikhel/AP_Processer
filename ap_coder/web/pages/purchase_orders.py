@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from fastapi import File as FileParam
 from fastapi import Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import po as po_mod
@@ -25,6 +26,7 @@ from ap_coder.web.core import (
     flash_message,
     get_store,
     message,
+    one_connection,
     page_router,
     posted_form,
     refuse,
@@ -253,6 +255,11 @@ async def po_upload(request: Request, file: UploadFile = FileParam(...)) -> JSON
 async def po_import(request: Request) -> JSONResponse:
     """One row per PO line; a PO in the file replaces its lines (a fresh export also updates what was received)."""
     form = await posted_form(request)
+    return await run_in_threadpool(_po_import, request, form)
+
+
+@one_connection
+def _po_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
