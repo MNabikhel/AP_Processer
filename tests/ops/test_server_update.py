@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -266,6 +267,72 @@ def test_the_command_line(server, monkeypatch):
     assert seen[0][0] == Path("C:\\b.zip") and seen[0][1]["dry_run"] is True
     assert seen[1][0] == "back" and seen[1][1]["yes"] is True
     assert cli.main(["server-update"]) == 2  # neither a bundle nor --back
+
+
+def test_the_task_server_update_stops_and_starts_is_never_server_jsons(server, monkeypatch):
+    """B-1586: server.json is in the data folder, which the service's account can write (B-1500). server-update took
+    the task's name from it, so the administrator's schtasks queried, ended and ran whatever task it named (Windows'
+    Defrag task). It names the task as ``service install|start|stop`` do: the command line's, else "AP Coder"."""
+    service.write_config(server["data"], task_name="\\Microsoft\\Windows\\Defrag\\ScheduledDefrag")
+    ran: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        ran.append([str(c) for c in cmd])
+        return subprocess.CompletedProcess(cmd, 0, "Status: Ready\n", "")
+
+    monkeypatch.setattr(service, "WINDOWS", True)
+    monkeypatch.setattr(service, "run_command", run)
+    monkeypatch.setattr(service, "dashboard_stopped", lambda data, settings, wait=45.0: True)
+    # The service's own Server (no fake one given), with the new folder's setup, its checks and the dashboard
+    # answering stood in for.
+    monkeypatch.setattr(server_update.Server, "set_up", lambda self, folder: True)
+    monkeypatch.setattr(server_update.Server, "migrate", lambda self, folder, db: True)
+    monkeypatch.setattr(server_update.Server, "self_check", lambda self, folder: (True, "Self-check OK"))
+    monkeypatch.setattr(server_update.Server, "up", lambda self, folder: True)
+    bundle = _bundle(server["tmp"])
+    assert _install(bundle, server["data"], server["db"]) == 0
+    assert server_update.go_back(server["data"], server["db"], yes=True) == 0
+    assert {cmd[1] for cmd in ran} == {"/query", "/end", "/run"}
+    assert {cmd[cmd.index("/tn") + 1] for cmd in ran} == {"AP Coder"}
+    ran.clear()  # another task only when the command line names it
+    sha = server_update.file_sha256(bundle)
+    assert cli.main(["server-update", str(bundle), "--sha256", sha, "--dry-run", "--task-name", "AP Coder test"]) == 0
+    assert ran == [["schtasks", "/query", "/tn", "AP Coder test"]]
+
+
+class NotInstalled(FakeServer):
+    """No scheduled task of the name server-update was given; whether a dashboard answers asked as the real one."""
+
+    def __init__(self, data: Path) -> None:
+        super().__init__()
+        self.data, self.settings = data, server_update.server_settings(data)
+
+    def installed(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("sign", ["server.json names it", "the dashboard answers"])
+def test_a_service_installed_under_another_name_is_not_updated_without_that_name(server, monkeypatch, capsys, sign):
+    """B-1672: since B-1586 server-update names the task "AP Coder" unless --task-name names another. A service
+    installed under another name was taken for none: the live server's database was updated and its folder switched
+    under it, the service never stopped. With no task of that name installed while server.json names another or the
+    dashboard answers, it refuses, says to pass --task-name, and changes nothing; --back too."""
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0  # one to go back
+    if sign == "server.json names it":
+        service.write_config(server["data"], task_name="AP Coder Prod")  # as service install --task-name wrote it
+        monkeypatch.setattr(service, "dashboard_health", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(service, "dashboard_health", lambda *a, **k: {"app": "ap-coder", "folder": "x"})
+    saved, marker = service.read_config(server["data"]), _marker(server["db"])
+    capsys.readouterr()
+    newer, fake = _bundle(server["tmp"], "0.5.0"), NotInstalled(server["data"])
+    assert _install(newer, server["data"], server["db"], server=fake, dry_run=True) == 1
+    assert _install(newer, server["data"], server["db"], server=fake) == 1
+    assert server_update.go_back(server["data"], server["db"], server=fake, yes=True) == 1
+    assert server_update.go_back(server["data"], server["db"], server=fake, dry_run=True) == 1
+    assert fake.calls == [] and service.read_config(server["data"]) == saved and _marker(server["db"]) == marker
+    assert not (server["current"].parent / "APProcessor-0.5.0").exists()
+    assert capsys.readouterr().err.count("pass --task-name <name>") == 4
 
 
 # --- The security review (D-101) --------------------------------------------------------------------------------------

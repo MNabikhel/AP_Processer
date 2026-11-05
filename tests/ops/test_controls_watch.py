@@ -243,3 +243,93 @@ def test_watch_once_fails_when_every_email_could_not_be_read(tmp_path):
     (inbox / "bad.msg").write_bytes(b"not an outlook email" * 40)
     os.utime(inbox / "bad.msg", (1_700_000_000, 1_700_000_000))
     assert cli.main(_watch_args(tmp_path, "--once")) == 1
+
+
+def test_watch_skips_its_check_while_the_dashboard_reads_into_the_same_database(tmp_path, capsys):
+    """B-1587: the dashboard's import holds the pick-up lock; the watch reads nothing then, and says so."""
+    from ap_coder.intake.mailbox import pickup_lock
+    from ap_coder.ops import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", inbox / "new.pdf")
+    os.utime(inbox / "new.pdf", (time.time() - 60, time.time() - 60))
+    args = _watch_args(tmp_path, "--once")
+    held = pickup_lock(tmp_path)  # the data folder: the database's
+    try:
+        assert cli.main(args) == 0
+    finally:
+        held.close()
+    assert "this check is skipped" in capsys.readouterr().err
+    assert Store(tmp_path / "a.db").list_invoices() == []
+
+
+def _process_args(tmp_path, path):
+    return ["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "process", str(path), "--out",
+            str(tmp_path / "out"), "--cache-dir", ""]  # fmt: skip
+
+
+def test_the_process_command_and_a_watch_store_a_new_file_once(tmp_path, monkeypatch):
+    """B-1589: ``ap_coder process <files>`` took no pick-up lock. A watch that checked the folder while it read a new
+    file listed it as not stored yet and stored it too: two invoices of one file. Here the two really run at once."""
+    import hashlib
+    import threading
+
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.ops import cli
+
+    watch = _watch_args(tmp_path, "--once")
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    new = inbox / "new.pdf"
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", new)
+    os.utime(new, (time.time() - 60, time.time() - 60))  # settled: the watch takes it
+    reading, go = threading.Event(), threading.Event()
+    real_process = InvoicePipeline.process
+
+    def process(self, path, *args, **kwargs):  # the command's reading is slow: the watch checks meanwhile
+        if not reading.is_set():
+            reading.set()
+            go.wait(60)
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(InvoicePipeline, "process", process)
+    command = threading.Thread(target=cli.main, args=(_process_args(tmp_path, new),))
+    command.start()
+    try:
+        assert reading.wait(60)
+        cli.main(watch)
+    finally:
+        go.set()
+        command.join(180)
+    sha = hashlib.sha256(new.read_bytes()).hexdigest()
+    with Store(tmp_path / "a.db")._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM invoices WHERE file_sha256 = ?", (sha,)).fetchone()[0] == 1
+
+
+def test_the_process_command_waits_for_another_pick_up_then_skips_a_file_it_stored(tmp_path, capsys):
+    """B-1589: while another pick-up holds the lock the command waits, then checks again what is stored."""
+    import threading
+
+    from ap_coder.intake.mailbox import pickup_lock
+    from ap_coder.ops import cli
+
+    _watch_args(tmp_path)  # the GL accounts imported
+    new = tmp_path / "new.pdf"
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", new)
+    held = pickup_lock(tmp_path)  # a watch or the dashboard reading into this database
+    command = threading.Thread(target=cli.main, args=(_process_args(tmp_path, new),))
+    command.start()
+    said, deadline = "", time.monotonic() + 20
+    try:
+        while "Waiting" not in said and time.monotonic() < deadline:
+            said += capsys.readouterr().err
+            time.sleep(0.05)
+        assert "Waiting" in said
+        Store(tmp_path / "a.db").add_invoice(new, _gt(), None)  # the other pick-up stored it meanwhile
+    finally:
+        held.close()
+        command.join(60)
+    said += capsys.readouterr().err
+    assert "Skipping 1 file(s) already in the review queue" in said
+    assert len(Store(tmp_path / "a.db").list_invoices()) == 1

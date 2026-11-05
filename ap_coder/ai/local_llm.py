@@ -15,9 +15,11 @@ Standard library only for detection, so a check costs no imports and works with 
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
 import os
 import re
+import socket
 import threading
 import time
 import urllib.request
@@ -27,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from ..core.config import _on_this_network
+from ..core.config import COMPANY_DOMAINS_ENV, _address, _on_this_network, judged_by_lookup, pinned_addresses
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
@@ -110,6 +112,13 @@ def refused_address(url: str) -> str:
     if _on_this_network(host) or internet_allowed():
         return ""
     name = host.rsplit("@", 1)[-1]
+    hostname = (urlparse(url).hostname or "").lower()
+    # A dotted name, outside .local/.lan/.home and the company's DNS domains: never looked up (a bare or local name, or
+    # a company one, is refused for the internet address it has, and has no domain to add: B-1675).
+    if _address(hostname) is None and not judged_by_lookup(host):
+        return (f"{name} is on another network: this offline build does not contact it. To use a model server named "
+                f"in the company's network, add its domain to {COMPANY_DOMAINS_ENV} in the .env file "
+                f"({INTERNET_ENV}=1, for developers, allows any server)")  # fmt: skip
     return (f"{name} is not on this computer or the office network: this offline build does not contact it "
             f"({INTERNET_ENV}=1 allows it)")  # fmt: skip
 
@@ -132,12 +141,51 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def opener(local: bool) -> urllib.request.OpenerDirector:
-    """The urllib opener for a model server: no proxy for one on this computer or network (an office proxy would
-    answer for 127.0.0.1, or hang), and no redirect followed (``_NoRedirect``)."""
+class _Pinned:
+    """An HTTP(S) handler whose connections go to ``addresses`` in turn, the ones the check judged, never to the name
+    looked up again; the name stays the Host header's and the certificate's (SNI) (B-1608)."""
+
+    def __init__(self, addresses: list[str]) -> None:
+        super().__init__()
+        self.addresses = addresses
+
+    def do_open(self, http_class: Any, req: Any, **kwargs: Any) -> Any:
+        *others, last = self.addresses
+
+        def connection(host: str, **options: Any) -> http.client.HTTPConnection:
+            conn = http_class(host, **options)
+
+            def pinned(where: tuple[str, int], *args: Any, **kw: Any) -> socket.socket:
+                for address in others:
+                    with contextlib.suppress(OSError):
+                        return socket.create_connection((address, where[1]), *args, **kw)
+                return socket.create_connection((last, where[1]), *args, **kw)
+
+            conn._create_connection = pinned  # type: ignore[attr-defined]
+            return conn
+
+        return super().do_open(connection, req, **kwargs)  # type: ignore[misc]
+
+
+class _PinnedHTTP(_Pinned, urllib.request.HTTPHandler):
+    pass
+
+
+class _PinnedHTTPS(_Pinned, urllib.request.HTTPSHandler):
+    pass
+
+
+def opener(local: bool, host: str) -> urllib.request.OpenerDirector:
+    """The urllib opener for a model server at ``host`` (a URL's netloc): no proxy for one on this computer or network
+    (an office proxy would answer for 127.0.0.1, or hang), connected there to the addresses its check judged
+    (``pinned_addresses``, which raises OSError for a name no longer on the office network), and no redirect followed
+    (``_NoRedirect``)."""
     handlers: list[Any] = [_NoRedirect()]
     if local:
         handlers.append(urllib.request.ProxyHandler({}))
+        addresses = pinned_addresses(host)
+        if addresses:
+            handlers += [_PinnedHTTP(addresses), _PinnedHTTPS(addresses)]
     return urllib.request.build_opener(*handlers)
 
 
@@ -148,7 +196,8 @@ def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
     if refused:
         raise PermissionError(refused)
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key or 'lm-studio'}"})
-    with opener(_on_this_network(urlparse(url).netloc)).open(request, timeout=timeout) as response:
+    host = urlparse(url).netloc
+    with opener(_on_this_network(host), host).open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8", "replace"))
 
 
@@ -337,6 +386,8 @@ def check_server(llm: LocalLLMSettings, *, timeout: float = DETECT_TIMEOUT, use_
             status.loaded, seeing = listing
         status.model = pick_model(llm.model, ids, status.loaded, lm_studio=status.lm_studio)
         status.vision = status.model in seeing if status.lm_studio else looks_like_vision(status.model)
+    except PermissionError as exc:  # the offline build's refusal (refused_address): whole, it says what to set
+        status.error = str(exc)
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         status.error = _short_error(exc)
     with _lock:
@@ -460,13 +511,18 @@ NO_MODEL_MESSAGE = (
 # --- Talking to it --------------------------------------------------------------------------------------------
 
 
-def _refusing_transport(client_class: type, reason: str) -> Any:
-    """A transport for the OpenAI SDK's HTTP client (httpx, or httpx2 under newer SDKs: the one ``client_class`` is
-    built on) whose every request fails as a connection error, before anything is sent."""
+def _http_library(client_class: type) -> Any:
+    """The HTTP library the OpenAI SDK's client ``client_class`` is built on: httpx, or httpx2 under newer SDKs."""
     import importlib
 
     base = next(c for c in client_class.__mro__ if c.__name__ == "Client" and c.__module__ != client_class.__module__)
-    http = importlib.import_module(base.__module__.split(".")[0])
+    return importlib.import_module(base.__module__.split(".")[0])
+
+
+def _refusing_transport(client_class: type, reason: str) -> Any:
+    """A transport for the OpenAI SDK's HTTP client (``client_class``) whose every request fails as a connection
+    error, before anything is sent."""
+    http = _http_library(client_class)
 
     class Refused(http.BaseTransport):
         def handle_request(self, request: Any) -> Any:
@@ -475,19 +531,58 @@ def _refusing_transport(client_class: type, reason: str) -> Any:
     return Refused()
 
 
+def _pinning_transport(client_class: type) -> Any:
+    """A transport for the OpenAI SDK's HTTP client (``client_class``) that sends each request to the addresses its
+    host's check judged (``pinned_addresses``), never where the name looked up again would lead (B-1608): the URL names
+    the address, the Host header and the certificate's check (SNI) keep the name. A name no longer on the office
+    network fails as a connection error, before anything is sent."""
+    import openai
+
+    http = _http_library(client_class)
+    inner = http.HTTPTransport(trust_env=False, limits=openai.DEFAULT_CONNECTION_LIMITS)  # the client's own
+
+    class Pinned(http.BaseTransport):
+        def handle_request(self, request: Any) -> Any:
+            url = request.url
+            try:
+                addresses = pinned_addresses(url.netloc.decode("ascii"))
+            except OSError as exc:
+                raise http.ConnectError(str(exc), request=request) from exc
+            extensions = dict(request.extensions)
+            if url.scheme == "https":
+                extensions["sni_hostname"] = url.raw_host.decode("ascii")
+            for number, address in enumerate(addresses, 1):
+                pinned = http.Request(request.method, url.copy_with(host=address), headers=request.headers,
+                                      stream=request.stream, extensions=extensions)  # fmt: skip
+                try:
+                    return inner.handle_request(pinned)
+                except (http.ConnectError, http.ConnectTimeout):  # nothing was sent: the next address
+                    if number == len(addresses):
+                        raise
+            return inner.handle_request(request)  # an address or localhost: as written
+
+        def close(self) -> None:
+            inner.close()
+
+    return Pinned()
+
+
 def build_local_client(llm: LocalLLMSettings) -> Any:
     from openai import DefaultHttpxClient, OpenAI
 
     options: dict[str, Any] = {}
     refused = refused_address(llm.base_url)
+    host = urlparse(llm.base_url).netloc
     # No redirect is followed (the SDK's own client follows them): it could point at the internet (B-973).
     if refused:  # every request fails like a server that is not running (APIConnectionError): nothing is sent
         options["http_client"] = DefaultHttpxClient(
             transport=_refusing_transport(DefaultHttpxClient, refused), follow_redirects=False
         )
-    elif _on_this_network(urlparse(llm.base_url).netloc):
-        # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1).
-        options["http_client"] = DefaultHttpxClient(trust_env=False, follow_redirects=False)
+    elif _on_this_network(host):
+        # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1); one
+        # reached by its name, at the addresses its check judged (B-1608).
+        pinned = {"transport": _pinning_transport(DefaultHttpxClient)} if judged_by_lookup(host) else {}
+        options["http_client"] = DefaultHttpxClient(trust_env=False, follow_redirects=False, **pinned)
     else:
         options["http_client"] = DefaultHttpxClient(follow_redirects=False)
     return OpenAI(

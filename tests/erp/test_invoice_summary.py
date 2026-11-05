@@ -18,6 +18,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.core.store import summary as summary_module
+from ap_coder.core.store._base import SCHEMA_VERSION
 from ap_coder.core.store.samples import load_sample_purchase_orders
 from ap_coder.erp import accruals, directory, insights, search, spend
 from tests import summary_reference as ref
@@ -297,7 +298,8 @@ def test_an_older_database_gets_its_summary(year):
         conn.execute("UPDATE settings SET value = '18' WHERE key = 'schema_version'")
     store = Store(year.path)
     assert (insights.compute(store), _pairs(taxreturn.build(store, *YEAR).claims), store.search_rows()) == before
-    assert store.summary_query("SELECT value FROM settings WHERE key = 'schema_version'")[0][0] == "19"
+    # brought up to this version's schema, whatever its number
+    assert store.summary_query("SELECT value FROM settings WHERE key = 'schema_version'")[0][0] == str(SCHEMA_VERSION)
 
 
 def test_a_backup_with_the_summary_restores_and_one_with_another_trigger_is_refused(year, tmp_path):

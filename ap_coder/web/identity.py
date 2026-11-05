@@ -65,6 +65,9 @@ NEW_PASSWORD_PATH = "/login/new-password"
 SET_UP_PATH = "/login/authenticator"
 CODE_PATH = "/login/code"
 LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
+# What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test): no one
+# using it, so these don't keep a session from ending after its idle minutes (D-109, B-1580).
+POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test)")
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
@@ -317,11 +320,12 @@ class Identity:
         store = getattr(getattr(scope.get("app"), "state", None), "store", None)
         secure = not getattr(getattr(scope.get("app"), "state", None), "insecure_http", False)  # as login.secure_cookie
         cookie = session_cookie(secure)
+        page = method in ("GET", "HEAD")
         if not path.startswith(OPEN_PREFIXES):
             token = session_token(scope.get("headers") or [], cookie)
             if token and store is not None:
-                user = await run_in_threadpool(store.session_user, token)
-        page = method in ("GET", "HEAD")
+                polled = page and POLLS.fullmatch(path) is not None
+                user = await run_in_threadpool(store.session_user, token, renew=not polled)
         refusal: Any = None
         if user is None and need != roles.OPEN:
             if page:

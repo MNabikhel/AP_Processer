@@ -3,6 +3,7 @@ log out."""
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -149,4 +150,89 @@ def test_in_a_browser_read_only_opens_an_invoice_without_a_refusal(browser, stor
     assert "X" not in box.input_value()
     assert page.locator('[data-grid="lines"] .pk-input').first.evaluate("el => el.readOnly")
     assert page.locator("[data-add-row], [data-vendor-add], [data-note-form]").count() == 0
+    assert errors == []
+
+
+def _again(page, store: Store, username: str) -> None:
+    """Log in on the login page this page was sent to (its code step too)."""
+    page.wait_for_url("**/login?next=*")
+    page.fill("input[name=username]", username)
+    page.fill("input[name=password]", GOOD)
+    page.click("button:has-text('Log in')")
+    page.wait_for_url("**/login/code*")
+    page.fill("input[name=code]", authenticator_code(store, username))
+    page.click("button:has-text('Log in')")
+
+
+def _session_ends(store: Store, username: str) -> None:
+    store.end_sessions(store.find_user(username)["id"])
+
+
+@pytest.mark.parametrize("by", ["check", "approve"])
+def test_in_a_browser_edits_made_after_the_session_ended_come_back_after_logging_in_again(browser, store, by):
+    """B-1594: an edit made after the session had ended was lost (its check refused, the edit kept nowhere), and
+    Approve sent the person to /login with no way back: logging in again opened the queue, not the invoice. The
+    edits are kept in the tab, the login comes back to the invoice, and they are its draft again."""
+    invoice = store.list_invoices("review")[0]["id"]
+    path = f"/review/{invoice}?sort=amount"
+    page, errors = _log_in(browser, store, "clara", path=path)
+    page.wait_for_selector("[data-approve]:not([disabled])")
+    _session_ends(store, "clara")
+    box = page.locator('[form="inv"][name="invoice_number"]')
+    box.fill("AFTER-THE-END")
+    if by == "approve":
+        page.click("[data-approve]")  # at once: the check of the edit is not sent first
+    _again(page, store, "clara")
+    page.wait_for_url(f"**{path}")
+    page.wait_for_function("() => document.querySelector('[form=inv][name=invoice_number]').value === 'AFTER-THE-END'")
+    page.wait_for_load_state("networkidle")
+    assert store.get_invoice(invoice)["status"] == "review"  # nothing approved behind the login
+    page.reload()  # kept on the server as the draft, not only in the tab
+    assert page.locator('[form="inv"][name="invoice_number"]').input_value() == "AFTER-THE-END"
+    assert errors == []
+
+
+def test_in_a_browser_edits_kept_when_the_session_ended_are_never_shown_to_someone_else(browser, store):
+    """B-1594: the edits kept in the tab when the session ended are only ever put back for the person who made them;
+    someone else logging in on that tab never sees them, nor does the first person afterwards."""
+    invoice = store.list_invoices("review")[0]["id"]
+    path = f"/review/{invoice}"
+    page, errors = _log_in(browser, store, "clara", path=path)
+    page.wait_for_selector("[data-approve]:not([disabled])")
+    number = page.locator('[form="inv"][name="invoice_number"]').input_value()
+    _session_ends(store, "clara")
+    page.locator('[form="inv"][name="invoice_number"]').fill("CLARAS-EDIT")
+    page.wait_for_url("**/login?next=*")
+    kept = json.loads(page.evaluate(f"sessionStorage.getItem('apc-unsaved-{invoice}')") or "null")
+    assert kept and kept["account"] == "clara" and ["invoice_number", "CLARAS-EDIT"] in kept["fields"]  # kept: B-1678
+    _again(page, store, "april")
+    page.wait_for_url(f"**{path}")
+    page.wait_for_load_state("networkidle")
+    assert page.locator('[form="inv"][name="invoice_number"]').input_value() == number
+    assert page.evaluate("Object.keys(sessionStorage).filter(k => k.startsWith('apc-unsaved'))") == []
+    assert errors == []
+
+
+def _unanswered(page, base: str, invoice: int) -> str:
+    """What the review screen says when AP Coder doesn't answer an edit's check."""
+    page.goto(f"{base}/review/{invoice}")
+    page.wait_for_selector("[data-approve]:not([disabled])")
+    page.route("**/check", lambda route: route.abort())
+    page.locator('[form="inv"][name="invoice_number"]').fill("NO-ANSWER")
+    page.wait_for_selector("#toasts > *")
+    return page.locator("#toasts").inner_text()
+
+
+def test_in_a_browser_no_answer_is_said_in_the_servers_words_on_the_server(browser, chromium, store):
+    """B-1595: on the server, a request that got no answer told the person to "start it again with the AP Coder
+    shortcut", which only a laptop has. The server's people are told the server didn't answer, and to tell IT if it
+    keeps happening; a laptop keeps its own words."""
+    invoice = store.list_invoices("review")[0]["id"]
+    page, errors = _log_in(browser, store, "clara", path=f"/review/{invoice}")
+    said = _unanswered(page, browser[1], invoice)
+    assert "The AP Coder server didn't answer" in said and "tell IT" in said and "shortcut" not in said, said
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (laptop, base):
+        page = laptop.new_page(viewport=LAPTOP)
+        said = _unanswered(page, base, invoice)
+        assert "Start it again with the AP Coder shortcut" in said and "IT" not in said.split(), said
     assert errors == []

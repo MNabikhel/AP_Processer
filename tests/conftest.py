@@ -163,6 +163,18 @@ def isolated_private_dir(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def backups_need_no_spare_room():
+    """A backup starts only when the copy and 512 MB more fit on the disk (B-1670): a test's backup of a small
+    database must not fail because the computer running the tests is short of room. The test of that rule sets it.
+    A patch of its own, which a test's ``monkeypatch.undo()`` leaves in place."""
+    from ap_coder.core.store import backups
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(backups, "BACKUP_RESERVE", 0)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def fresh_reading_memory():
     """The tables found per file and the learning memory are remembered for the life of the process: each test
     starts with none."""

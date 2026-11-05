@@ -5,6 +5,7 @@ the nightly timing, and the live "already in JD Edwards?" check with its cache a
 from __future__ import annotations
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -145,6 +146,15 @@ def test_the_live_check_finds_a_voucher_already_in_jde(store, ais):
     assert "DUPLICATE_IN_ERP" in codes  # through the review screen's vendor checks
 
 
+def test_a_supplier_without_an_an8_is_asked_by_the_invoice_number_as_printed(store, ais):
+    """B-1607: for a supplier with no AN8 the live check asked JD Edwards for the invoice number as AP Coder compares
+    it ("7001" for "INV-7001"), which the orchestration matches exactly: the voucher already there was never found."""
+    connect(store, ais)  # no supplier sync: no AN8 for Acme
+    found = jde_sync.live_findings(store, _coding())
+    assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"] and "voucher 90001 PV" in found[0][2]
+    assert ais.orchestration_calls("vouchers")[0]["InvoiceNumber"] == "INV-7001"
+
+
 def test_a_voucher_the_sync_put_in_the_register_is_said_with_its_voucher_number_and_paid(store, ais):
     """B-1217: once the nightly sync had put the voucher in the register, the review screen said only "already in the
     ERP (dated ...), total ...": the live check's voucher number and paid status were left out. JD Edwards' own answer
@@ -163,6 +173,61 @@ def test_the_live_check_degrades_when_jde_is_down(store, ais):
     assert [c for _, c, _ in found] == ["JDE_NOT_REACHED"] and "last sync" in found[0][2]
     codes = [c for _, c, _ in vendor_findings(_coding(), store)]
     assert "DUPLICATE_IN_ERP" in codes and "JDE_NOT_REACHED" in codes  # the last sync's copy still catches it
+
+
+def test_jde_down_the_register_is_checked_by_the_suppliers_number_too(store, ais):
+    """B-1602: with JDE not reached the check fell back on the register by the invoice's vendor name only, while the
+    sync files the vouchers under JDE's supplier name: an invoice whose name differs (found by its GST/HST number, a
+    supplier renamed) passed as no duplicate. The register is also looked up under the names of its AN8."""
+    connect(store, ais)
+    jde_sync.sync(store)  # the register holds INV-7001 from the sync, under "Acme Office Supplies Ltd."
+    ais.stop()
+    coding = _coding(vendor_name="Acme Supplies Toronto", gst_hst_registration_number="123456789RT0001")
+    found = {c: m for _, c, m in vendor_findings(coding, store)}
+    assert "JDE_NOT_REACHED" in found
+    assert "invoice INV-7001 from this vendor is already in the ERP (dated 2026-09-02)" in found["DUPLICATE_IN_ERP"]
+
+
+def test_the_live_check_signs_in_once_for_many_checks_and_out_at_the_end(store, ais, monkeypatch):
+    """B-1603: each live check signed in to AIS and out again (three requests where one does), hundreds of AIS
+    sessions an hour from 300 people. One signed-in client per process for each database: its token is re-used (by
+    several people at once too), asked again when it expired, and logged out when the settings change and at exit."""
+    connect(store, ais)
+    jde_sync.sync(store, parts=("suppliers",))
+    monkeypatch.setattr(jde_sync, "CACHE_SECONDS", 0)  # every check asks JDE
+    token, logout = ais.mapping["ais"]["token_path"], ais.mapping["ais"]["logout_path"]
+    before = len(ais.calls)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda i: jde_sync.live_findings(store, _coding(invoice_number=f"Z-{i}")), range(100)))
+    calls = [path for path, _ in ais.calls[before:]]
+    assert (calls.count(token), calls.count(logout), len(calls)) == (1, 0, 101)
+    ais.expire_tokens()
+    assert jde_sync.live_findings(store, _coding())[0][1] == "DUPLICATE_IN_ERP"  # signed in again, once
+    jde_sync.forget_cache()  # the settings saved, or the process stopping (atexit)
+    calls = [path for path, _ in ais.calls[before:]]
+    assert (calls.count(token), calls.count(logout)) == (2, 1) and not any(ais.tokens.values())
+
+
+@pytest.mark.parametrize("kind", [jde_ais.UNREACHABLE, jde_ais.TIMEOUT, jde_ais.CERTIFICATE])
+def test_jde_not_reached_the_live_check_looks_its_address_up_again(store, monkeypatch, kind):
+    """B-1609: the live check's shared AIS client kept the address its name resolved to when it was made, for the life
+    of the process: once JDE moved to another server (a failover, a new address in DNS) every check went on failing
+    at the old one. A client that can't reach JDE is dropped: the next check looks the name up again."""
+    answers = iter([["10.0.0.1"], ["10.0.0.2"]])  # the AIS name moved to another server after the first lookup
+    monkeypatch.setattr(jde_ais, "_resolve", lambda host: next(answers))
+    used = []
+
+    def once(self, method, path, body, headers, timeout):
+        used.append(self.address)
+        raise jde_ais.AisError(kind, f"{self.address} can't be reached")
+
+    monkeypatch.setattr(jde_ais.AisClient, "_once", once)
+    cfg = jde_ais.AisSettings(base_url="https://ais.corp.example:9443", environment="JDV920", username="u", step1=True)
+    store.set_setting(jde_ais.SETTING_KEY, cfg.to_json())
+    for _ in range(2):
+        assert [c for _, c, _ in jde_sync.live_findings(store, _coding())] == ["JDE_NOT_REACHED"]
+        jde_sync._DOWN.clear()  # DOWN_SECONDS later: JDE is asked again
+    assert used == ["10.0.0.1", "10.0.0.2"]
 
 
 def test_the_live_check_is_off_with_step_1(store, ais):

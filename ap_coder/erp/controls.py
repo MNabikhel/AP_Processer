@@ -39,6 +39,8 @@ SETUP_ACTIONS = (
 # The steps of an invoice that separation of duties keeps apart (D-109), by their audit event.
 DUTY_STEPS = {"approved": "approved", "final_approved": "gave the second approval", "exported": "exported",
               "jde_voucher_posted": "posted to JD Edwards"}  # fmt: skip
+# The events the report lists or counts (``build``), the only ones of its period it reads.
+REPORTED = ("sent_back", "reopened", *SETUP_ACTIONS, *DUTY_STEPS)
 
 
 def same_person_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -65,7 +67,9 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     """Sections of the report for events from ``start`` to ``end`` (inclusive). ``duties``: also the invoices where
     one person did several steps (the company server; on a laptop one person does them all)."""
     first, last = start.isoformat(), (end + dt.timedelta(days=1)).isoformat()
-    events = [e for e in store.events(limit=1_000_000) if first <= e["created_at"] < last]
+    # The period's events, picked by SQLite by their day, not the newest million filtered here: an older period kept
+    # none (B-1598, the kind of B-1251).
+    events = list(store.find_events(actions=REPORTED, since=first, until=last))
     approvals = [e for e in events if e["action"] == "approved"]
     overrides = [e for e in approvals if _codes(e, "error")]
     signals = [e for e in approvals if set(_codes(e)) & SIGNALS]
@@ -73,13 +77,14 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     sent_back = [e for e in events if e["action"] in ("sent_back", "reopened")]
     waiting = store.list_invoices(PENDING)
     limit = store.approval_limit()
+    rates = store.fx_rates() if limit else {}  # read once, not once an approved invoice (B-1598)
     one_person = (
         [
             i
             for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
             if not i["second_reviewer"]
-            and store.over_approval_limit(i["final_output"] or {}, limit)
             and first <= (i["reviewed_at"] or "") < last
+            and store.second_approval_reason(i["final_output"] or {}, limit, rates=rates)
         ]
         if limit
         else []
@@ -90,7 +95,7 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     bulk = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals
                                               if (e["detail"] or {}).get("bulk")})  # fmt: skip
     return {
-        "start": start, "end": end, "events": len(events), "approvals": len(approvals),
+        "start": start, "end": end, "events": store.count_events(since=first, until=last), "approvals": len(approvals),
         "overrides": overrides, "signals": signals, "finals": finals, "sent_back": sent_back,
         "waiting": waiting, "setup": setup, "one_person": one_person,
         "by_person": [(p, n, bulk.get(p, 0)) for p, n in by_person.most_common()],

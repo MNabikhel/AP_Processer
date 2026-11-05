@@ -12,13 +12,15 @@ so the checks and the learning work the same; and the live "already in JD Edward
   synced before and no longer open in JDE is closed); vouchers ``Store.import_erp_register`` (F0411, for the
   duplicate checks). Nothing is deleted, and what AP typed that JDE doesn't hold (account categories, meals ticks,
   vendors' notes) is kept. The report lists what was added and what changed, field by field.
-* ``live_findings``: the review screen's checks ask JDE (by supplier number) whether the invoice is already a voucher,
+* ``live_findings``: the review screen's checks ask JDE (by supplier number, the vouchers of the sync's window; a
+  supplier with too many even then by its number and the invoice number) whether the invoice is already a voucher,
   with a five-minute cache; JDE down or slow (5 seconds at most), it says so in an INFO line and the check stands on
   the last sync's copy, and JDE is not asked again for a minute.
 """
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import logging
@@ -353,53 +355,104 @@ LIVE_TIMEOUT = 5.0
 LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
+_BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
+_CLIENTS: dict[str, jde_ais.AisClient] = {}  # database -> this process's client for the live check, signed in once
+# JDE not reached at the address the client resolved when it was made: the next check makes another, its name looked up
+# again (JDE moved to another server) and jde_orchestrations.json read again (B-1609).
+_NEW_CLIENT = frozenset({jde_ais.UNREACHABLE, jde_ais.TIMEOUT, jde_ais.CERTIFICATE})
 _LOCK = threading.Lock()
 PAID = {"P": "paid", "A": "approved for payment, not paid yet", "H": "on hold in JDE"}
 
 
 def forget_cache() -> None:
+    """Forget what JDE said, and log the live check's clients out (the settings saved; the process stopping)."""
     with _LOCK:
         _CACHE.clear()
         _DOWN.clear()
+        _BIG.clear()
+        clients = list(_CLIENTS.values())
+        _CLIENTS.clear()
+    for c in clients:
+        c.close()
 
 
-def _ask(store: Any, an8: str, number: str) -> list[dict[str, Any]]:
+atexit.register(forget_cache)
+
+
+def _client(store: Any) -> jde_ais.AisClient:
+    """The live check's client for this database: one token for every check (and every thread), until the settings
+    change."""
     cfg = jde_ais.load(store)
     cfg.timeout = min(cfg.timeout, LIVE_TIMEOUT)
-    with jde_ais.AisClient(cfg) as c:
-        c.retries = 0
-        # Every page of the supplier's vouchers (the invoice numbers are compared here, written any way): a supplier
-        # with more vouchers than a page is checked to the last one.
-        return c.rows("vouchers", {"supplier": an8} if an8 else {"invoice": number}, max_pages=LIVE_PAGES)
+    where = str(store.path)
+    with _LOCK:
+        c = _CLIENTS.get(where)
+        if c is not None and c.cfg == cfg and c.cfg.password == cfg.password:
+            return c
+        old = _CLIENTS.pop(where, None)
+    if old is not None:
+        old.close()
+    made = jde_ais.AisClient(cfg)
+    made.retries = 0
+    with _LOCK:
+        return _CLIENTS.setdefault(where, made)  # not signed in yet: one made at the same time is simply dropped
+
+
+def _ask(store: Any, an8: str, printed: str, big: bool) -> tuple[list[dict[str, Any]], bool]:
+    """The vouchers in JDE that may be this invoice, and whether they were asked by its number (as printed: JDE
+    matches it exactly)."""
+    c = _client(store)
+    since = (_now().date() - dt.timedelta(days=c.cfg.voucher_days)).strftime(c.ais.get("date_format") or "%Y-%m-%d")
+    if not an8:
+        return c.rows("vouchers", {"invoice": printed, "since": since}, max_pages=LIVE_PAGES), True
+    if not big:
+        # Every page of the supplier's vouchers of the sync's window (the invoice numbers are compared here, written
+        # any way): a supplier with more vouchers than a page is checked to the last one.
+        try:
+            return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
+        except jde_ais.TooManyPages:
+            pass
+    # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
+    return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
 
 
 def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) of the live check: DUPLICATE_IN_ERP for a voucher already in JDE with this supplier
-    and invoice number (not the one AP Coder posted for this invoice), or JDE_NOT_REACHED when JDE can't be asked.
-    Nothing when step 1 is off."""
+    and invoice number (not the one AP Coder posted for this invoice), or JDE_NOT_REACHED when JDE can't be asked
+    (with the register's copies, by the supplier's AN8 as well as its name). Nothing when step 1 is off."""
     cfg = jde_ais.load(store)
     number = norm_invoice_number(getattr(coding, "invoice_number", ""))
     if not cfg.step1 or not number:
         return []
     final = {"vendor_name": coding.vendor_name, "gst_hst_registration_number": coding.gst_hst_registration_number}
-    an8 = jde.resolve_an8(final, store.vendor_ids(), jde.load(store))
-    where, key = str(store.path), (str(store.path), an8, number if not an8 else "")
+    ids = store.vendor_ids()
+    an8 = jde.resolve_an8(final, ids, jde.load(store))
+    where = str(store.path)
     now = time.monotonic()
     with _LOCK:
-        cached = _CACHE.get(key)
+        big = (where, an8) in _BIG
+        cached = _CACHE.get((where, an8, number if not an8 or big else ""))
         down = _DOWN.get(where)
     rows: list[dict[str, Any]] | None = cached[1] if cached and now - cached[0] < CACHE_SECONDS else None
     if rows is None:
         if down and now - down[0] < DOWN_SECONDS:
-            return [_not_reached(store, down[1])]
+            return [_not_reached(store, down[1]), *_in_register(store, coding, an8, ids)]
         try:
-            rows = _ask(store, an8, number)
+            rows, by_number = _ask(store, an8, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
-            with _LOCK:
-                _DOWN[where] = (now, str(exc))
-            return [_not_reached(store, str(exc))]
+            dropped = None
+            if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
+                with _LOCK:
+                    _DOWN[where] = (now, str(exc))
+                    if exc.kind in _NEW_CLIENT:
+                        dropped = _CLIENTS.pop(where, None)
+            if dropped is not None:  # logged out aside: the person's check doesn't wait on a JDE that didn't answer
+                threading.Thread(target=dropped.close, daemon=True).start()
+            return [_not_reached(store, str(exc)), *_in_register(store, coding, an8, ids)]
         with _LOCK:
-            _CACHE[key] = (now, rows)
+            if an8 and by_number:
+                _BIG.add((where, an8))
+            _CACHE[(where, an8, number if by_number else "")] = (now, rows)
             _DOWN.pop(where, None)
     from . import jde_post
 
@@ -426,6 +479,23 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         if len(out) >= 2:
             break
     return out
+
+
+def _in_register(store: Any, coding: Any, an8: str, ids: dict[str, str]) -> list[tuple[str, str, str]]:
+    """JDE not reached: DUPLICATE_IN_ERP for the register's copies of the invoice, under its vendor name and every
+    vendor of its AN8 (the sync files a voucher under JDE's supplier name, which may not be the invoice's). Without an
+    AN8 nothing: the review screen's vendor checks look the register up by name."""
+    if not an8:
+        return []
+    keys = {vendor_key(coding.vendor_name or "")} | {k for k, v in ids.items() if v == an8 and ":" not in k}
+    out = []
+    for key in sorted(keys - {""}):
+        for posted in store.in_erp(key, coding.invoice_number, coding.grand_total):
+            out.append((ERROR, "DUPLICATE_IN_ERP",
+                        f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
+                        f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
+                        f"{posted['total']:,.2f}: possible duplicate payment"))  # fmt: skip
+    return out[:2]
 
 
 def _not_reached(store: Any, why: str) -> tuple[str, str, str]:

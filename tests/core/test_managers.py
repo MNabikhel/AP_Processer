@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
-from ap_coder.core.store import PARKED, REVIEW
+from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.core.store.managers import CONFIRMED, SENT_BACK, WAITING, WITHDRAWN, coding_lines, same_coding
 from tests.webclient import add_clean
 
@@ -96,3 +98,33 @@ def test_the_users_page_still_lists_admins_first_and_managers_last(store):
     for name, role in (("mo", "manager"), ("cy", "clerk"), ("ad", "admin")):
         store.add_user(name, "correct horse battery", role=role)
     assert [u["role"] for u in store.list_users()] == ["admin", "clerk", "manager"]
+
+
+def _answer_at(start, path, rid, answer, note, said):
+    other = Store(path)  # a connection of its own, as another web worker's
+    start.wait()
+    try:
+        other.answer_manager_request(rid, answer, by="Bob Manager", actor="Bob Manager", note=note)
+        said.append("kept")
+    except ValueError as exc:
+        said.append(str(exc))
+
+
+def test_two_managers_answering_one_request_at_once_record_one_answer(store):
+    # Two browsers (or a manager on screen and AP recording the email) answer the same request at the same moment,
+    # each on a connection of its own: one answer is kept and logged, the other is told it was answered meanwhile.
+    iid = add_clean(store)
+    rounds = 25
+    for _ in range(rounds):
+        rid = store.send_to_manager(iid, "Ann (AP)", manager_name="Bob Manager", lines=LINES)
+        start, said = threading.Barrier(2), []
+        threads = [threading.Thread(target=_answer_at, args=(start, store.path, rid, answer, note, said))
+                   for answer, note in ((CONFIRMED, ""), (SENT_BACK, "Code line 2 to CC-200"))]  # fmt: skip
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        assert sorted(said) == ["This request was answered or withdrawn meanwhile.", "kept"]
+        assert store.get_invoice(iid)["status"] == REVIEW
+    answers = [e for e in store.events(invoice_id=iid) if e["action"] in ("manager_confirmed", "manager_sent_back")]
+    assert len(answers) == rounds  # one answer logged a request, never both

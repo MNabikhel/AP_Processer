@@ -17,9 +17,9 @@ developer, and you can read both before sending:
 
 The pilot tester's one-page summary of this guide, to print, is [QUICK_START.md](QUICK_START.md); in the dashboard,
 **Help → Quick start → Print**.
-Invoices appear in the share report as `doc-01`, `doc-02`, … The file
-`share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If the
-developer asks about `doc-07`, you can look it up there.
+Invoices appear in the share report by their number in AP Coder: if the developer asks about `doc-07`, it is the
+invoice AP Coder shows as #7 (`/review/7`). `python -m ap_coder share-report` also writes `share_report_key.csv` next
+to the report, mapping them back to file names; it stays on your machine.
 
 ---
 

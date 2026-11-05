@@ -11,6 +11,7 @@ import json
 import math
 import sqlite3
 import threading
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,36 @@ def count_masters_change(conn: sqlite3.Connection) -> None:
     )
 
 
+# The audit events with the invoice each is about (its vendor and number), as every list of events shows them.
+_EVENTS = (
+    "SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "
+    "LEFT JOIN invoices i ON i.id = e.invoice_id"
+)
+EVENTS_BATCH = 2000  # the events ``find_events`` reads at a time: memory stays flat however many there are
+
+
+def _event_filter(actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
+                  since: str | None = None, until: str | None = None) -> tuple[str, list[Any]]:  # fmt: skip
+    """The SQL condition on ``events e`` (and its arguments) of ``find_events`` and ``count_events``."""
+    where, args = ["1 = 1"], []
+    if actions is not None:
+        where.append(_in_list("e.action"))
+        args.append(json.dumps(list(actions)))
+    if hidden:
+        where.append(f"NOT {_in_list('e.action')}")
+        args.append(json.dumps(list(hidden)))
+    if actor is not None:
+        where.append("e.actor = ?")
+        args.append(actor)
+    if since:
+        where.append("e.created_at >= ?")
+        args.append(since)
+    if until:
+        where.append("e.created_at < ?")
+        args.append(until)
+    return " AND ".join(where), args
+
+
 # Who is signed in on the company server (set by web/identity.py): an event recorded without an actor (an upload, the
 # demo, a setup import) records them (B-1106). None on a laptop, whose events are as before.
 EVENT_ACTOR: contextvars.ContextVar[str | None] = contextvars.ContextVar("ap_coder_event_actor", default=None)
@@ -116,10 +147,7 @@ class AccountsMixin:
         self, invoice_id: int | None = None, actions: list[str] | None = None, limit: int = 1000
     ) -> list[dict[str, Any]]:
         """Audit events, newest first (optionally for one invoice or some actions)."""
-        sql = (  # with the invoice's vendor and number, so a list of events says which invoice each is about
-            "SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "
-            "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE 1 = 1"
-        )
+        sql = _EVENTS + " WHERE 1 = 1"  # with the invoice's vendor and number: which invoice each is about
         args: list[Any] = []
         if invoice_id is not None:
             sql += " AND e.invoice_id = ?"
@@ -132,6 +160,52 @@ class AccountsMixin:
         for r in rows:
             r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
         return rows
+
+    def find_events(
+        self, *, actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
+        since: str | None = None, until: str | None = None, before: int | None = None,
+        matches: Callable[[dict[str, Any]], bool] | None = None, limit: int | None = None,
+    ) -> Iterator[dict[str, Any]]:  # fmt: skip
+        """Every audit event that matches, newest first and as ``events`` gives them, read a batch at a time (a year of
+        them is never held at once, nor a read kept open while the caller works): of ``actions`` (None: any) and none
+        of ``hidden``, by ``actor``, made from ``since`` up to, not including, ``until`` (ISO days or times), older than
+        event ``before``, and for which ``matches(event)`` holds (what SQL can't ask: the words an event is shown
+        with); ``limit``: that many at most."""
+        where, args = _event_filter(actions, hidden, actor, since, until)
+        sql = f"{_EVENTS} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
+        below, found = before if before is not None else 2**63 - 1, 0
+        if limit is not None and limit <= 0:
+            return  # none asked for (a batch of none would end the loop on no rows: B-1676)
+        while True:
+            batch = EVENTS_BATCH if matches is not None or limit is None else min(EVENTS_BATCH, limit - found)
+            with self._conn() as conn:
+                rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
+            for r in rows:
+                r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+                if matches is None or matches(r):
+                    yield r
+                    found += 1
+                    if limit is not None and found >= limit:
+                        return
+            if len(rows) < batch:
+                return
+            below = rows[-1]["id"]
+
+    def count_events(
+        self, *, actions: Iterable[str] | None = None, hidden: Iterable[str] = (), actor: str | None = None,
+        since: str | None = None, until: str | None = None,
+    ) -> int:  # fmt: skip
+        """How many audit events ``find_events`` gives for these (counted by SQLite, none read)."""
+        where, args = _event_filter(actions, hidden, actor, since, until)
+        with self._conn() as conn:
+            return int(conn.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0])
+
+    def event_actors(self, hidden: Iterable[str] = ()) -> list[str]:
+        """Everyone the audit events are by (but those of ``hidden`` actions only), by name, each once."""
+        where, args = _event_filter(hidden=hidden)
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT DISTINCT e.actor FROM events e WHERE {where} AND e.actor != ''", args)
+            return sorted(str(r[0]) for r in rows)
 
     def event_values(self, action: str, field: str) -> set[str]:
         """The ``field`` of every ``action`` event's detail, as text (the emails marked done: their ids), read by

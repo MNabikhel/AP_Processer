@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from ap_coder.core import paths
 from ap_coder.ops import cli, service
 
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
@@ -217,9 +218,14 @@ def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_proces
     main("remove")
     assert ["schtasks", "/delete", "/tn", "AP Coder", "/f"] in commands
     assert not [cmd for cmd in commands if cmd[0] == "taskkill" or "Defrag" in " ".join(cmd)]
-    # The service's own Python (its .venv's, or the Python that .venv was made with) is ended when it won't stop.
+    # The service's own Python (its .venv's, or the Python that .venv was made with) is ended when it won't stop; the
+    # host only while it runs, holding the host lock (B-1590).
     monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
-    main("stop")
+    held = paths.try_lock(service.host_lock(data))
+    try:
+        main("stop")
+    finally:
+        held.close()
     assert {"4242", "4343"} <= {cmd[2] for cmd in commands if cmd[0] == "taskkill"}
     base = data / "Python312"
     (elsewhere / ".venv").mkdir(parents=True)
@@ -274,11 +280,98 @@ def test_the_host_does_nothing_while_the_service_is_stopped(data):
     assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
 
 
-def test_a_second_host_steps_aside_for_the_one_running(data, monkeypatch):
+def test_a_second_host_steps_aside_for_the_one_running(data):
+    """The running host holds the operating system's lock on service/host.lock (B-1585): it, not host.json, says a
+    host runs."""
+    held = paths.try_lock(service.host_lock(data))
+    assert held is not None
+    try:
+        assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
+    finally:
+        held.close()
+
+
+def test_a_stale_host_record_never_keeps_the_service_down(data):
+    """B-1585: after a reboot or a kill, host.json names a process number another program may have since (likely on
+    a Mac: numbers start again low at boot). The host took that for a host running and exited, starting nothing, at
+    every retry of the task: the service stayed down. Here host.json names a live process that is no host."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
     service.host_record(data).parent.mkdir(parents=True)
-    service.host_record(data).write_text(json.dumps({"pid": 999_999}))
-    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 999_999)
-    assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
+    service.host_record(data).write_text(json.dumps({"pid": os.getppid(), "started": "2026-11-01T08:00:00"}))
+    started = []
+
+    def popen(cmd, **kwargs):
+        started.append(cmd)
+        return FakeChild(0, [], lambda: service.stop_flag(data).write_text(""))
+
+    assert service.run_host(data, popen=popen, sleep=lambda s: None) == 0
+    assert len(started) == 1
+    again = paths.try_lock(service.host_lock(data))  # released once the host ends: the next one can start
+    assert again is not None
+    again.close()
+
+
+def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, commands, monkeypatch, capsys):
+    """B-1588: status said "Service host: running" when host.json named a live process (a number reused after a
+    reboot), and install then stopped the service first: with --no-start the service stayed stopped. The lock the
+    running host holds (B-1585) says it."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    service.host_record(data).parent.mkdir(parents=True)
+    service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-01T08:00:00"}))
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)  # the number is another program's now
+    monkeypatch.setattr(service, "_local", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("no dashboard")))
+    assert main("status") == 0
+    assert "Service host: not running" in capsys.readouterr().out
+    assert main("install", "--no-start") == 0
+    assert not service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] not in commands
+    held = paths.try_lock(service.host_lock(data))  # a host running
+    try:
+        assert main("status") == 0
+        assert "Service host: running since 2026-11-01T08:00:00 (process 4242" in capsys.readouterr().out
+        assert main("install", "--no-start") == 0  # installed again while it runs: stopped, to apply the settings
+        assert service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
+    finally:
+        held.close()
+
+
+def test_stop_ends_only_the_running_host_never_a_process_a_stale_record_names(data, commands, monkeypatch):
+    """B-1590: stop ended the process host.json named whenever it ran the AP Coder folder's Python. A record left by
+    a host that was killed may name a number an AP Coder watch has since: stop ended that watch mid-invoice. The host
+    is ended only while it holds the host lock (it writes host.json as soon as it holds it)."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    service.host_record(data).parent.mkdir(parents=True)
+    service.host_record(data).write_text(json.dumps({"pid": 4242}))
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 4242)
+    monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
+    assert main("stop") == 0  # no host runs: 4242 is the watch's now
+    assert not [cmd for cmd in commands if cmd[0] == "taskkill"]
+    assert service.stop_flag(data).exists() and ["schtasks", "/end", "/tn", "AP Coder"] in commands
+    held = paths.try_lock(service.host_lock(data))  # the host runs, and won't stop by itself
+    try:
+        assert main("stop") == 0
+    finally:
+        held.close()
+    assert ["taskkill", "/PID", "4242", "/T", "/F"] in commands
+
+
+def test_stop_reads_the_host_record_once_the_lock_says_a_host_runs(data, commands, monkeypatch):
+    """B-1677: stop read host.json before it asked whether a host holds the lock. A record left by a host that was
+    killed (its number an AP Coder watch's since) was read, then a new host took the lock and wrote its own: stop
+    ended the watch. The record is read once the lock says a host runs: the one that holds it wrote it."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
+    record = service.host_record(data)
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"pid": 4242}))  # the killed host's; 4242 is a watch's now
+
+    def a_host_starts_meanwhile(folder):  # it takes the lock and writes host.json at once
+        record.write_text(json.dumps({"pid": 5151}))
+        return True
+
+    monkeypatch.setattr(service, "host_running", a_host_starts_meanwhile)
+    monkeypatch.setattr(service, "process_alive", lambda pid: pid in (4242, 5151))
+    monkeypatch.setattr(service, "process_image", lambda pid: str(service.folder_python(service.PROJECT_DIR)))
+    assert main("stop") == 0
+    assert [cmd for cmd in commands if cmd[0] == "taskkill"] == [["taskkill", "/PID", "5151", "/T", "/F"]]
 
 
 # --- On Windows (GitHub's runner: an administrator), the task really installed and removed --------------------------

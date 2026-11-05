@@ -98,7 +98,14 @@ def test_a_model_server_on_the_internet_is_not_asked_offline(opened):
     assert "AP_ALLOW_INTERNET" in status.error and "models.example.com" in status.error
 
 
-def test_a_model_server_on_this_computer_or_the_office_network_is_asked(opened):
+def test_a_model_server_on_this_computer_or_the_office_network_is_asked(opened, monkeypatch):
+    import socket
+
+    from ap_coder.core import config
+
+    office = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.30", 0))]
+    monkeypatch.setattr(config.socket, "getaddrinfo", lambda host, *a, **k: office)  # lmstudio-pc, on the office DNS
+    config.forget_resolved()  # (a name that resolves to nothing is never connected to: B-1608)
     for base in ("http://127.0.0.1:1234/v1", "http://192.168.1.20:1234/v1", "http://lmstudio-pc:1234/v1"):
         local_llm.check_server(LocalLLMSettings(base_url=base), use_cache=False)
     assert [url.rsplit("/v1", 1)[0] for url in opened if url.endswith("/v1/models")] == [

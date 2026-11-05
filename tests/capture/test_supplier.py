@@ -96,6 +96,39 @@ def test_amounts(text, value):
     assert parse_amount(text) == value
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["1,234.56", "1 234,56 $", "1.234,56", "(12.00)", "-12.00", "113.00-", "12.00 CR", "392.99.CR", "$1,234.56",
+     "CAD 99", "45.10 USD", "€ 10,00", "1 050.00", "0,50", "0.125", "$-113.00", "-$113.00", "$.65", "1,234.567",
+     "12,345.6789", "1.3023", "1;864.71"],
+)  # fmt: skip
+def test_an_amount_is_read_as_the_reader_reads_it(text):
+    """B-1604: template learning's own amount parser read "0.125" as 125.0, dropped the minus of "$-113.00" and read a
+    date as 20260912: the number is now read by capture/normalize.py, the text still one amount only."""
+    from ap_coder.capture import normalize
+
+    assert parse_amount(text) == normalize.parse_amount(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text, value",
+    [("1 234 $", 1234.0), ("12 345 $", 12345.0), ("1 234", 1234.0), ("1 234 567,89", 1234567.89), ("CR 12.00", -12.0),
+     ("CR12.00", -12.0), ("- 12.00", -12.0), ("Cr. 12.00", -12.0), ("12.00 CR", -12.0), ("DR 12.00", 12.0),
+     ("CAD 1 234", 1234.0), ("1 234 CR", -1234.0), ("0.125", 0.125), ("$-113.00", -113.0), ("-12.00", -12.0)],
+)  # fmt: skip
+def test_spaced_thousands_and_a_credit_written_first_are_read_as_before(text, value):
+    """B-1674: B-1604 read the number with capture/normalize.py but kept a guard that wanted one amount from
+    ``find_amounts``, which splits a whole number in one space group ("1 234") into a quantity and a price: "1 234 $"
+    and "12 345 $" gave None (before, 1234 and 12345). And normalize's parser reads no credit before the amount:
+    "CR 12.00" and "- 12.00" gave +12 (before, -12)."""
+    assert parse_amount(text) == value
+
+
+@pytest.mark.parametrize("text", ["2026-09-12", "12/09/2026", "12 34", "1.2.3", "INV-2026", "C$ 12.00 net"])
+def test_a_text_that_is_not_one_amount_is_none(text):
+    assert parse_amount(text) is None
+
+
 def test_dates():
     assert parse_date("2026-09-12") == "2026-09-12"
     assert parse_date("Oct 7, 2026") == "2026-10-07"

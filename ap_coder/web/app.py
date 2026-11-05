@@ -118,8 +118,10 @@ class DailyBackup:
         return self.thread
 
     def _run(self) -> None:
+        from ap_coder.core.store.backups import BACKUP_HOURS_ENV, backup_window
+
         try:
-            self.store.auto_backup()
+            self.store.auto_backup(window=backup_window(os.environ.get(BACKUP_HOURS_ENV)))
         except Exception:  # noqa: BLE001 - a backup problem must never reach a page
             logging.getLogger(__name__).warning("the daily backup was not made", exc_info=True)
 

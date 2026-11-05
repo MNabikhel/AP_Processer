@@ -970,3 +970,130 @@ def test_lm_studio_listing_counts_a_loaded_model_listed_without_a_key(monkeypatc
     assert [m.key for m in local_llm.parse_lm_studio_listing(v1).models] == ["qwen/qwen3.5-9b"]
     monkeypatch.setattr(local_llm, "_fetch_json", lambda url, *a: {"data": [{"id": "x"}]})  # not LM Studio
     assert local_llm._lm_studio_listing("http://127.0.0.1:1234", "", 1.0) is None
+
+
+def test_a_refused_server_name_says_to_add_its_domain_to_the_company_domains(real_fetch, monkeypatch):
+    """B-1605: a model server named in the company's DNS but not under AP_COMPANY_DOMAINS was refused with only
+    AP_ALLOW_INTERNET=1 named as the way out (which opens the internet too). The chat model's and the page reader's
+    message now say to add its domain to AP_COMPANY_DOMAINS; an address, or a name already in those domains, isn't
+    told so."""
+    import socket
+
+    from ap_coder.ai import page_reader
+    from ap_coder.core import config
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setenv("AP_COMPANY_DOMAINS", "corp.acme-foods.ca")
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(config.socket, "getaddrinfo", lambda host, *a, **k: public)
+    config.forget_resolved()
+    said = local_llm.refused_address("http://macstudio.lab.acme-foods.ca:1234/v1")
+    status = local_llm.check_server(LocalLLMSettings(base_url="http://macstudio.lab.acme-foods.ca:1234/v1"),
+                                    use_cache=False)  # fmt: skip
+    assert status.error == said  # Settings → Reading says it whole
+    assert "macstudio.lab.acme-foods.ca" in said and "add its domain to AP_COMPANY_DOMAINS in the .env file" in said
+    with pytest.raises(page_reader.PageReaderError, match="add its domain to AP_COMPANY_DOMAINS"):
+        page_reader._post_json("http://macstudio.lab.acme-foods.ca:1234/api/v1/models/load", {}, "", 1.0)
+    assert "AP_COMPANY_DOMAINS" not in local_llm.refused_address("http://93.184.216.34:1234/v1")
+    assert "AP_COMPANY_DOMAINS" not in local_llm.refused_address("http://gpu.corp.acme-foods.ca:1234/v1")  # public
+    config.forget_resolved()
+
+
+@pytest.mark.parametrize("url", ["http://gpu-box:1234/v1", "http://studio.local:1234/v1", "http://mac.lan:1234/v1",
+                                 "http://ai.home:1234/v1"])  # fmt: skip
+def test_a_local_name_on_the_internet_is_not_told_to_add_a_company_domain(url, monkeypatch):
+    """B-1675: a bare, .local, .lan or .home name that resolves to an internet address was told to add its domain to
+    AP_COMPANY_DOMAINS: it has none to add, and it is refused for its address, as a company name is."""
+    import socket
+
+    from ap_coder.core import config
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.delenv("AP_COMPANY_DOMAINS", raising=False)
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(config.socket, "getaddrinfo", lambda host, *a, **k: public)
+    config.forget_resolved()
+    said = local_llm.refused_address(url)
+    assert "is not on this computer or the office network" in said and "AP_COMPANY_DOMAINS" not in said
+    config.forget_resolved()
+
+
+COMPANY_SERVER = "macstudio.corp.acme-foods.ca"
+
+
+@pytest.fixture
+def rebinding(monkeypatch):
+    """The company's model server answers a private address at its first lookup and an internet one at every lookup
+    after (a DNS change, a rebinding). Each lookup of its name and each address a socket connects to is recorded;
+    nothing is connected to."""
+    import socket
+
+    from ap_coder.core import config
+
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setenv("AP_COMPANY_DOMAINS", "corp.acme-foods.ca")
+    answers = iter(["10.40.2.15"])
+    asked: list[str] = []
+    tried: list[tuple] = []
+    real = socket.getaddrinfo
+
+    def getaddrinfo(host, port=None, *args, **kwargs):
+        if host != COMPANY_SERVER:
+            return real(host, port, *args, **kwargs)  # an address, as a pinned connection gives: nothing looked up
+        asked.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers, "93.184.216.34"), port or 0))]
+
+    def connect(self, address):
+        tried.append(tuple(address[:2]))
+        raise ConnectionRefusedError("test: nothing is connected to")
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    config.forget_resolved()
+    yield asked, tried
+    config.forget_resolved()
+
+
+def test_a_company_model_server_is_connected_to_at_the_address_its_check_judged(rebinding, real_fetch):
+    """B-1608: a model server named in the company's DNS was judged by one lookup and connected to by another: the
+    check allowed 10.40.2.15 and the socket then went where a second lookup said (an internet address, after a DNS
+    change or a rebinding), with the invoice. The chat model's listing and the page reader's requests now connect
+    to the address checked, and look the name up once."""
+    from ap_coder.ai import page_reader
+
+    asked, tried = rebinding
+    with pytest.raises(OSError):
+        local_llm._fetch_json(f"http://{COMPANY_SERVER}:1234/v1/models", "", 1.0)
+    with pytest.raises(page_reader.PageReaderError):
+        page_reader._post_json(f"http://{COMPANY_SERVER}:1234/api/v1/models/load", {}, "", 1.0)
+    assert tried == [("10.40.2.15", 1234)] * 2  # never the internet address a second lookup would give
+    assert asked == [COMPANY_SERVER]  # the one lookup the check made (kept 30 s)
+
+
+def test_the_chat_client_sends_a_company_model_server_its_requests_at_the_address_checked(rebinding, monkeypatch):
+    """B-1608: the OpenAI SDK's client looked the name up again for each connection. Its requests now go to the
+    address checked, with the name in the Host header and in the certificate's check (SNI); once the lookup kept is
+    over and the name resolves to the internet, nothing is sent."""
+    import importlib
+
+    import openai
+
+    from ap_coder.core import config
+
+    asked, _ = rebinding
+    base = next(c for c in openai.DefaultHttpxClient.__mro__ if c.__name__ == "Client")
+    http = importlib.import_module(base.__module__.split(".")[0])  # httpx, or httpx2 under newer SDKs
+    sent = []
+
+    def handle(self, request):
+        sent.append((str(request.url), request.headers["host"], request.extensions.get("sni_hostname")))
+        return http.Response(200, json={"object": "list", "data": [{"id": "gemma-4-12b", "object": "model"}]})
+
+    monkeypatch.setattr(http.HTTPTransport, "handle_request", handle)
+    client = local_llm.build_local_client(LocalLLMSettings(base_url=f"https://{COMPANY_SERVER}:1234/v1"))
+    assert [m.id for m in client.models.list()] == ["gemma-4-12b"]
+    assert sent == [("https://10.40.2.15:1234/v1/models", f"{COMPANY_SERVER}:1234", COMPANY_SERVER)]
+    config.forget_resolved()  # the 30 s the lookup is kept are over: the name now resolves to the internet
+    with pytest.raises(openai.APIConnectionError):
+        client.models.list()
+    assert len(sent) == 1 and asked == [COMPANY_SERVER] * 2

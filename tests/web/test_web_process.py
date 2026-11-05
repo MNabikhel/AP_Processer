@@ -3,7 +3,11 @@ the setup card and the demo invoices."""
 
 from __future__ import annotations
 
+import hashlib
+import os
 import shutil
+import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -131,6 +135,81 @@ def test_the_folder_pick_up_lists_and_processes_new_files(app, client, store):
     snap = finished(app, client)
     assert snap["result"]["ok"] == 1
     assert "No new files" in client.get("/process").text
+
+
+def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, client, store, tmp_path, monkeypatch):
+    """B-1587: a scheduled ``watch`` and the dashboard's Process button had no lock in common. Both listed a new file
+    as not stored yet, both read it, and it was stored twice (two invoices of the same file). Here they really run
+    at once, a watch in a thread and the button's import: neither reads the file until both have listed it."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.ops import cli
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    new = folder / f"{OTHER}.pdf"
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", new)
+    os.utime(new, (time.time() - 60, time.time() - 60))  # copied in a minute ago: the watch takes it
+    listed_by_watch, listed_by_both = threading.Event(), threading.Event()
+    real_new_files, real_process = cli.new_files, InvoicePipeline.process
+
+    def new_files(*args, **kwargs):
+        found = real_new_files(*args, **kwargs)
+        listed_by_watch.set()
+        return found
+
+    def process(self, path, *args, **kwargs):  # as a slow reading: the other pick-up lists the file meanwhile
+        listed_by_both.wait(30)
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "new_files", new_files)
+    monkeypatch.setattr(InvoicePipeline, "process", process)
+    argv = ["--env-file", str(tmp_path / "none.env"), "--db", str(store.path), "watch", "--once", "--cache-dir", ""]
+    watch = threading.Thread(target=cli.main, args=(argv,))
+    watch.start()
+    try:
+        assert listed_by_watch.wait(60)
+        assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"  # it lists the file too
+    finally:
+        listed_by_both.set()
+        watch.join(180)
+    snap = finished(app, client)
+    sha = hashlib.sha256(new.read_bytes()).hexdigest()
+    with store._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM invoices WHERE file_sha256 = ?", (sha,)).fetchone()[0] == 1
+    # The watch held the pick-up lock: the import waited for it, then found the file stored and skipped it.
+    assert snap["result"]["processed"] == 0
+    assert any(m["text"].startswith("Skipped") and m["details"] == [new.name] for m in snap["result"]["messages"])
+
+
+def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, client, store, monkeypatch):
+    """B-1673: the folder pick-up lists the files never processed, a failed read counting as processed (it is read
+    again only by Retry), but its check once it holds the pick-up lock left failed reads out: a file a scheduled watch
+    had just failed to read was read again at once. A retry still reads a failed file again."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.web.pages import process
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    new = folder / f"{OTHER}.pdf"
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", new)
+    real_wait, real_process, read = process.wait_for_pickup, InvoicePipeline.process, []
+
+    def watch_first(*args, **kwargs):  # a watch held the lock: it read the file, and failed
+        store.add_invoice(new, None, None, error="The file could not be read")
+        return real_wait(*args, **kwargs)
+
+    def reading(self, path, *args, **kwargs):
+        read.append(os.path.basename(path))
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(process, "wait_for_pickup", watch_first)
+    monkeypatch.setattr(InvoicePipeline, "process", reading)
+    assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"
+    assert finished(app, client)["result"]["processed"] == 0 and read == []
+    monkeypatch.setattr(process, "wait_for_pickup", real_wait)
+    failed = store.find_by_hash(new, include_failed=True)["id"]
+    assert client.post(f"/review/{failed}/retry", headers=PAGE).status_code == 200
+    assert finished(app, client)["result"]["processed"] == 1 and read == [new.name]
 
 
 def test_safe_upload_names(tmp_path):

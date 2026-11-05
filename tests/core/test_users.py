@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 
 import pytest
 
@@ -264,6 +266,69 @@ def test_a_deactivated_users_sessions_end(store, clock):
     assert store.session_user(token) is None
     store.activate_user(uid, actor="boss")
     assert store.user(uid)["active"]
+
+
+def _last_seen(store, token):
+    with sqlite3.connect(store.path) as conn:
+        return conn.execute(
+            "SELECT last_seen FROM sessions WHERE token_hash = ?", (users.token_hash(token),)
+        ).fetchone()[0]
+
+
+def test_a_session_lookup_never_waits_behind_another_writer_to_note_its_use(store, clock):
+    uid = with_app(store)
+    token = store.start_session(uid)
+    clock.now += users.SEEN_EVERY + 1  # its last use is due to be written down
+    writer = sqlite3.connect(store.path, isolation_level=None, check_same_thread=False)
+    writer.execute("BEGIN IMMEDIATE")  # another request's write, a long one (an import, a month end)
+    done = threading.Timer(2, writer.rollback)
+    done.start()
+    try:
+        started = time.monotonic()
+        assert store.session_user(token)["id"] == uid  # the page goes on at once
+        waited = time.monotonic() - started
+    finally:
+        done.join()
+        writer.close()
+    assert waited < 1
+    assert _last_seen(store, token) == clock.now - users.SEEN_EVERY - 1  # not written this time...
+    clock.now += 60
+    assert store.session_user(token) and _last_seen(store, token) == clock.now  # ...but by the next request
+
+
+def _sessions(store) -> int:
+    with sqlite3.connect(store.path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
+
+def test_the_first_request_after_a_session_expired_never_waits_behind_another_writer(store, clock):
+    uid = with_app(store)
+    token = store.start_session(uid)
+    clock.now += 30 * 60 + 1  # unused for its idle minutes: the next request finds it ended
+    writer = sqlite3.connect(store.path, isolation_level=None, check_same_thread=False)
+    writer.execute("BEGIN IMMEDIATE")  # another request's write, a long one (an import, a month end)
+    done = threading.Timer(2, writer.rollback)
+    done.start()
+    try:
+        started = time.monotonic()
+        assert store.session_user(token) is None  # off to the login page at once
+        waited = time.monotonic() - started
+    finally:
+        done.join()
+        writer.close()
+    assert waited < 1
+    assert _sessions(store) == 1  # not deleted this time...
+    assert store.session_user(token) is None and _sessions(store) == 0  # ...but by the next look at it
+
+
+def test_a_poll_reads_the_session_without_renewing_it(store, clock):
+    uid = with_app(store)
+    token = store.start_session(uid)
+    for _ in range(3):  # a page's automatic polls: still logged in, but no one using it
+        clock.now += 10 * 60 - 1
+        assert store.session_user(token, renew=False)["id"] == uid
+    clock.now += 4
+    assert store.session_user(token, renew=False) is None and store.session_user(token) is None
 
 
 # --- The second step: a code from an authenticator app (D-146) -------------------------------------------------------

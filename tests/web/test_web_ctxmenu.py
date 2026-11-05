@@ -554,6 +554,33 @@ def test_in_a_browser_the_queue_remembers_its_filter_and_where_it_was_scrolled(b
     assert errors == []
 
 
+def test_in_a_browser_back_from_an_invoice_opened_from_a_sorted_queue_loads_the_queue_once(browser, store):
+    """B-1593: coming back from an invoice opened from a sorted or filtered queue loaded the queue twice (its bare
+    address, then the view put back by ``location.replace``); with the view carried, the sort chosen from the toolbar
+    (its form sends an empty search, ``q=``) was not taken for the view left, and the queue was not scrolled back."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 420})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "/review")
+    with page.expect_navigation():
+        page.select_option(".rq-toolbar select[name=sort]", "amount")  # its form: ?show=all&q=&sort=amount
+    page.wait_for_load_state("networkidle")
+    page.evaluate("window.scrollTo(0, 260)")
+    y = page.evaluate("window.scrollY")
+    assert y > 100
+    href = page.eval_on_selector(".rq-list li:last-child a.rq-row", "a => (a.click(), a.getAttribute('href'))")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    loads: list[str] = []
+    page.on("request", lambda r: loads.append(r.url) if r.resource_type == "document" else None)
+    page.locator("[data-nav=queue]").click()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_function("y => Math.abs(window.scrollY - y) < 40", arg=y, timeout=3000)
+    assert len(loads) == 1 and "sort=amount" in page.url, loads
+    assert page.evaluate("document.activeElement.getAttribute('href')") == href  # the keyboard goes on from it
+    assert errors == []
+
+
 def _taxable(page, kind):
     return page.eval_on_selector_all(
         "[data-grid=taxes] > tr",

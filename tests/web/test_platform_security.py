@@ -228,6 +228,7 @@ def test_a_server_name_is_judged_by_the_address_it_resolves_to(monkeypatch, name
 
     monkeypatch.setattr(config.socket, "getaddrinfo",
                         lambda host, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))])  # fmt: skip
+    config.forget_resolved()  # the addresses another test's lookup gave are kept a while
     assert config._on_this_network(f"{name}:1234") is here
 
 
@@ -238,7 +239,62 @@ def test_a_name_that_does_not_resolve_is_judged_by_its_name(monkeypatch):
         raise OSError("no such name")
 
     monkeypatch.setattr(config.socket, "getaddrinfo", nothing)
+    config.forget_resolved()
     assert config._on_this_network("gpu-box:1234") and not config._on_this_network("example.com")
+
+
+@pytest.fixture
+def company_dns(monkeypatch):
+    """Name resolution answered by the test ({name: address}), each lookup recorded; the company's DNS domains set."""
+    import socket
+
+    from ap_coder.core import config
+
+    answers: dict[str, str] = {}
+    asked: list[str] = []
+
+    def getaddrinfo(host, *args, **kwargs):
+        asked.append(host)
+        if host not in answers:
+            raise OSError("no such name")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers[host], 0))]
+
+    monkeypatch.setattr(config.socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setenv("AP_COMPANY_DOMAINS", "corp.acme-foods.ca, .acme.example")
+    config.forget_resolved()
+    yield answers, asked
+    config.forget_resolved()
+
+
+@pytest.mark.parametrize("address, here", [("10.40.2.15", True), ("127.0.0.1", True), ("93.184.216.34", False)])
+def test_a_company_name_is_judged_by_the_address_it_resolves_to(company_dns, address, here):
+    """B-1605: a model server named by the company's DNS (the Mac Studio of stage 2, "macstudio.corp.acme-foods.ca")
+    was refused unless internet access was on: only bare names, .local, .lan and .home were judged by the addresses
+    they resolve to. A name under one of the company's DNS domains (AP_COMPANY_DOMAINS) is now judged so too."""
+    from ap_coder.ai import local_llm
+    from ap_coder.core import config
+
+    answers, _ = company_dns
+    answers["macstudio.corp.acme-foods.ca"] = answers["gpu.lab.acme.example"] = address
+    assert config._on_this_network("macstudio.corp.acme-foods.ca:1234") is here
+    assert config._on_this_network("gpu.lab.acme.example") is here
+    assert (local_llm.refused_address("http://macstudio.corp.acme-foods.ca:1234/v1") == "") is here
+
+
+def test_a_name_outside_the_company_domains_is_not_looked_up_and_a_lookup_is_kept_briefly(company_dns, monkeypatch):
+    from ap_coder.core import config
+
+    answers, asked = company_dns
+    answers["api.example.com"] = answers["macstudio.corp.acme-foods.ca"] = "10.40.2.15"
+    assert not config._on_this_network("api.example.com") and not config._on_this_network("corp.acme-foods.ca.evil.io")
+    assert asked == []  # the offline build asks no DNS about a name on the internet
+    for _ in range(3):
+        assert config._on_this_network("macstudio.corp.acme-foods.ca:1234")
+    assert asked == ["macstudio.corp.acme-foods.ca"]
+    later = config.time.monotonic() + config.RESOLVED_SECONDS + 1
+    monkeypatch.setattr(config.time, "monotonic", lambda: later)
+    answers["macstudio.corp.acme-foods.ca"] = "8.8.8.8"  # the name moved to the internet
+    assert not config._on_this_network("macstudio.corp.acme-foods.ca:1234")
 
 
 # --- 3. A small picture of a huge page is not decoded at full size ------------------------------------------------
