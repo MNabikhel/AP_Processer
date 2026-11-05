@@ -47,6 +47,7 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -499,6 +500,7 @@ class AisClient:
         self.scheme, self.netloc = parts.scheme, parts.netloc
         self.prefix = parts.path.rstrip("/")
         self.token = ""
+        self._signing = threading.Lock()  # one sign-in at a time when several threads share the client
         self.retries = DEFAULT_RETRIES
         self._context: ssl.SSLContext | None = None
 
@@ -658,7 +660,9 @@ class AisClient:
         if self.cfg.auth_mode == BASIC:
             return {"Authorization": self._basic(), **extra}
         if not self.token:
-            self.login()
+            with self._signing:
+                if not self.token:
+                    self.login()
         return {self.ais.get("token_header", "jde-AIS-Auth"): self.token,
                 self.ais.get("device_header", "jde-AIS-Auth-Device"): self.cfg.device_name}  # fmt: skip
 
@@ -693,11 +697,14 @@ class AisClient:
         path = self.ais.get("orchestrator_path", "/jderest/v3/orchestrator/{name}").replace("{name}", quote(name))
         expired = set(self.ais.get("expired_token_statuses") or [444])
         for again in (False, True):
-            status, parsed = self._request("POST", path, dict(inputs), self._auth_headers(), idempotent=idempotent,
+            headers = self._auth_headers()
+            status, parsed = self._request("POST", path, dict(inputs), headers, idempotent=idempotent,
                                            timeout=timeout)  # fmt: skip
             if status in expired and self.cfg.auth_mode == TOKEN and not again:
                 log.info("AIS: the token expired; signing in again")
-                self.token = ""
+                with self._signing:  # unless another thread has signed in again already
+                    if self.token == headers.get(self.ais.get("token_header", "jde-AIS-Auth")):
+                        self.token = ""
                 continue
             break
         log.info("AIS: %s answered HTTP %s", name, status)

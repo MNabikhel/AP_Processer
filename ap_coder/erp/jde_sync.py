@@ -20,6 +20,7 @@ so the checks and the learning work the same; and the live "already in JD Edward
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import logging
@@ -355,35 +356,60 @@ LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
 _BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
+_CLIENTS: dict[str, jde_ais.AisClient] = {}  # database -> this process's client for the live check, signed in once
 _LOCK = threading.Lock()
 PAID = {"P": "paid", "A": "approved for payment, not paid yet", "H": "on hold in JDE"}
 
 
 def forget_cache() -> None:
+    """Forget what JDE said, and log the live check's clients out (the settings saved; the process stopping)."""
     with _LOCK:
         _CACHE.clear()
         _DOWN.clear()
         _BIG.clear()
+        clients = list(_CLIENTS.values())
+        _CLIENTS.clear()
+    for c in clients:
+        c.close()
+
+
+atexit.register(forget_cache)
+
+
+def _client(store: Any) -> jde_ais.AisClient:
+    """The live check's client for this database: one token for every check (and every thread), until the settings
+    change."""
+    cfg = jde_ais.load(store)
+    cfg.timeout = min(cfg.timeout, LIVE_TIMEOUT)
+    where = str(store.path)
+    with _LOCK:
+        c = _CLIENTS.get(where)
+        if c is not None and c.cfg == cfg and c.cfg.password == cfg.password:
+            return c
+        old = _CLIENTS.pop(where, None)
+    if old is not None:
+        old.close()
+    made = jde_ais.AisClient(cfg)
+    made.retries = 0
+    with _LOCK:
+        return _CLIENTS.setdefault(where, made)  # not signed in yet: one made at the same time is simply dropped
 
 
 def _ask(store: Any, an8: str, number: str, printed: str, big: bool) -> tuple[list[dict[str, Any]], bool]:
     """The vouchers in JDE that may be this invoice, and whether they were asked by its number."""
-    cfg = jde_ais.load(store)
-    cfg.timeout = min(cfg.timeout, LIVE_TIMEOUT)
-    with jde_ais.AisClient(cfg) as c:
-        c.retries = 0
-        since = (_now().date() - dt.timedelta(days=cfg.voucher_days)).strftime(c.ais.get("date_format") or "%Y-%m-%d")
-        if not an8:
-            return c.rows("vouchers", {"invoice": number, "since": since}, max_pages=LIVE_PAGES), True
-        if not big:
-            # Every page of the supplier's vouchers of the sync's window (the invoice numbers are compared here,
-            # written any way): a supplier with more vouchers than a page is checked to the last one.
-            try:
-                return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
-            except jde_ais.TooManyPages:
-                pass
-        # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
-        return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
+    c = _client(store)
+    since = (_now().date() - dt.timedelta(days=c.cfg.voucher_days)).strftime(c.ais.get("date_format") or "%Y-%m-%d")
+    if not an8:
+        return c.rows("vouchers", {"invoice": number, "since": since}, max_pages=LIVE_PAGES), True
+    if not big:
+        # Every page of the supplier's vouchers of the sync's window (the invoice numbers are compared here, written
+        # any way): a supplier with more vouchers than a page is checked to the last one.
+        try:
+            return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
+        except jde_ais.TooManyPages:
+            pass
+    # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
+    return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
 
 
 def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None) -> list[tuple[str, str, str]]:

@@ -5,6 +5,7 @@ the nightly timing, and the live "already in JD Edwards?" check with its cache a
 from __future__ import annotations
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -176,6 +177,26 @@ def test_jde_down_the_register_is_checked_by_the_suppliers_number_too(store, ais
     found = {c: m for _, c, m in vendor_findings(coding, store)}
     assert "JDE_NOT_REACHED" in found
     assert "invoice INV-7001 from this vendor is already in the ERP (dated 2026-09-02)" in found["DUPLICATE_IN_ERP"]
+
+
+def test_the_live_check_signs_in_once_for_many_checks_and_out_at_the_end(store, ais, monkeypatch):
+    """B-1603: each live check signed in to AIS and out again (three requests where one does), hundreds of AIS
+    sessions an hour from 300 people. One signed-in client per process for each database: its token is re-used (by
+    several people at once too), asked again when it expired, and logged out when the settings change and at exit."""
+    connect(store, ais)
+    jde_sync.sync(store, parts=("suppliers",))
+    monkeypatch.setattr(jde_sync, "CACHE_SECONDS", 0)  # every check asks JDE
+    token, logout = ais.mapping["ais"]["token_path"], ais.mapping["ais"]["logout_path"]
+    before = len(ais.calls)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda i: jde_sync.live_findings(store, _coding(invoice_number=f"Z-{i}")), range(100)))
+    calls = [path for path, _ in ais.calls[before:]]
+    assert (calls.count(token), calls.count(logout), len(calls)) == (1, 0, 101)
+    ais.expire_tokens()
+    assert jde_sync.live_findings(store, _coding())[0][1] == "DUPLICATE_IN_ERP"  # signed in again, once
+    jde_sync.forget_cache()  # the settings saved, or the process stopping (atexit)
+    calls = [path for path, _ in ais.calls[before:]]
+    assert (calls.count(token), calls.count(logout)) == (2, 1) and not any(ais.tokens.values())
 
 
 def test_the_live_check_is_off_with_step_1(store, ais):
