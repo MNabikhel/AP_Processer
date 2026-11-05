@@ -3,6 +3,7 @@ answers them; its delays, slots, hangs, failures, going down and its control ove
 
 import base64
 import json
+import socket
 import threading
 import time
 import urllib.error
@@ -146,14 +147,23 @@ def test_slots_answer_that_many_at_once_and_the_rest_wait_in_line():
         assert 0.27 <= took < 3.0 and s["queue_wait"]["max"] >= 0.12 and s["queue_wait"]["n"] == 4
 
 
+def _wait_for(fake, key, at_least, seconds=10.0):
+    deadline = time.monotonic() + seconds
+    while fake.stats()[key] < at_least and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return fake.stats()
+
+
 def test_a_hung_request_is_never_answered_and_keeps_its_slot_until_released():
     with FakeModel(hang_rate=1.0) as fake:
-        with pytest.raises(OSError):  # the client gives up (a timeout)
-            chat(fake, timeout=0.2)
-        deadline = time.monotonic() + 5
-        while fake.stats()["hung_gave_up"] < 1 and time.monotonic() < deadline:
-            time.sleep(0.05)
-        s = fake.stats()
+        # The client gives up only once the request is hanging: a short timeout raced the request's arrival (CI).
+        body = json.dumps({"model": CHAT, "messages": [{"role": "user", "content": "Hello"}]}).encode()
+        client = socket.create_connection(("127.0.0.1", fake.port), timeout=10)
+        client.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                       + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)  # fmt: skip
+        assert _wait_for(fake, "hanging", 1)["hanging"] == 1
+        client.close()
+        s = _wait_for(fake, "hung_gave_up", 1)
         assert s["hung"] == 1 and s["hung_gave_up"] == 1 and s["served"] == 0 and s["hanging"] == 0
         fake.set(hang_rate=0.0)
         results = []
