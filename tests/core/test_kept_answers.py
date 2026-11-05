@@ -337,28 +337,79 @@ def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_p
 def test_vendors_asked_with_no_invoices_are_not_kept_for_ever(tmp_path, ground_truth, monkeypatch):
     """A name typed on the review screen is asked for, most with no invoices: at most ``VENDOR_KEYS_KEPT`` vendors are
     kept (B-1724's idea: 20,000 names kept 27.6 MB, and each new one summed them all), and ``VENDOR_ROWS_KEPT`` rows in
-    all, counted as they are kept; one vendor of more rows than that is not kept."""
+    all, counted as they are kept; one vendor of more rows than half that is not kept."""
     from ap_coder.core.store import vendors as vendors_module
 
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_KEYS_KEPT", 50)
-    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 3)
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 4)
     store = Store(tmp_path / "ap.db")
-    for name in ("A-1", "A-2", "A-3"):
-        _invoice(store, tmp_path, ground_truth, name, "Acme Supply")
-    beta = store.get_invoice(_invoice(store, tmp_path, ground_truth, "B-1", "Beta Ltd"))["vendor_key"]
-    acme = store.get_invoice(store.list_invoices()[0]["id"])["vendor_key"]
+
+    def vendor(name: str, *numbers: str) -> str:
+        ids = [_invoice(store, tmp_path, ground_truth, number, name) for number in numbers]
+        return store.get_invoice(ids[0])["vendor_key"]
+
+    acme, beta, gamma = vendor("Acme Supply", "A-1", "A-2"), vendor("Beta Ltd", "B-1", "B-2"), vendor("Gamma", "C-1")
     for n in range(200):
         assert store.vendor_invoices(f"nobody {n}") == []
     kept = vendors_module._VENDOR_ROWS
     assert len(kept) == 50 and list(kept)[-1][1] == "nobody 199" and vendors_module._VENDOR_ROWS_HELD == 0
-    assert len(store.vendor_invoices(acme)) == 3 and vendors_module._VENDOR_ROWS_HELD == 3
-    assert len(store.vendor_invoices(beta)) == 1  # the rows over the cap: the vendor asked longest ago goes
-    assert (str(store.path), acme) not in kept and vendors_module._VENDOR_ROWS_HELD == 1
+    assert len(store.vendor_invoices(acme)) == 2 and len(store.vendor_invoices(beta)) == 2
+    assert vendors_module._VENDOR_ROWS_HELD == 4
+    assert len(store.vendor_invoices(gamma)) == 1  # the rows over the cap: the vendor asked longest ago goes
+    assert (str(store.path), acme) not in kept and vendors_module._VENDOR_ROWS_HELD == 3
     assert sum(len(rows) for _, rows in kept.values()) == vendors_module._VENDOR_ROWS_HELD and len(kept) <= 50
-    _invoice(store, tmp_path, ground_truth, "A-4", "Acme Supply")
-    assert len(store.vendor_invoices(acme)) == 4 and (str(store.path), acme) not in kept  # more than the cap alone
+    _invoice(store, tmp_path, ground_truth, "A-3", "Acme Supply")
+    assert len(store.vendor_invoices(acme)) == 3 and (str(store.path), acme) not in kept  # more than half the cap
+
+
+def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_them(tmp_path, monkeypatch):
+    """A vendor of nearly ``VENDOR_ROWS_KEPT`` rows, once kept, dropped every other vendor kept, and the next one asked
+    dropped it again: each page of either vendor read its invoices afresh. One vendor is kept up to half the cap, the
+    other half left to the others."""
+    from ap_coder.core.store import vendors as vendors_module
+
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
+    store = Store(tmp_path / "ap.db")
+    with sqlite3.connect(store.path) as conn:
+        for key, count in (("small 1", 1), ("small 2", 2), ("half", 5), ("big", 6)):
+            conn.executemany("INSERT INTO invoices (source_path, file_name, status, created_at, vendor_key, "
+                             "vendor_name) VALUES ('x', 'x', 'review', ?, ?, ?)", [(NOW, key, key.title())] * count)  # fmt: skip
+    for key in ("small 1", "small 2", "big"):
+        store.vendor_invoices(key)
+    kept = vendors_module._VENDOR_ROWS
+    assert [key for _, key in kept] == ["small 1", "small 2"] and vendors_module._VENDOR_ROWS_HELD == 3
+    assert len(store.vendor_invoices("half")) == 5 and len(store.vendor_invoices("big")) == 6
+    assert [key for _, key in kept] == ["small 1", "small 2", "half"] and vendors_module._VENDOR_ROWS_HELD == 8
+
+
+def test_a_vendor_too_big_to_keep_is_read_once_by_a_check(tmp_path, ground_truth, monkeypatch):
+    """A check asks for its vendor's invoices twice (``vendor_findings``, ``expected_tax_numbers``). A vendor of more
+    rows than one is kept up to was read by both, 1.1 s each for one of 23,000 invoices: it is read once in a page's
+    session (``_session_memo``), again after a change; each caller gets rows of its own."""
+    from ap_coder.coding.vendors import expected_tax_numbers, vendor_findings
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import vendors as vendors_module
+
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 2)  # this vendor has 3
+    store = Store(tmp_path / "ap.db")
+    ids = [_invoice(store, tmp_path, ground_truth, f"N-{n}") for n in range(3)]
+    key = store.get_invoice(ids[0])["vendor_key"]
+    read = _vendor_reads(store, monkeypatch)
+    coding = InvoiceCoding.model_validate({**ground_truth, "invoice_number": "N-9"})
+    with store.session():  # one page
+        vendor_findings(coding, store)
+        expected_tax_numbers(coding, store)
+        assert read == [key]
+        store.vendor_invoices(key)[0]["status"] = "changed by its caller"
+        assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+        store.park_invoice(ids[2], "Ann", "waiting for the PO")  # a change: read again
+        assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+    assert (str(store.path), key) not in vendors_module._VENDOR_ROWS
+    assert len(store.vendor_invoices(key)) == 3 and len(read) == 3  # (outside a page's session: each time)
 
 
 # --- The uses (D-159's "What is kept"): each filled, changed through another Store or plain SQL, asked again -------

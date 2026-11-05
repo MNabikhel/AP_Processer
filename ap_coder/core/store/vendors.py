@@ -29,9 +29,10 @@ from .summary import fetch_rows
 _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
 
 # Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
-# most VENDOR_ROWS_KEPT rows in all (about 20 MB) and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is
-# asked for, most with no invoices), the rows held counted as they are kept and dropped.
-VENDOR_ROWS_KEPT = 20_000
+# most VENDOR_ROWS_KEPT rows in all (about 1 KB a row: 50 MB), one vendor up to half of them (a year's biggest vendor
+# has about 23,000), and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is asked for, most with no
+# invoices), the rows held counted as they are kept and dropped.
+VENDOR_ROWS_KEPT = 50_000
 VENDOR_KEYS_KEPT = 4_096
 _VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = OrderedDict()
 _VENDOR_ROWS_HELD = 0
@@ -40,9 +41,9 @@ _VENDOR_ROWS_LOCK = threading.Lock()
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, ...], rows: list[dict[str, Any]]) -> None:
     """``rows`` kept as the newest; the vendors asked longest ago go while over either cap. A vendor of more rows than
-    the cap is not kept."""
+    half the cap is not kept: the other half stays for the others (B-1721)."""
     global _VENDOR_ROWS_HELD
-    if len(rows) > VENDOR_ROWS_KEPT:
+    if len(rows) > VENDOR_ROWS_KEPT // 2:
         return
     with _VENDOR_ROWS_LOCK:
         before = _VENDOR_ROWS.pop(key, None)
@@ -492,8 +493,9 @@ class VendorsMixin:
         checks and the tax-number notes both ask, at every check of the review screen. Kept in this process for each
         vendor (``_keep_vendor_rows``, D-160) while its stamp, read before the rows, holds: the database's
         ``summary_id`` and the vendor's count of changes (``changes/vendor/<key>``, kept by triggers: an invoice of its
-        added or deleted, or a column listed here changed, whoever changed it). Inside a write under way they are read
-        afresh and not kept: it may yet be undone. Each caller gets rows of its own."""
+        added or deleted, or a column listed here changed, whoever changed it). A vendor too big to keep is read once in
+        a page's session (``_session_memo``, B-1721). Inside a write under way they are read afresh and not kept: it
+        may yet be undone. Each caller gets rows of its own."""
         with self._conn() as conn:
             stamp = tuple(conn.execute(
                 "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), "
@@ -508,7 +510,8 @@ class VendorsMixin:
             if hit is not None and hit[0] == stamp:
                 _VENDOR_ROWS.move_to_end(kept)
         if hit is None or hit[0] != stamp:
-            hit = (stamp, self._vendor_invoices(key))
+            rows = self._session_memo(("vendor_invoices", key, stamp), lambda: self._vendor_invoices(key), shared=True)
+            hit = (stamp, rows)
             _keep_vendor_rows(kept, *hit)
         return [dict(r) for r in hit[1]]
 
