@@ -118,15 +118,18 @@ def test_quick_search_on_top_of_the_filters(store):
     assert d.run(store, d.Query(q="zzz-nothing")).total == 0
 
 
-def test_quick_search_with_more_hits_than_sqlite_takes_variables(store, monkeypatch, few_sql_variables):
-    """Up to EXPORT_LIMIT hits: more than a stock SQLite build takes as bound variables (32,766, or 999)."""
+def test_quick_search_binds_nothing_per_hit_and_a_long_query_fits_older_sqlite(store, few_sql_variables):
+    """The quick search's hits are counted, sorted and paged by SQLite (D-157): nothing is bound per hit (a stock
+    SQLite build takes 32,766 bound variables, an older one 999), and the longest query (200 characters, every part
+    a number) stays within 999."""
     from ap_coder.erp import search
 
     real = {i["id"] for i in store.list_invoices()}
-    many = [search.Hit(1, {"id": n}) for n in [*real, *range(10_000, 12_000)]]
-    monkeypatch.setattr(search, "find", lambda *a, **kw: many)
-    found = d.run(store, d.Query(q="anything"), everything=True)
+    found = d.run(store, d.Query(q="pdf"), everything=True)  # every file name
     assert found.total == len(real) and {r["id"] for r in found.rows} == real
+    for long in (" ".join(str(n) for n in range(100, 200)), " ".join(str(n) for n in range(10, 99))):
+        query = d.Query.from_params({"q": long})
+        assert len(d.where(query)[1]) < 999 and d.run(store, query).total == len(search.find(store, query.q))
 
 
 # --- Sort, pages, columns -------------------------------------------------------------------------------------------
@@ -226,6 +229,45 @@ def test_export_has_the_columns_shown_and_every_row_kept(store):
     book = load_workbook(io.BytesIO(client.get(f"/search/export.xlsx?{query}").content))
     sheet = book.active
     assert [c.value for c in sheet[1]] == ["Vendor", "Total", "Status"] and sheet.max_row == len(approved) + 1
+
+
+def _cells(content: bytes) -> list:
+    """What a workbook's first sheet shows: its title, frozen panes, filter, column widths and every cell's value,
+    type and look."""
+    sheet = load_workbook(io.BytesIO(content)).worksheets[0]
+    widths = {k: d.width for k, d in sheet.column_dimensions.items()}
+    cells = [(c.coordinate, c.value, c.data_type, c.number_format, c.font.b, c.fill.fgColor.rgb, c.alignment.vertical,
+              c.quotePrefix) for row in sheet.iter_rows() for c in row]  # fmt: skip
+    return [sheet.title, sheet.freeze_panes, sheet.auto_filter.ref, widths, cells]
+
+
+def test_the_streamed_sheet_is_the_sheet_it_was(tmp_path):
+    """The directory's Excel export, written row by row in a write-only workbook (D-157), has the cells, formats,
+    widths, frozen header and filter the whole sheet held in memory had (``exports._sheet``)."""
+    from openpyxl import Workbook
+
+    from ap_coder.erp.exports import _sheet, streamed_sheet
+
+    columns = [("vendor", "Vendor"), ("invoice_date", "Invoice date"), ("total", "Total"),
+               ("reviewed_at", "Approved at"), ("status", "Status"), ("batch", "Export batch")]  # fmt: skip
+    rows = [{"vendor": v, "invoice_date": day, "total": total, "reviewed_at": at, "status": "Approved", "batch": n}
+            for n, (v, day, total, at) in enumerate([
+                ("North", "2026-09-14", 1250.5, "2026-09-15 10:04:05"), ('=HYPERLINK("x")', "", None, None),
+                ("-5 Ltd", "not a date", -12.0, "2026-09-15T10:04:05"), ("+1 @x", None, 0, ""),
+                ("bad\x01text", "2026-02-30", 3, "x"), ("x" * 90, "2026-01-01", 1e9, None)])]  # fmt: skip
+    rows += [{"vendor": f"Vendor {n}" + "y" * (n // 20), "total": n / 3, "invoice_date": "2026-03-01"}
+             for n in range(600)]  # fmt: skip
+    for shown in (rows, rows[:3], []):
+        whole = Workbook()
+        _sheet(whole.active, "Invoices", columns, shown)
+        streamed = Workbook(write_only=True)
+        streamed_sheet(streamed.create_sheet(), "Invoices", columns, iter(shown))
+        made = []
+        for book in (whole, streamed):
+            path = tmp_path / f"{len(made)}.xlsx"
+            book.save(path)
+            made.append(_cells(path.read_bytes()))
+        assert made[0] == made[1]
 
 
 def test_export_never_writes_a_formula(store, tmp_path):

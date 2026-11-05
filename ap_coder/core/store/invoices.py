@@ -187,16 +187,19 @@ class InvoicesMixin:
         for key, r in keyed:
             dates.setdefault(key, set()).add(r.get("invoice_date") or "")
         copies = {key: len(found - {""}) or 1 for key, found in dates.items()}
+        from ...erp.search import register_keys
+
         with self._conn() as conn:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
             conn.executemany(
                 """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
-                   imported_at, copies) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total)
+                   imported_at, copies, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(vendor_key, number_key, total)
                    DO UPDATE SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at,
                    copies = MAX(erp_invoices.copies, excluded.copies)""",
-                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key])
-                 for key, r in keyed],
+                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key],
+                  *register_keys(r["vendor_name"], r["invoice_number"])) for key, r in keyed],
             )  # fmt: skip
             count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
             detail: dict[str, Any] = {"rows": len(rows), "total": count}
@@ -231,24 +234,9 @@ class InvoicesMixin:
         """One page of the invoice directory, with the date each one's export batch was made. The page's ids come
         first (SQLite then reads only what the filters and the sort need), then their rows: reading every invoice's
         coding to sort the whole table would take most of a second with tens of thousands of invoices."""
-        with self._conn() as conn:
-            self._summary_fresh(conn)
-            ids = [
-                r[0]
-                for r in conn.execute(
-                    f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
-                    [*params, limit, offset],
-                )
-            ]
-            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
-            found = {r["id"]: dict(r) for r in page}
-            rows = [found[i] for i in ids if i in found]
-            wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
-            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
-            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
-        for r in rows:
-            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
-        return rows
+        with self.session():  # type: ignore[attr-defined]  (one connection for both)
+            ids = self.directory_ids(rows_sql, where, params, order, limit, offset)  # type: ignore[attr-defined]
+            return self.directory_rows_of(rows_sql, fields, ids)  # type: ignore[attr-defined]
 
     def erp_register(self) -> list[dict[str, Any]]:
         """Every invoice in the imported ERP register."""
@@ -260,6 +248,15 @@ class InvoicesMixin:
                     "FROM erp_invoices"
                 )
             ]
+
+    def erp_register_rows(self, where: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
+        """The ERP register's rows ``where`` keeps (the caller's SQL over its columns, with its vendor name and
+        invoice number as the quick search compares them: ``plain_name``, ``raw_number``), in ``erp_register``'s
+        order, read in one go."""
+        with self._conn() as conn:
+            sql = ("SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
+                   f"FROM erp_invoices WHERE {where} ORDER BY rowid")  # fmt: skip
+            return fetch_rows(conn, sql, tuple(params))
 
     def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
