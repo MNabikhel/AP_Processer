@@ -23,7 +23,6 @@ from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
@@ -928,16 +927,17 @@ def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], file
 
 
 @router.post("/process/upload")
-async def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
+def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
     """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
-    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory."""
+    is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory. (A
+    plain function: FastAPI takes the upload in, then runs it on a threadpool thread, D-158.)"""
     if server_mode(request):
         who = person()
         refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files),
                                          store=get_store(request))  # fmt: skip
         if refused:
             return refuse(refused, status=status)
-    return await run_in_threadpool(_save_and_start, request, files)
+    return _save_and_start(request, files)
 
 
 def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:
