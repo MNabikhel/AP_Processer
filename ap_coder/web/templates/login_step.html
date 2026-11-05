@@ -7,12 +7,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
   <title>{{ title }} · AP Coder</title>
-  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+  <link rel="icon" href="{{ static_url('/assets/icon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ static_url('/static/app.css') }}">
 </head>
 <body data-page="login" data-server>
   <main class="apc-login" id="main">
-    <img src="/assets/logo.svg" alt="AP Coder" height="28">
+    <img src="{{ static_url('/assets/logo.svg') }}" alt="AP Coder" height="28">
     <div id="flashes" class="flashes">
       {% for f in flashes %}
       <div class="flash {{ f.tone }}" role="status"><span class="ms" aria-hidden="true">{{ f.icon }}</span>
@@ -78,6 +78,6 @@
     </section>
   </main>
   <div id="toasts" class="toasts" aria-live="polite"></div>
-  <script type="module" src="/static/js/app.js"></script>
+  <script type="module" src="{{ static_url('/static/js/app.js') }}"></script>
 </body>
 </html>

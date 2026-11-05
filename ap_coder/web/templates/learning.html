@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">{% endblock %}
 {% block content %}
 <nav class="tabs" aria-label="Learning">
   {% for key, label in tabs.items() %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_sheet.html" import upload_form, preview, columns %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 {# server mode: the account lists and the tax setup are changed by an Admin; others see them read-only (D-98) #}
 {% set edit = can("/accounts/gl_accounts/save") %}
@@ -296,4 +296,4 @@
   </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>
 </tr>
 {% endmacro %}
-{% block scripts %}<script type="module" src="/static/js/accounts.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/accounts.js') }}"></script>{% endblock %}

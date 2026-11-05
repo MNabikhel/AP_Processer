@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 <section class="card">
   <form method="get" action="/sales-tax" class="row period">

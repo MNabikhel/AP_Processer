@@ -123,9 +123,23 @@ def test_static_files_fonts_and_logo_are_served_locally(client):
         assert url.startswith(("/", "#")), url  # nothing from another host
 
 
+def test_every_template_links_the_static_files_at_their_kept_addresses(client):
+    """A file linked at its plain address would be fetched again (checked) on every page; a page script loaded there
+    would be a second app.js module beside the page's own (its imports are relative), with state of its own."""
+    plain = re.compile(r'(?:src|href)="/(?:static|fonts|assets)/')
+    for path in sorted(core.TEMPLATES_DIR.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        assert not plain.search(text) and "static_version" not in text, path.name
+    page = client.get("/help").text
+    linked = re.findall(r'(?:src|href)="(/(?:static|fonts|assets)/[^"]+)"', page)
+    build = core.read_static().build
+    assert linked and all(url.split("/")[2] == build for url in linked), linked
+    assert f'src="/static/{build}/js/app.js"' in page
+
+
 def test_static_files_are_checked_again_on_every_use(client):
-    """app.js and invoice_viewer.js are imported without ?v= (one URL, one module): after an update a browser must ask
-    again instead of running the copy it kept. An unchanged file answers 304, so asking costs nothing."""
+    """At their plain addresses (a page an older AP Coder drew, a bookmark), after an update a browser must ask again
+    instead of running the copy it kept. An unchanged file answers 304, so asking costs nothing."""
     for path in ("/static/js/app.js", "/static/js/invoice_viewer.js", "/static/app.css"):
         response = client.get(path)
         assert response.status_code == 200 and response.headers.get("cache-control") == "no-cache", path

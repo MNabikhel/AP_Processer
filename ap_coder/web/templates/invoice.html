@@ -7,9 +7,9 @@
 {% import "_second_approval.html" as second_ui %}
 {% block title %}{{ title }} · Review · AP Coder{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="/static/invoice.css?v={{ static_version }}">
-<link rel="stylesheet" href="/static/invoice_viewer.css?v={{ static_version }}">
-<link rel="stylesheet" href="/static/ctxmenu.css?v={{ static_version }}">
+<link rel="stylesheet" href="{{ static_url('/static/invoice.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/invoice_viewer.css') }}">
+<link rel="stylesheet" href="{{ static_url('/static/ctxmenu.css') }}">
 {% endblock %}
 
 {% block header %}
@@ -510,5 +510,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/js/invoice.js?v={{ static_version }}"></script>
+<script type="module" src="{{ static_url('/static/js/invoice.js') }}"></script>
 {% endblock %}

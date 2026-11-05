@@ -200,15 +200,6 @@ class _UiHelpers:
         return lambda *args, **kwargs: Markup(builder(*args, **kwargs))  # noqa: S704 - ui.py escapes its input
 
 
-def _static_version() -> str:
-    """Changes whenever a stylesheet or script does, so a browser never keeps an old copy after an update."""
-    digest = hashlib.sha256()
-    for path in sorted(STATIC_DIR.rglob("*")):
-        if path.is_file():
-            digest.update(path.read_bytes())
-    return digest.hexdigest()[:10]
-
-
 def money(value: Any, currency: str = "") -> str:
     """1,234.50 (a credit as (1,234.50)), "—" for no amount; ``currency`` after it."""
     text = ui.money(value)
@@ -218,7 +209,7 @@ def money(value: Any, currency: str = "") -> str:
 # Autoescape on for every template: text from invoices and files is always escaped.
 templates = Jinja2Templates(env=jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True))
 templates.env.globals.update(
-    ui=_UiHelpers(), static_version=_static_version(), static_url=static_url, unassigned=UNASSIGNED
+    ui=_UiHelpers(), static_url=static_url, unassigned=UNASSIGNED
 )  # (a line without a GL account, as the pages say it)
 templates.env.filters.update(
     money=money,
