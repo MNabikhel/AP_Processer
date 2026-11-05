@@ -316,6 +316,41 @@ def test_the_supervisor_does_not_ask_the_ending_worker_alive_and_replaces_it_onc
     assert started == [99] and sorted(p.pid for p in supervisor.processes) == [12, 99]
 
 
+@pytest.mark.parametrize("what", ["job", "backup", "imports"])
+def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, monkeypatch, what):
+    """A request answered after ``Recycle`` looked (one on another thread, or in its DRAIN_SECONDS) may start a job, a
+    backup or queue an import: threads that end with the worker's process. Its lifespan waits for them once its
+    connections are closed (a service stop still ends it at the stop's deadline, ``join_all``); a laptop's doesn't."""
+    from ap_coder.web.pages.process import ImportQueue
+
+    def ending(processes: int) -> bool:
+        app = create_app(web_settings(), store, start_reader=False, background=processes == 1, processes=processes)
+        monkeypatch.setattr(app.state.daily_backup, "start", lambda: None)  # (a laptop's own backup at the start)
+        gate = threading.Event()
+        threading.Timer(0.6, gate.set).start()
+        if what == "job":
+            assert app.state.jobs.get("process").start(lambda job: gate.wait(10) and {})
+        elif what == "backup":
+            app.state.daily_backup.thread = threading.Thread(target=gate.wait, args=(10,), daemon=True)
+            app.state.daily_backup.thread.start()
+        else:
+            app.state.import_queue = ImportQueue()
+            app.state.import_queue.waiting.append((None, None, 1))
+            threading.Timer(0.6, app.state.import_queue.waiting.clear).start()
+
+        async def lifespan() -> None:
+            async with app.router.lifespan_context(app):
+                pass
+
+        asyncio.run(lifespan())
+        done = gate.is_set()
+        gate.set()
+        return done
+
+    assert ending(processes=2)  # one of the server's web workers: it waited for them
+    assert not ending(processes=1)  # the laptop stops as before
+
+
 def test_each_worker_ends_after_a_number_of_requests_of_its_own(tmp_path):
     import random
 

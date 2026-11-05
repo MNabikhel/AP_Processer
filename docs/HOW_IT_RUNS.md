@@ -382,7 +382,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   line). `server.Recycle` starts a worker afresh past its memory (`recycle_limits`) or requests: it stops taking
   connections, then uvicorn stops it gracefully and its supervisor starts another (`_Supervisor` does not ask the
   ending one "alive?", `.ap_coder_worker_restart.pid`); one at a time (`.ap_coder_worker_restart.lock`), never while
-  a job, a backup, waiting imports or the lane are busy.
+  a job, a backup, waiting imports or the lane are busy. One that a request started after that look is waited for as
+  the worker ends (its lifespan, `app.own_work_running`); a stop of the service still ends it at its deadline.
 
 ## 9. The data folder and everything AP Coder writes
 

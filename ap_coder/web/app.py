@@ -213,6 +213,15 @@ class EnvSettings:
             return read
 
 
+def own_work_running(state: Any) -> bool:
+    """Whether something this process runs on a thread of its own would end with it: a job, a backup, imports
+    waiting their turn (a web worker of the server waits for them before it ends: ``server.Recycle``)."""
+    backup = getattr(state.daily_backup, "thread", None)
+    queue = getattr(state, "import_queue", None)
+    return (state.jobs.running_here() or (backup is not None and backup.is_alive())
+            or bool(queue is not None and queue.waiting))  # fmt: skip
+
+
 def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, Any, Any, Any]:
     """The work the dashboard does on its own: the page reader and the AI reviewer (``page_worker``), the optional
     Azure check, the JD Edwards API's nightly sync and voucher queue, and the review queue checked again after a
@@ -267,6 +276,11 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
+        # One of the server's web workers: its connections are closed now, so no request starts more. What one
+        # started after Recycle looked (a JD Edwards send, a backup, imports) ends with the process: it is waited for.
+        # A stop of the service still ends the worker at its deadline (server.py, join_all).
+        while app.state.processes > 1 and own_work_running(app.state):
+            await anyio.sleep(0.2)
 
     app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.store = store

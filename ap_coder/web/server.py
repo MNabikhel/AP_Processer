@@ -41,7 +41,7 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.store import Store
 from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
-from ap_coder.web.app import CODE_FOLDER, create_app, os_user
+from ap_coder.web.app import CODE_FOLDER, create_app, os_user, own_work_running
 
 SERVER_FILE = ".ap_coder_server.json"
 
@@ -569,13 +569,10 @@ class Recycle:
         """Something of this worker's that would end with it: a job, a backup, imports waiting, a long route."""
         from ap_coder.web.core import heavy_lane
 
-        backup = getattr(self.state.daily_backup, "thread", None)
-        queue = getattr(self.state, "import_queue", None)
         lane = heavy_lane().statistics()
         if lane.borrowed_tokens or lane.tasks_waiting:
             return True
-        return (self.state.jobs.running_here() or (backup is not None and backup.is_alive())
-                or bool(queue is not None and queue.waiting))  # fmt: skip
+        return own_work_running(self.state)
 
     def _stop(self) -> None:
         from ap_coder.core.paths import try_lock
