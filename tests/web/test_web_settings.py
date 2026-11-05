@@ -418,6 +418,20 @@ def test_data_tab_backup_now_and_download(client, store):
     assert client.get("/settings/data/backups/nothing.db").status_code == 404
 
 
+def test_the_data_tab_counts_everything_in_the_invoices_folder(client, store):
+    """The Invoices tile's files: every entry of the folder, hidden files and folders too, as ``glob("*")`` counted
+    them before ``os.scandir`` (D-162)."""
+    folder = settings_page.invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("a.pdf", ".hidden"):
+        (folder / name).write_bytes(b"x")
+    for name in ("sub", ".kept"):
+        (folder / name).mkdir()
+    count = len(list(folder.glob("*")))
+    assert count >= 4 and settings_page.file_count(folder) == count
+    assert f"{count} files in invoices/" in client.get("/settings/data").text
+
+
 def test_restore_needs_restore_typed(client, store):
     backup = store.backup_now("manual")
     store.set_setting("fx_rates", "USD=9.99")  # done after the backup: undone by the restore
