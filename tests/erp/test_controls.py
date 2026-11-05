@@ -5,8 +5,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ap_coder.core.store import Store
+from ap_coder.core.store import APPROVED, Store
+from ap_coder.core.store.fx import parse_fx_rates
 from ap_coder.erp import controls
+
+MISSING = object()  # a key not in the coding at all
 
 
 def test_an_older_period_keeps_its_events_however_many_came_after(tmp_path, monkeypatch):
@@ -44,3 +47,48 @@ def test_the_report_reads_the_currency_rates_once_not_once_an_invoice(tmp_path, 
     today = dt.date.today()
     report = controls.build(store, today, today)
     assert len(report["one_person"]) == 4 and len(read) == 1
+
+
+def _one_person_as_before(store: Store, first: str, last: str, limit: float, rates: dict[str, float]) -> list:
+    """``controls.one_person`` as it was: every approved invoice's coding decoded and checked (kept here only, to
+    compare with)."""
+    return [i for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
+            if not i["second_reviewer"] and first <= (i["reviewed_at"] or "") < last
+            and store.second_approval_reason(i["final_output"] or {}, limit, rates=rates)]  # fmt: skip
+
+
+def test_one_person_finds_what_checking_every_approved_coding_found(tmp_path):
+    """The invoices over the approval limit approved by one person: SQLite leaves out the ones it can tell are under
+    the limit, the rest are checked as before. The same invoices, whatever the currency (none, blank, lower case,
+    without a rate, not text), the total (none, text, NaN, just under or over the limit at the rate) or the coding
+    (none, not an object), and whatever the period, second approver or limit."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    currencies = [MISSING, None, "CAD", "USD", " usd ", "usd", "EUR", "", "   ", True, False, 0, 5, "U$D", "ÜSD",
+                  {"code": "USD"}, "cad\t", "Usd"]  # fmt: skip
+    totals = [MISSING, None, 0, 999.99, 1000, 1000.0000001, 1000.01, -2000, "2000", True, False, 1e400, 730,
+              729.927, 729.9270072992701, 25000.0, 25000.01, -18248.175182481752, float("nan")]  # fmt: skip
+    docs: list[str | None] = [None, "", "[]", "{}", '{"currency": "USD", "grand_total": NaN}']
+    for currency in currencies:
+        for total in totals:
+            doc = {"vendor_name": "Acme", "invoice_number": "A-1"}
+            doc |= {} if currency is MISSING else {"currency": currency}
+            doc |= {} if total is MISSING else {"grand_total": total}
+            docs.append(json.dumps(doc))
+    when = ["2026-03-01T00:00:00", "2026-03-15T10:00:00", "2026-02-28T23:59:59", "2026-04-01", None]
+    seconds = [None, "", "Sam"]
+    with store._conn() as conn:
+        for n, doc in enumerate(docs):
+            conn.execute(
+                "INSERT INTO invoices (source_path, file_name, status, created_at, final_output, reviewed_at, "
+                "second_reviewer) VALUES ('x.pdf', 'x.pdf', ?, '2026-01-01', ?, ?, ?)",
+                ("approved" if n % 7 else "pending_approval", doc, when[n % len(when)],
+                 seconds[n % len(seconds)] if n % 2 else None),
+            )  # fmt: skip
+    periods = (("2026-03-01", "2026-04-01"), ("2026-01-01", "2027-01-01"), ("2026-05-01", "2026-06-01"))
+    for text in ("USD=1.37", "", "USD=1.37, EUR=1.5"):
+        rates = parse_fx_rates(text)
+        for limit in (1000.0, 25000.0, 0.5):
+            for first, last in periods:
+                found = controls.one_person(store, first, last, limit, rates)
+                assert found == _one_person_as_before(store, first, last, limit, rates), (text, limit, first)
+    assert len(controls.one_person(store, "2026-01-01", "2027-01-01", 1000.0, parse_fx_rates("USD=1.37"))) > 50
