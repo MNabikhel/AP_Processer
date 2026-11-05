@@ -121,6 +121,18 @@ def test_one_process_at_a_time_checks_the_queue_again(store):
     assert store.take_lease(bulk.RECHECK_LEASE, "another:1", 60)  # it let go of it
 
 
+def test_a_re_check_asked_to_stop_ends_between_two_batches_and_lets_go_of_its_lease(store, monkeypatch):
+    """A dashboard stopped during a re-check left its lease (the thread ended with the process before letting go): the
+    next start's queue waited for it up to two minutes. Asked to stop (``QueueRecheck.stop``), it ends between two
+    batches and lets go."""
+    _held(store)
+    monkeypatch.setattr(bulk, "RECHECK_BATCH", 1)
+    asked = []
+    done = bulk.recheck_queue(store, stopping=lambda: asked.append(1) or len(asked) > 2)
+    assert 0 < done < 3 and store.stale_checks(store.checks_stamp())  # (the rest: the next look)
+    assert store.take_lease(bulk.RECHECK_LEASE, "another:1", 60)
+
+
 def test_the_queue_is_checked_again_in_batches_each_kept_in_one_short_write(store, monkeypatch):
     _held(store)
     monkeypatch.setattr(bulk, "RECHECK_BATCH", 2)

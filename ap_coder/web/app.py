@@ -228,7 +228,7 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     change of settings. In the dashboard's own process (the laptop), or, with several web workers, in the server's
     background process only (``server.run_background``, D-111)."""
     from ap_coder.ai import azure_check, page_worker
-    from ap_coder.coding.bulk import QueueRecheck
+    from ap_coder.coding.bulk import RECHECK_LEASE, QueueRecheck
     from ap_coder.erp import jde_sync
 
     reader = page_worker.start_background(settings_factory, lambda: store, cache_dir=core.cache_dir(store))
@@ -237,6 +237,9 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     # The JD Edwards API's nightly sync and voucher queue (D-104): nothing while both its steps are off.
     jde = jde_sync.Background(lambda: store).start()
     # The queue's checks against today's settings (D-155): a few small queries every few seconds while none changed.
+    # A laptop's own re-check lease left is its last start's, stopped as it checked: the queue would wait for it.
+    if not offline.server_mode():
+        store.drop_lease(RECHECK_LEASE, None)
     recheck = QueueRecheck(settings_factory, lambda: store).start()
     return reader, azure, jde, recheck
 
@@ -276,6 +279,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
+        if app.state.queue_recheck is not None:  # it ends between two batches, letting go of its lease
+            from ap_coder.coding.bulk import RECHECK_STOP_SECONDS
+
+            ends = time.monotonic() + RECHECK_STOP_SECONDS
+            while app.state.queue_recheck.thread.is_alive() and time.monotonic() < ends:
+                await anyio.sleep(0.05)
         # One of the server's web workers: its connections are closed now, so no request starts more. What one
         # started after Recycle looked (a JD Edwards send, a backup, imports) ends with the process: it is waited for.
         # A stop of the service still ends the worker at its deadline (server.py, join_all).

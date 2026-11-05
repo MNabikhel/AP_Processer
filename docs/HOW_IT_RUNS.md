@@ -364,7 +364,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
-  `ephemeral` row `lease` "queue-recheck"; the queue page shows the earlier checks meanwhile and says so), the daily
+  `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
+  laptop's start; the queue page shows the earlier checks meanwhile and says so), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
   `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs

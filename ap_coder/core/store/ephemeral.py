@@ -127,8 +127,12 @@ class EphemeralMixin:
                                 (time.time() + seconds, name, owner.encode()))  # fmt: skip
             return done.rowcount == 1
 
-    def drop_lease(self, name: str, owner: str) -> None:
+    def drop_lease(self, name: str, owner: str | None) -> None:
+        """Let go of lease ``name`` held by ``owner``; None: whoever holds it (one a process that stopped left)."""
         with self._conn() as conn:
+            if owner is None:
+                conn.execute("DELETE FROM ephemeral WHERE kind = 'lease' AND token = ?", (name,))
+                return
             conn.execute("DELETE FROM ephemeral WHERE kind = 'lease' AND token = ? AND value = ?",
                          (name, owner.encode()))  # fmt: skip
 
