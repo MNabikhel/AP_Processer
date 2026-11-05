@@ -129,7 +129,8 @@ def _approved(store: Store) -> Iterator[tuple[int, Any, dict[str, Any]]]:
 
 
 def bills(store: Store) -> list[Bill]:
-    out = []
+    out: list[Bill] = []
+    keys: dict[str, str] = {}  # each vendor name's key worked out once (a vendor has many invoices)
     for invoice_id, batch, doc in _approved(store):
         total = float(doc.get("grand_total") or 0)
         if total <= 0:
@@ -137,8 +138,9 @@ def bills(store: Store) -> list[Bill]:
         name = str(doc.get("vendor_name") or "")
         number = str(doc.get("invoice_number") or "")
         date, currency = str(doc.get("invoice_date") or ""), str(doc.get("currency") or "")
-        out.append(Bill("AP Coder", invoice_id, vendor_key(name), name, number, norm_invoice_number(number), date,
-                        round(total, 2), currency, bool(batch)))  # fmt: skip
+        key = keys[name] if name in keys else keys.setdefault(name, vendor_key(name))
+        out.append(Bill("AP Coder", invoice_id, key, name, number, norm_invoice_number(number), date, round(total, 2),
+                        currency, bool(batch)))  # fmt: skip
     for r in store.erp_register_rows("total > 0"):
         out.append(Bill("ERP", None, r["vendor_key"], r["vendor_name"], r["invoice_number"], r["number_key"],
                         r["invoice_date"] or "", round(r["total"], 2), copies=int(r.get("copies") or 1)))  # fmt: skip
@@ -229,7 +231,8 @@ def find(store: Store) -> list[Pair]:
     for bill in all_bills:
         if bill.copies > 1:  # the same bill entered more than once in the ERP: one register row, paired with itself
             add(EXACT, bill, bill)
-    for group in by_vendor_amount.values():
+    vendor_groups = [group for group in by_vendor_amount.values() if len(group) > 1]  # (one bill: no pair)
+    for group in vendor_groups:
         for i, j in _number_pairs(group):
             a, b = group[i], group[j]
             if a.number_key == b.number_key:
@@ -237,9 +240,9 @@ def find(store: Store) -> list[Pair]:
             elif (apart := days(a, b)) is None or apart <= TYPO_DAYS:  # monthly bills 1001, 1002... are not typos
                 add(NUMBER_TYPO, a, b)
     for group in by_number_amount.values():
-        for i, j in _other_vendor_pairs(group):
+        for i, j in _other_vendor_pairs(group) if len(group) > 1 else ():
             add(OTHER_VENDOR, group[i], group[j])
-    for group in by_vendor_amount.values():
+    for group in vendor_groups:
         for i, j in _close_pairs(group, dated, SAME_AMOUNT_DAYS):
             if group[i].number_key != group[j].number_key:
                 add(SAME_AMOUNT, group[i], group[j])
