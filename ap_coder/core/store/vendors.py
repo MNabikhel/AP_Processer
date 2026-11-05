@@ -29,7 +29,7 @@ from .summary import fetch_rows
 _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
 
 # Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
-# most VENDOR_ROWS_KEPT rows in all (about 14 MB) and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is
+# most VENDOR_ROWS_KEPT rows in all (about 20 MB) and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is
 # asked for, most with no invoices), the rows held counted as they are kept and dropped.
 VENDOR_ROWS_KEPT = 20_000
 VENDOR_KEYS_KEPT = 4_096

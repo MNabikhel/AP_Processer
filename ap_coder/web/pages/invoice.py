@@ -645,7 +645,7 @@ def vendor_list(store: Store) -> VendorList:
     """The vendor list (``vendor_options``) as JSON, gzipped, with its version, its count and an index of it: worked
     out once per change of it in each process (``summary_memo``: ``changes/vendors``; without a vendor master the
     vendors approved before are in it too, the ``approved_vendors`` topic). 20,000 vendors: 3 MB of JSON, 0.4 MB
-    gzipped, ~0.6 s to build. Shared: read it, don't change it."""
+    gzipped, about 0.8 s to build and 21 MB kept. Shared: read it, don't change it."""
     master = store.has_vendor_master()
     return store.summary_memo("vendor_list", lambda: _vendor_list(store), "" if master else "approved_vendors",
                               changes="vendors", asked=master)  # fmt: skip

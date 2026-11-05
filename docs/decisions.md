@@ -705,3 +705,71 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **The uses** (what is kept, its stamp, its memory, measured) come in the next commits of phase 2 part 2.
   - (`core/store/summary.py`, `core/store/backups.py`; `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`,
     `tests/erp/test_invoice_summary.py`)
+- **D-160** · **The review screen made light: the vendor list fetched and kept, page pictures drawn once for all
+  workers, a reader poll of a few bytes, each vendor's invoices kept** (scale goal, phase 2 part 2; rebuilt from
+  `docs/archive/scale-2026-11/part2/`, its reviews' findings designed in).
+  - **Why:** on the 100k database the 19,000-vendor list was built again for every invoice opened and was 3.3 MB of
+    its 3.6 MB. Each web worker drew the page pictures it was asked for (35 ms, 125 ms at scale 2) into its own 96 MB.
+    The reader poll put its panel in again every 20 seconds. Every check read all of its vendor's invoices (430 ms
+    for a vendor of 7,812).
+  - **The vendor list:** `GET /review/vendors.json?v=<version>` (READ, as the screen; no bank details in it).
+    `invoice.vendor_list` keeps, per process and per vendor-list stamp (`summary_memo`, `changes/vendors`; without a
+    vendor master also the `approved_vendors` topic): the JSON, it gzipped, its version (its hash), its count, and the
+    first vendor of each vendor key and GST/HST business number. The page holds `#vendor-seed`: the address, whether
+    a master enforces it, the count, the vendors it names as it opens (the invoice's, the one whose GST/HST number it
+    shows) and what it looked up, so a vendor it doesn't name is known not to be in the list. An editable screen
+    fetches the list as it opens (a 30 s deadline); a read-only one doesn't. An open vendor list is drawn again when it
+    comes (`picker.refresh`); a vendor added on the screen is kept when it comes.
+    - **Before it comes** (review 2c item 2) the line under the vendor field says only what the seed knows: a vendor in
+      it, or one added here. Any other vendor is "Checking the vendor list…", in the plain tone.
+    - **A fetch that failed** (review 2c item 1: dropped, a 500, a 502/503, the deadline) is asked for again at the
+      next need (the list opened, the vendor typed, the line drawn again), at least 5 s after the last failure, 5 times
+      in all. Meanwhile, with a vendor master, the line says "Couldn't load the vendor list: the check on approval
+      still compares the vendor with it." It never says "Not in the vendor list", nor whose GST/HST number is printed;
+      without a master it says nothing. The list's "add as a new vendor" row waits for it; the fill from the list
+      waits once for a fetch under way, then fills from what is there.
+  - **Browser caching:** on a laptop, `private, max-age=31536000, immutable` while `v` is the list's version
+    (`no-cache` for another), with a weak ETag (304) and `Vary: Accept-Encoding`.
+    - **On the server B-1070 stands (decided):** every answer behind the login is `no-store`, the vendor list and the
+      page pictures included, so nothing of the company's stays in a shared computer's browser cache after logout.
+      Each editable screen fetches the list from the worker's memo: 350 KB gzipped and about 14 ms of CPU, on the
+      company network. Exempting them is one line in `identity._no_store`, a security decision, not a speed one.
+  - **Page pictures (server):** in `<data>/.cache/pages/<2>/`, named by the file's SHA-256, the page, the scale, the
+    DPI, the size cap and `DRAWING`. Written under a name of its own, then `os.replace`; on Windows retried, and left
+    when the same picture is there (B-1689's way). At most `PAGES_KEPT_BYTES` (1 GB), the oldest written removed first,
+    down to three quarters, never the newest; looked at as a worker writes its first picture there and after each
+    sixteenth of the cap. A full disk or a folder that can't be written draws each time. A worker keeps no picture in
+    memory there. The laptop is unchanged.
+    - **Room on the disk** (review 2c item 4): the cap counts the pictures, not the disk. No picture is written where
+      the disk's free space would fall under `backups.BACKUP_RESERVE` (512 MB), so the database and its backups keep
+      their room; the free space is read every 5 s at most (`ROOM_EVERY_SECONDS`), counted down by what was written
+      since. The picture is still served, drawn each time.
+  - **The reader poll:** the page's `data-tag` (`reader_tag`, what its panel shows); the poll sends `?seen=<tag>`.
+    While the panel is still that, the answer is `{state, poll, tag, same}`, without it, and nothing is drawn again.
+  - **Each vendor's invoices:** `Store.vendor_invoices` kept per process for the vendors asked most recently, its own
+    cache (not `summary_memo`): at most `VENDOR_ROWS_KEPT` (20,000 rows, about 20 MB) and `VENDOR_KEYS_KEPT` (4,096
+    vendors: review 2b item 4, each name typed is asked for, most with no invoices), with a running row total; a vendor
+    of more rows than the cap alone is not kept. Stamped by `summary_id` and `changes/vendor/<key>` (D-159's triggers;
+    a check's confidence is not listed). Read inside a write under way: afresh, not kept. Each caller gets rows of its
+    own. The rows no longer carry `adjusted_confidence`/`requires_review` (read by nothing).
+  - **Measured (100k database, read-only, the shared base d5c8013 → this; CPU of one process):**
+    - the page: 3.64 MB → 332 KB; the same invoice again 2,454 → 1,405 ms, four vendors in turn 2,419 → 1,335 ms.
+      Without the "Learned" hints (`_lesson_hints`, 1.1 s for the biggest vendor, below): 1,416 → 429 ms and
+      2,047 → 1,293 ms (in turn the rest is the suggestions' learning memory per vendor, `learning._past_memory`).
+    - the vendor list: 19,008 vendors, 3.03 MB of JSON, 351 KB gzipped, served in 14 ms (a 304: 5 ms); built in about
+      0.85 s once per change in each worker, about 21 MB kept; the seed 354 bytes.
+    - a check's two calls (`vendor_findings`, `expected_tax_numbers`): 428 → 34 ms for a vendor of 7,812, 158 → 31 ms
+      (4,196), 107 → 16 ms (2,872), 48 → 6 ms (1,227).
+    - a picture: drawn 35 ms (scale 1, 73 KB) and 126 ms (scale 2, 156 KB); read back from the shared folder 0.1 ms
+      (the route's own cost aside). A poll: 268 → 64 bytes, its CPU unchanged (17 ms; the first build found 9 ms of
+      it in `reading_status`).
+  - **Not done:** the "Learned" hints' `lessons_for` counts each lesson's approvals with two correlated subqueries
+    (1.9 M rows of `lesson_approvals` on the 100k database: 1.1 s for a vendor of 30 lessons); `reading_status` costs
+    9 ms on every page, queue and poll; a JD Edwards sync rewrites every vendor's `erp_bank`/`erp_hold`, which resets
+    the vendor list in every worker (phase 4); the pilot tester's page pictures (`pages/manager.py`) could use the
+    shared folder; once the 5 tries are used, only a reload fetches the vendor list again.
+  - (`web/pages/invoice.py`, `web/document.py`, `web/roles.py`, `web/static/js/invoice.js`, `picker.js`,
+    `templates/invoice.html`, `_invoice_document.html`, `core/store/vendors.py`, `bench/load.py`;
+    `tests/web/test_web_invoice.py`, `test_web_picker.py`, `test_web_document.py`, `test_server_web.py`,
+    `test_server_security.py`, `test_roles.py`, `tests/core/test_kept_answers.py`, `test_store_perf.py`,
+    `tests/bench/test_bench_load.py`)
