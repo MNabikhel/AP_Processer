@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from typing import Any
 
 from ..memory import vendor_key
@@ -546,3 +547,33 @@ class VendorsMixin:
                     (key,),
                 )
             ]
+
+    @staticmethod
+    def _merge_vendor_rows(conn: sqlite3.Connection, old: str, key: str) -> None:
+        """The vendor list row under ``old`` folded into the one under ``key`` (the same vendor under today's rules),
+        then removed: on hold if either is (a row left under a key no invoice gives any more would quietly lift the
+        hold), both rows' notes kept, a field blank in one filled from the other."""
+        kept = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        gone = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (old,)).fetchone()
+        if kept is None or gone is None:
+            return
+        values: dict[str, Any] = {}
+        for column in kept.keys():
+            if column in ("vendor_key", "updated_at"):
+                continue
+            a, b = kept[column], gone[column]
+            if column == "status":
+                values[column] = "on_hold" if "on_hold" in (a, b) else a
+            elif column == "notes":
+                values[column] = "; ".join(dict.fromkeys(n for n in (a, b) if n))
+            elif column == "in_master":
+                values[column] = max(a or 0, b or 0)
+            else:
+                values[column] = a if a not in (None, "") else b
+        assignments = ", ".join(f"{column} = ?" for column in values)
+        conn.execute(f"UPDATE vendors SET {assignments}, updated_at = ? WHERE vendor_key = ?",
+                     (*values.values(), _now(), key))  # fmt: skip
+        conn.execute("DELETE FROM vendors WHERE vendor_key = ?", (old,))
+        from .accounts import count_masters_change
+
+        count_masters_change(conn)
