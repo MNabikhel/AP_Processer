@@ -85,14 +85,17 @@ _FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[st
 _FEEDBACK_LOCK = threading.Lock()
 # The learning memory's part of ``Store.metrics`` as last counted, per database: (its stamp, the counts).
 _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+# What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
+# latest used last (``Store.vendor_lessons``).
+_VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
 
 
 def _forget_learning(path: Path) -> None:
-    """The learning memory kept for this database (``feedback_rows``, ``metrics``) dropped: an upgrade changed lessons
-    in place, which the stamps (lessons are otherwise only added or removed) don't see."""
+    """The learning memory kept for this database (``feedback_rows``, ``metrics``, ``vendor_lessons``) dropped: an
+    upgrade changed lessons in place, which the stamps (lessons are otherwise only added or removed) don't see."""
     key = str(path.resolve())
     with _FEEDBACK_LOCK:
-        for kept in (_FEEDBACK, _METRICS):
+        for kept in (_FEEDBACK, _METRICS, _VENDOR_LESSONS):
             for k in [k for k in kept if (k[0] if isinstance(k, tuple) else k) == key]:
                 kept.pop(k, None)
 

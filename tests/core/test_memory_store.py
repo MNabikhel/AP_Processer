@@ -411,3 +411,153 @@ def test_suggest_and_the_history_check_follow_one_rule(ground_truth, reference):
         coded = top.auto and top.gl_code == "6020"
         warned = _laptop(rows, ground_truth, "6020")["status"] == "conflict"
         assert coded == (before < UNCONFIRMED_REVERSAL) and warned == (not coded), before
+
+
+# --- The whole memory kept: refreshed with only the lessons added, read once at a time ---------------------------
+
+
+def _full_read(store, limit):
+    from ap_coder.core.store.summary import fetch_rows
+
+    with store._conn() as conn:
+        return fetch_rows(conn, "SELECT * FROM feedback ORDER BY outcome = 'history', id DESC LIMIT ?", (limit,))
+
+
+def test_the_memory_refreshed_with_the_lessons_added_is_the_memory_read_again(tmp_path, ground_truth, monkeypatch):
+    # The memory kept is refreshed with only the lessons added since (id > the newest kept): it must be what reading
+    # it all again gives, after approvals, history imports, a line forgotten, history forgotten and lessons changed
+    # by an upgrade, with the read cap reached (reviewer decisions first, then history) and without.
+    from ap_coder.core.store import _base, learning
+
+    store = Store(tmp_path / "ap.db")
+    reads = []
+    real = learning.fetch_rows
+
+    def spy(conn, sql, params=()):
+        reads.append(sql)
+        return real(conn, sql, params)
+
+    monkeypatch.setattr(learning, "fetch_rows", spy)
+
+    def history(n, start):
+        store.import_history([{"vendor_name": f"Freight {i}", "description": f"Freight lot {i}", "gl_code": "5100",
+                               "amount": 10.0, "date": "2025-06-01"} for i in range(start, start + n)])  # fmt: skip
+
+    def approve():
+        inv = store.add_invoice(tmp_path / "x.pdf", ground_truth, {"requires_review": True})
+        store.approve_invoice(inv, copy.deepcopy(ground_truth), reviewer="ap.clerk")
+        return inv
+
+    def same(how):
+        del reads[:]
+        for limit in (None, 7, 12):
+            got = store.feedback_rows(limit=limit)
+            assert got == _full_read(store, limit or learning.FEEDBACK_READ), (how, limit)
+        return list(reads)
+
+    history(4, 0)
+    first = approve()
+    same("first read")
+    history(1, 10)
+    approve()
+    read = same("history and an approval added")
+    assert len(read) == 3 and all(" WHERE id > ?" in sql for sql in read)  # only the new ones read
+    approve()
+    history(9, 20)  # more history than the smaller caps hold
+    same("added past the cap")
+    store.delete_feedback([store.feedback_rows()[3]["id"]])
+    assert not any(" WHERE id > ?" in sql for sql in same("a line forgotten"))  # read all again
+    approve()
+    store.delete_invoice(first, forget_lessons=True)
+    history(2, 40)
+    same("an invoice's lessons forgotten, then more added")
+    store.forget_history()
+    same("history forgotten")
+    history(5, 50)
+    with store._conn() as conn:  # an upgrade changes lessons in place, and drops what is kept
+        conn.execute("UPDATE feedback SET final_gl = '6999' WHERE outcome = 'history'")
+    _base._forget_learning(store.path)
+    same("changed by an upgrade")
+    approve()
+    assert same("added once more") and store.feedback_rows() == _full_read(store, 50_000)
+
+
+def test_the_memory_is_read_by_one_page_at_a_time(tmp_path, monkeypatch):
+    # Under load every page that found the memory out of date read its own copy at once (50,000 lessons, 130 MB
+    # each): one reads it, the others wait for it and share it.
+    import threading
+    import time
+
+    from ap_coder.core.store import learning
+
+    store = Store(tmp_path / "ap.db")
+    store.import_history([{"vendor_name": "Freight", "description": f"Freight lot {i}", "gl_code": "5100",
+                           "amount": 10.0, "date": "2025-06-01"} for i in range(5)])  # fmt: skip
+    reads = []
+    real = learning.fetch_rows
+
+    def slow(conn, sql, params=()):
+        reads.append(sql)
+        time.sleep(0.3)
+        return real(conn, sql, params)
+
+    monkeypatch.setattr(learning, "fetch_rows", slow)
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(store.feedback_rows())) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(reads) == 1 and len(got) == 4 and all(g is got[0] for g in got)
+
+
+def test_a_vendors_lessons_are_worked_out_once_until_one_of_them_changes(tmp_path, ground_truth, monkeypatch):
+    # The review screen and every check of its edits read the vendor's lessons (the history check, "Used for this
+    # vendor", the usual cost center): up to 50,000 for the biggest vendor. Worked out once and kept until one of this
+    # vendor's lessons is added or removed, they say what its lessons read again say.
+    from ap_coder.core.memory import _aggregate
+    from ap_coder.core.store import learning
+
+    store = Store(tmp_path / "ap.db")
+    vendor = ground_truth["vendor_name"]
+    reads = []
+    real = learning.fetch_rows
+
+    def spy(conn, sql, params=()):
+        if sql.startswith("SELECT " + learning._VENDOR_COLUMNS):  # (not the feedback_rows below)
+            reads.append(sql)
+        return real(conn, sql, params)
+
+    def expected():
+        rows = store.feedback_rows(vendor_name=vendor)
+        counts = {}
+        for r in rows:
+            if r["final_gl"] and r["final_gl"] != "UNASSIGNED":
+                counts[r["final_gl"]] = counts.get(r["final_gl"], 0) + 1
+        return ([vars(p) for p in _aggregate(rows)], sorted(counts, key=lambda c: -counts[c]),
+                {r["final_cc"] or "" for r in rows})  # fmt: skip
+
+    def same():
+        got = store.vendor_lessons(vendor)
+        assert ([vars(p) for p in got.patterns], got.accounts, set(got.cost_centers)) == expected()
+        return got
+
+    monkeypatch.setattr(learning, "fetch_rows", spy)
+    assert store.vendor_lessons(vendor).patterns == [] and not reads  # no lesson: nothing read
+    inv = store.add_invoice(tmp_path / "x.pdf", ground_truth, {"requires_review": True})
+    final = copy.deepcopy(ground_truth)
+    final["line_items"][1]["predicted_gl_code"] = "6010"
+    store.approve_invoice(inv, final, reviewer="ap.clerk")
+    first = same()
+    del reads[:]
+    assert store.vendor_lessons(vendor) is first and not reads  # kept: nothing read again
+    store.import_history([{"vendor_name": "Someone Else", "description": "Freight", "gl_code": "5100",
+                           "amount": 1.0, "date": "2025-06-01"}])  # fmt: skip
+    assert store.vendor_lessons(vendor) is first and not reads  # another vendor's lesson changes nothing here
+    store.import_history([{"vendor_name": vendor, "description": "Toner cartridges", "gl_code": "6300",
+                           "amount": 1.0, "date": "2025-06-01"}])  # fmt: skip
+    assert same() is not first and len(reads) == 1  # one of its own: worked out again
+    store.delete_feedback([store.feedback_rows(vendor_name=vendor)[0]["id"]])
+    same()
+    store.delete_invoice(inv, forget_lessons=True)
+    assert same().accounts == ["6300"]
