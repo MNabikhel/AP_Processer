@@ -183,14 +183,15 @@ def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
     return todo, already
 
 
-def still_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
+def still_new(store: Store, files: list[Path], include_failed: bool = False) -> tuple[list[Path], list[Path]]:
     """(the files still to read, the ones stored since they were listed): checked again once the import holds the
     pick-up lock, as another pick-up (a scheduled watch) may have stored them meanwhile (B-1587). A file gone or
-    locked meanwhile (a picture the other one made a PDF of) is in neither: the next pick-up sees it if it is there."""
+    locked meanwhile (a picture the other one made a PDF of) is in neither: the next pick-up sees it if it is there.
+    ``include_failed``: a failed read counts as stored, as the folder pick-up lists them (B-1673; Retry reads one)."""
     todo, stored = [], []
     for path in files:
         try:
-            (stored if store.find_by_hash(path) is not None else todo).append(path)
+            (stored if store.find_by_hash(path, include_failed) is not None else todo).append(path)
         except OSError:
             continue
     return todo, stored
@@ -602,7 +603,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
             lock.close()
 
     def read(job: Job) -> dict[str, Any]:
-        todo, stored = still_new(store, paths)  # listed before the lock: one stored since by another is not read
+        # Listed before the lock: one stored since by another is not read; by the folder pick-up, nor one that failed.
+        todo, stored = still_new(store, paths, include_failed=folder_emails)
         skipped, mails = [*(already or []), *stored], list(emails or [])
         if folder_emails:
             unpacked = unpack_folder(invoice_dir(store))
