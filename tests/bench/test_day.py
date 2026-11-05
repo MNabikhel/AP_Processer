@@ -96,9 +96,12 @@ def test_a_tiny_server_day_reads_every_invoice_and_reports_it(tmp_path, capsys):
                  "1", "--out", str(out), "--timeout", "8", "--self-test-minutes", "3"])  # fmt: skip
     report = json.loads((out / "report.json").read_text(encoding="utf-8"))
     r = report["results"]
-    log = (out / "server.log").read_text(encoding="utf-8", errors="replace") if (out / "server.log").is_file() else ""
-    # On a failure, the server's own words (its last lines) say why, on a CI machine nobody can log in to.
-    assert code == 0 and not report["timed_out"] and not report["problem"], (report["problem"], log[-4000:])
+    # On a failure, the server's own words say why, on a CI machine nobody can log in to: printed whole (pytest shows
+    # a failed test's output in full, while it shortens an assertion's message).
+    logs = [out / "server.log", *sorted((out / "server-logs").glob("*.log"))]
+    for path in (p for p in logs if p.is_file()):
+        print(f"--- {path.name}\n{path.read_text(encoding='utf-8', errors='replace')[-6000:]}")
+    assert code == 0 and not report["timed_out"] and not report["problem"], report["problem"]
     assert r["arrived"] == 4 and r["reads_open_at_end"] == 0 and r["reviews_open_at_end"] == 0
     # On a failure, say what went wrong (the failed imports, reads and reviews, with their errors), not only counts.
     assert r["reads_done"] + r["reads_skipped"] == r["reads_queued"] == 4 and r["reads_failed"] == 0, report["failures"]

@@ -154,6 +154,8 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     finally:
         server.stop()
         fake.stop()
+        if (data / "logs").is_dir():  # the server's own logs outlive the data folder: they say what went wrong
+            shutil.copytree(data / "logs", out / "server-logs", dirs_exist_ok=True)
         if not a.keep:
             shutil.rmtree(data, ignore_errors=True)
     report["config"].update({"latency": latency, "chat_latency": chat_latency, "llm_parallel": parallel})
