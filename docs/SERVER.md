@@ -273,7 +273,7 @@ host was ended. Settings can also come from environment variables, which win ove
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
 user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
 milliseconds (10 MB, then up to 9 older files); with several workers, one file per worker, `access-1.log`,
-`access-2.log`... Each download (a batch's files or ZIP, the directory's export, a
+`access-2.log`... And `D:\APCoderData\logs\background.log`: what the background process does, the work nobody waits on (it starts, the page reader's self-test, each invoice read, each AI review, JD Edwards; 5 MB, then up to 5 older files). Each download (a batch's files or ZIP, the directory's export, a
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 

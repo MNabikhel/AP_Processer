@@ -20,6 +20,8 @@ import contextlib
 import datetime as dt
 import errno
 import json
+import logging
+import logging.handlers
 import os
 import secrets
 import socket
@@ -488,6 +490,25 @@ class BackgroundWork:
             process.wait(5)
 
 
+BACKGROUND_LOG = "background.log"
+
+
+def background_log(folder: Path) -> logging.Handler:
+    """The background process's own log, ``logs/background.log`` beside the database (5 MB, then up to 5 older
+    files): the page reader, the AI reviewer, JD Edwards and the backup say there what they do (INFO and up), so IT
+    can see the work nobody waits on, and a failure leaves a trace. Warnings still reach the server's window too."""
+    folder.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(folder / BACKGROUND_LOG, maxBytes=5_000_000, backupCount=5,
+                                                   encoding="utf-8")  # fmt: skip
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setLevel(logging.INFO)
+    log = logging.getLogger("ap_coder")
+    log.addHandler(handler)
+    if log.level == logging.NOTSET or log.level > logging.INFO:
+        log.setLevel(logging.INFO)
+    return handler
+
+
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
     the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its input
@@ -502,10 +523,16 @@ def run_background(store: Store) -> int:
         halt.set()
 
     threading.Thread(target=until_input_closes, name="ap-coder-background-input", daemon=True).start()
-    lock = None
+    background_log(store.path.parent / "logs")
+    log = logging.getLogger("ap_coder.background")
+    log.info("background process %s started for %s", os.getpid(), store.path)
+    lock, waited = None, False
     while lock is None and not halt.is_set():
         lock = paths.try_lock(store.path.parent / ".ap_coder_background.lock")
         if lock is None:
+            if not waited:
+                log.info("waiting for another background process of this data folder to end (its lock is held)")
+            waited = True
             halt.wait(5.0)
     if lock is None:
         return 0
@@ -514,6 +541,7 @@ def run_background(store: Store) -> int:
     backup, hub = DailyBackup(store), HubSchedule(store)
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
+    log.info("background work running: the page reader, the AI reviewer, the Azure check and JD Edwards")
     try:
         while not halt.wait(30.0):
             backup.check()

@@ -683,3 +683,23 @@ def test_the_background_work_stops_while_the_workers_do_not_after_them():
     assert not stopped.wait(0.2)
     asked.set()
     assert stopped.wait(2)
+
+
+def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_database(tmp_path):
+    """The page reader, the AI reviewer and JD Edwards log at INFO, and the background process had no handler, so
+    nothing they did reached any file: a page reader that never ran (Windows CI) left no trace, for IT either."""
+    import logging
+
+    from ap_coder.web import server
+
+    handler = server.background_log(tmp_path / "logs")
+    try:
+        logging.getLogger("ap_coder.ai.page_worker").info("page reader: invoice 7 read (2 page(s), 9 s)")
+        logging.getLogger("other.library").info("not ours")
+        handler.flush()
+        text = (tmp_path / "logs" / server.BACKGROUND_LOG).read_text(encoding="utf-8")
+        assert "page reader: invoice 7 read" in text and "INFO ap_coder.ai.page_worker" in text
+        assert "not ours" not in text
+    finally:
+        logging.getLogger("ap_coder").removeHandler(handler)
+        handler.close()
