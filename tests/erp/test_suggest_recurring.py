@@ -104,6 +104,8 @@ def test_the_recurring_vendors_follow_their_invoices_and_settle_for_a_minute_und
     september = bill("2026-09-01")
     clock[0] += recurring.SETTLE_SECONDS - 1
     assert last() == [("Hydro Power", "2026-08-01")]  # changed, worked out under a minute ago: settled
+    unsettled = recurring.detected(store, today=dt.date(2026, 10, 3), settle=0)  # (Month-end's CSV)
+    assert [r.last_date.isoformat() for r in unsettled] == ["2026-09-01"]
     assert last(dt.date(2026, 10, 4)) == [("Hydro Power", "2026-09-01")]  # (another day: afresh)
     clock[0] += 1
     assert last() == [("Hydro Power", "2026-09-01")]

@@ -284,11 +284,11 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
 
 
 def _expected_recurring(store: Store, period_end: dt.date, received: list[Accrual],
-                        left_out: list[Accrual] | None = None) -> list[Accrual]:  # fmt: skip
+                        left_out: list[Accrual] | None = None, settle: float = 0.0) -> list[Accrual]:  # fmt: skip
     # A vendor's received, not invoiced PO lines (``received``) are what its next invoice bills: accrued once, on them.
     on_po = {vendor_key(a.vendor) for a in received}
     out = []
-    for r in recurring.detected(store, today=period_end):
+    for r in recurring.detected(store, today=period_end, settle=settle):
         if r.next_date > period_end:
             continue
         if r.vendor_key in on_po:
@@ -339,7 +339,7 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
                                         store.tax_treatments()), settle=settle)  # fmt: skip
     if undated is not None:
         undated.extend(no_date)
-    expected = _expected_recurring(store, period_end, received, left_out)
+    expected = _expected_recurring(store, period_end, received, left_out, settle)
     return received + found + expected
 
 

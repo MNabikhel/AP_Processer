@@ -102,11 +102,11 @@ def detect(rows: list[dict[str, Any]], today: dt.date | None = None) -> list[Rec
     return sorted(found, key=lambda r: (order[r.status], r.next_date))
 
 
-def detected(store: Any, today: dt.date | None = None) -> list[Recurring]:
+def detected(store: Any, today: dt.date | None = None, settle: float = SETTLE_SECONDS) -> list[Recurring]:
     """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice's vendor,
-    date or total changed (``Store.summary_memo``, D-110), and under a stream of changes at most every
-    ``SETTLE_SECONDS`` (D-166): the queue, Vendors and Month-end show it on every visit, nothing decides with it.
-    Shared: don't change it."""
+    date or total changed (``Store.summary_memo``, D-110), and under a stream of changes at most every ``settle``
+    seconds (D-166): the queue, Vendors and the Month-end page show it on every visit, nothing decides with it
+    (Month-end's CSV asks it with none). Shared: don't change it."""
     today = today or dt.date.today()
     return store.summary_memo(f"recurring/{today.isoformat()}", lambda: detect(store.vendor_invoice_dates(), today),
-                              "dates", settle=SETTLE_SECONDS)  # fmt: skip
+                              "dates", settle=settle)  # fmt: skip
