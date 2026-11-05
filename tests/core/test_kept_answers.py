@@ -362,3 +362,38 @@ def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and
     mine = store.approved_numbers([key])
     mine[key].append(("changed", "by the caller"))
     assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+
+
+def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_elsewhere_and_are_the_callers_own(
+    tmp_path,
+):
+    """``suggest_gl``'s answers, kept with the memory and the reference data they came from (``_Memory.said``): a
+    lesson added through another Store is a new memory, a GL account's description changed by plain SQL new
+    reference data (the accounts named the same: the same memory); each caller gets copies."""
+    from ap_coder.ai.suggest import suggest_gl
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    accounts = [{"code": "6000", "description": "Office supplies", "category": "Opex"},
+                {"code": "6230", "description": "Cleaning supplies", "category": "Opex"}]  # fmt: skip
+    store.save_accounts("gl_accounts", accounts)
+    lesson = {"vendor_name": "Acme", "description": "Nitrile gloves", "gl_code": "6000", "amount": 1.0,
+              "date": "2025-01-01"}  # fmt: skip
+    store.import_history([lesson])
+
+    def asked(line: str) -> list[tuple[str, str]]:
+        found = suggest_gl(line, "Acme", store.learning_rows("Acme"), store.reference_data())
+        return [(s.gl_code, s.reasons[0]) for s in found]
+
+    gloves = asked("Nitrile gloves")
+    assert gloves == [("6000", "coded this way 1 time for similar lines from this vendor")]
+    mine = suggest_gl("Nitrile gloves", "Acme", store.learning_rows("Acme"), store.reference_data())
+    mine[0].reasons.insert(0, "changed by the caller")
+    mine[0].gl_code = "9999"
+    assert asked("Nitrile gloves") == gloves and asked("Disinfectant 4 L") == []
+    other.import_history([{**lesson, "gl_code": "6230", "date": "2025-02-01"}])  # AP coded it otherwise since
+    assert asked("Nitrile gloves")[0] == ("6230", "coded this way 1 time for similar lines from this vendor")
+    assert asked("Disinfectant 4 L") == []  # (asked of this memory, before the account's description changes)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE gl_accounts SET description = 'Cleaning supplies, disinfectant' WHERE code = '6230'")
+    assert asked("Disinfectant 4 L") == [("6230", "account description mentions “disinfectant”")]

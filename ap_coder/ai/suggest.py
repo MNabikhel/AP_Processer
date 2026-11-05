@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 import threading
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.memory import (
@@ -125,6 +125,13 @@ class _Memory:
     index: Index
     usual: dict[str, Counter[str]]  # vendor key -> {account: different lines coded to it}
     newest: dict[str, int]  # vendor key -> rank of its latest decision
+    # ``suggest_gl``'s answers from this memory: (line, vendor key, limit, default) -> (the reference data, the
+    # suggestions), the latest used last
+    said: dict[tuple[str, str, int, str], tuple[ReferenceData, list[Suggestion]]] = field(default_factory=dict)
+
+
+SAID_KEPT = 1024  # lines whose suggestions each memory keeps
+_SAID_LOCK = threading.Lock()
 
 
 _MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
@@ -313,12 +320,34 @@ def suggest_gl(
 ) -> list[Suggestion]:
     """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()`` (newest
     first); ``default_gl`` is the vendor master's default account for this vendor, if any. Never a tax account or
-    an account that is not in the chart of accounts."""
+    an account that is not in the chart of accounts. Worked out once for the same line, vendor and default, kept with
+    the memory and the reference data they came from (``_Memory.said``, ``SAID_KEPT`` lines, D-159): every check of
+    the review screen asks it again of each line. Each caller gets copies."""
     line = keys(description)
     if not line and not tokens(description) and not default_gl:
         return []
     tax_gls = reference.tax.tax_gl_codes()
     valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
+    memory = _memory(feedback, valid)
+    asked = (description, key, limit, default_gl)
+    with _SAID_LOCK:
+        kept = memory.said.pop(asked, None)
+        if kept is not None and kept[0] is reference:
+            memory.said[asked] = kept  # the latest used, kept the longest
+    if kept is None or kept[0] is not reference:
+        kept = (reference, _suggested(description, line, key, memory, reference, valid, limit, default_gl))
+        with _SAID_LOCK:
+            memory.said.pop(asked, None)
+            memory.said[asked] = kept
+            while len(memory.said) > SAID_KEPT:
+                del memory.said[next(iter(memory.said))]
+    return [replace(s, reasons=list(s.reasons)) for s in kept[1]]
+
+
+def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory, reference: ReferenceData,
+               valid: frozenset[str], limit: int, default_gl: str) -> list[Suggestion]:  # fmt: skip
+    """``suggest_gl`` worked out."""
     found: dict[str, Suggestion] = {}
     strong: dict[str, int] = {}  # account -> the highest priority of a source strong enough to code with it
 
@@ -338,8 +367,6 @@ def suggest_gl(
         if auto:
             strong[gl] = max(strong.get(gl, -1), PRIORITY[source])
 
-    key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
-    memory = _memory(feedback, valid)
     if default_gl:
         add(default_gl, 0.5, "the vendor's default GL account in the vendor master", "master")
     mine, others = _similar_lines(line, key, memory)
