@@ -369,6 +369,28 @@ def test_the_import_page_reads_no_file_of_the_invoices_folder(app, client, store
     assert "No new files" in client.get("/process").text  # each as the pick-up read it
 
 
+def test_a_scan_written_over_another_of_its_name_is_listed_as_new_within_a_minute(app, client, store, monkeypatch):
+    """The list was kept until the folder, a pick-up's notes or the invoices changed: a scanner writing a new scan
+    over an old one's name changes none of them (the folder's time is that of a name added, removed or renamed), and
+    the new scan was never listed. The list is also worked out again after LISTED_SECONDS."""
+    from ap_coder.web.pages import process
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    scan = folder / "scan.pdf"
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", scan)
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1
+    before = os.stat(folder).st_mtime_ns - 10_000_000_000  # (the folder last changed 10 s ago: its list is kept)
+    os.utime(folder, ns=(before, before))
+    assert "No new files" in client.get("/process").text
+    scan.write_bytes((SAMPLES / f"{STEM}.pdf").read_bytes())  # the next scan, written over the last one
+    os.utime(folder, ns=(before, before))
+    assert "No new files" in client.get("/process").text  # (kept a while)
+    monkeypatch.setattr(process, "LISTED_SECONDS", 0.0)  # a minute later
+    assert "scan.pdf" in client.get("/process").text
+
+
 def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, store):
     """B-1633: a database from before has no record of what the pick-up read: its invoices' own files count as read
     (once, when this version opens it), so none is listed as new."""
