@@ -364,10 +364,10 @@ class BackupsMixin:
         """The summary's triggers in the restore's own copy of a backup (``_local_copy``, checked) made again as this
         version makes them (``summary.make_triggers``), before the copy goes into the database: the SQL the backup
         gave them never runs here. Raises ValueError when one of them cannot be made (its table is not there).
-        The copy is in the database minutes before its migration (the data folder's files are copied first), and the
-        web workers answer meanwhile: it gets the counts' triggers its tables allow (an older backup may have none),
-        so another worker's change is counted, and a new ``summary_id``, so nothing kept on the database as it was is
-        taken, though a count comes back to a number kept then (B-1720). The migration gives it another."""
+        The copy is the database for minutes before it is migrated (the data folder's files are copied first), the web
+        workers answering meanwhile. So it gets the counts' triggers its tables allow (an older backup may have none):
+        another worker's change is counted; and a new ``summary_id``: nothing kept on the database as it was is taken
+        when a count comes back to a number kept then (B-1720). The migration gives it another."""
         conn = sqlite3.connect(path)
         try:
             make_triggers(conn, missing=False, counts=True)
