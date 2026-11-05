@@ -38,7 +38,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 | # | Target | Baseline | Now |
 |---|---|---|---|
 | 1 | 100 simulated people on 4 cores, 300k invoices (here 100k): pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions p95 ≤ 1 s; 0 errors, 0 "database is locked"; memory flat for an hour (stretch: 200 people) | **Not met.** Pages p50 5.1 s, p95 67 s, p99 105 s; actions p95 116 s; 345 requests with no answer; 10 "database is locked"; web workers grew to 3.2–5.5 GB each and were killed for memory (9 workers started to keep 4) | |
-| 2 | One person, 300k invoices: every page ≤ 300 ms; reports and exports ≤ 3 s or a job; no full scans on hot paths | phase 0 | |
+| 2 | One person, 300k invoices (here 100k): every page ≤ 300 ms; reports and exports ≤ 3 s or a job; no full scans on hot paths | **Not met.** 165 addresses as Admin and Clerk: 43 over target, 45 full scans of big tables, 0 errors. Pages: median 60 ms, but 24 of 108 over 300 ms (Activity 12–20 s, Learning → Suppliers 8 s, Import invoices 6–8 s, Settings → Automation 4.7 s, an invoice 0.7 s with 689 statements). Reports and exports: Spend workbook 251 s, Month-end 202 s and its accruals CSV 195 s, Report a problem 22 s, the controls report 17 s, the duplicates CSV 14 s, search to Excel 8.6 s | |
 | 3 | 1,250 invoices (half scans) dropped at once: read the same day, web p95 unchanged; the model machine killed, hung or swapped: nothing lost or doubled, failover in under a minute | phase 0 | |
 | 4 | JD Edwards (stand-in): sync of 30k suppliers and 600k vouchers, then only the changes; 500 vouchers in one run; the duplicate check right beside a 20k-voucher supplier; fiscal periods | phase 0 | |
 | 5 | macOS service proven in CI; readiness check; updates under 5 minutes of downtime; backups pruned, with a free-space check | — | |
@@ -66,4 +66,12 @@ Every number here was measured, with the machine, the command and the date. Esti
 
     - **Login and its code step** took up to 33–45 s at p95, and 4 logins were refused (500s).
     - **The full report:** [archive/scale-2026-11/baseline-load-100-people.md](archive/scale-2026-11/baseline-load-100-people.md).
+    - **Caution:** the phase 0 review found the load harness left timeouts and the requests cut off at the end out of
+      its percentiles, and overstated the per-minute rate. This baseline is re-measured with the corrected harness,
+      and these figures will be replaced.
+  - **The volume baseline at 100k, one person:**
+    - [archive/scale-2026-11/baseline-volume-100k.md](archive/scale-2026-11/baseline-volume-100k.md), in the target 2 row
+      above;
+    - measured with phase 1's agents on the same 4 cores, so it's on the slow side (the reports take minutes, so noise
+      doesn't change what is over target).
   - **The first target for phase 2:** a web worker's memory on a big database.
