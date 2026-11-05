@@ -23,6 +23,7 @@ from ...coding.vendors import norm_invoice_number
 from ..memory import CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
 from ..reference_data import UNASSIGNED
+from .folder import add_register_keys, fill_seen_files
 from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unread_fx_text  # noqa: F401  (re-exported)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
@@ -624,16 +625,7 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
-        # The ERP register keeps its vendor names and invoice numbers as the quick search compares them, so a search
-        # reads only the rows it may find (schema 22, D-157; looked for whatever the version).
-        if columns and "plain_name" not in columns:
-            from ...erp.search import register_keys
-
-            conn.execute("ALTER TABLE erp_invoices ADD COLUMN plain_name TEXT NOT NULL DEFAULT ''")
-            conn.execute("ALTER TABLE erp_invoices ADD COLUMN raw_number TEXT NOT NULL DEFAULT ''")
-            rows = conn.execute("SELECT rowid, vendor_name, invoice_number FROM erp_invoices").fetchall()
-            conn.executemany("UPDATE erp_invoices SET plain_name = ?, raw_number = ? WHERE rowid = ?",
-                             [(*register_keys(r[1], r[2]), r[0]) for r in rows])  # fmt: skip
+        add_register_keys(conn, columns)  # the ERP register's search keys (schema 22, D-157; whatever the version)
         # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
         # amount), for what is left to expense on the review screen (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
@@ -706,12 +698,7 @@ class StoreCore:
         if missing:
             self._fill_tax_codes(conn)
         self._reading_as_d89(conn)
-        # What the pick-up read of the invoices folder's files (folder.py, D-155): to start with, each invoice's own
-        # file as it was processed (looked for whatever the version: once).
-        if not conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
-            conn.execute("INSERT OR IGNORE INTO seen_files (path, sha256) SELECT source_path, file_sha256 FROM "
-                         "invoices WHERE COALESCE(source_path, '') != '' AND file_sha256 IS NOT NULL")  # fmt: skip
-            conn.execute("INSERT INTO settings (key, value) VALUES ('seen_files', '1')")
+        fill_seen_files(conn)  # what the pick-up read of the folder: each invoice's own file to start with (D-155)
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "

@@ -72,3 +72,27 @@ class FolderMixin:
                 (json.dumps(listed),),
             ).fetchall()
         return {r[0] for r in rows}
+
+
+def fill_seen_files(conn: Any) -> None:
+    """An older database's start of ``seen_files``: each invoice's own file as it was processed, its size and time
+    unknown (so its place is trusted). Once, whatever the schema version (``_base._migrate``)."""
+    if conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
+        return
+    conn.execute("INSERT OR IGNORE INTO seen_files (path, sha256) SELECT source_path, file_sha256 FROM invoices "
+                 "WHERE COALESCE(source_path, '') != '' AND file_sha256 IS NOT NULL")  # fmt: skip
+    conn.execute("INSERT INTO settings (key, value) VALUES ('seen_files', '1')")
+
+
+def add_register_keys(conn: Any, columns: Any) -> None:
+    """The ERP register's vendor names and invoice numbers as the quick search compares them (schema 22, D-157), for
+    a register made before them: looked for whatever the version (``columns``: the table's, empty when it has none)."""
+    if not columns or "plain_name" in columns:
+        return
+    from ...erp.search import register_keys
+
+    conn.execute("ALTER TABLE erp_invoices ADD COLUMN plain_name TEXT NOT NULL DEFAULT ''")
+    conn.execute("ALTER TABLE erp_invoices ADD COLUMN raw_number TEXT NOT NULL DEFAULT ''")
+    rows = conn.execute("SELECT rowid, vendor_name, invoice_number FROM erp_invoices").fetchall()
+    conn.executemany("UPDATE erp_invoices SET plain_name = ?, raw_number = ? WHERE rowid = ?",
+                     [(*register_keys(r[1], r[2]), r[0]) for r in rows])  # fmt: skip
