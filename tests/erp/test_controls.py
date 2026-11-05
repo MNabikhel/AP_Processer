@@ -5,9 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ap_coder.core.store import APPROVED, Store
+from ap_coder.core.store import Store
 from ap_coder.core.store.fx import parse_fx_rates
 from ap_coder.erp import controls
+from tests import reports_reference as ref
 
 MISSING = object()  # a key not in the coding at all
 
@@ -49,14 +50,6 @@ def test_the_report_reads_the_currency_rates_once_not_once_an_invoice(tmp_path, 
     assert len(report["one_person"]) == 4 and len(read) == 1
 
 
-def _one_person_as_before(store: Store, first: str, last: str, limit: float, rates: dict[str, float]) -> list:
-    """``controls.one_person`` as it was: every approved invoice's coding decoded and checked (kept here only, to
-    compare with)."""
-    return [i for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
-            if not i["second_reviewer"] and first <= (i["reviewed_at"] or "") < last
-            and store.second_approval_reason(i["final_output"] or {}, limit, rates=rates)]  # fmt: skip
-
-
 def test_one_person_finds_what_checking_every_approved_coding_found(tmp_path):
     """The invoices over the approval limit approved by one person: SQLite leaves out the ones it can tell are under
     the limit, the rest are checked as before. The same invoices, whatever the currency (none, blank, lower case,
@@ -90,5 +83,5 @@ def test_one_person_finds_what_checking_every_approved_coding_found(tmp_path):
         for limit in (1000.0, 25000.0, 0.5):
             for first, last in periods:
                 found = controls.one_person(store, first, last, limit, rates)
-                assert found == _one_person_as_before(store, first, last, limit, rates), (text, limit, first)
+                assert found == ref.one_person(store, first, last, limit, rates), (text, limit, first)
     assert len(controls.one_person(store, "2026-01-01", "2027-01-01", 1000.0, parse_fx_rates("USD=1.37"))) > 50

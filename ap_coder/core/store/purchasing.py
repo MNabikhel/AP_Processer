@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 from ...coding.po import OPEN, po_key
@@ -18,6 +19,18 @@ from ._base import (
     _now,
 )
 from .summary import BIT, fetch_rows
+
+BILLING_BATCH = 500  # the codings ``billing_invoices`` reads at a time
+# Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
+# Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
+# null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
+_BILLING_FACTS = f"""
+WITH coded AS (SELECT id, COALESCE(NULLIF(final_output, ''), NULLIF(ai_output, ''), '{{}}') AS doc FROM invoices
+               WHERE {_in_list("id")}),
+read AS (SELECT id, doc, CASE WHEN NOT json_valid(doc) THEN 0 ELSE json_type(doc) = 'object' END AS ok FROM coded)
+SELECT json_group_array(CASE WHEN ok THEN json_array(id, json_extract(doc, '$.invoice_date', '$.line_items'), NULL)
+                             ELSE json_array(id, NULL, doc) END) FROM read
+"""
 
 
 class PurchasingMixin:
@@ -93,6 +106,50 @@ class PurchasingMixin:
                 dict(r) for r in conn.execute("SELECT * FROM po_lines WHERE po_key = ? ORDER BY line_number", (key,))
             ]
         return {**dict(head), "lines": lines, "total": round(sum(li["amount"] for li in lines), 2)}
+
+    def purchase_orders_by_key(self, keys: list[str]) -> dict[str, dict[str, Any]]:
+        """``purchase_order`` of each of ``keys`` that exists, by key: in two queries, not two a PO."""
+        listed = (json.dumps(list(keys)),)
+        with self._conn() as conn:
+            heads = {r["po_key"]: dict(r) for r in conn.execute(
+                f"SELECT * FROM purchase_orders WHERE {_in_list('po_key')}", listed)}  # fmt: skip
+            lines: dict[str, list[dict[str, Any]]] = {}
+            for r in conn.execute(f"SELECT * FROM po_lines WHERE {_in_list('po_key')} ORDER BY po_key, line_number",
+                                  listed):  # fmt: skip
+                lines.setdefault(r["po_key"], []).append(dict(r))
+        found = {}
+        for key in keys:
+            if key in heads:
+                rows = lines.get(key, [])
+                found[key] = {**heads[key], "lines": rows, "total": round(sum(li["amount"] for li in rows), 2)}
+        return found
+
+    def billing_invoices(self, po_keys: list[str], vendor_keys: list[str]) -> Iterator[dict[str, Any]]:
+        """The invoices ``po_invoices`` gives for each of ``po_keys`` and ``vendor_invoices_without_po`` for each of
+        ``vendor_keys``, by id, each once (with its ``po_key`` and ``vendor_key``), and of each coding only what
+        billing a PO reads (its invoice date and lines, read out by SQLite: the rest of it is not decoded); read from
+        the invoices' summary in one query, then a batch of codings at a time (the lines of every invoice of a
+        vendor are never held at once)."""
+        with self._conn() as conn:
+            self._summary_fresh(conn)
+            picked = fetch_rows(
+                conn,
+                "SELECT id, status, invoice_number, invoice_date, po_key, vendor_key FROM invoice_summary WHERE status "
+                f"IN {_ACTIVE_IN} AND ({_in_list('po_key')} OR (po_key = '' AND {_in_list('vendor_key')})) ORDER BY id",
+                (*ACTIVE_STATUSES, json.dumps(list(po_keys)), json.dumps([k for k in vendor_keys if k])),
+            )
+        for start in range(0, len(picked), BILLING_BATCH):
+            batch = picked[start : start + BILLING_BATCH]
+            with self._conn() as conn:
+                found = conn.execute(_BILLING_FACTS, (json.dumps([r["id"] for r in batch]),)).fetchone()[0]
+            read = {n: (facts, doc) for n, facts, doc in json.loads(found)}
+            for r in batch:
+                if r["id"] not in read:  # deleted since
+                    continue
+                facts, doc = read[r["id"]]
+                # Not an object of valid JSON: the coding read as it was, failing as it did.
+                coding = json.loads(doc) if facts is None else {"invoice_date": facts[0], "line_items": facts[1]}
+                yield {**r, "coding": coding}
 
     def purchase_orders(self) -> list[dict[str, Any]]:
         """Every PO with its total and how much has been invoiced against it (invoices in review included)."""
