@@ -751,3 +751,36 @@ def test_a_backup_that_would_fill_the_disk_is_not_started(tmp_path, monkeypatch)
         store.auto_backup()
     monkeypatch.setattr(backups.shutil, "disk_usage", real)
     assert store.backup_now("manual").exists() and store.get_setting(backups.BACKUP_STATUS) == ""
+
+
+def test_the_daily_backup_waits_for_its_hours_but_never_skips_a_day(tmp_path):
+    """The company server copies a 7-9 GB database once a day: started 20 hours after the last one, it drifted into
+    the working day, minutes of disk work under 300 people. With AP_BACKUP_HOURS (``backup_window``: "1-5", from 1
+    to 5 in the morning) it starts only then, unless the last one is more than a day and a bit old (the server was
+    off during those hours): then at once."""
+    import datetime as dt
+
+    from ap_coder.core.store.backups import backup_window
+
+    assert backup_window("1-5") == (1, 5) and backup_window("22-4") == (22, 4)
+    assert backup_window("") is None and backup_window("lunch") is None and backup_window("3-3") is None
+    store = Store(tmp_path / "ap.db")
+    made = store.auto_backup()
+    day = dt.datetime.fromtimestamp(made.stat().st_mtime)
+    afternoon = day.replace(hour=14) + dt.timedelta(days=1)
+    if afternoon - day < dt.timedelta(hours=21):
+        afternoon += dt.timedelta(days=1)
+    stamp = (afternoon - dt.timedelta(hours=25)).timestamp()
+    os.utime(made, (stamp, stamp))  # the last one 25 hours before a weekday afternoon
+    assert store.auto_backup(window=(1, 5), now=afternoon) is None  # outside its hours: it waits
+    assert store.auto_backup(window=(22, 4), now=afternoon) is None
+    night = afternoon.replace(hour=2) + dt.timedelta(days=1)
+    stamp = (night - dt.timedelta(hours=21)).timestamp()
+    os.utime(made, (stamp, stamp))
+    assert store.auto_backup(window=(1, 5), now=night) is not None  # in its hours, a day after the last
+    late = sorted(store.list_backups())[-1]
+    stamp = (afternoon - dt.timedelta(hours=31)).timestamp()
+    for backup in store.list_backups():
+        os.utime(backup, (stamp, stamp))
+    assert store.auto_backup(window=(1, 5), now=afternoon) is not None  # the hours were missed: not a day skipped
+    assert late.exists()
