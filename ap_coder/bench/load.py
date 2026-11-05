@@ -316,31 +316,33 @@ def _ready(url: str, deadline: float, proc: subprocess.Popen | None = None) -> b
 
 def start_model(host: str, latency: tuple[float, float], slots: int, log: Path) -> tuple[str, subprocess.Popen, str]:
     """The stand-in model server, in a process of its own (its CPU is not the harness's): ``FakeModel`` from
-    ap_coder/bench/fake_model.py when it is there, else scripts/ci/fake_lm_studio.py (on 127.0.0.1, no latency).
-    (url, process, which)."""
+    ap_coder/bench/fake_model.py when it is there and starts, else scripts/ci/fake_lm_studio.py (on 127.0.0.1, no
+    latency). (url, process, which)."""
     import importlib.util
 
     from ap_coder.core.paths import PROJECT_DIR
 
-    port = free_port()
-    out = log.open("w", encoding="utf-8")
+    script = PROJECT_DIR / "scripts" / "ci" / "fake_lm_studio.py"
+    tries = []
     if importlib.util.find_spec("ap_coder.bench.fake_model") is not None:
+        port = free_port()
         code = ("import sys\nfrom ap_coder.bench.fake_model import FakeModel\n"
                 f"m = FakeModel({host!r}, {port}, latency=({latency[0]!r}, {latency[1]!r}), slots={slots})\n"
                 "m.start()\nsys.stdin.read()\nm.stop()\n")  # fmt: skip
-        command = [sys.executable, "-c", code]
         which = f"ap_coder/bench/fake_model.py, {latency[0]:g}-{latency[1]:g} s an answer, {slots} at once"
-    else:
-        host = "127.0.0.1"
-        script = PROJECT_DIR / "scripts" / "ci" / "fake_lm_studio.py"
-        command = [sys.executable, str(script), "serve", "--port", str(port)]
-        which = "scripts/ci/fake_lm_studio.py (answers at once, no latency or slots)"
-    proc = subprocess.Popen(command, cwd=PROJECT_DIR, stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT)
-    url = f"http://{host}:{port}/v1"
-    if not _ready(f"{url}/models", time.monotonic() + 30, proc):
-        stop_process(proc)
-        raise RuntimeError(f"the stand-in model server ({which}) did not start: see {log}")
-    return url, proc, which
+        tries.append(([sys.executable, "-c", code], f"http://{host}:{port}/v1", which))
+    port = free_port()
+    tries.append(([sys.executable, str(script), "serve", "--port", str(port)], f"http://127.0.0.1:{port}/v1",
+                  "scripts/ci/fake_lm_studio.py (answers at once, no latency or slots)"))  # fmt: skip
+    with log.open("w", encoding="utf-8") as out:
+        for command, url, which in tries:
+            proc = subprocess.Popen(command, cwd=PROJECT_DIR, stdin=subprocess.PIPE, stdout=out,
+                                    stderr=subprocess.STDOUT)  # fmt: skip
+            if _ready(f"{url}/models", time.monotonic() + 30, proc):
+                return url, proc, which
+            stop_process(proc)
+            print(f"the stand-in model server ({which}) did not start: see {log}", file=sys.stderr)
+    raise RuntimeError(f"no stand-in model server started: see {log}")
 
 
 def stop_process(proc: subprocess.Popen, wait: float = 10) -> None:
@@ -1524,7 +1526,8 @@ def audit(db: Path, since: str, seed: int = 1) -> dict[str, Any]:
     return {"approved_twice": twice[:20], "final_approved_twice": final_twice[:20],
             "exported_twice": exported_twice[:20], "approved_without_event": unrecorded[:20],
             "summary_checked": len(ids), "summary_rows_differing": {t: n for t, n in summary.items() if n},
-            "logins_paused": paused[:20], "events": events, "statuses": statuses}  # fmt: skip
+            "logins_paused": paused[:20], "events": events, "statuses": statuses,
+            "page_reads_waiting": store.page_reads_waiting()}  # fmt: skip
 
 
 # --- The report, and the gate ---------------------------------------------------------------------------------------
@@ -1676,9 +1679,11 @@ def markdown(report: dict[str, Any]) -> str:
         out += [f"- Approved twice: {a['approved_twice'] or 'none'}; finally approved twice: "
                 f"{a['final_approved_twice'] or 'none'}; exported twice: {a['exported_twice'] or 'none'}.",
                 f"- Approved without an approval event: {a['approved_without_event'] or 'none'}.",
-                f"- Summary against a recomputation: {a['summary_rows_differing'] or 'the same'}.",
+                f"- Summary against a recomputation ({a['summary_checked']} invoices: every one the run touched, and a "
+                f"sample): {a['summary_rows_differing'] or 'the same'}.",
                 f"- Logins paused: {a['logins_paused'] or 'none'}.",
-                f"- Events in the run: {a['events']}; invoices now: {a['statuses']}."]  # fmt: skip
+                f"- Events in the run: {a['events']}; invoices now: {a['statuses']}; waiting for OvisOCR2 at the end: "
+                f"{a['page_reads_waiting']}."]  # fmt: skip
     out += ["", "## What people did", ""]
     out += [f"- {k}: {v}" for k, v in report["counts"].items()]
     out += [
