@@ -271,3 +271,94 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
     with sqlite3.connect(store.path) as conn:  # the count is again the one kept before the restore
         conn.execute("UPDATE vendors SET display_name = 'Acme restored'")
     assert kept()[0][1] == "Acme restored"
+
+
+# --- The uses (D-159's "What is kept"): each filled, changed through another Store or plain SQL, asked again -------
+
+
+def _master(conn, key: str, erp_id: str, gst: str, in_master: int = 1) -> None:
+    conn.execute("INSERT INTO vendors (vendor_key, display_name, erp_id, expected_gst, in_master, updated_at) VALUES "
+                 "(?, ?, ?, ?, ?, ?)", (key, key.title(), erp_id, gst, in_master, NOW))  # fmt: skip
+
+
+def test_the_vendor_masters_ids_follow_a_change_made_through_another_store_or_plain_sql(tmp_path):
+    """``vendor_ids``, kept on ``changes/vendors``: an ERP ID changed, a vendor added or deleted by another Store or
+    plain SQL is in the next answer; while nothing changed it is not worked out again."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "acme", "S1", "123456789 RT0001")
+    first = store.vendor_ids()
+    assert first == {"acme": "S1", "gst:123456789rt0001": "S1", "bnx:123456789": "S1"}
+    assert store.vendor_ids() is first  # kept
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_id = 'S2' WHERE vendor_key = 'acme'")
+    assert store.vendor_ids()["acme"] == "S2"
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "beta", "B1", "987654321")
+    assert store.vendor_ids() == store._vendor_ids() and store.vendor_ids()["bn:987654321"] == "B1"
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM vendors WHERE vendor_key = 'acme'")
+    assert store.vendor_ids() == {"beta": "B1", "gst:987654321": "B1", "bn:987654321": "B1"}
+
+
+def test_the_masters_vendors_found_by_a_tax_number_are_the_whole_lists_and_follow_a_change(tmp_path):
+    """``master_by_tax_number``: the master's vendors ``same_tax_number`` matches, in the list's order, as reading
+    the whole master gives them (a Business Number for a full account and back; two full accounts only the same). Its
+    numbers are kept on ``changes/vendors``: a number changed through another Store, a vendor put in the master by
+    plain SQL, are found by what they are now."""
+    from ap_coder.coding.vendors import norm_tax_number, same_tax_number
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        for key, gst, in_master in (
+            ("acme", "123456789 RT0001", 1),
+            ("acme #2", "123456789", 1),
+            ("beta", "123456789RT0002", 1),
+            ("gamma", "987654321RT0001", 0),
+            ("delta", "N/A", 1),
+            ("epsilon", "", 1),
+            ("zeta", "1234567890TQ0001", 1),
+        ):
+            _master(conn, key, key[:2].upper(), gst, in_master)
+
+    def whole(number):
+        return [v for v in store.master_vendors() if same_tax_number(v["expected_gst"], norm_tax_number(number))]
+
+    asked = ("123456789RT0001", "123 456 789", "123456789 rt 0002", "123456789RT0003", "987654321RT0001", "n/a",
+             "1234567890TQ0001", "555555555", "")  # fmt: skip
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("123456789")] == ["acme", "acme #2", "beta"]
+    with other._conn() as conn:
+        conn.execute("UPDATE vendors SET expected_gst = '555555555 RT0001' WHERE vendor_key = 'beta'")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE vendors SET in_master = 1 WHERE vendor_key = 'gamma'")
+    for number in asked:
+        assert store.master_by_tax_number(number) == whole(number), number
+    assert [v["vendor_key"] for v in store.master_by_tax_number("555555555")] == ["beta"]
+    assert [v["vendor_key"] for v in store.master_by_tax_number("987654321RT0001")] == ["gamma"]
+
+
+def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(tmp_path, ground_truth):
+    """``approved_numbers``, kept on ``changes/approved`` and the vendors asked: an approval through another Store,
+    an approved coding changed by plain SQL, are in the next answer; other vendors asked get their own; each caller
+    gets lists of its own."""
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    invoice = _invoice(store, tmp_path, ground_truth, "H-1", "Acme Supply")
+    key = store.get_invoice(invoice)["vendor_key"]
+    assert store.approved_numbers([key]) == {}
+    coding = {**ground_truth, "vendor_name": "Acme Supply", "gst_hst_registration_number": "123456789RT0001",
+              "remit_bank_account": "004-12345-1234567"}  # fmt: skip
+    other.approve_invoice(invoice, coding, "Jordan Lee")
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]}
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.remit_bank_account', '999') "
+                     "WHERE id = ?", (invoice,))  # fmt: skip
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+    assert store.approved_numbers(["beta"]) == {} and store.approved_numbers(["beta", key])[key]
+    mine = store.approved_numbers([key])
+    mine[key].append(("changed", "by the caller"))
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
