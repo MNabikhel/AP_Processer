@@ -9,6 +9,7 @@ import pytest
 from ap_coder.bench import day
 from ap_coder.bench.__main__ import main
 from ap_coder.bench.fake_model import FakeModel
+from ap_coder.capture import layout
 
 
 def _drill(kind, **kw):
@@ -52,7 +53,9 @@ def test_each_drill_makes_the_model_machine_misbehave_then_puts_it_back():
 def test_a_tiny_server_day_reads_every_invoice_and_reports_it(tmp_path, capsys):
     """4 invoices through ``serve --server`` (2 workers) and its background process, the model 100 times faster."""
     out = tmp_path / "day"
-    code = main(["day", "--n", "4", "--scanned", "0.25", "--time-scale", "0.01", "--workers", "2", "--gen-workers",
+    # Without the OCR engine (pip install -e .[ocr]) a scan is refused on arrival, as it should be: digital ones only.
+    scanned = "0.25" if layout.ocr_available() else "0"
+    code = main(["day", "--n", "4", "--scanned", scanned, "--time-scale", "0.01", "--workers", "2", "--gen-workers",
                  "1", "--out", str(out), "--timeout", "8"])  # fmt: skip
     report = json.loads((out / "report.json").read_text(encoding="utf-8"))
     r = report["results"]
