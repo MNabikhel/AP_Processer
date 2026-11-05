@@ -396,7 +396,7 @@ can corrupt an open SQLite database).
 | `.env` | settings (Azure for developers, LM Studio address, reviewer…) | installer, Settings page, `adopt_legacy`, `envfile.retire` |
 | `.ap_coder_server.json` | the running server: pid, port, folder, version, token, user (the computer account) | `web/server.write_server_file` |
 | `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
-| `.ap_coder_pickup.lock` | one pick-up of new invoices at a time: a `watch` check or a dashboard import (the operating system's lock) | `mailbox.pickup_lock` |
+| `.ap_coder_pickup.lock` | one pick-up of new invoices at a time: a `watch` check, a dashboard import or `ap_coder process` (the operating system's lock) | `mailbox.pickup_lock` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
 | `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |

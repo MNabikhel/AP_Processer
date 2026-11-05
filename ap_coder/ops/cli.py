@@ -38,7 +38,7 @@ from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
 from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
-from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder
+from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder, wait_for_pickup
 from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
@@ -456,6 +456,18 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         vision=args.vision,
     )
     store = None if args.no_db else Store(args.db)
+    # One pick-up at a time into the database (``pickup_lock``, B-1589): what is stored already is checked once this
+    # holds it, so a file a watch or the dashboard stored meanwhile is skipped, never stored twice.
+    waiting = "Waiting: the dashboard or a watch is reading invoices into this database. These follow once it is done."
+    lock = None if store is None else wait_for_pickup(store.path.parent, lambda: print(waiting, file=sys.stderr))
+    try:
+        return _process(args, settings, store)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _process(args: argparse.Namespace, settings: Settings, store: Store | None) -> int:
     given = _inputs(args.inputs, store)
     if given is None:
         return 2
@@ -567,8 +579,8 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
     lock = pickup_lock(store.path.parent)
     if lock is None:
         later = "run it again in a moment" if args.once else "the next check picks them up"
-        print(f"{time.strftime('%H:%M:%S')} the dashboard (or another watch) is reading invoices into this database: "
-              f"this check is skipped ({later})", file=sys.stderr)  # fmt: skip
+        print(f"{time.strftime('%H:%M:%S')} the dashboard, ap_coder process or another watch is reading invoices into "
+              f"this database: this check is skipped ({later})", file=sys.stderr)  # fmt: skip
         return 0, 0
     try:
         return _check(args, settings, store, folder)

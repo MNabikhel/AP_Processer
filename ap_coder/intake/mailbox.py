@@ -66,6 +66,7 @@ PERSON_FOLDER = "needs a person"  # inside DONE_FOLDER: emails and attachments a
 STATEMENTS_FOLDER = "statements"  # in the invoices folder: statements of account taken out of emails
 TRIAGE_LOG = "triage.jsonl"  # inside DONE_FOLDER: one line per email sorted
 PICKUP_LOCK = ".ap_coder_pickup.lock"  # in the data folder, beside the database: held by the pick-up reading (B-1587)
+PICKUP_WAIT = 2.0  # seconds between looks at the pick-up lock while another pick-up holds it
 _MAGIC = {b"%PDF": ".pdf", b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"II*\x00": ".tif", b"MM\x00*": ".tif",
           b"BM": ".bmp"}  # fmt: skip
 _TYPES = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/tiff": ".tif",
@@ -531,3 +532,15 @@ def pickup_lock(data: Path) -> object | None:
     (``paths.try_lock``: kept while the returned file is open, released when a process ends, crashed or not); None
     while another pick-up holds it."""
     return try_lock(data / PICKUP_LOCK)
+
+
+def wait_for_pickup(data: Path, waiting: Callable[[], None]) -> object:
+    """``pickup_lock``, once the pick-up holding it has finished: ``waiting()`` says so first when one holds it. For
+    a person's import (the dashboard's, ``ap_coder process``): what was listed before is then checked again."""
+    lock = pickup_lock(data)
+    if lock is None:
+        waiting()
+    while lock is None:
+        time.sleep(PICKUP_WAIT)
+        lock = pickup_lock(data)
+    return lock

@@ -40,10 +40,10 @@ from ap_coder.intake.mailbox import (
     MAX_EMAIL_BYTES,
     Unpacked,
     emails_in,
-    pickup_lock,
     safe_name,
     unpack,
     unpack_folder,
+    wait_for_pickup,
 )
 from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.ops.help import SERVER_LM_STUDIO
@@ -79,7 +79,6 @@ router = page_router()  # each plain handler: one connection a request
 
 JOB = "process"
 STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written
-PICKUP_WAIT = 2.0  # seconds between looks at the pick-up lock while a scheduled watch holds it
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 # The largest invoice uploaded (B-981): as a spreadsheet (web/files.py); a saved email up to what the mailbox reads.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -594,11 +593,9 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
     actor = reviewer()  # who started it (the job's thread has no request to say)
 
     def work(job: Job) -> dict[str, Any]:
-        lock = pickup_lock(data_dir(store))
-        while lock is None:  # a scheduled watch is reading invoices into this database: after it (B-1587)
-            job.step(0, len(paths), "Waiting for the scheduled pick-up of the invoices folder to finish")
-            time.sleep(PICKUP_WAIT)
-            lock = pickup_lock(data_dir(store))
+        # After another pick-up reading invoices into this database: a scheduled watch, ap_coder process (B-1587)
+        note = "Waiting for another pick-up of invoices to finish (a scheduled watch)"
+        lock = wait_for_pickup(data_dir(store), lambda: job.step(0, len(paths), note))
         try:
             return read(job)
         finally:
