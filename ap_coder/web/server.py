@@ -20,6 +20,8 @@ import contextlib
 import datetime as dt
 import errno
 import json
+import logging
+import logging.handlers
 import os
 import secrets
 import socket
@@ -30,6 +32,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -488,6 +491,87 @@ class BackgroundWork:
             process.wait(5)
 
 
+BACKGROUND_LOG = "background.log"
+STACK_DUMP_LOG = "background-stacks.log"
+STACK_DUMP_ENV = "AP_STACK_DUMP_SECONDS"  # a bench's look inside a background process that seems stuck
+
+
+def background_log(folder: Path) -> logging.Handler:
+    """The background process's own log, ``logs/background.log`` beside the database (5 MB, then up to 5 older
+    files): the page reader, the AI reviewer, JD Edwards and the backup say there what they do (INFO and up), so IT
+    can see the work nobody waits on, and a failure leaves a trace. Warnings still reach the server's window too."""
+    folder.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(folder / BACKGROUND_LOG, maxBytes=5_000_000, backupCount=5,
+                                                   encoding="utf-8")  # fmt: skip
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setLevel(logging.INFO)
+    log = logging.getLogger("ap_coder")
+    log.addHandler(handler)
+    if log.level == logging.NOTSET or log.level > logging.INFO:
+        log.setLevel(logging.INFO)
+    return handler
+
+
+def stack_dumps(folder: Path) -> Any:
+    """Every thread's stack written to ``logs/background-stacks.log`` every AP_STACK_DUMP_SECONDS (unset: never), to
+    see where a background process that seems stuck waits: Python's faulthandler, which works on Windows too,
+    where no signal can ask a process. The open file, which must stay open while the dumps go on; None when off."""
+    try:
+        seconds = float(os.environ.get(STACK_DUMP_ENV) or 0)
+    except ValueError:
+        return None
+    if seconds <= 0:
+        return None
+    import faulthandler
+
+    folder.mkdir(parents=True, exist_ok=True)
+    handle = open(folder / STACK_DUMP_LOG, "w", encoding="utf-8")  # noqa: SIM115 - open while the dumps go on
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=handle)
+    return handle
+
+
+def until_input_closes(on_close: Callable[[], None], poll: float = 0.5) -> None:
+    """Wait until this process's standard input closes (how ``serve --server`` stops its background process), then
+    ``on_close()``. What the other end writes is read and dropped.
+
+    On Windows a pipe is peeked every ``poll`` seconds, never read with a read left pending: Windows blocks
+    ``GetFileType`` on a pipe while a read waits on it, and every DLL that starts its own C runtime calls it as it
+    loads. numpy's did, so the page reader's self-test waited until the server stopped (B-1680); every scan and OCR
+    would have too."""
+    try:
+        stream = sys.stdin.buffer
+        if os.name == "nt" and _peek_until_closed(stream.fileno(), poll):
+            return on_close()
+        stream.read()
+    except (OSError, ValueError, AttributeError):
+        pass  # no input to wait for (closed, none at all): as closed
+    on_close()
+
+
+def _peek_until_closed(fd: int, poll: float) -> bool:
+    """Windows: wait until the pipe behind ``fd`` is closed at the other end, peeking at it (PeekNamedPipe) and
+    reading only what is already there, so no read is ever left waiting. False when ``fd`` is not a pipe (a
+    console, a file): it is read as before."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p,
+                                       ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]  # fmt: skip
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    if kernel32.GetFileType(handle) != 3:  # FILE_TYPE_PIPE
+        return False
+    available = wintypes.DWORD()
+    while kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None):
+        if available.value:
+            os.read(fd, available.value)  # only what is there: returns at once
+        else:
+            time.sleep(poll)
+    return True  # the other end closed it (a broken pipe)
+
+
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
     the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its input
@@ -495,17 +579,19 @@ def run_background(store: Store) -> int:
     from ap_coder.web.app import DailyBackup, EnvSettings, start_background_work
 
     halt = threading.Event()
-
-    def until_input_closes() -> None:
-        with contextlib.suppress(OSError, ValueError):
-            sys.stdin.buffer.read()
-        halt.set()
-
-    threading.Thread(target=until_input_closes, name="ap-coder-background-input", daemon=True).start()
-    lock = None
+    threading.Thread(target=until_input_closes, args=(halt.set,), name="ap-coder-background-input",
+                     daemon=True).start()  # fmt: skip
+    background_log(store.path.parent / "logs")
+    stacks = stack_dumps(store.path.parent / "logs")  # noqa: F841 - kept open for the process's life
+    log = logging.getLogger("ap_coder.background")
+    log.info("background process %s started for %s", os.getpid(), store.path)
+    lock, waited = None, False
     while lock is None and not halt.is_set():
         lock = paths.try_lock(store.path.parent / ".ap_coder_background.lock")
         if lock is None:
+            if not waited:
+                log.info("waiting for another background process of this data folder to end (its lock is held)")
+            waited = True
             halt.wait(5.0)
     if lock is None:
         return 0
@@ -514,6 +600,7 @@ def run_background(store: Store) -> int:
     backup, hub = DailyBackup(store), HubSchedule(store)
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
+    log.info("background work running: the page reader, the AI reviewer, the Azure check and JD Edwards")
     try:
         while not halt.wait(30.0):
             backup.check()

@@ -1,6 +1,6 @@
 """A local model through LM Studio (or Ollama): detection, model picking, structured-output fallback, loose JSON.
 
-A tiny OpenAI-compatible server runs in a thread on 127.0.0.1 (no real network, no real model).
+The benches' stand-in LM Studio runs in a thread on 127.0.0.1 (no real network, no real model).
 """
 
 import json
@@ -9,7 +9,6 @@ import tempfile
 import threading
 import time
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -26,53 +25,34 @@ from ap_coder.ai.local_llm import (
     read_reply,
     resolve_provider,
 )
+from ap_coder.bench.fake_model import FakeModel
 from ap_coder.core.config import LocalLLMSettings, OpenAISettings, Settings, normalise_base_url
 from tests.conftest import FakeOpenAI, make_completion
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every other test
 
 
-class FakeLMStudio:
-    """``/v1/models``, LM Studio's ``/api/v0/models`` (when ``v0`` is given) and ``/v1/chat/completions``.
+class FakeLMStudio(FakeModel):
+    """``/v1/models``, LM Studio's ``/api/v0/models`` (when ``v0`` is given) and ``/v1/chat/completions``: the
+    benches' stand-in model server (ap_coder/bench/fake_model.py) without LM Studio 0.4's own routes.
 
     ``reply(body)`` returns ``(status, payload)`` for each chat request; every request body is kept in ``chats``."""
 
     def __init__(self, models, v0=None, reply=None):
-        self.models, self.v0, self.reply, self.chats = models, v0, reply, []
-        fake = self
+        self.reply = reply
+        super().__init__(models=models, api="none", routes={} if v0 is None else {"/api/v0/models": {
+            "object": "list", "data": v0}}, on_request=self._reply, record=True, slots=8)  # fmt: skip
+        self.start()
 
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
+    def _reply(self, method, path, body):
+        return self.reply(body) if method == "POST" else None
 
-            def _send(self, status, payload):
-                body = json.dumps(payload).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                if self.path == "/v1/models":
-                    self._send(200, {"object": "list", "data": [{"id": m, "object": "model"} for m in fake.models]})
-                elif self.path == "/api/v0/models" and fake.v0 is not None:
-                    self._send(200, {"object": "list", "data": fake.v0})
-                else:
-                    self._send(404, {"error": "not found"})
-
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                fake.chats.append(body)
-                self._send(*fake.reply(body))
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+    @property
+    def chats(self):
+        return [r["body"] for r in self.requests if r["method"] == "POST"]
 
     def close(self):
-        self.server.shutdown()
-        self.server.server_close()
+        self.stop()
 
 
 @pytest.fixture

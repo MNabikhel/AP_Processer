@@ -683,3 +683,86 @@ def test_the_background_work_stops_while_the_workers_do_not_after_them():
     assert not stopped.wait(0.2)
     asked.set()
     assert stopped.wait(2)
+
+
+def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_database(tmp_path):
+    """The page reader, the AI reviewer and JD Edwards log at INFO, and the background process had no handler, so
+    nothing they did reached any file: a page reader that never ran (Windows CI) left no trace, for IT either."""
+    import logging
+
+    from ap_coder.web import server
+
+    handler = server.background_log(tmp_path / "logs")
+    try:
+        logging.getLogger("ap_coder.ai.page_worker").info("page reader: invoice 7 read (2 page(s), 9 s)")
+        logging.getLogger("other.library").info("not ours")
+        handler.flush()
+        text = (tmp_path / "logs" / server.BACKGROUND_LOG).read_text(encoding="utf-8")
+        assert "page reader: invoice 7 read" in text and "INFO ap_coder.ai.page_worker" in text
+        assert "not ours" not in text
+    finally:
+        logging.getLogger("ap_coder").removeHandler(handler)
+        handler.close()
+
+
+def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_thread_s_stack(tmp_path, monkeypatch):
+    """Windows CI: the page reader's self-test waited 11 minutes on something no log line names, and no signal can
+    ask a Windows process where it is. With AP_STACK_DUMP_SECONDS set (a bench, or IT on a developer's word), the
+    background process writes every thread's stack to logs/background-stacks.log that often; unset, never."""
+    import faulthandler
+    import time
+
+    from ap_coder.web import server
+
+    monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
+    assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
+    monkeypatch.setenv(server.STACK_DUMP_ENV, "0.2")
+    handle = server.stack_dumps(tmp_path / "logs")
+    try:
+        path = tmp_path / "logs" / server.STACK_DUMP_LOG
+        deadline = time.monotonic() + 10
+        while "test_server_scale.py" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert "test_server_scale.py" in path.read_text(encoding="utf-8")  # this test's own frame, as it waits
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        handle.close()
+
+
+def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_close(tmp_path):
+    """Windows CI: the page reader's self-test sat 11 minutes in ``import numpy`` and went on 4 s after the server
+    stopped. The thread waiting for its input to close (how the server stops it) kept a read pending on the pipe,
+    and Windows blocks ``GetFileType`` on a pipe with a read pending, which every DLL that starts its own C runtime
+    calls as it loads: on the company server, the self-test, each scan and OCR would wait until the server stopped.
+    The library loads at once, and the process still stops when its input closes (on every system)."""
+    import subprocess
+    import sys
+    import time
+
+    script = (
+        "import threading, time, sys\n"
+        "from ap_coder.web import server\n"
+        "closed = threading.Event()\n"
+        "threading.Thread(target=server.until_input_closes, args=(closed.set,), daemon=True).start()\n"
+        "time.sleep(1.0)\n"  # the wait for the input is under way before the library loads
+        "assert 'numpy' not in sys.modules\n"
+        "import numpy\n"
+        "print('loaded', flush=True)\n"
+        "assert closed.wait(30), 'the input closed and nobody noticed'\n"
+        "print('stopped', flush=True)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)  # fmt: skip
+    try:
+        started = time.monotonic()
+        assert proc.stdout.readline().strip() == "loaded"
+        assert time.monotonic() - started < 30  # not waiting for the input to close
+        proc.stdin.write("anything the server sends is read and dropped\n")
+        proc.stdin.flush()
+        time.sleep(0.5)
+        assert proc.poll() is None  # input, but not closed: still running
+        proc.stdin.close()
+        assert proc.stdout.readline().strip() == "stopped"
+        assert proc.wait(15) == 0
+    finally:
+        proc.kill()

@@ -87,7 +87,7 @@ sample:
    that both reviews missed at 2% or less (the pilot tester blind re-codes about 50 invoices a week).
 2. **First-time match:** at least 60% of invoices need no change; the target is 70%.
 3. **Time:** AP touch time is at least 2 minutes an invoice below a baseline timed before the pilot, and the lower
-   bound of that saving stays above break-even (1.5 minutes in the proposal's base case).
+   bound of that saving stays above the break-even of the proposal's base case.
 4. **Exceptions:** 15% or less (the market average is 18.4%, Ardent); technical failures 2% or less.
 5. **Controls (any failure stops the pilot):** zero duplicate vouchers, zero vouchers to the wrong supplier, daily
    control totals that tie, every batch approved in JD Edwards before posting.

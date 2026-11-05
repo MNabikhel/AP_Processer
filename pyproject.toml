@@ -56,6 +56,11 @@ testpaths = ["tests"]
 # The default run leaves out the slow tests (tests/slow_tests.txt, and every browser test) to stay at a few minutes;
 # `python -m pytest -m ""` runs everything, as CI does.
 addopts = ["-m", "not slow"]
+# Keep only a failed test's temporary folder, of the last run alone: a default run otherwise leaves hundreds of MB.
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
+# A test stuck for 5 minutes prints every thread's stack, so a hang names itself in the CI log.
+faulthandler_timeout = 300
 markers = [
     "slow: a browser, or over half a second (tests/conftest.py, tests/slow_tests.txt); run with -m \"\"",
     "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/launcher/test_update_from_old_versions.py)",

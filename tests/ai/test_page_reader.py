@@ -6,7 +6,6 @@ import json
 import sys
 import threading
 import types
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
 from urllib.parse import urlparse
@@ -28,6 +27,7 @@ from ap_coder.ai.page_reader import (
     reader_for,
     reader_name,
 )
+from ap_coder.bench.fake_model import FakeModel
 from ap_coder.capture.transcript import PARTIAL_MARK
 from ap_coder.capture.types import Reading
 from ap_coder.core.config import PageReaderSettings, Settings
@@ -421,33 +421,11 @@ def test_post_json_gives_lm_studio_reason():
     """The real HTTP layer against a server on this computer: LM Studio's own words when it refuses."""
     answers = {"/api/v1/models/load": (500, {"error": {"message": "Insufficient system resources"}}),
                "/api/v1/models/unload": (200, {"instance_id": OVIS_KEY})}  # fmt: skip
-    seen = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def do_POST(self):
-            seen.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
-            status, payload = answers[self.path]
-            body = json.dumps(payload).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    root = f"http://127.0.0.1:{server.server_address[1]}"
-    try:
+    with FakeModel(on_request=lambda method, path, body: answers.get(path), record=True) as server:
         with pytest.raises(PageReaderError, match=r"^not enough memory to load it \(Insufficient system resources\)$"):
-            page_reader._post_json(root + "/api/v1/models/load", {"model": OVIS_KEY}, "lm-studio", 5)
-        assert page_reader._post_json(root + "/api/v1/models/unload", {}, "", 5) == {"instance_id": OVIS_KEY}
-    finally:
-        server.shutdown()
-        server.server_close()
-    assert seen[0] == ("/api/v1/models/load", {"model": OVIS_KEY})
+            page_reader._post_json(server.url + "/api/v1/models/load", {"model": OVIS_KEY}, "lm-studio", 5)
+        assert page_reader._post_json(server.url + "/api/v1/models/unload", {}, "", 5) == {"instance_id": OVIS_KEY}
+    assert (server.requests[0]["path"], server.requests[0]["body"]) == ("/api/v1/models/load", {"model": OVIS_KEY})
 
 
 # --- Rendering ----------------------------------------------------------------------------------------------------
