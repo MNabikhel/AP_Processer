@@ -166,9 +166,10 @@ class PurchasingMixin:
         if not key:
             return []
         with self._conn() as conn:
+            # The vendor's invoices, by its index ("+": not by the PO's, where no PO is nearly every invoice, B-1583).
             rows = conn.execute(
                 "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
-                "WHERE vendor_key = ? AND po_key = '' AND status IN " + _ACTIVE_IN + " ORDER BY id",
+                "WHERE vendor_key = ? AND +po_key = '' AND +status IN " + _ACTIVE_IN + " ORDER BY id",
                 (key, *ACTIVE_STATUSES),
             ).fetchall()
         return [

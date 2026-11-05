@@ -6,7 +6,7 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 has a short tour, and the [pilot plan](PILOT_PLAN.md) connects AP Coder to the company first (stage 0), then
 runs a parallel week and four measured live weeks to a decision.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 19), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 20), and a
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
