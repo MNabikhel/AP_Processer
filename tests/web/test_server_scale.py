@@ -727,3 +727,42 @@ def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_threa
     finally:
         faulthandler.cancel_dump_traceback_later()
         handle.close()
+
+
+def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_close(tmp_path):
+    """Windows CI: the page reader's self-test sat 11 minutes in ``import numpy`` and went on 4 s after the server
+    stopped. The thread waiting for its input to close (how the server stops it) kept a read pending on the pipe,
+    and Windows blocks ``GetFileType`` on a pipe with a read pending, which every DLL that starts its own C runtime
+    calls as it loads: on the company server, the self-test, each scan and OCR would wait until the server stopped.
+    The library loads at once, and the process still stops when its input closes (on every system)."""
+    import subprocess
+    import sys
+    import time
+
+    script = (
+        "import threading, time, sys\n"
+        "from ap_coder.web import server\n"
+        "closed = threading.Event()\n"
+        "threading.Thread(target=server.until_input_closes, args=(closed.set,), daemon=True).start()\n"
+        "time.sleep(1.0)\n"  # the wait for the input is under way before the library loads
+        "assert 'numpy' not in sys.modules\n"
+        "import numpy\n"
+        "print('loaded', flush=True)\n"
+        "assert closed.wait(30), 'the input closed and nobody noticed'\n"
+        "print('stopped', flush=True)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)  # fmt: skip
+    try:
+        started = time.monotonic()
+        assert proc.stdout.readline().strip() == "loaded"
+        assert time.monotonic() - started < 30  # not waiting for the input to close
+        proc.stdin.write("anything the server sends is read and dropped\n")
+        proc.stdin.flush()
+        time.sleep(0.5)
+        assert proc.poll() is None  # input, but not closed: still running
+        proc.stdin.close()
+        assert proc.stdout.readline().strip() == "stopped"
+        assert proc.wait(15) == 0
+    finally:
+        proc.kill()
