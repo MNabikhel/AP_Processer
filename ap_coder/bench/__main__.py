@@ -8,6 +8,8 @@ python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_
 python -m ap_coder.bench load --users 10 --duration 60 --workers 2 [--data DIR] [--baseline FILE] (bench/load.py)
 python -m ap_coder.bench fake-model --port 1234 [--latency 8-20] [--slots 2] [--hang-rate 0.1] [--down-after 50]
 python -m ap_coder.bench day --n 1250 --scanned 0.5 [--latency 8-20] [--slots 2] [--time-scale 0.05] [--drill kill]
+python -m ap_coder.bench seed --out DIR --invoices 12000 [--register 600000] [--replace]
+python -m ap_coder.bench volume --data DIR [--out bench_volume] [--roles admin,clerk]
 
 --quick on run, learn, lines, speed, coding and triage: a small run to check a change (sizes in ``QUICK``)."""
 
@@ -147,12 +149,16 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import load  # the server under load: its own options, sizes and --quick
+    from ap_coder.bench import load, seed, volume  # the scale goal's benches: each adds its own subcommand
 
     load.add_parser(sub)
+    seed.add_parser(sub)
+    volume.add_parser(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":
         return load.main_load(a)
+    if getattr(a, "run", None) is not None:
+        return a.run(a)
     if getattr(a, "quick", False):  # smaller sizes, unless given
         for key, value in QUICK[a.cmd].items():
             if key != "took" and getattr(a, key) == parsers[a.cmd].get_default(key):
