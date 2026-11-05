@@ -96,6 +96,8 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--probe-every", type=float, default=3.0, help="seconds between GET /review probes (default 3)")
     p.add_argument("--sample-every", type=float, default=2.0, help="seconds between samples (default 2)")
     p.add_argument("--timeout", type=float, default=120.0, help="minutes before the run stops anyway (default 120)")
+    p.add_argument("--self-test-minutes", type=float, default=10.0,
+                   help="minutes to wait for the page reader's self-test before the drop (default 10)")  # fmt: skip
     p.add_argument("--keep", action="store_true", help="keep the data folder (OUT/data) afterwards")
 
 
@@ -139,7 +141,7 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
         client = Client(server.base)
         client.login(ADMIN, password, secret)
         run = Run(a, cases, data, fake, server, client, test_pages)
-        run.wait_for_self_test()  # on a server it ran when the model was first seen, long before a morning's drop
+        run.wait_for_self_test(a.self_test_minutes * 60)  # on a server it ran when the model was first seen
         for _ in range(4 * a.workers):  # each worker's first page is slow: not the idle figure
             client.probe()
         idle = []
@@ -245,7 +247,7 @@ class Run:
                     self.problem = f"the page reader failed its self-test before the drop: {test.get('problem')}"
                 return
             time.sleep(1.0)
-        self.problem = "the page reader's self-test did not end within 10 minutes of the start"
+        self.problem = f"the page reader's self-test did not end within {timeout / 60:g} minutes of the start"
 
     def drop(self) -> None:
         """Every invoice at once, as the morning's batch."""
