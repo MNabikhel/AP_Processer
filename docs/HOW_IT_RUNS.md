@@ -408,7 +408,7 @@ can corrupt an open SQLite database).
 | Next to an older install | `<folder>.removing-<date>` while it is deleted | `upgrade.remove_folder` |
 | **Server mode only:** `server.json` | the server's settings (port, address, certificate, host names, proxy) | `service install`, `server-update` |
 | `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |
-| `service/run.cmd` (and the task's XML, `host.json`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
+| `service/run.cmd` (and the task's XML, `host.json`, `host.lock`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
 | `logs/service.log` | what the server said (rotating) | the service host |
 | `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |
 

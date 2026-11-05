@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from ap_coder.core import paths
 from ap_coder.ops import cli, service
 
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
@@ -274,11 +275,35 @@ def test_the_host_does_nothing_while_the_service_is_stopped(data):
     assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
 
 
-def test_a_second_host_steps_aside_for_the_one_running(data, monkeypatch):
+def test_a_second_host_steps_aside_for_the_one_running(data):
+    """The running host holds the operating system's lock on service/host.lock (B-1585): it, not host.json, says a
+    host runs."""
+    held = paths.try_lock(service.host_lock(data))
+    assert held is not None
+    try:
+        assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
+    finally:
+        held.close()
+
+
+def test_a_stale_host_record_never_keeps_the_service_down(data):
+    """B-1585: after a reboot or a kill, host.json names a process number another program may have since (likely on
+    a Mac: numbers start again low at boot). The host took that for a host running and exited, starting nothing, at
+    every retry of the task: the service stayed down. Here host.json names a live process that is no host."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True}))
     service.host_record(data).parent.mkdir(parents=True)
-    service.host_record(data).write_text(json.dumps({"pid": 999_999}))
-    monkeypatch.setattr(service, "process_alive", lambda pid: pid == 999_999)
-    assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
+    service.host_record(data).write_text(json.dumps({"pid": os.getppid(), "started": "2026-11-01T08:00:00"}))
+    started = []
+
+    def popen(cmd, **kwargs):
+        started.append(cmd)
+        return FakeChild(0, [], lambda: service.stop_flag(data).write_text(""))
+
+    assert service.run_host(data, popen=popen, sleep=lambda s: None) == 0
+    assert len(started) == 1
+    again = paths.try_lock(service.host_lock(data))  # released once the host ends: the next one can start
+    assert again is not None
+    again.close()
 
 
 # --- On Windows (GitHub's runner: an administrator), the task really installed and removed --------------------------

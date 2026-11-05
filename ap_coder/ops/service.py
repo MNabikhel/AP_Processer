@@ -42,11 +42,11 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from .. import __version__
-from ..core.paths import PROJECT_DIR, private_dir, same_folder
+from ..core.paths import PROJECT_DIR, private_dir, same_folder, try_lock
 
 WINDOWS = os.name == "nt"
 CONFIG_FILE = "server.json"  # in the data folder
-SERVICE_DIR = "service"  # in the data folder: run.cmd, the task's XML, host.json, stopped
+SERVICE_DIR = "service"  # in the data folder: run.cmd, the task's XML, host.json, host.lock, stopped
 LOG_DIR = "logs"
 LOG_FILE = "service.log"
 TASK_NAME = "AP Coder"
@@ -290,6 +290,11 @@ def stop_flag(data: Path) -> Path:
 
 def host_record(data: Path) -> Path:
     return service_dir(data) / "host.json"
+
+
+def host_lock(data: Path) -> Path:
+    """Held by the running host (``try_lock``): the operating system releases it when the host ends, killed or not."""
+    return service_dir(data) / "host.lock"
 
 
 def log_path(data: Path) -> Path:
@@ -622,10 +627,12 @@ def run_host(
     start, so a change in server.json applies at the next restart."""
     if stop_flag(data).exists():
         return 0  # stopped on purpose: the repeating trigger starts nothing
+    # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
+    # kill that number may be another program's, and the service would stay down (B-1585).
+    lock = try_lock(host_lock(data))
+    if lock is None:
+        return 0
     record = host_record(data)
-    other = int(_read_json(record).get("pid") or 0)
-    if other and other != os.getpid() and process_alive(other):
-        return 0  # a host is running already
     log = host_logger(data)
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"),
@@ -672,6 +679,7 @@ def run_host(
         with contextlib.suppress(OSError):
             if int(_read_json(record).get("pid") or 0) == os.getpid():
                 record.unlink()
+        lock.close()
     return 0
 
 
