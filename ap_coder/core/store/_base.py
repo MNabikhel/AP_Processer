@@ -23,6 +23,7 @@ from ...coding.vendors import norm_invoice_number
 from ..memory import CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
 from ..reference_data import UNASSIGNED
+from .folder import add_register_keys, fill_seen_files
 from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unread_fx_text  # noqa: F401  (re-exported)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
@@ -33,7 +34,8 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 20  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 22  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+# (below), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -172,7 +174,8 @@ CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key
 CREATE TABLE IF NOT EXISTS erp_invoices (
     vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
     invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
-    copies INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (vendor_key, number_key, total));
+    copies INTEGER NOT NULL DEFAULT 1, plain_name TEXT NOT NULL DEFAULT '', raw_number TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (vendor_key, number_key, total));
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
@@ -264,6 +267,7 @@ CREATE INDEX IF NOT EXISTS login_attempts_user ON login_attempts (username, at);
 CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
 CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
     created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
+CREATE TABLE IF NOT EXISTS seen_files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -627,6 +631,7 @@ class StoreCore:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
+        add_register_keys(conn, columns)  # the ERP register's search keys (schema 22, D-157; whatever the version)
         # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
         # amount), for what is left to expense on the review screen (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
@@ -699,6 +704,7 @@ class StoreCore:
         if missing:
             self._fill_tax_codes(conn)
         self._reading_as_d89(conn)
+        fill_seen_files(conn)  # what the pick-up read of the folder: each invoice's own file to start with (D-155)
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "

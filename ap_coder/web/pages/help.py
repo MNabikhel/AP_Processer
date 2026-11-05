@@ -161,13 +161,18 @@ def _make_setup_report(store: Any) -> str:
     return format_checks(checks)
 
 
+REPORT_INVOICES = 500  # the latest invoices Report a problem summarises (a year of them is no report to paste)
+
+
 def activity_report(store: Any, include_codes: bool) -> str:
-    """The share report (``python -m ap_coder share-report``): counts and accuracy, no vendor names, amounts or
-    file names. An invoice is doc-<its number in AP Coder> (doc-07 is #7): a page view writes no key file (B-1606)."""
+    """The share report (``python -m ap_coder share-report``) of the latest REPORT_INVOICES invoices (D-157): counts
+    and accuracy, no vendor names, amounts or file names. An invoice is doc-<its number in AP Coder> (doc-07 is #7): a
+    page view writes no key file (B-1606)."""
     from ap_coder.ops.share_report import build_share_report
 
     try:
-        return build_share_report(data_dir(store) / "output", None, include_codes, db_path=store.path)
+        return build_share_report(data_dir(store) / "output", None, include_codes, db_path=store.path,
+                                  latest=REPORT_INVOICES)  # fmt: skip
     except FileNotFoundError:
         return ""
     except Exception as exc:  # noqa: BLE001
@@ -202,6 +207,7 @@ def report_page(request: Request, codes: bool = False) -> HTMLResponse:
         setup=ready,
         setup_shown=admin_here,  # an Admin's on the server: versions, names (D-109)
         activity=activity_report(store, codes),
+        report_invoices=REPORT_INVOICES,
         codes=codes,
         logs=[short_path(p) for p in shown],
     )

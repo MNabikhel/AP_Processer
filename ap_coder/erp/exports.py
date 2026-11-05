@@ -28,6 +28,8 @@ import csv
 import datetime as dt
 import io
 from collections import defaultdict
+from collections.abc import Iterable
+from itertools import chain, islice
 from typing import Any
 
 from openpyxl import Workbook
@@ -264,6 +266,51 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
     neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas
+
+
+def streamed_sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: Iterable[dict[str, Any]]) -> None:
+    """``_sheet`` on a sheet of a write-only workbook (``Workbook(write_only=True)``): the same cells, formats, column
+    widths (from the first 500 rows), frozen header and filter, each row written as it comes instead of the whole
+    sheet held in memory (D-157)."""
+    from openpyxl.cell import WriteOnlyCell
+
+    from ..core.safe import FORMULA_START
+
+    def written(value: Any, *, money: bool = False, date: str = "") -> Any:
+        dated = date and isinstance(value, (dt.date, dt.datetime))
+        if not money and not dated and not (isinstance(value, str) and value.startswith(FORMULA_START)):
+            return value  # a plain value: no cell of its own to make
+        cell = WriteOnlyCell(ws, value)
+        if money:
+            cell.number_format = "#,##0.00"
+        if date and isinstance(value, (dt.date, dt.datetime)):
+            cell.number_format = date
+        if isinstance(value, str) and value.startswith(FORMULA_START):  # never a formula (``neutralise_sheet``)
+            cell.data_type, cell.quotePrefix = "s", True
+        return cell
+
+    ws.title = title
+    rows = iter(rows)
+    first = list(islice(rows, 500))
+    for i, (key, label) in enumerate(columns, start=1):
+        width = max([len(label)] + [len(str(r.get(key) or "")) for r in first])
+        ws.column_dimensions[get_column_letter(i)].width = min(max(10, width + 2), 60)
+    ws.freeze_panes = "A2"
+    header_fill = PatternFill("solid", fgColor="E9EEF6")
+    header = []
+    for _, label in columns:
+        cell = WriteOnlyCell(ws, label)
+        cell.font, cell.fill, cell.alignment = Font(bold=True), header_fill, Alignment(vertical="center")
+        header.append(cell)
+    ws.append(header)
+    dated = {key for key, label in columns if label in DATE_HEADERS}
+    count = 0
+    for r in chain(first, rows):
+        values = xlsx_row([_excel_date(r.get(key)) if key in dated else r.get(key) for key, _ in columns])
+        ws.append([written(v, money=label in MONEY_HEADERS, date=DATE_HEADERS.get(label, ""))
+                   for (_, label), v in zip(columns, values, strict=True)])  # fmt: skip
+        count += 1
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{count + 1}"
 
 
 def csv_amount(value: Any) -> Any:

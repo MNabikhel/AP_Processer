@@ -34,6 +34,8 @@ from .users import carry_accounts, saved_accounts
 # A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
 # A labelled one (-manual, -before-restore, -before-update-...) is kept.
 DAILY = re.compile(r"ap_coder-\d{8}-\d{6}(-\d+)?")
+# Left free on the backups' disk once a backup is made: a full disk stops every write to the database, for everyone.
+BACKUP_RESERVE = 512 * 1024 * 1024
 BACKUP_STATUS = "backup_status"  # the last backup that failed: "failed <when>: <why>" ("" once one works again)
 
 
@@ -43,6 +45,49 @@ class Restored:
 
     safety: Path
     files: backup_files.FilesRestored
+
+
+BACKUP_HOURS_ENV = "AP_BACKUP_HOURS"  # when the daily backup may start ("1-5"); unset: any time (``backup_window``)
+MISSED_WINDOW_HOURS = 30  # a daily backup this old is made at once, whatever the hours: a day is never skipped
+
+
+def backup_window(text: str | None) -> tuple[int, int] | None:
+    """AP_BACKUP_HOURS as (start, end) hours of the server's clock: "1-5" from 1 to 5 in the morning, "22-4" across
+    midnight. None when it is unset or can't be read: the daily backup starts at any time, as before."""
+    found = re.fullmatch(r"\s*(\d{1,2})\s*-\s*(\d{1,2})\s*", text or "")
+    if not found:
+        return None
+    start, end = int(found.group(1)), int(found.group(2))
+    if start > 23 or end > 24 or start == end % 24:
+        return None
+    return start, end
+
+
+def _in_window(hour: int, window: tuple[int, int]) -> bool:
+    start, end = window
+    return start <= hour < end if start < end else hour >= start or hour < end
+
+
+def _size(n: float) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def _room_refusal(database: Path, folder: Path) -> str:
+    """Why a backup of ``database`` into ``folder`` must not start, "" when it may: the copy (the database with its
+    write-ahead log) and ``BACKUP_RESERVE`` more must fit in that disk's free space (a year's database on the company
+    server is 7-9 GB). "" when the space can't be read: the backup is tried, as before, and one cut short by a full
+    disk leaves nothing behind (``backup_to``)."""
+    try:
+        size = sum(p.stat().st_size for p in (database, database.with_name(database.name + "-wal")) if p.exists())
+        folder.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(folder).free
+    except OSError:
+        return ""
+    need = size + BACKUP_RESERVE
+    if free >= need:
+        return ""
+    return (f"not enough free space for a backup ({_size(free)} free, {_size(need)} needed: the copy and "
+            f"{_size(BACKUP_RESERVE)} to spare); free space on the disk of the data folder")  # fmt: skip
 
 
 def _daily(path: Path) -> bool:
@@ -140,6 +185,9 @@ class BackupsMixin:
             except OSError:
                 pass
         try:
+            short = _room_refusal(self.path, self.backup_dir())
+            if short:
+                raise OSError(short)
             made = self.backup_to(dest)
             try:
                 backup_files.snapshot(made, self.path.parent)
@@ -207,19 +255,23 @@ class BackupsMixin:
         backup_files.record_copy(made, True, _now()[:16], str(target))
         return copied
 
-    def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
+    def auto_backup(self, keep: int = 14, min_hours: float = 20, window: tuple[int, int] | None = None,
+                    now: dt.datetime | None = None) -> Path | None:  # fmt: skip
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies
         (``backup_files.drop_old``). Only a complete backup (with its list of files) is the day's: one cut short is
-        made again at the next check (B-1557). None while another backup or a restore runs (B-1559)."""
+        made again at the next check (B-1557). None while another backup or a restore runs (B-1559). ``window``
+        (``backup_window``): it starts only in those hours, unless the last daily backup is ``MISSED_WINDOW_HOURS``
+        old or there is none (B-1671)."""
         try:
             with backup_files.exclusive(self.path.parent):
-                return self._auto_backup(keep, min_hours)
+                return self._auto_backup(keep, min_hours, window, now or dt.datetime.now())
         except backup_files.Busy:
             return None
 
-    def _auto_backup(self, keep: int, min_hours: float) -> Path | None:
+    def _auto_backup(self, keep: int, min_hours: float, window: tuple[int, int] | None,
+                     now: dt.datetime) -> Path | None:  # fmt: skip
         daily = [p for p in self.list_backups() if _daily(p) and backup_files.list_path(p).is_file()]
-        now = dt.datetime.now()
+        newest: dt.timedelta | None = None
         for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
             try:
                 age = now - dt.datetime.fromtimestamp(backup.stat().st_mtime)
@@ -227,6 +279,11 @@ class BackupsMixin:
                 continue
             if dt.timedelta(0) <= age < dt.timedelta(hours=min_hours):
                 return None
+            if age >= dt.timedelta(0) and (newest is None or age < newest):
+                newest = age
+        if window and not _in_window(now.hour, window) and newest is not None:
+            if newest < dt.timedelta(hours=MISSED_WINDOW_HOURS):
+                return None  # its hours come before a day is missed
         if not self.path.exists():
             return None
         made = self.backup_now(keep=keep)

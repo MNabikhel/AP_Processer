@@ -64,7 +64,7 @@ Why these numbers:
 
   | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
   |---|---|---|
-  | Processor | 8 cores, `--workers 8` (the default) | 16 cores, `--workers 8` (8 for OCR and the rest) |
+  | Processor | 8 cores, 7 workers (the default) | 16 cores, `--workers 8` (8 for OCR and the rest) |
   | Memory | 32 GB | 64 GB |
   | Graphics card | 16 GB of VRAM, `--llm-parallel 2` | 24 GB of VRAM or more, `--llm-parallel 4` (step 8) |
   | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
@@ -222,20 +222,39 @@ and `--llm-parallel` (below), `--no-start`.
 `--account`, `--task-name` and `--folder` are never taken from `server.json`: the service's account can change that
 file, and these three say what the task runs, as whom, and which task your `schtasks` commands change. Each
 `service install|start|stop|status|remove` uses the ones given on its own command line, else the defaults (the
-folder: the one you run it from); `server-update` takes `--task-name` the same way. So when you chose another
+folder: the one you run it from); `server-update` takes `--task-name` the same way, and changes nothing when no task
+of that name is installed while `server.json` names another or the dashboard answers. So when you chose another
 account, task name or folder, give them again each time;
 `SYSTEM` and the other built-in accounts are used only when `--account` names them. `service stop` ends only the
 service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself,
 and the service host only while it runs (it holds `service\host.lock`).
 
-**Workers** (`--workers N`, kept in `server.json` as `"workers"`; default one per processor core, at most 8): one
-Python process answers about 1.6 pages a second however many cores the server has, so the service runs N *web
-workers*, all answering on the same port, and one *background process* beside them for the work nobody waits on
-(OvisOCR2's reading, the AI reviewer, the Azure check, JD Edwards, the daily backup, the finance hub's schedule). A
-worker or the background process that stops is started again on its own. Each worker uses about 300 to 600 MB of
-memory (measured on a 12,000-invoice database), so 8 workers need 4 to 5 GB. `--workers 1` runs everything in one
-process, as before. Stopping (`service stop`) gives the requests under way 25 seconds, then ends them: the service
-is stopped within 30 seconds.
+**Workers** (`--workers N`, kept in `server.json` as `"workers"`): one Python process answers about 1.6 pages a
+second however many cores the server has, so the service runs N *web workers*, all answering on the same port, and
+one *background process* beside them for the work nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure
+check, JD Edwards, the review queue checked again after a change of settings, the daily backup, the finance hub's
+schedule). A worker or the background process that stops is
+started again on its own. `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
+the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.
+
+- **The default** (D-153): one worker per processor core but an eighth of them, and no more than fit in the memory at
+  1.5 GB each, a quarter of the memory (at least 4 GB) being kept for the system, the background process and the
+  database's cache. 32 cores and 64 GB: 28 workers; 16 cores and 32 GB: 14; 4 cores and 16 GB: 4; 8 GB: 2.
+- **Each worker works on 4 requests at once** (`server.json` `"worker_threads"`, 1 to 40; the others wait their
+  turn): one process works on one at a time anyway, and each request under way holds what it read (about 110 MB on
+  a big database). With anyio's default of 40, 16 people at once took a worker to about 2 GB; with 4, to 1.3 GB, the
+  same work done. A worker stays near 1 to 1.5 GB.
+- **Reports and exports take turns**: the reports (Activity, the controls report, Spend, Month-end and its
+  accruals, Sales tax, Insights), the exports (the Exports page, a batch, its files, the duplicates CSV, search to
+  CSV or Excel, the JD Edwards worksheet), Report a problem, a backup or restore, and the buttons that wait on LM
+  Studio or JD Edwards run 2 at a time in each worker, beside its 4, so they never hold up the other pages. One that
+  waits more than 30 seconds for its turn says AP Coder is busy, to try again in a minute.
+- **A worker is started afresh** past its share of the memory (that 1.5 GB share, at least 2 GB; the variable
+  `AP_WORKER_MAX_MB`, 0 for never) or after about 50,000 requests (a number of its own, so they don't all go
+  together; `AP_WORKER_MAX_REQUESTS`). It takes no new requests, finishes those under way, and a new one takes its
+  place within seconds; one worker at a time, and never while an import, a backup or a report of its own runs.
+  Nobody is signed out (logins are in the database). The service log says "A web worker (process N) is started
+  afresh after ...".
 
 **Requests to LM Studio at once** (`--llm-parallel N`, `server.json` `"llm_parallel"`, or `AP_LLM_PARALLEL`;
 default 1): how many pages OvisOCR2 reads, and how many questions the chat model answers, at the same time, for all
@@ -338,7 +357,8 @@ window, started at boot like AP Coder.
    On another computer of the company network instead (a Mac Studio), give its address in the .env
    (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
    needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
-   while every address it has is private, and no other name is looked up.
+   while every address it has is private, AP Coder connects to the very addresses it checked (never to a second
+   lookup's), and no other name is looked up.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two
@@ -358,7 +378,13 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  runs; the newest 14 are kept.
+  - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
+    during the working day. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
+    during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
+  - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
+    to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
+  - Plan the disk for 14 daily copies of the database, plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
   *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
   made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
   restorable whole (D-143):

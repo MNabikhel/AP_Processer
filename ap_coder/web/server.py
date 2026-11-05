@@ -16,6 +16,7 @@ them; a stop file asks them all to stop.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
 import errno
@@ -32,6 +33,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -220,9 +222,71 @@ def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile:
                           **more)  # fmt: skip
 
 
-def default_workers() -> int:
-    """How many web workers the company server runs when nothing says (D-111): one per core, at most 8."""
-    return max(1, min(os.cpu_count() or 1, 8))
+WORKER_MB = 1500  # what a web worker uses on a 300,000-invoice database, its threads capped (D-153)
+
+
+def default_workers(cores: int | None = None, memory_mb: float | None = None) -> int:
+    """How many web workers the company server runs when nothing says (D-153; D-111 had one per core, at most 8):
+    one per core but an eighth of them, left to the background process and the database, and only as many as fit
+    at WORKER_MB each in the memory not kept for those and the system (``spare_mb``). 32 cores and 64 GB: 28."""
+    cores = cores or os.cpu_count() or 1
+    by_cores = cores - cores // 8
+    total = memory_mb if memory_mb is not None else memory_total_mb()
+    by_memory = int(spare_mb(total) // WORKER_MB) if total else by_cores
+    return max(1, min(by_cores, by_memory, 64))
+
+
+def spare_mb(total_mb: float) -> float:
+    """What the web workers may use of ``total_mb``: a quarter (at least 4 GB) is kept for the system, the background
+    process (OCR) and the database's own cache."""
+    return total_mb - max(4000.0, total_mb / 4)
+
+
+def memory_total_mb() -> float | None:
+    """This computer's memory in MB (None where it can't be told)."""
+    if os.name == "nt":
+        import ctypes
+
+        class Status(ctypes.Structure):  # MEMORYSTATUSEX
+            _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), *(
+                (name, ctypes.c_ulonglong) for name in ("total", "free", "pagefile", "pagefree", "virtual",
+                                                        "virtualfree", "extended"))]  # fmt: skip
+
+        status = Status()
+        status.length = ctypes.sizeof(Status)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+            return None
+        return status.total / 1e6
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e6
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def memory_mb() -> float | None:
+    """This process's resident memory in MB (its working set on Windows; None where it can't be told)."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+            _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD), *(
+                (name, ctypes.c_size_t) for name in ("peak", "working_set", "peak_paged", "paged", "peak_nonpaged",
+                                                     "nonpaged", "pagefile", "peak_pagefile"))]  # fmt: skip
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return None
+        return counters.working_set / 1e6
+    try:
+        with open("/proc/self/statm", "rb") as statm:
+            return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None, *,
@@ -371,13 +435,22 @@ def _supervisor_class() -> Any:
 
         def keep_subprocess_alive(self) -> None:
             """The stop file first: workers that read it may have ended (on Windows with STARTUP_FAILURE's exit
-            code) before ``_stop_when_asked`` saw it, and are no workers that failed to start (B-1493)."""
+            code) before ``_stop_when_asked`` saw it, and are no workers that failed to start (B-1493). A worker
+            being started afresh (``Recycle``) is not asked "alive?" while it ends: it can't answer as its process
+            closes, and uvicorn then waited timeout_worker_healthcheck (30 s), replacing no worker meanwhile. It is
+            replaced once it has ended."""
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
             if spec.get("data") and _asked_to_stop(Path(spec["data"]), str(spec.get("token") or "")):
                 self.asked_to_stop = True
                 self.should_exit.set()
                 return
-            super().keep_subprocess_alive()
+            leaving = _leaving(Path(spec["data"])) if spec.get("data") else None
+            ending = [p for p in self.processes if p.pid == leaving and p.process.is_alive()]
+            self.processes = [p for p in self.processes if p not in ending]
+            try:
+                super().keep_subprocess_alive()
+            finally:
+                self.processes += ending
 
         def terminate_all(self) -> None:
             spec = json.loads(os.environ.get(WORKER_ENV) or "{}")
@@ -424,7 +497,124 @@ def worker_app() -> Any:
     app.state.stop_file = stop_file(Path(spec["data"]))
     threading.Thread(target=_stop_worker_when_asked, args=(Path(spec["data"]), spec["token"], int(spec["parent"])),
                      name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
+    app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
     return app
+
+
+# --- A web worker started afresh now and then (D-153) ------------------------------------------------------------
+# What a worker frees is mostly kept by Python's allocator: its memory stays near its highest. Past its share of the
+# memory, or past RECYCLE_REQUESTS requests (each worker a number of its own, up to a quarter more, so they don't all
+# go together), a worker takes no new requests, finishes those under way and ends; uvicorn's supervisor starts
+# another in its place (on Windows too: it ends as any process does, not by a signal). One worker at a time (a lock
+# in the data folder), and never while something of its own runs that would end with it: a job, a backup, imports
+# waiting their turn, the long routes' lane (core.run_heavy). Logins are kept in the database: nobody is signed out.
+MEMORY_ENV, REQUESTS_ENV = "AP_WORKER_MAX_MB", "AP_WORKER_MAX_REQUESTS"
+RECYCLE_REQUESTS = 50_000  # about a working day for each of 16 workers answering 20-40 requests a second
+RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
+RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
+MEMORY_EVERY = 10  # requests between two looks at the memory
+DRAIN_SECONDS = 1.0
+
+
+def recycle_limits(workers: int, total_mb: float | None = None) -> dict[str, float]:
+    """A worker's memory ceiling (AP_WORKER_MAX_MB, else its share of ``spare_mb``, at least 2 GB) and requests
+    (AP_WORKER_MAX_REQUESTS, else RECYCLE_REQUESTS); 0: no limit."""
+    total = total_mb if total_mb is not None else memory_total_mb()
+    share = max(2000.0, spare_mb(total) / max(1, workers)) if total else 0.0
+
+    def env(name: str, default: float) -> float:
+        try:
+            return max(0.0, float((os.environ.get(name) or "").strip() or default))
+        except ValueError:
+            return default  # a typo never stops the server
+
+    return {"max_mb": env(MEMORY_ENV, share), "max_requests": env(REQUESTS_ENV, RECYCLE_REQUESTS)}
+
+
+class Recycle:
+    """ASGI middleware of one web worker of the company server: after each request, whether it is time for the
+    worker to be started afresh (above), and if so, as soon as nothing of its own would end with it, its stop."""
+
+    def __init__(self, app: Any, state: Any, data: Path, max_mb: float, max_requests: float,
+                 jitter: Any = None) -> None:  # fmt: skip
+        import random
+
+        self.app, self.state, self.data, self.max_mb = app, state, data, max_mb
+        rng = jitter or random.Random()
+        self.limit = int(max_requests) + rng.randint(0, int(max_requests) // 4) if max_requests else 0
+        self.served = 0
+        self.why = ""  # what made it due
+        self.stopping: Any = None  # the restart lock, held until this process ends
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if scope["type"] == "http" and self.stopping is None:
+                self.served += 1
+                self.why = self.why or self._due()
+                if self.why and not self._busy():
+                    self._stop()
+
+    def _due(self) -> str:
+        if self.limit and self.served >= self.limit:
+            return f"{self.served} requests"
+        if self.max_mb and self.served % MEMORY_EVERY == 0:
+            used = memory_mb()
+            if used is not None and used > self.max_mb:
+                return f"{used:,.0f} MB of memory (its ceiling: {self.max_mb:,.0f} MB)"
+        return ""
+
+    def _busy(self) -> bool:
+        """Something of this worker's that would end with it: a job, a backup, imports waiting, a long route."""
+        from ap_coder.web.core import heavy_lane
+
+        backup = getattr(self.state.daily_backup, "thread", None)
+        queue = getattr(self.state, "import_queue", None)
+        lane = heavy_lane().statistics()
+        if lane.borrowed_tokens or lane.tasks_waiting:
+            return True
+        return (self.state.jobs.running_here() or (backup is not None and backup.is_alive())
+                or bool(queue is not None and queue.waiting))  # fmt: skip
+
+    def _stop(self) -> None:
+        from ap_coder.core.paths import try_lock
+
+        found = uvicorn_server()
+        if found is None:
+            return
+        self.stopping = try_lock(self.data / RECYCLE_LOCK)
+        if self.stopping is None:
+            return  # another worker is being started afresh: this one's turn comes after
+        with contextlib.suppress(OSError):
+            (self.data / RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")
+        logging.getLogger(__name__).warning("A web worker (process %s) is started afresh after %s.", os.getpid(),
+                                            self.why)  # fmt: skip
+        # It takes no new connection first (the other workers do), and those it took already have DRAIN_SECONDS to
+        # ask: uvicorn's own stop, alone, left one taken as it began unanswered until the end of its grace (25 s).
+        loop = asyncio.get_running_loop()
+        for listening in getattr(found, "servers", None) or []:
+            for sock in listening.sockets:
+                loop.remove_reader(sock.fileno())
+        loop.call_later(DRAIN_SECONDS, setattr, found, "should_exit", True)  # then uvicorn finishes what is under way
+
+
+def _leaving(data: Path) -> int | None:
+    """The process of the web worker being started afresh (``Recycle``), as it wrote."""
+    try:
+        return int((data / RECYCLE_PID).read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def uvicorn_server() -> Any:
+    """The uvicorn server running this process (it took SIGTERM to stop gracefully); None when there is none."""
+    import signal
+
+    import uvicorn
+
+    found = getattr(signal.getsignal(signal.SIGTERM), "__self__", None)
+    return found if isinstance(found, uvicorn.Server) else None
 
 
 def _stop_worker_when_asked(data: Path, token: str, parent: int) -> None:
@@ -491,6 +681,8 @@ class BackgroundWork:
 
 
 BACKGROUND_LOG = "background.log"
+STACK_DUMP_LOG = "background-stacks.log"
+STACK_DUMP_ENV = "AP_STACK_DUMP_SECONDS"  # a bench's look inside a background process that seems stuck
 
 
 def background_log(folder: Path) -> logging.Handler:
@@ -509,21 +701,78 @@ def background_log(folder: Path) -> logging.Handler:
     return handler
 
 
+def stack_dumps(folder: Path) -> Any:
+    """Every thread's stack written to ``logs/background-stacks.log`` every AP_STACK_DUMP_SECONDS (unset: never), to
+    see where a background process that seems stuck waits: Python's faulthandler, which works on Windows too,
+    where no signal can ask a process. The open file, which must stay open while the dumps go on; None when off."""
+    try:
+        seconds = float(os.environ.get(STACK_DUMP_ENV) or 0)
+    except ValueError:
+        return None
+    if seconds <= 0:
+        return None
+    import faulthandler
+
+    folder.mkdir(parents=True, exist_ok=True)
+    handle = open(folder / STACK_DUMP_LOG, "w", encoding="utf-8")  # noqa: SIM115 - open while the dumps go on
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=handle)
+    return handle
+
+
+def until_input_closes(on_close: Callable[[], None], poll: float = 0.5) -> None:
+    """Wait until this process's standard input closes (how ``serve --server`` stops its background process), then
+    ``on_close()``. What the other end writes is read and dropped.
+
+    On Windows a pipe is peeked every ``poll`` seconds, never read with a read left pending: Windows blocks
+    ``GetFileType`` on a pipe while a read waits on it, and every DLL that starts its own C runtime calls it as it
+    loads. numpy's did, so the page reader's self-test waited until the server stopped (B-1680); every scan and OCR
+    would have too."""
+    try:
+        stream = sys.stdin.buffer
+        if os.name == "nt" and _peek_until_closed(stream.fileno(), poll):
+            return on_close()
+        stream.read()
+    except (OSError, ValueError, AttributeError):
+        pass  # no input to wait for (closed, none at all): as closed
+    on_close()
+
+
+def _peek_until_closed(fd: int, poll: float) -> bool:
+    """Windows: wait until the pipe behind ``fd`` is closed at the other end, peeking at it (PeekNamedPipe) and
+    reading only what is already there, so no read is ever left waiting. False when ``fd`` is not a pipe (a
+    console, a file): it is read as before."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p,
+                                       ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]  # fmt: skip
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    if kernel32.GetFileType(handle) != 3:  # FILE_TYPE_PIPE
+        return False
+    available = wintypes.DWORD()
+    while kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None):
+        if available.value:
+            os.read(fd, available.value)  # only what is there: returns at once
+        else:
+            time.sleep(poll)
+    return True  # the other end closed it (a broken pipe)
+
+
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
-    the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its input
+    the review queue checked again after a change of settings (D-155), the daily backup and the finance hub's
+    schedule (looked at every 30 seconds, not at each page), until its input
     closes. One per data folder (an OS lock): a second one waits for the first to end."""
     from ap_coder.web.app import DailyBackup, EnvSettings, start_background_work
 
     halt = threading.Event()
-
-    def until_input_closes() -> None:
-        with contextlib.suppress(OSError, ValueError):
-            sys.stdin.buffer.read()
-        halt.set()
-
-    threading.Thread(target=until_input_closes, name="ap-coder-background-input", daemon=True).start()
+    threading.Thread(target=until_input_closes, args=(halt.set,), name="ap-coder-background-input",
+                     daemon=True).start()  # fmt: skip
     background_log(store.path.parent / "logs")
+    stacks = stack_dumps(store.path.parent / "logs")  # noqa: F841 - kept open for the process's life
     log = logging.getLogger("ap_coder.background")
     log.info("background process %s started for %s", os.getpid(), store.path)
     lock, waited = None, False
@@ -541,7 +790,10 @@ def run_background(store: Store) -> int:
     backup, hub = DailyBackup(store), HubSchedule(store)
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
-    log.info("background work running: the page reader, the AI reviewer, the Azure check and JD Edwards")
+    log.info(
+        "background work running: the page reader, the AI reviewer, the Azure check, JD Edwards and the review "
+        "queue's checks after a change of settings"
+    )
     try:
         while not halt.wait(30.0):
             backup.check()

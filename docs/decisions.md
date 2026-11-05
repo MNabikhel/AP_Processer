@@ -439,6 +439,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   saved address is (D-104). The refusal says to add the domain to `AP_COMPANY_DOMAINS` instead of turning on internet
   access, and keeps that whole sentence (`check_server` cuts other errors to 160 characters). (`core/config.py`,
   `ai/local_llm.py`; `tests/web/test_platform_security.py`, `tests/ai/test_local_llm.py`)
+  - **Amended (B-1608, B-1675):** such a name is connected to at the very addresses its check judged, never through
+    a second lookup.
+    - **Which names:** bare names, .local, .lan and .home, and names under `AP_COMPANY_DOMAINS`.
+    - **How:** `config.pinned_addresses` feeds urllib's connection and the OpenAI client's transport. The name stays
+      in the Host header and in the certificate check (SNI).
+    - **The 30 s lookup** decides refusals and gives those addresses; it never stands in for them.
+    - **A name that resolves to nothing** is still judged by its name (no proxy) but isn't connected to.
+    - **The advice** to add a domain to `AP_COMPANY_DOMAINS` goes only to a dotted name outside .local, .lan, .home
+      and those domains. (`core/config.py`, `ai/local_llm.py`, `ai/page_reader.py`; `tests/ai/test_local_llm.py`)
 - **D-150** · **Background polls are not activity; schema 20** (B-1579, B-1580, B-1581, B-1584; changes D-109's idle
   rule where it says otherwise). A tab left open logged out at 30 idle minutes only if nothing polled: the reader
   panel and job status renewed the session for as long as the tab stayed open (up to the 12-hour limit). The routes

@@ -135,9 +135,14 @@ def parse_amount(text: Any) -> float | None:
     if any(w not in _CURRENCY_WORDS for w in re.findall(r"[a-z]+", _fold(s))):
         return None  # letters other than a currency code or CR: an id, not an amount
     found = normalize.find_amounts(s)
-    if len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :]):
+    # "1 234 $", "CAD 1 234": one amount, which find_amounts splits (a quantity and a price)
+    spaced = _SPACED_THOUSANDS.fullmatch(" ".join(re.sub(r"^[a-z]+\.?|[a-z]+\.?$", "", _fold(s)).split()))
+    if not spaced and (len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :])):
         return None  # two numbers ("1,23,4.00", a date) or digits beside the amount
-    return normalize.parse_amount(s)
+    value = normalize.parse_amount(s)
+    if value and value > 0 and re.match(r"\s*(?:cr(?![a-z])|[-−–])", _fold(s)):
+        return -value  # a credit written first ("CR 12.00", "- 12.00"), which normalize's parser leaves positive
+    return value
 
 
 _MONTHS = {
@@ -1309,16 +1314,34 @@ class SupplierStats:
             inv["sources"].add(r.get("source") or "review")
             inv["rows"].append(r)
         history = sorted(by_invoice.values(), key=lambda h: (h["at"], str(h["invoice_id"])), reverse=True)
-        recent = history[:window]
-        stats = cls(key=key, invoices=total_invoices if total_invoices is not None else len(history))
-        stats.window_invoices = len(recent)
-        for inv in recent:
+        fields: dict[str, FieldStat] = {}
+        for inv in history[:window]:
             for r in inv["rows"]:
-                fs = stats.fields.setdefault(r["field"], FieldStat())
+                fs = fields.setdefault(r["field"], FieldStat())
                 fs.n += 1
                 fs.correct += 1 if r["correct"] else 0
-        stats.n = sum(f.n for f in stats.fields.values())
-        stats.correct = sum(f.correct for f in stats.fields.values())
+        return cls.from_invoices(history, fields, key=key, window=window, total_invoices=total_invoices)
+
+    @classmethod
+    def from_invoices(
+        cls, invoices: Iterable[dict[str, Any]], fields: dict[str, FieldStat] | None, key: str = "",
+        window: int = 200, total_invoices: int | None = None,
+    ) -> SupplierStats:  # fmt: skip
+        """From each invoice's figures (``invoice_id``, ``at``, ``fields``, ``corrections``, ``sources``) and the
+        header fields' over the last ``window`` of them: what ``from_rows`` works out of the rows, or SQLite for every
+        supplier at once (``Store.all_supplier_stats``, D-157). ``fields`` None: not worked out (``fields`` left
+        empty), the fields read and read right counted from the invoices' figures, as many."""
+        history = sorted(invoices, key=lambda h: (h["at"], str(h["invoice_id"])), reverse=True)
+        recent = history[:window]
+        stats = cls(key=key, invoices=total_invoices if total_invoices is not None else len(history),
+                    fields=fields or {})  # fmt: skip
+        stats.window_invoices = len(recent)
+        if fields is None:
+            stats.n = sum(h["fields"] for h in recent)
+            stats.correct = sum(h["fields"] - h["corrections"] for h in recent)
+        else:
+            stats.n = sum(f.n for f in stats.fields.values())
+            stats.correct = sum(f.correct for f in stats.fields.values())
         stats.touchless_rate = sum(1 for h in recent if not h["corrections"]) / len(recent) if recent else 0.0
         for h in history:
             if h["corrections"]:

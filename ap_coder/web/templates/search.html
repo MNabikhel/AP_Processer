@@ -187,7 +187,7 @@
 </section>
 
 {% if erp %}
-<section class="card">
+<section class="card" id="erp">
   <h5>In the ERP's invoice register</h5>
   <p class="muted">Imported on the Exports page: these were not processed by AP Coder.</p>
   {% for h in erp %}
@@ -196,6 +196,10 @@
     <div class="muted">Invoice {{ h.number }} · {{ h.date }} · {{ h.total | money }} {{ h.currency }}</div>
   </div>
   {% endfor %}
+  {% if result.erp_total > erp | length %}
+  <p class="row"><span class="muted">{{ erp | length }} of {{ result.erp_total }} shown, the closest matches first.</span>
+    <a class="btn sm" href="/search?{{ query.query_string(erp_shown=query.erp_shown + erp_step) }}#erp">Show more</a></p>
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}

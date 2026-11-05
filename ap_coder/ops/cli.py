@@ -38,6 +38,7 @@ from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
 from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
+from ..core.store.folder import read_file
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder, wait_for_pickup
 from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
@@ -535,16 +536,19 @@ def new_files(folder: Path, store: Store, now: float | None = None, fresh: Colle
         return []
     found = []
     seen: set[str] = set()  # the contents already in this check (the store knows them only once processed)
+    read = []  # what was read of each, for the import page (``Store.note_files``)
     for p in invoice_files(folder):
         try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
             if p not in fresh and abs(now - p.stat().st_mtime) < SETTLE_SECONDS:  # (far ahead of the clock: settled)
                 continue
-            digest = hashlib.sha256(p.read_bytes()).hexdigest()
-            if digest not in seen and store.find_by_hash(p, include_failed=True) is None:
+            read.append(read_file(p))
+            digest = read[-1][3]
+            if digest not in seen and store.find_by_hash(p, include_failed=True, sha=digest) is None:
                 found.append(p)
             seen.add(digest)
         except OSError:
             continue
+    store.note_files(read)
     return found
 
 

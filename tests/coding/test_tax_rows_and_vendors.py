@@ -259,6 +259,7 @@ def test_a_gratuity_after_the_tax_does_not_fail_the_printed_subtotal():
 def test_an_invoice_with_a_warning_bulk_approval_refuses_is_not_ready(client, store):
     """B-1027: HST 15% in Ontario, or no GST number: bulk approval and touchless refuse it (D-95), but the queue said
     Ready."""
+    from ap_coder.coding.bulk import queue_checks
     from ap_coder.web.pages.review import attention
     from tests.web.test_web_invoice import clean_invoice
 
@@ -266,23 +267,20 @@ def test_an_invoice_with_a_warning_bulk_approval_refuses_is_not_ready(client, st
     store.refresh_confidence(invoice_id, 0.99, False)  # not flagged by its checks
     pending = [i for i in store.list_invoices("review") if i["id"] == invoice_id]
     reference = store.reference_data()
-    assert invoice_id not in attention(store, reference, pending, today={invoice_id: []})
+    facts = queue_checks(store, [invoice_id])[0][invoice_id]
+
+    def found(issues):  # the queue's checks of the invoice, as today's checks find them
+        return {invoice_id: {**facts, "found": issues}}
+
+    assert invoice_id not in attention(store, reference, pending, checks=found([]))
     warned = [{"severity": "warning", "code": "TAX_RATE_MISMATCH", "line": None,
                "message": "HST charged at 15% but the official rate in ON is 13%"}]  # fmt: skip
-    reasons = attention(store, reference, pending, today={invoice_id: warned})
+    reasons = attention(store, reference, pending, checks=found(warned))
     assert "warning" in reasons[invoice_id].lower()
     always = [{"severity": "info", "code": "VENDOR_BANK_CHANGED", "line": None, "message": "bank changed"}]
-    assert invoice_id in attention(store, reference, pending, today={invoice_id: always})
-    assert invoice_id not in attention(
-        store,
-        reference,
-        pending,
-        today={
-            invoice_id: [
-                {"severity": "info", "code": "TERMS_FROM_VENDOR", "line": None, "message": "terms from the vendor list"}
-            ]
-        },
-    )
+    assert invoice_id in attention(store, reference, pending, checks=found(always))
+    terms = [{"severity": "info", "code": "TERMS_FROM_VENDOR", "line": None, "message": "terms from the vendor list"}]
+    assert invoice_id not in attention(store, reference, pending, checks=found(terms))
 
 
 # --- 9. Rates in percent -----------------------------------------------------------------------------------------

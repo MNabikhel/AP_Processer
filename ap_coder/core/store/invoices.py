@@ -119,10 +119,11 @@ class InvoicesMixin:
                 })  # fmt: skip
             return invoice_id
 
-    def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
+    def find_by_hash(self, path: str | Path, include_failed: bool = False,
+                     sha: str | None = None) -> dict[str, Any] | None:  # fmt: skip
         """The latest invoice made from this exact file, or from this exact picture made into a PDF (failed attempts
-        only if ``include_failed``)."""
-        sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        only if ``include_failed``). ``sha``: its SHA-256, when the caller read it already."""
+        sha = sha or hashlib.sha256(Path(path).read_bytes()).hexdigest()
         sql = "SELECT id, status FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?)"
         if not include_failed:
             sql += f" AND status != '{FAILED}'"
@@ -187,16 +188,19 @@ class InvoicesMixin:
         for key, r in keyed:
             dates.setdefault(key, set()).add(r.get("invoice_date") or "")
         copies = {key: len(found - {""}) or 1 for key, found in dates.items()}
+        from ...erp.search import register_keys
+
         with self._conn() as conn:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
             conn.executemany(
                 """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
-                   imported_at, copies) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total)
+                   imported_at, copies, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(vendor_key, number_key, total)
                    DO UPDATE SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at,
                    copies = MAX(erp_invoices.copies, excluded.copies)""",
-                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key])
-                 for key, r in keyed],
+                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key],
+                  *register_keys(r["vendor_name"], r["invoice_number"])) for key, r in keyed],
             )  # fmt: skip
             count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
             detail: dict[str, Any] = {"rows": len(rows), "total": count}
@@ -231,24 +235,9 @@ class InvoicesMixin:
         """One page of the invoice directory, with the date each one's export batch was made. The page's ids come
         first (SQLite then reads only what the filters and the sort need), then their rows: reading every invoice's
         coding to sort the whole table would take most of a second with tens of thousands of invoices."""
-        with self._conn() as conn:
-            self._summary_fresh(conn)
-            ids = [
-                r[0]
-                for r in conn.execute(
-                    f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
-                    [*params, limit, offset],
-                )
-            ]
-            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
-            found = {r["id"]: dict(r) for r in page}
-            rows = [found[i] for i in ids if i in found]
-            wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
-            made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
-            batches = {b["id"]: b["created_at"] for b in conn.execute(made, (json.dumps(wanted),))}
-        for r in rows:
-            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
-        return rows
+        with self.session():  # type: ignore[attr-defined]  (one connection for both)
+            ids = self.directory_ids(rows_sql, where, params, order, limit, offset)  # type: ignore[attr-defined]
+            return self.directory_rows_of(rows_sql, fields, ids)  # type: ignore[attr-defined]
 
     def erp_register(self) -> list[dict[str, Any]]:
         """Every invoice in the imported ERP register."""
@@ -260,6 +249,15 @@ class InvoicesMixin:
                     "FROM erp_invoices"
                 )
             ]
+
+    def erp_register_rows(self, where: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
+        """The ERP register's rows ``where`` keeps (the caller's SQL over its columns, with its vendor name and
+        invoice number as the quick search compares them: ``plain_name``, ``raw_number``), in ``erp_register``'s
+        order, read in one go."""
+        with self._conn() as conn:
+            sql = ("SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
+                   f"FROM erp_invoices WHERE {where} ORDER BY rowid")  # fmt: skip
+            return fetch_rows(conn, sql, tuple(params))
 
     def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
@@ -592,18 +590,14 @@ class InvoicesMixin:
             )
         return {int(r["id"]): (str(r["a"] or ""), str(r["b"] or "")) for r in rows}
 
-    def save_recheck(self, invoice_id: int, stamp: str, issues: list[dict[str, Any]], seen: str | None) -> bool:
-        """Keep the queue's re-check of an invoice in review (``coding.bulk.issues_today``) with its stored checks,
-        beside them (``recheck``: the stamp and the findings): they stay as they were found. Only while the stored
-        checks are still ``seen`` (their text as read): True when kept."""
-        recheck = json.dumps({"stamp": stamp, "issues": issues}, default=str)
+    def save_rechecks(self, found: list[tuple[int, str, list[dict[str, Any]] | None, str | None]]) -> int:
+        """Keep the queue's re-checks (``coding.bulk.recheck_queue``), each (invoice id, stamp, findings: None when its
+        coding can't be read, its stored checks as read), beside the stored checks (``recheck``): they stay as they
+        were found. In one write; each only while its invoice is in review with its stored checks as read. How many."""
+        rows = [(json.dumps({"stamp": s, "issues": f}, default=str), int(i), REVIEW, seen) for i, s, f, seen in found]
         with self._conn() as conn:
-            cur = conn.execute(
-                "UPDATE invoices SET validation = json_set(validation, '$.recheck', json(?)) "
-                "WHERE id = ? AND status = ? AND validation = ?",
-                (recheck, int(invoice_id), REVIEW, seen),
-            )
-        return cur.rowcount > 0
+            return conn.executemany("UPDATE invoices SET validation = json_set(validation, '$.recheck', json(?)) "
+                                    "WHERE id = ? AND status = ? AND validation = ?", rows).rowcount  # fmt: skip
 
     def invoice_columns(
         self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None, decode: bool = True

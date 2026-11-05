@@ -49,6 +49,9 @@
         {% for key, name in sorts.items() %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
     </form>
+    {% if updating %}
+    <p class="muted pad rq-updating" role="status">Checks being updated after a settings change: {{ updating | plural("invoice") }} still {{ "shows its" if updating == 1 else "show their" }} earlier checks. Reload in a minute.</p>
+    {% endif %}
 
     {% if candidates %}
     <div class="rq-bulk-bar">

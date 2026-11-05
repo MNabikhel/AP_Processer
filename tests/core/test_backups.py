@@ -726,3 +726,63 @@ def test_a_restore_never_replaces_or_sets_aside_the_key_of_the_accounts_here(tmp
     assert (data / authenticator.KEY_FILE).read_bytes() == key
     clock[0] += 60
     assert store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"
+
+
+def test_a_backup_that_would_fill_the_disk_is_not_started(tmp_path, monkeypatch):
+    """A year's database on the company server is 7-9 GB: a daily copy started with less room than that filled the
+    disk, and a full disk stops every write to the database, for everyone. The backup is refused before it starts,
+    with the reason kept for Settings and the start-up check, and nothing half-written is left behind."""
+    from ap_coder.core.store import backups
+
+    store = Store(tmp_path / "ap.db")
+    with pytest.MonkeyPatch.context() as rule:  # the real rule (conftest sets no spare room)
+        rule.setattr(backups, "BACKUP_RESERVE", 512 * 1024 * 1024)
+        real = shutil.disk_usage
+
+        def short(path):
+            usage = real(path)
+            return usage._replace(free=store.path.stat().st_size + 1024)  # the copy fits, the room to keep doesn't
+
+        monkeypatch.setattr(backups.shutil, "disk_usage", short)
+        with pytest.raises(OSError, match="not enough free space"):
+            store.backup_now("manual")
+        assert not list(store.backup_dir().glob("ap_coder-*"))
+        assert store.get_setting(backups.BACKUP_STATUS).startswith("failed ")
+        assert "not enough free space" in store.get_setting(backups.BACKUP_STATUS)
+        with pytest.raises(OSError, match="not enough free space"):  # the daily one too (its thread logs it)
+            store.auto_backup()
+    monkeypatch.setattr(backups.shutil, "disk_usage", real)  # room again: the next one is made, the status cleared
+    assert store.backup_now("manual").exists() and store.get_setting(backups.BACKUP_STATUS) == ""
+
+
+def test_the_daily_backup_waits_for_its_hours_but_never_skips_a_day(tmp_path):
+    """The company server copies a 7-9 GB database once a day: started 20 hours after the last one, it drifted into
+    the working day, minutes of disk work under 300 people. With AP_BACKUP_HOURS (``backup_window``: "1-5", from 1
+    to 5 in the morning) it starts only then, unless the last one is more than a day and a bit old (the server was
+    off during those hours): then at once."""
+    import datetime as dt
+
+    from ap_coder.core.store.backups import backup_window
+
+    assert backup_window("1-5") == (1, 5) and backup_window("22-4") == (22, 4)
+    assert backup_window("") is None and backup_window("lunch") is None and backup_window("3-3") is None
+    store = Store(tmp_path / "ap.db")
+    made = store.auto_backup()
+    day = dt.datetime.fromtimestamp(made.stat().st_mtime)
+    afternoon = day.replace(hour=14) + dt.timedelta(days=1)
+    if afternoon - day < dt.timedelta(hours=21):
+        afternoon += dt.timedelta(days=1)
+    stamp = (afternoon - dt.timedelta(hours=25)).timestamp()
+    os.utime(made, (stamp, stamp))  # the last one 25 hours before a weekday afternoon
+    assert store.auto_backup(window=(1, 5), now=afternoon) is None  # outside its hours: it waits
+    assert store.auto_backup(window=(22, 4), now=afternoon) is None
+    night = afternoon.replace(hour=2) + dt.timedelta(days=1)
+    stamp = (night - dt.timedelta(hours=21)).timestamp()
+    os.utime(made, (stamp, stamp))
+    assert store.auto_backup(window=(1, 5), now=night) is not None  # in its hours, a day after the last
+    late = sorted(store.list_backups())[-1]
+    stamp = (afternoon - dt.timedelta(hours=31)).timestamp()
+    for backup in store.list_backups():
+        os.utime(backup, (stamp, stamp))
+    assert store.auto_backup(window=(1, 5), now=afternoon) is not None  # the hours were missed: not a day skipped
+    assert late.exists()

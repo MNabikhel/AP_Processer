@@ -169,10 +169,10 @@ def test_watch_skips_files_it_cannot_read(tmp_path, monkeypatch):
     (inbox / "locked.pdf").write_bytes(b"%PDF-1.4 locked")
     real = store.find_by_hash
 
-    def find(path, include_failed=False):
+    def find(path, include_failed=False, **known):  # (``sha``: the hash its caller read already, D-155)
         if path.name == "locked.pdf":
             raise PermissionError("in use")
-        return real(path, include_failed)
+        return real(path, include_failed, **known)
 
     monkeypatch.setattr(store, "find_by_hash", find)
     assert [p.name for p in new_files(inbox, store, now=9e12)] == ["good.pdf"]

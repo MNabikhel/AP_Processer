@@ -137,6 +137,47 @@ def test_the_folder_pick_up_lists_and_processes_new_files(app, client, store):
     assert "No new files" in client.get("/process").text
 
 
+def test_the_saved_emails_are_found_by_their_names_first(tmp_path):
+    """Whether a path is a file is asked of the saved emails only, not of every invoice in the folder (D-157): the
+    same emails."""
+    from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, emails_in
+
+    folder = tmp_path / "invoices"
+    folder.mkdir()
+    for name in ("a.pdf", "C.PDF", "note.docx", "mail.eml", "MAIL2.MSG", ".hidden.eml", "plain", "dot.eml."):
+        (folder / name).write_bytes(name.encode())
+    (folder / "folder.eml").mkdir()
+    old = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
+    assert emails_in(folder) == old and [p.name for p in old] == [".hidden.eml", "MAIL2.MSG", "mail.eml"]
+
+
+def test_the_files_not_processed_are_found_in_one_query(store, tmp_path):
+    """Each file's SHA-256 against every invoice's in one query, not one query a file (D-157): the same files new
+    (an invoice of a picture made into a PDF, and a failed one, count as processed) and the same ones unreadable."""
+    from ap_coder.web.pages.process import not_processed
+
+    folder = tmp_path / "in"
+    folder.mkdir()
+    files = []
+    for n in range(6):
+        files.append(folder / f"f{n}.pdf")
+        files[-1].write_bytes(f"%PDF-1.4 {n}".encode())
+    store.add_invoice(files[0], {"vendor_name": "A", "invoice_number": "1", "grand_total": 1}, {"issues": []})
+    store.add_invoice(files[1], None, None, error="could not be read")
+    store.add_invoice(tmp_path / "made.pdf", {"vendor_name": "B", "invoice_number": "2", "grand_total": 2},
+                      {"issues": []}, original_sha256=hashlib.sha256(files[2].read_bytes()).hexdigest())  # fmt: skip
+    shutil.copy(files[3], folder / "copy of f3.pdf")
+    files += [folder / "copy of f3.pdf", folder / "gone.pdf"]
+    store.add_invoice(files[3], {"vendor_name": "C", "invoice_number": "3", "grand_total": 3}, {"issues": []})
+    old_new, old_unreadable = [], []
+    for path in files:
+        try:
+            (old_new if store.find_by_hash(path, include_failed=True) is None else []).append(path)
+        except OSError:
+            old_unreadable.append(path)
+    assert not_processed(store, files) == (old_new, old_unreadable) == (files[4:6], [files[7]])
+
+
 def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, client, store, tmp_path, monkeypatch):
     """B-1587: a scheduled ``watch`` and the dashboard's Process button had no lock in common. Both listed a new file
     as not stored yet, both read it, and it was stored twice (two invoices of the same file). Here they really run
@@ -179,6 +220,37 @@ def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, cli
     # The watch held the pick-up lock: the import waited for it, then found the file stored and skipped it.
     assert snap["result"]["processed"] == 0
     assert any(m["text"].startswith("Skipped") and m["details"] == [new.name] for m in snap["result"]["messages"])
+
+
+def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, client, store, monkeypatch):
+    """B-1673: the folder pick-up lists the files never processed, a failed read counting as processed (it is read
+    again only by Retry), but its check once it holds the pick-up lock left failed reads out: a file a scheduled watch
+    had just failed to read was read again at once. A retry still reads a failed file again."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.web.pages import process
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    new = folder / f"{OTHER}.pdf"
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", new)
+    real_wait, real_process, read = process.wait_for_pickup, InvoicePipeline.process, []
+
+    def watch_first(*args, **kwargs):  # a watch held the lock: it read the file, and failed
+        store.add_invoice(new, None, None, error="The file could not be read")
+        return real_wait(*args, **kwargs)
+
+    def reading(self, path, *args, **kwargs):
+        read.append(os.path.basename(path))
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(process, "wait_for_pickup", watch_first)
+    monkeypatch.setattr(InvoicePipeline, "process", reading)
+    assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"
+    assert finished(app, client)["result"]["processed"] == 0 and read == []
+    monkeypatch.setattr(process, "wait_for_pickup", real_wait)
+    failed = store.find_by_hash(new, include_failed=True)["id"]
+    assert client.post(f"/review/{failed}/retry", headers=PAGE).status_code == 200
+    assert finished(app, client)["result"]["processed"] == 1 and read == [new.name]
 
 
 def test_safe_upload_names(tmp_path):
@@ -269,3 +341,45 @@ def test_a_stale_page_cannot_load_the_demo_beside_your_own_invoices(client, stor
     answer = client.post("/demo/load", headers=PAGE)
     assert not answer.json().get("ok", True) and "your own invoices" in answer.text
     assert store.demo_count() == 0 and sum(store.status_counts().values()) == 1
+
+
+def test_the_import_page_reads_no_file_of_the_invoices_folder(app, client, store, monkeypatch):
+    """B-1633: each view of Import invoices read and hashed every file in the invoices folder to list the new ones,
+    and the folder keeps the processed files (100,000 of them at 100,000 invoices: 7 s a view, 847 s at p95 under
+    load). A view reads none: it lists the files the pick-up has not read since they changed, or read and found in no
+    invoice; the pick-up still reads every one."""
+    from pathlib import Path
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", folder / f"{OTHER}.pdf")
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1  # processed: it stays in the folder
+    shutil.copy(SAMPLES / f"{STEM}.pdf", folder / "new.pdf")
+    shutil.copy(folder / f"{OTHER}.pdf", folder / "again.pdf")  # the same invoice again, under another name
+    read = []
+    real = Path.read_bytes
+    with monkeypatch.context() as m:
+        m.setattr(Path, "read_bytes", lambda self: read.append(self) or real(self))
+        text = client.get("/process").text
+    assert not [p for p in read if folder in p.parents] and "Process 2 files" in text, read
+    assert "new.pdf" in text and "again.pdf" in text  # (not read yet: new for now)
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1  # new.pdf read and coded; again.pdf found in AP Coder
+    assert "No new files" in client.get("/process").text  # each as the pick-up read it
+
+
+def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, store):
+    """B-1633: a database from before has no record of what the pick-up read: its invoices' own files count as read
+    (once, when this version opens it), so none is listed as new."""
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / f"{OTHER}.pdf", folder / f"{OTHER}.pdf")
+    client.post("/process/folder", headers=PAGE)
+    assert finished(app, client)["result"]["ok"] == 1
+    with store._conn() as conn:  # as an older AP Coder left it
+        conn.execute("DELETE FROM seen_files")
+        conn.execute("DELETE FROM settings WHERE key = 'seen_files'")
+    assert "Process 1 file" in client.get("/process").text
+    Store(store.path)  # opened by this version
+    assert "No new files" in client.get("/process").text
