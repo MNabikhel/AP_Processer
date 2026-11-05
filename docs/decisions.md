@@ -779,8 +779,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **The reading:** `scripts/same_behaviour.py --ref 62d2590`: tax, approve and read the same.
     - **The benches** (`--quick --scanned 1`): `run`, 24 scans, the same before and after (field accuracy 100.0%,
       verified precision 100.0% at 50.7% coverage, every invoice right, no silent error, ECE 0.0226; its failures and
-      evidence the same bytes). `lines`, every invoice a scan (B-1740): descriptions right 43.1% after (before: still to run);
-      the 17 AP corrected all right the next time, GL right 100%.
+      evidence the same bytes). `lines`, every invoice a scan (B-1740): descriptions right 43.1% after (before: still
+      to run); the 17 AP corrected all right the next time, GL right 100%.
   - **On Python 3.13 and 3.14** a venv made with `pip install -e ".[ocr]"` had no 1.4.4 (the launcher's had it). Now it
     reads exactly as 3.12 does: the read probe's 60 readings are the same bytes as 3.12's before, and the benches' cases
     the same. Against its PP-OCRv5-alone reading: `run` field accuracy 98.7 → 100.0%, invoices all right 87.5 → 100%,
