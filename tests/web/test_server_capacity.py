@@ -461,7 +461,11 @@ def test_the_ending_workers_note_goes_once_it_ended_at_the_start_and_after_ten_m
             self.should_exit.set()
 
     monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
-    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(bind_socket=lambda: None))
+    monkeypatch.setattr(
+        server,
+        "server_config",
+        lambda *a, **k: SimpleNamespace(bind_socket=lambda: SimpleNamespace(listen=lambda n: None), backlog=2048),
+    )
     monkeypatch.setattr(server, "Supervisor", Supervisor)
     monkeypatch.setattr(server, "BackgroundWork", lambda db: SimpleNamespace(start=lambda: None, stop=lambda: None))
     monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)

@@ -818,3 +818,18 @@ def test_a_long_import_does_not_hold_up_the_other_requests_of_its_web_worker(sto
     assert page.status_code == 200 and imported.status_code == 200, imported.text
     assert store.erp_register_count() == 1
     assert answered_meanwhile, "the page waited for the import's store call to end"
+
+
+def test_the_servers_socket_listens_before_any_worker_starts():
+    """B-1711: each web worker listened on its own copy of the server's socket, the first one changing it from bound
+    to listening while the others did the same; on Windows a worker's start once failed there with WinError 10022
+    (an invalid argument), and the stop then waited for the worker started in its place. The server's socket now
+    listens before any worker starts (a connection waits in its queue for the first one): a worker's listen changes
+    nothing."""
+    config = server.server_config("ap_coder.web.server:worker_app", "127.0.0.1", 0, None, None, None, factory=True,
+                                  workers=2)  # fmt: skip
+    sock = server.listening_socket(config)
+    try:
+        socket.create_connection(sock.getsockname()[:2], timeout=2).close()  # a socket only bound refuses it
+    finally:
+        sock.close()

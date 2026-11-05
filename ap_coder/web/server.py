@@ -364,7 +364,7 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     # time: one taken for hung is ended and started again.
     config = server_config("ap_coder.web.server:worker_app", host, port, certfile, keyfile, proxy, factory=True,
                            workers=workers, timeout_worker_healthcheck=30)  # fmt: skip
-    supervisor = Supervisor(config, sockets=[config.bind_socket()])
+    supervisor = Supervisor(config, sockets=[listening_socket(config)])
     write_server_file(port, token)
     background = BackgroundWork(store.path)
     background.start()
@@ -481,6 +481,16 @@ def _supervisor_class() -> Any:
             self.failed = not self.asked_to_stop and any(p.exitcode == STARTUP_FAILURE for p in self.processes)
 
     return _Supervisor
+
+
+def listening_socket(config: Any) -> socket.socket:
+    """The server's socket, bound and listening before any web worker starts (B-1711). Each worker listens on its own
+    copy (on Windows, ``socket.share``): when the first of them made it listen while another did the same, one
+    worker's start failed with WinError 10022. A socket already listening is left as it is, its queue holding a
+    connection until the first worker takes it."""
+    sock = config.bind_socket()
+    sock.listen(config.backlog)
+    return sock
 
 
 def Supervisor(config: Any, sockets: list[Any]) -> Any:  # noqa: N802 - built when used: uvicorn is imported late
