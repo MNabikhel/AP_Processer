@@ -136,6 +136,7 @@ def _clear_reading_memory() -> None:
     layout._SCAN_PNGS.clear()
     store._FEEDBACK.clear()
     store._base._VENDOR_LESSONS.clear()
+    store._base._PAST_MEMORY.clear()
 
 
 def _no_local_model(monkeypatch) -> None:
@@ -175,6 +176,7 @@ def fresh_reading_memory():
     table_finder._found.clear()
     store._FEEDBACK.clear()
     store._base._VENDOR_LESSONS.clear()
+    store._base._PAST_MEMORY.clear()
 
 
 @pytest.fixture(autouse=True)

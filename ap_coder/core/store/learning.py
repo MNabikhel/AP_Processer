@@ -16,6 +16,7 @@ from ._base import (
     _FEEDBACK,
     _FEEDBACK_LOCK,
     _METRICS,
+    _PAST_MEMORY,
     _VENDOR_LESSONS,
     APPROVED,
     FEEDBACK_READ,
@@ -219,10 +220,34 @@ class LearningMixin:
         rows = self.feedback_rows()
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
-        key = key or vendor_key(vendor_name)
-        have = {r["id"] for r in rows if r["vendor_key"] == key}
-        missing = [r for r in self.feedback_rows(vendor_name=vendor_name, key=key) if r["id"] not in have]
+        missing = self._past_memory(key or vendor_key(vendor_name), rows[-1])
         return rows + missing if missing else rows
+
+    def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
+        """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
+        it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Read again only once one of the
+        vendor's lessons or the memory's last changed: the GL suggestions' index (``suggest._MEMORY``) knows the same
+        rows at once, where rows read again are told apart by what they say. The latest two vendors are kept, as that
+        index keeps two lists of rows."""
+        kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
+        history = last["outcome"] == "history"
+        with self._conn() as conn, _one_snapshot(conn):
+            stamp = (*_vendor_stamp(conn, key), last["id"], history)
+            with _FEEDBACK_LOCK:
+                kept = _PAST_MEMORY.get(kept_key)
+            if kept is not None and kept[0] == stamp:
+                return kept[1]
+            missing = fetch_rows(
+                conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
+                "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
+                (key, FEEDBACK_READ, history, history, last["id"]),
+            )  # fmt: skip
+        with _FEEDBACK_LOCK:
+            _PAST_MEMORY.pop(kept_key, None)
+            _PAST_MEMORY[kept_key] = (stamp, missing)
+            while len(_PAST_MEMORY) > 2:
+                _PAST_MEMORY.pop(next(iter(_PAST_MEMORY)))
+        return missing
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.

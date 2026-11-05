@@ -88,6 +88,9 @@ _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 # What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
 # latest used last (``Store.vendor_lessons``).
 _VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
+# A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows)
+# (``Store.learning_rows``).
+_PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 
 
 def _forget_learning(path: Path) -> None:
@@ -95,7 +98,7 @@ def _forget_learning(path: Path) -> None:
     upgrade changed lessons in place, which the stamps (lessons are otherwise only added or removed) don't see."""
     key = str(path.resolve())
     with _FEEDBACK_LOCK:
-        for kept in (_FEEDBACK, _METRICS, _VENDOR_LESSONS):
+        for kept in (_FEEDBACK, _METRICS, _VENDOR_LESSONS, _PAST_MEMORY):
             for k in [k for k in kept if (k[0] if isinstance(k, tuple) else k) == key]:
                 kept.pop(k, None)
 

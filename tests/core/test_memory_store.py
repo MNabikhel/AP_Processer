@@ -561,3 +561,46 @@ def test_a_vendors_lessons_are_worked_out_once_until_one_of_them_changes(tmp_pat
     same()
     store.delete_invoice(inv, forget_lessons=True)
     assert same().accounts == ["6300"]
+
+
+def test_a_vendors_lessons_past_the_memory_are_read_once_until_they_or_the_memory_change(tmp_path, monkeypatch):
+    # Past the read cap, the review screen's GL suggestions read the whole memory plus the vendor's lessons it does not
+    # hold (``learning_rows``): all of the vendor's were read on every page and check (50,000 for the biggest), and
+    # their new copies made the suggestions' index tell the rows apart by what they say (half a second). Only the ones
+    # past the memory are read now, once until the vendor's lessons or the memory change, as reading them all gives.
+    from ap_coder.core.store import learning
+
+    store = Store(tmp_path / "ap.db")
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 12)
+    reads = []
+    real = learning.fetch_rows
+
+    def spy(conn, sql, params=()):
+        reads.append(sql)
+        return real(conn, sql, params)
+
+    def history(vendor, n, start, outcome_date="2025-06-01"):
+        store.import_history([{"vendor_name": vendor, "description": f"Freight lot {i}", "gl_code": "5100",
+                               "amount": 10.0, "date": outcome_date} for i in range(start, start + n)])  # fmt: skip
+
+    def expected(vendor):  # what learning_rows gave reading all of the vendor's lessons
+        rows = store.feedback_rows()
+        have = {r["id"] for r in rows if r["vendor_key"] == vendor_key(vendor)}
+        missing = [r for r in store.feedback_rows(vendor_name=vendor) if r["id"] not in have]
+        return rows + missing
+
+    history("Northwind IT", 9, 0)  # imported first: pushed out of the memory by the others
+    history("Zenith Freight", 10, 100)
+    monkeypatch.setattr(learning, "fetch_rows", spy)
+    first = store.learning_rows("Northwind IT")
+    assert first == expected("Northwind IT") and len(first) > 12
+    del reads[:]
+    again = store.learning_rows("Northwind IT")
+    assert again == first and all(a is b for a, b in zip(again, first, strict=True)) and not reads  # nothing read
+    history("Zenith Freight", 3, 200)  # the memory moves on: more of Northwind's fall out of it
+    assert store.learning_rows("Northwind IT") == expected("Northwind IT")
+    history("Northwind IT", 2, 300)  # its own newest are in the memory again
+    assert store.learning_rows("Northwind IT") == expected("Northwind IT")
+    assert store.learning_rows("Zenith Freight") == expected("Zenith Freight")
+    store.forget_history()
+    assert store.learning_rows("Northwind IT") == store.feedback_rows() == []
