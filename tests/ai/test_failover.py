@@ -249,6 +249,30 @@ def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, 
     assert _until(lambda: breaker.serving() == primary.base_url, 10)
 
 
+def test_with_both_servers_down_the_primary_is_taken_back_as_soon_as_it_answers(two, quick, monkeypatch, reference):
+    """B-1872: both servers down, then the primary back: the calls stayed on the dead backup for the whole hold
+    (60 s, up to 30 minutes when it flapped), since a backup that doesn't list its models was never counted as
+    failing, and nothing else is asked of it then. Its model list not given counts on the backup too (the page
+    reader's and the chat model's), and the primary is taken back once it answered its probes."""
+    primary, backup = two
+    monkeypatch.setattr(local_llm, "HOLD_SECONDS", 60.0)
+    settings = _settings(primary.base_url, backup.base_url)
+    assert page_reader.reader_status(settings).usable
+    breaker = page_reader.reader_failover(settings)
+    primary.set(down=True)
+    backup.set(down=True)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # what ready() asks each round, a status 10 s old each time
+        local_llm.forget_status()
+        page_reader.reader_status(settings)
+    assert breaker.state()["on"] == BACKUP and breaker.state()["failures"][BACKUP] == 1  # (the list just asked)
+    local_llm.forget_status()
+    with pytest.raises(CodingError):  # the chat model's coder asks the backup's list too
+        InvoiceCoder(settings, reference, provider="local")._prepare_local()
+    assert breaker.state()["failures"][BACKUP] == local_llm.FAILOVER_FAILURES
+    primary.set(down=False)
+    assert _until(lambda: breaker.serving() == primary.base_url, 5)
+
+
 def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypatch):
     """On the company server what one process finds moves every process's calls: its state is kept in the slots
     folder (AP_LLM_SLOTS_DIR, which ``serve --server`` sets for all its processes)."""

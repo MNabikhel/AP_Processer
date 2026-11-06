@@ -2307,7 +2307,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `PROBE_SECONDS` (5 s; `local_llm.probe`: one of its models, no slot taken, `PROBE_TIMEOUT` 10 s, one process at a
       time), once the calls have been on the backup `hold` seconds: `HOLD_SECONDS` (60 s), twice as long each time it
       fails again within `FLAP_SECONDS` (10 minutes) of being taken back, at most 30 minutes; at once when the backup
-      fails too. Calls under way on the backup end there.
+      fails too: two of its calls, or its model list not given while the calls are on it (both down, nothing else is
+      asked of it: B-1872). Calls under way on the backup end there.
     - **Shared** by the company server's processes, as the minute needs (measured below): a small JSON file in
       `AP_LLM_SLOTS_DIR` (the slot locks' folder `serve --server` gives them all), written under its lock
       (`paths.try_lock`), read at most every 0.5 s; times on the server's clock (one machine). Not the database: the
