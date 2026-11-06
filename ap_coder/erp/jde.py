@@ -489,14 +489,26 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
     return _vendor_id(final, vendor_lookup or {}).strip()  # (read, not copied: once per invoice or vendor)
 
 
+def _gl_index(settings: JdeSettings) -> dict[tuple[str, str], GlMap]:
+    """The account mapping by (GL code, cost center), the first row of each (as read from the top): made once for
+    these settings, again once their mapping is another list or has grown (B-1863), not read row by row per line."""
+    kept = settings.__dict__.get("_gl_index")
+    if kept is None or kept[0] is not settings.gl_map or kept[1] != len(settings.gl_map):
+        index: dict[tuple[str, str], GlMap] = {}
+        for m in settings.gl_map:
+            index.setdefault((_norm(m.gl_code), _norm(m.cost_center)), m)
+        kept = settings.__dict__["_gl_index"] = (settings.gl_map, len(settings.gl_map), index)
+    return kept[2]
+
+
 def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap | None:
     """The E1 account of an AP Coder GL code (+ cost center), or None when it is not mapped."""
     gl, cc = _norm(gl_code), _norm(cost_center)
     cc = "" if cc == UNASSIGNED else cc  # a cost center still to pick is not a business unit (B-1211)
     if not gl or gl == UNASSIGNED:  # a line still to code has no object account (B-830)
         return None
-    exact = next((m for m in settings.gl_map if _norm(m.gl_code) == gl and _norm(m.cost_center) == cc), None)
-    row = exact or next((m for m in settings.gl_map if _norm(m.gl_code) == gl and not _norm(m.cost_center)), None)
+    index = _gl_index(settings)
+    row = index.get((gl, cc)) or index.get((gl, ""))
     if row is None and not settings.use_default_rule:
         return None
     row = row or GlMap(gl_code)

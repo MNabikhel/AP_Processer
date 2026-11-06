@@ -374,6 +374,35 @@ def test_account_columns_mode_and_mapping():
     assert jde.ani(jde.account_for("6010", "CC400", no_cc)) == "1.6010"
 
 
+def test_the_account_of_each_line_is_found_without_reading_the_whole_mapping():
+    """B-1863: ``account_for`` read the account mapping from the top for each line (twice when a line's cost center
+    had no row of its own): with the 20,000 rows a JD Edwards sync adds, 5,000 lines (a 500-voucher batch) took 13
+    seconds, at every check, dry run, go-ahead and download. The mapping is looked up by GL code and cost center, the
+    first row of each as before, and again once the mapping is another or has grown."""
+    import time
+
+    rows = [jde.GlMap(f"{6000 + i}", "CC1" if i % 2 else "", "B1", f"{6000 + i}", f"{i % 7}") for i in range(20000)]
+    rows += [jde.GlMap("6002", "", "SECOND", "6002")]  # a second row of a code: the first one counts
+    settings = jde.JdeSettings(default_bu="CC9", gl_map=rows)
+    asked = [(f"{6000 + i * 7 % 30000}", ("CC1", "CC2", "")[i % 3]) for i in range(5000)]
+
+    def scanned(gl: str, cc: str) -> jde.GlMap | None:  # the mapping read row by row, as before
+        exact = next((m for m in rows if m.gl_code == gl and m.cost_center == cc), None)
+        row = exact or next((m for m in rows if m.gl_code == gl and not m.cost_center), None)
+        return jde.GlMap(gl, cc, row.bu or cc or "CC9", row.obj or gl, row.sub, row.sbl, row.sblt) if row else (
+            jde.GlMap(gl, cc, cc or "CC9", gl))  # fmt: skip
+
+    expected = [scanned(gl, cc) for gl, cc in asked[:300]]
+    started = time.perf_counter()
+    found = [jde.account_for(gl, cc, settings) for gl, cc in asked]
+    assert time.perf_counter() - started < 1.0
+    assert found[:300] == expected and jde.account_for("6002", "", settings).bu == "B1"
+    settings.gl_map.append(jde.GlMap("99999", "", "NEW", "7000"))  # a row added: found at once
+    assert jde.account_for("99999", "", settings).obj == "7000"
+    settings.gl_map = [jde.GlMap("6002", "", "ONLY", "6002")]  # another mapping
+    assert jde.account_for("6002", "", settings).bu == "ONLY"
+
+
 def test_a_subledger_too_long_for_jd_edwards_holds_the_voucher_back_before_the_batch():
     """VNSBL holds 8 characters and VNSBLT one: a longer mapping (from a spreadsheet) failed only when JD Edwards
     loaded the batch, where the business unit, object and subsidiary are checked before it is made."""

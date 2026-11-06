@@ -489,6 +489,40 @@ _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
 
 
+def _number_keys(value: Any) -> list[Any]:
+    """What a GST/HST number is the same as (``same_tax_number``): itself, and its 9-digit Business Number."""
+    number = norm_tax_number(value)
+    found = _BUSINESS_NUMBER.fullmatch(number) if number else None
+    return ([("gst", number)] if number else []) + ([("bn", found.group(1))] if found else [])
+
+
+def _account_keys(value: Any) -> list[Any]:
+    """What a bank account is the same as (``same_bank_account``: its digits or its numbers, as written and cut at the
+    account), and the last 4 digits JD Edwards pays on (``_jde_pays_on``); none without digits."""
+    if not bank_digits(value)[0]:
+        return []
+    cut = "; ".join(cut_bank_details(part) for part in str(value or "").split("; "))
+    (digits, runs), (cut_digits, cut_runs) = bank_digits(value), bank_digits(cut)
+    shown = mask_account(value)
+    return [("d", digits), ("r", runs)] + ([("cd", cut_digits), ("cr", cut_runs)] if cut_digits else []) + (
+        [("jde", shown[-4:])] if shown != "(none)" else [])  # fmt: skip
+
+
+def _ties(held: list[dict[str, Any]], numbers: dict[str, list[tuple[Any, Any]]]) -> dict[Any, set[str]]:
+    """{what a GST/HST number or bank account is the same as: the held vendors it could be} (``_number_keys``,
+    ``_account_keys``), from their own numbers, their approved invoices' and the account JD Edwards pays them on."""
+    out: dict[Any, set[str]] = {}
+    for v in held:
+        approved = numbers.get(v["vendor_key"]) or []
+        keys = [k for n in [v.get("expected_gst"), *(n for n, _ in approved)] for k in _number_keys(n)]
+        keys += [k for _, b in approved for k in _account_keys(b) if k[0] != "jde"]
+        if last4 := str(v.get("erp_bank") or "").strip()[-4:]:
+            keys.append(("jde", last4))
+        for k in keys:
+            out.setdefault(k, set()).add(v["vendor_key"])
+    return out
+
+
 def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None,
                 held: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], str] | None:  # fmt: skip
     """The vendor on hold behind an invoice's details, and what ties it: its name ("name"), its GST/HST number given
@@ -505,9 +539,15 @@ def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None,
     real = sum(c.isdigit() for c in norm_tax_number(gst)) >= 9  # a Business Number, not "N/A" or "pending"
     if not real and not bank_digits(bank)[0]:
         return None
-    # what each held vendor's approved invoices carried, read in one go (not one read per vendor on hold)
+    # what each held vendor's approved invoices carried, read in one go (not one read per vendor on hold), and which of
+    # them these details could be (``_ties``): only those are compared, in the same order (B-1863)
     numbers = store.approved_numbers([v["vendor_key"] for v in held])
+    asked = (tuple(v["vendor_key"] for v in held), numbers)
+    ties = store.summary_memo("held_ties", lambda: _ties(held, numbers), topic="", changes="vendors", asked=asked)
+    could = set().union(*(ties.get(k, ()) for k in ((_number_keys(gst) if real else []) + _account_keys(bank))))
     for v in held:
+        if v["vendor_key"] not in could:
+            continue
         approved = numbers.get(v["vendor_key"]) or []
         if real and any(same_tax_number(n, gst) for n in [v.get("expected_gst"), *(n for n, _ in approved)]):
             return v, "gst"

@@ -283,7 +283,8 @@ def _unposted_note(status: str) -> str:
     from . import jde_post
 
     return "exported; its JD Edwards voucher: " + (
-        "approved, not sent yet" if status == jde_post.CHECKED else jde_post.LABELS[status])
+        "approved, not sent yet" if status == jde_post.CHECKED else jde_post.LABELS[status]
+    )
 
 
 def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None = None) -> list[Accrual]:
@@ -345,8 +346,14 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
                     cc,
                     round(amount, 2),
                     doc.get("currency") or "",
-                    (EXPORTED_LATE if r["id"] in late else _unposted_note(unposted[r["id"]]) if r["id"] in unposted
-                     else state[r["status"]]) + (f"; {OLD_NOTE}" if old else ""),  # fmt: skip
+                    (
+                        EXPORTED_LATE
+                        if r["id"] in late
+                        else _unposted_note(unposted[r["id"]])
+                        if r["id"] in unposted
+                        else state[r["status"]]
+                    )
+                    + (f"; {OLD_NOTE}" if old else ""),  # fmt: skip
                     old,
                 )  # fmt: skip
             )
