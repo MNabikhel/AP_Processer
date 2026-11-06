@@ -39,12 +39,20 @@ def process_var(name: str) -> bool:
     return upper in PROCESS_VARS or upper.startswith(PROCESS_PREFIXES)
 
 
+_FROM_ENV_FILE: dict[str, str] = {}  # what load_env_file put in the environment: name -> value
+
+
 def load_env_file(path: Path) -> None:
     """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones."""
     values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False)
     for name, value in values.items():
         if value is not None and not process_var(name) and name not in os.environ:
-            os.environ[name] = value
+            os.environ[name] = _FROM_ENV_FILE[name] = value
+
+
+def from_env_file(name: str, value: str) -> bool:
+    """Whether the environment's ``value`` of ``name`` is the one a .env put there, not the machine's own."""
+    return _FROM_ENV_FILE.get(name) == value
 
 
 _PLACEHOLDER = re.compile(r"<[^<>]+>")  # "https://<your-resource>.openai.azure.com/" in .env.example

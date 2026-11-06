@@ -12,9 +12,10 @@ Service Control Manager ends it after 30 s), and a ctypes service host does not 
 ``python.exe`` (it starts the real Python as a second process, which cannot answer the Service Control Manager).
 
 Settings: ``<data folder>\\server.json`` (written by ``service install``; ``server-update`` keeps its record there
-too), each overridden by an environment variable (:data:`ENV_SETTINGS`). The ``run.cmd`` file is the one thing the task
-points at: ``server-update`` rewrites it for a new folder, so the task (and the account's password Windows keeps for
-it) never has to be registered again.
+too), each overridden by an environment variable (:data:`ENV_SETTINGS`; the data folder's .env, which ``service run``
+reads into its environment, too, but for the backup model servers: :data:`OVER_ENV_FILE`). The ``run.cmd`` file is the
+one thing the task points at: ``server-update`` rewrites it for a new folder, so the task (and the account's password
+Windows keeps for it) never has to be registered again.
 
 ``service stop`` leaves a ``stopped`` file beside ``run.cmd`` (the repeating trigger then starts nothing), asks the
 dashboard to stop (``POST /shutdown`` with the token of ``.ap_coder_server.json``, to this computer only) and ends the
@@ -61,6 +62,10 @@ ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certf
                 "worker_threads": "AP_WORKER_THREADS", "capture_processes": "AP_CAPTURE_PROCESSES",
                 "llm_backup_url": "AP_LLM_BACKUP_URL",
                 "page_reader_backup_url": "AP_PAGE_READER_BACKUP_URL"}  # fmt: skip
+# The settings server.json gives that win over the data folder's .env, which ``service run`` reads into its own
+# environment as every AP Coder process does: the backup model servers, given to the dashboard and left by its form
+# (D-180). The machine's own environment still wins.
+OVER_ENV_FILE = ("llm_backup_url", "page_reader_backup_url")
 # Windows' own accounts: no password; the task names them by their SID.
 BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
             "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
@@ -197,13 +202,17 @@ def session_limits(data: Path) -> tuple[float, float]:
 
 
 def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSettings:
-    """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`), then
-    ``overrides`` (the command line; None = not given)."""
+    """The settings in effect: the defaults, then server.json, then the environment (:data:`ENV_SETTINGS`: the data
+    folder's .env too, once read into it, but for :data:`OVER_ENV_FILE`), then ``overrides`` (the command line; None =
+    not given)."""
+    from ..core.config import from_env_file
+
     env = os.environ if env is None else env
     values: dict[str, Any] = {k: v for k, v in read_config(data).items() if k in FIELDS}
     for name, var in ENV_SETTINGS.items():
-        if (env.get(var) or "").strip():
-            values[name] = env[var].strip()
+        given = env.get(var) or ""
+        if given.strip() and not (name in OVER_ENV_FILE and values.get(name) and from_env_file(var, given)):
+            values[name] = given.strip()
     values.update({k: v for k, v in overrides.items() if v is not None})
     values["allowed_hosts"] = _hosts(values.get("allowed_hosts"))
     values["allowed_folders"] = _folders(values.get("allowed_folders"))

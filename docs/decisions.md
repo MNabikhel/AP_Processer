@@ -2274,8 +2274,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     *Settings → Reading → For IT → Backup model servers* (Admin; refused for an address off the company network by
     the offline rule's own checks, `refused_address`, as the main address, and for the main server itself), or
     server.json's `llm_backup_url` / `page_reader_backup_url` (given to the dashboard as its environment, which wins
-    over the .env: the form then shows it and leaves it). Empty: none, and nothing below runs: no breaker, no thread,
-    nothing kept, every call to the one server as before (laptop mode; `same_behaviour.py` the same).
+    over the .env: the form then shows it and leaves it). The service host reads the .env into its own environment
+    first, so it lets server.json's win over a value the .env put there (`service.OVER_ENV_FILE`, B-1873); the
+    machine's environment still wins over both. The service's other settings keep their order, a .env's winning over
+    server.json, which `service install` writes in full (its `llm_parallel` 1 would hide the .env's): SERVER.md says
+    so. Empty: none, and nothing below runs: no breaker, no thread, nothing kept, every call to the one server as
+    before (laptop mode; `same_behaviour.py` the same).
   - **The breaker** (`local_llm.Failover`), one a server: the chat model and the page reader share one when they share
     a machine and its backup (the planned layout); a page reader on a server of its own has its own. One a model
     (the first try) left the page reader on a killed Mac Studio: it saw the model list fail, read nothing, and so

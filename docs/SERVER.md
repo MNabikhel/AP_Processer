@@ -304,7 +304,11 @@ host starts the dashboard (`python -m ap_coder serve --server ...` with the sett
 again if it stops (after 5 seconds, then longer, up to 5 minutes). The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
 `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
-`AP_LLM_PARALLEL`.
+`AP_LLM_PARALLEL`, `AP_WORKER_THREADS`, `AP_CAPTURE_PROCESSES`. The host reads the data folder's `.env` into its
+environment first, as every AP Coder process does, so one of these written there wins over `server.json` too: keep
+them in `server.json` or the machine's environment (step 2). The backup model servers are the exception:
+`server.json`'s `llm_backup_url` and `page_reader_backup_url` win over the `.env`'s `AP_LLM_BACKUP_URL` and
+`AP_PAGE_READER_BACKUP_URL` (the machine's environment still wins over both; D-180).
 
 **Logs**: `D:\APCoderData\logs\service.log` (what the host and the dashboard say; 5 MB, then up to 5 older files,
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
