@@ -5,6 +5,7 @@ it in the background and takes it back only after it answered well for a while. 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -16,7 +17,7 @@ from dataclasses import replace
 import pytest
 
 from ap_coder.ai import local_llm, page_reader, page_worker, pipeline, verifier
-from ap_coder.ai.inference import CodingError, InvoiceCoder, suggest_accounts
+from ap_coder.ai.inference import ChatTimeout, CodingError, InvoiceCoder, suggest_accounts
 from ap_coder.ai.local_llm import BACKUP, PRIMARY
 from ap_coder.ai.pipeline import ArrivalBreaker, InvoicePipeline
 from ap_coder.bench.fake_model import READER, FakeModel, page_key
@@ -187,6 +188,98 @@ def test_a_call_waiting_on_a_hung_primary_is_asked_again_on_the_backup_at_once(t
     assert _served(backup, "suggest") == 1 and _served(primary, "suggest") == 0
 
 
+def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(two, reference, monkeypatch):
+    """B-1870: an arrival that spent most of its 20 s waiting for AP Coder's own chat slot (another call held it) was
+    sent with what was left, and the healthy primary's usual answer time past it was counted as its failure: two
+    such moved every call to the backup. Only the server's own time counts: an arrival that waited for its slot
+    isn't counted when it gets no answer, and one left too little time isn't sent at all."""
+    primary, backup = two
+    primary.set(chat_latency=(0.6, 0.6))
+    monkeypatch.setattr(local_llm, "WAITED_SECONDS", 0.1)  # (1 s and 5 s in the app, the arrival's 20 s scaled)
+    monkeypatch.setattr(local_llm, "SEND_SECONDS", 0.25)
+    coder = InvoiceCoder(_settings(primary.base_url, backup.base_url, parallel=1), reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+
+    def arrival(within: float) -> str:  # behind a call that holds the one chat slot for 0.6 s
+        holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        holder.start()
+        time.sleep(0.05)
+        try:
+            coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + within)
+            return "answered"
+        except ChatTimeout as exc:
+            return str(exc)
+        finally:
+            holder.join()
+
+    sent = len(primary.history())
+    assert "no answer in the time an arriving invoice waits" in arrival(0.9)  # sent with 0.35 s: no answer then
+    assert len(primary.history()) == sent + 2
+    assert "busy" in arrival(0.7)  # 0.15 s left once it had its slot: never sent
+    assert len(primary.history()) == sent + 3
+    breaker = local_llm.chat_failover(coder.settings.llm)
+    assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
+    assert not backup.history()
+
+
+def test_an_arrival_waiting_for_a_slot_held_past_the_hang_limit_counts_against_the_server(two, reference, monkeypatch):
+    """B-1870, its limit (D-180): the wait for a chat slot is AP Coder's own line only while the call holding the slot
+    has been under way less than the hang limit. Held longer with no answer, the server isn't answering it: an arrival
+    that got no slot in time counts against it, and two move the calls (the call holding the slot asked again on the
+    backup)."""
+    primary, backup = two
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 0.5)
+    settings = _settings(primary.base_url, backup.base_url, parallel=1)
+    coder = InvoiceCoder(settings, reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+    breaker = local_llm.chat_failover(settings.llm)
+    primary.set(hang_rate=1.0)
+    holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+    holder.start()  # hung on the primary, holding the one chat slot
+    assert _until(lambda: primary.stats()["hanging"] == 1)
+    with pytest.raises(ChatTimeout, match="busy"):  # given up with the holder under 0.5 s old: AP Coder's own line
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.2)
+    assert breaker.state()["failures"][PRIMARY] == 0
+    time.sleep(0.3)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # the holder silent past the hang limit: the server's
+        with pytest.raises(ChatTimeout):
+            coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.2)
+    holder.join(10)
+    primary.release_hung()
+    assert breaker.state()["on"] == BACKUP and "slot" in breaker.state()["why"]
+    assert _served(backup, "chat") == 1  # the holder, asked again there
+
+
+def test_a_chat_slot_another_process_holds_says_since_when(two, reference, monkeypatch, tmp_path):
+    """The same across the company server's processes (an arrival in a capture process, the reviews in the background
+    process): a slot's lock file says since when its call is under way."""
+    from ap_coder.core.paths import try_lock
+
+    primary, backup = two
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 1.0)
+    coder = InvoiceCoder(_settings(primary.base_url, backup.base_url, parallel=1), reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    breaker = local_llm.chat_failover(coder.settings.llm)
+    path = tmp_path / "llm" / "chat-1.lock"
+    other = try_lock(path)  # another process's call holds the one slot, from now
+    with pytest.raises(ChatTimeout, match="busy"):
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.3)
+    assert breaker.state()["failures"][PRIMARY] == 0
+    os.utime(path, (time.time() - 5, time.time() - 5))  # held 5 s: past the hang limit
+    with pytest.raises(ChatTimeout, match="busy"):
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.3)
+    other.close()
+    assert breaker.state()["failures"][PRIMARY] == 1 and not primary.history()
+    with local_llm.CHAT_LOCK.held(1):  # a slot taken says so: its lock file's time is when
+        assert time.time() - path.stat().st_mtime < 1
+
+
 def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, quick):
     """Hysteresis: the primary, probed in the background, is taken back after three answers in a row and the hold
     (a second here); one that fails again soon after is kept away twice as long."""
@@ -213,6 +306,30 @@ def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, 
     assert _until(lambda: breaker.serving() == primary.base_url, 10)
 
 
+def test_with_both_servers_down_the_primary_is_taken_back_as_soon_as_it_answers(two, quick, monkeypatch, reference):
+    """B-1872: both servers down, then the primary back: the calls stayed on the dead backup for the whole hold
+    (60 s, up to 30 minutes when it flapped), since a backup that doesn't list its models was never counted as
+    failing, and nothing else is asked of it then. Its model list not given counts on the backup too (the page
+    reader's and the chat model's), and the primary is taken back once it answered its probes."""
+    primary, backup = two
+    monkeypatch.setattr(local_llm, "HOLD_SECONDS", 60.0)
+    settings = _settings(primary.base_url, backup.base_url)
+    assert page_reader.reader_status(settings).usable
+    breaker = page_reader.reader_failover(settings)
+    primary.set(down=True)
+    backup.set(down=True)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # what ready() asks each round, a status 10 s old each time
+        local_llm.forget_status()
+        page_reader.reader_status(settings)
+    assert breaker.state()["on"] == BACKUP and breaker.state()["failures"][BACKUP] == 1  # (the list just asked)
+    local_llm.forget_status()
+    with pytest.raises(CodingError):  # the chat model's coder asks the backup's list too
+        InvoiceCoder(settings, reference, provider="local")._prepare_local()
+    assert breaker.state()["failures"][BACKUP] == local_llm.FAILOVER_FAILURES
+    primary.set(down=False)
+    assert _until(lambda: breaker.serving() == primary.base_url, 5)
+
+
 def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypatch):
     """On the company server what one process finds moves every process's calls: its state is kept in the slots
     folder (AP_LLM_SLOTS_DIR, which ``serve --server`` sets for all its processes)."""
@@ -230,6 +347,23 @@ def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypat
     assert here.left_since() >= started
     kept = json.loads(next((tmp_path / "llm").glob("failover-*.json")).read_text(encoding="utf-8"))
     assert kept["on"] == BACKUP and kept["moves"] == 1
+
+
+def test_an_answer_in_another_process_between_two_failures_keeps_the_calls_where_they_are(tmp_path, monkeypatch):
+    """B-1876: across the company server's processes, an answer between two failures didn't reset the count: the
+    process answered looked at its own copy of the state (read again every STATE_SECONDS) and, seeing no failure
+    there, wrote nothing. Not two failures in a row, yet the calls moved."""
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    primary, backup = "http://10.0.0.5:1234/v1", "http://10.0.0.6:1234/v1"
+    one = local_llm.Failover(local_llm.CHAT, primary, backup)  # one process's breaker
+    other = local_llm.Failover(local_llm.CHAT, primary, backup)  # another's, on the same file
+    one.answered(primary, CHAT)
+    time.sleep(local_llm.STATE_SECONDS)
+    other.state()  # it looked a moment ago (every call does)
+    one.failed(primary, "no answer in time")
+    other.answered(primary, CHAT)
+    one.failed(primary, "no answer in time")
+    assert one.state()["on"] == PRIMARY and one.state()["failures"][PRIMARY] == 1
 
 
 def test_a_failure_of_a_server_already_left_or_a_refusal_moves_nothing(two):
@@ -275,6 +409,95 @@ def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_bac
     assert local_llm.serving_llm(settings.llm).base_url == backup.base_url
 
 
+def test_a_call_waiting_behind_another_of_ap_coders_is_no_hang_while_that_one_is_within_the_hang_limit(
+    reference, monkeypatch
+):
+    """B-1871: a healthy primary, only busy (its one slot taken by a long chat call of AP Coder's): calls that waited
+    in the model server's own line behind it were counted as hangs, and the calls left it, the call under way there
+    dropped and asked again from the start on the backup. A call is no hang while another of this process's calls to
+    that server, under way since before it was sent, is still within the hang limit. Once that one is silent past it
+    the server isn't answering, and a timeout behind it counts: a page read waits the whole hang limit itself, so
+    whatever it waited behind was silent past it."""
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 1.5)
+    with FakeModel(models=[CHAT, READER], slots=1, chat_latency=(1.0, 1.0), page_latency=(0.05, 0.05)) as primary, \
+            FakeModel(models=[CHAT, READER]) as backup:  # fmt: skip
+        settings = _settings(primary.base_url, backup.base_url, timeout_seconds=600, parallel=2)
+        coder = InvoiceCoder(settings, reference, provider="local")
+        model = coder._prepare_local()
+        messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+        coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+        review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        review.start()
+        assert _until(lambda: primary.stats()["active"] == 1)
+        for _ in range(local_llm.FAILOVER_FAILURES):  # arrivals in the server's line behind it, under 1.5 s old
+            with pytest.raises(ChatTimeout, match="no answer in the time an arriving invoice waits"):
+                coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.4)
+        review.join(10)
+        breaker = local_llm.chat_failover(settings.llm)
+        assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
+        assert _served(primary, "chat") == 2 and not backup.history()
+        primary.set(hang_rate=1.0)  # hung: the call ahead of the page reads is silent past the hang limit
+        review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        review.start()
+        assert _until(lambda: primary.stats()["hanging"] == 1)
+        with pytest.raises(page_reader.PageReaderError, match="no word from the model"):
+            page_reader.transcribe(settings, b"page 0", model=READER)
+        assert page_reader.transcribe(settings, b"page 1", model=READER)  # the second moves them: read on the backup
+        review.join(10)  # (dropped there, and answered on the backup)
+        primary.release_hung()
+        assert breaker.state()["on"] == BACKUP and backup.page_answers() == {page_key(b"page 1"): 1}
+        assert _served(backup, "chat") == 1
+
+
+def test_a_hang_while_reviews_hold_the_chat_slots_moves_the_calls_within_a_minute(two, reference, monkeypatch):
+    """D-180, SCALE.md's minute: the app's limits scaled 1:20 (the hang limit 45 s, an arrival's 20 s, a reviewer's
+    call its 5 minutes, the slot wait's 1 s and 5 s). The primary hangs while two reviews hold both chat slots: the
+    page reads and the arrivals waiting behind them count once the reviews are silent past the hang limit, so the
+    calls move within the minute, not after the reviews' own 5 minutes; the reviews are asked again on the backup."""
+    primary, backup = two
+    scale = 1 / 20
+    for name, seconds in (("HANG_SECONDS", 45), ("WAITED_SECONDS", 1), ("SEND_SECONDS", 5)):
+        monkeypatch.setattr(local_llm, name, seconds * scale)
+    settings = _settings(primary.base_url, backup.base_url, parallel=2)
+    coder = InvoiceCoder(settings, reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+    primary.set(hang_rate=1.0)
+    hung = time.monotonic()
+    reviews = [threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"},
+                                                                   timeout=300 * scale)) for _ in range(2)]  # fmt: skip
+    for review in reviews:
+        review.start()
+    assert _until(lambda: primary.stats()["hanging"] == 2)
+    stop = threading.Event()
+
+    def arrivals() -> None:  # one arriving invoice's chat call after another, each waiting for a slot
+        while not stop.is_set():
+            with contextlib.suppress(CodingError):
+                coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 20 * scale)
+
+    def pages(reader: int) -> None:  # the background reader's threads, one a page slot
+        for n in range(100):
+            if stop.is_set():
+                return
+            with contextlib.suppress(page_reader.PageReaderError):
+                page_reader.transcribe(settings, f"page {reader}-{n}".encode(), model=READER)
+
+    workers = [threading.Thread(target=arrivals), *(threading.Thread(target=pages, args=(n,)) for n in range(2))]
+    for worker in workers:
+        worker.start()
+    breaker = local_llm.chat_failover(settings.llm)
+    moved = _until(lambda: breaker.state()["on"] == BACKUP, 300 * scale)
+    took = time.monotonic() - hung
+    stop.set()
+    for thread in (*reviews, *workers):
+        thread.join(10)
+    primary.release_hung()
+    assert moved and took < 60 * scale, took
+    assert _served(backup, "chat") >= 2  # the reviews, asked again there
+
+
 def test_a_page_reader_on_a_server_of_its_own_has_a_breaker_of_its_own(two):
     primary, backup = two
     s = _settings(primary.base_url, backup.base_url)
@@ -303,6 +526,27 @@ def test_a_primary_that_gives_no_model_list_moves_the_page_reader_to_its_backup(
     local_llm.forget_status()
     status = page_reader.reader_status(settings)  # asked afresh: the second
     assert status.base_url == backup.base_url and status.model == READER and status.usable
+
+
+def test_a_chat_model_on_a_server_of_its_own_moves_to_its_backup_when_its_model_list_doesnt_come(reference):
+    """B-1869: the chat model's server killed, with the page reader on another machine: each review (a coder of its
+    own) found no model in the dead server's list and stopped before any call was sent, so its breaker counted
+    nothing, never moved, and the backup with the same model was never asked. A list asked afresh that doesn't come
+    is a failure of the chat model's server too."""
+    with FakeModel(models=[CHAT]) as chat, FakeModel(models=[CHAT]) as spare, FakeModel(models=[READER]) as pages:
+        s = _settings(chat.base_url, spare.base_url)
+        settings = replace(s, page_reader=replace(s.page_reader, base_url=pages.base_url))
+        assert InvoiceCoder(settings, reference, provider="local")._prepare_local() == CHAT
+        chat.set(down=True)
+        local_llm.forget_status()
+        with pytest.raises(CodingError):  # the first: the invoice's lines left for AP, as before
+            suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        with pytest.raises(CodingError):  # the same status, kept: no second failure
+            suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        local_llm.forget_status()  # (what DOWN_TTL_SECONDS does)
+        assert suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        assert local_llm.chat_failover(settings.llm).state()["on"] == BACKUP
+        assert _served(spare, "suggest") == 1 and page_reader.reader_base_url(settings) == pages.base_url
 
 
 @pytest.fixture
@@ -438,6 +682,102 @@ def test_the_first_chat_model_is_the_one_ap_coder_was_qualified_with(store):
     assert page_worker.chat_tests(store)["first"] == CHAT
 
 
+def _read_touchless(store: Store, settings: Settings, monkeypatch, reviewer: bool = False) -> page_worker.ReadOutcome:
+    """The page reader's pass over a new invoice touchless processing passes (its gates taken as passed), the AI
+    reviewer off (or on: ``reviewer``): what the pass decides."""
+    from ap_coder.capture.supplier import AUTONOMOUS
+
+    _invoice(store, replace(settings, llm=replace(settings.llm, provider="off")))
+    verifier.save_settings(store, on=reviewer, rounds=1, minutes=1.0)
+    monkeypatch.setattr(pipeline, "autonomy_decision", lambda *a, **k: {
+        "state": AUTONOMOUS, "auto": True, "audit": False, "reason": "every header field verified"})  # fmt: skip
+    text = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
+    status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model=READER, document_reader=True,
+                                      state="loaded", candidates=[READER])  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: status)
+    monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
+    monkeypatch.setattr(page_reader, "read_document", lambda settings, path, **kw: page_reader.PageReading(
+        model=READER, pages=[text], seconds=[1.0], page_count=1))  # fmt: skip
+    outcome = page_worker.read_one(settings, store)
+    assert outcome is not None and outcome.status == "done" and outcome.updated, outcome
+    return outcome
+
+
+def test_a_chat_model_that_cant_see_pages_is_not_tested_nor_kept_from_touchless(store, monkeypatch):
+    """B-1875: the chat model swapped for one that can't see pages (a laptop too) could never pass the self-test,
+    which reads pages; so after every reading nothing was approved without a person for as long as it was loaded,
+    and the test ran again, audited, every hour. Such a model reads no header and its accounts always go to a
+    person: it decides nothing touchless, so it is neither gated nor tested."""
+    text_only = {"id": "qwen/qwen3-8b", "type": "llm", "vision": False}
+    with FakeModel(models=[{"id": CHAT, "vision": True}, READER]) as fake:
+        settings = _settings(fake.base_url)
+        assert page_worker.chat_untrusted(settings, store) == ""  # the first: the one it was qualified with
+        fake.set(models=[text_only, READER])
+        local_llm.forget_status()
+        assert page_worker.chat_untrusted(settings, store) == ""
+        assert page_worker.chat_test_if_due(settings, store) is None
+        assert page_worker.chat_tests(store)["first"] == CHAT
+        assert _read_touchless(store, settings, monkeypatch).auto_approved
+    assert "chat_model_tested" not in [e["action"] for e in store.events()]
+
+
+def test_the_azure_check_approves_nothing_whose_header_an_untested_chat_model_read(store, monkeypatch):
+    """B-1877: with the Azure check on and the AI reviewer off, the page reader's pass held an invoice for Azure (so
+    the chat model's trust was never asked), and Azure agreeing approved it without a person, though a chat model not
+    yet tested had read its header. Azure's approval needs that model trusted too."""
+    from ap_coder.ai import azure_check
+    from ap_coder.capture import workflow
+    from ap_coder.core.store import REVIEW
+    from tests.ai.test_azure_check import FakeClient, _raw_from, _turn_on
+
+    assert page_worker.chat_trust(store, CHAT) == ""  # the one AP Coder was qualified with
+    with FakeModel(models=[{"id": SWAPPED, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        _turn_on(store, monkeypatch, rate=100)
+        monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)  # a spot-check, every one
+        outcome = _read_touchless(store, settings, monkeypatch)
+        iid = outcome.invoice_id
+        assert not outcome.auto_approved and store.get_invoice(iid)["meta"]["capture"]["azure_hold"]  # held for it
+        assert _models_asked(fake, "header") == [SWAPPED]  # it read the header
+        monkeypatch.setattr(workflow, "still_touchless", lambda *a, **k: True)  # (its other gates passed)
+        checked = azure_check.check_one(settings, store, client=FakeClient(_raw_from(store.get_capture(iid))))
+    assert checked.status == "done" and not checked.differ and not checked.approved
+    assert store.get_invoice(iid)["status"] == REVIEW
+    assert SWAPPED in store.get_invoice(iid)["meta"]["capture"]["reason"]  # the person sees why
+
+
+@pytest.mark.parametrize(("read_by", "in_use"), [(SWAPPED, CHAT), (CHAT, SWAPPED)])
+def test_the_trust_that_counts_is_the_chat_model_that_read_the_header(store, monkeypatch, read_by, in_use):
+    """B-1878: the page reader's pass asked the trust of the chat model in use when it decided, not of the one that
+    had read the header (LM Studio may swap it between): one not tested yet could read it and the invoice be approved
+    without a person, or a qualified model's reading be held for another's. The trust follows the model that read."""
+    assert page_worker.chat_trust(store, CHAT) == ""  # the one AP Coder was qualified with
+    with FakeModel(models=[{"id": read_by, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        monkeypatch.setattr(page_worker, "chat_model_in_use", lambda settings: in_use)  # swapped as it decided
+        outcome = _read_touchless(store, settings, monkeypatch)
+        assert _models_asked(fake, "header") == [read_by]
+    assert outcome.auto_approved is (read_by == CHAT)
+    assert store.get_invoice(outcome.invoice_id)["meta"]["page_reader"]["chat_model"] == read_by
+    assert (SWAPPED in outcome.message) is (read_by == SWAPPED)
+
+
+def test_the_ai_reviewer_approves_nothing_whose_header_an_untested_chat_model_read(store, monkeypatch):
+    """B-1878: likewise the AI reviewer's agreement, given by the qualified model once LM Studio had it back: the
+    header it took part in was read by one not tested yet."""
+    from ap_coder.capture import workflow
+
+    assert page_worker.chat_trust(store, CHAT) == ""
+    with FakeModel(models=[{"id": SWAPPED, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        assert not _read_touchless(store, settings, monkeypatch, reviewer=True).auto_approved  # held for it
+        fake.set(models=[{"id": CHAT, "vision": True}, READER])  # the qualified one back
+        local_llm.forget_status()
+        monkeypatch.setattr(workflow, "still_touchless", lambda *a, **k: True)  # (its other gates passed)
+        reviewed = verifier.verify_one(settings, store)
+    assert reviewed is not None and reviewed.status == verifier.AGREED and not reviewed.approved
+
+
 # --- The doctor (item 4) --------------------------------------------------------------------------------------------
 
 
@@ -459,6 +799,43 @@ def test_the_doctor_says_which_model_server_answers_and_how(two):
     rows = doctor._server_checks(settings, "local")
     assert rows[1][1] == doctor.WARN and "answered in" not in rows[1][2]  # (how it failed, in its words)
     assert doctor._server_checks(_settings(primary.base_url), "local") == []
+
+
+def test_the_doctor_from_a_console_on_the_server_sees_its_breakers_and_server_json(two, tmp_path, monkeypatch):
+    """B-1874: ``python -m ap_coder doctor`` from IT's console on the company server had a breaker of its own, new
+    and in memory (only ``serve --server`` sets AP_LLM_SLOTS_DIR), so it said the calls go to the primary while the
+    server's processes had moved them; and a backup given only in server.json wasn't seen at all. It reads the
+    server's shared state and its server.json as the dashboard does."""
+    import argparse
+
+    from ap_coder.ops import cli, doctor, service
+
+    primary, backup = two
+    data = tmp_path / "private"  # (the data folder, AP_PRIVATE_DIR)
+    data.mkdir(exist_ok=True)
+    service.write_config(data, llm_backup_url=backup.base_url)  # the console's .env names no backup
+    monkeypatch.setenv(local_llm.SLOTS_ENV, "")
+    monkeypatch.delenv(local_llm.SLOTS_ENV)  # the console: not set (and none left behind)
+    code = ("import sys; from ap_coder.ai import local_llm\n"
+            "b = local_llm.failover(local_llm.CHAT, sys.argv[1], sys.argv[2])\n"
+            "for _ in range(local_llm.FAILOVER_FAILURES): b.failed(sys.argv[1], 'not answering')\n")  # fmt: skip
+    subprocess.run([sys.executable, "-c", code, primary.base_url, backup.base_url], check=True, timeout=60,
+                   cwd=PROJECT_DIR, env={**os.environ, local_llm.SLOTS_ENV: str(data / "llm")})  # fmt: skip
+    seen: dict = {}
+
+    def checks(settings, *args, **kwargs):  # the doctor's model server rows, with the settings it runs with
+        rows = doctor._server_checks(settings, "local")
+        seen["rows"] = {area: (status, detail) for area, status, detail in rows}
+        return [doctor.Check(*row) for row in rows] or [doctor.Check("model servers", doctor.SKIP, "no backup")]
+
+    monkeypatch.setattr(cli, "run_checks", checks)
+    monkeypatch.setattr(doctor, "store_checks", lambda store, server: [])
+    cli.cmd_doctor(argparse.Namespace(online=False, coa=None, db=str(tmp_path / "ap.db")), _settings(primary.base_url))
+    rows = seen["rows"]
+    assert "the calls go to it now" in rows["chat model server (backup)"][1]
+    assert "the calls go to it now" not in rows["chat model server (primary)"][1]
+    assert rows["model server failover"][0] == doctor.WARN
+    assert "The calls go to the backup " + backup.base_url in rows["model server failover"][1]
 
 
 def test_a_review_asked_of_a_chat_model_lm_studio_no_longer_has_waits_in_line_not_unsure(store):

@@ -23,6 +23,7 @@ Invoices are confidential: a page's text is never logged, only timings and the m
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import functools
 import hashlib
@@ -262,24 +263,17 @@ NOT_DOWNLOADED = (
 TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are saved."
 
 
-_LIST_FAILED: dict[str, Any] = {}  # the primary's last status that gave no model list, counted by its breaker
-
-
 def reader_status(settings: Settings, *, use_cache: bool = True) -> ReaderStatus:
     """The model that reads pages and its state. Automatic (always, but for a developer's AP_PAGE_READER_MODEL): a
     document reader LM Studio has downloaded (OvisOCR2: any model whose key has "ovisocr" in it), unless it couldn't
     load it lately; else none. A general model that can see is never used instead: the page reader is then simply
     not available, and invoices wait for it. Asks the server (cached briefly). With a backup (D-180), a primary that
-    didn't give its model list (asked afresh) is a failure its breaker counts: once the calls move, the backup's."""
+    didn't give its model list (asked afresh) is a failure its breaker counts (``local_llm.unlisted``): once the calls
+    move, the backup's."""
     base = reader_base_url(settings)
     status = local_llm.check_server(_reader_llm(settings), use_cache=use_cache)
-    breaker = reader_failover(settings)
-    if not status.reachable and breaker is not None and breaker.role(base) == local_llm.PRIMARY:
-        if _LIST_FAILED.get(base) is not status:  # (a status kept 10 s is one failure, however often it is read)
-            _LIST_FAILED[base] = status
-            breaker.failed(base, "its model list didn't come")
-        if reader_base_url(settings) != base:
-            return reader_status(settings, use_cache=use_cache)
+    if local_llm.unlisted(reader_failover(settings), status):
+        return reader_status(settings, use_cache=use_cache)
     out = ReaderStatus(status.reachable, False, "", False, "down", base_url=base)
     listing = _listing_for(settings, status)
     out.lm_studio = listing is not None
@@ -780,14 +774,15 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
     with READ_LOCK.held(settings.llm.parallel):  # one page at a time by default: LM Studio is shared with CloseDesk
         while True:
             try:
-                text = _read_page(settings, base, model, reader, messages, should_stop)
+                with breaker.calling(base) if breaker is not None else contextlib.nullcontext():  # (``behind``)
+                    text = _read_page(settings, base, model, reader, messages, should_stop)
             except PageReaderError as exc:
                 if breaker is None:
                     raise
                 if not exc.failed:
                     breaker.answered(base)
                     raise
-                breaker.failed(base, str(exc))
+                breaker.failed(base, str(exc))  # (it waited the hang limit: whatever it was behind was silent past it)
                 tries -= 1
                 other = reader_base_url(settings)
                 if not tries or other == base or not _has_model(settings, other, model):

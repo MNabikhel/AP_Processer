@@ -643,6 +643,7 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
     restore may have put another invoice under its number). Returns (fields read differently, approved now)."""
     from ..capture.workflow import AUTONOMOUS_REVIEWER, still_touchless
     from ..core.store import APPROVED, PARKED, PENDING, REVIEW
+    from .page_worker import header_untrusted
 
     iid = int(inv["id"])
     differ = apply(capture, rows)
@@ -655,9 +656,12 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
         notes = dict(meta.get("capture") or {})
         held = bool(notes.get("azure_hold"))
         untouched = status_ == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
+        # The chat model that read its header took part: Azure agreeing approves nothing it isn't trusted for (D-180).
+        untrusted = header_untrusted(store, meta) if held and rows and not differ else ""
         if held and rows:  # nothing compared is not nothing differing: then the hold stays
             notes = {k: v for k, v in notes.items() if k != "azure_hold"}
-            notes["reason"] = "" if not differ else f"{NAME} read {len(differ)} field(s) differently"
+            notes["reason"] = (f"{NAME} read {len(differ)} field(s) differently" if differ else
+                               untrusted and f"not approved without a person: {untrusted}")  # fmt: skip
         elif held:
             notes["reason"] = summary(rows)
         folded = store.update_after_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
@@ -666,7 +670,7 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
         # checked again, as they stand now, and the invoice is read again: the AI reviewer may still hold it, or a
         # person may have approved it with corrections and reopened it while Azure read it.
         output = inv.get("ai_output")
-        if (folded and held and rows and untouched and not differ and output
+        if (folded and held and rows and untouched and not differ and not untrusted and output
                 and still_touchless(store, capture, output, invoice_id=iid)):  # fmt: skip
             try:
                 store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")

@@ -657,13 +657,14 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     meta = pipeline_meta(result)
     meta["page_reader"] = {"model": model, "pages": len(reading.pages), "seconds": round(seconds, 1),
                            "cached": reading.cached, "at": dt.datetime.now().isoformat(timespec="seconds"),
-                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()}}  # fmt: skip
+                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()},
+                           **({"chat_model": result.header_model} if result.header_model else {})}  # fmt: skip
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
     # A person's unapproved corrections on it (a draft, D-86): the reading replaces the proposal, but nothing is
-    # approved over their work (B-953); nor while the chat model that read it too isn't trusted (D-180).
-    untrusted = chat_untrusted(settings, store) if updated and result.autonomy.get("auto") else ""
+    # approved over their work (B-953); nor while the chat model that read its header too isn't trusted (D-180).
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:
             store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
@@ -724,7 +725,7 @@ def chat_again(settings: Settings, store: Any, *, cache_dir: Path | None = None)
                                      expect=identity)  # fmt: skip
     outcome = ReadOutcome(iid, "done", updated=updated, message="the chat model asked again" if updated else
                           "not applied: the invoice was already edited or decided")  # fmt: skip
-    untrusted = chat_untrusted(settings, store) if updated and result.autonomy.get("auto") else ""
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if untrusted:
         outcome.message += f"; not approved without a person: {untrusted}"
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
@@ -1116,12 +1117,30 @@ def chat_model_in_use(settings: Settings) -> str:
     return llm.model or local_llm.check_server(llm).model
 
 
+def chat_sees_pages(settings: Settings, model: str) -> bool:
+    """Whether ``model``, the chat model in use, can see pages. One that can't reads no header, reviews nothing and
+    its accounts always go to a person: it decides nothing touchless, so it is neither kept back nor tested."""
+    from . import local_llm
+
+    llm = local_llm.serving_llm(settings.llm)
+    return local_llm.sees_pages(llm, local_llm.check_server(llm), model)
+
+
 def chat_untrusted(settings: Settings, store: Any) -> str:
-    """``chat_trust`` of the chat model in use: why nothing it took part in is approved without a person now."""
+    """``chat_trust`` of the chat model in use: why nothing it took part in is approved without a person now ("" for
+    one that can't see pages: ``chat_sees_pages``)."""
     try:
-        return chat_trust(store, chat_model_in_use(settings))
+        model = chat_model_in_use(settings)
+        why = chat_trust(store, model)  # (the first one asked is noted, whichever it is)
+        return why if why and chat_sees_pages(settings, model) else ""
     except Exception as exc:  # noqa: BLE001 - not known: nothing approved on it this time
         return f"the chat model's self-test couldn't be looked up ({type(exc).__name__})"
+
+
+def header_untrusted(store: Any, meta: dict[str, Any] | None) -> str:
+    """``chat_trust`` of the chat model that read the invoice's header from its pages in the page reader's pass (its
+    ``meta``): why a check agreeing approves nothing without a person yet ("" when none read it, or it is trusted)."""
+    return chat_trust(store, str(((meta or {}).get("page_reader") or {}).get("chat_model") or ""))
 
 
 def chat_test_due(store: Any, model: str, now: dt.datetime | None = None) -> bool:
@@ -1177,7 +1196,7 @@ def chat_test_if_due(settings: Settings, store: Any) -> dict[str, Any] | None:
     """Test the chat model in use here and now when it is due (``chat_test_due``), and keep the result as its model's.
     None when no test was run."""
     model = chat_model_in_use(settings)
-    if not chat_test_due(store, model):
+    if not chat_test_due(store, model) or not chat_sees_pages(settings, model):
         return None
     log.info("chat model: %s is not the one AP Coder was qualified with; testing it on the test invoice", model)
     record = test_chat_model(settings, store)

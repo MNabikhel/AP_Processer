@@ -326,6 +326,11 @@ def _add_server_ops(sub: Any) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
+    from .doctor import as_the_server
+    from .service import is_server_here
+
+    if is_server_here(private_dir()):  # from a console on the company server: its model servers as its dashboard's
+        settings = as_the_server(settings, private_dir())
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online, bundled=bundled_reference(args))
     try:
         source = reference_source(args)
@@ -336,7 +341,6 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         source = "none (the database cannot be opened)"
     else:
         from .doctor import store_checks
-        from .service import is_server_here
 
         db = Path(getattr(args, "db", None) or default_db_path())
         server = is_server_here(private_dir())
