@@ -143,7 +143,7 @@ def test_watch_once_fails_when_every_invoice_failed(tmp_path, monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             return SimpleNamespace(ok=self.ok, error="unreadable", output={"vendor_name": "V"}, report=None)
 
     monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
@@ -175,7 +175,7 @@ def test_a_crafted_email_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             processed.append(path.name)
             return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
 
@@ -226,7 +226,7 @@ def test_watch_once_processes_the_invoices_it_just_took_out_of_emails(tmp_path, 
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             processed.append(path.name)
             return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
 

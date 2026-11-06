@@ -878,7 +878,8 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     given = _inputs(args.inputs)
     if given is None:
         return 2
-    paths, unread, sorted_emails = given
+    taken, unread, sorted_emails = given
+    paths = [path for path, _ in taken]
     if not paths:
         if sorted_emails:
             print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
