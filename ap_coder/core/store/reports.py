@@ -117,8 +117,10 @@ class ReportsMixin:
             return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)
 
         def before(found: tuple[Any, Any, float] | None) -> bool:
-            """Whether ``found`` may be shown while another works the answer out again: settled, of this database."""
-            return bool(settle and found is not None and found[0][:1] == seen[:1])
+            """Whether ``found`` may be shown while another works the answer out again: settled, of this database, its
+            work begun less than the settle and the longest wait ago (B-1838: never older than that)."""
+            return bool(settle and found is not None and found[0][:1] == seen[:1]
+                        and 0 <= began - found[2] < settle + ANSWER_WAIT)  # fmt: skip
 
         with _KEPT_LOCK:
             hit = _KEPT.get(here)
@@ -138,9 +140,11 @@ class ReportsMixin:
             lease, taken, took = f"answer/{name}/{key}", True, holds(found, later=True)
             if not took:
                 taken = self._briefly_or(lambda: self.take_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
-                if not taken and before(hit) and not (before(found) and found[2] > hit[2]):  # type: ignore[index]
+                # Another process works it out (its hold: not just a database too busy to give one, B-1838)
+                other = not taken and self._lease_held(lease)
+                if other and before(hit) and not (before(found) and found[2] > hit[2]):  # type: ignore[index]
                     return hit[1]  # type: ignore[index]  (another process works it out again: the one before meanwhile)
-                took = not taken and before(found)  # (or the database's, when it is the latest)
+                took = other and before(found)  # (or the database's, when it is the latest)
                 until = time.monotonic() + ANSWER_WAIT
                 # another process works it out, with no answer before to show: taken once written
                 while not taken and not took and time.monotonic() < until:

@@ -2200,7 +2200,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       again, the others asking take the answer before, this database's latest (in the process, or the database's
       when later), instead of waiting up to `ANSWER_WAIT`; with none, or an exact answer, they wait as before
       (B-1834). Its age is then at most the settle and the time the other takes to work it out: D-164's "at most
-      that old" now reads "at most that old, but for the work under way". Month-end's settled answers too.
+      that old" now reads "at most that old, but for the work under way". Month-end's settled answers too. Only an
+      answer whose work began less than the settle and `ANSWER_WAIT` ago is shown so, and only while another thread
+      holds the work or another process its hold: a database too busy to give the hold is not another process
+      working it out (B-1838).
     - **Sales tax:** what the page shows (totals, counts, the rows listed: `sales_tax.shown`) is one shared answer
       for the dates, the view and its rows, settling 30 s as Spend's; `taxreturn.setup_key` (the tax setup, the rate
       table, our provinces, JD Edwards' settings and batches) is part of what it is asked for, so a change of one

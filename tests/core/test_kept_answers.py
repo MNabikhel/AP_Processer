@@ -1819,3 +1819,69 @@ def test_an_answer_the_database_was_too_busy_to_keep_is_kept_once_it_is_free_and
     began = time.monotonic()
     assert second() == ["first"] and second.worked == 0
     assert time.monotonic() - began < 2
+
+
+def _settled_rows(tmp_path, monkeypatch):
+    """(the clock, the store, a fresh read of the vendors, the settled shared answer of them, plain SQL)."""
+    from ap_coder.core.store import reports
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+
+    def rows() -> list[str]:
+        with sqlite3.connect(store.path) as conn:
+            return [r[0] for r in conn.execute("SELECT vendor_key FROM vendors ORDER BY vendor_key")]
+
+    def ask(compute=rows):
+        return store.shared_answer("rows", compute, version="t-1", topic="", changes=("vendors",), settle=30)
+
+    def plain(sql: str) -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.execute(sql)
+
+    return clock, store, rows, ask, plain
+
+
+def test_the_answer_before_shown_while_another_works_it_out_is_never_older_than_its_settle_and_the_wait(
+    tmp_path, monkeypatch
+):
+    """B-1838: B-1834's answer before, shown while another thread or process works a settled answer out again, could
+    be of any age: asked again an hour after a change, the second asker was shown the answer of before the change at
+    once. It is shown only while it began less than its settle and ANSWER_WAIT ago; an older one is waited for."""
+    clock, store, rows, ask, plain = _settled_rows(tmp_path, monkeypatch)
+    assert ask() == []
+    clock[0] = 1010
+    plain("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', 'x')")
+    clock[0] = 5000  # an hour later: nobody asked meanwhile
+    began, finish = threading.Event(), threading.Event()
+    worker = threading.Thread(target=lambda: ask(lambda: began.set() or finish.wait(10) and rows()))
+    worker.start()
+    assert began.wait(5)
+    threading.Timer(0.5, finish.set).start()  # (the work under way takes half a second)
+    try:
+        assert ask() == ["acme"]
+    finally:
+        finish.set()
+        worker.join()
+
+
+def test_a_settled_answer_asked_while_the_database_is_busy_and_no_one_works_it_out_is_worked_out(tmp_path, monkeypatch):
+    """B-1838: with the database held by a long write (a bulk approval, an import), the hold on an answer could not be
+    taken, and B-1834 took that for another process working it out: the latest kept, of any age, was shown. Only a
+    hold another process has stands for that; with none, the answer is worked out from what is committed."""
+    from ap_coder.core.store import reports
+
+    clock, store, rows, ask, plain = _settled_rows(tmp_path, monkeypatch)
+    assert ask() == []
+    plain("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', 'x')")
+    clock[0] = 9000
+    monkeypatch.setattr(reports, "_KEPT", {})  # (another process: nothing of its own)
+    writer = sqlite3.connect(store.path, isolation_level=None, timeout=0)
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("INSERT INTO settings (key, value) VALUES ('busy', '1')")
+    try:
+        assert ask() == ["acme"]
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
