@@ -246,7 +246,9 @@ schedule), and for the long downloads (search to Excel, the Activity CSV, the du
 the file got and downloads it once made; each person's own, kept an hour in `.cache\downloads\made`). The invoices
 brought in (uploads, the invoices folder, a scheduled watch) wait in an import queue in the database, kept over a
 restart, and are read by *capture processes* of their own, one per core but two (`server.json` `"capture_processes"`,
-1 to 64, or `AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by a web worker: a big batch doesn't slow the pages, and colleagues' batches are read in turn. A
+1 to 64, or `AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by a web worker: a big batch doesn't slow the pages, and colleagues' batches are read in turn.
+A file a scanner or a mail rule saves in the invoices folder shows on *Import invoices* within a minute (the folder is
+listed once for every worker, D-176). A
 worker, the background process or a capture process that stops is started again on its own (a download it was making
 is made again). `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
 the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.

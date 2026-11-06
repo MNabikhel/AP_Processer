@@ -6,6 +6,10 @@ processes read them (``web/server.py``), never a web worker; on a laptop the das
 (``ap_coder/web/jobs.py``) does, as before. The page polls ``GET /process/status`` (the queue's latest run) and shows
 each invoice as it is done. The demo invoices (load / remove) are here too; the review queue's welcome card uses the
 same routes.
+
+The new files in the invoices folder: on a laptop each view lists the folder (``folder_files``); on the company server
+the folder is listed once for every process and kept in the database, each view showing that (``shared_files``,
+D-176).
 """
 
 from __future__ import annotations
@@ -630,9 +634,9 @@ _LISTED: dict[str, tuple[tuple[Any, ...], tuple[list[dict[str, Any]], list[str]]
 LISTED_SECONDS = 60.0
 # On the company server, the folder as listed for every process (``shared_files``, D-176): listed again once the
 # folder changed and the listing is SHARED_REFRESH seconds old, or whatever changed once it is SHARED_MOST old (each
-# counted from its end: a slow folder is not listed back to back); a view waits SHARED_WAIT at most for the next one
-# when the one kept is older than that. A file saved in the folder shows within a minute; a listing shown older than
-# SHARED_MOST says when it was made.
+# counted from its end: a slow folder is not listed back to back); the view that started a listing waits SHARED_WAIT
+# at most for it when the one kept is older than that. A file saved in the folder shows within a minute; a listing
+# shown older than SHARED_MOST says when it was made.
 SHARED_REFRESH = 20.0
 SHARED_MOST = 45.0
 SHARED_WAIT = 5.0
@@ -1054,7 +1058,10 @@ def process_folder(request: Request) -> JSONResponse:
     if lock is None:
         return refuse(BUSY_PICKUP, 409)
     try:  # (the folder listed before the emails are unpacked: their attachments are read once, as theirs)
-        listing = list_folder(store, folder) if folder.exists() else None
+        try:
+            listing = list_folder(store, folder) if folder.exists() else None
+        except OSError as exc:  # there, but not listable just now (B-1806)
+            return refuse(NOT_LISTED.format(why=exc.strerror or type(exc).__name__), 409)
         read, unreadable, saving = ([], [], []) if listing is None else pick_up(store, folder, still_being_saved,
                                                                                 listing)  # fmt: skip
         mails = [] if listing is None else unpack_folder(folder)

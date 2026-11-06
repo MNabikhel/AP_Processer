@@ -671,3 +671,23 @@ def test_an_invoices_folder_that_cannot_be_listed_never_breaks_the_import_page(c
     answer = client.get("/process")
     assert answer.status_code == 200 and "Setup" in answer.text
     assert "The invoices folder could not be listed just now" in answer.text and "No new files" not in answer.text
+
+
+def test_the_process_button_says_when_the_invoices_folder_cannot_be_listed(client, store, monkeypatch):
+    """B-1806: the Process button on an invoices folder there but not listable just then answered "Something went
+    wrong" (a server error, its traceback in the log); it says why now, and nothing is put in line."""
+    from ap_coder.intake import files
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    real = files.os.scandir
+
+    def refused(path):
+        if not isinstance(path, int) and os.path.realpath(path) == os.path.realpath(folder):
+            raise PermissionError(13, "Access is denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(files.os, "scandir", refused)
+    answer = client.post("/process/folder", headers=PAGE)
+    assert answer.status_code == 409 and "could not be listed just now (Access is denied)" in answer.json()["error"]
+    assert store.imports_open()["waiting"] == 0
