@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -537,24 +538,25 @@ async def review_bulk_approve(request: Request) -> JSONResponse:
     except ValueError:
         return refuse("Nothing to approve.")
     started = await run_in_threadpool(_start_bulk, request, ids)
-    if not isinstance(started, int):
+    if not isinstance(started, tuple):
         return started
-    store, elsewhere = get_store(request), request.app.state.processes > 1  # (approved by the background process)
-    here = jobs.ended(store, started)
+    job, here = started  # (here: set once it ends in this process)
+    elsewhere = request.app.state.processes > 1  # (approved by the background process: looked at in the database)
     try:
         ends, wait = time.monotonic() + BULK_WAIT, 0.05
         while time.monotonic() < ends:
-            if here.is_set() or (elsewhere and await run_in_threadpool(_bulk_ended, store, started)):
-                return await run_in_threadpool(_bulk_done, request, started)
+            if here.is_set() or (elsewhere and await run_in_threadpool(_bulk_ended, request, job)):
+                return await run_in_threadpool(_bulk_done, request, job)
             await anyio.sleep(wait)
             wait = min(BULK_LOOK, wait * 1.5)
     finally:
-        jobs.forget_ended(store, started)
+        jobs.forget_ended(here)
     return done(request, BULK_PAGE)
 
 
-def _start_bulk(request: Request, ids: list[int]) -> int | JSONResponse:
-    """The bulk approval of ``ids`` asked for: the job started (its id), or the answer when none is."""
+def _start_bulk(request: Request, ids: list[int]) -> tuple[int, threading.Event] | JSONResponse:
+    """The bulk approval of ``ids`` asked for: the job started (its id, and what is set once it ends in this process),
+    or the answer when none is."""
     store = get_store(request)
     with store.session():
         if reference_or_none(store) is None or not ids:
@@ -564,9 +566,9 @@ def _start_bulk(request: Request, ids: list[int]) -> int | JSONResponse:
         job, new = store.start_bulk_job(_bulk_owner(), person, asked, bulk.JOB_FORMAT)
     if not new:
         return done(request, BULK_PAGE, flash_message(STILL_UNDER_WAY, "info", icon="hourglass_top"))
-    jobs.ended(store, job)  # (before it can end)
+    here = jobs.ended(store, job)  # (before it can end)
     _approve_bulk(request)
-    return job
+    return job, here
 
 
 def _approve_bulk(request: Request) -> None:
@@ -587,8 +589,8 @@ def _bulk_left(request: Request, job: dict[str, Any]) -> None:
         _approve_bulk(request)
 
 
-def _bulk_ended(store: Store, job_id: int) -> bool:
-    job = store.bulk_job(job_id)
+def _bulk_ended(request: Request, job_id: int) -> bool:
+    job = get_store(request).bulk_job(job_id)
     return job is None or job["state"] in (bulk_jobs.DONE, bulk_jobs.STOPPED)
 
 

@@ -240,9 +240,11 @@ def ended(store: Any, job_id: int) -> threading.Event:
         return _ENDED.setdefault((str(store.path), job_id), threading.Event())
 
 
-def forget_ended(store: Any, job_id: int) -> None:
+def forget_ended(event: threading.Event) -> None:
+    """No request waits for the bulk approval ``event`` (``ended``) is of any more."""
     with _ENDED_LOCK:
-        _ENDED.pop((str(store.path), job_id), None)
+        for key in [k for k, e in _ENDED.items() if e is event]:
+            del _ENDED[key]
 
 
 def _may_not(store: Any, kept: dict[str, Any]) -> str:

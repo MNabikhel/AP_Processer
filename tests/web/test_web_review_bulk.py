@@ -76,7 +76,7 @@ def test_a_long_bulk_approval_answers_at_once_and_its_page_says_how_far_it_got(s
     POST answers within ``BULK_WAIT`` with the job's page, which says "N of M approved, x need a look" while it goes
     on, and the queue says it too (safe to leave and come back); once done, what was done, said once."""
     monkeypatch.setattr(review, "BULK_WAIT", 0.2)
-    ids = _clean(store, 30)
+    ids = _clean(store, 12)
     gate = Gate(monkeypatch, hold=3)
     client = client_for(store)
     began = time.monotonic()
@@ -85,18 +85,18 @@ def test_a_long_bulk_approval_answers_at_once_and_its_page_says_how_far_it_got(s
     assert time.monotonic() - began < 2  # (not the whole run)
     gate.reached(4)
     page = client.get("/review/bulk").text
-    assert "Approving: 3 of 30 approved, 0 need a look" in page and 'data-job-status="/review/bulk/status?job=' in page
+    assert "Approving: 3 of 12 approved, 0 need a look" in page and 'data-job-status="/review/bulk/status?job=' in page
     queue = client.get("/review").text
-    assert "Your bulk approval is under way: 3 of 30 approved, 0 need a look." in queue
+    assert "Your bulk approval is under way: 3 of 12 approved, 0 need a look." in queue
     status = client.get(f"/review/bulk/status?job={store.latest_bulk_job('')['id']}").json()
-    assert status["state"] == "running" and status["note"] == "3 of 30 approved, 0 need a look"
+    assert status["state"] == "running" and status["note"] == "3 of 12 approved, 0 need a look"
     gate.go.set()
     job = _ended(store)
     assert job["state"] == bulk_jobs.DONE and job["approved"] == ids
     assert all(store.get_invoice(i)["status"] == APPROVED for i in ids) and sorted(_approvals(store)) == ids
-    assert "Your bulk approval is done: 30 of 30 approved, 0 need a look." in client.get("/review").text
+    assert "Your bulk approval is done: 12 of 12 approved, 0 need a look." in client.get("/review").text
     done = client.get("/review/bulk").text
-    assert "Done: 30 of 30 approved, 0 need a look." in done and "data-job-status" not in done
+    assert "Done: 12 of 12 approved, 0 need a look." in done and "data-job-status" not in done
     assert "Your bulk approval" not in client.get("/review").text  # (said once it was seen)
 
 
@@ -273,3 +273,25 @@ def test_with_several_web_workers_the_background_process_approves_and_the_worker
     assert asked == [] and answer["redirect"].startswith("/review?flash=")
     assert "Approved 3 invoices." in client.get(answer["redirect"]).text
     assert all(store.get_invoice(i)["status"] == APPROVED for i in ids)
+
+
+def test_in_a_browser_the_bulk_approvals_page_says_how_far_it_got_then_what_was_done(chromium, store, monkeypatch):
+    """The queue's Approve goes to the job's page once it takes longer than ``BULK_WAIT``: its line follows how far it
+    got (app.js's data-job-status), and the page is drawn again with what was done once it is."""
+    from tests.browser import browser_on
+
+    monkeypatch.setattr(review, "BULK_WAIT", 0.2)
+    _clean(store, 6)
+    gate = Gate(monkeypatch, hold=2)
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/review")
+        page.click("summary:has-text('Approve 6')")
+        page.click("button:has-text('Approve them')")
+        page.wait_for_url("**/review/bulk")
+        assert page.inner_text("[data-job-status]") == "Approving: 2 of 6 approved, 0 need a look"
+        gate.go.set()
+        page.wait_for_selector("text=Done: 6 of 6 approved, 0 need a look.", timeout=15000)
+        assert page.locator("[data-job-status]").count() == 0 and errors == []

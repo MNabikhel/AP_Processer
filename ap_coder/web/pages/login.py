@@ -204,23 +204,30 @@ def _step_page(request: Request, step: str, next: str) -> Response:  # noqa: A00
     return response
 
 
-def _pending_at(request: Request, step: str) -> tuple[dict | None, Response | None]:
-    """The account of the login half way at ``step``; else the refusal to send."""
+def _again(wanted: str) -> str:
+    """The login page, coming back to ``wanted`` after it (a login half way that ended, B-1925)."""
+    return f"{identity.LOGIN_PATH}?next={quote(_next(wanted), safe='')}"
+
+
+def _pending_at(request: Request, step: str, wanted: str) -> tuple[dict | None, Response | None]:
+    """The account of the login half way at ``step``; else the refusal to send (one that ended: to the login page,
+    coming back to ``wanted`` after it)."""
     if not server_mode(request):
         return None, refuse(NO_LOGINS)
     user = get_store(request).pending_user(_pending(request))
     if user is None:
-        again = with_flash(identity.LOGIN_PATH, [flash_message(TOO_LONG, "info", icon="schedule")])
+        again = with_flash(_again(wanted), [flash_message(TOO_LONG, "info", icon="schedule")])
         return None, refuse(TOO_LONG, 401, redirect=again)
     if _step(user) != step:
         return None, refuse(OUT_OF_STEP)
     return user, None
 
 
-def _back_to_login(request: Request, text: str) -> JSONResponse:
-    """The login half way ended (logins paused, the server's key missing): said on the login page."""
+def _back_to_login(request: Request, text: str, wanted: str) -> JSONResponse:
+    """The login half way ended (logins paused, the server's key missing): said on the login page, which comes back to
+    ``wanted`` after it."""
     get_store(request).end_pending(_pending(request))
-    answer = refuse(text, 401, redirect=with_flash(identity.LOGIN_PATH, [flash_message(text, "err", icon="lock")]))
+    answer = refuse(text, 401, redirect=with_flash(_again(wanted), [flash_message(text, "err", icon="lock")]))
     clear_pending_cookie(request, answer)
     return answer
 
@@ -233,7 +240,7 @@ def new_password_page(request: Request, next: str = HOME) -> Response:  # noqa: 
 @router.post(identity.NEW_PASSWORD_PATH)
 def new_password_save(request: Request, current: str = Form(""), new: str = Form(""), again: str = Form(""),
                       next: str = Form(HOME)) -> Response:  # noqa: A002  # fmt: skip
-    user, refusal = _pending_at(request, identity.NEW_PASSWORD_PATH)
+    user, refusal = _pending_at(request, identity.NEW_PASSWORD_PATH, next)
     if user is None:
         return refusal
     if new != again:
@@ -243,7 +250,7 @@ def new_password_save(request: Request, current: str = Form(""), new: str = Form
         store.change_password(user["id"], current, new, ip=request.client.host if request.client else "")
     except ValueError as exc:
         if store.pending_user(_pending(request)) is None:  # the 5th that didn't match: logins paused
-            return _back_to_login(request, str(exc))
+            return _back_to_login(request, str(exc), next)
         return refuse(str(exc))
     after = store.pending_user(_pending(request)) or user
     return done(request, _step_url(after, _next(next)), flash_message("Password changed.", "ok", icon="key"))
@@ -271,7 +278,7 @@ def code_save(request: Request, code: str = Form(""), next: str = Form(HOME)) ->
 
 def _second_step(request: Request, step: str, code: str, next: str) -> Response:  # noqa: A002
     """The code (setting the app up, or at a login): right, the login gets its session, under a new token."""
-    user, refusal = _pending_at(request, step)
+    user, refusal = _pending_at(request, step, next)
     if user is None:
         return refusal
     typed = "".join(code.split())
@@ -283,7 +290,7 @@ def _second_step(request: Request, step: str, code: str, next: str) -> Response:
         found = store.check_code(user["id"], typed, ip, console=from_console(request))
     except LoginRefused as exc:
         if str(exc) in (LOCKED, KEY_MISSING):
-            return _back_to_login(request, str(exc))
+            return _back_to_login(request, str(exc), next)
         return refuse(str(exc), 401)
     store.end_pending(_pending(request))
     token = store.start_session(found["id"], ip, request.headers.get("user-agent", ""))

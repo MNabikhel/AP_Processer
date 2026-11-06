@@ -687,7 +687,8 @@ def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_t
 def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chromium, store):
     """A colleague on a laptop shared on the office network says who they are once; after AP Coder started again (a
     new key) their cookie is no longer good, and a look is sent on to "Who are you?": it kept asking every 0.8 s,
-    answered by that page. It stops, and the job page goes there, to come back after it."""
+    answered by that page. It stops; the job page says so and stays (D-185), its link to that page comes back after
+    it."""
     import time
 
     from tests.browser import browser_on, wait_until
@@ -713,10 +714,14 @@ def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chrom
             wait_until(page, lambda: looks)
             page.context.clear_cookies()  # (as a new start's key makes of them)
             gone = time.monotonic()
-            wait_until(page, lambda: "/who" in page.url, timeout=6)
-            assert "/who?next=%2Fprocess" in page.url
+            said = page.locator("#apc-session-ended")
+            said.wait_for(timeout=6000)
+            assert "AP Coder asks who you are again: say who you are." in said.inner_text()
             page.wait_for_timeout(2000)
             assert len([t for t in looks if t > gone]) <= 1, looks
+            assert page.url.endswith("/process")
+            page.click("#apc-session-ended .flash-act")
+            page.wait_for_url("**/who?next=%2Fprocess")
     finally:
         release.set()
 
@@ -758,3 +763,29 @@ def test_templates_escape_and_ui_helpers_are_safe():
     assert "<i>" not in out and out.count("&lt;i&gt;v&lt;/i&gt;") == 2
     with pytest.raises(jinja2.UndefinedError):  # only the HTML builders listed in core are there
         env.from_string("{{ ui.document_text(x) }}").render(x="")
+
+
+def test_in_a_browser_an_upload_whose_answer_never_comes_says_so_and_keeps_the_files(chromium, store, tmp_path):
+    """B-1926: Import invoices sent its files by an XMLHttpRequest with no deadline (every other request has one,
+    D-161): an answer that never came (the server busy or stopped once the files were in) left the button on
+    "Uploading…" for good. Past LOOK_MS without the files moving on, or without the answer once they are sent, it says
+    AP Coder didn't answer, and the files stay picked to send again."""
+    from ap_coder.core.store import load_sample_setup
+    from tests.browser import browser_on, wait_until
+
+    load_sample_setup(store)  # (GL accounts: the upload is open)
+    picked = tmp_path / "north_invoice.pdf"
+    picked.write_bytes(b"%PDF-1.4 north")
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
+        page = browser.new_page()
+        held: list = []
+        page.route("**/process/upload", lambda route: held.append(route))  # never answered
+        page.clock.install()
+        page.goto(base + "/process")
+        page.set_input_files("#upload-files", [str(picked)])
+        page.click("#upload-go")
+        wait_until(page, lambda: held)
+        page.clock.run_for(31_000)
+        page.wait_for_selector("#toasts .flash", timeout=5000)
+        assert "AP Coder didn't answer" in page.locator("#toasts").inner_text()
+        assert page.locator("#picked li").count() == 1 and page.locator("#upload-go").is_enabled()

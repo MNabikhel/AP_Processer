@@ -199,3 +199,57 @@ async def d(request):
     assert _waits_on_the_loop(bad) == [("a", 3), ("b", 6), ("c", 8), ("d", 10), ("e", 13), ("f", 15), ("f", 16),
                                        ("g", 18), ("h", 20)]  # fmt: skip
     assert _waits_on_the_loop(safe) == []
+
+
+# Every request of the pages' scripts has a deadline (D-161) and sees the login's answer (D-185): ``fetchWithin``
+# (app.js) is their one fetch. A bare ``fetch(`` waited for ever on a server that never answered, and an answer that
+# was the login's went unseen; an XMLHttpRequest (the upload, for its progress) is given up (``abort()``) once no
+# answer came in time (B-1926).
+JS = ROOT / "ap_coder" / "web" / "static" / "js"
+
+
+def _bare_requests(name: str, source: str) -> list[str]:
+    """Each ``fetch(`` of a page's script outside app.js's ``fetchWithin``, and an XMLHttpRequest never aborted."""
+    import re
+
+    code = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), source, flags=re.S)  # (comments: not code)
+    code = re.sub(r"(^|[^:\\])//[^\n]*", r"\1", code)
+    if name == "app.js" and "export function fetchWithin(" in code:
+        start = code.index("export function fetchWithin(")
+        code = code[:start] + code[code.index("\n}\n", start) :]
+    found = [f"{name}: {code[: m.start()].count(chr(10)) + 1}" for m in re.finditer(r"\bfetch\(", code)]
+    if "XMLHttpRequest" in code and ".abort()" not in code:
+        found.append(f"{name}: an XMLHttpRequest with no deadline")
+    return found
+
+
+def test_every_request_of_the_pages_scripts_has_a_deadline_and_sees_the_login():
+    found = [hit for path in sorted(JS.glob("*.js")) for hit in _bare_requests(path.name, path.read_text("utf-8"))]
+    said = "send it with fetchWithin (app.js), which has a deadline and says when the session ended: "
+    assert not found, said + ", ".join(found)
+
+
+def test_the_deadline_rule_finds_what_it_should():
+    bad = """
+const a = await fetch("/review/1/words");
+window.fetch(url, { keepalive: true });
+const xhr = new XMLHttpRequest();
+"""
+    safe = """
+/* fetch( in a comment */
+// fetch("/x") either
+const a = await fetchWithin("/review/1/words", {}, ACTION_MS);
+const url = "https://example.invalid/x"; // fetch(
+const xhr = new XMLHttpRequest();
+setTimeout(() => xhr.abort(), LOOK_MS);
+"""
+    helper = """
+export function fetchWithin(url, options = {}, ms = LOOK_MS) {
+  if (!ms) return fetch(url, options);
+  return fetch(url, { ...options, signal });
+}
+export const after = 1;
+"""
+    assert _bare_requests("x.js", bad) == ["x.js: 2", "x.js: 3", "x.js: an XMLHttpRequest with no deadline"]
+    assert _bare_requests("x.js", safe) == []
+    assert _bare_requests("app.js", helper) == [] and len(_bare_requests("other.js", helper)) == 2
