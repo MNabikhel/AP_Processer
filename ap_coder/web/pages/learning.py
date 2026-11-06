@@ -229,12 +229,14 @@ NEXT_TIME = {
 }
 
 
-def _settled(store: Store, name: str, compute: Callable[[], Any], decode: Callable[[Any], Any] = lambda v: v) -> Any:
+def _settled(store: Store, name: str, compute: Callable[[], Any], decode: Callable[[Any], Any] = lambda v: v, *,
+             also: Any = None) -> Any:  # fmt: skip
     """``compute()`` as the Coding accuracy tab shows it: worked out once for every process (D-169) on any change of
     the invoices or the lessons, and under a stream of approvals at most every ``SETTLE_SECONDS`` (D-164); a lesson
-    forgotten or taught here (``SETTLES_AFTER``) is another question, worked out at once. Shared: read it, don't change
-    it."""
-    asked = store.count_events(actions=SETTLES_AFTER)
+    forgotten or taught here (``SETTLES_AFTER``) is another question, worked out at once, as is one of ``also`` (what
+    else it is worked out from that no count of changes follows). Shared: read it, don't change it."""
+    asked = (store.count_events(actions=SETTLES_AFTER), also) if also is not None else store.count_events(
+        actions=SETTLES_AFTER)  # fmt: skip
     return store.shared_answer(name, compute, version=SETTLED_FORMAT, decode=decode, changes=("lessons", "situations"),
                                asked=asked, settle=SETTLE_SECONDS)  # fmt: skip
 
@@ -247,7 +249,9 @@ def corrections_context(store: Store) -> dict[str, Any]:
 
     reference = reference_or_none(store)
     rows = []
-    for c in _settled(store, "learning_corrections", lambda: store.corrections(limit=CORRECTIONS_SHOWN)):
+    corrected = store.line_texts_stamp()  # (the line descriptions corrected: no count follows them, B-1839)
+    for c in _settled(store, "learning_corrections", lambda: store.corrections(limit=CORRECTIONS_SHOWN),
+                      also=corrected):  # fmt: skip
         field, pattern = c["field"], c["pattern"]
         if field == lessons.LINE_GL:
             what = f"GL account of lines like “{pattern}”"

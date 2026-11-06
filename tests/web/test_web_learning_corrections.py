@@ -68,3 +68,31 @@ def test_forgetting_the_line_takes_its_correction_off_the_list(tmp_path, ground_
     ids = [r["id"] for r in store.feedback_rows() if r["description"].startswith("Dell Latitude")]
     store.delete_feedback(ids)
     assert store.corrections() == []
+
+
+def test_a_line_description_corrected_on_its_own_shows_on_the_learning_page(tmp_path, monkeypatch):
+    """B-1839: the Corrections list, settled and shared (D-179), followed the lessons and the invoices but not the
+    line descriptions AP corrected (``line_texts``), which an approval keeps in a write of their own after its
+    lessons: a page asked between the two kept a list without the correction, and with nothing else changing it
+    never came, a day later still."""
+    from pathlib import Path
+
+    from ap_coder.core.store import Store, reports
+    from ap_coder.web.pages import learning
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+    invoice = store.add_invoice(Path(tmp_path / "a.pdf"), {"vendor_name": "Acme", "invoice_number": "A-1",
+                                                          "line_items": []}, {})  # fmt: skip
+
+    def shown() -> list[tuple[str, str]]:
+        rows = learning._settled(store, "learning_corrections",
+                                 lambda: store.corrections(limit=learning.CORRECTIONS_SHOWN))  # fmt: skip
+        return [(r["field"], r["value"]) for r in rows]
+
+    assert shown() == []
+    store.remember_line_texts("name:acme", [{"read_key": "k1", "printed": "Bolts sz 1", "description": "Bolts size 1",
+                                             "corrected": True}], invoice_id=invoice)  # fmt: skip
+    clock[0] += 86400
+    assert shown() == [("line_description", "Bolts size 1")]
