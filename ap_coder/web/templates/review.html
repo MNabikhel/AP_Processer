@@ -92,6 +92,7 @@
           <div class="who"><div class="name" title="{{ r.name }}{% if r.name_check %} (not sure: check it){% endif %} · {{ r.file }}">{% if r.name_check %}<span class="rq-unsure">{{ r.name }}{% if r.name != "No vendor name" %}?{% endif %}</span>{% else %}{{ r.name }}{% endif %}</div>
             {% if r.name_check %}<div class="due warn rq-check">Vendor name: check it</div>{% endif %}
             {% if r.due %}<div class="due {{ r.due_tone }}">{{ r.due }}</div>{% endif %}
+            {% if r.open %}<div class="due info" data-open title="Someone else is working on it now">{{ r.open }}</div>{% endif %}
             {% if r.kind and r.kind.key != "text" %}<div class="kind" title="{{ r.kind.title }}"><span class="ms" aria-hidden="true">{{ r.kind.icon }}</span>{{ r.kind.label }}</div>{% endif %}</div></div>
         <div class="c-num" title="{{ r.number }}">{{ r.number }}</div>
         <div class="c-date">{{ r.date }}</div>

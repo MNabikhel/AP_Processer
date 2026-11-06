@@ -2757,3 +2757,70 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
     `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
     `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)
+- **D-184** · **Many people on one review queue: who else has an invoice open, Previous / Next past those, a screen out
+  of date said once, and two revisions on every check** (scale goal, phase 5, S1; `docs/archive/scale-2026-11/
+  web_frontend.md` §3.1, its bugs 7 and 8 and ideas 7 to 9, `web_backend.md` §9.1 and idea 13; B-1915 to B-1917).
+  - **Who has it open** (server mode only; `core/store/ephemeral.py` `keep_open`, `open_by`):
+    - one row of the `ephemeral` table per invoice and person: kind `open:<id>`, the person's draft key, the name
+      shown; written as the screen is drawn (in the page's own brief transaction, with its draft) and renewed by the
+      screen's poll (`GET /review/<id>/reader`, every 30 s, a minute apart at most while nothing changes);
+    - written only when its last write is 45 s old or more (`OPEN_RENEW_SECONDS`): a read, then one upsert, else
+      nothing; gone 120 s after it (`OPEN_SECONDS`): a tab closed, or hidden (the poll pauses);
+    - its times are the database's clock (`julianday('now')`, as B-1770), in seconds since 1970 as the table's
+      other rows keep theirs: the expired ones go with any of them;
+    - only a role that may edit the invoice counts (a Read-only person looking is not working on it); never oneself;
+      the display name, an email's part before its @;
+    - said on the screen ("Ann Lee is working on this invoice too.", its poll says it again) and on the queue row
+      ("Ann Lee has it open");
+    - why not from the drafts (`invoice_drafts`): a draft lasts until the approval, days, and someone who opened an
+      invoice without editing it yet is working on it too.
+  - **Previous / Next** pass over the ones someone else has open, the screen saying so ("Next skips 2 that Ann Lee
+    and Bo Chen have open."); every other one open, none is skipped. The invoice an action goes to next
+    (`next_url`) is never one someone else has open, the screen's `next_id` included when it was opened since.
+    - A tab left is not said: an invoice opened and passed with Next stays "open" up to 2 minutes (no write when
+      leaving; the expiry says it).
+  - **The invoice's revision** (`Store.coding_revision`): the id of its last event that moved it in or out of the
+    queue or stored its coding (`REVISION_ACTIONS`: approved, its second approval, sent back, reopened (an approval
+    undone too), parked, brought back, rejected, deleted, and the manager's three), as the second approval's `shown`
+    is its last approval's id. The screen's form carries it (`rev`).
+    - Why events, not a counter column: each of those changes logs its event in its own transaction already, so no
+      path that moves an invoice can leave the revision behind; no schema 28, no upgrade, no backup; and the event
+      says who did it and when. A note, a reading, the AI reviewer's verdict move no revision: a reading coming in
+      keeps its own way (the panel draws the page again, the edits kept).
+  - **The draft's revision**: the person's draft's edits in 12 letters (blake2b), "0" for none; the same edits keep
+    it (two tabs typing the same thing lose nothing). It is in the approve bar (`draft_rev`), drawn again by each
+    check, so the screen sends back the revision its last check answered (and the load bench's browsers follow it as
+    a browser does); a line action answers it (`draft_rev`).
+    - The screen's own id (`screen`, made with the page) is kept with each draft it writes: its poll, check or
+      approval sent while its own check was under way carries the revision from before it, and is no other tab's.
+    - The page's first revision allows the one before it too ("<new> <old>"): the page keeps its draft once drawn,
+      unless another writer holds the database (left to the next check).
+  - **Out of date**: behind either revision, or the invoice gone from the queue, a check (409, `stale`), a line
+    action (409) or the poll says once what was done, by whom and when (`ui.day_and_time`: "Approved by Ann Lee
+    today at 10:41 a.m.", "Edited in another tab or window today at 10:41 a.m.", "Deleted by …"); the screen turns
+    read-only (its boxes read-only, the approve bar gone, nothing more checked or sent) with what was typed still in
+    its boxes to copy, and "Open it as it is now" opens the invoice as it is now in a new tab, beside them.
+    - An action from it (approve, send to the manager) is "changed meanwhile", as before (`changed_meanwhile`).
+    - A form posted without the revisions (not the screen's) is checked as before: "no longer in the review queue".
+  - **Laptop**: one person: nobody else is shown and nothing of it is written; the revisions and the out-of-date
+    screen hold between its tabs (the screen's poll asks every 30 to 60 s there too).
+  - **Measured** (`bench load --users 100 --duration 300 --workers 4`, a 20,000-invoice seed of 3,000 queued and
+    400 accounts (`bench seed --invoices 20000 --queue 3000 --users 400 --history 0.3 --seed 7`, made again for
+    each run), before (6152f8a) and after; write transactions counted from a connection of their own (PRAGMA
+    data_version every 2 ms: a lower bound), and the writes of who has it open exactly (each write's row seen):
+    - who has it open: 413 writes in the 300 s, **1.38 a second** (0.014 a person); write transactions seen 13.2 →
+      14.2 a second (+0.97: most of those writes share the page's own transaction with its draft and confidence;
+      the run also made 1,004 checks, 904 before);
+    - the screen's poll: 0 → 55 (p50 11 ms, p95 44 ms through uvicorn; the bench's people seldom keep a screen 30 s);
+      invoices opened 681 → 706, p50 66 → 76 ms, p95 295 → 303 ms; pages p95 477 → 425 ms; 5xx, "database is
+      locked", tracebacks: none either time;
+    - a day's use, a screen open all the time: a write when an invoice opens and one a minute while it stays open
+      (the poll at 30, 75, 135 s…, written at 45 s or more): about 1.7 a second at 100 people and 7 at 400, plus
+      the invoices opened, each a small upsert of one row.
+  - **Left**: a tab left could drop its row at once (`pagehide`, a write more per invoice opened); "Take it" or
+    assigning invoices to people; the queue row's note is as of the queue's drawing (no poll there); the load
+    bench's browsers poll every `data-poll` seconds without the page's backing off (a little more than a browser).
+  - (`core/store/ephemeral.py`, `core/store/invoices.py` (`coding_revision`, `last_change`, `invoice_draft`),
+    `web/pages/invoice.py`, `web/pages/review.py` (`queue_rows`), `web/static/js/invoice.js`,
+    `web/templates/{invoice,review,_invoice_document,_invoice_live}.html`; `tests/web/test_web_invoice_together.py`,
+    `tests/core/test_store_ephemeral.py`)
