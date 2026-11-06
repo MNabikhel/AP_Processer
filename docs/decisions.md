@@ -2403,6 +2403,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       one answered after 2 s and trusted after 4 s. Every run: 0 lost, 0 read twice, 0 stored twice, 0 failures,
       40 of 40 reviews done. `same_behaviour.py --ref cfb45d6 read pipeline`: the same (60 read outputs, 1 pipeline
       output).
+    - **With the minute's cap**, the AI reviewer running (`--reviewer all`): hang 31.6 s to the backup (32.7 / 31.6 /
+      32.0 s), back 37 s, with the bench's scaled limits (its reviews give up at 30 s, the cap there too: no gain to
+      show); at the app's own limits (`--no-scale-timeouts`, a review's call up to its 5 minutes) 20.9 s (21.9 /
+      21.8 / 20.9 s), back 27 s: one review hung there, and two arrivals that had their slots at once moved it. Two
+      reviews holding both slots is the test's case: 46 s at the app's limits, 300 s before the cap. 0 lost, 0 read
+      twice, 0 stored twice, 0 failures in both.
   - **Not done:**
     - A call dropped on the primary is not cancelled there: a slow primary finishes it for nobody (above).
     - The capture processes take a backup address saved on the Reading page at their next start (their pipeline is
