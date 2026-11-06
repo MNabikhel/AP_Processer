@@ -256,3 +256,13 @@ def test_the_command_serves_until_stopped(tmp_path, monkeypatch, capsys):
     assert main(["fake-model", "--port", "0", "--latency", "8-20", "--slots", "2", "--embed", ""]) == 0
     assert started.is_set() and [m["id"] for m in seen["models"]["data"]] == [CHAT, READER]
     assert "latency (8.0, 20.0) s" in capsys.readouterr().out
+
+
+def test_an_answer_whose_client_gave_up_is_not_served():
+    """A slow answer the client stopped waiting for (its own limit, AP Coder's breaker moving it to a backup) is
+    dropped when it is ready, as LM Studio stops: never counted as a page answered (D-180's drills)."""
+    with FakeModel(latency="1") as fake:
+        assert _quietly(chat, fake, timeout=0.3) == "dropped"  # the client's limit: 0.3 s
+        s = _wait_for(fake, lambda s: s["dropped"] >= 1 and s["active"] == 0)
+        assert s["served"] == 0 and [h.get("gave_up") for h in fake.history()] == [True]
+        assert chat(fake)[0] == 200 and fake.stats()["served"] == 1

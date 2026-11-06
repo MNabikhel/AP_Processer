@@ -2258,3 +2258,119 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
     `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
     `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)
+- **D-180** · **A backup for each model server: one breaker a server, shared by the company server's processes; a
+  call under way on a failed primary asked again on the backup at once; a chat model other than the first trusted
+  for touchless approval only once it read the self-test's invoice right** (phase 4, M1; SCALE.md's target 3: "the
+  model machine killed, hung, slow or swapped: nothing lost or doubled, and failover to the backup in under a
+  minute"; B-1843, B-1844).
+  - **Why:** the planned layout puts the models on a Mac Studio with a Mac mini as its backup. AP Coder had one
+    address a model server (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`) and nothing moved to another on its own: a
+    dead Mac Studio stopped the page reader and the AI reviewer until a person changed the .env, and a hung one held
+    each page read up to its 20-minute word limit and each review its minutes. A chat model swapped in LM Studio was
+    asked for by its old name by every capture process until it restarted (B-1843), a review asked of it ended unsure
+    (B-1844), and the new one was then used, its reviews approving held invoices, with no test of its own.
+  - **The settings:** `AP_LLM_BACKUP_URL` (the chat model's backup, and the page reader's when it shares that server)
+    and `AP_PAGE_READER_BACKUP_URL` (a page reader on a server of its own, `AP_PAGE_READER_BASE_URL`): the .env,
+    *Settings → Reading → For IT → Backup model servers* (Admin; refused for an address off the company network by
+    the offline rule's own checks, `refused_address`, as the main address, and for the main server itself), or
+    server.json's `llm_backup_url` / `page_reader_backup_url` (given to the dashboard as its environment, which wins
+    over the .env: the form then shows it and leaves it). Empty: none, and nothing below runs: no breaker, no thread,
+    nothing kept, every call to the one server as before (laptop mode; `same_behaviour.py` the same).
+  - **The breaker** (`local_llm.Failover`), one a server: the chat model and the page reader share one when they share
+    a machine and its backup (the planned layout); a page reader on a server of its own has its own. One a model
+    (the first try) left the page reader on a killed Mac Studio: it saw the model list fail, read nothing, and so
+    never counted a failure while the chat calls had long moved.
+    - **Moves the calls** after `FAILOVER_FAILURES` (2) calls in a row the primary didn't answer: refused or dropped,
+      a 5xx, no answer within the call's limit (the arrival's 20 s, the reviewer's time left, AP_LLM_TIMEOUT_SECONDS;
+      a page read's next word within `HANG_SECONDS`, 45 s, on a primary with a backup, instead of its 20 minutes), or
+      its model list not given when asked afresh (a status kept 10 s is one failure, `page_reader.reader_status`). A
+      4xx is an answer (a model it doesn't have, a field refused): a swap moves nothing. A slow answer within its
+      limit is no failure: the backup is the smaller machine.
+    - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
+      looking at the breaker every 0.25 s): `ServerLeft`, and the call is asked once more on the backup when that has
+      the same model (`InvoiceCoder._local_create`, the arrival only within its deadline; `page_reader.transcribe`).
+      An answer that came just as the calls moved is taken (the second kill drill read a page twice before). A read
+      or review that fails all the same because the calls moved goes back in line at once, its try not counted
+      (`page_worker._postpone_or_fail(moved)`, `verifier._postpone_or_fail(moved)`), and a reader thread pausing
+      after a failed read wakes when they move.
+    - **Takes the primary back** after `PROBES_TO_RETURN` (3) answers in a row to a one-word question asked every
+      `PROBE_SECONDS` (5 s; `local_llm.probe`: one of its models, no slot taken, `PROBE_TIMEOUT` 10 s, one process at a
+      time), once the calls have been on the backup `hold` seconds: `HOLD_SECONDS` (60 s), twice as long each time it
+      fails again within `FLAP_SECONDS` (10 minutes) of being taken back, at most 30 minutes; at once when the backup
+      fails too. Calls under way on the backup end there.
+    - **Shared** by the company server's processes, as the minute needs (measured below): a small JSON file in
+      `AP_LLM_SLOTS_DIR` (the slot locks' folder `serve --server` gives them all), written under its lock
+      (`paths.try_lock`), read at most every 0.5 s; times on the server's clock (one machine). Not the database: the
+      model calls have no store at hand (`local_llm` opens none), and it is no row's state. `AP_FAILOVER_SHARED=0`
+      gives each process its own (to measure). On a laptop, each process its own.
+    - **D-168's arrival breaker** counts for the server in use (`ArrivalBreaker.asks(server)`): its two timeouts in a
+      row move the calls first, and it counts afresh on the backup, so arrivals stop asking only when neither answers.
+  - **Which one answers, and how** (item 4): `page_reader.server_checks` lists each model's server and its backup: the
+    model it would use there, then (Check again, the doctor) a one-word question, timed. *Settings → Reading*: a card
+    "Model servers" (in use or standing by, how each answered at the last Check again, where the breaker sends the
+    calls and why); `python -m ap_coder doctor`: a line for each server and one for the breaker. Without a backup:
+    neither, as before.
+  - **A swapped model** (item 5): the page reader's self-test was already its model's (`confirmed(store, model)`):
+    another OvisOCR2 build reads nothing until it passed, on whichever server it is; the backup's with the same key is
+    trusted on the primary's test (the same model file, LM Studio's key says). The chat model:
+    `page_worker.CHAT_TEST_KEY` notes the first chat model AP Coder runs with (the one it was qualified with); any
+    other (swapped in LM Studio, or the backup's own) reads the page reader's test invoice's header from the same
+    scanned pages (`inference.read_header`, compared by `page_reader._verdict`) before it decides anything
+    touchless: `chat_test_if_due`, in the first reader's round as `self_test_if_due`. Meanwhile the AI reviewer waits
+    (`verify_one` takes nothing), its agreement approves nothing (`_fold_in`), nor does a reading (`_read_taken`,
+    `chat_again`). The Reading tab's reviewer card says why ("The AI reviewer waits: the chat model is now …"); the
+    test is audited (`chat_model_tested`). This holds on a laptop too: a swapped model is as risky there.
+  - **Measured** (`python -m ap_coder.bench day --backup --drill …`: a second stand-in model server as the backup,
+    the same models and latencies, the drill on the primary; 40 invoices, half scans, the model 8-20 s a page × 0.05,
+    2 slots, 2 web workers, 2 capture processes; the 4 cores shared with three other agents' work; real seconds, the
+    app's limits unscaled but AP_LLM_TIMEOUT_SECONDS 30 s and the page reader's 60 s):
+
+    | drill on the primary | to the backup (pages / GL / reviews) | back | lost | read twice | stored twice |
+    |---|---|---:|---:|---:|---:|
+    | kill, 60 s | 0.9 s (3.3 / 2.2 / 0.9 s) | 14 s | 0 | 0 | 0 |
+    | hang, 60 s | 22.7 s (23.5 / 22.7 / 26.6 s) | 28 s | 0 | 0 | 0 |
+    | slow, answers ×100 (40-100 s), 90 s | 29.2 s (29.2 / 34.0 / 31.0 s) | 49 s | 0 | 1 | 0 |
+    | swap (another chat model) | none: a 404 is an answer | — | 0 | 0 | 0 |
+    | hang, each process its own breaker | 49.1 s (49.1 / 50.3 / 49.6 s) | 51 s | 0 | 0 | 0 |
+
+    To the backup: its first answer after the drill began (the hang's 2 s after the first request found hung, the
+    unshared hang's 16 s); back: the primary's first answer to a call asked after the drill ended; lost: reads failed
+    or never read; read twice: pages the two model servers answered twice; stored twice: readings or reviews folded
+    in twice. 0 failures, 0 imports failed and every review done in every run.
+
+    - **Sharing** halves a hang's failover (49 → 23 s) and its return (51 → 28 s): alone, each process finds it
+      by its own calls (the capture processes two arrivals each, 40 s; the background process its page reads' 45 s,
+      or its reviews' minutes had it no page read under way); shared, the first two timeouts anywhere move them all.
+      The arrivals during the drop: 3.7 min alone, 2.6 min shared.
+    - **The slow primary:** a call dropped when the calls moved is left to end on its own: on a hung primary it never
+      does, on a slow one it may still be answered within its limit, to nobody (the one page answered twice, its
+      reading stored once). Its return waits for those calls to leave the primary's slots: the probes, asked behind
+      them, go unanswered until then (49 s; three runs: 0, 1 and 1 page answered twice, 0 stored twice). The
+      stand-in model server now drops an answer whose client gave up (LM Studio stops), so it no longer counts
+      those as answered.
+    - **The swap:** nothing moves (a model not found is an answer); after it, 6 → 3 requests asked for the old chat
+      model and 2 → 0 of 40 reviews unsure with B-1844 (the status asked again at once); the new model answered
+      after 2.5 s and was trusted after 7.6 s (its self-test: 9 of 9 fields, 3.1 s), the AI reviewer waiting meanwhile;
+      all 40 agreed.
+    - The first runs found three of this change's gaps, fixed before the rows above: the page reader on its own
+      breaker never moved off a killed primary (one breaker a server, the model list counted); an answer that came
+      as the calls moved was asked again (taken now); two of 40 reviews unsure after the swap (B-1844).
+    - **Nothing else changed:** `scripts/same_behaviour.py --ref 5aa6014 read pipeline` (Python 3.12, both OCR
+      models): the same (60 read outputs, 1 pipeline output).
+  - **Not done:**
+    - A call dropped on the primary is not cancelled there: a slow primary finishes it for nobody (above).
+    - The capture processes take a backup address saved on the Reading page at their next start (their pipeline is
+      made once, `intake.imports.Reader`), as they take a new main address; the page reader and the reviewer at once.
+    - The backup's own models (another chat model, another OvisOCR2 key) are tested when the calls first go there,
+      not before: the AI reviewer, or the page reader, waits for that test then.
+    - The chat model's self-test reads the header: a reviewer that agrees with a wrong total (the digest's item 12)
+      is not tested.
+    - A hung chat model on a server of its own is found by the arrivals' 20 s, or else by a call's own limit (the
+      reviewer's minutes) while nothing arrives.
+    - At full latency the drills are estimates of the bench's own: the limits (20 s, 45 s, the probes) are real time
+      and the model's answers ×0.05, so a hang is found sooner relative to the work than on the Mac Studio.
+  - (`ai/{local_llm,inference,page_reader,page_worker,verifier,pipeline}.py`, `core/{config,audit}.py`,
+    `ops/{doctor,service}.py`, `web/pages/{settings_reading,activity}.py`, `web/roles.py`,
+    `web/templates/settings_reading.html`, `bench/{day,fake_model}.py`, `docs/{REFERENCE,SERVER,HOW_IT_RUNS}.md`;
+    `tests/ai/test_failover.py`, `tests/ai/test_page_reader.py`, `tests/web/test_reading_pages.py`,
+    `tests/ops/test_service.py`, `tests/bench/test_day.py`)
