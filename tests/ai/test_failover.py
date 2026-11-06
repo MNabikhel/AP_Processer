@@ -459,3 +459,21 @@ def test_the_doctor_says_which_model_server_answers_and_how(two):
     rows = doctor._server_checks(settings, "local")
     assert rows[1][1] == doctor.WARN and "answered in" not in rows[1][2]  # (how it failed, in its words)
     assert doctor._server_checks(_settings(primary.base_url), "local") == []
+
+
+def test_a_review_asked_of_a_chat_model_lm_studio_no_longer_has_waits_in_line_not_unsure(store):
+    """B-1844: a review asked of the chat model LM Studio had a moment ago (swapped since, its status kept 30 s)
+    got a 404 on its first question and ended unsure, its invoice sent to a person: a model the server no longer
+    has is the server's change, not the reviewer's verdict. The review waits in line, and the next asks the new
+    model."""
+    with FakeModel(models=[{"id": CHAT, "vision": True}, READER]) as fake:
+        settings = _settings(fake.base_url)
+        iid = _invoice(store, replace(settings, llm=replace(settings.llm, provider="off")))
+        verifier.save_settings(store, on=True, rounds=1, minutes=1.0)
+        store.queue_verification(iid, verifier.QUEUED[0])
+        assert page_worker.chat_untrusted(settings, store) == ""  # (its status kept: CHAT, the first)
+        fake.set(models=[{"id": SWAPPED, "vision": True}, READER])
+        outcome = verifier.verify_one(settings, store, after_page_reader=False)
+        assert outcome is not None and outcome.status == "postponed", outcome
+        assert store.verification(iid)["status"] == "waiting"
+        assert local_llm.check_server(settings.llm).model == SWAPPED  # asked again at once

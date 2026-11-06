@@ -465,6 +465,13 @@ class InvoiceCoder:
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: Developer tab → Start server.",
                 temporary=True,
             )
+        if isinstance(exc, openai.NotFoundError):  # the model asked for isn't there any more (swapped): B-1844
+            local_llm.forget_status()  # the next call asks the one it has
+            return CodingError(
+                f"The server at {llm.base_url} no longer has the chat model asked for (LM Studio has another one "
+                "now): asked again with the one it has.",
+                temporary=True,
+            )
         if local_llm.context_overflow(exc):
             return CodingError(
                 "The invoice is too long for the model's context window. In LM Studio raise the model's Context "
