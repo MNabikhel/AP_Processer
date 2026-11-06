@@ -696,6 +696,61 @@ def test_the_wait_is_estimated_from_measured_page_times(store, monkeypatch):
     assert page_worker.wait_seconds(settings, store, MODEL) == (2 * 2 + 2) * 120.0
 
 
+def test_the_wait_is_divided_among_the_readers(store, monkeypatch):
+    """With ``llm_parallel`` readers (D-111) each reads one invoice at a time: the queue takes its rounds, an invoice
+    waits for the rounds of those ahead of it, then its own (D-171; the wait was as long as with one reader)."""
+    settings = _settings()
+    settings = replace(settings, llm=replace(settings.llm, parallel=2))
+    monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: 120.0)
+    ids = [_process(store, settings).invoice_id for _ in range(5)]
+    assert page_worker.wait_seconds(settings, store, MODEL) == 3 * 120.0  # 5 invoices of 1 page: 3 rounds of 2
+    assert page_worker.wait_seconds(settings, store, MODEL, invoice_id=ids[1]) == 1 * 120.0  # read beside the first
+    assert page_worker.wait_seconds(settings, store, MODEL, invoice_id=ids[4]) == 3 * 120.0
+    assert page_worker.wait_seconds(_settings(), store, MODEL) == 5 * 120.0  # one reader: as before
+
+
+def test_a_read_under_way_is_renewed_while_it_is_read(store, fake_reader, monkeypatch):
+    """Its reader renews it while it reads (D-171): another reader takes it again only once this one stopped renewing
+    it (READING_STALE_SECONDS, 5 minutes), where it was 2 hours after it was taken; the renewing ends with the read."""
+    from ap_coder.core.store import page_queue
+
+    monkeypatch.setattr(page_queue, "READING_RENEW_SECONDS", 0.05)
+    settings = _settings()
+    first = _process(store, settings)
+    renewed, real = [], Store.renew_page_read
+    monkeypatch.setattr(Store, "renew_page_read",
+                        lambda self, iid, reader: renewed.append((iid, reader)) or real(self, iid, reader))  # fmt: skip
+    faked = page_reader.read_document
+    monkeypatch.setattr(page_reader, "read_document", lambda *a, **k: time.sleep(0.4) or faked(*a, **k))
+    assert page_worker.read_one(settings, store).status == "done"
+    assert len(renewed) >= 3 and set(renewed) == {(first.invoice_id, page_worker.READER_ID)}
+    count = len(renewed)
+    time.sleep(0.2)
+    assert len(renewed) == count and store.page_read(first.invoice_id)["status"] == "done"
+
+
+@pytest.mark.parametrize("server", [True, False])
+def test_on_the_server_the_reviewer_takes_every_other_turn(store, monkeypatch, server):
+    """Under a backlog of pages the AI reviewer was starved: it reviewed only when nothing was left to read, so the
+    invoices touchless processing held for it waited for the whole backlog. On the company server it takes a turn
+    after each invoice read, while it has one (D-171); on a laptop it waits for the page reader as before (one LM
+    Studio there may hold one model at a time)."""
+    from ap_coder.ops import offline
+
+    monkeypatch.setattr(offline, "server_mode", lambda: server)
+    turns, reviews = [], iter([0.0, None, 0.0])  # a review, none waiting, a review
+    monkeypatch.setattr(page_worker, "read_one", lambda *a, **k: turns.append("read") or page_worker.ReadOutcome(
+        1, "done", MODEL))  # fmt: skip
+    monkeypatch.setattr(page_worker.BackgroundReader, "_review_one",
+                        lambda self, settings, store: turns.append("review") or next(reviews))  # fmt: skip
+    reader = page_worker.BackgroundReader(_settings, lambda: store)
+    pauses = [reader._round(_settings(), store) for _ in range(5)]
+    if server:  # the 4th round's reviewer had nothing: the page reader read in that round
+        assert turns == ["read", "review", "read", "review", "read", "review"] and pauses == [0.0] * 5
+    else:
+        assert turns == ["read"] * 5
+
+
 # --- The second review's findings (the page reader run for real on a laptop) ---------------------------------------
 
 

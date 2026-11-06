@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..capture.bridge import review_issues
 from ..capture.layout import PDF_LOCK, CannotRead
-from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
+from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
@@ -778,7 +778,8 @@ class InvoicePipeline:
                 why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
                 why = "" if result.chat_deferred else why  # its pass asks the chat model again (D-168)
                 if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
-                    queue_new_invoice(self.store, result.invoice_id, path)
+                    touchless = result.autonomy.get("reason") == WAITING_FOR_PAGE_READER  # read first (D-171)
+                    queue_new_invoice(self.store, result.invoice_id, path, touchless=touchless)
         except ClaimLost as exc:  # another reader took the file after this one stalled past its lease: it stores it
             log.warning("%s", exc)
             result.error = result.error or str(exc)

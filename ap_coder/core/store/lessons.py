@@ -32,8 +32,15 @@ from ._base import (
     _due,
     _now,
     _same_row,
-    _stale_before,
 )
+from .page_queue import _reading_stale_before
+
+# The order the AI reviewer takes its queue in (D-171), as the page reader's (``page_queue``): a person's ask first (the
+# review screen's "asked by <name>"), then one touchless processing waits on (``verifier.QUEUED``'s "held for
+# touchless"), then the earliest due (one without a due date last), then the oldest; ``i`` its invoice.
+_REVIEW_ORDER = ("verifications.reason NOT LIKE 'asked by %'", "verifications.reason != 'held for touchless'",
+                 "i.due_date IS NULL", "COALESCE(i.due_date, '')", "verifications.created_at",
+                 "verifications.invoice_id")  # fmt: skip
 
 # A lesson with how many of the approvals still standing corrected it to its value (``agreeing``): a lesson recorded
 # without an invoice (none kept beside it) counts its corrections.
@@ -283,15 +290,17 @@ class LessonsMixin:
                    created_at = CASE WHEN verifications.status = 'waiting' THEN verifications.created_at
                                 ELSE excluded.created_at END
                    WHERE verifications.status != 'verifying' OR verifications.updated_at < ?""",
-                (invoice_id, reason or "", now, now, _stale_before()),
+                (invoice_id, reason or "", now, now, _reading_stale_before()),
             )
             return cur.rowcount > 0
 
     def next_verification(self, *, after_page_reader: bool = True, reader: str = "") -> dict[str, Any] | None:
-        """The invoice the AI reviewer takes next (the one waiting longest), marked as being reviewed (by ``reader``,
-        the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave invoices still
-        waiting for the page reader (it reads them first, then the reviewer reviews them as they then stand)."""
-        now, stale = _now(), _stale_before()
+        """The invoice the AI reviewer takes next (in the queue's order: a person's ask first, then one touchless
+        processing waits on, then the earliest due, then the one waiting longest), marked as being reviewed (by
+        ``reader``, the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave
+        invoices still waiting for the page reader (it reads them first, then the reviewer reviews them as they then
+        stand)."""
+        now, stale = _now(), _reading_stale_before()
         later = (
             " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = verifications.invoice_id "
             "AND p.status IN ('waiting', 'reading'))"
@@ -301,8 +310,8 @@ class LessonsMixin:
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                f"SELECT invoice_id FROM verifications WHERE {_VERIFY_IN_LINE}{later} "
-                "ORDER BY created_at, invoice_id LIMIT 1",
+                f"SELECT verifications.invoice_id FROM verifications LEFT JOIN invoices i ON i.id = "
+                f"verifications.invoice_id WHERE {_VERIFY_IN_LINE}{later} ORDER BY {', '.join(_REVIEW_ORDER)} LIMIT 1",
                 (stale,),
             ).fetchone()
             if row is None:
@@ -314,6 +323,15 @@ class LessonsMixin:
             )
             taken = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
+
+    def renew_verification(self, invoice_id: int, reader: str) -> bool:
+        """The heartbeat of a review under way (``renew_page_read``'s): still ``reader``'s, marked afresh. False once
+        it is no longer that reader's."""
+        with self._conn() as conn:
+            return conn.execute(
+                "UPDATE verifications SET updated_at = ? WHERE invoice_id = ? AND status = 'verifying' AND reader = ?",
+                (_now(), invoice_id, reader or ""),
+            ).rowcount > 0  # fmt: skip
 
     def finish_verification(
         self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, rounds: int = 0,
@@ -342,7 +360,7 @@ class LessonsMixin:
 
     def release_verifications(self, alive: Callable[[str], bool]) -> int:
         """Put back in line every invoice marked as being reviewed by a process that isn't reviewing any more
-        (``alive(reader)`` is False: closed or killed part way), at once rather than after STALE_READING_HOURS. How
+        (``alive(reader)`` is False: closed or killed part way), at once rather than after READING_STALE_SECONDS. How
         many were put back (``release_page_reads``, for the AI reviewer's queue)."""
         why = "interrupted (AP Coder was closed while it was reviewed): it is reviewed again"
         with self._conn() as conn:
@@ -365,7 +383,7 @@ class LessonsMixin:
             return None
         found = dict(row)
         found["result"] = json.loads(found.pop("result_json") or "null")
-        if found["status"] == VERIFY_RUNNING and found["updated_at"] < _stale_before():
+        if found["status"] == VERIFY_RUNNING and found["updated_at"] < _reading_stale_before():
             found["status"] = VERIFY_WAITING
         return found
 

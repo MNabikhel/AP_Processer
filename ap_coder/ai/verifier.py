@@ -527,7 +527,7 @@ def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[
     cfg = load_settings(store)
     if not cfg.on:
         return None
-    from .page_worker import READER_ID, reading_as
+    from .page_worker import READER_ID, reading_as, renewed
 
     with reading_as(reader or READER_ID) as mark:
         row = store.next_verification(after_page_reader=after_page_reader, reader=mark)
@@ -535,7 +535,8 @@ def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[
             return None
         iid = int(row["invoice_id"])
         try:
-            return _verify(settings, store, row, cfg, coder, clock)
+            with renewed(lambda: store.renew_verification(iid, mark)):  # its heartbeat while it is reviewed (D-171)
+                return _verify(settings, store, row, cfg, coder, clock)
         except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
             log.warning("%s: invoice %s failed (%s)", NAME, iid, exc)
             _end(store, row, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")

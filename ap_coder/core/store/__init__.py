@@ -15,9 +15,9 @@ leaving the machine:
 One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schema, migrations, connections, shared
 helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
 approving, the ERP's register, the second approval), ``purchasing`` (POs, export batches, coding rules), ``capture``
-(supplier learning, touchless, reader scores, the page-reader and Azure queues), ``lessons`` (lessons and the AI
-reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the invoice files and others a backup holds,
-D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
+(supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
+D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the
+invoice files and others a backup holds, D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
 restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
@@ -113,6 +113,7 @@ from .invoices import InvoicesMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
 from .managers import ManagersMixin
+from .page_queue import PageQueueMixin
 from .purchasing import PurchasingMixin
 from .reports import ReportsMixin
 from .summary import SummaryMixin
@@ -128,6 +129,7 @@ class Store(
     InvoicesMixin,
     PurchasingMixin,
     CaptureMixin,
+    PageQueueMixin,
     SuppliersMixin,
     LessonsMixin,
     VendorsMixin,
