@@ -335,3 +335,34 @@ def test_in_a_browser_a_screen_approved_in_another_tab_says_so_from_its_poll(bro
     assert "Approved by Jordan Lee today at" in waiting.inner_text("[data-stale]")
     assert waiting.locator("[form=inv][name=invoice_number]").evaluate("el => el.readOnly")
     assert errors == []
+
+
+@pytest.fixture
+def server_browser(chromium, store):
+    _account(store, "ann", "Ann Lee")
+    _account(store, "bo", "Bo Chen")
+    with browser_on(chromium, create_app(web_settings(), store, start_reader=False, server=True)) as opened:
+        yield opened
+
+
+def test_in_a_browser_on_the_server_one_sees_who_else_has_it_open_and_next_passes_it_over(server_browser, store,
+                                                                                          monkeypatch):  # fmt: skip
+    """Two people, each logged in on a browser of their own: Bo has an invoice open; Ann's Next passes over it and
+    says so; on it, Ann sees Bo's name, and her poll says when Bo opens one she has open."""
+    from ap_coder.web.pages import invoice
+    from tests.web.test_server_browser import _log_in
+
+    monkeypatch.setattr(invoice, "WATCH_SECONDS", 1)  # (the page asks every 5 s at least)
+    _, base = server_browser
+    ids = store.listed_ids(REVIEW)
+    first, second, third = ids[0], ids[1], ids[2]
+    bo, bo_errors = _log_in(server_browser, store, "bo", GOOD, f"/review/{second}")
+    ann, ann_errors = _log_in(server_browser, store, "ann", GOOD, f"/review/{first}")
+    assert "Next skips 1 that Bo Chen has open." in ann.inner_text("[data-skipped]")
+    ann.click("[data-nav=next]")
+    ann.wait_for_url(f"**/review/{third}*")
+    assert ann.locator("[data-others]").is_hidden()
+    bo.goto(f"{base}/review/{third}")
+    wait_until(ann, lambda: ann.locator("[data-others]").is_visible(), timeout=15)
+    assert ann.inner_text("[data-others-text]") == "Bo Chen is working on this invoice too."
+    assert ann_errors == [] and bo_errors == []
