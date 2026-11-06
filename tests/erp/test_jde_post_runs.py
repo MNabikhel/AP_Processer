@@ -4,6 +4,7 @@ the holds and the open period checked just before each voucher is sent; never a 
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import time
@@ -87,13 +88,13 @@ def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wa
     it be shorter than a voucher's own wait: with a voucher's wait of 900 seconds and the resend wait of 10 minutes,
     an answer lost after 15 minutes was "not there" at its first lookup and sent again while JD Edwards could still
     be making the first. It is counted from when the answer was lost, and is never less than a voucher's wait and a
-    margin (here the voucher's wait 0.5 s, the margin 1 s, the resend wait set to 0.1 s)."""
-    monkeypatch.setattr(jde, "RESEND_MARGIN", 1.0)
+    margin (here the voucher's wait 0.5 s, the margin 2 s, the resend wait set to 0.1 s; kept to the second)."""
+    monkeypatch.setattr(jde, "RESEND_MARGIN", 2.0)
     with FakeAis(slow_seconds=1.8) as ais:  # JD Edwards makes it 1.8 s after the request arrived
         store, batch = batch_of(tmp_path, ais)
         connect(store, ais, timeout=0.5)
         settings(store, resend_minutes=0.1 / 60)
-        assert jde.load(store).resend_seconds == 1.5
+        assert jde.load(store).resend_seconds == 2.5
         jde_post.dry_run(store, batch)
         ais.script("voucher_create", "late-made")
         jde_post.post(store, batch)
@@ -101,10 +102,30 @@ def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wa
         jde_post.retry_queue(store)  # "Try again now" right after: JD Edwards hasn't it yet, and may still make it
         row = jde_post.postings(store, batch)[0]
         assert len(finals(ais)) == 1 and row["status"] == jde_post.UNKNOWN and row["maybe_sent"] == 1
-        time.sleep(max(0.0, 1.7 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
+        time.sleep(max(0.0, 2.6 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
         jde_post.retry_queue(store)
         assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
     assert jde.JdeSettings(voucher_timeout=900, resend_minutes=10).resend_seconds == 900 + jde.RESEND_MARGIN
+
+
+def test_a_live_send_is_nobody_elses_for_as_long_as_it_can_take_its_retries_included(tmp_path, ais):
+    """B-1881: a row *sending* was someone's live send for only 15 minutes (``SENDING_MINUTES``), the longest a
+    voucher's own wait can be, though a send whose request AIS turned away busy (503) is tried again, each try a
+    voucher's wait: a send still trying at 40 minutes was taken by the queue, found "not there" (its last try not in
+    JD Edwards yet) and sent a second time beside it. A live send is left alone for the longest it can take: every
+    try and pause, the sign-in, twice over if the token expired meanwhile (``send_seconds``)."""
+    store, batch = batch_of(tmp_path, ais)
+    settings(store, voucher_timeout=900)
+    jde_post.dry_run(store, batch)
+    began = (dt.datetime.now() - dt.timedelta(minutes=40)).isoformat(timespec="seconds")
+    with store._conn() as conn:  # a go-ahead's send, its request turned away busy twice and tried a third time
+        conn.execute("UPDATE jde_postings SET status = 'sending', maybe_sent = 1, approved_at = ?, sending_at = ?",
+                     (began, began))  # fmt: skip
+    assert jde_post.send_seconds(jde.load(store), jde_ais.load(store)) > 3 * 900
+    assert jde_post.waiting(store) == []
+    jde_post.retry_queue(store)
+    assert finals(ais) == [] and ais.orchestration_calls("voucher_status") == []
+    assert statuses(store, batch)[1] == jde_post.SENDING
 
 
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):

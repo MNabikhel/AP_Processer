@@ -23,7 +23,8 @@ The flow, per export batch made in the JD Edwards format (Exports):
      (the connection refused, AIS busy with 503, the sign-in or permission refused before the orchestration ran).
    * *unknown* / *sending* never go back to *queued* or *failed* unless a lookup by the key says JDE holds nothing
      (``maybe_sent`` is then cleared): JDE down, no client, a lookup that fails leave the row as it is (its next try
-     only). A *sending* row is someone's live post; after ``SENDING_MINUTES`` it is looked up, never sent blind. A
+     only). A *sending* row is someone's live post for as long as a send can take (``SENDING_MINUTES`` at least,
+     ``send_seconds``: its retries included); after that it is looked up, never sent blind. A
      "not there" for a send whose answer was lost is believed only ``resend_minutes`` after the answer was lost, and
      never sooner than a voucher's wait and a margin (``_in_flight``, ``JdeSettings.resend_seconds``, D-182): JDE
      may still be making it.
@@ -71,7 +72,9 @@ LOCKED_SQL = ledger.LOCKED_SQL
 SENDABLE = (CHECKED, QUEUED, UNKNOWN, SENDING)  # claimed only with maybe_sent = 0: never sent while JDE may have it
 DRY_RUN_OVER = (CHECKED, REFUSED, FAILED)  # what a dry run may write over (and only with maybe_sent = 0)
 RETRY_MINUTES = (5, 15, 60)  # the queue's waits after each try that did not reach JDE (then hourly)
-SENDING_MINUTES = 15  # a row *sending* longer than this was left by a stop: looked up by its key, never resent blind
+# A row *sending* longer than this, and than a send can take (``_live_seconds``), was left by a stop: looked up by its
+# key, never resent blind.
+SENDING_MINUTES = 15
 LATE_STOP = 3  # answers lost one after another: JDE is overloaded, the rest of the run waits in the queue (D-182)
 LOOK_AFTER = 30.0  # seconds after a lost answer before the run looks the voucher up (a younger one: the queue does)
 # JDE's words for a G/L date in a closed period (PBCO: "post before cut-off"): CONFIRM R04110ZA's error IDs (D-182)
@@ -409,17 +412,34 @@ def downloaded_message(batch: int, found: list[dict[str, str]]) -> str:
             "there twice: tick that it was not loaded and say what you checked.")  # fmt: skip
 
 
-def _fresh_sending(row: dict[str, Any]) -> bool:
-    """A row someone is sending now (not left by a stop): nobody else touches it."""
+def send_seconds(settings: jde.JdeSettings, cfg: jde_ais.AisSettings) -> float:
+    """The longest one voucher's send can take (B-1881): each try of its request a voucher's wait, AIS busy (503)
+    answered at the end of it and tried again after its pause (``jde_ais``), a sign-in before it (each try the
+    connection's wait), and all of it twice over when the sign-in token expired meanwhile."""
+    tries = jde_ais.DEFAULT_RETRIES + 1
+    pauses = sum(jde_ais.RETRY_PAUSE * 2**i for i in range(jde_ais.DEFAULT_RETRIES))
+    return 2 * (tries * (settings.voucher_timeout + cfg.timeout) + 2 * pauses)
+
+
+def _live_seconds(store: Any) -> float:
+    """How long a row stays someone's live send: ``SENDING_MINUTES``, or the longest a send can take and a margin."""
+    cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
+    return max(SENDING_MINUTES * 60, send_seconds(jde.load(store), cfg) + jde.RESEND_MARGIN)
+
+
+def _fresh_sending(row: dict[str, Any], live: float) -> bool:
+    """A row someone is sending now (not left by a stop: claimed less than ``live`` seconds ago): nobody else touches
+    it."""
     if row["status"] != SENDING or not row.get("sending_at"):
         return False
-    since = dt.datetime.now() - dt.timedelta(minutes=SENDING_MINUTES)
+    since = dt.datetime.now() - dt.timedelta(seconds=live)
     return str(row["sending_at"]) > since.isoformat(timespec="seconds")
 
 
 def waiting(store: Any, due_only: bool = False) -> list[dict[str, Any]]:
     """The queue: approved and not finished, without the rows being sent right now."""
-    found = [p for p in postings(store, statuses=IN_FLIGHT) if not _fresh_sending(p)]
+    live = _live_seconds(store)
+    found = [p for p in postings(store, statuses=IN_FLIGHT) if not _fresh_sending(p, live)]
     if due_only:
         now = _now()
         found = [p for p in found if not p.get("next_try") or p["next_try"] <= now]
@@ -802,7 +822,8 @@ class _Run:
         self.settings = settings = jde.JdeSettings.from_json(self.text)
         self.refused: tuple[dt.date, int, dt.date, str] | None = None  # (through, invoice, its G/L date, JDE's words)
         # a lost answer's "not there" believed only this long after it was lost (or after the send's longest), B-1880
-        self.resend, self.longest = settings.resend_seconds, settings.voucher_timeout
+        cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
+        self.resend, self.longest = settings.resend_seconds, send_seconds(settings, cfg)
         self.minutes, self.began = settings.post_minutes, time.monotonic()
         self.total, self.progress = total, progress
         self.outcome: dict[str, str] = {}  # key -> its status now

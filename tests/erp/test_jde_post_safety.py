@@ -277,7 +277,9 @@ def test_a_voucher_left_sending_by_a_stop_is_looked_up_never_resent(tmp_path, ai
     store, batch = batch_of(tmp_path, ais)
     jde_post.dry_run(store, batch)
     jde_post.post(store, batch)
-    stale = (dt.datetime.now() - dt.timedelta(minutes=jde_post.SENDING_MINUTES + 1)).isoformat(timespec="seconds")
+    # longer ago than a send can take, its retries included (B-1881), and than SENDING_MINUTES
+    live = max(jde_post.SENDING_MINUTES * 60, jde_post._live_seconds(store))
+    stale = (dt.datetime.now() - dt.timedelta(seconds=live + 60)).isoformat(timespec="seconds")
     with store._conn() as conn:  # AP Coder stopped after sending, before the answer was kept
         conn.execute("UPDATE jde_postings SET status = 'sending', document = '', sending_at = ?", (stale,))
     assert len(jde_post.waiting(store)) == 1

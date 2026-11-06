@@ -2475,8 +2475,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only `resend_minutes` (10)
       after the answer was lost (`lost_at`; a send whose end is not known, from its start and the longest it could
       take), never sooner than a voucher's wait and `RESEND_MARGIN` (a minute): Settings refuses less, and a run takes
-      the larger (`JdeSettings.resend_seconds`, B-1880). Before, the row stays unknown and locked (B-1858). A refusal
-      that JDE answered (its error shape) is looked up and believed at once, as before.
+      the larger (`JdeSettings.resend_seconds`, B-1880). Before, the row stays unknown and locked (B-1858). A row
+      *sending* is someone's live send, never looked up nor sent by another, for the longest a send can take
+      (`send_seconds`: each try a voucher's wait, AIS's 503 retries and their pauses, the sign-in, twice over for a
+      token expired meanwhile; 15 minutes at least, B-1881). A refusal that JDE answered (its error shape) is looked
+      up and believed at once, as before.
     - **Holds** (`coding.vendors.voucher_hold`): AP Coder's own and JD Edwards' as the last supplier sync left it,
       indexed until the vendor list changes; held, the voucher is queued saying why, the dry run refuses it.
     - **The open period** (`open_from`, `open_to`, `closed_period` in Settings → JD Edwards E1; none read from JDE:
