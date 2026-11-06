@@ -243,6 +243,17 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     return Report(start, end, claims, not_approved, not_recoverable)
 
 
+def setup_key(store: Store) -> tuple[Any, ...]:
+    """What ``build`` and ``self_assessment`` read beside the invoices' summary: the tax setup, the rate table, our
+    provinces, and whether JD Edwards accrues the PST (its settings, its batches): an answer of theirs kept for a page
+    is one for these (the Sales tax page's, D-179), so that a change of one of them is worked out at once."""
+    from ..erp import jde
+
+    batches = [b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")]
+    return (store.tax_treatments(), TaxRateTable.load(), store.our_province(), store.site_provinces(), batches,
+            jde.in_use(store), store.get_setting(jde.SETTING_KEY))  # fmt: skip
+
+
 def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str, Any]:
     """What ``build`` needs of an approved invoice (``row``: its columns, the JSON ones decoded; ``approval``: its
     latest ``approved`` event), whatever the tax setup: kept in the invoices' summary (D-110). Each tax line that may

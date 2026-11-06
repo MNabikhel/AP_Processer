@@ -434,6 +434,53 @@ def test_sales_tax_claims_and_self_assessment_downloads(client, busy):
     assert client.get(f"/sales-tax/claims.csv?start={end}&end={start}").status_code == 400
 
 
+def test_the_sales_tax_page_is_worked_out_once_for_every_process_and_settles_but_its_csvs_and_tax_setup_never_do(
+    client, busy, monkeypatch
+):
+    """B-1835: the Sales tax page read the period's claims and self-assessments whole at every visit (the default
+    quarter: 0.23 s at 20,000 invoices, about 3.5 s at 300,000, 6.3% of the busy web workers' CPU). What it shows is
+    worked out once for every process, the same page as worked out afresh, and under a stream of approvals at most
+    every ``SETTLE_SECONDS`` (D-164); a change of the tax setup shows at once, and the CSVs are never settled."""
+    from ap_coder.core.store import reports
+    from ap_coder.web.pages import sales_tax as page
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    worked = []
+    real = taxreturn.build
+    monkeypatch.setattr(taxreturn, "build", lambda *a, **k: worked.append(a[1:]) or real(*a, **k))
+    start, end = dt.date(2020, 1, 1), dt.date.today()
+    url, csv_url = f"/sales-tax?start={start}&end={end}&show=all", f"/sales-tax/claims.csv?start={start}&end={end}"
+
+    def shown() -> str:  # (the page's own part: the rail's counts settle on their own, B-1738)
+        return client.get(url).text.split('id="main"')[1].split("</main>")[0]
+
+    def another_process(afresh: bool = False) -> None:
+        monkeypatch.setattr(reports, "_KEPT", {})
+        monkeypatch.setattr(reports, "_WORKING", {})
+        if afresh:  # (nothing kept anywhere: worked out whole)
+            with busy._conn() as conn:
+                conn.execute("DELETE FROM report_answers")
+
+    first = shown()
+    assert "By tax and rate" in first and len(worked) == 1
+    another_process()
+    assert shown() == first and len(worked) == 1  # (the first process's)
+    waiting = next(i for i in busy.list_invoices(REVIEW) if start.isoformat() <= (i["invoice_date"] or "") <= str(end))
+    busy.approve_invoice(waiting["id"], busy.get_invoice(waiting["id"])["ai_output"], "Jordan Lee")
+    clock[0] += page.SETTLE_SECONDS - 1
+    assert shown() == first  # settled
+    assert client.get(csv_url).content == taxreturn.to_csv(real(busy, start, end))  # (never settled)
+    clock[0] += 1
+    worked.clear()
+    after = shown()
+    assert after != first and len(worked) == 1
+    another_process(afresh=True)
+    assert shown() == after and len(worked) == 2  # the same page as worked out afresh
+    busy.set_tax_treatment("QST", "expense_to_line")  # (within the settle: shown at once)
+    assert "QST is set up\n  as not recoverable" in shown() and len(worked) == 3
+
+
 def test_the_sales_tax_lists_show_a_part_at_a_time_and_the_csvs_and_tiles_every_row(client, busy, monkeypatch):
     """The claims and the self-assessments, ``ROWS_SHOWN`` at a time each ("Show more", D-162), each keeping the
     other's length; the CSVs, tiles and counts have every row; under the step, the page is as it was."""

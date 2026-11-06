@@ -82,6 +82,12 @@ FEED = 4  # recent lessons beside the chart
 VENDORS_SHOWN = 12
 MEMORY_READ = 2000  # lessons the memory list works on (newest first)
 MEMORY_SHOWN = 300
+# Seconds the Coding accuracy tab's figures and corrections may be behind the stream of approvals (D-164, D-179): read
+# from every lesson (1.1 million at 300,000 invoices), worked out once for every process (``_settled``). The lessons
+# forgotten or taught on this page show at once; the memory list is never settled.
+SETTLE_SECONDS = 60.0
+SETTLED_FORMAT = "learning-1"  # what is kept for every process; another when that changes
+SETTLES_AFTER = ("lessons_forgotten", "history_imported")  # the page's own changes: each another question
 OUTCOMES = {
     "accepted": "✓ confirmed",
     "corrected": "✎ corrected",
@@ -223,15 +229,25 @@ NEXT_TIME = {
 }
 
 
+def _settled(store: Store, name: str, compute: Callable[[], Any], decode: Callable[[Any], Any] = lambda v: v) -> Any:
+    """``compute()`` as the Coding accuracy tab shows it: worked out once for every process (D-169) on any change of
+    the invoices or the lessons, and under a stream of approvals at most every ``SETTLE_SECONDS`` (D-164); a lesson
+    forgotten or taught here (``SETTLES_AFTER``) is another question, worked out at once. Shared: read it, don't change
+    it."""
+    asked = store.count_events(actions=SETTLES_AFTER)
+    return store.shared_answer(name, compute, version=SETTLED_FORMAT, decode=decode, changes=("lessons", "situations"),
+                               asked=asked, settle=SETTLE_SECONDS)  # fmt: skip
+
+
 def corrections_context(store: Store) -> dict[str, Any]:
     """Corrections, the first thing on the Coding accuracy tab: each correction AP made (an invoice's field, a line's
     GL account, cost center, tax code or description), what AP Coder proposed and what AP approved, and whether AP
-    Coder had it right the next time (``Store.corrections``)."""
+    Coder had it right the next time (``Store.corrections``, settled: ``_settled``)."""
     from ap_coder.ai import lessons
 
     reference = reference_or_none(store)
     rows = []
-    for c in store.corrections(limit=CORRECTIONS_SHOWN):
+    for c in _settled(store, "learning_corrections", lambda: store.corrections(limit=CORRECTIONS_SHOWN)):
         field, pattern = c["field"], c["pattern"]
         if field == lessons.LINE_GL:
             what = f"GL account of lines like “{pattern}”"
@@ -263,12 +279,15 @@ def corrections_context(store: Store) -> dict[str, Any]:
 
 
 def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, Any]:
-    m = store.metrics()
+    """The Coding accuracy tab but its corrections: the tiles, the chart by week, the recent lessons, the vendors, the
+    most common corrections and the memory list (``mem_q``: its search). Its figures settle (``_settled``)."""
+    m = _settled(store, "learning_metrics", store.metrics)
     if not m["lines_reviewed"]:
         return {"metrics": None}
     measured = m["line_accuracy"] is not None  # none: AP coded every line, the AI proposed none (no model, B-1298)
     accuracy = m["line_accuracy"] or 0.0
-    clean, total, filled = insights.approval_counts(store)  # as Insights counts them (D-39), by SQLite (D-156)
+    # as Insights counts them (D-39), by SQLite (D-156)
+    clean, total, filled = _settled(store, "learning_approvals", lambda: insights.approval_counts(store), tuple)
     weekly = []
     for w in m["weekly"]:
         lines = w["accepted"] + w["corrected"]

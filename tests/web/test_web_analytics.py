@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import io
+import re
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
@@ -113,6 +114,59 @@ def test_learning_shows_accuracy_lessons_vendors_and_memory(client, busy):
     assert "corrected" in text and "90% target" in text
     (chart,) = _svgs(text)
     assert chart.get("role") == "img" and chart.find(f"{SVG}title").text == "Coding accuracy by week"
+
+
+def test_the_coding_accuracy_figures_are_worked_out_once_for_every_process_and_settle_but_not_after_a_forget(
+    client, busy, monkeypatch
+):
+    """B-1836: the Learning page's Coding accuracy tab read every lesson again after each approval (the metrics: four
+    scans of 1.1 million lessons at 300,000 invoices), and counted every approval and the corrections at each visit,
+    in each web worker (5.9% of the busy workers' CPU under 100 people). Its figures and corrections are worked out
+    once for every process, the same page as worked out afresh, and under a stream of approvals at most every
+    ``SETTLE_SECONDS``; a lesson forgotten on the page shows at once, and the memory list never settles."""
+    from ap_coder.core.store import Store, reports
+    from ap_coder.web.pages import learning as page
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    worked = []
+    real = Store.metrics
+    monkeypatch.setattr(Store, "metrics", lambda self: worked.append(1) or real(self))
+
+    def shown() -> str:  # the page's own part (the rail's counts settle on their own, B-1738), its charts' ids aside
+        main = client.get("/learning").text.split('id="main"')[1].split("</main>")[0]
+        return re.sub(r"(apc-chart-[\w-]*?-)\d+(-[td]\b)", r"\1n\2", main)
+
+    def figures(page: str) -> str:  # what settles: the page but its latest lessons and its memory list
+        page = re.sub(r'(?s)<section class="card" aria-labelledby="feed-title">.*?</section>', "", page)
+        return re.sub(r'(?s)<details class="card an-expander" id="memory".*?</details>', "", page)
+
+    def another_process(afresh: bool = False) -> None:
+        monkeypatch.setattr(reports, "_KEPT", {})
+        monkeypatch.setattr(reports, "_WORKING", {})
+        if afresh:  # (nothing kept anywhere: worked out whole)
+            with busy._conn() as conn:
+                conn.execute("DELETE FROM report_answers")
+
+    first = shown()
+    assert "Lines reviewed" in first and len(worked) == 1
+    another_process()
+    assert shown() == first and len(worked) == 1  # (the first process's)
+    row = busy.list_invoices(REVIEW)[0]
+    _approve(busy, row["id"], copy.deepcopy(busy.get_invoice(row["id"])["ai_output"]))
+    clock[0] += page.SETTLE_SECONDS - 1
+    now = shown()
+    assert figures(now) == figures(first) and now != first and len(worked) == 1  # settled, but the latest lessons
+    clock[0] += 1
+    after = shown()
+    assert figures(after) != figures(first) and len(worked) == 2
+    another_process(afresh=True)
+    assert shown() == after and len(worked) == 3  # the same page as worked out afresh
+    lesson = busy.feedback_rows()[0]
+    assert f'value="{lesson["id"]}"' in after
+    assert client.post("/learning/memory/forget", data={"ids": [lesson["id"]]}, headers=PAGE).status_code == 200
+    forgotten = shown()  # (within the settle: at once)
+    assert f'value="{lesson["id"]}"' not in forgotten and figures(forgotten) != figures(after) and len(worked) == 4
 
 
 def test_insights_shows_the_business_case_and_the_straight_through_rate(client, busy, monkeypatch):

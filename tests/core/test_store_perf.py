@@ -577,3 +577,55 @@ def test_the_queues_facts_carry_each_findings_text_once_for_all_the_invoices_tha
     assert rows == each and [list(r) for r in rows] == [list(r) for r in each] and len(rows) == 5
     assert "".join(sent).count("TOTAL_MISMATCH") == 1 and "".join(sent).count("DUE_DATE_PAST") == 1
     assert bulk._queue_rows(store, asked) == {r["id"]: r for r in each}
+
+
+def test_the_duplicate_check_seeks_the_invoice_number_not_each_invoice_of_the_vendor(tmp_path, monkeypatch):
+    """B-1832: each check (the review screen's, every invoice read) looked for the same vendor's invoice with the same
+    number by reading every invoice of the vendor and comparing each number in Python (23,000 for the biggest vendor at
+    300,000 invoices: 3.3% of the busy web workers' CPU). It seeks the number as it compares, off the summary's index:
+    what comparing each gives, the same number written another way included, a rejected or failed one and the invoice
+    itself left out, a credit note no duplicate of an invoice."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    first = add_clean(store, invoice_number="INV-00123")
+    second = add_clean(store, invoice_number="#123")
+    add_clean(store, invoice_number="124")
+    store.reject_invoice(add_clean(store, invoice_number="123"), "Ann", "a copy")
+    credit = add_clean(store, invoice_number="123", grand_total=-50.0)
+    other = add_clean(store, invoice_number="123", vendor_name="Another Vendor Inc")
+    with sqlite3.connect(store.path) as conn:  # failed later, by a plain connection: the summary follows it
+        conn.execute("UPDATE invoices SET status = 'failed' WHERE id = ?", (second,))
+    name = store.get_invoice(first)["vendor_name"]
+    assert store.find_duplicates(name, "123") == [first, credit]
+    assert store.find_duplicates(name, "inv 123", exclude_id=first, grand_total=10.0) == []
+    assert store.find_duplicates(name, "123", grand_total=-1.0) == [credit]
+    assert store.find_duplicates("Another Vendor Inc", "0123") == [other]
+    assert store.find_duplicates(name, "") == [] and store.find_duplicates("", "123") == []
+    (plan,) = _plans(store, monkeypatch, lambda: store.find_duplicates(name, "123"), "invoice_summary", "number_key")
+    assert "summary_number" in plan and "SCAN" not in plan, plan
+
+
+def test_the_parked_invoices_are_read_from_the_summary_not_the_invoices_whole_rows(tmp_path, monkeypatch):
+    """B-1837: the review queue's "parked to follow up" pill and its Parked tab read each parked invoice's row of the
+    invoices table, whose reason and follow-up day come last in it, after its coding, checks and text (about 30 KB
+    each: 8 MB for the 271 parked at 300,000 invoices, at every view of the queue). They are read off the summary's
+    narrow rows, in the same order, what the invoices hold, a change by plain SQL included."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    ids = [add_clean(store, invoice_number=f"P-{n}") for n in range(4)]
+    for invoice_id, follow_up in zip(ids, ("2026-11-20", "", "2026-11-03", "2026-11-03"), strict=True):
+        store.park_invoice(invoice_id, "Jordan Lee", f"waiting {invoice_id}", follow_up=follow_up or None)
+    add_clean(store, invoice_number="P-in-review")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET parked_reason = 'changed by hand' WHERE id = ?", (ids[0],))
+    with sqlite3.connect(store.path) as conn:
+        conn.row_factory = sqlite3.Row
+        whole = [dict(r) for r in conn.execute(
+            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, parked_reason, follow_up "
+            "FROM invoices WHERE status = 'parked' ORDER BY follow_up IS NULL, follow_up, id")]  # fmt: skip
+    assert store.parked() == whole and [r["id"] for r in whole] == [ids[2], ids[3], ids[0], ids[1]]
+    assert whole[2]["parked_reason"] == "changed by hand"
+    (plan,) = _plans(store, monkeypatch, store.parked, "invoice_summary", "status")
+    assert "SEARCH invoice_summary USING INDEX" in plan and "SCAN invoice_summary" not in plan, plan
