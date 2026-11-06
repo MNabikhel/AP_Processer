@@ -1226,3 +1226,90 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
     `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
     `tests/bench/test_seed_volume.py`)
+- **D-168** · **Imports out of the web workers: a persistent import queue, capture processes of their own on the
+  company server, the arrival's chat call bounded, each file hashed once; schema 26** (phase 3 α; changes D-99's
+  imports queued in memory and D-111's one import job server-wide).
+  - **Why:** on the server an import ran as one job server-wide, in a thread of a web worker: files read one after
+    another, the uploads queued meanwhile in that worker's memory (lost at a restart), the chat model asked on each
+    arrival for up to 600 s, and OCR holding that worker's Python lock for up to 0.9 s, which slowed every page it
+    served. A colleague's 1,000 files went before your 3.
+  - **The queue** (`core/store/imports.py`; `import_batches`, `import_files`, `import_turns`):
+    - **In:** an upload (its SHA-256 from the bytes uploaded), the Process button's pick-up and a scheduled `watch`
+      (only the files whose size and time the pick-up hasn't noted are read, `intake.imports.pick_up`), `ap_coder
+      process` (a batch of its own, `--force` reads stored files again), a Retry. One transaction a batch; a file an
+      invoice was made from (a failed one too for the folder's pick-ups) or a repeat is named among its skipped.
+    - **Taken** one at a time in BEGIN IMMEDIATE (`claim_import`): a person's batch before a watch's, then the
+      uploader served least recently (round-robin, `import_turns`), then the oldest. Never a file whose content
+      another reader is reading; a file stored meanwhile is skipped as it is taken.
+    - **Leases:** 120 s (`IMPORT_LEASE_SECONDS`), renewed every 20 s by the reader's heartbeat, as times of the
+      database's clock (`julianday('now')`) compared there. A file whose reader stopped is taken again once its lease
+      ran out; the second time (`IMPORT_TRIES`) it is failed with the reason (`STOPPED_TWICE`) as an invoice in
+      Failed / rejected, which Retry reads again. A stop (the server, Ctrl+C) puts the file back, its try not counted.
+    - **A restart:** what waits is taken up again: by the capture processes, a laptop's dashboard at its start
+      (`process.resume`), or the next `watch`.
+    - **A full disk:** nothing is taken while the data folder's disk has less than `backups.BACKUP_RESERVE` (512 MB)
+      free; the files stay in the folder, in line, and the Process page says why.
+    - **The Process page** shows the latest run (`process.import_status`, the job's snapshot as before): the batches
+      that came in while the queue had work. Each batch is recorded in the audit trail once its last file is done
+      (`record_import_run`, D-103). Kept 7 days (`IMPORT_KEEP_DAYS`), the latest run whatever its age.
+  - **Who reads** (`intake.imports.Reader`):
+    - **The company server** (`serve --server`, several web workers): `server.capture_processes()` capture processes
+      (`serve --capture-work`, `server.run_capture`) beside the background process, started and stopped with it
+      (`server.Together`: asked at once, 15 s in all), started again when one stops. As many as the cores less two,
+      and as fit at `CAPTURE_MB` (700 MB; 660-680 measured) in the memory the web workers leave less 2 GB: 4 cores and
+      16 GB 2, 32 cores and 64 GB 20; `AP_CAPTURE_PROCESSES` sets it. Each a fresh Python (`subprocess`, so spawn on
+      every system), its models loaded once for its life, its ONNX Runtime, OpenCV and BLAS threads its share of the
+      cores less two (`AP_OCR_THREADS`, `server.capture_env`: 1 each on 4 cores), its log `logs/capture-<n>.log`. A
+      stop gives the file under way 12 s, then puts it back. No web worker reads an invoice.
+    - **A laptop** and `--workers 1`: the dashboard's own job "process", in its own process, as before.
+    - **`watch`** reads what waits, unless a capture process runs (its `capture:` lease), then it only puts files in
+      line; **`process`** reads its own batch (its `reader:` lease; anyone's once it stopped).
+  - **The arrival's chat call** (the choice): **a short timeout with a circuit breaker**, not a queue of its own.
+    - **How:** on the company server an arriving invoice waits at most 20 s for the chat model's accounts, the wait
+      for a chat slot included (`pipeline.ARRIVAL_SECONDS`, `AP_LLM_ARRIVAL_SECONDS`; `inference.ChatTimeout`,
+      `Slots.held(deadline=)`). After two arrivals in a row with no answer in time (`BREAKER_FAILURES`) arrivals
+      don't ask for 2 minutes (`BREAKER_SECONDS`), then one asks: an answer in time closes it. One per process. The
+      invoice goes in with the local coding, those lines left for AP; it is never left out of the page reader's pass
+      (D-111's `skip_clean`), which asks again with the full AP_LLM_TIMEOUT_SECONDS.
+    - **Why not a queue:** an answer in time codes exactly as before (the same question, the same kept answers,
+      D-131), while a queued call would bring every invoice in without the model's accounts and need a writer that
+      changes a proposal someone may be reviewing already. The page reader's pass is that second chance already.
+    - **A laptop:** no limit (0), as before: its LM Studio is the pilot tester's own, and laptop mode stays as it is.
+  - **Hash once:** the SHA-256 read as the file comes in goes with it (`InvoicePipeline.process(sha256=)`,
+    `add_invoice(sha256=)`); a file whose size or time changed since is hashed again; the page reader's pass's
+    header reading takes the invoice's stored hash. The folder pick-up and `watch` no longer hash every file of the
+    folder at each press or check.
+  - **One rule** for a folder's files (`intake.files.folder_names`): `pipeline.invoice_files`, `pipeline.other_files`,
+    `mailbox.emails_in` and the import page's list are its parts (D-166 repeated them; B-1758's hidden emails kept).
+  - **Measured** (4 cores shared with two other agents' tests; `python -m ap_coder.bench day --n 100 --scanned 0.5`,
+    the fake model 8-20 s a page, 2 slots, time ×0.05; before: fd5d166 with B-1758):
+
+    | | before | after |
+    |---|---:|---:|
+    | all 100 in the review queue after | 8.9 min | 5.9 min |
+    | arrival, invoices an hour | 673 | 1,022 |
+    | page reader drained after | 9.1 min | 6.2 min |
+    | web workers' CPU (the busiest) | 1,067 s, 1.93 cores (1,057 s) | 9 s, 0.02 cores (3.5 s) |
+    | capture processes' CPU | | 600 s, 1.58 cores (2 processes) |
+    | `GET /review` p95 idle / during the drop | 18 / 204 ms | 20 / 130 ms |
+    | failures | 0 | 0 |
+
+    GIL probe (`p3_alpha/gil_probe.py` in the session's scratchpad: a 5 ms timer thread in a web worker while 20
+    scans are imported; how late it woke): p50 0.08 → 0.08 ms, p95 3.0 → 0.24 ms, p99 11.0 → 3.8 ms, the longest
+    818 → 100 ms, wake-ups over 50 ms 67 → 7 (of about 40,000; the 4 cores were shared, so a late wake-up after is
+    the machine's, not the import's); the import 262 → 209 s.
+  - **No new dependency.**
+  - **Not done:**
+    - `server.json` has no `capture_processes` key (`ops/service.py`): `AP_CAPTURE_PROCESSES` in the .env sets it.
+    - The day bench's estimate at full latency still adds the arrival's chat answers one after another, as when one
+      import read serially: with N capture processes and the 20 s limit it overstates the arrival.
+    - A reader that loses its lease while still reading (no heartbeat for 2 minutes: the database held by another
+      writer that long) could have its file read again by another; the claim then finds it stored only if the first
+      saved it already.
+  - (`core/store/{imports,_base,folder,invoices}.py`, `intake/{files,imports,mailbox}.py`, `ai/pipeline.py`,
+    `ai/inference.py`, `ai/local_llm.py`, `web/pages/{process,review}.py`, `web/server.py`, `web/app.py`,
+    `ops/cli.py`, `ops/offline.py`, `bench/day.py`, `web/templates/process.html`, `web/static/js/process.js`;
+    `tests/core/test_imports.py`, `tests/intake/test_imports.py`, `tests/ai/test_pipeline_arrival.py`,
+    `tests/web/test_server_capture.py`, `tests/web/test_web_process.py`, `tests/web/test_server_ux.py`,
+    `tests/web/test_server_capacity.py`, `tests/ops/test_controls_watch.py`, `tests/coding/test_terms_po_vendors.py`,
+    `tests/ai/test_pipeline.py`)
