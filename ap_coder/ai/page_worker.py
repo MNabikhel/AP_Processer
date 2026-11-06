@@ -668,6 +668,48 @@ def _restored(iid: int, model: str) -> ReadOutcome:
     return ReadOutcome(iid, "skipped", model, message=message)
 
 
+def chat_again(settings: Settings, store: Any, *, cache_dir: Path | None = None) -> ReadOutcome | None:
+    """An invoice whose arrival put off the chat model's accounts (D-168) and that no page read will ask again for (a
+    text file; one in line while the page reader can't read: ``Store.take_chat_deferred``) coded again, the chat model
+    asked with no arrival limit as the page reader's pass asks, into its proposal while nobody has worked on it, and
+    approved as touchless processing would have (B-1765). None when none waits."""
+    from ..capture.workflow import AUTONOMOUS_REVIEWER, has_draft
+    from .pipeline import InvoicePipeline
+    from .pipeline import _meta as pipeline_meta
+
+    if store.restoring():
+        return None
+    iid = store.take_chat_deferred()
+    if iid is None and not ready(settings, store)[0]:
+        iid = store.take_chat_deferred(in_line_too=True)
+    if iid is None:
+        return None
+    inv = store.get_invoice(iid)
+    identity = store.row_identity(iid)
+    path = Path((inv or {}).get("source_path") or "")
+    if inv is None or not path.exists():
+        return ReadOutcome(iid, "skipped", message="the invoice or its file is gone")
+    pipeline = InvoicePipeline(settings, reference_data(store), cache_dir=cache_dir, store=store)
+    pipeline.arrival_seconds = 0.0  # no arrival limit: AP_LLM_TIMEOUT_SECONDS, as the page reader's pass asks
+    result = pipeline.process(path, save=False, invoice_id=iid)
+    if result.error or result.output is None or result.report is None:
+        return ReadOutcome(iid, "failed", message=result.error or "the invoice could not be coded again")
+    if store.restoring() or store.row_identity(iid) != identity:
+        return _restored(iid, "")
+    capture = result.capture.to_dict() if result.capture is not None else None
+    updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, pipeline_meta(result),
+                                     expect=identity)  # fmt: skip
+    outcome = ReadOutcome(iid, "done", updated=updated, message="the chat model asked again" if updated else
+                          "not applied: the invoice was already edited or decided")  # fmt: skip
+    if updated and result.autonomy.get("auto") and not has_draft(store, iid):
+        try:
+            store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            outcome.auto_approved = True
+        except (KeyError, ValueError) as exc:  # approved or rejected meanwhile
+            log.info("invoice %s: not approved automatically (%s)", iid, exc)
+    return outcome
+
+
 def run_queue(settings: Settings, store: Any, *, minutes: float = 30.0, cache_dir: Path | None = None,
               on_result: Callable[[ReadOutcome], None] | None = None) -> list[ReadOutcome]:  # fmt: skip
     """Read waiting invoices until the queue is empty or ``minutes`` have passed (a page under way is finished; an
@@ -795,6 +837,19 @@ class BackgroundReader(threading.Thread):
         for helper in self.helpers:
             helper.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
 
+    def _ask_again(self, settings: Settings, store: Any) -> bool:
+        """With nothing to read: the chat model asked again for an invoice whose arrival put it off and that no page
+        read will ask for (``chat_again``, B-1765). Whether there was one."""
+        try:
+            outcome = chat_again(settings, store, cache_dir=self._cache_dir)
+        except Exception:  # noqa: BLE001 - an extra, as the reviewer is: never the page reader's undoing
+            log.exception("asking the chat model again failed")
+            return False
+        if outcome is None:
+            return False
+        log.info("chat model asked again: invoice %s %s (%s)", outcome.invoice_id, outcome.status, outcome.message)
+        return True
+
     def _review_one(self, settings: Settings, store: Any) -> float | None:
         """The AI reviewer reviews the next invoice in line (verifier.py), here in the same thread so the two never
         ask LM Studio at once. The pause before the next round; None when nothing waits for it."""
@@ -856,6 +911,8 @@ class BackgroundReader(threading.Thread):
         outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set,
                            **({"reader": self.mark} if self.slot else {}))  # fmt: skip
         if outcome is None:
+            if self._ask_again(settings, store):  # an arrival's accounts no page read asks again for (B-1765)
+                return 0.0
             pause = self._review_one(settings, store)
             return IDLE_SECONDS if pause is None else pause
         self.last = outcome

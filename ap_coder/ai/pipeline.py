@@ -951,4 +951,6 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "layout": result.capture.layout_source,
             **{k: v for k, v in result.autonomy.items() if v not in ("", None)},
         }
+    if result.chat_deferred:  # asked again where no page read will ask (``Store.take_chat_deferred``, B-1765)
+        meta["chat_deferred"] = True
     return meta

@@ -152,3 +152,30 @@ def test_a_chat_slot_not_free_in_time_is_a_timeout(monkeypatch):
         pass
     assert time.monotonic() - started < 2
     release.set()
+
+
+def test_an_arrival_no_page_read_asks_again_for_is_asked_again(store, monkeypatch, real_fetch):
+    """Text invoices whose arrival's chat call ran out of time: the page reader's pass, the second chance D-168
+    counted on, never comes for a text file (no page to read), nor while the page reader can't read (OvisOCR2 not
+    in LM Studio): their lines stayed for AP for good (B-1765). The background process's page reader asks again for
+    them when it has nothing to read, with no limit, as its pass asks; one a person dealt with meanwhile is left."""
+    from ap_coder.ai import page_worker
+
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    monkeypatch.setenv(pipeline.ARRIVAL_ENV, "1")
+    with FakeModel(hang_rate=1.0) as fake:
+        settings = _settings(fake.base_url)
+        store.queue_imports(_text_invoices(store, 2), source="upload", person=True)
+        results = []
+        Reader(store, settings, "r", on_result=lambda row, result: results.append(result)).read_all()
+        assert [r.chat_deferred for r in results] == [True, True]
+        first, second = sorted(r.invoice_id for r in results)
+        assert MODEL_SUGGESTED not in json.dumps(store.get_invoice(first)["ai_output"])
+        store.park_invoice(second, "Ann", "Waiting on the vendor")
+        fake.set(hang_rate=0.0)  # the model answers again
+        reader = page_worker.BackgroundReader(lambda: settings, lambda: store)
+        assert reader._round(settings, store) == 0.0  # it asked again for the first, nothing else to do
+        assert reader._round(settings, store) == page_worker.IDLE_SECONDS  # (asked once)
+    coded = store.get_invoice(first)
+    assert MODEL_SUGGESTED in json.dumps(coded["ai_output"]) and not coded["meta"]["chat_deferred"]
+    assert store.get_invoice(second)["ai_output"] == next(r.output for r in results if r.invoice_id == second)

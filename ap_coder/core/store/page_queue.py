@@ -126,6 +126,27 @@ class PageQueueMixin:
             )
             return cur.rowcount > 0
 
+    def take_chat_deferred(self, in_line_too: bool = False) -> int | None:
+        """The oldest invoice waiting in the review queue untouched whose arrival put off the chat model's accounts
+        (``meta.chat_deferred``, D-168) and that no page read asks again for: none done nor in line (``in_line_too``:
+        the page reader can't read now, those in line too). Its mark cleared as it is taken: it is asked again once,
+        by one reader (B-1765). None when none waits."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT i.id FROM invoices i WHERE i.status = ? AND i.meta LIKE '%\"chat_deferred\": true%' AND CASE "
+                "WHEN json_valid(i.meta) THEN json_extract(i.meta, '$.chat_deferred') END = 1 AND i.final_output IS "
+                "NULL AND COALESCE(i.reviewer, '') = '' AND COALESCE(i.edits, 'null') IN ('null', '[]', '{}', '') AND "
+                "NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = i.id AND (p.status = 'done' OR (p.status "
+                "IN ('waiting', 'reading') AND NOT ?))) ORDER BY i.id LIMIT 1", (REVIEW, int(in_line_too)),
+            ).fetchone()  # fmt: skip
+            if row is None:
+                return None
+            taken = conn.execute(
+                "UPDATE invoices SET meta = json_set(meta, '$.chat_deferred', json('false')) WHERE id = ? AND "
+                "json_extract(meta, '$.chat_deferred') = 1", (row[0],),
+            ).rowcount  # fmt: skip
+        return int(row[0]) if taken else None
+
     def finish_page_read(
         self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = "",
         *, tries: int | None = None, only_if_reading: bool = False, reader: str | None = None,
