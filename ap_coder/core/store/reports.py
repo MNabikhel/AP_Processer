@@ -1,7 +1,8 @@
 """What the company server's processes share of the big reports and downloads (D-169).
 
 * **An answer worked out once for every process** (``report_answers``): a report's big answer (the duplicate payment
-  audit's pairs, month-end's received purchase orders) kept as JSON with the stamp it was worked out under, the stamp
+  audit's pairs, month-end's received purchase orders, Spend's figures, the recurring vendors, Insights' figures:
+  D-169, D-175) kept as JSON with the stamp it was worked out under, the stamp
   read from the database before the work, as ``summary_memo`` reads its own (D-159): the database's ``summary_id``
   (another after a restore), the summary's generation, the counts of changes the triggers keep, and what the answer is
   for (``asked``). A process that has nothing kept in its memory takes it from here instead of working it out again
@@ -107,8 +108,9 @@ class ReportsMixin:
             if found is None:
                 return False
             kept, _, made = found
-            return kept == seen or (later and _later(kept, seen)) or \
-                bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)  # fmt: skip
+            if kept == seen or (later and _later(kept, seen)):
+                return True
+            return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)
 
         with _KEPT_LOCK:
             hit = _KEPT.get(here)
