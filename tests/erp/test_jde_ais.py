@@ -47,6 +47,41 @@ def test_rows_are_read_page_by_page(ais):
     assert [p["AfterBusinessUnit"] for p in pages] == ["", "CC100", "CC200"] and pages[0]["MaxRows"] == 1
 
 
+@pytest.mark.parametrize("https", [False, True])
+def test_every_page_and_call_goes_on_the_one_connection_kept_open(https):
+    """D-181: each request opened its own connection (TCP and TLS handshakes for each of a night's hundreds of
+    pages). One connection kept open serves them all."""
+    with FakeAis(https=https) as ais:
+        ais.mapping["ais"]["page_size"] = 1
+        with jde_ais.AisClient(ais.settings(), ais.mapping) as c:
+            for _ in range(3):
+                assert len(c.rows("business_units")) == 2
+            c.call("suppliers", {})
+        assert len(ais.calls) == 12 and ais.connections == 1
+
+
+def test_a_connection_ais_closed_meanwhile_is_not_used(ais):
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0  # (as the live check's)
+    c.call("suppliers", {})
+    ais.drop_idle()  # AIS closes a connection left unused for a while
+    assert c.call("suppliers", {})["Suppliers"] and ais.connections == 2
+
+
+def test_a_connection_found_closed_as_it_is_used_is_asked_again_for_a_read_never_for_a_voucher(ais, monkeypatch):
+    monkeypatch.setattr(jde_ais, "_closed_meanwhile", lambda sock: False)  # closed just after it was looked at
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0
+    c.call("suppliers", {})
+    ais.drop_idle()
+    assert c.call("suppliers", {})["Suppliers"]  # a read: asked again at once on a new connection
+    ais.drop_idle()
+    with pytest.raises(jde_ais.AisError) as err:
+        c.call("voucher_create", {"key": "k"}, idempotent=False)
+    assert err.value.sent and err.value.kind == jde_ais.UNREACHABLE  # looked up by its key, never sent blind again
+    assert ais.orchestration_calls("voucher_create") == []
+
+
 def test_an_expired_token_is_asked_again_once(ais):
     c = jde_ais.AisClient(ais.settings())
     c.call("suppliers", {})

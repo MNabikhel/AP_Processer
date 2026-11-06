@@ -1,4 +1,4 @@
-"""Invoices: saving, reading, approving, the ERP's register, the second approval."""
+"""Invoices: saving, reading, approving, the second approval (the ERP's register: register.py)."""
 
 from __future__ import annotations
 
@@ -157,61 +157,6 @@ class InvoicesMixin:
         except ValueError:
             return DEFAULT_TERMS_DAYS
 
-    # --- The ERP's invoice register (invoices entered before or outside AP Coder) ---------------------
-
-    def import_erp_register(
-        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
-    ) -> int:
-        """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored. A bill
-        listed more than once in the file with another date (the same vendor, number and amount: entered twice in the
-        ERP) is one row that counts its ``copies``; rows alike in their date too are one bill (a register listing a
-        bill once per GL line, or JD Edwards pay items), and a register imported again, overlapping the last, does not
-        add to them."""
-        now = _now()
-        keyed = [
-            ((vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2)), r)
-            for r in rows
-            if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
-        ]
-        dates: dict[tuple[str, str, float], set[str]] = {}
-        for key, r in keyed:
-            dates.setdefault(key, set()).add(r.get("invoice_date") or "")
-        copies = {key: len(found - {""}) or 1 for key, found in dates.items()}
-        from ...erp.search import register_keys
-
-        with self._conn() as conn:
-            if replace_all:
-                conn.execute("DELETE FROM erp_invoices")
-            conn.executemany(
-                """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
-                   imported_at, copies, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(vendor_key, number_key, total)
-                   DO UPDATE SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at,
-                   copies = MAX(erp_invoices.copies, excluded.copies)""",
-                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key],
-                  *register_keys(r["vendor_name"], r["invoice_number"])) for key, r in keyed],
-            )  # fmt: skip
-            count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
-            detail: dict[str, Any] = {"rows": len(rows), "total": count}
-            if repeats := sum(1 for n in copies.values() if n > 1):
-                detail["repeated"] = repeats  # bills the file lists more than once
-            self._log(conn, "erp_register_imported", actor=actor, detail=detail)
-        return count
-
-    def erp_register_repeats(self) -> int:
-        """How many bills the ERP register lists more than once (entered twice in the ERP: the duplicate audit)."""
-        with self._conn() as conn:
-            return int(conn.execute("SELECT COUNT(*) FROM erp_invoices WHERE copies > 1").fetchone()[0])
-
-    def erp_register_count(self) -> int:
-        with self._conn() as conn:
-            return int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
-
-    def clear_erp_register(self, actor: str | None = None) -> None:
-        with self._conn() as conn:
-            conn.execute("DELETE FROM erp_invoices")
-            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
-
     def directory_count(self, rows_sql: str, where: str, params: list[Any]) -> int:
         """How many invoices the invoice directory's filters keep (``directory.py`` builds the SQL, with parameters)."""
         with self._conn() as conn:
@@ -227,45 +172,6 @@ class InvoicesMixin:
         with self.session():  # type: ignore[attr-defined]  (one connection for both)
             ids = self.directory_ids(rows_sql, where, params, order, limit, offset)  # type: ignore[attr-defined]
             return self.directory_rows_of(rows_sql, fields, ids)  # type: ignore[attr-defined]
-
-    def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
-        """Every invoice in the imported ERP register; with ``numbers``, those with one of these invoice numbers (as
-        compared: ``norm_invoice_number``), in the same order."""
-        sql = (
-            "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies FROM erp_invoices"
-        )
-        with self._conn() as conn:
-            if numbers is None:
-                return [dict(r) for r in conn.execute(sql)]
-            return fetch_rows(conn, f"{sql} WHERE {_in_list('number_key')} ORDER BY rowid", (json.dumps(numbers),))
-
-    def erp_register_rows(self, where: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
-        """The ERP register's rows ``where`` keeps (the caller's SQL over its columns, with its vendor name and
-        invoice number as the quick search compares them: ``plain_name``, ``raw_number``), in ``erp_register``'s
-        order, read in one go."""
-        with self._conn() as conn:
-            sql = ("SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
-                   f"FROM erp_invoices WHERE {where} ORDER BY rowid")  # fmt: skip
-            return fetch_rows(conn, sql, tuple(params))
-
-    def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
-        """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
-        of the invoice it reverses)."""
-        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
-        if not key or not number:
-            return []
-        with self._conn() as conn:
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT invoice_number, invoice_date, total FROM erp_invoices "
-                    "WHERE vendor_key = ? AND number_key = ?",
-                    (key, number),
-                )
-            ]
-        if grand_total is None:
-            return rows
-        return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
 
     def duplicates_elsewhere(
         self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None,

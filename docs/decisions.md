@@ -2374,6 +2374,88 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `web/templates/settings_reading.html`, `bench/{day,fake_model}.py`, `docs/{REFERENCE,SERVER,HOW_IT_RUNS}.md`;
     `tests/ai/test_failover.py`, `tests/ai/test_page_reader.py`, `tests/web/test_reading_pages.py`,
     `tests/ops/test_service.py`, `tests/bench/test_day.py`)
+- **D-181** · **The JD Edwards sync at the company's size: what changed each night and everything once a week, each
+  page written as it comes in a transaction of its own and resumed where it stopped, JD Edwards' vouchers kept by
+  their key in the register, one connection kept open** (scale goal phase 4, target 4's sync half; B-1850 to B-1856).
+  - **Why:** the digest ([coding_erp.md](archive/scale-2026-11/coding_erp.md) §2b, §5 R7 and R9), checked in the code:
+    every part read whole every night (no ChangedSince sent; the vouchers of 730 days), at most 200 pages a part
+    (100,000 rows: 600,000 vouchers failed every night), nothing kept of where a read stopped, a new TCP and TLS
+    connection for each request, each part written in one transaction after its last page, the PO sync three or four
+    queries a PO, voided vouchers never removed, a renamed supplier's vouchers kept under its old name for good, a
+    split PO line's number cut. Not reproduced: "no index on `vendors.erp_id`, 52 s for 30,000 suppliers": the index
+    has been there since B-1581 (schema 20); 30,000 suppliers took 1.9 s, the write lock 0.44 to 0.53 s at a time.
+  - **What:**
+    - **What changed, each night.** Each part keeps in the sync's state (`parts`) when its last good read began, when
+      it was last read whole, and what it reads (its scope: the company, the PO order type, the vouchers' days). The
+      next asks `ChangedSince` = that day less one (the two servers' clocks, a time zone); the vouchers: what changed
+      in the `voucher_days` window, then every voucher of the last 31 days (`RECENT_DAYS`). A part is read whole once
+      a week (`FULL_DAYS`), the first time, when its scope changes and when asked (`jde sync --full`, Settings' *Read
+      everything again*); the business units always (a short list). The mapping file's GL, PO and voucher reads take
+      `ChangedSince` (the suppliers' had it); an orchestration that ignores it still works, everything every night.
+    - **What only a whole read can say.** A PO no longer listed is closed only after a whole read (a changed one
+      merges its lines by number, the changed lines alone or the whole PO: both work; closed lines, 999, close it). A
+      voucher leaves the register when a complete read of its dates no longer lists it: those of the last 31 days each
+      night, the rest at the week's whole read. Either refused when most or all at once (a wrong answer: a filter, row
+      security), as D-105's mass close, with `--allow-mass-close`. Nothing is removed before a read's last page:
+      marked, not staged and swapped (each voucher read is real and in the register as it comes; a half-read register
+      is never short of one).
+    - **Every page, as it comes.** `AisClient.pages` yields each page with the key to ask the next after; no ceiling
+      (a page ending on the key asked after raises, never a loop); `rows` keeps its `max_pages` for the live check.
+      Each page's rows, where the read is (`jde_ais_sync_progress`: the reads planned, the step, the last key written,
+      the report so far, each read's stamp) and the lease are one transaction; a stopped read goes on after that key
+      (a whole read left is taken whatever is due: it reads the changes too; begun less than 3 days ago). A PO's lines
+      are held to the next page so each PO is written whole. One database connection for a part (closing the last
+      one writes the log into the database: 40 ms a page). One sync at a time (lease `jde_sync`, renewed each page,
+      15 minutes): another is refused at once, nothing saved.
+    - **The register** (`core/store/register.py`, moved out of `invoices.py`, 994 lines): JD Edwards' vouchers by
+      their key (`erp_vouchers`, made at every start, no schema version: an older AP Coder leaves it be) under their
+      bill (`erp_invoices`, what every check reads); a bill's copies are its vouchers' dates across pages, as the
+      file import counts dates; a voucher whose supplier was renamed or gross corrected moves to its new bill, the old
+      going with its last voucher; each bill keeps its supplier's number (`an8`), and `in_erp` finds a bill by the
+      vendor's ERP ID too, so a renamed supplier's vouchers are found before the week's read moves them.
+    - **Suppliers a page at a time:** `import_vendor_master(by_erp_id=True)` takes the vendors already there as
+      earlier rows of the same file: a row goes to the vendor of its name holding its AN8 ("Acme #4002", B-930), and
+      another AN8's row of a vendor's name is merged into it or is the second vendor, as in one file.
+    - **POs:** two queries a page for the POs before and after (`purchase_orders_by_key`), not three or four a PO;
+      R9: a whole LNID as it is (1.000 → 1), a split line's in JDE's own thousandths (1.500 → 1500), so no two lines
+      of a PO share a number and none after it is renumbered (`coding/po.py` matches whole numbers: kept so).
+    - **GL accounts:** an object.subsidiary's description is its first account's in a whole read; in a changes read
+      the changed account's (another business unit's may differ: the week's whole read puts the first back). The
+      account mapping rows are saved with their page; one `settings_changed` logged for the part.
+    - **Events:** one import event a part (`vendors_imported`, `accounts_imported`, `pos_imported`,
+      `erp_register_imported`), as its CSV import logs, not one a page; none on a night that read nothing.
+    - **One connection kept open** (`jde_ais`): a client keeps up to 4 open (one for each thread asking at once:
+      the live check's client is shared), TLS as before; one AIS closed meanwhile is seen before it is used (readable
+      while no answer is awaited); a read that finds it closed as it is sent is asked again once on a new one, a
+      voucher's never (it is "unknown", looked up by its key, as before); after a timeout or any failure the
+      connection is closed. One signed-in client per worker for the live check (B-1603), one per sync.
+  - **Measured** on the stand-in (`tests/erp/test_jde_sync_volume.py`, 4 cores shared with three other agents; the
+    wait is a tiny write's from another connection every 20 ms, for the lock alone):
+
+    | | took | longest wait for the write lock | read |
+    |---|---:|---:|---|
+    | first sync: 30,000 suppliers, 600,000 vouchers (1,260 pages) | 48.7 s | 0.11 s | everything |
+    | next night: 50 suppliers changed, 1,000 vouchers new, 50 voided | 5.2 s | 0.04 s | 50 + 28,568 vouchers |
+    | the week's whole read, AIS down at the vouchers' page 600 | 26.9 s | 0.05 s | 600 pages |
+    | the next sync, going on from there | 24.7 s | 0.05 s | 602 pages (the 20 older removed) |
+
+    The next night read 50 suppliers and 28,568 vouchers (the 1,000 new and the last 31 days'), and removed the 30
+    voided this month; the 20 older went at the whole read. The register equalled the stand-in's after each.
+    Before: 600,000 vouchers failed at page 200 every night. 30,000 suppliers: 1.9 s, a write held 0.44 to 0.53 s;
+    now 2.4 s, 0.04 s. 30,000 open PO lines (10,000 POs): 22.3 s the first sync, 37.6 s the next; now 1.2 s, 1.5 s.
+  - **To confirm with the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 21 and 22): the update dates `ChangedSince`
+    covers on each read (a supplier's bank account, a receipt, a voucher paid or voided), the PO read listing the
+    lines closed since, each read's order by its key kept stable, and AIS (and a load balancer) keeping a connection
+    open. Left: a voucher entered with an invoice date older than the window is never read (as before); the
+    vendor's key is its name, so a renamed supplier is a second vendor in AP Coder (as before: only its register is
+    found by number); a bill a file import put in the register, or a sync before this version (no voucher key kept
+    for it), is never removed by the sync unless JDE lists it again: to start clean, clear the register (Exports)
+    and *Read everything again*.
+  - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
+    purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
+    `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,
+    `tests/erp/test_jde_sync_volume.py`, `tests/erp/test_jde_ais.py`, `tests/erp/test_jde_sync{,_safety}.py`,
+    `tests/erp/test_jde_api_web.py`, `tests/core/test_store_perf.py`)
 - **D-182** · **Posting through the JD Edwards API at 500 vouchers: each voucher its own outcome and the run goes on
   past a late answer; a lost answer sent again only once JD Edwards could have finished it; holds and the open period
   read just before each voucher; Z-table keys unique per data folder and after a restore; accruals follow the postings**

@@ -1,0 +1,242 @@
+"""The JD Edwards sync at a company's size (ap_coder/erp/jde_sync.py, D-181) against the stand-in AIS server: every
+page read however many, only what changed the next night, a sync interrupted going on where it stopped, a page a
+transaction, the POs read in a few queries with JDE's line numbers, voided vouchers out of the register, and the
+register found by the supplier's number."""
+
+from __future__ import annotations
+
+import datetime as dt
+import sqlite3
+
+import pytest
+
+from ap_coder.coding.vendors import vendor_findings
+from ap_coder.core import store as store_mod
+from ap_coder.core.store import Store
+from ap_coder.erp import jde_ais, jde_sync
+from tests.erp.test_jde_sync import _coding, connect, quick  # noqa: F401  (the fixture that pauses nothing)
+from tests.fake_ais import FakeAis
+
+TODAY = dt.date.today()
+LONG_AGO = "2020-01-01"  # what a row's ``_changed`` says when it has not changed since the first sync
+
+
+@pytest.fixture
+def ais():
+    with FakeAis() as fake:
+        yield fake
+
+
+@pytest.fixture
+def store(tmp_path):
+    return Store(tmp_path / "ap_coder.db")
+
+
+def _day(days_ago: int) -> str:
+    return (TODAY - dt.timedelta(days=days_ago)).isoformat()
+
+
+def _vouchers(ais, count: int, days_ago: int = 3, start: int = 0, **values) -> list[dict]:
+    base = ais.data["vouchers"][0]
+    made = [{**base, "key": f"00001-PV-{start + i:06d}-001", "document": str(500000 + start + i),
+             "invoice_number": f"B-{start + i}", "invoice_date": _day(days_ago), "gross": 50.0 + i, **values}
+            for i in range(count)]  # fmt: skip
+    ais.data["vouchers"] += made
+    return made
+
+
+def _numbers(store) -> set[str]:
+    return {r["invoice_number"] for r in store.erp_register()}
+
+
+def test_more_than_two_hundred_pages_of_vouchers_are_all_read(store, ais):
+    """B-1850: the sync read at most 200 pages of a part (100,000 rows at 500 a page) and then failed it: at 25,000
+    invoices a month, 730 days of vouchers are about 600,000, so the voucher sync failed every night and the
+    register the duplicate checks fall back on went stale (as would a chart of more than 100,000 accounts)."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 1
+    _vouchers(ais, 205)
+    report = jde_sync.sync(store, parts=("vouchers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
+    assert report["ok"], report["errors"]
+    assert len(_numbers(store)) == 206 and report["parts"]["vouchers"]["read"] == 206
+
+
+def test_the_next_night_reads_only_what_changed(store, ais, monkeypatch):
+    """B-1851: every part was read whole every night (no ChangedSince sent, though the suppliers' orchestration takes
+    it; the vouchers of the last 730 days), so the nightly sync grew with JDE, not with what changed in a day. The
+    next night asks for what changed since the last good read began (from a day before), and the vouchers of the
+    last weeks whole; a week on, everything again."""
+    for part in ("suppliers", "gl_accounts", "purchase_orders", "vouchers"):
+        for row in ais.data[part]:
+            row["_changed"] = LONG_AGO
+    _vouchers(ais, 3, days_ago=200, _changed=LONG_AGO)
+    connect(store, ais)
+    first = jde_sync.sync(store)
+    assert first["ok"] and first["parts"]["suppliers"]["read"] == 2
+    ais.data["suppliers"][1].update(hold_code="", _changed=_day(0))  # released in JDE today
+    _vouchers(ais, 1, days_ago=300, start=100, _changed=_day(0))  # an old bill entered today
+    asked = len(ais.calls)
+    report = jde_sync.sync(store)
+    assert report["ok"], report["errors"]
+    since = (TODAY - dt.timedelta(days=1)).isoformat()
+    calls = {path.rsplit("/", 1)[-1]: inputs for path, inputs in ais.calls[asked:] if "/orchestrator/" in path}
+    for name in ("APC_Suppliers_Read", "APC_Accounts_Read", "APC_OpenPOs_Read"):
+        assert calls[name]["ChangedSince"] == since, name
+    parts = report["parts"]
+    assert parts["suppliers"]["read"] == 1 and parts["suppliers"]["changed"] == ["Northern Courier Inc. (hold)"]
+    assert parts["gl_accounts"]["read"] == 0 and parts["purchase_orders"]["read"] == 0
+    asked_vouchers = [i for p, i in ais.calls[asked:] if p.endswith("/APC_Vouchers_Read")]
+    # what changed in the window, then every voucher of the last weeks
+    assert [(i["ChangedSince"], i["FromInvoiceDate"]) for i in asked_vouchers] == [
+        (since, _day(730)), ("", _day(jde_sync.RECENT_DAYS))]  # fmt: skip
+    assert parts["vouchers"]["read"] == 1 and "B-100" in _numbers(store)
+    assert store.get_vendor("northern courier")["erp_hold"] == ""
+    lines = jde_sync.report_lines(report)
+    assert lines[0].startswith(f"Suppliers (what changed since {since}): 0 added, 1 changed"), lines
+    later = dt.datetime.now() + dt.timedelta(days=jde_sync.FULL_DAYS)
+    monkeypatch.setattr(jde_sync, "_now", lambda: later)
+    assert jde_sync.sync(store)["parts"]["suppliers"]["read"] == 2  # a week on: everything again
+
+
+def test_an_interrupted_sync_goes_on_from_the_last_page_written(store, ais):
+    """B-1852: a sync that stopped (JDE down at page 150, the computer restarted) kept nothing of where it was: the
+    next one read every page from the first again, and one that never got through never finished. Each page is
+    written with where the read is; the next sync goes on after the last row written."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    made = _vouchers(ais, 9)
+    ais.script("vouchers", None, None, 503, 503, 503)  # the third page: AIS down, retried, given up
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    report = jde_sync.sync(store, parts=("vouchers",), client=client)
+    assert set(report["errors"]) == {"vouchers"} and len(_numbers(store)) == 4
+    asked = len(ais.orchestration_calls("vouchers"))
+    report = jde_sync.sync(store, parts=("vouchers",), client=client)
+    assert report["ok"] and report["parts"]["vouchers"]["resumed"]
+    assert ais.orchestration_calls("vouchers")[asked]["AfterKey"] == made[3]["key"]  # after the fourth voucher
+    assert _numbers(store) == {"INV-7001", *(v["invoice_number"] for v in made)}
+    assert store.get_json(jde_sync.PROGRESS_KEY, {}) == {}  # nothing left to go on with
+
+
+def test_each_page_is_written_in_a_transaction_of_its_own(store, ais):
+    """B-1853: each part was written in one transaction once every page had been read (30,000 suppliers: half a
+    second of the write lock here, much more on a busy server; 600,000 vouchers: seconds), holding up every approval
+    meanwhile. Each page is written and committed as it comes: another connection sees it before the next is asked."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    base = ais.data["suppliers"][0]
+    ais.data["suppliers"] = [{**base, "an8": str(5000 + i), "name": f"Supplier {i} Ltd.", "tax_id": ""}
+                             for i in range(6)]  # fmt: skip
+    seen = []
+
+    def look() -> None:
+        with sqlite3.connect(store.path) as conn:
+            seen.append(conn.execute("SELECT COUNT(*) FROM vendors WHERE in_master = 1").fetchone()[0])
+
+    ais.script("suppliers", None, look, look)
+    jde_sync.sync(store, parts=("suppliers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
+    assert seen == [2, 4] and len(store.master_vendors()) == 6
+
+
+def test_the_po_sync_reads_the_pos_a_page_at_a_time_with_jdes_line_numbers(store, ais, monkeypatch):
+    """B-1854: the PO sync read each PO's lines before and after its import and every synced open PO again: three or
+    four queries a PO (40,000 POs, 160,000 queries a night). And a split line's number (JDE's 1.500) was cut to 1:
+    taken as a second line 1, it and every line after it were numbered one more than in JDE (R9)."""
+    connect(store, ais)
+    base = ais.data["purchase_orders"][0]
+    ais.data["purchase_orders"] = [{**base, "key": f"{6000 + n}-OP-00001-{line}", "order_number": str(6000 + n),
+                                    "line_number": line} for n in range(40) for line in ("1.000", "2.000")]  # fmt: skip
+    ais.data["purchase_orders"].append({**base, "key": "6000-OP-00001-1.5", "order_number": "6000",
+                                        "line_number": "1.500", "description": "Split"})  # fmt: skip
+    seen: list[str] = []
+    real = sqlite3.connect
+
+    def tracing(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(seen.append)
+        return conn
+
+    monkeypatch.setattr(store_mod.sqlite3, "connect", tracing)
+    report = jde_sync.sync(store, parts=("purchase_orders",))
+    monkeypatch.undo()
+    assert report["ok"] and len(report["parts"]["purchase_orders"]["added"]) == 40
+    reads = [s for s in seen if s.lstrip().startswith("SELECT") and ("purchase_orders" in s or "po_lines" in s)]
+    assert len(reads) < 12, len(reads)
+    assert [li["line_number"] for li in store.purchase_order("6000")["lines"]] == [1, 2, 1500]
+    assert [li["line_number"] for li in store.purchase_order("6001")["lines"]] == [1, 2]
+
+
+def test_a_po_whose_changed_line_alone_comes_back_keeps_its_other_lines(store, ais):
+    """What changed of a PO (one line received) is merged into its lines, whether JDE answers that line alone or the
+    whole PO; a PO is closed by its lines at 999, or by a whole read no longer listing it."""
+    for row in ais.data["purchase_orders"]:
+        row["_changed"] = LONG_AGO
+    connect(store, ais)
+    jde_sync.sync(store, parts=("purchase_orders",))
+    ais.data["purchase_orders"][1].update(received=2, _changed=_day(0))  # the toner received today, line 2 alone
+    part = jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]
+    lines = store.purchase_order("4512")["lines"]
+    assert part["read"] == 1 and part["changed"] == ["4512"]
+    assert [(li["line_number"], li["received_quantity"]) for li in lines] == [(1, 10), (2, 2)]
+    ais.data["purchase_orders"][1].update(next_status="999", _changed=_day(0))  # line 2 closed: the PO still open
+    jde_sync.sync(store, parts=("purchase_orders",))
+    assert store.purchase_order("4512")["status"] == "open"
+
+
+def test_a_voucher_voided_in_jde_leaves_the_register(store, ais):
+    """B-1855: the vouchers were only ever added to the register: one voided in JDE stayed for good, so the bill
+    entered again (or AP Coder's own invoice of it) was flagged DUPLICATE_IN_ERP against a voucher JDE no longer has
+    (R7). Each night a voucher of the last weeks no longer listed leaves; an older one at the week's whole read; most
+    or all at once is refused, as a wrong answer."""
+    connect(store, ais)
+    recent, old = _vouchers(ais, 4), _vouchers(ais, 3, days_ago=90, start=10)
+    jde_sync.sync(store)
+    assert {"B-0", "B-10"} <= _numbers(store)
+    ais.data["vouchers"].remove(recent[0])  # voided in JDE
+    ais.data["vouchers"].remove(old[0])
+    report = jde_sync.sync(store)
+    assert report["parts"]["vouchers"]["removed"] == 1 and "B-0" not in _numbers(store) and "B-10" in _numbers(store)
+    assert store.in_erp("Acme Office Supplies Ltd.", "B-0", 50.0) == []
+    assert any("1 no longer in JD Edwards" in line for line in jde_sync.report_lines(report))
+    jde_sync.sync(store, full=True)  # the week's whole read
+    assert _numbers(store) == {"INV-7001", "B-1", "B-2", "B-3", "B-11", "B-12"}
+    ais.data["vouchers"] = []  # a wrong answer (a filter, row security): nothing removed
+    part = jde_sync.sync(store, full=True)["parts"]["vouchers"]
+    assert "would remove 6 of the 6" in part["refused_remove"] and len(_numbers(store)) == 6
+
+
+def test_a_bill_entered_twice_in_jde_counts_both_whatever_page_each_is_on(store, ais):
+    """The register's copies of a bill (the duplicate audit's "entered twice in the ERP") are its vouchers' dates,
+    across pages; one of them voided, the bill counts one."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    twice = _vouchers(ais, 1, invoice_number="TWICE", gross=75.0)
+    _vouchers(ais, 4, start=1)
+    _vouchers(ais, 1, start=9, days_ago=5, invoice_number="TWICE", gross=75.0)
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    jde_sync.sync(store, parts=("vouchers",), client=client)
+    assert store.erp_register_repeats() == 1
+    ais.data["vouchers"].remove(twice[0])
+    jde_sync.sync(store, parts=("vouchers",), client=client, full=True)
+    assert store.erp_register_repeats() == 0 and "TWICE" in _numbers(store)
+
+
+def test_a_supplier_renamed_in_jde_has_its_vouchers_once_found_by_its_number(store, ais):
+    """B-1856: the register is keyed by the vendor's name and was only ever added to: a supplier renamed in JDE (the
+    same AN8) had its vouchers in it twice for good, under the old name, which no invoice of it bears any more, and
+    the new (R7). Each voucher is kept by its key and moves to the new name when it is read again (the week's whole
+    read); meanwhile it is found by the supplier's number."""
+    for part in ("suppliers", "vouchers"):
+        for row in ais.data[part]:
+            row["_changed"] = LONG_AGO
+    connect(store, ais)
+    jde_sync.sync(store)
+    renamed = "Acme Business Supplies Inc."
+    ais.data["suppliers"][0].update(name=renamed, _changed=_day(0))
+    ais.data["vouchers"][0]["supplier_name"] = renamed  # (JDE's name of it now; the voucher itself unchanged)
+    jde_sync.sync(store)
+    assert len(store.erp_register()) == 1 and store.in_erp(renamed, "INV-7001", 113.0)
+    credit = _coding(vendor_name=renamed, invoice_number="CR-1", grand_total=-20.0, subtotal=-17.7, tax_total=-2.3,
+                     original_invoice_number="INV-7001")  # fmt: skip
+    assert "CREDIT_NOTE_ORIGINAL_UNKNOWN" not in [c for _, c, _ in vendor_findings(credit, store)]
+    jde_sync.sync(store, full=True)
+    assert [r["vendor_name"] for r in store.erp_register()] == [renamed]

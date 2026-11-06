@@ -104,12 +104,12 @@ def test_an_answer_that_would_close_every_open_po_is_refused(store, ais):
     connect(store, ais)
     _synced_pos(store, ais, 4)
     ais.data["purchase_orders"] = []  # a wrong filter, a lost page...
-    report = jde_sync.sync(store, parts=("purchase_orders",))
+    report = jde_sync.sync(store, parts=("purchase_orders",), full=True)
     part = report["parts"]["purchase_orders"]
     assert part["closed"] == [] and "4 of the 4" in part["refused_close"]
     assert all(store.purchase_order(str(5000 + n))["status"] == "open" for n in range(4))
     assert any("--allow-mass-close" in line for line in jde_sync.report_lines(report))
-    report = jde_sync.sync(store, parts=("purchase_orders",), allow_mass_close=True)  # the next sync still knows them
+    report = jde_sync.sync(store, parts=("purchase_orders",), allow_mass_close=True, full=True)  # still known
     assert len(report["parts"]["purchase_orders"]["closed"]) == 4
 
 
@@ -117,11 +117,11 @@ def test_more_than_half_closed_at_once_is_refused_a_few_are_not(store, ais):
     connect(store, ais)
     _synced_pos(store, ais, 4)
     ais.data["purchase_orders"] = ais.data["purchase_orders"][:1]  # 3 of 4 gone
-    part = jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]
+    part = jde_sync.sync(store, parts=("purchase_orders",), full=True)["parts"]["purchase_orders"]
     assert part["closed"] == [] and part["refused_close"]
     _synced_pos(store, ais, 4)
     ais.data["purchase_orders"] = ais.data["purchase_orders"][:2]  # 2 of 4: half, closed
-    part = jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]
+    part = jde_sync.sync(store, parts=("purchase_orders",), full=True)["parts"]["purchase_orders"]
     assert sorted(part["closed"]) == ["5002", "5003"] and not part["refused_close"]
 
 

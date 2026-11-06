@@ -449,7 +449,10 @@ inputs and outputs are in `ap_coder/erp/jde_orchestrations.json`.
 
 * **Step 1 (read)**: suppliers, GL accounts, business units, open POs and the AP ledger's vouchers come from JDE
   every night while AP Coder runs, or with *Sync now* (or `python -m ap_coder jde sync`), through the same imports
-  as the CSV files; the report says what was added and changed. While an invoice is reviewed, JDE is asked whether
+  as the CSV files; the report says what was added and changed. Each night reads what changed since the last sync
+  (and every voucher of the last 31 days); once a week, or with *Read everything again* (`jde sync --full`),
+  everything, which alone shows what JDE closed, deleted or voided (D-181). Every page is written as it comes, so a
+  sync that stopped goes on from there, and nobody approving waits on it. While an invoice is reviewed, JDE is asked whether
   it is already a voucher (*Already in the ERP*, with its voucher number and whether it is paid); JDE down, the
   check uses the last sync's vouchers and says so (*JD Edwards not asked*). A supplier's bank account in JDE (its
   last four digits) is compared with the one printed on the invoice (*Not the bank account JD Edwards pays*).

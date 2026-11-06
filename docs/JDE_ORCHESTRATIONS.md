@@ -24,7 +24,7 @@ Lines marked **CONFIRM** are what the JDE team must check for their tools releas
 | AIS address | `https://<server>:<port>` saved in Settings → JD Edwards E1 → API connection | the AIS Server's HTTPS address and port |
 | Version check | `GET /jderest/v2/defaultconfig` (its `aisVersion`; not required) | that it answers |
 | Sign in | `POST /jderest/v2/tokenrequest` with `{"username", "password", "environment", "role", "deviceName"}`; the token is read from `userInfo.token` | the v2 path on your release |
-| Each call | `POST /jderest/v3/orchestrator/<name>`, header `jde-AIS-Auth: <token>` and `jde-AIS-Auth-Device` | v3 orchestrator path |
+| Each call | `POST /jderest/v3/orchestrator/<name>`, header `jde-AIS-Auth: <token>` and `jde-AIS-Auth-Device`, on one connection kept open (HTTP/1.1 keep-alive; a new one when AIS has closed it) | v3 orchestrator path; that AIS (and a load balancer before it) keeps a connection open between calls |
 | Basic authentication (option) | `Authorization: Basic …` on each call, with `jde-AIS-Auth-Environment`, `-Role` and `-Device` | that your AIS allows Basic on v3 |
 | Expired token | HTTP **444** (AIS's invalid-token status): AP Coder signs in again once | the status your AIS answers |
 | Sign out | `POST /jderest/v2/tokenrequest/logout` with `{"token"}` | |
@@ -66,14 +66,23 @@ Nothing else: no table updates outside the Z-tables or the voucher application, 
 ## The read orchestrations (step 1)
 
 All five page the same way: AP Coder sends `MaxRows` and the key of the last row it has (`After…`, blank for the first
-page) and asks again while a page comes back full. Rows come back sorted by that key. They are read every night (and
-on *Sync now*); the vouchers are also read one supplier at a time while an invoice is reviewed.
+page) and asks again while a page comes back full, however many pages there are. Rows come back sorted by that key,
+always in the same order: AP Coder writes each page as it comes, and a sync that stopped (AIS down at page 300, the
+computer restarted) goes on the next time after the last row it wrote. The vouchers are also read one supplier at a
+time while an invoice is reviewed.
+
+**What changed, each night** (D-181): AP Coder sends `ChangedSince`, a date (`date_format`) a day before its last
+good read of that part began, and expects the rows added or changed on or after it (the update dates below). Once a
+week, the first time, and when AP asks (*Read everything again*, `jde sync --full`), it sends `ChangedSince` blank and
+reads everything: only that read tells it what JDE no longer has (a PO no longer open is closed, a voucher no longer
+listed leaves the register). An orchestration that ignores `ChangedSince` still works: everything every night, as
+before, only slower. The business units are read whole each time (a short list).
 
 ### APC_Suppliers_Read: suppliers (F0101 / F0401)
 
 | Input | Meaning |
 | --- | --- |
-| `ChangedSince` | blank: every supplier (AP Coder sends blank today) |
+| `ChangedSince` | a date: the suppliers whose rows were added or changed on or after it (F0101.ABUPMJ, F0401.A6UPMJ, F0030.AYUPMJ, F0116.ALUPMJ; CONFIRM); blank: every supplier |
 | `AfterAddressNumber`, `MaxRows` | paging |
 
 Output `Suppliers`, one row per supplier (search type V, or the types your company uses for suppliers):
@@ -94,7 +103,8 @@ Output `Suppliers`, one row per supplier (search type V, or the types your compa
 
 ### APC_Accounts_Read: GL accounts (F0901)
 
-Inputs `Company` (blank: all), `AfterAccountId`, `MaxRows`. Output `Accounts`: `AccountId` (GMAID), `BusinessUnit`
+Inputs `Company` (blank: all), `ChangedSince` (a date: the accounts added or changed on or after it, GMUPMJ; blank:
+every account), `AfterAccountId`, `MaxRows`. Output `Accounts`: `AccountId` (GMAID), `BusinessUnit`
 (GMMCU), `ObjectAccount` (GMOBJ), `Subsidiary` (GMSUB), `Description` (GMDL01), `PostingEdit` (GMPEC),
 `LevelOfDetail` (GMLDA). AP Coder's GL code is the object, or `object.subsidiary`; an account with a subsidiary is
 added to Settings → JD Edwards E1's account mapping so the voucher sends it as that object and subsidiary. Only
@@ -109,7 +119,9 @@ cost centers (the voucher's BU with Settings' "BU = the line's cost center").
 
 ### APC_OpenPOs_Read: open POs and what was received (F4311 / F43121)
 
-Inputs `OrderType` (OP by default; Settings), `AfterKey`, `MaxRows`. Output `Lines`, one row per open PO line:
+Inputs `OrderType` (OP by default; Settings), `ChangedSince` (a date: the lines added or changed on or after it,
+PDUPMJ, or with a receipt then, F43121.PRUPMJ, **closed ones too** (`NextStatus` 999), so AP Coder closes a PO JDE
+closed; blank: every open line), `AfterKey`, `MaxRows`. Output `Lines`, one row per open PO line:
 
 | Output | JDE |
 | --- | --- |
@@ -122,17 +134,25 @@ Inputs `OrderType` (OP by default; Settings), `AfterKey`, `MaxRows`. Output `Lin
 | `ObjectAccount`, `Subsidiary`, `BusinessUnit` | from PDANI |
 | `NextStatus` | PDNXTR (999: closed) |
 
-A PO AP Coder had from JDE that is no longer in the answer is closed in AP Coder. AP Coder knows a PO by its number
-alone (PDDOCO): CONFIRM that the order numbers of the types read do not overlap.
+With `ChangedSince` AP Coder merges the lines it is given into the PO's lines (each replaces the line of its
+number): the changed lines alone, or every line of a PO with a change, both work. A PO AP Coder had from JDE that is
+no longer in a whole answer (`ChangedSince` blank) is closed in AP Coder; most or all of them at once is refused as a
+wrong answer. A split line (1.500) is kept as JDE's thousandths (1500), so no line is renumbered. AP Coder knows a PO
+by its number alone (PDDOCO): CONFIRM that the order numbers of the types read do not overlap.
 
 ### APC_Vouchers_Read: the AP ledger (F0411)
 
-Inputs `SupplierNumber` and / or `InvoiceNumber` (either may be blank), `FromInvoiceDate` (the nightly read: the last
-730 days, Settings), `AfterKey`, `MaxRows`. Output `Vouchers`, one row per voucher (pay item 001, or the pay items
+Inputs `SupplierNumber` and / or `InvoiceNumber` (either may be blank), `FromInvoiceDate` (the window: the last 730
+days, Settings), `ChangedSince` (a date: the vouchers entered or changed on or after it, RPUPMJ; blank: every voucher
+from `FromInvoiceDate`), `AfterKey`, `MaxRows`. Output `Vouchers`, one row per voucher (pay item 001, or the pay items
 added up): `Key` (KCO-DCT-DOC-SFX), `DocumentNumber` (RPDOC), `DocumentType` (RPDCT), `DocumentCompany` (RPKCO),
 `SupplierNumber` (RPAN8), `SupplierName`, `InvoiceNumber` (RPVINV), `InvoiceDate` (RPDIVJ), `GrossAmount` (RPAG),
 `OpenAmount` (RPAAP), `PayStatus` (RPPST: P paid, A approved, H held), `BatchNumber` (RPICU). Voided vouchers are left
-out. While an invoice is reviewed AP Coder asks with the supplier's number and the same `FromInvoiceDate`, page after
+out. Each night AP Coder reads what changed in the window, then every voucher of the last 31 days (`ChangedSince`
+blank, `FromInvoiceDate` 31 days back): a voucher of those days it had that is no longer listed (voided this month)
+leaves its register; an older one, at the week's whole read of the window. Most or all of the vouchers of a read's
+days gone at once is refused as a wrong answer (a filter, row security). The `Key` is the voucher's for good: AP Coder
+keeps each voucher by it. While an invoice is reviewed AP Coder asks with the supplier's number and the same `FromInvoiceDate`, page after
 page (`AfterKey`), and compares invoice numbers itself (it ignores dashes, spaces and leading zeros), so the
 orchestration need not match numbers loosely. A supplier with more than 40 pages of vouchers even then is asked by its
 number and the `InvoiceNumber` as printed, which the orchestration matches exactly; a supplier with no AN8 by that
@@ -266,8 +286,9 @@ built once the JDE team confirms the names, the size of a call and the wait.
 ## Testing it
 
 AP Coder's tests run every orchestration against a stand-in AIS server (`tests/fake_ais.py`): the token flow and its
-expiry, a wrong password, no permission, an orchestration not built, timeouts, AIS busy, JDE's error shape, paging and
-the voucher with its key. For the first real trial: Settings → JD Edwards E1 → API connection, on a test environment
+expiry, a wrong password, no permission, an orchestration not built, timeouts, AIS busy, JDE's error shape, paging,
+`ChangedSince`, the connection kept open and the voucher with its key; and the sync at the company's size, 30,000
+suppliers and 600,000 vouchers (`python -m tests.erp.test_jde_sync_volume`). For the first real trial: Settings → JD Edwards E1 → API connection, on a test environment
 (e.g. JPY920 / JDV920), **Test connection**, step 1's **Sync now**, then a dry run of one batch; step 2 on only once the
 dry runs agree with what AP expects.
 
@@ -304,3 +325,9 @@ dry runs agree with what AP expects.
     takes, how long it may run.
 20. Whether AP Coder may learn that a JDE batch it made is still pending (F0011 ICIST, or F0411 RPPOST in
     `APC_Vouchers_Read`): until then month end counts a voucher in a pending batch as in the ERP.
+21. `ChangedSince` on the four reads (D-181): which update dates each covers (a supplier's bank account or address
+    changed, a PO line received, a voucher paid or voided), that it is inclusive and in `date_format`, and that the
+    PO read with it lists the lines closed since (999); and that each read keeps its rows in the same order by its
+    key (a stopped sync goes on after the last key it wrote).
+22. That the AIS Server and any load balancer before it keep a connection open between calls (HTTP keep-alive), and
+    for how long unused; AP Coder opens a new one when it finds the old one closed.

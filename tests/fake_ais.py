@@ -16,9 +16,16 @@ answers as AIS does, as far as AP Coder uses it:
 * ``script(name, *steps)``: what the next calls of an orchestration (or "token") do instead: an HTTP status, "slow"
   (answer after ``slow_seconds``, longer than the client waits), "slow-after" (do the work, then answer late: the
   request reached JDE), "late-made" (JDE still making it after the client gave up: the work done after
-  ``slow_seconds``), "drop" (close the connection without an answer), ("refuse", code, text) (JDE's error shape).
+  ``slow_seconds``), "drop" (close the connection without an answer), ("refuse", code, text) (JDE's error shape), or a
+  function (called as the request arrives, then answered as usual: a look at the database between two pages).
 * ``plan(key, inputs)``: the step of a call nothing is scripted for (None: as usual), e.g. every tenth voucher late;
   ``latency``: seconds each voucher call takes before it is answered (R04110ZA's run).
+* HTTP/1.1, a connection kept open between requests as AIS does (``connections`` counts those opened); ``stop`` closes
+  them, as a server going down does.
+* The reads filter as the orchestrations do: the vouchers by ``FromInvoiceDate`` (a voucher with no date always), and
+  every read by ``ChangedSince``: a row with a ``_changed`` date (never sent) is listed when it is that day or later,
+  a row without one always (as an orchestration that does not filter by it would).
+* ``Generated`` rows: a volume of them (600,000 vouchers) made from their position as they are asked, not held.
 
 Every request is recorded in ``calls`` ((path, the orchestration's inputs or {}), the password never kept).
 """
@@ -26,12 +33,14 @@ Every request is recorded in ``calls`` ((path, the orchestration's inputs or {})
 from __future__ import annotations
 
 import base64
+import bisect
 import json
 import secrets
+import socket
 import ssl
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -208,6 +217,41 @@ def sample_data() -> dict[str, list[dict[str, Any]]]:
 
 KEYS = {"suppliers": "an8", "gl_accounts": "account_id", "business_units": "business_unit",
         "purchase_orders": "key", "vouchers": "key"}  # fmt: skip
+SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its length is the same)
+
+
+class Generated:
+    """Rows made from their position as they are asked, in the order of their key: ``make(i)`` the row at position
+    ``i`` (its key growing with ``i``), ``key(i)`` its key alone. ``gone``: positions deleted (voided in JDE);
+    ``changed``: rows changed at a position (``change``), or added after the last (``add``), with their ``_changed``
+    date."""
+
+    def __init__(self, count: int, make: Callable[[int], dict[str, Any]], key: Callable[[int], str]) -> None:
+        self.count, self.make, self.key = count, make, key
+        self.gone: set[int] = set()
+        self.changed: dict[int, dict[str, Any]] = {}
+
+    def __len__(self) -> int:
+        return self.count - len(self.gone)
+
+    def row(self, i: int) -> dict[str, Any]:
+        return self.changed.get(i) or self.make(i)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return (self.row(i) for i in range(self.count) if i not in self.gone)
+
+    def change(self, i: int, day: str, **values: Any) -> dict[str, Any]:
+        self.changed[i] = {**self.row(i), **values, "_changed": day}
+        return self.changed[i]
+
+    def add(self, day: str, **values: Any) -> dict[str, Any]:
+        self.count += 1
+        return self.change(self.count - 1, day, **values)
+
+    def after(self, after: str) -> Iterator[dict[str, Any]]:
+        """The rows whose key is past ``after``, in order."""
+        start = bisect.bisect_right(range(self.count), after, key=self.key) if after else 0
+        return (self.row(i) for i in range(start, self.count) if i not in self.gone)
 
 
 class FakeAis:
@@ -229,6 +273,9 @@ class FakeAis:
         self.lock = threading.Lock()
         self.server: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
+        self.connections = 0  # connections opened to it (the client keeps one open, D-181)
+        self.open: set[socket.socket] = set()
+        self.ordered: dict[str, tuple[tuple[int, int], list[dict[str, Any]], list[str]]] = {}  # big lists, sorted
 
     # -- running
     def __enter__(self) -> FakeAis:
@@ -242,6 +289,23 @@ class FakeAis:
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # a connection kept open between requests, as AIS does
+            disable_nagle_algorithm = True  # an answer's headers and body sent at once, not 40 ms apart
+
+            def setup(self) -> None:
+                super().setup()
+                with fake.lock:
+                    fake.connections += 1
+                    fake.open.add(self.connection)
+
+            def finish(self) -> None:
+                with fake.lock:
+                    fake.open.discard(self.connection)
+                try:
+                    super().finish()
+                except OSError:  # the client went away first
+                    pass
+
             def log_message(self, *args: Any) -> None:
                 pass
 
@@ -267,14 +331,26 @@ class FakeAis:
         return f"{'https' if self.https else 'http'}://127.0.0.1:{self.server.server_address[1]}"
 
     def stop(self) -> None:
+        """Down: no new connection, and the ones kept open closed (as a server going down closes them)."""
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()
             self.server = None
+        self.drop_idle()
 
     def script(self, name: str, *steps: Any) -> None:
         """What the next calls of the orchestration ``name`` (its key, e.g. "voucher_create", or "token") do."""
         self.scripts.setdefault(name, []).extend(steps)
+
+    def drop_idle(self) -> None:
+        """Close the connections kept open, as AIS does with one unused for a while (the server goes on)."""
+        with self.lock:
+            kept, self.open = list(self.open), set()
+        for sock in kept:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def expire_tokens(self) -> None:
         with self.lock:
@@ -371,6 +447,9 @@ class FakeAis:
         return self._play(h, self._step(key))
 
     def _play(self, h: BaseHTTPRequestHandler, step: Any) -> bool:
+        if callable(step):
+            step()
+            return False
         if step is None or step in ("slow-after", "late-made"):
             return False
         if isinstance(step, tuple) and step[0] == "refuse":
@@ -406,21 +485,49 @@ class FakeAis:
         names = self.mapping["orchestrations"][key].get("inputs") or {}
         return {ours: body.get(theirs) for ours, theirs in names.items()}
 
+    def _after(self, key: str, after: str) -> Iterable[dict[str, Any]]:
+        """The rows of a read past the key ``after``, in the order of their key."""
+        data = self.data[key]
+        if isinstance(data, Generated):
+            return data.after(after)
+        field = KEYS[key]
+        stamp = (id(data), len(data))
+        with self.lock:
+            kept = self.ordered.get(key)
+        if kept is None or kept[0] != stamp or len(data) <= SORTED_KEPT:
+            rows = sorted(data, key=lambda r: str(r[field]))
+            kept = (stamp, rows, [str(r[field]) for r in rows])
+            if len(data) > SORTED_KEPT:
+                with self.lock:
+                    self.ordered[key] = kept
+        _, rows, keys = kept
+        return rows[bisect.bisect_right(keys, after) if after else 0 :]
+
+    @staticmethod
+    def _listed(key: str, r: dict[str, Any], given: dict[str, Any]) -> bool:
+        """Whether row ``r`` is in the answer to these inputs (AP Coder's names)."""
+        if key == "vouchers":
+            if given.get("supplier") and r["an8"] != str(given["supplier"]):
+                return False
+            if given.get("invoice") and r["invoice_number"] != str(given["invoice"]):
+                return False
+            if given.get("since") and r.get("invoice_date") and str(r["invoice_date"]) < str(given["since"]):
+                return False
+        changed = r.get("_changed")
+        return not (given.get("changed_since") and changed and str(changed) < str(given["changed_since"]))
+
     def _run(self, key: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         spec = self.mapping["orchestrations"][key]
         given = self._inputs(key, body)
         if key in KEYS:
-            rows = sorted(self.data[key], key=lambda r: str(r[KEYS[key]]))
-            if key == "vouchers":
-                if given.get("supplier"):
-                    rows = [r for r in rows if r["an8"] == str(given["supplier"])]
-                if given.get("invoice"):
-                    rows = [r for r in rows if r["invoice_number"] == str(given["invoice"])]
-            if given.get("after"):
-                rows = [r for r in rows if str(r[KEYS[key]]) > str(given["after"])]
             size = int(given.get("max_rows") or 100)
-            out = {spec["rows"]: [self._out(key, r) for r in rows[:size]]}
-            return 200, {**out, "jde__status": "SUCCESS", "jde__serverExecutionSeconds": 0.01}
+            page = []
+            for r in self._after(key, str(given.get("after") or "")):
+                if self._listed(key, r, given):
+                    page.append(self._out(key, r))
+                    if len(page) >= size:
+                        break
+            return 200, {spec["rows"]: page, "jde__status": "SUCCESS", "jde__serverExecutionSeconds": 0.01}
         if key == "voucher_status":
             found = self.by_key.get(str(given.get("key") or ""))
             if not found:

@@ -88,10 +88,11 @@ class PurchasingMixin:
     # --- Purchase orders ---------------------------------------------------------------------------
 
     def import_purchase_orders(
-        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
+        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None, log: bool = True
     ) -> dict[str, int]:
         """Import PO lines (``po.rows_from_records`` output). A PO in the file replaces that PO's lines,
-        so re-importing an ERP export updates quantities received; other POs are kept unless ``replace_all``."""
+        so re-importing an ERP export updates quantities received; other POs are kept unless ``replace_all``.
+        ``log``: the import's event (the JD Edwards sync logs one for all its pages, D-181)."""
         orders: dict[str, dict[str, Any]] = {}
         for row in rows:
             key = po_key(row["po_number"])
@@ -140,7 +141,8 @@ class PurchasingMixin:
                 "updated": len(set(orders) & existing),
                 "lines": sum(len(o["lines"]) for o in orders.values()),
             }
-            self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
+            if log:
+                self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
         return counts
 
     def has_purchase_orders(self) -> bool:
