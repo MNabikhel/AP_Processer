@@ -28,6 +28,14 @@ JDE_REGISTER = (
     "CREATE INDEX IF NOT EXISTS erp_vouchers_date ON erp_vouchers (invoice_date, seen)",
 )
 WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never long enough to hold up an approval
+# When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
+# gone, so its next read of the vouchers is whole.
+CLEARED_KEY = "erp_register_cleared"
+
+
+def _cleared(conn: sqlite3.Connection) -> None:
+    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                 "value = excluded.value", (CLEARED_KEY, _now()))  # fmt: skip
 
 
 def add_jde_register(conn: sqlite3.Connection, columns: Any) -> None:
@@ -66,6 +74,7 @@ class RegisterMixin:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
                 conn.execute("DELETE FROM erp_vouchers")
+                _cleared(conn)
             conn.executemany(
                 """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
                    imported_at, copies, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -95,6 +104,7 @@ class RegisterMixin:
         with self._conn() as conn:
             conn.execute("DELETE FROM erp_invoices")
             conn.execute("DELETE FROM erp_vouchers")
+            _cleared(conn)
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
     def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:

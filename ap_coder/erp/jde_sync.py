@@ -49,6 +49,7 @@ from ..coding import po as po_mod
 from ..coding.vendors import master_rows, norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
+from ..core.store.register import CLEARED_KEY
 from . import jde, jde_ais
 from .jde import ERROR, INFO
 from .registers import iso_date
@@ -471,15 +472,19 @@ def _log_part(store: Any, run: _Run) -> None:
 def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[str, Any]:
     """What to read of ``part``: the read left unfinished (its scope the same, begun less than RESUME ago) when it is
     the kind due or a whole one (which reads the changes too), else a new one: whole (``full``, never read whole, a
-    week since, its scope changed) or what changed since the last good read."""
+    week since, its scope changed) or what changed since the last good read. The register cleared or replaced since a
+    read of the vouchers began (Exports): what it wrote is gone, so the next is a new whole one."""
     cfg = client.cfg
     scope = {k: getattr(cfg, k) for k in SCOPE.get(part, ())}
     done = (state(store).get("parts") or {}).get(part) or {}
+    left = store.get_json(PROGRESS_KEY, {}).get(part)
+    if part == "vouchers" and (cleared := store.get_setting(CLEARED_KEY)):
+        done = {} if cleared >= str(done.get("at") or "") else done
+        left = None if cleared >= str((left or {}).get("started") or "") else left
     last, whole_at = _when(done.get("at")), _when(done.get("full"))
     whole = (full or part in WHOLE or last is None or whole_at is None or done.get("scope") != scope
              or _now() - whole_at >= dt.timedelta(days=FULL_DAYS))  # fmt: skip
     mode = FULL if whole else CHANGES
-    left = store.get_json(PROGRESS_KEY, {}).get(part)
     begun = _when((left or {}).get("started"))
     if left and left.get("mode") in (mode, FULL) and left.get("scope") == scope and begun and _now() - begun < RESUME:
         left["report"]["resumed"] = True

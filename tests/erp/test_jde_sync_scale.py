@@ -240,3 +240,24 @@ def test_a_supplier_renamed_in_jde_has_its_vouchers_once_found_by_its_number(sto
     assert "CREDIT_NOTE_ORIGINAL_UNKNOWN" not in [c for _, c, _ in vendor_findings(credit, store)]
     jde_sync.sync(store, full=True)
     assert [r["vendor_name"] for r in store.erp_register()] == [renamed]
+
+
+@pytest.mark.parametrize("how", ["clear", "replace"])
+def test_a_register_cleared_or_replaced_is_read_whole_again_the_next_night(store, ais, monkeypatch, how):
+    """B-1893: clearing the register (Exports) or replacing it with a file deleted JD Edwards' vouchers but not the
+    sync's state, so the next night read only what changed and the last 31 days: every voucher older than that was
+    out of the register (the duplicate checks' fallback) until the week's whole read, six nights at most."""
+    for row in ais.data["vouchers"]:
+        row["_changed"] = LONG_AGO
+    _vouchers(ais, 3, days_ago=100, _changed=LONG_AGO)
+    connect(store, ais)
+    assert jde_sync.sync(store, parts=("vouchers",))["ok"] and "B-2" in _numbers(store)
+    if how == "clear":
+        store.clear_erp_register(actor="ap")
+    else:
+        store.import_erp_register([{"vendor_name": "Other Co", "invoice_number": "X-1", "total": 5.0,
+                                    "invoice_date": _day(3)}], replace_all=True, actor="ap")  # fmt: skip
+    night = dt.datetime.now() + dt.timedelta(days=1)
+    monkeypatch.setattr(jde_sync, "_now", lambda: night)
+    part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]
+    assert part["mode"] == jde_sync.FULL and {"INV-7001", "B-0", "B-1", "B-2"} <= _numbers(store)
