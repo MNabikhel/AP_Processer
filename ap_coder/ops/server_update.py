@@ -1,32 +1,42 @@
 """Updating AP Coder on the company server (D-100): ``python -m ap_coder server-update <bundle.zip>``, and ``--back``.
 
-The steps, in order (``--dry-run`` prints them with the folders and files, and changes nothing):
+The steps, in order (``--dry-run`` prints them with the folders and files, and changes nothing). The first ones
+prepare the new version while the old one keeps serving (D-188):
 
 1. **Check the bundle**, from a copy in a private temporary folder (the file given may be changed once checked; the
    copy is what is unzipped): a ZIP holding one AP Coder folder (no path out of it), every file the manifest lists, CRCs
    that match, and a newer AP Coder than the one the service runs (``paths.compare``, as the laptop updater judges).
-2. **Stop the service** (``service stop``).
-3. **Back up the database** and the files: ``backups/ap_coder-<time>-before-update-<version>.db`` and its list of
-   files (``Store.backup_now``, D-143).
-4. **Unzip** it next to the current folder, as ``APProcessor-<version>``.
-5. **Set up** that folder with its own launcher (``scripts/launch.py --no-start --yes``: its ``.venv`` from its
+2. **Unzip** it next to the current folder, as ``APProcessor-<version>``.
+3. **Set up** that folder with its own launcher (``scripts/launch.py --no-start --yes``: its ``.venv`` from its
    ``wheelhouse/``, offline), in server mode, so the launcher keeps the previous folder.
-6. **Update the database**: the new version opens it once (``Store``: its migrations).
-7. **Self-check**: the new folder's ``scripts/pilot_check.py`` (the sample invoices read right).
-8. **Start the service** from the new folder (``run.cmd`` rewritten), and wait for the dashboard to answer.
+4. **Update a copy of the database** with the new version (``service/update-check``, removed after): the migration is
+   proven, and timed, before anything stops.
+5. **Self-check**: the new folder's ``scripts/pilot_check.py`` (the sample invoices read right).
 
-When 5, 6, 7 or 8 fails, the backup is put back, the service switched back to the old folder and started again. The
-previous folder is kept: ``server-update --back`` goes back to it and puts back the pre-update backup (an older
-version refuses a database a newer one has changed). Putting a backup back keeps the user accounts and paused logins
-as they are, and logs everyone out (``put_back``, D-101); it puts back the invoice files as they were then, the
-ones added since moved aside (D-143). What it does is recorded in server.json (``folder``,
-``previous_folder``, ``pre_update_backup``, ``history``) and in the record of installs (``~/.ap_coder/settings.json``),
-as the laptop updater does.
+Then the switch, the service stopped (the downtime, printed and recorded):
+
+6. **Stop the service** (``service stop``).
+7. **Back up the database** and the files: ``backups/ap_coder-<time>-before-update-<version>.db`` and its list of
+   files (``safety_copy``, D-143).
+8. **Update the database**: the new version opens it once (``Store``: its migrations).
+9. **Start the service** from the new folder (``run.cmd`` rewritten), and wait for the dashboard to answer. The
+   backup is then copied to the second backup folder, when one is set (by the new version).
+
+When 2 to 5 fail, nothing was stopped or changed: the old version kept serving. When 6 to 9 fail, the backup is put
+back, the service switched back to the old folder and started again. The previous folder is kept: ``server-update
+--back`` goes back to it and puts back the pre-update backup (an older version refuses a database a newer one has
+changed). Putting a backup back keeps the user accounts and paused logins as they are, and logs everyone out
+(``put_back``, D-101); it puts back the invoice files as they were then, the ones added since moved aside (D-143).
+What it does is recorded in server.json (``folder``, ``previous_folder``, ``pre_update_backup``, ``history`` with
+the times) and in the record of installs (``~/.ap_coder/settings.json``), as the laptop updater does. Where it is
+is in ``service/update.json`` at each step: an update cut short (a power cut) is dealt with at the next
+``server-update`` or the service's next start (``update_recovery``).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import importlib.util
 import os
@@ -44,6 +54,7 @@ from typing import TYPE_CHECKING, Any
 from ..core import paths
 from ..core.paths import PROJECT_DIR, private_dir
 from . import service
+from . import update_recovery as recovery
 from .offline import sha256 as file_sha256
 
 if TYPE_CHECKING:
@@ -64,6 +75,16 @@ KEPT_ENV = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
             "PROGRAMW6432", "COMMONPROGRAMFILES", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
             "COMPUTERNAME", "USERNAME", "USERDOMAIN", "LANG", "LC_ALL", "TERM", "AP_PRIVATE_DIR")  # fmt: skip
 SAFE_PYTHON = ("-E", "-s")
+# The new version's migration (``Server.migrate``): its Store, without its own copy before it migrates (D-188).
+MIGRATE = """import sys
+from ap_coder.core.store import Store
+try:
+    from ap_coder.core.store import backup_files
+    backup_files.before_update = lambda store, found: ""
+except ImportError:
+    pass
+Store(sys.argv[1])
+"""
 
 
 def child_env(data: Path) -> dict[str, str]:
@@ -216,12 +237,20 @@ def safety_copy(db: Path, label: str) -> Path:
     with backup_files.exclusive(db.parent):
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
-        copy_database(db, dest)
-        conn = sqlite3.connect(dest)
+        part = dest.with_name(dest.name + ".part")  # renamed once complete: one cut short is no backup (B-1955)
         try:
-            conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
-        finally:
-            conn.close()
+            copy_database(db, part)
+            conn = sqlite3.connect(part)
+            try:
+                conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
+            finally:
+                conn.close()
+            os.replace(part, dest)
+        except BaseException:
+            for leftover in (part, part.with_name(part.name + "-journal")):
+                with contextlib.suppress(OSError):
+                    leftover.unlink(missing_ok=True)
+            raise
         backup_files.snapshot(dest, db.parent)
     return dest
 
@@ -282,9 +311,11 @@ class Server:
         return done.returncode == 0 and service.folder_python(folder).exists()
 
     def migrate(self, folder: Path, db: Path) -> bool:
-        code = "import sys; from ap_coder.core.store import Store; Store(sys.argv[1])"
+        """``db`` updated by the new version (its ``Store``), without the copy a Store makes before it migrates: the
+        copy server-update updates first is thrown away, and the real database has its safety copy, made a moment
+        before with the service stopped (D-188). A second copy would only add its minutes to the downtime."""
         done = subprocess.run(
-            [str(service.folder_python(folder)), *SAFE_PYTHON, "-c", code, str(db)],
+            [str(service.folder_python(folder)), *SAFE_PYTHON, "-c", MIGRATE, str(db)],
             cwd=folder,  # noqa: S603
             env=self._env(),
             capture_output=True,
@@ -295,6 +326,31 @@ class Server:
         if done.returncode:
             self.say((done.stderr or done.stdout).strip()[-2000:])
         return done.returncode == 0
+
+    def second_copy(self, folder: Path, db: Path, backup: Path) -> str:
+        """The pre-update backup copied to the second backup folder, when one is set, by the new version (the old one
+        can't open the updated database), once the service answers again: what was done ("" when none is set)."""
+        from ..core.store import backup_files
+
+        try:
+            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+            try:
+                row = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            row = None
+        if not row or not str(row[0] or "").strip():
+            return ""
+        code = ("import sys; from pathlib import Path; from ap_coder.core.store import Store; "
+                "Store(sys.argv[1]).copy_backup(Path(sys.argv[2]))")  # fmt: skip
+        subprocess.run([str(service.folder_python(folder)), *SAFE_PYTHON, "-c", code, str(db), str(backup)],  # noqa: S603
+                       cwd=folder, env=self._env(), capture_output=True, check=False)  # fmt: skip
+        copied = backup_files.check(backup).copy
+        if not copied:
+            return "The backup was not copied to the second backup folder: Settings → Data & backups says why."
+        return f"Also copied to {copied['what']}." if copied["ok"] else (
+            f"Not copied to the second backup folder: {copied['what']}.")  # fmt: skip
 
     def self_check(self, folder: Path) -> tuple[bool, str]:
         cmd = [str(service.folder_python(folder)), *SAFE_PYTHON, str(folder / "scripts" / "pilot_check.py")]
@@ -441,64 +497,165 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
 
     try:
         s, saved = server_settings(data, task_name), service.read_config(data)
-        info = check_bundle(Path(bundle))
-    except (service.SettingsError, BundleError) as exc:
+    except service.SettingsError as exc:
         return refuse(str(exc))
-    if wrong_folder(s):
-        return refuse(wrong_folder(s))
-    current = s.code_folder
-    theirs, mine = info["identity"], paths.install_identity(current)
-    new_version, old_version = theirs["version"], mine.get("version") or "?"
-    verdict = paths.compare(theirs, mine)
-    if not force and verdict != "newer":
-        said = {"same": f"{bundle.name} is the AP Coder the service runs already ({paths.describe(mine)}).",
-                "older": f"{bundle.name} holds an older AP Coder ({paths.describe(theirs)}) than the one the service "
-                         f"runs ({paths.describe(mine)}).",
-                "unknown": f"{bundle.name} is AP Coder {new_version}, like the one the service runs, and which build "
-                           "is newer can't be told: --force installs it anyway."}[verdict]  # fmt: skip
-        return refuse(f"{said} Nothing was changed. To go back to the previous version: server-update --back")
-    new = target_folder(current, new_version)
-    label = f"before-update-{new_version}"
     server = server or Server(data, s, say)
-    installed = server.installed()
-    elsewhere = "" if installed else another_task(server, s, saved)
-    if elsewhere:
-        return refuse(elsewhere)
-    if dry_run:
-        say(f"Updating AP Coder on this server from {paths.describe(mine)} to {paths.describe(theirs)}:")
-        steps = [
-            f"Check the bundle: {bundle} (one AP Coder folder, every file it lists, no damage): done, it is fine",
-            f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)'
-            if installed
-            else "The service is not installed on this computer: nothing to stop",
-            f"Back up the database {db} and the invoice files to backups\\ap_coder-<date>-{label}.db",
-            f"Unzip it next to the current folder: {new}",
-            f"Set up the new folder from its wheelhouse (offline): {new / 'scripts' / 'launch.py'} --no-start --yes",
-            "Update the database (the new version opens it once: its migrations)",
-            f"Self-check: {new / 'scripts' / 'pilot_check.py'} (the sample invoices read right)",
-            f"Start the service from {new} and wait for the dashboard to answer"
-            if installed
-            else f"Switch to {new}; no service to start (python -m ap_coder service install, from the new folder)",
-        ]
-        for n, step in enumerate(steps, 1):
-            say(f"  {n}. {step}")
-        again = "the service started again from" if installed else "the service switched back to"
-        say(f"If 5 to 8 fail: the backup is put back and {again} {current}.")
-        say(f"The current folder {current} is kept: server-update --back goes back to it.")
-        say("Nothing was changed (dry run).")
-        return 0
+    with recovery.update_lock(data) as lock:
+        if lock is None:
+            return refuse(f"Another server-update runs on this data folder now ({recovery.service_folder(data)}): "
+                          "wait for it to end. Nothing was changed.")  # fmt: skip
+        cut = recovery.read(data)
+        if cut:  # left by an update cut short (a power cut): dealt with first, and only that this time
+            return recovery.recover(data, db, server, cut, dry_run=dry_run, say=say)
+        try:
+            info = check_bundle(Path(bundle))
+        except BundleError as exc:
+            return refuse(str(exc))
+        if wrong_folder(s):
+            return refuse(wrong_folder(s))
+        current = s.code_folder
+        theirs, mine = info["identity"], paths.install_identity(current)
+        new_version, old_version = theirs["version"], mine.get("version") or "?"
+        verdict = paths.compare(theirs, mine)
+        if not force and verdict != "newer":
+            said = {"same": f"{bundle.name} is the AP Coder the service runs already ({paths.describe(mine)}).",
+                    "older": f"{bundle.name} holds an older AP Coder ({paths.describe(theirs)}) than the one the "
+                             f"service runs ({paths.describe(mine)}).",
+                    "unknown": f"{bundle.name} is AP Coder {new_version}, like the one the service runs, and which "
+                               "build is newer can't be told: --force installs it anyway."}[verdict]  # fmt: skip
+            return refuse(f"{said} Nothing was changed. To go back to the previous version: server-update --back")
+        new = target_folder(current, new_version)
+        installed = server.installed()
+        elsewhere = "" if installed else another_task(server, s, saved)
+        if elsewhere:
+            return refuse(elsewhere)
+        plan = {"from": old_version, "to": new_version, "from_folder": str(current), "to_folder": str(new),
+                "label": f"before-update-{new_version}", "database": str(db), "started": recovery.started_now(),
+                "pid": os.getpid(), "safety_copy": "", "bundle_hash": checked}  # fmt: skip
+        if dry_run:
+            _dry_run(bundle, db, s, plan, installed, paths.describe(mine), paths.describe(theirs), say)
+            return 0
+        say(f"Updating AP Coder from {paths.describe(mine)} to {paths.describe(theirs)}.")
+        return _install(Path(bundle), info["top"], data, db, server, installed, plan, say)
 
-    say(f"Updating AP Coder from {paths.describe(mine)} to {paths.describe(theirs)}.")
-    if installed:
-        say("Stopping the service...")
-        if not server.stop():
-            return refuse("The service did not stop: nothing was changed. Try again, or restart the server.")
-    else:
-        say("The service is not installed on this computer: nothing to stop.")
-    backup = None
+
+def _dry_run(bundle: Path, db: Path, s: service.ServerSettings, plan: dict, installed: bool, mine: str, theirs: str,
+             say: Say) -> None:  # fmt: skip
+    new, current = Path(plan["to_folder"]), Path(plan["from_folder"])
+    say(f"Updating AP Coder on this server from {mine} to {theirs}:")
+    say(f"While AP Coder {plan['from']} keeps serving:")
+    steps = [
+        f"Check the bundle: {bundle} (one AP Coder folder, every file it lists, no damage): done, it is fine",
+        f"Unzip it next to the current folder: {new}",
+        f"Set up the new folder from its wheelhouse (offline): {new / 'scripts' / 'launch.py'} --no-start --yes",
+        f"Update a copy of the database with the new version, and time it ({recovery.check_folder(db.parent)}, "
+        "removed after)",
+        f"Self-check: {new / 'scripts' / 'pilot_check.py'} (the sample invoices read right)",
+    ]
+    switch = [
+        f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)'
+        if installed
+        else "The service is not installed on this computer: nothing to stop",
+        f"Back up the database {db} and the invoice files to backups\\ap_coder-<date>-{plan['label']}.db",
+        "Update the database (the new version opens it once: its migrations)",
+        f"Start the service from {new} and wait for the dashboard to answer (the downtime: stop to answer)"
+        if installed
+        else f"Switch to {new}; no service to start (python -m ap_coder service install, from the new folder)",
+    ]
+    for n, step in enumerate(steps, 1):
+        say(f"  {n}. {step}")
+    say("Then, the service stopped:")
+    for n, step in enumerate(switch, len(steps) + 1):
+        say(f"  {n}. {step}")
+    again = "the service started again from" if installed else "the service switched back to"
+    say(f"If 2 to 5 fail, nothing was stopped or changed. If 6 to 9 fail: the backup is put back and {again} "
+        f"{current}.")  # fmt: skip
+    say(f"The current folder {current} is kept: server-update --back goes back to it.")
+    say("Nothing was changed (dry run).")
+
+
+def _seconds(start: float) -> float:
+    return round(time.monotonic() - start, 1)
+
+
+def _install(bundle: Path, top: str, data: Path, db: Path, server: Server, installed: bool, plan: dict,
+             say: Say) -> int:  # fmt: skip
+    """The update itself: prepared while the old version serves, then switched over with the service stopped. Each
+    step is in the marker first (``update_recovery``), so a power cut at any point is dealt with at the next start."""
+    new, old_version, new_version = Path(plan["to_folder"]), plan["from"], plan["to"]
+    times: dict[str, float] = {}
+    began = time.monotonic()
+
+    def step(name: str) -> None:
+        plan["step"] = name
+        recovery.write(data, plan)
+
+    def not_updated(reason: str) -> int:
+        """A step before the stop failed: the old version kept serving, its database untouched."""
+        say(f"\n{reason}\nNothing was stopped or changed: AP Coder {old_version} kept serving.")
+        recovery.remove_check_copy(data)
+        _record(data, {"from": old_version, "to": new_version, "result": f"not updated: {reason}", "backup": "",
+                       "bundle_hash": plan["bundle_hash"], "times": times})  # fmt: skip
+        recovery.clear(data)
+        if new.exists():
+            say(f"The new folder {new} is kept to look at; delete it when done.")
+        return 1
+
+    # --- Prepared while the old version serves ----------------------------------------------------------------------
+    try:
+        step("prepare")
+        if db.exists():
+            from ..core.store.backups import _room_refusal
+
+            short = _room_refusal(db, data / "backups")
+            if short:
+                return not_updated(f"The update needs room for a copy of the database: {short}.")
+        say(f"Unzipping to {new}...")
+        try:
+            unzip(bundle, top, new)
+        except (OSError, zipfile.BadZipFile) as exc:
+            return not_updated(f"The bundle could not be unzipped ({exc}).")
+        say("Setting up the new folder (its packages come from its wheelhouse; a few minutes)...")
+        if not server.set_up(new):
+            return not_updated("The new folder could not be set up: its launcher's window says why (and "
+                               "~/.ap_coder/logs).")  # fmt: skip
+        if db.exists():
+            say("Updating a copy of the database with the new version (the database itself is not touched)...")
+            started = time.monotonic()
+            copy = copy_database(db, recovery.check_folder(data) / db.name)
+            ok = server.migrate(new, copy)
+            times["check_migration_s"] = _seconds(started)
+            recovery.remove_check_copy(data)
+            if not ok:
+                return not_updated("The new version could not update a copy of the database: the database itself "
+                                   "was not touched.")  # fmt: skip
+            say(f"The new version updated the copy in {times['check_migration_s']:g} s.")
+        started = time.monotonic()
+        ok, result = server.self_check(new)
+        times["self_check_s"] = _seconds(started)
+        say(result)
+        if not ok:
+            return not_updated(f"The self-check failed: {result}")
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - nothing stopped yet: said, the old one serves on
+        why = "interrupted (Ctrl+C)" if isinstance(exc, KeyboardInterrupt) else f"stopped on an error: {exc}"
+        return not_updated(f"The update was {why}.")
+    times["prepare_s"] = _seconds(began)
+    say(f"Prepared in {times['prepare_s']:g} s while AP Coder {old_version} kept serving.")
+    return _switch_over(data, db, server, installed, plan, times, step, say)
+
+
+def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: dict, times: dict[str, float],
+                 step: Callable[[str], None], say: Say) -> int:  # fmt: skip
+    """Stop, safety copy, the database updated, switched and started: the downtime, from the stop to the answer."""
+    current, new = Path(plan["from_folder"]), Path(plan["to_folder"])
+    old_version, new_version, label = plan["from"], plan["to"], plan["label"]
+    backup: Path | None = None
     started = False
+    down = time.monotonic()
 
     def back(reason: str) -> int:
+        with contextlib.suppress(OSError):  # (a full disk: the going back goes on all the same)
+            step("going-back")
         say(f"\n{reason}\nGoing back to AP Coder {old_version}...")
         if started:
             server.stop()
@@ -512,7 +669,8 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
                     f"old version runs, restore it from Settings → Data & backups.")  # fmt: skip
         switch_to(data, current)
         _record(data, {"from": old_version, "to": new_version, "result": f"rolled back: {reason}",
-                       "backup": str(backup or ""), "bundle_hash": checked})  # fmt: skip
+                       "backup": str(backup or ""), "bundle_hash": plan["bundle_hash"], "times": times})  # fmt: skip
+        recovery.clear(data)
         if installed:
             server.start()
             if not server.up(current):
@@ -524,51 +682,58 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
     # Whatever stops it once the service is stopped (the disk full for the backup, the new folder's Python blocked,
     # Ctrl+C) puts the old version back and starts it again: never a server left stopped.
     try:
+        step("stop")
+        if installed:
+            say("Stopping the service...")
+            if not server.stop():
+                return back("The service did not stop.")
+        else:
+            say("The service is not installed on this computer: nothing to stop.")
+        times["stop_s"] = _seconds(down)
         if db.exists():
-            from ..core.store import Store
-
-            backup = Store(db).backup_now(label)
+            step("safety-copy")
+            mark = time.monotonic()
+            backup = safety_copy(db, label)
+            plan["safety_copy"] = str(backup)
+            times["safety_copy_s"] = _seconds(mark)
             say(f"Database backed up: {backup}")
-        say(f"Unzipping to {new}...")
-        try:
-            unzip(Path(bundle), info["top"], new)
-        except (OSError, zipfile.BadZipFile) as exc:
-            return back(f"The bundle could not be unzipped ({exc}).")
-        say("Setting up the new folder (its packages come from its wheelhouse; a few minutes)...")
-        if not server.set_up(new):
-            return back("The new folder could not be set up: its launcher's window says why (and ~/.ap_coder/logs).")
+        step("migrate")
         say("Updating the database...")
+        mark = time.monotonic()
         if not server.migrate(new, db):
             return back("The new version could not update the database.")
-        ok, result = server.self_check(new)
-        say(result)
-        if not ok:
-            return back(f"The self-check failed: {result}")
+        times["migrate_s"] = _seconds(mark)
         previous = service.read_config(data).get("previous_folder") or ""
+        step("switch")
         switch_to(data, new)
+        step("start")
         if installed:
             say("Starting the service...")
+            mark = time.monotonic()
             started = server.start()
             if not started or not server.up(new):
                 return back("The new version does not answer (python -m ap_coder service status; the log).")
+            times["start_s"] = _seconds(mark)
     except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - see above
         if isinstance(exc, KeyboardInterrupt):
             return back("The update was interrupted (Ctrl+C).")
         return back(f"The update stopped on an error: {exc or type(exc).__name__}.")
-    _record(
-        data,
-        {
-            "from": old_version,
-            "to": new_version,
-            "result": "updated",
-            "backup": str(backup or ""),
-            "bundle_hash": checked,
-        },
-        previous_folder=str(current),
-        previous_version=old_version,
-        pre_update_backup=str(backup or ""),
-    )
+    times["downtime_s"] = _seconds(down)
+    entry = {"from": old_version, "to": new_version, "result": "updated", "backup": str(backup or ""),
+             "bundle_hash": plan["bundle_hash"], "times": times}  # fmt: skip
+    _record(data, entry, previous_folder=str(current), previous_version=old_version,
+            pre_update_backup=str(backup or ""))  # fmt: skip
+    recovery.clear(data)
+    parts = [("stopping", "stop_s"), ("safety copy", "safety_copy_s"), ("database update", "migrate_s"),
+             ("starting", "start_s")]  # fmt: skip
+    said = ", ".join(f"{what} {times[key]:g} s" for what, key in parts if key in times)
+    stopped = "Downtime" if installed else "The switch took"
     say(f"\nUpdated AP Coder from {old_version} to {new_version}: {new}.")
+    say(f"{stopped}: {times['downtime_s']:g} s ({said}); prepared beforehand in {times['prepare_s']:g} s.")
+    if backup is not None:
+        copied = server.second_copy(new, db, backup)
+        if copied:
+            say(copied)
     if not installed:
         say("Start it: python -m ap_coder service install (or start), from the new folder.")
     say(f"The previous version stays in {current}: python -m ap_coder server-update --back goes back to it.")
@@ -582,6 +747,25 @@ def _update(bundle: Path, data: Path, db: Path, *, server: Server | None, dry_ru
 
 def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False, yes: bool = False,
             task_name: str | None = None, say: Say = print) -> int:  # fmt: skip
+    """``_go_back``, never while an update runs; an update cut short is dealt with first, and only that this time."""
+    with recovery.update_lock(data) as lock:
+        if lock is None:
+            print("A server-update runs on this data folder now: wait for it to end. Nothing was changed.",
+                  file=sys.stderr)  # fmt: skip
+            return 1
+        cut = recovery.read(data)
+        if not cut:
+            return _go_back(data, db, server=server, dry_run=dry_run, yes=yes, task_name=task_name, say=say)
+        try:
+            server = server or Server(data, server_settings(data, task_name), say)
+        except service.SettingsError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return recovery.recover(data, db, server, cut, dry_run=dry_run, say=say)
+
+
+def _go_back(data: Path, db: Path, *, server: Server | None, dry_run: bool, yes: bool, task_name: str | None,
+             say: Say) -> int:  # fmt: skip
     try:
         saved, s = service.read_config(data), server_settings(data, task_name)
     except service.SettingsError as exc:
@@ -610,7 +794,8 @@ def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool
         return 1
     current = s.code_folder
     # The update the backup was made for: the last one that went through, not a later attempt rolled back.
-    updates = [h for h in saved.get("history") or [] if isinstance(h, dict) and h.get("result") == "updated"]
+    updates = [h for h in saved.get("history") or [] if isinstance(h, dict)
+               and str(h.get("result") or "").startswith("updated")]  # fmt: skip
     since = updates[-1].get("at", "the update") if updates else "the update"
     say(f"Going back from AP Coder {_version(current)} ({current}) to {_version(previous)} ({previous}).")
     say(f"The database goes back to the backup made before the update ({backup.name}): what was done in AP Coder "
