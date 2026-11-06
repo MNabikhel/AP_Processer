@@ -54,7 +54,7 @@ AGAIN = "sudo .venv/bin/python -m ap_coder service start"
 SUDO = f"sudo AP_PRIVATE_DIR=<the data folder> .venv/bin/python -m ap_coder service install --account {DEFAULT_ACCOUNT}"
 
 
-# --- The daemon's names and its plist --------------------------------------------------------------------------------
+# --- The daemon's names and its plist ---------------------------------------------------------------------------------
 
 
 def label(task_name: str) -> str:
@@ -101,6 +101,7 @@ def daemon(s: ServerSettings, data: Path) -> dict[str, Any]:
         "UserName": s.account,
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
+        "AbandonProcessGroup": False,  # (launchd's default, relied on) a host killed: its dashboard ended with it
         "ThrottleInterval": THROTTLE,
         "ExitTimeOut": EXIT_TIMEOUT,
         "SoftResourceLimits": {"NumberOfFiles": OPEN_FILES},
@@ -125,7 +126,7 @@ def write_plist(task_name: str, content: dict) -> Path:
     part.write_bytes(plistlib.dumps(content))
     os.chmod(part, 0o644)
     if is_root():
-        os.chown(part, 0, 0)
+        own(part, 0, 0)  # root:wheel
     os.replace(part, path)
     return path
 
@@ -173,7 +174,7 @@ def switch_folder(data: Path, folder: Path) -> None:
     point_current(folder)
 
 
-# --- This Mac: root, the service's account, its part of the data folder ----------------------------------------------
+# --- This Mac: root, the service's account, its part of the data folder -----------------------------------------------
 
 
 def is_root() -> bool:

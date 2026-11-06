@@ -154,7 +154,7 @@ def switch_folder(data: Path, folder: Path) -> None:
     write_runner(data, folder)
 
 
-# --- The host's dashboard, ended with it -----------------------------------------------------------------------------
+# --- The host's dashboard, ended with it ------------------------------------------------------------------------------
 
 
 _JOBS: list[Any] = []  # the job objects that end the dashboard with the host (kept open while the host runs)

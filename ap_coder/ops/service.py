@@ -730,12 +730,14 @@ def status_info(data: Path, s: ServerSettings, found: dict) -> dict:
     running = host_running(data)
     host = _read_json(host_record(data)) if running else {}
     health = dashboard_health(data, s)
+    dashboard = int(_read_json(data / SERVER_FILE).get("pid") or 0) if health else 0
     return {"platform": _backend().NAME, **{k: v for k, v in found.items() if k not in ("line", "missing")},
             "running": running, "pid": host.get("pid"), "started": host.get("started"),
             "version": host.get("version") or (health or {}).get("version"),
             "folder": host.get("folder") or (health or {}).get("folder"), "address": address(s),
-            "answering": health is not None, "health": health, "stopped_on_purpose": stop_flag(data).exists(),
-            "data": str(data), "settings": str(config_path(data)), "log": str(log_path(data))}  # fmt: skip
+            "answering": health is not None, "health": health, "dashboard_pid": dashboard or None,
+            "stopped_on_purpose": stop_flag(data).exists(), "data": str(data), "settings": str(config_path(data)),
+            "log": str(log_path(data))}  # fmt: skip
 
 
 def status(data: Path, s: ServerSettings, say: Say = print, as_json: bool = False) -> int:

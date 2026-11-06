@@ -339,6 +339,35 @@ def test_status_and_install_tell_a_running_host_by_its_lock_not_host_json(data, 
         held.close()
 
 
+def test_status_json_says_the_task_the_host_and_the_dashboard(data, commands, monkeypatch, capsys):
+    """``service status --json`` (D-186), for a monitoring script: whether it is installed and runs, the host's
+    process, version and folder, the address, and the dashboard's /healthz answer; the plain words stay the default."""
+    (data / "server.json").write_text(json.dumps({"insecure_http": True, "allowed_hosts": ["apcoder.company.local"]}))
+    health = {"ok": True, "app": "ap-coder", "version": "1.4.0", "folder": "C:\\APCoder\\APProcessor", "port": 8501}
+    monkeypatch.setattr(service, "dashboard_health", lambda data, s, timeout=3.0: health)
+    service.host_record(data).parent.mkdir(parents=True)
+    service.host_record(data).write_text(json.dumps({"pid": 4242, "started": "2026-11-06T08:00:00", "version": "1.4.0",
+                                                     "folder": "C:\\APCoder\\APProcessor"}))  # fmt: skip
+    held = paths.try_lock(service.host_lock(data))
+    try:
+        assert main("status", "--json") == 0
+    finally:
+        held.close()
+    found = json.loads(capsys.readouterr().out)
+    assert found["platform"] == "windows" and found["installed"] is True and found["state"] == "Ready"
+    assert found["task"] == "AP Coder" and found["running"] is True and found["pid"] == 4242
+    assert (found["version"], found["folder"]) == ("1.4.0", "C:\\APCoder\\APProcessor")
+    assert found["address"] == "http://apcoder.company.local:8501" and found["answering"] is True
+    assert found["health"] == health and found["stopped_on_purpose"] is False
+    assert commands[-1] == ["schtasks", "/query", "/tn", "AP Coder", "/v", "/fo", "LIST"]
+    monkeypatch.setattr(service, "run_command", lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    monkeypatch.setattr(service, "dashboard_health", lambda data, s, timeout=3.0: None)
+    assert main("status", "--json") == 1
+    found = json.loads(capsys.readouterr().out)
+    assert found["installed"] is False and found["running"] is False and found["health"] is None
+    assert main("status") == 1 and "is not installed" in capsys.readouterr().out  # the words, as before
+
+
 def test_stop_ends_only_the_running_host_never_a_process_a_stale_record_names(data, commands, monkeypatch):
     """B-1590: stop ended the process host.json named whenever it ran the AP Coder folder's Python. A record left by
     a host that was killed may name a number an AP Coder watch has since: stop ended that watch mid-invoice. The host
