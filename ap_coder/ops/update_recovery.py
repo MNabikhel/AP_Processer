@@ -21,8 +21,16 @@ What is done with it, decided per step (:data:`RULES`):
   ``server-update`` itself goes back when it doesn't answer).
 * ``going-back``: an update going back on its own (the new version did not answer): it goes back.
 
-The service host runs the folder run.cmd names. When that is not the folder the rule starts, it rewrites run.cmd
-and ends: the scheduled task's repeating trigger starts the right one within 5 minutes.
+Once put back, the marker says so (``put_back``): it is never put back twice, and only going back is left.
+
+The service host runs the folder run.cmd names (the Mac's ``current`` link). When that is the folder the rule starts,
+it switches nothing. When it is another, it rewrites run.cmd and ends: the scheduled task's repeating trigger starts
+the right one within 5 minutes. The Mac's host can't change the link (root's, beside the code folders): then it
+changes nothing at all, keeps the marker and ends with 0 (launchd leaves it stopped), its log saying to run
+server-update (which finishes or undoes it). Neither does it act when it can't open ``update.lock`` (which can't
+tell an update cut short from one running): it goes on as without a marker, so the old version serves at ``prepare``
+and the update's own ``stopped`` file keeps it stopped after. ``update.lock`` and the marker made by root's sudo are
+the service folder owner's (the service's account), so its host can open them.
 """
 
 from __future__ import annotations
@@ -70,12 +78,28 @@ def check_folder(data: Path) -> Path:
     return service_folder(data) / CHECK_FOLDER
 
 
+def _owned(fd: int, folder: Path) -> None:
+    """A file root has just made in the service folder (``fd``, open) given to the folder's owner, when that is
+    another account: on a Mac, ``sudo server-update`` makes update.lock and update.json, and the service host, which
+    runs as the service's account, must open them after a power cut (a Mac's file is its maker's, B-1956)."""
+    from . import service_macos
+
+    if not service_macos.is_root():
+        return
+    found = os.stat(folder)
+    if found.st_uid != service_macos.ROOT_UID:
+        os.fchown(fd, found.st_uid, found.st_gid)
+
+
 def write(data: Path, state: dict) -> None:
-    """The marker, whole: written beside it, flushed to the disk, then renamed over it (never half a file)."""
+    """The marker, whole: written beside it, flushed to the disk, then renamed over it (never half a file). Made by
+    root, it is the service folder owner's (``_owned``)."""
     path = marker_path(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    with open(part, "w", encoding="utf-8") as f:
+    part.unlink(missing_ok=True)
+    with open(part, "x", encoding="utf-8") as f:  # (made now: never a file or a link left under that name)
+        _owned(f.fileno(), path.parent)
         json.dump(state, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
@@ -103,8 +127,13 @@ def clear(data: Path) -> None:
 
 @contextlib.contextmanager
 def update_lock(data: Path) -> Iterator[object | None]:
-    """``update.lock``, held by this process while it lasts (None when another process holds it: an update runs)."""
-    handle = try_lock(service_folder(data) / LOCK)
+    """``update.lock``, held by this process while it lasts (None when another process holds it: an update runs).
+    Made by root, it is the service folder owner's (``_owned``); one there already is left as it is."""
+    path = service_folder(data) / LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(FileExistsError), open(path, "xb") as made:
+        _owned(made.fileno(), path.parent)
+    handle = try_lock(path)
     try:
         yield handle
     finally:
@@ -112,11 +141,12 @@ def update_lock(data: Path) -> Iterator[object | None]:
             handle.close()
 
 
-def rule(step: str, host_runs_new: bool | None = None) -> str:
+def rule(step: str, host_runs_new: bool | None = None, put_back: bool = False) -> str:
     """What is done with an update cut short at ``step``: OLD, BACK or FINISH. ``host_runs_new``: the service host
-    deciding (True when it runs the new folder): a switch it can't finish itself is undone."""
+    deciding (True when it runs the new folder): a switch it can't finish itself is undone. ``put_back``: the marker
+    says the safety copy was put back already (by a start whose next step failed): only back, then."""
     found = RULES.get(step, OLD)
-    if step == "switch" and host_runs_new is False:
+    if put_back or (step == "switch" and host_runs_new is False):
         return BACK
     return found
 
@@ -165,29 +195,48 @@ def _drop_cut_copy(state: dict, db: Path) -> None:
             part.unlink(missing_ok=True)
 
 
-def apply(state: dict, chosen: str, data: Path, db: Path, say: Say) -> tuple[str, Path | None]:
-    """Do what ``chosen`` says with the database and the record; the folder that must run now (None when it can't
-    be told: the folders are gone) and what was done, in words. run.cmd and server.json are switched to it."""
+def plan(state: dict, chosen: str) -> tuple[str, Path | None]:
+    """``chosen`` once the folders are looked at (an update to finish whose new folder is gone goes back instead),
+    and the folder that must run then (None when it is gone too)."""
     from . import server_update
 
     old, new = Path(str(state.get("from_folder") or ".")), Path(str(state.get("to_folder") or "."))
     upgrade = server_update._upgrade()
-    safety = _safety(state, db)
     if chosen == FINISH and not upgrade.is_install(new):
-        say(f"The new folder {new} is gone: the update can't be finished, so it goes back instead.")
         chosen = BACK
-    if chosen == BACK and safety is None:
+    target = new if chosen == FINISH else old
+    return chosen, target if upgrade.is_install(target) else None
+
+
+def apply(state: dict, chosen: str, data: Path, db: Path, say: Say, switch: bool = True) -> tuple[str, Path | None]:
+    """Do what ``chosen`` says with the database and the record; the folder that must run now (None when it can't
+    be told: the folders are gone) and what was done, in words. run.cmd (the Mac's link) and server.json are
+    switched to it; only server.json when ``switch`` is False (the service host runs that folder already). Once the
+    safety copy is put back the marker says so, and it is never put back again (``rule``)."""
+    from . import server_update, service
+
+    old, new = Path(str(state.get("from_folder") or ".")), Path(str(state.get("to_folder") or "."))
+    safety = _safety(state, db)
+    wanted, (chosen, target) = chosen, plan(state, chosen)
+    if wanted == FINISH and chosen == BACK:
+        say(f"The new folder {new} is gone: the update can't be finished, so it goes back instead.")
+    if chosen == BACK and state.get("put_back"):
+        say(f"The database was put back already ({state['put_back']}), at an earlier start.")
+    elif chosen == BACK and safety is None:
         say("The safety copy made before the update is not in the backups folder: the database is left as it is.")
-    if chosen == BACK and safety is not None:
+    elif chosen == BACK and safety is not None:
         files = server_update.put_back(safety, db)
+        write(data, {**state, "put_back": safety.name})  # (a step below that fails is tried again: this is not)
         say(f"The database is back as it was before the update ({safety.name}); the user accounts are kept as they "
             f"are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
     _drop_cut_copy(state, db)
     remove_check_copy(data)
-    target = new if chosen == FINISH else old
-    if not upgrade.is_install(target):
+    if target is None:
         return chosen, None
-    server_update.switch_to(data, target)
+    if switch:
+        server_update.switch_to(data, target)
+    else:
+        service.write_config(data, folder=str(target))
     entry = {"from": state.get("from", "?"), "to": state.get("to", "?"), "backup": str(safety or "")}
     if chosen == FINISH:
         server_update._record(data, {**entry, "result": f"updated: finished after it was cut short at {state['step']}"},
@@ -201,47 +250,88 @@ def apply(state: dict, chosen: str, data: Path, db: Path, say: Say) -> tuple[str
 # --- The service's next start (``service run``) ---------------------------------------------------------------------
 
 
-def recover_at_start(data: Path, db: Path, here: Path) -> bool:
-    """The service host of ``here``, as it starts: a marker left by an update cut short is acted on (``rule``), said
-    in the service's log. False when this host must not start the dashboard: run.cmd now names another folder, which
-    the task starts next (within 5 minutes), or the database could not be put back (tried again then). Nothing while
-    an update runs (its lock is held) or when none was cut short."""
-    if not marker_path(data).exists():
-        return True
-    with update_lock(data) as lock:
-        if lock is None:
-            return True  # server-update runs: it decides
-        state = read(data)
-        if not state:
-            clear(data)
-            return True
-        from ..core.paths import same_folder
-        from . import service
+ASK = ("Run server-update again as an administrator (with sudo on a Mac): it finishes the update cut short or undoes "
+       "it, then starts the service.")  # fmt: skip
 
-        log = service.host_logger(data)
-        runs_new = same_folder(here, state.get("to_folder") or "")
-        chosen = rule(state["step"], host_runs_new=runs_new)
-        log.warning("%s. %s", words(state), plan_words(state, chosen))
-        try:
-            chosen, target = apply(state, chosen, data, db, lambda m: log.warning("%s", m))
-        except Exception as exc:  # noqa: BLE001 - said in the log; the marker stays, and is tried again
-            log.error("The update cut short could not be dealt with (%s): the service tries again at its next start "
-                      "(within 5 minutes); else run server-update again, or restore a backup (docs/SERVER.md section "
-                      "9). The marker: %s", exc, marker_path(data))  # fmt: skip
-            return chosen != BACK  # never the old version on a database half put back
+
+def recover_at_start(data: Path, db: Path, here: Path) -> int | None:
+    """The service host of ``here``, as it starts: a marker left by an update cut short is acted on (``rule``), said
+    in the service's log. None: the host goes on (it starts the dashboard, unless the service is stopped). Else the
+    exit code it ends with: ``service.again()`` when run.cmd now names another folder, which the task starts next
+    (within 5 minutes), or the database could not be put back (tried again then); 0 when the folder to run is another
+    that this host can't switch to (the Mac's ``current`` link is root's): nothing is changed, and the service stays
+    stopped until the administrator's server-update. Nothing either while an update runs (its lock is held), when
+    none was cut short, or when that can't be told (the lock can't be opened)."""
+    if not marker_path(data).exists():
+        return None
+    from . import service
+
+    log = service.host_logger(data)
+    try:
+        lock = try_lock(service_folder(data) / LOCK)
+    except OSError as exc:  # (a Mac: made by root's sudo before B-1956, and no service start since to hand it back)
+        log.error("An update was cut short, or runs now (%s), and which can't be told: %s can't be opened (%s). "
+                  "Nothing was changed, and AP Coder starts only if the update had not stopped it. %s",
+                  marker_path(data), LOCK, exc, ASK)  # fmt: skip
+        return None
+    if lock is None:
+        return None  # server-update runs: it decides
+    try:
+        return _recover_at_start(data, db, here, log)
+    finally:
+        lock.close()
+
+
+def _recover_at_start(data: Path, db: Path, here: Path, log: Any) -> int | None:
+    from ..core.paths import same_folder
+    from . import service
+
+    state = read(data)
+    if not state:
         clear(data)
+        return None
+    runs_new = same_folder(here, state.get("to_folder") or "")
+    wanted = rule(state["step"], host_runs_new=runs_new, put_back=bool(state.get("put_back")))
+    chosen, target = plan(state, wanted)
+    switch = target is not None and not same_folder(here, target)
+    if switch and not service.can_switch(data, target):
+        log.error("%s. AP Coder %s must run now (%s), and this service can't switch to it itself (it runs %s): nothing "
+                  "was changed, and the service stays stopped. %s", words(state),
+                  state.get("to" if chosen == FINISH else "from"), target, here, ASK)  # fmt: skip
+        return 0
+    log.warning("%s. %s", words(state), plan_words(state, chosen))
+    try:
+        chosen, target = apply(state, wanted, data, db, lambda m: log.warning("%s", m), switch=switch)
+    except Exception as exc:  # noqa: BLE001 - said in the log; the marker stays, and is acted on at the next start
+        ready = not switch and (chosen != BACK or bool(read(data).get("put_back")))  # never a database half put back
+        if not ready and isinstance(exc, PermissionError):  # (a file root's sudo made: no use trying again)
+            log.error("The update cut short could not be dealt with (%s), and this service's account can't do it: "
+                      "the service stays stopped. %s The marker: %s", exc, ASK, marker_path(data))  # fmt: skip
+            return 0
+        if not ready:
+            log.error("The update cut short could not be dealt with (%s): the service tries again at its next start; "
+                      "else run server-update again, or restore a backup (docs/SERVER.md section 9). The marker: %s",
+                      exc, marker_path(data))  # fmt: skip
+            return service.again()
+        log.error("The update cut short could not all be dealt with (%s), but the database is as the folder this "
+                  "service runs needs it: AP Coder starts, and the rest is done at its next start. The marker: %s",
+                  exc, marker_path(data))  # fmt: skip
         if state["step"] != "prepare":
-            service.stop_flag(data).unlink(missing_ok=True)  # the update's own stop, never one made on purpose
-        if target is None:
-            log.error("Neither %s nor %s is an AP Coder folder any more: the service runs %s as it is.",
-                      state.get("from_folder"), state.get("to_folder"), here)  # fmt: skip
-            return True
-        if same_folder(here, target):
-            log.warning("Done: AP Coder %s starts.", state.get("to" if chosen == FINISH else "from"))
-            return True
-        log.warning("Done: the service runs %s from its next start (the scheduled task starts it within 5 minutes).",
-                    target)  # fmt: skip
-        return False
+            service.stop_flag(data).unlink(missing_ok=True)  # the update's own stop
+        return None
+    clear(data)
+    if state["step"] != "prepare":
+        service.stop_flag(data).unlink(missing_ok=True)  # the update's own stop, never one made on purpose
+    if target is None:
+        log.error("Neither %s nor %s is an AP Coder folder any more: the service runs %s as it is.",
+                  state.get("from_folder"), state.get("to_folder"), here)  # fmt: skip
+        return None
+    if not switch:
+        log.warning("Done: AP Coder %s starts.", state.get("to" if chosen == FINISH else "from"))
+        return None
+    log.warning("Done: the service runs %s from its next start (the scheduled task starts it within 5 minutes).",
+                target)  # fmt: skip
+    return service.again()
 
 
 # --- The next ``server-update`` (the administrator) -----------------------------------------------------------------
@@ -269,7 +359,7 @@ def recover(data: Path, db: Path, server: Any, state: dict, *, dry_run: bool, sa
     """``server-update`` (or ``--back``) finding an update cut short: it is acted on (``rule``), and nothing else is
     done this time. ``db`` is the database the command was given, never the marker's. 0 when AP Coder runs as it
     should afterwards."""
-    chosen = rule(state["step"])
+    chosen = rule(state["step"], put_back=bool(state.get("put_back")))
     say(f"{words(state)}.")
     say(plan_words(state, chosen))
     why = refusal({**state, "_marker": str(marker_path(data))})
@@ -294,8 +384,11 @@ def recover(data: Path, db: Path, server: Any, state: dict, *, dry_run: bool, sa
         up = server.up(target)
         if not up and chosen == FINISH:
             say(f"AP Coder {state.get('to')} does not answer: going back to {state.get('from')}.")
+            back = {**state, "step": "going-back"}
+            write(data, back)  # (a power cut while it goes back: the next start goes back, B-1958)
             server.stop()
-            chosen, target = apply({**state, "step": "going-back"}, BACK, data, db, say)
+            chosen, target = apply(back, BACK, data, db, say)
+            clear(data)
             if target is not None:
                 server.start()
                 up = server.up(target)

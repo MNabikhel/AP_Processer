@@ -887,9 +887,10 @@ jobs:
     # asks no password) as the runner's account, under a test label, on 127.0.0.1 over plain HTTP; the dashboard
     # answers; its host is killed with kill -9 and launchd starts it again; service start while it runs restarts it;
     # launchctl bootout (launchd's SIGTERM: the host ends its dashboard, then itself, and stays stopped); service stop,
-    # and it is still stopped a minute later; service start, and it answers; service remove, and the plist is gone.
-    # scripts/ci/macos_service.py (it prints the service's logs and what launchd says on a failure, and removes the
-    # test daemon).
+    # and it is still stopped a minute later; service start, and it answers; an update cut short (root's marker and
+    # stopped file, as sudo server-update leaves them) dealt with by the host at the daemon's next load; service
+    # remove, and the plist is gone. scripts/ci/macos_service.py (it prints the service's logs and what launchd says
+    # on a failure, and removes the test daemon).
     name: The server's service on macOS (launchd)
     runs-on: macos-latest
     timeout-minutes: 20

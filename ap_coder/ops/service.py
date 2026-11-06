@@ -628,10 +628,11 @@ def run_host(
     from ..core.paths import env_path
     from .update_recovery import recover_at_start
 
-    # An update cut short (a power cut): acted on first, its own stop too (D-188). False: the folder to run is another
-    # now (run.cmd, or the Mac's ``current`` link), which the service starts next: ``again()``.
-    if not recover_at_start(data, env_path("AP_DB_PATH") or data / "ap_coder.db", PROJECT_DIR):
-        return again()
+    # An update cut short (a power cut): acted on first, its own stop too (D-188). An exit code: the folder to run is
+    # another now, which the service starts next (``again()``), or only server-update can finish it (0).
+    left = recover_at_start(data, env_path("AP_DB_PATH") or data / "ap_coder.db", PROJECT_DIR)
+    if left is not None:
+        return left
     if stop_flag(data).exists():
         return 0  # stopped on purpose: the repeating trigger (the Mac's next start) starts nothing
     # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
@@ -765,6 +766,12 @@ def switch_folder(data: Path, folder: Path) -> None:
     """The service runs ``folder`` from its next start (``server-update``): the Mac's ``current`` link pointed at it,
     elsewhere Windows' run.cmd rewritten."""
     _backend().switch_folder(data, folder)
+
+
+def can_switch(data: Path, folder: Path) -> bool:
+    """Whether this process may ``switch_folder``: the Mac's ``current`` link is in the code folders' parent, root's,
+    which the service's own account can't change (only sudo can)."""
+    return _backend().can_switch(data, folder)
 
 
 def address(s: ServerSettings) -> str:

@@ -153,6 +153,11 @@ def switch_folder(data: Path, folder: Path) -> None:
     write_runner(data, folder)
 
 
+def can_switch(data: Path, folder: Path) -> bool:
+    """run.cmd's folder (the data folder's ``service``, the service account's) may be written by this process."""
+    return os.access(runner_path(data).parent, os.W_OK)
+
+
 # --- The host's dashboard, ended with it ------------------------------------------------------------------------------
 
 

@@ -181,6 +181,7 @@ def test_install_writes_the_plist_points_current_hands_the_data_folder_over_and_
     assert saved["account"] == "_apcoder" and saved["folder"] == str(mac.folder)
     # The parts the host writes are the account's (root made them); the plist is root's.
     assert {("service", 450, 450), ("logs", 450, 450), ("host.lock", 450, 450)} <= set(mac.owned)
+    assert ("update.lock", 450, 450) in mac.owned  # (made by sudo server-update, its host could not open it: B-1956)
     assert any(name.endswith(".part") and (uid, gid) == (0, 0) for name, uid, gid in mac.owned)
     assert "bootstrap system " + str(mac.plist) in mac.launchd.verbs()
     assert "system/com.apcoder.server" in mac.launchd.loaded
@@ -540,6 +541,7 @@ class FakeMac:
         self.plist, self.misbehave, self.ran = plist, misbehave, []
         self.host = self.dashboard = 0
         self.stopped_at = 0.0
+        self.asked: dict[str, int] = {}  # kill -0 of each process: how many times
 
     def __call__(self, cmd, timeout=300):
         self.ran.append(cmd)
@@ -572,27 +574,40 @@ class FakeMac:
                 self.host, self.dashboard = self.host + 1, self.dashboard + 1  # launchd: a new host, its dashboard
             else:
                 self.host = self.dashboard = 0
-        elif cmd[:3] == ["sudo", "kill", "-0"]:
-            code = 1  # the killed host's dashboard is gone
+        elif cmd[:3] == ["sudo", "kill", "-0"]:  # the old dashboard: gone (a moment later, or never, if so told)
+            asked = self.asked[cmd[3]] = self.asked.get(cmd[3], 0) + 1
+            late = self.misbehave == "the old dashboard ends a few seconds later" and asked <= 2
+            code = 0 if late or self.misbehave == "the old dashboard never ends" else 1
         elif cmd[:3] == ["sudo", "launchctl", "bootout"]:  # launchd's SIGTERM: the host ends its dashboard, then itself
             self.host = self.dashboard = 0
             self.stopped_at = time.monotonic()
+        elif cmd[:4] == ["sudo", "launchctl", "bootstrap", "system"]:  # the Mac's next start: the host deals with it
+            if self.misbehave != "stays stopped after an update cut short":
+                self.host, self.dashboard = 900, 901
+        elif cmd[:3] == ["sudo", "test", "-e"]:  # the update's marker: removed once dealt with
+            code = 0 if self.misbehave == "keeps the marker of an update cut short" else 1
         elif cmd[0] == "grep":
             code = 1 if self.misbehave == "no SIGTERM in its log" else 0
         return subprocess.CompletedProcess(cmd, code, out, "")
 
 
-@needs_ci_script
-@pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "no SIGTERM in its log",
-                                       "comes back"])  # fmt: skip
-def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not(tmp_path, monkeypatch, misbehave):
+def _ci_run(tmp_path, monkeypatch, misbehave: str) -> tuple[int, FakeMac]:
     ci = _ci()
     mac = FakeMac(tmp_path / "com.apcoder.ci.plist", misbehave)
     clock = [0.0]
     monkeypatch.setattr(ci, "run", mac)
     monkeypatch.setattr(ci, "clock", lambda: clock[0])
     monkeypatch.setattr(ci, "pause", lambda seconds: clock.__setitem__(0, clock[0] + max(seconds, 0.5)))
-    code = ci.main(["--data", str(tmp_path / "data"), "--port", "8597", "--account", "runner"])
+    return ci.main(["--data", str(tmp_path / "data"), "--port", "8597", "--account", "runner"]), mac
+
+
+@needs_ci_script
+@pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "no SIGTERM in its log",
+                                       "comes back", "the old dashboard never ends",
+                                       "stays stopped after an update cut short",
+                                       "keeps the marker of an update cut short"])  # fmt: skip
+def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not(tmp_path, monkeypatch, misbehave):
+    code, mac = _ci_run(tmp_path, monkeypatch, misbehave)
     assert code == (0 if not misbehave else 1)
     commands = [" ".join(c) for c in mac.ran]
     assert any("service install --account runner --insecure-http --host 127.0.0.1 --port 8597" in c
@@ -601,3 +616,25 @@ def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not
     assert not mac.plist.exists()  # removed at the end, failed or not
     if misbehave:
         assert any(c.startswith("sudo tail -n 80") for c in commands)  # the logs, for the failure
+    if not misbehave:  # an update cut short, as root's sudo leaves it: its marker, then the Mac's next start
+        assert any("update_recovery" in c and "safety-copy" in c for c in commands)
+        assert commands.index(f"sudo launchctl bootstrap system {mac.plist}") > max(
+            i for i, c in enumerate(commands) if "update_recovery" in c)  # fmt: skip
+
+
+@needs_ci_script
+def test_the_ci_script_gives_the_old_dashboard_a_while_to_end(tmp_path, monkeypatch):
+    """launchd ends a killed host's processes as it starts the new one: the old dashboard can still be there a moment
+    after the new one answers. It was looked at once, right then, and the job failed now and again (B-1959)."""
+    code, mac = _ci_run(tmp_path, monkeypatch, "the old dashboard ends a few seconds later")
+    assert code == 0 and max(mac.asked.values()) == 3
+
+
+def test_the_hosts_switch_is_asked_of_the_links_folder(tmp_path, monkeypatch):
+    """The Mac's host, as the service's account, can't change /Library/APCoder (root's): it is asked first, so the
+    host never puts a database back and then fails at the link (B-1957)."""
+    asked = []
+    monkeypatch.setattr(os, "access", lambda path, mode: asked.append((Path(path), mode)) or False)
+    folder = tmp_path / "Library" / "APCoder" / "APProcessor-1.4.0"
+    assert service_macos.can_switch(tmp_path / "data", folder) is False
+    assert asked == [(folder.parent, os.W_OK)]

@@ -1,7 +1,8 @@
 """CI's check of the company server's service on a Mac (D-186), for real: the LaunchDaemon installed with sudo, the
 dashboard answering, its host killed (launchd starts it again), restarted while it runs (``service start``), stopped
 by launchd itself (``launchctl bootout``: SIGTERM, on which the host ends its dashboard, then itself, and stays
-stopped), stopped with ``service stop`` (still stopped a minute later), started again, removed (its plist gone). Run
+stopped), stopped with ``service stop`` (still stopped a minute later), started again, an update cut short (root's
+marker and ``stopped`` file) dealt with by the host at the daemon's next load, removed (its plist gone). Run
 by .github/workflows/ci.yml (job macos-service) on GitHub's macOS runner, whose sudo asks no password; on a Mac of
 your own, from an AP Coder folder set up with its .venv:
 
@@ -99,9 +100,18 @@ class Check:
         self.until(f"{what}: its dashboard answers",
                    lambda f: self.answering(f) and f.get("pid") != host and f.get("dashboard_pid") != dashboard,
                    within=240)  # fmt: skip
-        if dashboard and run(["sudo", "kill", "-0", str(dashboard)]).returncode == 0:
-            raise Failed(f"{what}: the old dashboard (process {dashboard}) still runs")
+        if dashboard:
+            self.gone(f"{what}: the old dashboard (process {dashboard})", dashboard)
         print(f"{what}: the dashboard answers again {clock() - started:.0f} s later", flush=True)
+
+    def gone(self, what: str, pid: int, within: float = 30) -> None:
+        """``pid`` has ended within ``within`` seconds (``kill -0`` fails): launchd ends the old host's processes as
+        it starts the new one, which may be a moment after the new dashboard answers."""
+        deadline = clock() + within
+        while run(["sudo", "kill", "-0", str(pid)]).returncode == 0:
+            if clock() >= deadline:
+                raise Failed(f"{what} still runs {within:.0f} s later")
+            pause(1.0)
 
     def kill_the_host(self, within: float) -> None:
         """``kill -9`` of the host: launchd ends its dashboard with it (the process group) and, KeepAlive, starts the
@@ -130,8 +140,8 @@ class Check:
         log = str(self.data / "logs" / "service.log")
         if run(["grep", "-q", "the host was asked to stop (SIGTERM)", log]).returncode:
             raise Failed("the host's log does not say it was asked to stop (SIGTERM)")
-        if dashboard and run(["sudo", "kill", "-0", str(dashboard)]).returncode == 0:
-            raise Failed(f"the dashboard (process {dashboard}) still runs after launchd stopped its host")
+        if dashboard:
+            self.gone(f"the dashboard (process {dashboard}), after launchd stopped its host,", dashboard)
         self.stays_stopped(stays, "launchctl bootout")
 
     def stays_stopped(self, stays: float, after: str) -> None:
@@ -156,6 +166,31 @@ class Check:
         if self.service("start").returncode:
             raise Failed("service start ended with an error")
         self.until("the dashboard answers after service start", self.answering, within=240)
+
+    def cut_short(self, plist: str) -> None:
+        """An update cut short, as a power cut leaves it: root's sudo server-update had stopped the service (its
+        ``stopped`` file) and was making the safety copy, its marker (update.json) written by root. At the Mac's next
+        start (launchd loading the daemon) the host, as the service's account, deals with it: the version it runs
+        starts, the marker and the ``stopped`` file gone, said in its log (D-188). Nothing else is touched."""
+        if self.service("stop").returncode:
+            raise Failed("service stop (the update's own) ended with an error")
+        marker = self.data / "service" / "update.json"
+        state = {"from": "0.0.1", "to": "0.0.2", "from_folder": str(ROOT), "label": "before-update-0.0.2",
+                 "to_folder": str(ROOT.parent / "APProcessor-ci-cut-short"), "database": str(self.data / "ap_coder.db"),
+                 "step": "safety-copy", "started": "2026-11-06T02:00:00", "pid": 1, "safety_copy": ""}  # fmt: skip
+        write = ("import json, sys; from pathlib import Path; from ap_coder.ops import update_recovery; "
+                 "update_recovery.write(Path(sys.argv[1]), json.loads(sys.argv[2]))")  # fmt: skip
+        done = run(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", self.python, "-c", write, str(self.data),
+                    json.dumps(state)])  # fmt: skip
+        if done.returncode:
+            raise Failed("the marker of an update cut short could not be written (as root)")
+        run(["sudo", "launchctl", "bootstrap", "system", plist])  # the Mac's next start: launchd loads it (RunAtLoad)
+        self.until("the dashboard answers after an update cut short", self.answering, within=240)
+        if run(["sudo", "test", "-e", str(marker)]).returncode == 0:
+            raise Failed(f"the update cut short was not dealt with: {marker} is still there")
+        log = str(self.data / "logs" / "service.log")
+        if run(["grep", "-q", "was cut short while it made the safety copy", log]).returncode:
+            raise Failed("the service's log does not say it dealt with the update cut short")
 
     def remove(self, plist: str) -> None:
         if self.service("remove").returncode:
@@ -196,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         check.start()
         check.stop(args.stays_stopped)
         check.start()
+        check.cut_short(plist)
         check.remove(plist)
     except (Failed, subprocess.TimeoutExpired, OSError, ValueError, KeyError) as exc:
         print(f"\nFAILED: {exc}", flush=True)
@@ -207,7 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         if made_link and link.is_symlink():
             run(["sudo", "rm", str(link)])  # (the link install made beside this folder)
     print("\nThe LaunchDaemon: installed, answering, started again by launchd after a kill, restarted, stopped by "
-          "launchd (SIGTERM), stopped for good, started, removed.")  # fmt: skip
+          "launchd (SIGTERM), stopped for good, started, an update cut short dealt with at its next start, "
+          "removed.")  # fmt: skip
     return 0
 
 

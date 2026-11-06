@@ -666,8 +666,9 @@ starts it again, and says why. Either way the new folder is kept to look at; del
 
 **If the power goes off (or the window is closed) during an update**, where it was is in
 `D:\APCoderData\service\update.json` at each step. The service's next start (the server booting, or the scheduled
-task's 5-minute retry) and the next `server-update` act on it before anything else, and say what they did in
-`logs\service.log` or on screen:
+task's 5-minute retry) and the next `server-update` act on it before anything else (on a Mac, the service's start
+leaves to `server-update` what only an administrator may do: below), and say what they did in `logs\service.log` or
+on screen:
 
 - cut short while it prepared, stopped the service or made the backup: the old version starts as it was (its
   database was not touched); a backup cut short is removed;
@@ -678,8 +679,16 @@ task's 5-minute retry) and the next `server-update` act on it before anything el
   goes back when it still runs the old folder (run.cmd not rewritten yet);
 - cut short while it went back: going back is finished.
 
+The database is put back once: the marker then says so, and a start that fails after it never puts it back again.
 `server-update` then stops there: run it again to update. While one `server-update` runs, another (and the service's
 retry) leaves it alone (`service\update.lock`).
+
+On a Mac the service's start does all of this too, but for what only an administrator may do: the service runs as
+`_apcoder`, and `/Library/APCoder/current` is root's. So when an update was cut short while it went back with the link
+still on the new folder, the service changes nothing (no backup put back), stays stopped, and `logs/service.log` says
+so: run `apc server-update` (section 14) again, which goes back and starts it. The same when the service can't tell an
+update cut short from one running (it can't open `service/update.lock`, made by an older `sudo server-update`): it
+serves on if the update had not stopped it yet, and else stays stopped until `apc server-update`.
 
 **Going back** after an update that went through, when the new version turns out wrong:
 
@@ -940,7 +949,9 @@ It does the steps of section 11 with the LaunchDaemon: it stops it, unzips the b
 (`/Library/APCoder/APProcessor-0.5.0`), and once the new folder is set up and checked, points `/Library/APCoder/current`
 at it in one step (a new link renamed over the old one, while the service is stopped) and starts the service again. The
 LaunchDaemon itself never changes. `apc server-update --back` points the link back. Leave the `current` link to
-`server-update`; never change it while the service runs.
+`server-update`; never change it while the service runs. An update cut short (a power cut) is dealt with at the Mac's
+next start as section 11 says, except what only root can do (the link): then the service stays stopped and its log
+says to run `apc server-update` again.
 
 Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
 the same data. Use `service stop` and `service start`.

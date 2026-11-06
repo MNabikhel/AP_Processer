@@ -2917,7 +2917,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     won't, then exit 0); "start me again", `service.again()`: `HOST_AGAIN` (75) off Windows, so launchd starts it
     again 10 s later, 0 on Windows as before (its task comes back every 5 minutes), when another host holds the lock
     or when the folder to run has changed (an update's recovery at the host's start, D-188, returns `again()`: the
-    host started by the `current` link's new target is the right one); a crash or a kill is started again.
+    host started by the `current` link's new target is the right one); a crash or a kill is started again. An update
+    cut short that only root can finish (the link to switch is root's, D-188) ends with 0 too: left stopped, its log
+    saying to run `sudo server-update`, never started again every 10 s (B-1956, B-1957).
     `service stop` is the flag, `/shutdown`, then `bootout`: it stays stopped after a reboot (the host launchd starts
     at load ends at once). `service start` bootstraps it, or `kickstart -k` when it is loaded.
   - **server-update:** `switch_to` asks the backend (`service.switch_folder`): Windows rewrites run.cmd as before;
@@ -3056,11 +3058,39 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     back (`put_back`), the old version starts; `switch`, `start` → finished (the new version starts, recorded with
     `previous_folder` and `pre_update_backup`, so `--back` works); server-update goes back when the new version does
     not answer, and the service host goes back at `switch` when it still runs the old folder. A host whose folder is not
-    the one to run rewrites run.cmd and exits: the task's 5-minute trigger starts the right one. server-update acts on
+    the one to run rewrites run.cmd and exits: the task's 5-minute trigger starts the right one (a Mac's host can't:
+    below). server-update acts on
     a marker only when both folders are beside its own (the data folder is the service account's to write, D-109),
     with the database it was given, a safety copy only from `backups`; it then stops ("run server-update again").
     Each step is proven by a test that cuts the update there (a `BaseException`, so no rollback code runs) and then
     recovers both ways (`tests/ops/test_update_recovery.py`).
+  - **The service host's part** (B-1956, B-1957, B-1958): it switches nothing when the rule's folder is the one it
+    runs (only server.json's `folder` is written), and asks before it acts whether it may switch at all
+    (`service.can_switch`: the folder it would write, not the platform). Once the safety copy is put back, the marker
+    says so (`put_back`): never put back twice, and only going back is left. On a Mac the host runs as `_apcoder`,
+    and the `current` link and its folder are root's, so by step:
+
+    | cut short at | the host runs (the link's) | it does |
+    |---|---|---|
+    | `prepare`, `stop`, `safety-copy` | the old folder (moved at the switch only) | the old version starts as it was |
+    | `migrate` | the old folder | the safety copy put back once; the old version starts |
+    | `switch` | the old folder / the new (moved before the cut) | put back once, old starts / finished, new starts |
+    | `start` | the new folder | finished: the new version starts |
+    | `going-back` | the old folder (moved back) / the new | put back once, old starts / **nothing changed**, exit 0 |
+
+    "Nothing changed": no put back under the new version, the marker kept, exit 0 (launchd leaves it stopped), the log
+    saying to run `sudo server-update`, which goes back. Windows' host there rewrites run.cmd and exits (`again()`):
+    its task starts the old folder. **Can't tell** (`update.lock` won't open: root's, made by a `sudo server-update`,
+    `--dry-run` too, before this, and no `service start` since to hand it back): nothing changed, said in the log, and
+    the host goes on as without a marker: at `prepare` the old version serves on (it was serving), after it the
+    update's own `stopped` file keeps it stopped (exit 0) for server-update. A put back the account may not make (a
+    backups folder root's sudo made: `PermissionError`): exit 0 too, not 75 every 10 s. Any other failure: `again()`
+    while the database may be half put back or the folder is wrong (tried again), else AP Coder starts and the rest
+    is done at the next start. `service install` makes `update.lock` the account's (`hand_over`), and a lock or a
+    marker root's sudo makes is the service folder owner's from the start (`_owned`: on the file just made with
+    `O_EXCL`, never through a link). server-update going back after its own recovery (the new version did not
+    answer) writes a `going-back` marker first. Proven on Linux with the host really run as another account (uid
+    65534, the code folders' parent root's), each step; the macOS CI job cuts one short at the safety copy for real.
   - **A restore** (`core/store/backups.py`, `web/maintenance.py`): its marker `<database>.restoring` (beside the
     database, never in it) is {pid, started, backup}; on the server an ASGI middleware outside the session answers
     503 (a plain page that refreshes itself, JSON for fetches, `Retry-After: 60`) while it is there and its process

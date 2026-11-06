@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core import paths
 from . import service
+from .update_recovery import LOCK as UPDATE_LOCK
 
 if TYPE_CHECKING:
     from .service import Say, ServerSettings
@@ -171,6 +172,12 @@ def switch_folder(data: Path, folder: Path) -> None:
     point_current(folder)
 
 
+def can_switch(data: Path, folder: Path) -> bool:
+    """The ``current`` link's folder may be written by this process: root's /Library/APCoder, never by the service's
+    account (its host leaves the switch to sudo server-update)."""
+    return os.access(current_link(folder).parent, os.W_OK)
+
+
 # --- This Mac: root, the service's account, its part of the data folder -----------------------------------------------
 
 
@@ -195,9 +202,10 @@ def own(path: Path, uid: int, gid: int) -> None:
 
 
 def hand_over(data: Path, account: str, uid: int, gid: int) -> str:
-    """The parts of the data folder the host writes (``service/``, its ``host.lock``, ``logs/``; the data folder too
-    when made now) made the service account's: as root, ``service install`` would otherwise leave them root's, and
-    the host could not start. Then what else root made in it (``hand_back``), when the data folder is the account's.
+    """The parts of the data folder the host writes (``service/``, its ``host.lock`` and ``update.lock``, ``logs/``;
+    the data folder too when made now) made the service account's: as root, ``service install`` would otherwise leave
+    them root's, and the host could not start (nor deal with an update cut short, B-1956). Then what else root made in
+    it (``hand_back``), when the data folder is the account's.
     A link there is refused, and a file with other names (a hard link) left as it is: the account can write here, and
     root must not hand it what they point at. Returns a warning ("" = none)."""
     made = not data.exists()
@@ -209,12 +217,12 @@ def hand_over(data: Path, account: str, uid: int, gid: int) -> str:
         folder.mkdir(exist_ok=True)
     for folder in [data, *folders] if made else folders:
         own(folder, uid, gid)
-    lock = service.host_lock(data)
-    if not lock.exists():
-        lock.touch()
-    found = lock.lstat()
-    if stat.S_ISREG(found.st_mode) and found.st_nlink == 1:
-        own(lock, uid, gid)
+    for lock in (service.host_lock(data), service.service_dir(data) / UPDATE_LOCK):  # (made by root, the host can't)
+        if not lock.exists():
+            lock.touch()
+        found = lock.lstat()
+        if stat.S_ISREG(found.st_mode) and found.st_nlink == 1:
+            own(lock, uid, gid)
     if data.stat().st_uid == uid:
         hand_back(data, uid, gid)
         return ""
