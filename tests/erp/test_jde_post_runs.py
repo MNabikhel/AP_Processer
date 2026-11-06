@@ -275,6 +275,24 @@ def test_ais_giving_up_with_its_own_error_is_an_answer_lost_not_a_refusal(tmp_pa
     assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
 
 
+def test_a_voucher_changed_meanwhile_counts_as_done_in_the_runs_progress(tmp_path, ais):
+    """B-1891: a voucher the run skipped because it changed meanwhile (sent from elsewhere, its batch undone, its file
+    downloaded) was never counted as done, so the job's progress ended at "1 of 2"."""
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    jde_post.dry_run(store, batch)
+
+    def elsewhere(key, inputs):  # as the first is sent, the second is changed by another process
+        if key == "voucher_create" and inputs.get("mode") == "FINAL":
+            with store._conn() as conn:
+                conn.execute("UPDATE jde_postings SET rev = rev + 1 WHERE invoice_id = 2")
+
+    ais.plan = elsewhere
+    seen = []
+    result = jde_post.post(store, batch, progress=seen.append)
+    assert any("changed meanwhile" in s for s in result["skipped"]) and result["posted"] == 1
+    assert (seen[-1]["done"], seen[-1]["total"]) == (2, 2)
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""

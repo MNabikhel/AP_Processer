@@ -2471,7 +2471,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       run goes on; JDE not reached (refused connection, 503 after the retries, the sign-in or the permission refused)
       or `LATE_STOP` (3) late answers in a row stop it, the rest queued saying why; so does the run's time
       (`post_minutes`, 60). A voucher's request waits `voucher_timeout` (120 s), the connection's 30 s stays for the
-      reads and lookups. The exports page's job shows done of total, posted, being checked, refused, waiting, held.
+      reads and lookups. The exports page's job shows done of total (one left as it changed meanwhile is done too,
+      B-1891), posted, being checked, refused, waiting, held.
       A run cut short: each voucher of a go-ahead has when its run is over at the latest as its next try
       (`_run_over`: the run's time, the last send it began, a margin), and one not sent by then (AP Coder stopped)
       is the queue's (`waiting`); stopped by an error, the run queues the rest at once. A dry run since the go-ahead

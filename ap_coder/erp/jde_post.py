@@ -869,6 +869,7 @@ class _Run:
         self.minutes, self.began = settings.post_minutes, time.monotonic()
         self.total, self.progress = total, progress
         self.outcome: dict[str, str] = {}  # key -> its status now
+        self.skipped: set[str] = set()  # the keys it left as they changed meanwhile (done too, B-1891)
         self.late: dict[str, float] = {}  # key -> when its answer was given up on (time.monotonic)
         self.in_a_row = 0
         self.why = ""
@@ -922,8 +923,11 @@ class _Run:
     def done(self, row: dict[str, Any], status: str) -> None:
         if status != "skipped":
             self.outcome[row["idem_key"]] = status
+        else:
+            self.skipped.add(row["idem_key"])
         if self.progress is not None:
-            self.progress({"done": len(self.outcome), "total": self.total, **self.counts(), "note": self.note})
+            done = len(self.outcome.keys() | self.skipped)
+            self.progress({"done": done, "total": self.total, **self.counts(), "note": self.note})
 
     def after(self, row: dict[str, Any], exc: jde_ais.AisError | None, sent: bool) -> bool:
         """Whether JDE may still be asked after this voucher's call (``sent``: a send, not a lookup)."""
