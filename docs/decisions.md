@@ -2824,3 +2824,74 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `web/pages/invoice.py`, `web/pages/review.py` (`queue_rows`), `web/static/js/invoice.js`,
     `web/templates/{invoice,review,_invoice_document,_invoice_live}.html`; `tests/web/test_web_invoice_together.py`,
     `tests/core/test_store_ephemeral.py`)
+- **D-185** · **Bulk approval as a background job; a session that ended keeps the page; every request of the pages'
+  scripts has a deadline** (scale goal, phase 5, S2; items 6, 11 and 15 of `docs/archive/scale-2026-11/web_frontend.md`;
+  B-1925 to B-1927).
+  - **Why:** a person approving 200 clean invoices held a web worker's thread for the whole run (6.6 s at 200 on this
+    machine, one request with no progress, cut by a proxy's timeout while it went on behind); a check, an approval or a
+    poll answered by the login sent the page to the login (the review screen kept its edits in the tab, B-1594; any
+    other page was lost); and one request had no deadline (the upload, B-1926), the data-long actions none either.
+  - **The job** (`core/store/bulk_jobs.py`, table `bulk_jobs` by `_SCHEMA`, no schema version of its own, as
+    `past_lines`): the invoices asked, each with its `row_identity` as the page listed it, who asked (their name and
+    login, and the person as `identity.kept_person` keeps them), what was approved and what was left with why.
+    - One open (waiting or being approved) a person (a unique index and one write transaction: four web workers asking
+      at once get one job); asked again meanwhile, the page of the one under way says so.
+    - Done by the company server's background process (`jobs.BulkRunner`, started by `app.start_background_work`, two
+      at a time, oldest first), as D-169's downloads; on a laptop, or a server of one process without its background
+      work, by a thread of the process asked (`jobs.approve_here`), which ends once none waits.
+    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`) → "changed
+      meanwhile"; not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
+      `bulk_approve`, which the tests and the bench still use); else approved as coded. The approval and the job's
+      record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only while the job is still
+      that runner's, and in it the review screens' drafts are looked at (someone's edits kept → "it has edits open on
+      its review screen"; the queue's request read them once at its start, now each invoice's own moment); the
+      approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted on meanwhile.
+      So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
+  - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
+    counted); at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
+    background process a data folder, D-111). One whose process stopped noting its progress for 30 s is taken again by
+    another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
+    3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
+    way; one of the database before a restore is no one's. What was done is kept and shown either way.
+  - **As the person who asked:** the job runs inside `identity.acting_as(kept)` (`person()`, the events' actor and
+    address as their request's), their name and login on each approval and its learning: whether their session goes
+    on or not. On the server it stops (with why) once their account may no longer approve (turned off, or a role below
+    Clerk): an Admin's change applies to the invoices not approved yet.
+  - **The request:** `POST /review/bulk-approve` starts it and waits up to `BULK_WAIT` (3 s, as Process waits at most
+    3 s, D-172) holding no thread (an async loop on an event set by the thread of this process, or, with several web
+    workers, a look at the job every 0.05 to 0.25 s). Done by then: the same answer as before (the queue, "Approved N
+    invoices", the ones not approved and why), so the tests, the bench and a small approval are unchanged. Not yet: to
+    `/review/bulk`. The form is no longer data-long.
+  - **The page** (`/review/bulk`, `review_bulk.html`): "Approving: 37 of 200 approved, 2 need a look", followed by
+    `app.js`'s `data-job-status` from `/review/bulk/status` (an automatic look: it keeps no session going); once done,
+    what was done and each invoice left, linked while it is still in the queue. Safe to leave: the queue says "Your
+    bulk approval is under way: …, See how far it got", then once "…is done: …" until the page is seen. Its routes are
+    Clerk's, and a person's job is theirs alone.
+  - **The session ended** (server mode; and a laptop shared on the office network that asks who it is again): every
+    request goes through `fetchWithin`, which sees the login's answer (a 401, or a look sent on to /login or /who) and
+    says so once, on the page, which stays as it is: "Your session ended: sign in again; your edits are kept" (the
+    last part only when the review screen kept them in the tab), with "Sign in again" to `/login?next=<this page>`.
+    The review screen keeps its edits in the tab (B-1594's `apc:session-ended`) at every refused check and as the
+    link is followed, then puts them back as the person's draft after the login. `post` answers such a 401 (the
+    middleware's, marked `session_ended`) with nothing to follow or show; a login step's own 401 is followed as it is
+    (B-1925). Polls stop (B-1712) without reloading the page; the download link and the upload keep the page too.
+    - What the server keeps: each check of the review screen saves its coding as the person's draft (`invoice_drafts`,
+      D-86), so everything up to the last check answered before the session ended is on the server; Approve sends the
+      whole form. Edits after it are only in the tab (sessionStorage) until the login: a tab closed meanwhile loses
+      them. Elsewhere nothing is kept: a settings form, a note typed, a file picked for upload stays on the page while
+      it is open, but following "Sign in again" leaves it (sign in in another tab to keep it).
+  - **Deadlines:** `fetchWithin` is the pages' one fetch (`tests/meta/test_code_rules.py`: no bare `fetch(` outside
+    it, an XMLHttpRequest only with an abort); the review screen's last check sent as the page closes goes through it.
+    A look 30 s, an action 5 minutes (the Process POST answers within 3 s, D-172; the bulk approval within
+    `BULK_WAIT`), a data-long action (a restore, a big import) 2 hours (`LONG_MS`, it had none). The upload: 30 s
+    without its files moving on, or without the answer once they are all sent (B-1926). Long downloads are jobs
+    (D-169).
+  - **Measured** (`scripts/ci/perf_timing.py --invoices 600 --bulk 200`, which now waits for the job's end): before,
+    6.6 s in the request, one thread held; now the answer after 3 s holding none, the 200 approved in 6.3 s by the
+    job's thread (6 connections in all). `scripts/same_behaviour.py --ref 6152f8a approve`: same.
+  - **Left:** the queue still lists and posts every candidate (a cap and "select all N" are item 12); the page doesn't
+    warn before the idle limit; the job's progress is a line, not a bar.
+  - (`core/store/bulk_jobs.py`, `coding/bulk.py`, `web/jobs.py`, `web/pages/review.py` (the bulk route and its page),
+    `web/identity.py`, `web/pages/login.py`, `web/app.py`, `web/roles.py`, `web/static/js/{app,process,settings}.js`,
+    one call of `invoice.js`, `review.html`, `review_bulk.html`; `tests/core/test_bulk_jobs.py`,
+    `tests/web/test_web_review_bulk.py`, `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)

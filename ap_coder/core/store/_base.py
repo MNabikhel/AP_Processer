@@ -40,7 +40,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
 # 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of the company
 # server, and the downloads its background process makes, reports.py, D-169); past_lines came later in 27 (by
-# _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178)
+# _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178),
+# and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -343,6 +344,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_jobs_one ON report_jobs (owner, kind, p
     ('waiting', 'running');
 CREATE INDEX IF NOT EXISTS report_jobs_state ON report_jobs (state, id);
 CREATE INDEX IF NOT EXISTS report_jobs_owner ON report_jobs (owner, state);
+CREATE TABLE IF NOT EXISTS bulk_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, person TEXT NOT NULL,
+    ids TEXT NOT NULL, state TEXT NOT NULL, approved TEXT NOT NULL DEFAULT '[]', skipped TEXT NOT NULL DEFAULT '[]',
+    error TEXT NOT NULL DEFAULT '', runner TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0, db TEXT NOT NULL,
+    version TEXT NOT NULL, created_at REAL NOT NULL, renewed_at REAL NOT NULL DEFAULT 0,
+    finished_at REAL NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS bulk_jobs_one ON bulk_jobs (owner, db) WHERE state IN ('waiting', 'running');
+CREATE INDEX IF NOT EXISTS bulk_jobs_state ON bulk_jobs (state, id);
+CREATE INDEX IF NOT EXISTS bulk_jobs_owner ON bulk_jobs (owner, id);
 """
 
 # The page reader's queue (``page_reads.status``, ``page_queue``). A read not renewed for READING_STALE_SECONDS was

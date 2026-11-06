@@ -115,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
             def bulk():
                 answer = client.post("/review/bulk-approve", data={"ids": [str(i) for i in bulk_ids]}, headers=PAGE)
                 assert answer.status_code == 200, answer.text
+                with store.session():  # (one connection to look: D-185, the answer comes within a few seconds)
+                    while (store.latest_bulk_job("") or {}).get("state") in ("waiting", "running"):  # to its end
+                        time.sleep(0.01)
 
             rows.append((f"bulk approve {len(bulk_ids)}", *timed(bulk, 1)))
         finally:

@@ -16,7 +16,7 @@ if (selfTest && selfTest.dataset.state === "running") {
     if (snap.state !== "running") return;
     document.getElementById("self-test-started").textContent = snap.started || "";
     document.getElementById("self-test-pages").textContent = snap.pages ? ` · ${snap.done} of ${snap.pages} pages read` : "";
-  }, every).then(() => location.reload());
+  }, every).then((snap) => snap !== null && location.reload()); // (null: the session ended, said on the page)
 }
 
 // Restore: the button only works once RESTORE is typed (the server checks it again).

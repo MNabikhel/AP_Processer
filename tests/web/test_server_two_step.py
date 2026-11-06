@@ -224,3 +224,49 @@ def test_the_qr_code_is_an_svg_of_the_address_with_its_quiet_zone():
     size = int(re.search(r'viewBox="0 0 (\d+) \1"', svg).group(1)) - 2 * login.QUIET
     assert svg.startswith("<svg") and "<path" in svg and "script" not in svg
     assert size % 4 == 1 and size >= 21  # a QR code is 17 + 4 x its version modules a side
+
+
+def test_a_login_step_left_too_long_goes_back_to_the_login_with_the_page_asked_for(store):
+    """B-1925: a login half way that ended (left past its time, or logins paused) sent its step's answer to the login
+    page without the page the person was going to: logging in again opened the queue. The page's script then added its
+    own ``?next=`` after the message's (``/login?flash=…?next=…``), so the message was lost too. The answer carries
+    ``next`` itself, and the login page says why."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from ap_coder.core.store.users import PENDING_KIND
+
+    account(store, "clara")
+    client = server_client(store)
+    wanted = "/review/7?sort=amount"
+    step = redirect(client.post("/login", data={"username": "clara", "password": GOOD, "next": wanted}, headers=PAGE))
+    assert step.startswith("/login/code?next=")
+    with store._conn() as conn:  # past its time
+        conn.execute("UPDATE ephemeral SET expires_at = 0 WHERE kind = ?", (PENDING_KIND,))
+    pending = f"{PENDING_COOKIE}={client.cookies.get(PENDING_COOKIE)}"
+    answer = client.post("/login/code", data={"code": authenticator_code(store, "clara"), "next": wanted},
+                         headers={**PAGE, "Cookie": pending})  # fmt: skip
+    assert answer.status_code == 401 and not answer.json().get("session_ended")  # (the login's own: followed as is)
+    back = urlsplit(answer.json()["redirect"])
+    query = parse_qs(back.query)
+    assert back.path == "/login" and query["next"] == [wanted] and query["flash"], answer.json()
+    page = client.get(answer.json()["redirect"]).text
+    assert login.TOO_LONG in page and f'name="next" value="{wanted}"' in page.replace("&amp;", "&")
+
+
+@pytest.mark.parametrize("wanted, lands", [
+    ("/review/7?sort=amount&show=ready", "/review/7?sort=amount&show=ready"),
+    ("//elsewhere.example/review", "/review"),
+    ("https://elsewhere.example/review", "/review"),
+    ("/\\elsewhere.example", "/review"),
+    ("/\telsewhere.example", "/review"),
+    ("/logout", "/review"),
+])  # fmt: skip
+def test_the_login_comes_back_to_the_page_asked_for_and_only_to_a_page_of_this_server(store, wanted, lands):
+    """A page asked for without a session goes to the login with it (``next``), through both steps, and comes back to
+    it after them; a ``next`` that is not a path of this server (another site, by any spelling) is the queue (D-185)."""
+    account(store, "clara")
+    client = server_client(store)
+    asked = client.get("/review/7?sort=amount&show=ready")
+    assert asked.status_code == 303
+    assert asked.headers["location"] == "/login?next=%2Freview%2F7%3Fsort%3Damount%26show%3Dready"
+    assert redirect(sign_in(client, "clara", GOOD, next=wanted)) == lands

@@ -1546,7 +1546,7 @@ window.addEventListener("pagehide", () => {
   if (!form || readOnly || stale || !timer || form.dataset.sending) return;
   clearTimeout(timer);
   timer = 0;
-  fetch(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }).catch(() => {});
+  fetchWithin(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }, ACTION_MS).catch(() => {});
 });
 
 /* ---------- Undo: the last change, put back (D-60) ----------

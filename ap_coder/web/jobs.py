@@ -15,6 +15,9 @@ result the page shows when it is done). An exception becomes the job's error, sh
         return {"messages": [{"text": "3 invoices read and coded.", "tone": "ok"}]}
 
     started = jobs(request).get("process").start(work)
+
+A bulk approval (D-185) is a job of the database instead, done by the company server's background process or a thread
+of the laptop's own, as the person who asked: ``BulkRunner``, ``approve_here`` and ``run_bulk`` below.
 """
 
 from __future__ import annotations
@@ -29,6 +32,8 @@ import secrets
 import threading
 from collections.abc import Callable
 from typing import Any
+
+from ap_coder.web import identity
 
 IDLE, RUNNING, DONE, ERROR = "idle", "running", "done", "error"
 MAX_LINES = 500  # log lines kept per job (a page shows the newest)
@@ -210,3 +215,161 @@ class Jobs:
 
 def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
+
+
+# --- Bulk approvals, approved in the background (D-185) ------------------------------------------------------------
+# A person's bulk approval is a job of the database (``Store.start_bulk_job``), not of a process: the company server's
+# background process approves it (``BulkRunner``, started by ``app.start_background_work``); a laptop, or a server of
+# one process without its background work (a first test), on a thread of the process asked (``approve_here``). Each
+# is done as the person who asked (``identity.acting_as``), their session ended or not.
+
+BULK_RUNNERS = 2  # bulk approvals the background process does at once, each on a thread of its own
+BULK_POLL = 0.5  # seconds between two looks for a bulk approval waiting (the background process)
+BULK_STALE = 30.0  # seconds without an invoice done: the process approving them stopped, the next one goes on
+NOT_DONE = "AP Coder stopped approving these invoices ({why}). The ones still in the queue need a person."
+NO_LONGER = ("AP Coder stopped approving these invoices: your account can no longer approve invoices (an Admin "
+             "changed it). The ones still in the queue need a person.")  # fmt: skip
+_ENDED: dict[tuple[str, int], threading.Event] = {}  # bulk approvals a request of this process waits for (``ended``)
+_ENDED_LOCK = threading.Lock()
+
+
+def ended(store: Any, job_id: int) -> threading.Event:
+    """Set once bulk approval ``job_id`` ends in this process (a request waits for it holding no thread, then
+    ``forget_ended``)."""
+    with _ENDED_LOCK:
+        return _ENDED.setdefault((str(store.path), job_id), threading.Event())
+
+
+def forget_ended(event: threading.Event) -> None:
+    """No request waits for the bulk approval ``event`` (``ended``) is of any more."""
+    with _ENDED_LOCK:
+        for key in [k for k, e in _ENDED.items() if e is event]:
+            del _ENDED[key]
+
+
+def _may_not(store: Any, kept: dict[str, Any]) -> str:
+    """Why the person who asked may no longer approve: on the server, their account turned off or its role lowered
+    since (an Admin's change applies to the invoices not approved yet); "" when they still may."""
+    from ap_coder.web import roles
+
+    if not kept.get("user_id"):
+        return ""
+    user = store.user(kept["user_id"])
+    allowed = user is not None and user.get("active") and roles.allowed(user["role"], roles.CLERK)
+    return "" if allowed else NO_LONGER
+
+
+def run_bulk(store: Any, settings: Any, job: dict[str, Any], runner: str, halt: threading.Event | None = None) -> None:
+    """Approve bulk approval ``job`` (claimed by ``runner``) to its end, as the person who asked, and end it: done, or
+    stopped with why. Put back in line when ``halt`` is set meanwhile (AP Coder stopping): the next start goes on."""
+    from ap_coder.coding import bulk
+
+    halt = halt or threading.Event()
+    kept = job["person"].get("as") or {}
+    try:
+        with identity.acting_as(kept), store.session():
+            why = bulk.approve_in_job(store, settings, job, runner, stopping=halt.is_set,
+                                      refused=lambda: _may_not(store, kept))  # fmt: skip
+    except bulk.Stopping:
+        if halt.is_set():
+            store.release_bulk_job(job["id"], runner)
+        return
+    except Exception as exc:  # noqa: BLE001 - the person is told, never left waiting
+        logging.getLogger(__name__).exception("bulk approval %s stopped", job["id"])
+        why = NOT_DONE.format(why=str(exc) or type(exc).__name__)
+    try:
+        store.end_bulk_job(job["id"], runner, why)
+    finally:
+        with _ENDED_LOCK:
+            waiting = _ENDED.get((str(store.path), job["id"]))
+        if waiting is not None:
+            waiting.set()
+
+
+class BulkRunner:
+    """The bulk approvals waiting, approved by the company server's background process (``app.start_background_work``):
+    ``BULK_RUNNERS`` at a time, oldest first. At its start the ones left being approved are put back in line: the
+    process that approved them stopped (one background process at a time, D-111)."""
+
+    def __init__(self, settings_factory: Callable[[], Any], store_factory: Callable[[], Any]) -> None:
+        self.settings_factory, self.store_factory = settings_factory, store_factory
+        self._halt, self._wake = threading.Event(), threading.Event()
+        self.thread = threading.Thread(target=self._run, name="ap-coder-bulk", daemon=True)
+
+    def start(self) -> BulkRunner:
+        try:
+            self.store_factory().release_left_bulk_jobs()
+        except Exception:  # noqa: BLE001 - a busy database: taken again once BULK_STALE has passed
+            logging.getLogger(__name__).warning("the bulk approvals left were not put back in line", exc_info=True)
+        self.thread.start()
+        return self
+
+    def wake(self) -> None:
+        """A bulk approval was asked for in this process: looked for now."""
+        self._wake.set()
+
+    def stop(self) -> None:
+        """Stop: the approvals under way are put back in line for the next start, between two invoices."""
+        self._halt.set()
+        self._wake.set()
+
+    def _run(self) -> None:
+        makers = [threading.Thread(target=self._approve, args=(f"{OWNER}:bulk-{n}",), name=f"ap-coder-bulk-{n}",
+                                   daemon=True) for n in range(BULK_RUNNERS)]  # fmt: skip
+        for maker in makers:
+            maker.start()
+        for maker in makers:
+            maker.join()
+
+    def _approve(self, runner: str) -> None:
+        from ap_coder.coding import bulk
+
+        while not self._halt.is_set():
+            try:
+                store = self.store_factory()
+                job = store.claim_bulk_job(runner, BULK_STALE, bulk.JOB_FORMAT)
+            except Exception:  # noqa: BLE001 - a busy database: looked at again
+                logging.getLogger(__name__).debug("no bulk approval claimed", exc_info=True)
+                job = None
+            if job is None:
+                self._wake.wait(BULK_POLL)
+                self._wake.clear()
+                continue
+            run_bulk(store, self.settings_factory(), job, runner, self._halt)
+
+
+_HERE: dict[str, threading.Thread] = {}  # the thread approving each database's bulk approvals here, while some wait
+_HERE_LOCK = threading.Lock()
+
+
+def approve_here(store: Any, settings_factory: Callable[[], Any]) -> None:
+    """The bulk approvals waiting approved by a thread of this process, which ends once none is left: a laptop's, or
+    a server of one process without its background work (no ``BulkRunner``)."""
+    with _HERE_LOCK:
+        if str(store.path) in _HERE:
+            return  # (one is at it: it takes this one too before it ends)
+        here = _HERE[str(store.path)] = threading.Thread(target=_approve_until_none, args=(store, settings_factory),
+                                                         name="ap-coder-bulk-here", daemon=True)  # fmt: skip
+    here.start()
+
+
+def _approve_until_none(store: Any, settings_factory: Callable[[], Any]) -> None:
+    from ap_coder.coding import bulk
+
+    runner = f"{OWNER}:bulk-here"
+    while True:
+        with _HERE_LOCK:  # (one asked meanwhile is claimed here, or finds no thread at it and starts one)
+            try:
+                job = store.claim_bulk_job(runner, BULK_STALE, bulk.JOB_FORMAT)
+            except Exception:  # noqa: BLE001 - a busy database: the next one asked, or looked at, starts another
+                job = None
+            if job is None:
+                del _HERE[str(store.path)]
+                return
+        run_bulk(store, settings_factory(), job, runner)
+
+
+def resume_bulk(store: Any, settings_factory: Callable[[], Any]) -> None:
+    """A laptop's dashboard starting: the bulk approvals its last run left (it stopped meanwhile) go on, here."""
+    store.release_left_bulk_jobs()
+    approve_here(store, settings_factory)  # (none waiting: its thread ends at once)

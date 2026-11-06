@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import contextvars
 import hashlib
 import hmac
@@ -37,7 +38,8 @@ import ipaddress
 import re
 import secrets
 import unicodedata
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -65,9 +67,11 @@ NEW_PASSWORD_PATH = "/login/new-password"
 SET_UP_PATH = "/login/authenticator"
 CODE_PATH = "/login/code"
 LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
-# What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test): no one
-# using it, so these don't keep a session from ending after its idle minutes (D-109, B-1580).
-POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test)")
+# What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test, a download
+# being made, a bulk approval): no one using it, so these don't keep a session from ending after its idle minutes
+# (D-109, B-1580, B-1927).
+POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test|downloads/\d+|"
+                   r"review/bulk/status)")  # fmt: skip
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
@@ -107,6 +111,32 @@ PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder
 def person() -> Person | None:
     """The colleague behind the request being answered; None on this computer (or outside a request)."""
     return PERSON.get()
+
+
+def kept_person() -> dict[str, Any]:
+    """The colleague behind the request (``person``) as work started for them keeps them, to be done as them later
+    (``acting_as``); {} on this computer."""
+    found = person()
+    return {} if found is None else asdict(found)
+
+
+@contextlib.contextmanager
+def acting_as(kept: dict[str, Any]) -> Iterator[None]:
+    """Work done outside their request, as the person it was started for (``kept_person``): ``person()`` is them, and
+    every event the store records names them and their address, as their requests' do, whether or not their session
+    has ended since (a bulk approval, D-185)."""
+    found = Person(**kept) if kept else None
+    tokens = (
+        PERSON.set(found),
+        EVENT_ORIGIN.set((found.address or None) if found is not None else None),
+        EVENT_ACTOR.set(found.name if found is not None and found.user_id else None),  # (as ``_server`` sets it)
+    )
+    try:
+        yield
+    finally:
+        PERSON.reset(tokens[0])
+        EVENT_ORIGIN.reset(tokens[1])
+        EVENT_ACTOR.reset(tokens[2])
 
 
 def network_login(address: str) -> str:
@@ -331,7 +361,9 @@ class Identity:
             if page:
                 refusal = RedirectResponse(f"{LOGIN_PATH}?next={quote(_wanted(scope), safe='')}", status_code=303)
             else:
-                refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH}, status_code=401)
+                # (``session_ended``: the page's script stays on the page and says so, its edits kept, D-185)
+                refusal = JSONResponse({"ok": False, "error": SESSION_ENDED, "redirect": LOGIN_PATH,
+                                        "session_ended": True}, status_code=401)  # fmt: skip
                 if path == "/logout":  # (two cookies, say): the sessions they name end, and the cookie is cleared
                     for named in session_tokens(scope.get("headers") or [], cookie):
                         if named and store is not None:

@@ -520,3 +520,32 @@ def test_the_review_screen_hides_the_buttons_a_role_cannot_use(store):
     assert "data-approve " not in shown["readonly"] and "data-park" not in shown["readonly"]
     assert "data-approve " in shown["clerk"] and f"/review/{invoice_id}/delete" not in shown["clerk"]
     assert f"/review/{invoice_id}/delete" in shown["admin"]
+
+
+def test_the_progress_of_a_download_or_a_bulk_approval_keeps_no_session_going(store, monkeypatch):
+    """B-1927: the progress of a download the server's background process makes (D-169) is looked at by its link
+    every half second, up to every 1.5 s, for as long as it waits, and each look counted as use: a tab waiting on one
+    (the background process stopped: it waits for good) stayed logged in past the idle limit, as B-1580's polls did.
+    A bulk approval's page looks the same way (D-185). Neither renews the session."""
+    import json
+
+    from ap_coder.coding import bulk
+    from ap_coder.core.store import users
+    from ap_coder.web.pages import downloads
+
+    clock = [users._clock()]
+    monkeypatch.setattr(users, "_clock", lambda: clock[0])
+    monkeypatch.setattr(downloads, "_left", lambda request, job: None)  # (waiting: no process makes it)
+    uid = account(store, "boss", "admin")
+    client = server_client(store)
+    log_in(client, "boss")
+    made, _ = store.start_download(f"user:{uid}", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
+    person = {"name": "Boss", "login": f"user:{uid}", "server": True, "as": {}}
+    approving, _ = store.start_bulk_job(json.dumps(["", f"user:{uid}"]), person, [], bulk.JOB_FORMAT)
+    polls = (f"/downloads/{made}", f"/review/bulk/status?job={approving}")
+    for _ in range(3):  # nothing but the tab's automatic looks
+        clock[0] += 10 * 60 - 1
+        for poll in polls:
+            assert client.get(poll).status_code == 200, poll  # still logged in: they are answered
+    clock[0] += 4
+    assert client.get("/review").status_code == 303  # 30 minutes without a click: logged out
