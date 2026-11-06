@@ -251,3 +251,22 @@ def test_a_login_step_left_too_long_goes_back_to_the_login_with_the_page_asked_f
     assert back.path == "/login" and query["next"] == [wanted] and query["flash"], answer.json()
     page = client.get(answer.json()["redirect"]).text
     assert login.TOO_LONG in page and f'name="next" value="{wanted}"' in page.replace("&amp;", "&")
+
+
+@pytest.mark.parametrize("wanted, lands", [
+    ("/review/7?sort=amount&show=ready", "/review/7?sort=amount&show=ready"),
+    ("//elsewhere.example/review", "/review"),
+    ("https://elsewhere.example/review", "/review"),
+    ("/\\elsewhere.example", "/review"),
+    ("/\telsewhere.example", "/review"),
+    ("/logout", "/review"),
+])  # fmt: skip
+def test_the_login_comes_back_to_the_page_asked_for_and_only_to_a_page_of_this_server(store, wanted, lands):
+    """A page asked for without a session goes to the login with it (``next``), through both steps, and comes back to
+    it after them; a ``next`` that is not a path of this server (another site, by any spelling) is the queue (D-185)."""
+    account(store, "clara")
+    client = server_client(store)
+    asked = client.get("/review/7?sort=amount&show=ready")
+    assert asked.status_code == 303
+    assert asked.headers["location"] == "/login?next=%2Freview%2F7%3Fsort%3Damount%26show%3Dready"
+    assert redirect(sign_in(client, "clara", GOOD, next=wanted)) == lands
