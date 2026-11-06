@@ -56,7 +56,12 @@ def test_settings_save_test_and_sync(tmp_path, ais, monkeypatch):
     assert result["messages"][0]["text"] == "Synced from JD Edwards."
     assert any(m["text"].startswith("Suppliers: 2 added") for m in result["messages"])
     assert store.get_vendor("acme office supplies")["erp_id"] == "4001"
-    assert "Suppliers: 2 added" in client.get("/settings/jde").text
+    page = client.get("/settings/jde").text
+    assert "Suppliers: 2 added" in page and "Read everything again" in page
+    post(client, "/settings/jde/api/sync")  # what changed since (D-181)
+    assert any("Suppliers (what changed since" in m["text"] for m in _wait(client, "jde-sync")["messages"])
+    post(client, "/settings/jde/api/sync", {"full": "1"})  # Read everything again
+    assert any(m["text"].startswith("Suppliers: 0 added") for m in _wait(client, "jde-sync")["messages"])
 
 
 def test_test_and_sync_refuse_while_off(tmp_path, ais):

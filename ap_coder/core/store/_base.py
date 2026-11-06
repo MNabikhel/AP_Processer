@@ -843,6 +843,8 @@ class StoreCore:
                 if key == (r["vendor_key"] or ""):
                     continue
                 done = conn.execute(f"UPDATE OR IGNORE {table} SET vendor_key = ? WHERE {ident} = ?", (key, r["ident"]))
+                if table == "erp_invoices":  # its JD Edwards vouchers go with it (D-181)
+                    conn.execute("UPDATE erp_vouchers SET vendor_key = ? WHERE vendor_key = ?", (key, r["vendor_key"]))
                 if not done.rowcount and table == "erp_invoices":  # the same ERP bill is already there under the key
                     conn.execute("DELETE FROM erp_invoices WHERE rowid = ?", (r["ident"],))
                 elif not done.rowcount and table == "vendors":  # the same vendor twice: one row, on hold if either is

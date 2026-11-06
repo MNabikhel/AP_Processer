@@ -317,7 +317,7 @@ This is a memory of your team's decisions. No model is retrained.
 | `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task (not a Windows service). |
 | `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
 | `users add\|list\|reset\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles. |
-| `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data, show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
+| `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data (what changed since the last sync; `--full` everything, as once a week), show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
 | `hub export\|status [--full] [--dry-run]` | The finance hub feed: send what changed, or show how the last run went. See [docs/FINANCE_HUB.md](FINANCE_HUB.md). |
 | `pilot-score --vouchers FILE [--distribution FILE]` | The pilot's score: what AP Coder approved against what AP posted in JD Edwards (the parallel week against production, the live weeks against what AP posted after review). |
 | `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |

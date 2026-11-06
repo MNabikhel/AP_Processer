@@ -102,6 +102,10 @@
     <form method="post" action="/settings/jde/api/sync" data-busy="Syncing…">
       <button class="btn" type="submit"{% if not c.step1 %} disabled{% endif %}><span class="ms" aria-hidden="true">sync</span>Sync now</button>
     </form>
+    <form method="post" action="/settings/jde/api/sync" data-busy="Reading everything…">
+      <input type="hidden" name="full" value="1">
+      <button class="btn" type="submit"{% if not c.step1 %} disabled{% endif %} title="Every supplier, account, PO and voucher again, as once a week: what was deleted, closed or voided in JD Edwards is seen only so"><span class="ms" aria-hidden="true">restart_alt</span>Read everything again</button>
+    </form>
   </div>
   {% if api.tested %}<p class="muted small">Last test {{ (api.tested.at or "")[:16] | replace("T", " ") }}:
     {{ api.tested.summary if api.tested.ok else api.tested.error }}</p>{% endif %}
