@@ -2779,7 +2779,9 @@ document.addEventListener("apc:session-ended", () => {
   if (!form || readOnly || !account) return;
   try {
     const fields = [...formData()].filter(([, v]) => typeof v === "string");
-    sessionStorage.setItem(UNSAVED, JSON.stringify({ account, fields }));
+    const snap = snapshot(); // the boxes as they are, put back in them if it changed meanwhile (B-1941)
+    snap.edits = snap.edits ? [...snap.edits] : null;
+    sessionStorage.setItem(UNSAVED, JSON.stringify({ account, fields, snap }));
   } catch {
     /* not kept: the edits made since the session ended are lost, as before */
   }
@@ -2790,17 +2792,22 @@ function unsaved() {
   try {
     const kept = JSON.parse(sessionStorage.getItem(UNSAVED) || "null");
     sessionStorage.removeItem(UNSAVED);
-    return kept && account && kept.account === account && !readOnly ? kept.fields : null;
+    return kept && account && kept.account === account && !readOnly ? kept : null;
   } catch {
     return null;
   }
 }
 
-async function putBack(fields) {
+async function putBack({ fields, snap }) {
   const body = new FormData();
   for (const [k, v] of fields) body.append(k, v);
   const answer = await post(`${base}/check`, body);
-  if (answer.stale) return showStale(answer.stale); // changed since: the edits stay on the screen to copy (D-184)
+  if (answer.stale) {
+    // Changed since (D-184): the page was drawn afresh, so the edits go in its boxes first, read-only there to copy
+    // (B-1941)
+    if (snap) restore(snap);
+    return showStale(answer.stale);
+  }
   if (answer.ok && answer.draft) return location.reload(); // drawn again with them: the draft they are now
   if (answer.error) toast({ text: `Your edits from before you logged in again were not kept: ${answer.error}`, tone: "err" }, 9000);
   return check().then(() => focusFirstToCheck());

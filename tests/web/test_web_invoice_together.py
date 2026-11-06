@@ -510,6 +510,30 @@ def server_browser(chromium, store):
         yield opened
 
 
+def test_in_a_browser_edits_kept_over_a_login_stay_in_their_boxes_when_it_changed_meanwhile(server_browser, store):
+    """B-1941: the edits kept in the tab when the session ended, put back after the login, were refused as out of date
+    (approved and the approval undone meanwhile) and the screen said so on the page drawn afresh, without them: taken
+    out of the tab already, they were lost. They are put in its boxes first, read-only there to copy."""
+    from tests.web.test_server_browser import _again, _log_in, _said_ended, _session_ends, _sign_in_again
+
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    ann, errors = _log_in(server_browser, store, "ann", GOOD, f"/review/{inv_id}")
+    ann.wait_for_selector("[form=inv][name=invoice_number]")
+    _session_ends(store, "ann")
+    box = ann.locator("[form=inv][name=invoice_number]")
+    box.fill("TYPED-AFTER-THE-END")
+    _said_ended(ann)
+    store.approve_invoice(inv_id, dict(store.get_invoice(inv_id)["ai_output"]), "Bo Chen")
+    store.reopen(inv_id, "Bo Chen", "Approval undone")
+    _sign_in_again(ann)
+    _again(ann, store, "ann")
+    ann.wait_for_url(f"**/review/{inv_id}")
+    ann.wait_for_selector("[data-stale]", timeout=10000)
+    assert "Reopened by Bo Chen today at" in ann.inner_text("[data-stale]")
+    assert box.input_value() == "TYPED-AFTER-THE-END" and box.evaluate("el => el.readOnly")
+    assert errors == []
+
+
 def test_in_a_browser_on_the_server_one_sees_who_else_has_it_open_and_next_passes_it_over(server_browser, store,
                                                                                           monkeypatch):  # fmt: skip
     """Two people, each logged in on a browser of their own: Bo has an invoice open; Ann's Next passes over it and

@@ -2890,8 +2890,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - What the server keeps: each check of the review screen saves its coding as the person's draft (`invoice_drafts`,
       D-86), so everything up to the last check answered before the session ended is on the server; Approve sends the
       whole form. Edits after it are only in the tab (sessionStorage) until the login: a tab closed meanwhile loses
-      them. Elsewhere nothing is kept: a settings form, a note typed, a file picked for upload stays on the page while
-      it is open, but following "Sign in again" leaves it (sign in in another tab to keep it).
+      them. Changed meanwhile (D-184), the screen drawn after the login puts them in its boxes (the tab keeps the
+      boxes as Undo does, `snapshot`), then turns read-only with them there to copy (B-1941). Elsewhere nothing is
+      kept: a settings form, a note typed, a file picked for upload stays on the page while it is open, but following
+      "Sign in again" leaves it (sign in in another tab to keep it).
   - **Deadlines:** `fetchWithin` is the pages' one fetch (`tests/meta/test_code_rules.py`: no bare `fetch(` outside
     it, an XMLHttpRequest only with an abort); the review screen's last check sent as the page closes goes through it.
     A look 30 s, an action 5 minutes (the Process POST answers within 3 s, D-172; the bulk approval within
