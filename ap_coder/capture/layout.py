@@ -840,8 +840,9 @@ def _native_dpi(page: Any) -> float:
         x0, y0, x1, y1 = info.get("bbox") or (0.0, 0.0, 0.0, 0.0)
         across, down = abs(x1 - x0) / 72, abs(y1 - y0) / 72
         wide, high = float(info.get("width") or 0), float(info.get("height") or 0)
-        if min(wide, high) < 300 or across <= 0 or down <= 0 or across * down * 72 * 72 < 0.25 * area:
-            continue  # a small picture (a stretched background), not the scan
+        if min(wide, high) < 100 or across <= 0 or down <= 0 or across * down * 72 * 72 < 0.25 * area:
+            continue  # a logo, or a picture too few pixels across for a line of text (a stretched background), not
+            # the scan: a 58 mm receipt at 72 dpi is 164 px across, a 4 x 6 in. slip at 72 dpi 288 (B-1778)
         a, b = (list(info.get("transform") or (1, 0)) + [0, 0])[:2]
         if abs(b) > abs(a):  # placed turned a quarter: its width runs down the page
             wide, high = high, wide

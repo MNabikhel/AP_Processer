@@ -1506,9 +1506,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - `ai/page_reader.py` keeps its own `_RENDER_LOCK`, and `ai/imaging.py`, `ai/pipeline.py`, `intake/`,
       `erp/stamp.py` call PyMuPDF without `PDF_LOCK`: not this item's files (one line each to share it).
     - The table finder's model is loaded in each process (0.6 s); its tables are no longer looked for again.
-    - Found, not changed (it would change what is read): a page drawn for OCR states the 96 dpi PyMuPDF gives its
-      pixmaps, so a small page with neither text nor a picture (text drawn as outlines, a 4 x 6 in. slip) is said
-      to be scanned at about 96 dpi, coarse, and each field goes to a person.
+    - Found, then changed (B-1761, B-1778): a page drawn for OCR states the 96 dpi PyMuPDF gives its pixmaps, so a
+      small page with neither text nor a picture (text drawn as outlines, a 4 x 6 in. slip) was said to be scanned
+      at about 96 dpi, coarse, and each field went to a person. A PDF page's resolution is now its scan's: the
+      picture covering at least a quarter of it, from 100 px on its short side (a 4 x 6 in. slip at 72 dpi, a
+      thumbnail made a PDF: coarse, as before); a page without one has none.
   - (`capture/layout.py`, `capture/table_finder.py`, `capture/reader/totals.py`, `web/document.py`,
     `ai/local_llm.py`, `docs/HOW_IT_RUNS.md`, `docs/CAPTURE_DESIGN.md`; `tests/capture/test_reading_cache.py`,
     `tests/capture/test_totals_solver.py`, `tests/capture/test_reading_once.py`, `tests/ai/test_local_llm.py`)

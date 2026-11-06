@@ -120,3 +120,31 @@ def test_a_small_page_drawn_without_text_or_a_picture_is_not_taken_for_a_coarse_
         assert [layout._native_dpi(page) for page in doc] == [0.0, 0.0] and not doc[0].get_text().strip()
     pages = build_layout(pdf, ocr=True).pages
     assert [p.dpi for p in pages] == [0.0, 0.0]
+
+
+def test_a_small_coarse_picture_is_still_taken_for_a_coarse_scan(tmp_path):
+    """B-1778: B-1761's fix gave no resolution to every page without a picture the scan's size: one under 300 px on
+    its short side too. A 290 x 380 px picture (a thumbnail, a narrow receipt at 72 dpi), made a PDF as every picture
+    coming in is, was read at 0 dpi, its values shown as verified (read as a picture itself: 34.5 dpi, each to a
+    person); a 4 x 6 in. slip scanned at 72 dpi (288 x 432 px) in a PDF too. A scan's resolution is its picture's."""
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.intake import pictures as intake
+
+    thumbnail = tmp_path / "thumbnail.png"
+    Image.new("RGB", (290, 380), "white").save(thumbnail)
+    made = tmp_path / "thumbnail.pdf"
+    assert intake.image_to_pdf(thumbnail, made) == 1
+    slip = tmp_path / "slip.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=288, height=432)  # 4 x 6 in.
+        png = io.BytesIO()
+        Image.new("L", (288, 432), 255).save(png, format="PNG")
+        page.insert_image(page.rect, stream=png.getvalue())
+        doc.save(slip)
+    for pdf, dpi in ((made, 34.5), (slip, 72.0)):
+        with pymupdf.open(pdf) as doc:
+            assert layout._native_dpi(doc[0]) == dpi, pdf.name
+    pytest.importorskip("rapidocr")
+    assert [p.dpi for p in build_layout(made, ocr=True).pages] == [34.5]
+    assert [p.dpi for p in build_layout(slip, ocr=True).pages] == [72.0]
+    assert [p.dpi for p in build_layout(thumbnail, ocr=True).pages] == [34.5]  # as the picture read itself
