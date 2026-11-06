@@ -78,6 +78,28 @@ def test_account_names_and_the_vendor_master_alone_only_suggest(reference):
     assert master.gl_code == "6800" and not master.auto
 
 
+def test_the_accounts_words_are_worked_out_once_for_the_chart(reference, monkeypatch):
+    """Each line suggested went over the words of every account of the chart again (1,500 on the seed: 12,000 times
+    for a check of an invoice of 8 lines after each approval, when the memory's suggestions are new). Worked out once
+    for the chart now, and again for another (the accounts changed)."""
+    from dataclasses import replace
+
+    from ap_coder.core.reference_data import ReferenceTable
+
+    stems, real = [], suggest._stems
+    monkeypatch.setattr(suggest, "_stems", lambda words: stems.append(1) or real(words))
+    monkeypatch.setattr(suggest, "_ACCOUNT_STEMS", {})
+    chart = reference.chart_of_accounts
+    lines = ["Copy paper and toner cartridges", "Freight charge", "Diesel fluid", "Paper towels"]
+    assert suggest_gl(lines[0], "Nobody", [], reference)[0].gl_code == "6000"
+    for line in lines[1:]:
+        suggest_gl(line, "Nobody", [], reference)
+    assert len(stems) == len(chart.rows) + len(lines)  # the chart's once, then each line's own
+    rows = [{**r, "description": "Toner and drums"} if r["gl_code"] == "6230" else r for r in chart.rows]
+    changed = replace(reference, chart_of_accounts=ReferenceTable(chart.kind, chart.key_column, rows))
+    assert suggest_gl("Toner drums", "Nobody", [], changed)[0].gl_code == "6230"
+
+
 def test_other_vendors_code_a_line_only_when_they_agree(reference):
     feedback = _history(("Beta", "6220", "Hydraulic hose assembly 1/2 in."), ("Gamma", "6220", "HOSE ASSY HYDRAULIC"))
     top = suggest_gl("Hydraulic hose assy", "Newco", feedback, reference)[0]
@@ -261,12 +283,16 @@ def test_a_store_learns_from_each_approval_with_the_index_kept_in_between(tmp_pa
 
 
 def _held(memory) -> tuple:
-    """All a memory holds, in its order: its patterns, its index's lists and dicts, each vendor's usual accounts."""
-    index = memory.index
+    """All a memory holds, in its order: its patterns, its index's lists and dicts, each vendor's usual accounts (each
+    rank as its place in the rows: an updated memory's are less its ``offset``; the words' weights, read by word, in
+    any order, as ``_as_built``)."""
+    index, o = memory.index, memory.offset
     return (
-        [(p.vendor_key, p.description, p.keys, p.gl_code, p.cost_center, p.rank, p.latest) for p in memory.patterns],
-        index.entries, index.accounts, list(index.by_word.items()), list(index.weight.items()),
-        list(index._by_letter.items()), {v: list(c.items()) for v, c in memory.usual.items()}, memory.newest,
+        [(p.vendor_key, p.description, p.keys, p.gl_code, p.cost_center, p.rank + o, p.latest)
+         for p in memory.patterns],
+        index.entries, index.accounts, list(index.by_word.items()), dict(index.weight),
+        list(index._by_letter.items()), {v: list(c.items()) for v, c in memory.usual.items()},
+        {v: n + o for v, n in memory.newest.items()},
     )  # fmt: skip
 
 
@@ -406,6 +432,77 @@ def test_a_vendor_whose_older_lessons_add_nothing_is_charged_no_bytes_of_its_own
         rows = WithPast(shared, [row(1000 + i, f"Closed {n}", "4999") for i in range(5)], ("db", f"closed {n}", 1))
         assert suggest._memory(rows, valid) is base
     assert [kept[4] for kept in suggest._PAST.values()] == [0, 0, 0]
+
+
+def test_a_vendors_extended_memory_carried_forward_after_each_approval_is_what_building_it_gives(
+    tmp_path, reference, monkeypatch
+):
+    """D-173: past the memory's cap each approval moves the memory's last lesson, and every vendor's memory extended by
+    its older lessons was gone over again from all of them and the shared rows (50,000), in every process. The store
+    carries those lessons forward now, and so is the extended memory: only the lines of the lessons that moved (and
+    of the shared rows' lines that changed) are worked out again, a line only in the older lessons ranked again.
+    Random approvals of random vendors (corrections and recodes, accounts the chart doesn't have, lines with no words
+    that count), now and then an invoice approved again, a lesson forgotten or history imported (all read again),
+    some vendors asked each time: exactly what building it of all the rows gives, and the same suggestions."""
+    import random
+
+    from ap_coder.core import memory as memory_module
+    from ap_coder.core.store import learning
+
+    cap = 60
+    monkeypatch.setattr(learning, "FEEDBACK_READ", cap)
+    for name in ("_PAST", "_OLDER"):
+        monkeypatch.setattr(suggest, name, {})
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    tax_gls = reference.tax.tax_gl_codes()
+    valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    accounts = sorted(valid)[:6]
+    rng, store = random.Random(1730), Store(tmp_path / "ap.db")
+    carried, real = [], suggest._carried
+
+    def carry(kept, past):
+        older = real(kept, past)
+        carried.append(older is not None)
+        return older
+
+    monkeypatch.setattr(suggest, "_carried", carry)
+    invoice = [0]
+
+    def add(n, outcome=None):
+        invoice[0] += 1
+        with store._conn() as conn:
+            for r in _lessons(rng, n, 1, accounts):
+                conn.execute(
+                    "INSERT INTO feedback (invoice_id, vendor_key, vendor_name, description, final_gl, final_cc, "
+                    "suggested_gl, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (invoice[0], r["vendor_key"], r["vendor_name"], r["description"], r["final_gl"], r["final_cc"],
+                     r["suggested_gl"], outcome or r["outcome"], r["created_at"]),
+                )  # fmt: skip
+
+    add(150)
+    vendors = ["Acme Supply", "Beta Ltd", "Gamma Inc.", "Delta"]
+    for step in range(120):
+        op = rng.choices(["approve", "again", "forget", "history"], weights=[90, 4, 3, 3])[0]
+        if op == "approve":
+            add(rng.choice([1, 1, 2, 3, 5]))
+        elif op == "again":  # an invoice approved again: its lessons replaced
+            with store._conn() as conn:
+                conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (rng.randint(2, invoice[0]),))
+            add(rng.randint(1, 4))
+        elif op == "forget":
+            store.delete_feedback([rng.choice(store.feedback_rows())["id"]])
+        else:
+            add(2, outcome="history")
+        for vendor in rng.sample(vendors, rng.randint(1, 3)):
+            rows = store.learning_rows(vendor)
+            assert isinstance(rows, memory_module.WithPast) and rows.past, (step, vendor)
+            memory, built = suggest._memory(rows, valid), suggest._build_memory(list(rows), valid)
+            assert _held(memory) == _held(built), (step, op, vendor)
+            for item in ("Nitrile gloves XL", "Copy paper 2", "Toner", "Freight", "laptop", "cloud hosting"):
+                key = vendor_key(vendor)
+                assert suggest._suggested(item, keys(item), key, memory, reference, valid, 3, "") == suggest._suggested(
+                    item, keys(item), key, built, reference, valid, 3, ""), (step, vendor, item)  # fmt: skip
+    assert carried.count(True) > 150 and carried.count(False) > 5, (carried.count(True), carried.count(False))
 
 
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():

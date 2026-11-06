@@ -3,6 +3,7 @@ into the review queue.
 
 * ``pick_up``: the invoices folder's files the pick-up hasn't read since they changed (``Store.unseen_files``: a look
   at each file's size and time), each read once for its SHA-256, which goes with it all the way to its invoice.
+  ``list_folder`` is its look at the folder, which the import page shows too (kept for every process, D-176).
 * ``Reader``: takes the queue's files one at a time a thread and reads each (``InvoicePipeline.process``). It is what
   each capture process of the company server runs (``web/server.py run_capture``), the dashboard's own import on a
   laptop, and the ``watch`` and ``process`` commands. While it reads, a heartbeat renews its files' leases; it takes
@@ -12,6 +13,7 @@ into the review queue.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import hashlib
 import logging
@@ -20,7 +22,9 @@ import platform
 import secrets
 import shutil
 import threading
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -48,24 +52,62 @@ def noted(path: Path, content: bytes) -> Read:
     return str(path.parent.resolve() / path.name), seen.st_size, seen.st_mtime_ns, hashlib.sha256(content).hexdigest()
 
 
-def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool]) -> tuple[list[Read], list[Path], list[Path]]:
-    """(what to put in line, the files that can't be read now, those still being written: ``settling``) of the
-    invoices in ``folder``. Only a file the pick-up hasn't read since it changed, nor whose content is in AP Coder or
-    in line, is read (the folder keeps every invoice ever processed: a year of them on the server)."""
+@dataclass
+class Listing:
+    """One look at a folder (``list_folder``): its resolved place, when the look began (``time.time``), the folder's
+    time read before it (nanoseconds), the invoice files new then (place, size, time in nanoseconds), the saved emails
+    (name, size) and the names of the files of a kind not read, each sorted as ``folder_names`` sorts them; the seconds
+    it took."""
+
+    place: str
+    began: float
+    mtime_ns: int
+    new: list[tuple[str, int, int]]
+    emails: list[tuple[str, int]]
+    others: list[str]
+    took: float
+
+    def keep(self, store: Any) -> None:
+        """Kept for every process (``Store.keep_listing``, D-176): the import page of each shows it."""
+        found = {"files": [[os.path.basename(place), size, at] for place, size, at in self.new],
+                 "emails": [list(e) for e in self.emails], "others": self.others,
+                 "took": round(self.took, 3)}  # fmt: skip
+        store.keep_listing(self.place, self.began, self.mtime_ns, found)
+
+
+def list_folder(store: Any, folder: Path) -> Listing:
+    """``folder`` as it is now (``Listing``): its files by name (``folder_names``), each invoice file's and saved
+    email's size and time looked at, none read; new, the invoice files the pick-up hasn't read since they changed,
+    nor whose content is in AP Coder or in line (``Store.unseen_files``). Raises OSError."""
     folder = folder.resolve()
-    listed = []
-    for name in folder_names(folder)[0]:
+    began, mtime_ns = time.time(), os.stat(folder).st_mtime_ns  # (the time first: a change meanwhile shows later)
+    names, emails, others = folder_names(folder)
+    listed, mails = [], []
+    for name in names:
         place = os.path.join(folder, name)
         try:
             seen = os.stat(place)
         except OSError:  # gone meanwhile
             continue
         listed.append((place, seen.st_size, seen.st_mtime_ns))
-    new = store.unseen_files(listed)
+    for name in emails:
+        with contextlib.suppress(OSError):
+            mails.append((name, os.stat(os.path.join(folder, name)).st_size))
+    new = store.unseen_files(listed, str(folder))
+    new_files = [f for f in listed if f[0] in new]
+    return Listing(str(folder), began, mtime_ns, new_files, mails, others, max(0.0, time.time() - began))
+
+
+def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool],
+            listing: Listing | None = None) -> tuple[list[Read], list[Path], list[Path]]:  # fmt: skip
+    """(what to put in line, the files that can't be read now, those still being written: ``settling``) of the
+    invoices in ``folder``, as ``listing`` found them (default: ``list_folder`` now). Only a file the pick-up hasn't
+    read since it changed, nor whose content is in AP Coder or in line, is read (the folder keeps every invoice ever
+    processed: a year of them on the server). The listing is kept for the import page of every process (D-176), each
+    file read with the size and time it was read at, as it goes in line (one written again meanwhile, B-1814)."""
+    listing = listing or list_folder(store, folder)
     read, unreadable, saving = [], [], []
-    for place, _, _ in listed:
-        if place not in new:
-            continue
+    for place, _, _ in listing.new:
         path = Path(place)
         try:
             if settling(path):
@@ -74,6 +116,9 @@ def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool]) -> tuple
             read.append(read_file(path))
         except OSError:  # open in another program, a cloud placeholder not downloaded: the next pick-up
             unreadable.append(path)
+    as_read = {place: (size, at) for place, size, at, _ in read}
+    listing.new = [(place, *as_read.get(place, (size, at))) for place, size, at in listing.new]
+    listing.keep(store)
     return read, unreadable, saving
 
 

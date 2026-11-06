@@ -23,9 +23,10 @@ What it runs:
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
   page images, the vendor list through the cache, the reader's poll while it is open), 3 to 6 edits each checked,
   then approve (with "approve anyway" when only errors keep it closed), park or reject; second approvals; the
-  directory, its CSV and Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job
-  polled; a bulk approval (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's
-  fetch sends (the ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
+  directory, its CSV and Excel exports (each a job of the background process, followed as the page follows it, then
+  the file downloaded); Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk
+  approval (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
+  ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
 - **Think time**: lognormal around ``--think`` seconds between scenarios, a third of it between the steps of one.
   Each person keeps a schedule (scheduled start, against coordinated omission): a step is due a think time after the
   previous one was due, and its time is counted from when it was due, so a slow server's waits are in the figures,
@@ -104,7 +105,9 @@ JOB_POLL = 0.8  # app.js pollJob's interval
 # How long a person keeps a connection unused (--keep-alive): httpx's 5 s by default, so earlier runs compare. A browser
 # keeps its own for minutes (Chrome up to 5, Firefox about 2), which keeps people on the worker that took them (D-161).
 KEEP_ALIVE = 5.0
-JOB_MOST = 180.0  # an upload's job polled for at most this long
+JOB_MOST = 180.0  # an upload's job polled for at most this long; a download's too
+DOWNLOAD_POLL, DOWNLOAD_POLL_MOST = 0.5, 5.0  # app.js: a download's job looked at every 0.5 s, up to 5 s apart
+NOT_MADE = "search exports not made"  # its job failed or is gone, or its file was not there: the gate fails (B-1813)
 BULK_MOST = 50  # invoices in one bulk approval (the page would post every candidate)
 EXPORT_MOST = 50  # invoices in one export batch
 REGRESSION_FLOOR = 0.05  # seconds: a p95 within this of its baseline is never a regression (noise on quick routes)
@@ -1259,11 +1262,49 @@ class Person:
             self.current = None
 
     async def export_search(self) -> None:
+        """A search, then its Excel or CSV as the page's link gets it on the server (D-169, ``app.js``): the download
+        asked for with the page's header, its job followed, then the file downloaded once made. A job that failed or
+        is gone, or a file not there once made, fails the run (``NOT_MADE``), as the 500 of its plain address did."""
         query = self.search_query()
         await self.page("/search" + (f"?{query}" if query else ""), await self.step(self.think()))
         kind = "xlsx" if self.rng.random() < 1 / 3 else "csv"
-        await self.send("GET", f"/search/export.{kind}" + (f"?{query}" if query else ""), "download",
-                        due=await self.step(self.think(STEP_THINK)))  # fmt: skip
+        asked = await self.send("GET", f"/search/export.{kind}" + (f"?{query}" if query else ""), "download",
+                                due=await self.step(self.think(STEP_THINK)), accept="application/json",
+                                headers={"X-AP-Coder": "1"})  # fmt: skip
+        try:
+            answer = asked.json()
+        except ValueError:  # the file itself: made as it is asked for (a laptop)
+            return
+        if not isinstance(answer, dict) or not answer.get("job"):
+            self.run.counts["search exports refused" + (" (too many at once)" if asked.status_code == 429 else "")] += 1
+            return
+        state = (await self.follow_job(str(answer["status"]))).get("state")
+        if state == "running":  # the person stopped waiting (JOB_MOST, the run's end)
+            self.run.counts["search exports still being made when left"] += 1
+            return
+        if state == "done":
+            got = await self.send("GET", str(answer["file"]), "download", route=f"GET /search/export.{kind}?job={{id}}")
+            if got.status_code == 200:
+                self.run.counts["search exports downloaded"] += 1
+                return
+        self.run.counts[NOT_MADE] += 1
+
+    async def follow_job(self, url: str) -> dict[str, Any]:
+        """A download's job looked at as ``app.js`` follows it (``pollJob``): at once, then DOWNLOAD_POLL seconds
+        after an answer that changed, half as long again after one the same as the last, DOWNLOAD_POLL_MOST at most;
+        its last snapshot once it is no longer running (or after JOB_MOST, or at the run's end)."""
+        wait, last, until = DOWNLOAD_POLL, None, min(time.monotonic() + JOB_MOST, self.run.deadline)
+        while True:
+            polled = await self.send("GET", url, "poll", accept="application/json")
+            try:
+                snap = polled.json()
+            except ValueError:
+                snap = {}
+            if not isinstance(snap, dict) or snap.get("state") != "running" or time.monotonic() >= until:
+                return snap if isinstance(snap, dict) else {}
+            wait = DOWNLOAD_POLL if polled.text != last else min(DOWNLOAD_POLL_MOST, wait * 1.5)
+            last = polled.text
+            await asyncio.sleep(wait)
 
     async def reports(self) -> None:
         pages = REPORTS + (CLERK_REPORTS if self.account.role != "readonly" else ())
@@ -1672,6 +1713,8 @@ def gate(report: dict[str, Any], baseline: dict[str, Any] | None, factor: float)
         problems.append("uploads refused by the hourly allowance")
     if report["counts"].get("logins refused"):
         problems.append(f"{report['counts']['logins refused']} logins refused")
+    if report["counts"].get(NOT_MADE):
+        problems.append(f"{NOT_MADE}: {report['counts'][NOT_MADE]}")
     for route, base in ((baseline or {}).get("routes") or {}).items():
         now = report["routes"].get(route)
         if not now or now["n"] < MIN_COUNT or base.get("n", 0) < MIN_COUNT or not base.get("p95"):

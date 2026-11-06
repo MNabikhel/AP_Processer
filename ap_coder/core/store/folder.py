@@ -7,14 +7,30 @@ AP Coder has it already (``find_by_hash``), and keeps what it read of each in ``
 and SHA-256. The import page (GET /process) lists as new each file whose size and time are not those the pick-up read,
 or whose content no invoice was made from: a look at each file's size and time, one query, nothing read. A database
 from before keeps its invoices' own files as read when they were processed (their size and time not known: NULL).
+
+On the company server the folder is listed once for every process (D-176): ``folder_listings`` keeps the latest
+listing of each folder (its new files, saved emails and files of a kind not read), which every web worker's import
+page shows, the files a pick-up has put in line or read since left out at once.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+# A file whose content AP Coder has (``seen_files`` as ``f``): an invoice was made from it, or it is in line.
+_KNOWN = ("EXISTS (SELECT 1 FROM invoices AS i WHERE i.file_sha256 = f.sha256 UNION ALL SELECT 1 FROM invoices AS i "
+          "WHERE i.original_sha256 = f.sha256 UNION ALL SELECT 1 FROM import_files AS q WHERE q.status IN ('waiting', "
+          "'reading') AND q.sha256 = f.sha256)")  # fmt: skip
+_AT_ONCE_FROM = 1000  # files of a folder's listing from which what the pick-up read there is read at once
+# The latest listing of each folder (D-176): its resolved place, when it began (``time.time``), the folder's time then
+# (nanoseconds) and what it found (JSON: {"files": [[name, size, time], ...] the invoice files new then, "emails":
+# [[name, size], ...], "others": [name, ...], "took": seconds}; one that failed: {..., "error": why}).
+LISTINGS = ("CREATE TABLE IF NOT EXISTS folder_listings (place TEXT PRIMARY KEY, began REAL NOT NULL, mtime_ns INTEGER "
+            "NOT NULL, found TEXT NOT NULL)")  # fmt: skip
 
 
 def read_file(path: Path) -> tuple[str, int, int, str]:
@@ -60,30 +76,73 @@ class FolderMixin:
                 "import_batches) FROM invoices"
             ).fetchone())  # fmt: skip
 
-    def unseen_files(self, listed: list[tuple[str, int, int]]) -> set[str]:
+    def unseen_files(self, listed: list[tuple[str, int, int]], folder: str = "", since: int | None = None) -> set[str]:
         """The places of ``listed`` (place, size, time in nanoseconds) that are not a file an invoice was made from as
         the pick-up last read it (failed attempts count: ``find_by_hash(include_failed=True)``), nor one in line to
         be read (the import queue, D-168), without reading any: one the pick-up has not read yet, or that changed
-        since, is new."""
+        since, is new. ``folder``: the place of the folder they are all in, when they are its listing: what the
+        pick-up read of that folder is then read at once (0.6 s for 300,000 files, against 0.8 s looked up one by
+        one), unless it read far more files there than are listed now (files removed since). ``since``: when the
+        listing of ``listed`` began (nanoseconds), for a listing kept a while (D-176): a file the pick-up read with a
+        time later than both the one listed and ``since`` was written again after the listing looked at it, and
+        counts as the pick-up read it (B-1814; one written over by an older copy keeps an earlier time: new)."""
         if not listed:
             return set()
         with self._conn() as conn:  # type: ignore[attr-defined]
-            rows = conn.execute(
+            known = _known_in(conn, folder, len(listed)) if folder and len(listed) >= _AT_ONCE_FROM else None
+            if known is not None:  # (a size of None: its size and time not known, its place trusted)
+                return {place for place, size, at in listed
+                        if (was := known.get(place)) is None or was[0] is not None and was != (size, at)
+                        and not (since is not None and was[1] > max(at, since))}  # fmt: skip
+            rows = conn.execute(  # (``since`` None: NULL, never later)
                 "SELECT json_extract(j.value, '$[0]') FROM json_each(?) AS j WHERE NOT EXISTS (SELECT 1 FROM "
                 "seen_files AS f WHERE f.path = json_extract(j.value, '$[0]') AND (f.size IS NULL OR (f.size = "
-                "json_extract(j.value, '$[1]') AND f.mtime_ns = json_extract(j.value, '$[2]'))) AND EXISTS (SELECT 1 "
-                "FROM invoices AS i WHERE i.file_sha256 = f.sha256 UNION ALL SELECT 1 FROM invoices AS i WHERE "
-                "i.original_sha256 = f.sha256 UNION ALL SELECT 1 FROM import_files AS q WHERE q.status IN ('waiting', "
-                "'reading') AND q.sha256 = f.sha256))",
-                (json.dumps(listed),),
+                "json_extract(j.value, '$[1]') AND f.mtime_ns = json_extract(j.value, '$[2]')) OR (f.mtime_ns > "
+                f"json_extract(j.value, '$[2]') AND f.mtime_ns > ?)) AND {_KNOWN})",
+                (json.dumps(listed), since),
             ).fetchall()
         return {r[0] for r in rows}
+
+    # --- The folder listed once for every process (D-176) ----------------------------------------------------------
+
+    def keep_listing(self, place: str, began: float, mtime_ns: int, found: dict[str, Any]) -> None:
+        """Keep a listing of the folder at ``place`` (resolved) for every process, in place of the one kept: begun at
+        ``began`` (``time.time``), the folder's time ``mtime_ns`` read before it, what it ``found`` (``LISTINGS``)."""
+        text = json.dumps(found, separators=(",", ":"))
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            conn.execute("INSERT INTO folder_listings (place, began, mtime_ns, found) VALUES (?, ?, ?, ?) ON "
+                         "CONFLICT(place) DO UPDATE SET began = excluded.began, mtime_ns = excluded.mtime_ns, found = "
+                         "excluded.found", (place, began, mtime_ns, text))  # fmt: skip
+
+    def kept_listing(self, place: str) -> tuple[float, int, dict[str, Any]] | None:
+        """(when it began, the folder's time then, what it found) of the listing kept of the folder at ``place``; None
+        when there is none."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT began, mtime_ns, found FROM folder_listings WHERE place = ?",
+                               (place,)).fetchone()  # fmt: skip
+        return None if row is None else (row[0], row[1], json.loads(row[2]))
+
+
+def _known_in(conn: Any, folder: str, listed: int) -> dict[str, tuple[Any, Any]] | None:
+    """What the pick-up read in ``folder`` of the files whose content AP Coder has, read at once: place -> (size,
+    time in nanoseconds), (None, None) when trusted; None when it read more than twice ``listed`` files there (files
+    removed since): then looking each listed file up is quicker."""
+    inside = (folder.rstrip(os.sep) + os.sep, folder.rstrip(os.sep) + chr(ord(os.sep) + 1))  # (its files, as text)
+    noted = conn.execute("SELECT COUNT(*) FROM (SELECT 1 FROM seen_files WHERE path >= ? AND path < ? LIMIT ?)",
+                         (*inside, 2 * listed + 1)).fetchone()[0]  # fmt: skip
+    if noted > 2 * listed:
+        return None
+    rows = conn.execute(f"SELECT path, size, mtime_ns FROM seen_files AS f WHERE path >= ? AND path < ? AND {_KNOWN}",
+                        inside)  # fmt: skip
+    return {r[0]: (r[1], r[2]) for r in rows}
 
 
 def fill_seen_files(conn: Any, again: bool = False) -> None:
     """An older database's start of ``seen_files``: each invoice's own file as it was processed, its size and time
     unknown (so its place is trusted). Once, whatever the schema version (``_base._migrate``); ``again``: whatever was
-    done before (the bench's seed, which writes its invoices without a pick-up)."""
+    done before (the bench's seed, which writes its invoices without a pick-up). This part's table of the folders'
+    listings (``LISTINGS``, D-176) is made here too, whatever the version."""
+    conn.execute(LISTINGS)
     if not again and conn.execute("SELECT 1 FROM settings WHERE key = 'seen_files'").fetchone():
         return
     conn.execute("INSERT OR IGNORE INTO seen_files (path, sha256) SELECT source_path, file_sha256 FROM invoices "

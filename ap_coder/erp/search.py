@@ -107,15 +107,19 @@ def register_keys(vendor_name: str, invoice_number: str) -> tuple[str, str]:
     return keys[0], keys[2]
 
 
-def _score(row: dict[str, Any], words: list[str], numbers: list[str]) -> int:
+def _score(row: dict[str, Any], words: list[str], numbers: list[str], name: str | None = None) -> int:
     """0 unless every part of the query matches: the words in the vendor (or file) name, and each number as
-    the invoice number, the PO, the amount, or part of the name ("3m")."""
+    the invoice number, the PO, the amount, or part of the name ("3m"). ``name``: that name as compared, when worked
+    out already."""
     score = 0
-    name = _plain(f"{row.get('vendor_name') or ''} {row.get('file_name') or ''}")
+    if name is None:
+        name = _plain(f"{row.get('vendor_name') or ''} {row.get('file_name') or ''}")
     if words:
         if not all(w in name for w in words):
             return 0
         score += 2 + len(words)
+    if not numbers:
+        return score
     invoice_number = norm_invoice_number(row.get("invoice_number") or "")
     raw_number = _raw(row.get("invoice_number") or "")
     total = row.get("grand_total")
@@ -265,10 +269,14 @@ def erp_hits(store: Store, words: list[str], numbers: list[str]) -> list[Hit]:
     amount (with its sign: a credit is another document), and the same vendor."""
     where, params = _in_register(words, numbers)
     scored = []
+    names: dict[str, str] = {}  # each vendor's name as ``_score`` compares it, worked out once (B-1801)
     for r in store.erp_register_rows(where, params):
         row = {"vendor_name": r["vendor_name"], "invoice_number": r["invoice_number"], "grand_total": r["total"],
                "invoice_date": r["invoice_date"], "po_key": ""}  # fmt: skip
-        if s := _score(row, words, numbers):
+        vendor = r["vendor_name"] or ""
+        if vendor not in names:
+            names[vendor] = _plain(f"{vendor} ")
+        if s := _score(row, words, numbers, names[vendor]):
             scored.append((s, r, row))
     keys = sorted({r["number_key"] for _, r, _ in scored})
     exported: dict[str, list[dict[str, Any]]] = {}

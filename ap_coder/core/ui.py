@@ -296,6 +296,15 @@ def time_ago(iso: str | None, now: dt.datetime | None = None) -> str:
     return iso
 
 
+def day_and_time(at: dt.datetime) -> str:
+    """When something was done, as the screens say it: "today at 4:23 p.m.", "Oct 21 at 12:37 a.m." before, its year
+    too when not this one (B-826, B-997: "0:37" read as a duration)."""
+    clock = f"{at.hour % 12 or 12}:{at.minute:02d} {'a.m.' if at.hour < 12 else 'p.m.'}"
+    today = dt.date.today()
+    day = "today" if at.date() == today else f"{at:%b} {at.day}" + (f", {at.year}" if at.year != today.year else "")
+    return f"{day} at {clock}"
+
+
 STATUS_PILLS = {
     "attention": ("Needs attention", "warn", "flag"),
     "review": ("In queue", "info", "inbox"),

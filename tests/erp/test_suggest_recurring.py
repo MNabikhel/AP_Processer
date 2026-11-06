@@ -83,10 +83,11 @@ def test_the_recurring_vendors_follow_their_invoices_and_settle_for_a_minute_und
     """The recurring vendors (the queue's pill, Vendors, Month-end) are kept on the invoices' vendors, dates and totals
     (the summary's "dates", D-110), whoever changed them; once one changed they are worked out again at most every
     ``recurring.SETTLE_SECONDS`` (D-166), never past it."""
-    from ap_coder.core.store import summary
+    from ap_coder.core.store import reports, summary
 
     clock = [1000.0]
     monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])  # (worked out once for every process, B-1798)
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
 
     def bill(day: str) -> int:

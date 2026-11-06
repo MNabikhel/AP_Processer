@@ -604,3 +604,267 @@ def test_a_vendors_lessons_past_the_memory_are_read_once_until_they_or_the_memor
     assert store.learning_rows("Zenith Freight") == expected("Zenith Freight")
     store.forget_history()
     assert store.learning_rows("Northwind IT") == store.feedback_rows() == []
+
+
+def _lesson(conn, vendor, description="Part 1", outcome=ACCEPTED, invoice=None, gl="6000"):
+    """A lesson put straight into the database (an approval's, or imported history), its id."""
+    return conn.execute(
+        "INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, final_gl, outcome, "
+        "created_at) VALUES (?, 1, ?, ?, ?, ?, ?, '2026-01-01')", (invoice, vendor, vendor, description, gl, outcome)
+    ).lastrowid  # fmt: skip
+
+
+def _past_read(store, key, last, cap):
+    """What ``learning_rows`` adds for this vendor, worked out from all its lessons: its newest ``cap`` in the memory's
+    order (decisions first, then history, each newest first), those after the memory's ``last``."""
+    place = lambda r: (r["outcome"] == "history", -r["id"])  # noqa: E731
+    with store._conn() as conn:
+        rows = sorted((dict(r) for r in conn.execute("SELECT * FROM feedback WHERE vendor_key = ?", (key,))), key=place)
+    return [r for r in rows[:cap] if place(r) > place(last)]
+
+
+def test_a_vendors_older_lessons_carried_forward_are_what_reading_them_again_gives(tmp_path, monkeypatch):
+    # D-173: past the memory's cap each approval moves its last lesson, and every vendor past it read all its older
+    # lessons again, in every process (up to 50,000 rows for the biggest). They are carried forward now (the vendor's
+    # lessons the memory just let go put in front, the oldest past its own cap dropped) and read whole after anything
+    # else. Random approvals, history imports, re-approvals, lessons forgotten, moved to another vendor, changed by an
+    # upgrade, more than the memory holds at once and a database restored, vendors asked now and then: each time
+    # what reading them all gives.
+    import random
+    import sqlite3
+
+    from ap_coder.core.store import _base, learning
+
+    cap = 30
+    monkeypatch.setattr(learning, "FEEDBACK_READ", cap)
+    store = Store(tmp_path / "ap.db")
+    rng = random.Random(173)
+    vendors = [vendor_key(v) for v in ("Acme Supply", "Beta Ltd", "Gamma Inc.", "Delta", "Echo Freight", "Fox")]
+    reads = {"carried": 0, "whole": 0}
+    real = learning.fetch_rows
+
+    def spy(conn, sql, params=()):
+        if "LIMIT ?) WHERE" in sql:
+            reads["whole"] += 1
+        elif sql.startswith("SELECT * FROM feedback WHERE vendor_key = ? AND ("):
+            reads["carried"] += 1
+        return real(conn, sql, params)
+
+    monkeypatch.setattr(learning, "fetch_rows", spy)
+    invoices = [0]
+
+    def add(conn, n, history=False, vendor=None):
+        invoices[0] += 1
+        for _ in range(n):
+            outcome = "history" if history else rng.choice([ACCEPTED, CORRECTED, CODED, "bulk"])
+            _lesson(conn, vendor or rng.choices(vendors, weights=[12, 4, 2, 1, 1, 0.3])[0], f"Part {rng.randint(1, 9)}",
+                    outcome, None if history else invoices[0], rng.choice(["5000", "6000", "6100"]))  # fmt: skip
+
+    def any_lesson(conn, where="1"):
+        ids = [r[0] for r in conn.execute(f"SELECT id FROM feedback WHERE {where} ORDER BY id")]
+        return rng.choice(ids) if ids else None
+
+    with store._conn() as conn:
+        add(conn, 20, history=True)
+        add(conn, 15)
+    saved, ops = None, []
+    for step in range(300):
+        op = rng.choices(["approve", "history", "reapprove", "forget", "move", "upgrade", "many", "save", "restore"],
+                         weights=[60, 8, 5, 3, 2, 1, 1, 2, 1])[0]  # fmt: skip
+        ops.append(op)
+        with store._conn() as conn:
+            if op == "approve":
+                add(conn, rng.randint(1, 6))
+            elif op == "history":
+                add(conn, rng.randint(1, 8), history=True)
+            elif op == "reapprove" and (lesson := any_lesson(conn, "invoice_id IS NOT NULL")) is not None:
+                invoice, vendor = conn.execute("SELECT invoice_id, vendor_key FROM feedback WHERE id = ?",
+                                               (lesson,)).fetchone()  # fmt: skip
+                conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice,))
+                add(conn, rng.randint(1, 4), vendor=vendor)
+            elif op == "forget" and (lesson := any_lesson(conn)) is not None:
+                conn.execute("DELETE FROM feedback WHERE id = ?", (lesson,))
+            elif op == "move" and (lesson := any_lesson(conn)) is not None:  # a vendor merged into another
+                conn.execute("UPDATE feedback SET vendor_key = ? WHERE id = ?", (rng.choice(vendors), lesson))
+            elif op == "upgrade" and (lesson := any_lesson(conn)) is not None:  # changed in place: what is kept dropped
+                conn.execute("UPDATE feedback SET final_gl = '6999' WHERE id = ?", (lesson,))
+            elif op == "many":
+                add(conn, cap + 5)
+        if op == "upgrade":
+            _base._forget_learning(store.path)
+        if op == "save":
+            saved = sqlite3.connect(":memory:")
+            with sqlite3.connect(store.path) as live:
+                live.backup(saved)
+        elif op == "restore" and saved is not None:
+            with sqlite3.connect(store.path) as live:
+                saved.backup(live)
+        with store.session():
+            rows = store.feedback_rows()
+            for key in rng.sample(vendors, rng.randint(1, len(vendors))):  # some vendors asked, not all, each time
+                got = store.learning_rows(key, key)
+                past = _past_read(store, key, rows[-1], cap) if len(rows) >= cap else []
+                assert list(got) == rows + past, (step, op, key)
+                if past:
+                    assert got.past is store.learning_rows(key, key).past  # kept until something changes
+    assert reads["carried"] > 200 and reads["whole"] > 20, reads  # both ways, many times
+    assert {"approve", "reapprove", "forget", "move", "upgrade", "many", "restore"} <= set(ops)
+
+
+def test_a_vendors_older_lessons_are_read_again_when_more_than_the_memorys_last_moved(tmp_path, monkeypatch):
+    # D-173's carry forward at its edges: the memory's last moved from the history to the decisions (the vendor's
+    # history lesson it was), history of the vendor imported past the memory (read again), a database restored whose
+    # next lessons took the ids of those it lost (read again), and more decisions at once than the memory holds, the
+    # vendor's among those it doesn't.
+    import sqlite3
+
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 5)
+    store = Store(tmp_path / "ap.db")
+    whole, real = [], learning.fetch_rows
+    monkeypatch.setattr(learning, "fetch_rows", lambda conn, sql, params=(): whole.append(
+        "LIMIT ?) WHERE" in sql) or real(conn, sql, params))  # fmt: skip
+
+    def same(how):
+        del whole[:]
+        rows = store.feedback_rows()
+        assert list(store.learning_rows("x", "x")) == rows + _past_read(store, "x", rows[-1], 5)
+        assert ("read again" if any(whole) else "carried") == how
+
+    with store._conn() as conn:
+        for vendor in "yxyyyy":
+            _lesson(conn, vendor, outcome="history")  # 1 to 6: the memory's last is x's (2)
+    same("read again")
+    with store._conn() as conn:
+        for _ in range(5):
+            _lesson(conn, "z")  # 7 to 11: the memory holds only decisions now, x's 2 is past its last (7)
+    same("carried")
+    with store._conn() as conn:
+        _lesson(conn, "x", outcome="history")  # 12: history, past the memory's last
+    same("read again")
+    saved = sqlite3.connect(":memory:")
+    with sqlite3.connect(store.path) as live:
+        live.backup(saved)
+    with store._conn() as conn:
+        _lesson(conn, "x", "Part before the restore")  # 13
+        for _ in range(6):
+            _lesson(conn, "z")  # 14 to 19
+    same("carried")
+    with sqlite3.connect(store.path) as live:
+        saved.backup(live)
+    with store._conn() as conn:
+        assert _lesson(conn, "x", "Part after the restore") == 13  # the id of the one lost, another lesson
+        for _ in range(7):
+            _lesson(conn, "z")  # 14 to 20: the memory's last moves on (16)
+    same("read again")
+    with store._conn() as conn:
+        _lesson(conn, "z")  # 21
+        _lesson(conn, "x", "Part 2")  # 22: past the memory's last once the next five are in (23)
+        for _ in range(5):
+            _lesson(conn, "z")  # 23 to 27
+    same("carried")
+
+
+def test_a_vendors_lessons_are_counted_once_a_page_while_nothing_changes(tmp_path, monkeypatch):
+    # A check asked for the stamp of the vendor's lessons three or four times (the history check, the accounts and
+    # cost centers used for it, its older lessons past the memory), each counting all of them: 8 ms each for the
+    # biggest vendor at 300,000 invoices. Once a page now while the database does not change; a change meanwhile, by
+    # another process or the page itself, counts them again.
+    import sqlite3
+
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 5)
+    store = Store(tmp_path / "ap.db")
+    with store._conn() as conn:
+        for n in range(12):
+            _lesson(conn, "acme" if n % 2 else "beta", f"Part {n}")
+    counted, real = [], learning._vendor_stamp
+    monkeypatch.setattr(learning, "_vendor_stamp", lambda conn, key: counted.append(key) or real(conn, key))
+
+    def parts():
+        return {p.description for p in store.vendor_lessons("Acme").patterns}
+
+    with store.session():
+        assert len(parts()) == 5 and store.learning_rows("Acme").past and parts()  # (its newest FEEDBACK_READ)
+        assert counted == ["acme"]
+        with sqlite3.connect(store.path) as other:  # another process's approval meanwhile
+            _lesson(other, "acme", "Freight")
+        assert "Freight" in parts() and store.learning_rows("Acme").past
+        assert counted == ["acme"] * 2
+        with store._conn() as conn:  # the page's own
+            _lesson(conn, "acme", "Toner")
+        assert "Toner" in parts() and counted == ["acme"] * 3
+    parts()
+    parts()  # outside a page: each time
+    assert counted == ["acme"] * 5
+
+
+def test_a_vendors_older_lessons_kept_from_a_race_with_an_approval_are_not_carried_forward(tmp_path, monkeypatch):
+    # B-1809: the whole memory and the vendor's own lessons are read a moment apart (``learning_rows``); an approval
+    # of the vendor between the two, past the memory's cap, had its older lessons kept for a memory they were not read
+    # with, and D-173's carry forward then gave it lessons too many at every approval after (the GL suggestions'
+    # counts with them) until something made them be read whole. What is read across such a moment is used once and
+    # not kept: the next ask reads them again from one moment.
+    import sqlite3
+
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 5)
+    store = Store(tmp_path / "ap.db")
+    sql = ("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+           "VALUES ('acme', 'acme', 'line', '6100', 'corrected', datetime('now'))")  # fmt: skip
+
+    def add() -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.execute(sql)
+
+    def fresh() -> list[int]:
+        with sqlite3.connect(store.path) as conn:
+            memory = [
+                r[0] for r in conn.execute("SELECT id FROM feedback ORDER BY outcome = 'history', id DESC LIMIT 5")
+            ]
+            own = [r[0] for r in conn.execute("SELECT id FROM feedback WHERE vendor_key = 'acme' ORDER BY "
+                                              "outcome = 'history', id DESC LIMIT 5")]  # fmt: skip
+        return memory + [i for i in own if i < memory[-1]]
+
+    for _ in range(6):
+        add()
+    real, raced = store.feedback_rows, []
+
+    def racing(*a, **k):
+        rows = real(*a, **k)
+        if not raced:  # an approval of the vendor lands just after the whole memory was read
+            raced.append(1)
+            add()
+        return rows
+
+    monkeypatch.setattr(store, "feedback_rows", racing)
+    store.learning_rows("acme", key="acme")
+    for _ in range(4):
+        assert [r["id"] for r in store.learning_rows("acme", key="acme")] == fresh()
+        add()
+
+
+def test_a_vendors_lessons_read_inside_a_write_that_is_undone_are_not_answered_after_it(tmp_path):
+    # B-1810: the vendor's lessons' stamp, read once a page while the database does not change (D-173), was also
+    # kept from inside a write: one undone moves neither of the session's counts, so the rest of the page was told
+    # of the lesson that was undone. Inside a write it is read afresh.
+    import sqlite3
+
+    store = Store(tmp_path / "ap.db")
+    sql = ("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+           "VALUES ('acme', 'acme', ?, ?, 'corrected', datetime('now'))")  # fmt: skip
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(sql, ("gloves", "6100"))
+    with store.session():
+        assert store.vendor_lessons("acme", "acme").accounts == ["6100"]
+        try:
+            with store._conn() as conn:
+                conn.execute(sql, ("toner", "7200"))
+                assert "7200" in store.vendor_lessons("acme", "acme").accounts
+                raise RuntimeError("undone")
+        except RuntimeError:
+            pass
+        assert store.vendor_lessons("acme", "acme").accounts == ["6100"]
