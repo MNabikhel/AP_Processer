@@ -128,6 +128,21 @@ def test_a_live_send_is_nobody_elses_for_as_long_as_it_can_take_its_retries_incl
     assert statuses(store, batch)[1] == jde_post.SENDING
 
 
+def test_the_queue_builds_each_batch_once_not_once_per_voucher_waiting(tmp_path, ais, monkeypatch):
+    """B-1884: the queue built a batch's vouchers again for each of its vouchers waiting (``setdefault`` evaluated
+    the build each time): 500 waiting took 84 s before anything was sent, every five minutes. Once per batch now."""
+    store, batch = batch_of(tmp_path, ais, ON, QC, BC)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: all three wait in the queue
+    jde_post.post(store, batch)
+    assert set(statuses(store, batch).values()) == {jde_post.QUEUED}
+    built = []
+    real = jde_post.payloads
+    monkeypatch.setattr(jde_post, "payloads", lambda store, batch: built.append(batch) or real(store, batch))
+    jde_post.retry_queue(store)
+    assert built == [batch] and set(statuses(store, batch).values()) == {jde_post.POSTED}
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""

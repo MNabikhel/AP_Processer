@@ -1012,12 +1012,16 @@ def retry_queue(store: Any, actor: str | None = None, client: jde_ais.AisClient 
     rows = [p for p in waiting(store) if batch is None or p["batch"] == batch]
     ready: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     skipped: list[str] = []
-    built: dict[int, dict[int, dict[str, Any]]] = {}
+    built: dict[int, dict[int, dict[str, Any]] | ValueError] = {}
     for row in rows:
-        try:
-            found = built.setdefault(row["batch"], payloads(store, row["batch"])[0])
-        except ValueError as exc:
-            skipped.append(f"AP Coder #{row['invoice_id']}: {exc}")
+        if row["batch"] not in built:  # once per batch, not once per voucher waiting (B-1884)
+            try:
+                built[row["batch"]] = payloads(store, row["batch"])[0]
+            except ValueError as exc:
+                built[row["batch"]] = exc
+        found = built[row["batch"]]
+        if isinstance(found, ValueError):
+            skipped.append(f"AP Coder #{row['invoice_id']}: {found}")
             continue
         payload = found.get(row["invoice_id"])
         # Changed since it was approved: JDE may have it all the same (sent before the change): asked for by its key,
