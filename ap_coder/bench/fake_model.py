@@ -12,7 +12,8 @@ How the model machine behaves, given when it starts or changed while it runs (``
 the same names in JSON):
 
 - ``latency``: the seconds an answer takes, (lo, hi), uniform (it sets both of these); ``page_latency`` and
-  ``chat_latency`` for each kind;
+  ``chat_latency`` for each kind; an answer whose client stopped waiting meanwhile is dropped, never served (as LM
+  Studio stops);
 - ``slots``: the requests answered at once (LM Studio's concurrent predictions, one GPU for every model); the rest
   wait in line, first come first served;
 - ``fail_rate``: the share answered 500; ``hang_rate``: the share that never answer (they keep their slot until
@@ -557,6 +558,9 @@ class FakeModel:
                 outcome = self._hang(h, entry, release)
                 return
             self._pause(self._latency(kind))
+            if self._client_gone(h):  # it gave up meanwhile (its own limit): LM Studio stops, nothing is served
+                entry["gave_up"] = True
+                raise _Dropped
             answer = self.on_request(method, path, body) if self.on_request else None
             if answer is None and fail:
                 answer = 500, {"error": "The model stopped while it was answering (a fake failure)."}
@@ -597,6 +601,15 @@ class FakeModel:
                 if after is not None and sum(self._served.values()) >= after:
                     self._state["down"], self._state["down_after"] = True, None
             self._cond.notify_all()
+
+    @staticmethod
+    def _client_gone(h: BaseHTTPRequestHandler) -> bool:
+        """Whether the client closed its connection while its answer was being worked out (it gave up)."""
+        try:
+            readable, _, _ = select.select([h.connection], [], [], 0)
+            return bool(readable) and not h.connection.recv(1, socket.MSG_PEEK)
+        except (OSError, ValueError):
+            return True
 
     def _hang(self, h: BaseHTTPRequestHandler, entry: dict[str, Any], release: int) -> str:
         """Never answer: until release_hung, the server going down or stopping, or the client giving up."""
