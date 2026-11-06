@@ -367,8 +367,9 @@ def test_the_servers_background_process_makes_the_downloads_and_a_laptops_starts
                          (jde_sync, "Background"), (bulk, "QueueRecheck")):  # fmt: skip
         monkeypatch.setattr(module, name, lambda *args, **kwargs: stub)
     monkeypatch.setenv("AP_SERVER_MODE", "1")
-    *_, runner = web_app.start_background_work(web_settings, store)
+    *_, bulk_runner, runner = web_app.start_background_work(web_settings, store)
     assert isinstance(runner, downloads.Runner) and runner.thread.is_alive()
+    bulk_runner.stop()  # (the bulk approvals', D-185: tests/web/test_web_review_bulk.py)
     job, _ = store.start_download("user:1", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
     ends = time.monotonic() + 20
     while store.download_job(job)["state"] != reports.MADE and time.monotonic() < ends:
