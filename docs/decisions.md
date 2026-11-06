@@ -1226,3 +1226,92 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
     `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
     `tests/bench/test_seed_volume.py`)
+- **D-170** · **A scanned page is drawn and OCR'd once, whatever reads it and in whichever process; OCR reads the
+  page's pixels, with no PNG between; PyMuPDF one thread at a time; one HTTP client a model server; the totals
+  solver pruned. What is read is the same, byte for byte** (phase 3, item β; B-1760).
+  - **Why** (measured again on fd5d166, Python 3.12, both OCR engines and the table finder): a scan was read up to
+    five times in its life (arrival, the page reader's blank pages and its pass, the approval's template learning,
+    teach mode's words) and each time every page was drawn and made a PNG again (0.4 to 1 s a page), because the
+    readings kept in `.cache/ocr` were named by the hash of that PNG: the page reader's pass on a 2-page scan took
+    3.2 s with every reading kept, teach mode 1.9 s. The table finder's tables were kept only in the process that
+    found them. PyMuPDF was used from several threads with no lock (N-14). Each page read made a new HTTP client
+    (B-1760). The totals solver tried up to 480,000 combinations (1.3 s).
+  - **The readings kept by what was asked** (`capture/layout.py`): a page for OCR is a `PageToRead`, named by the
+    file's SHA-256 (worked out once per version of the file, before it is opened), the page and how it is drawn
+    (`OCR_DPI`, `OCR_MAX_SIDE`, straightened and enlarged for a second read by the same engine), and drawn only when
+    its reading isn't kept. A reading is kept under the hash of that, the engine with its settings and its model
+    files' SHA-256, the libraries' versions (RapidOCR, ONNX Runtime, PyMuPDF, Pillow, pillow-heif, NumPy, OpenCV) and
+    `PAGE_DRAWING` (`kept_name`). Kept with it: the picture's size, the resolution it states and, when the page's turn
+    needed them, its letters' count (``_letters_upright``), so a reading read back never draws the page. The turn,
+    the tilt and the words are worked out from the reading each time, as before: a change to the reader needs no
+    reading again. `tests/capture/test_reading_cache.py` pins the code that draws a page, runs OCR and says what is
+    kept (`KEPT_CODE`): a change to it fails until `PAGE_DRAWING` is one more.
+    - The table finder's tables are kept there too (by the file, the pages, the model's SHA-256 and its settings).
+    - The folder is `.cache/ocr`, shared by every process of the data folder: a reading is written under a name of
+      its process and thread, then renamed; at most 512 MB (was 4,000 files, about a day and a half of a busy
+      server's scans: two weeks now), the oldest written first, down to three quarters; a half-written one left by a
+      stopped process goes after an hour. The readings named the old way are never read again and go as the folder
+      is pruned: each page kept is read once more.
+    - `AP_OCR_CACHE` (a developer's cache for bench iterations) is named the same way now; D-163's names go, so a
+      cache made before is read once more.
+    - Not kept on disk: the pictures themselves (the readings are what is read back). In memory, the last pages
+      drawn (at most 32 MB, `PICTURES_KEPT_BYTES`) for the second engine, as the last 4 PNGs were.
+  - **Pixels, no PNG** (`_page_picture`, `_scan_picture`, `_image_pages`, `_prepared`, `table_finder.page_pictures`):
+    PyMuPDF's pixmap into a Pillow picture, a picture's frame as it is, the second read's straightened page as it is
+    made. OCR is given the same pixels, in the same mode, as the PNG gave it, and the resolution the PNG stated
+    (PyMuPDF writes the pixmap's own, 96 dpi: read off a one-pixel PNG once, `_png_dpi`; a page small enough states
+    it, as before). Proven per kind of page in the tests: a scanned PDF page (letter, a 4 x 6 in. slip, tabloid), a
+    PDF made from a picture (PNG, JPEG, grey, palette), a photo and a 3-page TIFF, PNG files with transparency,
+    palette and grey, the straightened second read of each, and the table finder's pictures.
+  - **PyMuPDF one thread at a time** (`layout.PDF_LOCK`, `opened_pdf`): every call on a document in `capture/` and
+    `web/document.py` (the page pictures, teach mode's words, the page sizes) holds one lock; OCR runs outside it.
+    PyMuPDF holds Python's own lock in its calls (another thread got 2% of the time during a page's PNG), so nothing
+    waits longer than before. Fifty PDFs (scans and digital, one to three pages) read, rendered for the table finder
+    and the viewer and listed for teach mode, eight threads at once, each the same as alone. N-14 did not reproduce
+    before: the lock makes it so whatever PyMuPDF's next version does.
+  - **One HTTP client a model server** (`local_llm.build_local_client`, B-1760): shared by every request of a
+    process to that server and way of reaching it (refused, on the network and how, the internet), a forked process
+    making its own: 1,000 page reads and codings against a server keeping its connections open, 2,000 more open
+    files before, none now.
+  - **The totals solver** (`reader/totals.py`): with a total tax or a deposit only the combination with no tax is
+    tried (the others were all skipped one by one); otherwise only the taxes that make the totals add up (a range of
+    the combinations sorted by their sum: the sum grows with it) and those whose most possible score, worked out
+    with each tax's rate, beats the best so far. One that doesn't add up never scores 3.0 more, so the subtotals that
+    balance are all still found. The same answers: 5,000 random readings of every kind (added up or not, a deposit,
+    a total tax, GST and HST from one amount, no subtotal) the same readings, scores and methods as the solver kept
+    in the test (`_solve_totals_as_before`), 300 in the test itself. No cap on the combinations: a cap could change
+    an answer. Worst case (every amount field full) 1.33 s → 12 ms.
+  - **The proof that reading is the same:** `scripts/same_behaviour.py --ref claude/epic-feynman-r6ns86 read
+    pipeline` (Python 3.12, both engines, the table finder on): read 60 outputs and pipeline the same bytes. `python -m
+    ap_coder.bench run --quick --scanned 1` and `lines --quick --scanned 1` before and after: the same evidence,
+    failures, reports and cases (field accuracy 100.0%, ECE 0.0226; descriptions right 43.1%), only the timings
+    differ.
+  - **Measured** (`p3_beta/stages.py` in the session's scratchpad: a 2-page bench scan, each step in a new process,
+    the arrival with the models loaded, before and after one after the other 4 to 6 times, medians; other agents'
+    work loaded the 4 cores 2 to 8 times over, so the arrival's times spread from 12 to 43 s):
+
+    | a 2-page scan | both OCR engines | one engine (the second read straightened, enlarged) |
+    |---|---:|---:|
+    | arrival | 28.6 → 28.5 s | 22.0 → 17.3 s |
+    | the page reader's pass (its blank pages, then the whole pipeline again) | 3.16 → 0.69 s | 6.59 → 0.67 s |
+    | of it, the reading (`analyze`) | 2.55 → 0.27 s | 6.12 → 0.24 s |
+    | teach mode's words | 1.80 → 0.41 s | |
+    | the approval's template learning (`build_layout`) | 1.88 → 0.43 s | |
+
+    The arrival with both engines is the OCR: drawing the pages for it took 1.6 s of 11 s on a quiet moment (PyMuPDF's
+    PNG 1.43 s, read back 0.18 s), now 0.26 s, within the load's spread here. With one engine, the straightened page
+    is no longer made a PNG and read back. Teach mode's 0.41 s is importing RapidOCR (0.45 s) in a new process: in a
+    running one it is the reading's 0.05 s. What is read is the same in every row (each step's digest, before and
+    after).
+
+  - **Not done, and why:**
+    - The OCR itself is the arrival's cost and stays: a reading the same needs the same engines on the same pixels.
+    - `ai/page_reader.py` keeps its own `_RENDER_LOCK`, and `ai/imaging.py`, `ai/pipeline.py`, `intake/`,
+      `erp/stamp.py` call PyMuPDF without `PDF_LOCK`: not this item's files (one line each to share it).
+    - The table finder's model is loaded in each process (0.6 s); its tables are no longer looked for again.
+    - Found, not changed (it would change what is read): a page drawn for OCR states the 96 dpi PyMuPDF gives its
+      pixmaps, so a small page with neither text nor a picture (text drawn as outlines, a 4 x 6 in. slip) is said
+      to be scanned at about 96 dpi, coarse, and each field goes to a person.
+  - (`capture/layout.py`, `capture/table_finder.py`, `capture/reader/totals.py`, `web/document.py`,
+    `ai/local_llm.py`, `docs/HOW_IT_RUNS.md`, `docs/CAPTURE_DESIGN.md`; `tests/capture/test_reading_cache.py`,
+    `tests/capture/test_totals_solver.py`, `tests/capture/test_reading_once.py`, `tests/ai/test_local_llm.py`)

@@ -464,7 +464,7 @@ can corrupt an open SQLite database).
 | `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
 | `.ap_coder_pickup.lock` | one pick-up of new invoices at a time: a `watch` check, a dashboard import or `ap_coder process` (the operating system's lock) | `mailbox.pickup_lock` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
-| `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
+| `.cache/ocr/` | each scanned page's OCR, per engine, and each file's tables (by what was asked: the file's SHA-256, the page, how it is drawn, the engine and its models, the libraries' versions, D-170): a page is drawn and OCR'd once however often its invoice is read, by any process; at most 512 MB, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |
 | `backup-<date>/` | the data set aside by `install --fresh-start` | `install.fresh_start` |
 | `models/` (optional) | the table finder model, if IT puts it there | IT |
