@@ -200,8 +200,9 @@ def own(path: Path, uid: int, gid: int) -> None:
 def hand_over(data: Path, account: str, uid: int, gid: int) -> str:
     """The parts of the data folder the host writes (``service/``, its ``host.lock``, ``logs/``; the data folder too
     when made now) made the service account's: as root, ``service install`` would otherwise leave them root's, and
-    the host could not start. A link there is refused, and a file with other names (a hard link) left as it is: the
-    account can write here, and root must not hand it what they point at. Returns a warning ("" = none)."""
+    the host could not start. Then what else root made in it (``hand_back``), when the data folder is the account's.
+    A link there is refused, and a file with other names (a hard link) left as it is: the account can write here, and
+    root must not hand it what they point at. Returns a warning ("" = none)."""
     made = not data.exists()
     data.mkdir(parents=True, exist_ok=True)
     folders = [service.service_dir(data), data / service.LOG_DIR]
@@ -217,10 +218,46 @@ def hand_over(data: Path, account: str, uid: int, gid: int) -> str:
     found = lock.lstat()
     if stat.S_ISREG(found.st_mode) and found.st_nlink == 1:
         own(lock, uid, gid)
-    if not made and data.stat().st_uid != uid:
-        return (f"The data folder {data} is not {account}'s: the service must be able to write in it (the database, "
-                f"the invoices). If it can't: sudo chown -R {account} {shlex.quote(str(data))}")  # fmt: skip
-    return ""
+    if data.stat().st_uid == uid:
+        hand_back(data, uid, gid)
+        return ""
+    return (f"The data folder {data} is not {account}'s: the service must be able to write in it (the database, "
+            f"the invoices). If it can't: sudo chown -R {account} {shlex.quote(str(data))}")  # fmt: skip
+
+
+ROOT_UID = 0  # whose files ``hand_back`` hands back: root's, made by an administrator's sudo
+
+
+def hand_back(data: Path, uid: int, gid: int) -> int:
+    """What root made in the data folder (an administrator's sudo: server-update's backup or restore, ``users add``
+    before the service's first start) handed back to the service's account, which could otherwise not write it: a
+    Windows folder gives its rights to what is made in it, a Mac's file is its maker's. Only the folder of an account
+    (never a folder of the system named by mistake), only root's folders and its files with one name (no hard link),
+    each opened without following a link (``os.fwalk``, ``O_NOFOLLOW``) and changed through that open file: never
+    what a link, or a file swapped in meanwhile, points at. Returns how many were handed back."""
+    handed = 0
+    for _, folders, files, where in os.fwalk(data, follow_symlinks=False):
+        for name in (*folders, *files):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=where)
+            except OSError:
+                continue  # a link, a socket, gone meanwhile
+            try:
+                found = os.fstat(fd)
+                one = stat.S_ISDIR(found.st_mode) or (stat.S_ISREG(found.st_mode) and found.st_nlink == 1)
+                if found.st_uid == ROOT_UID and one:
+                    os.fchown(fd, uid, gid)
+                    handed += 1
+            finally:
+                os.close(fd)
+    return handed
+
+
+def hand_back_to_daemon(data: Path, task_name: str) -> None:
+    """``hand_back`` to the installed daemon's account, as root, when the data folder is that account's."""
+    ids = account_ids(str(read_plist(task_name).get("UserName") or "")) if is_root() else None
+    if ids and ids[0] != 0 and data.is_dir() and data.stat().st_uid == ids[0]:
+        hand_back(data, *ids)
 
 
 # --- launchctl --------------------------------------------------------------------------------------------------------
@@ -267,6 +304,7 @@ def start(data: Path, s: ServerSettings, say: Say = print) -> int:
         say(f"The LaunchDaemon {label(s.task_name)} is not installed: {SUDO}")
         return 1
     service.stop_flag(data).unlink(missing_ok=True)
+    hand_back_to_daemon(data, s.task_name)  # (what server-update or another sudo made there meanwhile)
     launchctl("enable", target(s.task_name))  # (one turned off with launchctl disable would not load)
     if loaded(s.task_name) is None:
         done = launchctl("bootstrap", "system", str(plist))  # RunAtLoad: it starts now

@@ -1,7 +1,8 @@
 """CI's check of the company server's service on a Mac (D-186), for real: the LaunchDaemon installed with sudo, the
-dashboard answering, its host killed (launchd starts it again), stopped (still stopped a minute later), started again,
-removed (its plist gone). Run by .github/workflows/ci.yml (job macos-service) on GitHub's macOS runner, whose sudo
-asks no password; on a Mac of your own, from an AP Coder folder set up with its .venv:
+dashboard answering, its host killed (launchd starts it again), restarted while it runs (launchd's SIGTERM: the host
+ends its dashboard, then itself), stopped (still stopped a minute later), started again, removed (its plist gone).
+Run by .github/workflows/ci.yml (job macos-service) on GitHub's macOS runner, whose sudo asks no password; on a Mac
+of your own, from an AP Coder folder set up with its .venv:
 
     .venv/bin/python scripts/ci/macos_service.py --data /tmp/apcoder-ci-data --port 8597
 
@@ -90,6 +91,17 @@ class Check:
         run(["plutil", "-p", plist])  # (what launchd was given, in the log)
         return found
 
+    def again(self, what: str, host: int, dashboard: int, within: float) -> None:
+        """A new host within ``within`` seconds, then a dashboard of its own answering; the old dashboard gone."""
+        started = clock()
+        self.until(f"{what}: a new host", lambda f: bool(f.get("running")) and f.get("pid") != host, within)
+        self.until(f"{what}: its dashboard answers",
+                   lambda f: self.answering(f) and f.get("pid") != host and f.get("dashboard_pid") != dashboard,
+                   within=240)  # fmt: skip
+        if dashboard and run(["sudo", "kill", "-0", str(dashboard)]).returncode == 0:
+            raise Failed(f"{what}: the old dashboard (process {dashboard}) still runs")
+        print(f"{what}: the dashboard answers again {clock() - started:.0f} s later", flush=True)
+
     def kill_the_host(self, within: float) -> None:
         """``kill -9`` of the host: launchd ends its dashboard with it (the process group) and, KeepAlive, starts the
         host again (a new process), whose own dashboard answers."""
@@ -97,14 +109,19 @@ class Check:
         host, dashboard = int(before["pid"]), int(before.get("dashboard_pid") or 0)
         if run(["sudo", "kill", "-9", str(host)]).returncode:
             raise Failed(f"the host (process {host}) could not be killed")
-        started = clock()
-        self.until("launchd started the host again, and a dashboard of its own answers",
-                   lambda f: self.answering(f) and f.get("pid") != host and f.get("dashboard_pid") != dashboard,
-                   within)  # fmt: skip
-        if dashboard and run(["sudo", "kill", "-0", str(dashboard)]).returncode == 0:
-            raise Failed(f"the killed host's dashboard (process {dashboard}) still runs")
-        print(f"launchd started the host again, the dashboard answering, {clock() - started:.0f} s after "
-              f"the kill of process {host}", flush=True)  # fmt: skip
+        self.again(f"the host (process {host}) killed", host, dashboard, within)
+
+    def restart(self) -> None:
+        """``service start`` while it runs: launchctl kickstart -k sends the host SIGTERM; it ends its dashboard, then
+        itself, and launchd starts it again."""
+        before = self.until("the dashboard answers", self.answering, within=240)
+        host, dashboard = int(before["pid"]), int(before.get("dashboard_pid") or 0)
+        if self.service("start").returncode:
+            raise Failed("service start (while it runs) ended with an error")
+        self.again("service start while it runs", host, dashboard, within=120)
+        log = str(self.data / "logs" / "service.log")
+        if run(["grep", "-q", "the host was asked to stop (SIGTERM)", log]).returncode:
+            raise Failed("the host's log does not say it was asked to stop by SIGTERM")
 
     def stop(self, stays: float) -> None:
         """``service stop``: stopped at once, and still stopped ``stays`` seconds later (KeepAlive leaves it)."""
@@ -150,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8597)
     parser.add_argument("--account", default=os.environ.get("SUDO_USER") or getpass.getuser(),
                         help="The account the service runs as (default: this one; never root)")  # fmt: skip
-    parser.add_argument("--back-within", type=float, default=60, help="Seconds launchd has to start a killed host")
+    parser.add_argument("--back-within", type=float, default=30, help="Seconds launchd has to start a killed host")
     parser.add_argument("--stays-stopped", type=float, default=60, help="Seconds it must stay stopped after stop")
     args = parser.parse_args(argv)
     check = Check(Path(args.data).resolve(), args.port, args.account)
@@ -159,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         plist = str(check.install()["plist"])
         check.kill_the_host(args.back_within)
+        check.restart()
         check.stop(args.stays_stopped)
         check.start()
         check.remove(plist)
@@ -171,8 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if made_link and link.is_symlink():
             run(["sudo", "rm", str(link)])  # (the link install made beside this folder)
-    print("\nThe LaunchDaemon: installed, answering, started again by launchd after a kill, stopped for good, started, "
-          "removed.")  # fmt: skip
+    print("\nThe LaunchDaemon: installed, answering, started again by launchd after a kill, restarted (SIGTERM), "
+          "stopped for good, started, removed.")  # fmt: skip
     return 0
 
 

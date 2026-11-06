@@ -235,6 +235,38 @@ def test_remove_boots_it_out_and_deletes_the_plist_keeping_the_data_and_the_link
     assert main("start") == 1
 
 
+def test_what_roots_sudo_made_in_the_data_folder_is_handed_back_never_what_a_link_points_at(tmp_path, monkeypatch):
+    """An administrator's sudo (server-update's backup and restore, users add before the first start) leaves files
+    and folders that are root's: the service's account could not write them (a new backup in a backups folder root
+    made, the database root made). ``hand_back`` gives the account root's own folders and files with one name only,
+    through the open file: a link, a hard link to a file of the system, or a folder linked in are left alone."""
+    data, system = tmp_path / "APCoderData", tmp_path / "etc"
+    (data / "backups").mkdir(parents=True)
+    (data / "backups" / "ap_coder-before-update.db").write_text("db", encoding="utf-8")
+    (data / "authenticator.key").write_text("key", encoding="utf-8")
+    system.mkdir()
+    (system / "sudoers").write_text("root ALL", encoding="utf-8")
+    (system / "inside").write_text("x", encoding="utf-8")
+    (data / "a link").symlink_to(system / "inside")  # (one name: only O_NOFOLLOW keeps it)
+    (data / "a linked folder").symlink_to(system)
+    os.link(system / "sudoers", data / "a hard link")
+    monkeypatch.setattr(service_macos, "ROOT_UID", os.lstat(data).st_uid)  # the test's own files stand for root's
+    handed: list[tuple[int, int, int]] = []
+    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: handed.append((os.fstat(fd).st_ino, uid, gid)))
+    assert service_macos.hand_back(data, 450, 450) == 3
+    names = {p.lstat().st_ino: p.name for p in (data / "backups", data / "backups" / "ap_coder-before-update.db",
+                                                data / "authenticator.key")}  # fmt: skip
+    assert {names.get(inode, inode) for inode, _, _ in handed} == set(names.values())
+    assert {(uid, gid) for _, uid, gid in handed} == {(450, 450)}
+    # A data folder that is not the daemon's account's (a system folder named by mistake) is never walked.
+    monkeypatch.setattr(service_macos, "is_root", lambda: True)
+    monkeypatch.setattr(service_macos, "read_plist", lambda task: {"UserName": "_apcoder"})
+    monkeypatch.setattr(service_macos, "account_ids", lambda name: (os.lstat(data).st_uid + 1, 450))
+    handed.clear()
+    service_macos.hand_back_to_daemon(data, "AP Coder")
+    assert handed == []
+
+
 def test_the_other_commands_find_the_data_folder_in_the_daemon_when_sudo_leaves_it_out(mac, monkeypatch, tmp_path):
     """sudo leaves AP_PRIVATE_DIR out: ``service stop`` then wrote its ``stopped`` file in another folder (the code
     folder's private/), and the host started at the Mac's next start did not see it. The daemon's plist (root's) names
@@ -475,6 +507,9 @@ class FakeMac:
                 self.stopped_at = time.monotonic()
                 if action == "remove":
                     self.plist.unlink(missing_ok=True)
+            elif action == "start" and self.host:  # running: kickstart -k, a new host (the old one asked to stop)
+                kept = self.misbehave == "keeps the old dashboard"
+                self.host, self.dashboard = self.host + 10, self.dashboard + (0 if kept else 10)
             elif action == "start":
                 self.host, self.dashboard = 700, 701
             elif action == "status":
@@ -496,7 +531,7 @@ class FakeMac:
 
 
 @needs_ci_script
-@pytest.mark.parametrize("misbehave", ["", "stays dead", "comes back"])
+@pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "comes back"])
 def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not(tmp_path, monkeypatch, misbehave):
     ci = _ci()
     mac = FakeMac(tmp_path / "com.apcoder.ci.plist", misbehave)
