@@ -87,9 +87,7 @@ def test_a_line_description_corrected_on_its_own_shows_on_the_learning_page(tmp_
                                                           "line_items": []}, {})  # fmt: skip
 
     def shown() -> list[tuple[str, str]]:
-        rows = learning._settled(store, "learning_corrections",
-                                 lambda: store.corrections(limit=learning.CORRECTIONS_SHOWN))  # fmt: skip
-        return [(r["field"], r["value"]) for r in rows]
+        return [(r["field"], r["value"]) for r in learning.corrections_context(store)["fixes"]]
 
     assert shown() == []
     store.remember_line_texts("name:acme", [{"read_key": "k1", "printed": "Bolts sz 1", "description": "Bolts size 1",
