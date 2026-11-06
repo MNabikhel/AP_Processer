@@ -477,3 +477,21 @@ def test_a_review_asked_of_a_chat_model_lm_studio_no_longer_has_waits_in_line_no
         assert outcome is not None and outcome.status == "postponed", outcome
         assert store.verification(iid)["status"] == "waiting"
         assert local_llm.check_server(settings.llm).model == SWAPPED  # asked again at once
+
+
+def test_a_reader_thread_pausing_after_a_failed_read_wakes_when_the_calls_move(two, store):
+    """The first read that found the primary gone waits its minute; once the calls move it reads on at once."""
+    primary, backup = two
+    settings = _settings(primary.base_url, backup.base_url)
+    worker = page_worker.BackgroundReader(lambda: settings, lambda: store)
+    woke: list[float] = []
+    started = time.monotonic()
+    pausing = threading.Thread(target=lambda: (worker._pause(page_worker.OFF_SECONDS, settings),
+                                               woke.append(time.monotonic() - started)))  # fmt: skip
+    pausing.start()
+    time.sleep(0.3)
+    breaker = page_reader.reader_failover(settings)
+    for _ in range(local_llm.FAILOVER_FAILURES):
+        breaker.failed(primary.base_url, "not answering")
+    pausing.join(5)
+    assert woke and woke[0] < 3, woke
