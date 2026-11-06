@@ -141,27 +141,26 @@ class InvoicesMixin:
         grand_total: float | None = None,
         key: str | None = None,
     ) -> list[int]:
-        """Other invoices with the same vendor and invoice number (possible duplicate payment). With ``grand_total``,
-        a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the vendor's own
-        (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the name's."""
+        """Other invoices with the same vendor and invoice number (possible duplicate payment), in the order they came.
+        With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the
+        vendor's own (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the name's.
+        The number is sought as it compares (the summary's ``number_key``), not each of the vendor's invoices read
+        (B-1832)."""
         key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
         with self._conn() as conn:
+            self._summary_fresh(conn)
             rows = conn.execute(
-                "SELECT id, invoice_number, grand_total FROM invoices "
-                "WHERE vendor_key = ? AND status != ? AND status != ?",
-                (key, FAILED, REJECTED),
+                "SELECT id, grand_total FROM invoice_summary WHERE number_key = ? AND +vendor_key = ? "
+                "AND +status NOT IN (?, ?) ORDER BY id",  # by the number's index
+                (number, key, FAILED, REJECTED),
             ).fetchall()
 
         def same_sign(other: float | None) -> bool:
             return grand_total is None or other is None or (grand_total < 0) == (other < 0)
 
-        return [
-            r["id"]
-            for r in rows
-            if _norm_number(r["invoice_number"]) == number and r["id"] != exclude_id and same_sign(r["grand_total"])
-        ]
+        return [r["id"] for r in rows if r["id"] != exclude_id and same_sign(r["grand_total"])]
 
     def default_terms_days(self) -> int:
         """Days to pay when an invoice prints neither a due date nor terms (Settings → Review)."""
@@ -320,6 +319,13 @@ class InvoicesMixin:
                 return [{**kept[o["id"]], **o} for o in order]
             # (an invoice listed or gone between the two reads, by another worker: read afresh)
         return self.summary_fetch(sql, args)
+
+    def listed_ids(self, status: str) -> list[int]:
+        """The ids of ``list_invoices(status)``, in its order, read off the queue's index alone
+        (``summary_queue_order``): what an invoice page's Previous and Next step through, not every row of the list read
+        again after each change (B-1833)."""
+        sql = f"SELECT id FROM invoice_summary WHERE status = ? ORDER BY {QUEUE_ORDER}"
+        return [r["id"] for r in self.summary_fetch(sql, (status,))]
 
     def has_invoices(self) -> bool:
         """Whether there is any invoice at all (of any status)."""

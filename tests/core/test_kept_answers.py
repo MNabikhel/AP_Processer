@@ -895,6 +895,43 @@ def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain
     assert navigation(store, a, {})["ids"] == [c, a] and navigation(store, a, {})["prev"] == f"/review/{c}"
 
 
+def test_previous_and_next_in_the_queues_own_order_read_its_ids_alone(tmp_path, ground_truth, monkeypatch):
+    """B-1833: an invoice page's Previous and Next read the review queue's whole list again after every approval, park
+    or new invoice (its rows kept until the list changes: at once under 100 people, 5.1% of the busy web workers' CPU
+    at 300,000 invoices), only to step through its ids. In the queue's own order (no search, no other sort or view)
+    they are read alone, off the queue's index: the same ids, the same steps."""
+    from ap_coder.web.pages.invoice import navigation
+
+    store = Store(tmp_path / "ap.db")
+    other = Store(store.path)
+    a, b, c, d = (_invoice(store, tmp_path, ground_truth, name) for name in ("N-1", "N-2", "N-3", "N-4"))
+    for invoice_id, confidence in ((a, 0.5), (b, 0.6), (c, 0.2)):
+        other.refresh_confidence(invoice_id, confidence, True)
+    other.park_invoice(d, "Jordan Lee", "waiting for the buyer")
+    seen: list[str] = []
+    real = sqlite3.connect
+
+    def tracing(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(seen.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", tracing)
+    for query in ({}, {"sort": "priority"}, {"show": "all", "limit": "100"}):
+        nav = navigation(store, a, query)
+        assert nav["ids"] == [c, a, b] and nav["next"] == _with(f"/review/{b}", query) and nav["next_id"] == b
+        assert navigation(store, d, query)["position"] is None  # (parked: not in the queue)
+    assert not [s for s in seen if "file_name" in s], seen  # no row of the queue's list read
+    assert [r["id"] for r in store.list_invoices("review")] == [c, a, b]
+    assert navigation(store, a, {"sort": "amount"})["ids"] == [r["id"] for r in store.list_invoices("review")]
+
+
+def _with(path: str, query: dict[str, str]) -> str:
+    from urllib.parse import urlencode
+
+    return path + (f"?{urlencode(query)}" if query else "")
+
+
 def test_the_queues_lists_keep_their_rows_when_a_check_only_writes_a_confidence_in_the_same_order(
     tmp_path, ground_truth, monkeypatch
 ):

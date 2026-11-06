@@ -577,3 +577,30 @@ def test_the_queues_facts_carry_each_findings_text_once_for_all_the_invoices_tha
     assert rows == each and [list(r) for r in rows] == [list(r) for r in each] and len(rows) == 5
     assert "".join(sent).count("TOTAL_MISMATCH") == 1 and "".join(sent).count("DUE_DATE_PAST") == 1
     assert bulk._queue_rows(store, asked) == {r["id"]: r for r in each}
+
+
+def test_the_duplicate_check_seeks_the_invoice_number_not_each_invoice_of_the_vendor(tmp_path, monkeypatch):
+    """B-1832: each check (the review screen's, every invoice read) looked for the same vendor's invoice with the same
+    number by reading every invoice of the vendor and comparing each number in Python (23,000 for the biggest vendor at
+    300,000 invoices: 3.3% of the busy web workers' CPU). It seeks the number as it compares, off the summary's index:
+    what comparing each gives, the same number written another way included, a rejected or failed one and the invoice
+    itself left out, a credit note no duplicate of an invoice."""
+    from tests.webclient import add_clean
+
+    store = Store(tmp_path / "ap.db")
+    first = add_clean(store, invoice_number="INV-00123")
+    second = add_clean(store, invoice_number="#123")
+    add_clean(store, invoice_number="124")
+    store.reject_invoice(add_clean(store, invoice_number="123"), "Ann", "a copy")
+    credit = add_clean(store, invoice_number="123", grand_total=-50.0)
+    other = add_clean(store, invoice_number="123", vendor_name="Another Vendor Inc")
+    with sqlite3.connect(store.path) as conn:  # failed later, by a plain connection: the summary follows it
+        conn.execute("UPDATE invoices SET status = 'failed' WHERE id = ?", (second,))
+    name = store.get_invoice(first)["vendor_name"]
+    assert store.find_duplicates(name, "123") == [first, credit]
+    assert store.find_duplicates(name, "inv 123", exclude_id=first, grand_total=10.0) == []
+    assert store.find_duplicates(name, "123", grand_total=-1.0) == [credit]
+    assert store.find_duplicates("Another Vendor Inc", "0123") == [other]
+    assert store.find_duplicates(name, "") == [] and store.find_duplicates("", "123") == []
+    (plan,) = _plans(store, monkeypatch, lambda: store.find_duplicates(name, "123"), "invoice_summary", "number_key")
+    assert "summary_number" in plan and "SCAN" not in plan, plan
