@@ -635,8 +635,8 @@ Then the switch, the only time staff see AP Coder closed:
 
 It prints how long the service was down (from the stop to the new version answering) and each step's time, and
 keeps them in `server.json`'s `history` (`times`, in seconds). A year's database takes a few minutes for step 7 and
-the start; CI checks a database of 20,000 invoices stays under 5 minutes on Windows (it took 11 s on a test
-computer). If step 2, 3, 4 or 5 fails, nothing was stopped or changed: the old version kept serving, and it says
+the start; CI checks that with a database of 20,000 invoices it stays under 5 minutes on Windows (11 s on a Linux
+test computer, D-188). If step 2, 3, 4 or 5 fails, nothing was stopped or changed: the old version kept serving, and it says
 why. If step 6, 7, 8 or 9 fails, it puts the database backup back, switches the service back to the old folder and
 starts it again, and says why. Either way the new folder is kept to look at; delete it when done.
 
