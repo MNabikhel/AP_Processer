@@ -34,8 +34,13 @@ Lines marked **CONFIRM** are what the JDE team must check for their tools releas
 * **HTTPS** with the certificate checked: against the computer's trusted certificates, or a company CA file named in
   Settings. AP Coder never follows a redirect, never uses a proxy, and connects to nothing but the one AIS address
   saved; an address that is not on the company network (a public IP address, or a name resolving to one) is refused.
-* **Timeouts and retries**: 30 seconds a request (Settings); a read is tried again up to twice when AIS is busy
-  (502/503/504) or the connection fails; a voucher's request is never repeated by the client (see *Never twice*).
+* **Timeouts and retries**: 30 seconds a request (Settings); a voucher's request waits 120 seconds (Settings → JD
+  Edwards E1: R04110ZA runs in it); a read is tried again up to twice when AIS is busy (502/503/504) or the
+  connection fails; a voucher's request is never repeated by the client (see *Never twice*).
+* **A posting run** (D-182): the vouchers go one after another; one answered late is "sent, being checked" and the
+  run goes on with the next, then looks the late ones up by their key. It stops (the rest wait in the queue, sent in
+  the background every few minutes) when JDE can't be reached, after three late answers in a row, or after its time
+  (60 minutes, Settings).
 * **Errors**: AP Coder reads JDE's own messages from the answer and shows them as they are: `userDefinedErrorText`,
   `message` (text, or a form request's `errors` / `warnings` with `CODE`, `TITLE`, `DESC`), an orchestration's
   `Messages`, and `jde__status: ERROR` on a v3 answer. Use **Custom error text** in the orchestrations where JDE's own
@@ -150,7 +155,18 @@ AP Coder sends one voucher per call:
 
 The amounts, dates (Julian CYYDDD) and text are exactly as in the files, with the settings of Settings → JD Edwards
 E1 (implied decimals by default, the tax coded to G/L accounts by default, D-93). The batch number (VLEDBT = prefix +
-AP Coder batch) and transaction number (VLEDTN = APC + invoice id) are the Z-tables' own keys.
+AP Coder batch + `-` + a code of the batch, as room allows in 15) and transaction number (VLEDTN = APC + invoice id +
+`-` + an 8-character code of the invoice, at most 22) are the Z-tables' own keys: two AP Coder data folders posting
+to one JDE, or a database put back from a backup handing out its numbers again, never send the same keys (D-182).
+CONFIRM that these characters are taken in VLEDBT / VLEDTN by your loads and R04110ZA's data selection.
+
+Just before each voucher is sent AP Coder reads again whether its supplier is on hold (AP Coder's own hold, or JDE's
+as the last supplier sync read it: `HoldPaymentCode`), and whether its G/L date (VLDGJ) is in JDE's open period as
+set in Settings → JD Edwards E1 (a G/L date in a closed period is moved to the first day of the open one, said and
+confirmed, or held): either way it is not sent. CONFIRM whether VLPST (the pay status sent, `A` by default) overrides
+a supplier's hold default in R04110ZA, or should be sent blank. CONFIRM the error R04110ZA gives for a G/L date in a
+closed period: AP Coder takes `PBCO` and the words "closed period" / "before cut-off" as that, and holds back the
+run's other vouchers of that month.
 
 Outputs: `Result` (`VALID` after a proof that passed, `CREATED`, `EXISTS` for a key seen before: with the voucher it
 made, or `ERROR`), `DocumentNumber`, `DocumentType`, `DocumentCompany`, `BatchNumber`, `Messages` (JDE's warnings or
@@ -171,8 +187,9 @@ edits, AAIs and processing options.
 1. Look for the key (see *Never twice*); found, answer EXISTS with that voucher.
 2. Insert the `PayItems` rows into F0411Z1 and the `GLLines` into F0911Z1 (the orchestration's *Database* steps or a
    custom business function), with VLEDSP / VNEDSP 0 and VLEDTC / VNEDTC A.
-3. Run R04110ZA (a version for AP Coder) for that batch (VLEDUS + VLEDBT): in **proof** mode for `PROOF`, in **final**
-   mode for `FINAL`; its processing option version decides the defaults and the duplicate-invoice edit.
+3. Run R04110ZA (a version for AP Coder) for that voucher (data selection VLEDUS + VLEDBT + VLEDTN: a long batch
+   prefix leaves no room for the batch's code in VLEDBT): in **proof** mode for `PROOF`, in **final** mode for
+   `FINAL`; its processing option version decides the defaults and the duplicate-invoice edit.
 4. Read back the result: VLEDSP = 1 and the voucher's F0411 document number (VLDOC / VLDCT / VLKCO), or the errors
    from the Z-table (P0411Z1 / the work center). For `PROOF`, delete the rows the run left in the Z-tables.
 5. Keep the key with the voucher (step 1 of the next call).
@@ -200,10 +217,51 @@ twice.
 ### Never twice
 
 AP Coder sends a voucher again only after a lost answer, and then only after `APC_Voucher_Status` said JDE does not
-have its key. JDE keeps one voucher per key all the same: the orchestration looks for the key first (route (a): the
+have its key, asked at least 10 minutes after the send (Settings → JD Edwards E1): a request whose answer AIS lost may
+still be running R04110ZA, its key not kept yet (D-182). CONFIRM how long an orchestration can go on after AIS gave
+up on it (AIS's own orchestration timeout). JDE keeps one voucher per key all the same: the orchestration looks for the key first (route (a): the
 F0411Z1 rows of that VLEDUS / VLEDBT / VLEDTN, which also stops a batch file loaded after the API posted it; route
 (b): the key stored with the voucher) and answers EXISTS. JDE's own duplicate-invoice edit (supplier + invoice
 number, hard error) is the last word.
+
+## Proposed: one R04110ZA per batch (for the JDE team to build)
+
+Route (a) runs R04110ZA once for each voucher: a UBE start, its run and its report for every voucher, and one
+pending JDE batch per voucher for AP to approve. With R04110ZA taking tens of seconds, 500 vouchers take hours, and
+AP approves 500 batches. A batch-level orchestration does the same work once per AP Coder batch. AP Coder keeps the
+per-voucher route for one voucher at a time (the queue's resends) and as the fallback.
+
+### APC_Voucher_Batch_Create
+
+| Input | What |
+| --- | --- |
+| `BatchKey` | `APC-<installation id>-B<batch>-<try>`: unique per call; the same on a call AP Coder repeats after a lost answer |
+| `ProcessingMode` | `PROOF` or `FINAL`, as for one voucher |
+| `Vouchers` | array, one per voucher: `IdempotencyKey`, `PayloadFingerprint`, `PayItems`, `GLLines`, `ReceiptMatches`, exactly as `APC_Voucher_Create`'s inputs (its rows' VLEDUS / VLEDBT are the batch's, VLEDTN each voucher's) |
+
+1. For each voucher, look for its `IdempotencyKey` (*Never twice*): found, that voucher is left out of the run and
+   answered `EXISTS`, as `APC_Voucher_Create` answers it.
+2. Insert the other vouchers' rows into F0411Z1 / F0911Z1 (VLEDSP 0), all in one go.
+3. Run R04110ZA **once** for the batch (data selection VLEDUS + VLEDBT), proof or final mode: in the pilot one pending
+   JDE batch (ICU) for AP to approve and post (D-145).
+4. Read back each voucher's result (VLEDSP, the F0411 document, or its errors from the Z-tables) and keep each key
+   with its voucher; for `PROOF`, delete the rows the run left.
+
+Outputs: `Vouchers`, one row per voucher sent, by its `IdempotencyKey`: `Result` (`VALID`, `CREATED`, `EXISTS` or
+`ERROR`), `DocumentNumber`, `DocumentType`, `DocumentCompany`, `BatchNumber`, `Messages`, and with `EXISTS` who the
+voucher is for, as for one voucher. A voucher missing from the answer is "sent, being checked" for AP Coder (looked up
+by its key, never sent blind); the whole call failing or timing out leaves every voucher of it so. AP Coder sends at
+most 200 vouchers a call (CONFIRM the size AIS and R04110ZA take well) and waits for it as long as a batch of them can
+take (CONFIRM).
+
+### APC_Voucher_Status with many keys
+
+Input `IdempotencyKeys` (up to 200), output `Vouchers`: one row per key asked, with `IdempotencyKey` and the outputs
+of `APC_Voucher_Status`. A key missing from the answer is "can't say" (never "not there"). AP Coder then looks up a
+batch's late vouchers in one call instead of one call each.
+
+Until these are built AP Coder sends one voucher per call (above). AP Coder's side of them is not written yet: it is
+built once the JDE team confirms the names, the size of a call and the wait.
 
 ## Testing it
 
@@ -234,3 +292,15 @@ dry runs agree with what AP expects.
     to G/L accounts with code E, the account mapping, line numbering), which the API sends the same way.
 14. That batch approval (*Manager Approval of Input*) is on for AP Coder's batch type, so each batch it creates
     stays pending until AP approves it.
+15. How long R04110ZA takes for one voucher (AP Coder waits 120 seconds), and how long an orchestration can still run
+    after AIS gave up on it (AP Coder believes a "not there" only 10 minutes after the send).
+16. The VLEDBT / VLEDTN keys with their codes (`APC12-4F2A`, `APC345-1A2B3C4D`): taken by your loads and R04110ZA's
+    data selection; route (a)'s R04110ZA run selecting VLEDUS + VLEDBT + VLEDTN for one voucher.
+17. Whether VLPST `A` overrides a supplier's hold (F0401 A6HDPY) in R04110ZA, or should be sent blank.
+18. JD Edwards' open period for AP Coder's company (F0010 current period, F0008 date pattern), to set in Settings →
+    JD Edwards E1, and whether an orchestration could give it (`APC_Periods_Read`: company → the first and last
+    open G/L dates); the error R04110ZA gives for a G/L date in a closed period (PBCO?).
+19. The batch-level orchestration and the status lookup of many keys (*Proposed* above): names, the vouchers a call
+    takes, how long it may run.
+20. Whether AP Coder may learn that a JDE batch it made is still pending (F0011 ICIST, or F0411 RPPOST in
+    `APC_Vouchers_Read`): until then month end counts a voucher in a pending batch as in the ERP.
