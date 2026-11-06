@@ -1097,3 +1097,64 @@ def test_the_chat_client_sends_a_company_model_server_its_requests_at_the_addres
     with pytest.raises(openai.APIConnectionError):
         client.models.list()
     assert len(sent) == 1 and asked == [COMPANY_SERVER] * 2
+
+
+@pytest.fixture
+def keep_alive_server():
+    """A model server that keeps each connection open for the next request, as LM Studio does."""
+    import http.server
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        disable_nagle_algorithm = True  # (the body is sent at once, not after the client's delayed acknowledgement)
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # noqa: N802
+            body = json.dumps({"object": "list", "data": [{"id": "ovisocr2", "object": "model"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/v1"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def _open_files() -> int:
+    import os
+
+    for folder in ("/proc/self/fd", "/dev/fd"):
+        if os.path.isdir(folder):
+            return len(os.listdir(folder))
+    pytest.skip("this system doesn't list a process's open files")
+
+
+def test_a_thousand_page_reads_and_codings_reuse_one_connection_to_the_model_server(keep_alive_server):
+    """B-1760: each page read and each invoice coded made a new HTTP client and left it open, so its connection to the
+    model server (an open file at each end) stayed open until Python's garbage collector came round: thousands on a
+    busy day. One client a server, reused by every request of the process: the open files stay as they were."""
+    import gc
+
+    from ap_coder.ai import page_reader
+
+    settings = Settings(llm=LocalLLMSettings(base_url=keep_alive_server))
+    page_reader._client(settings).models.list()
+    local_llm.build_local_client(settings.llm).models.list()
+    gc.collect()
+    gc.disable()  # (what was left open stays open: as between two of the garbage collector's rounds)
+    try:
+        before = _open_files()
+        for _ in range(500):
+            page_reader._client(settings).models.list()  # a page read
+            local_llm.build_local_client(settings.llm).models.list()  # an invoice coded
+        grown = _open_files() - before
+    finally:
+        gc.enable()
+    assert grown <= 2

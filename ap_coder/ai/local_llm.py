@@ -567,24 +567,41 @@ def _pinning_transport(client_class: type) -> Any:
     return Pinned()
 
 
+_HTTP_CLIENTS: dict[tuple[Any, ...], Any] = {}  # one HTTP client a model server and way to it, in each process
+_HTTP_CLIENTS_LOCK = threading.Lock()
+
+
+def _http_client(key: tuple[Any, ...], make: Any) -> Any:
+    """The HTTP client for ``key`` (a server, and how it is reached), made once in this process and shared by every
+    request to it from any thread: its connections stay open for the next request. A client made for each page read
+    or invoice coded left its connection open until Python's garbage collector came round (B-1760)."""
+    key = (os.getpid(), *key)  # (a process forked from this one makes its own)
+    with _HTTP_CLIENTS_LOCK:
+        client = _HTTP_CLIENTS.get(key)
+        if client is None or client.is_closed:
+            client = _HTTP_CLIENTS[key] = make()
+        return client
+
+
 def build_local_client(llm: LocalLLMSettings) -> Any:
     from openai import DefaultHttpxClient, OpenAI
 
-    options: dict[str, Any] = {}
     refused = refused_address(llm.base_url)
     host = urlparse(llm.base_url).netloc
+    server = _root(llm.base_url)
     # No redirect is followed (the SDK's own client follows them): it could point at the internet (B-973).
     if refused:  # every request fails like a server that is not running (APIConnectionError): nothing is sent
-        options["http_client"] = DefaultHttpxClient(
-            transport=_refusing_transport(DefaultHttpxClient, refused), follow_redirects=False
-        )
+        http_client = _http_client((server, "refused", refused), lambda: DefaultHttpxClient(
+            transport=_refusing_transport(DefaultHttpxClient, refused), follow_redirects=False))  # fmt: skip
     elif _on_this_network(host):
         # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1); one
         # reached by its name, at the addresses its check judged (B-1608).
-        pinned = {"transport": _pinning_transport(DefaultHttpxClient)} if judged_by_lookup(host) else {}
-        options["http_client"] = DefaultHttpxClient(trust_env=False, follow_redirects=False, **pinned)
+        judged = judged_by_lookup(host)
+        pinned = (lambda: {"transport": _pinning_transport(DefaultHttpxClient)}) if judged else dict
+        http_client = _http_client((server, "network", judged), lambda: DefaultHttpxClient(
+            trust_env=False, follow_redirects=False, **pinned()))  # fmt: skip
     else:
-        options["http_client"] = DefaultHttpxClient(follow_redirects=False)
+        http_client = _http_client((server, "internet"), lambda: DefaultHttpxClient(follow_redirects=False))
     return OpenAI(
         base_url=llm.base_url,
         api_key=llm.api_key or "lm-studio",
@@ -592,7 +609,7 @@ def build_local_client(llm: LocalLLMSettings) -> Any:
         # Never sent again by the SDK itself: a local server that failed is busy (CloseDesk shares it) or down, not
         # rate limited, and a request sent again after a ten-minute timeout only doubles the wait (CloseDesk doesn't).
         max_retries=0,
-        **options,
+        http_client=http_client,
     )
 
 
