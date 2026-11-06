@@ -32,7 +32,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Any
 
@@ -176,30 +176,57 @@ class RowsCache:
     once; rows read again from the database by what they say (a few milliseconds for tens of thousands). Rows
     are read, never changed in place. The latest ``slots`` lists are kept: past the memory read cap an old
     vendor's invoice has a list of its own (``Store.learning_rows``), and invoices of it and of other vendors in
-    turn would otherwise rebuild the value each time."""
+    turn would otherwise rebuild the value each time. ``get``'s ``update(rows kept, their value)``: the value for the
+    rows asked for, from one kept (an approval's lessons added in front of them, D-171), or None; asked before the
+    value is built. Each slot is [rows, their fingerprint (worked out once compared), extra, value]."""
 
     def __init__(self, slots: int = 2) -> None:
         self._size = max(1, slots)
-        self._slots: tuple[tuple[list[dict[str, Any]], int, Any, Any], ...] = ()  # the latest first
+        self._slots: tuple[list[Any], ...] = ()  # the latest first
 
-    def get(self, rows: list[dict[str, Any]], extra: Any, build: Callable[[], Any]) -> Any:
+    def get(self, rows: list[dict[str, Any]], extra: Any, build: Callable[[], Any],
+            update: Callable[[list[dict[str, Any]], Any], Any] | None = None) -> Any:  # fmt: skip
         slots = self._slots  # one read: another thread may replace them meanwhile
         fingerprint = None
         for slot in slots:
             if slot[2] == extra and len(slot[0]) == len(rows) and all(map(operator.is_, slot[0], rows)):
                 return self._keep(slots, slot, slot)  # the same rows (in the same order), in any list
+        for slot in slots if update is not None else ():
+            if slot[2] == extra and (value := update(slot[0], slot[3])) is not None:
+                return self._keep(slots, None, [list(rows), None, extra, value])
         for slot in slots:
             if slot[2] == extra and len(slot[0]) == len(rows):
                 fingerprint = _fingerprint(rows) if fingerprint is None else fingerprint
+                if slot[1] is None:
+                    slot[1] = _fingerprint(slot[0])
                 if fingerprint == slot[1]:
-                    return self._keep(slots, slot, (list(rows), fingerprint, extra, slot[3]))
+                    return self._keep(slots, slot, [list(rows), fingerprint, extra, slot[3]])
         value = build()
-        fresh = (list(rows), _fingerprint(rows) if fingerprint is None else fingerprint, extra, value)
-        return self._keep(slots, None, fresh)
+        return self._keep(slots, None, [list(rows), fingerprint, extra, value])
 
-    def _keep(self, slots: tuple, old: Any, new: tuple) -> Any:
+    def _keep(self, slots: tuple, old: Any, new: list[Any]) -> Any:
         self._slots = (new, *(s for s in slots if s is not old))[: self._size]
         return new[3]
+
+
+# An approval's lessons are added to what is kept of the memory (the GL suggestions' index, ``suggest._updated_memory``;
+# the patterns, ``_updated_aggregate``) instead of working it out again from every row (D-171): at most this many
+# lessons added and dropped (the oldest, past the memory's cap) at once; past it, or any other change (lessons
+# forgotten, the memory read again), it is worked out from all the rows.
+UPDATE_MOST = 1000
+
+
+def added_in_front(kept: list[dict[str, Any]], rows: list[dict[str, Any]]) -> int | None:
+    """How many lessons ``rows`` has before the rows ``kept``, when it is those, then the newest of ``kept`` (the same
+    row objects, in the same order: the store's memory after an approval, its oldest past the cap dropped,
+    ``Store.feedback_rows``), at most UPDATE_MOST; None when it is anything else."""
+    if not kept or not rows:
+        return None
+    first = kept[0]
+    added = next((k for k in range(min(len(rows), UPDATE_MOST + 1)) if rows[k] is first), None)
+    if added is None or len(rows) - added > len(kept) or not all(map(operator.is_, rows[added:], kept)):
+        return None
+    return added if added + len(kept) - (len(rows) - added) <= UPDATE_MOST else None
 
 
 # The vendors whose lessons go past the whole memory's cap (``Store.learning_rows``): their older lessons (the store's
@@ -223,9 +250,10 @@ _AGGREGATED = RowsCache()
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
-    """The decisions in ``rows`` grouped by vendor, description and coding. Worked out once for the same rows
-    (the result is shared: read it, don't change it)."""
-    return _AGGREGATED.get(rows, None, lambda: _aggregate(rows))
+    """The decisions in ``rows`` grouped by vendor, description and coding. Worked out once for the same rows, and
+    after an approval from those kept (``_updated_aggregate``; the result is shared: read it, don't change it)."""
+    return _AGGREGATED.get(rows, None, lambda: _aggregated(rows),
+                           lambda kept_rows, kept: _updated_aggregate(kept_rows, kept, rows)).patterns  # fmt: skip
 
 
 # AP changes its mind (D-118): one rule for the GL suggestions (``suggest``), the history check (``current``) and the
@@ -270,28 +298,99 @@ def latest_decision(values: list[str], corrected: bool, reversal: int = UNCONFIR
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
-    groups: dict[tuple[str, str, str, str], Pattern] = {}
-    history: dict[tuple[str, str], list[str]] = {}  # each line's accounts, newest first
-    first: dict[tuple[str, str], bool] = {}  # whether its latest decision changed the account (``changed_account``)
-    for r in rows:  # newest first (``Store.feedback_rows``)
-        key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
-        p = groups.get(key)
-        if p is None:
-            p = groups[key] = Pattern(
-                r["vendor_key"], r["vendor_name"], r["description"], r["final_gl"], r.get("final_cc") or ""
-            )
-        if changed_account(r):
-            p.corrections += 1
-        else:
-            p.approvals += 1
-        p.last_seen = max(p.last_seen, r.get("created_at") or "")
-        history.setdefault(key[:2], []).append(r["final_gl"])
-        first.setdefault(key[:2], changed_account(r))
-    latest = {line: latest_decision(values, first[line]) for line, values in history.items()}
+    return _aggregated(rows).patterns
+
+
+@dataclass
+class _Aggregated:
+    """``aggregate`` of some rows (``patterns``), and what an approval's update starts from (``_updated_aggregate``):
+    each line's rows, (vendor key, description normalised) -> [row] newest first, and each group's pattern."""
+
+    patterns: list[Pattern]
+    lines: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    groups: dict[tuple[str, str, str, str], Pattern] = field(default_factory=dict)
+
+
+def _group_key(r: dict[str, Any], line: tuple[str, str]) -> tuple[str, str, str, str]:
+    return (*line, r["final_gl"], r.get("final_cc") or "")
+
+
+def _counted(groups: dict[tuple[str, str, str, str], Pattern], r: dict[str, Any], key: tuple[str, str, str, str],
+             changed: bool) -> None:  # fmt: skip
+    """Row ``r`` (``changed``: ``changed_account(r)``) counted in its group's pattern, made by its first row."""
+    p = groups.get(key)
+    if p is None:
+        p = groups[key] = Pattern(r["vendor_key"], r["vendor_name"], r["description"], r["final_gl"], key[3])
+    if changed:
+        p.corrections += 1
+    else:
+        p.approvals += 1
+    p.last_seen = max(p.last_seen, r.get("created_at") or "")
+
+
+def _superseded(groups: dict[tuple[str, str, str, str], Pattern], lines: dict[tuple[str, str], list[dict[str, Any]]]
+                ) -> None:  # fmt: skip
+    """Each group's ``superseded``, by its line's latest decision (``latest_decision`` of the line's rows)."""
+    latest = {line: latest_decision([r["final_gl"] for r in rs], changed_account(rs[0])) for line, rs in lines.items()}
     for key, p in groups.items():
         last = latest[key[:2]]
         p.superseded = last.counts and p.gl_code != last.value
-    return list(groups.values())
+
+
+def _aggregated(rows: list[dict[str, Any]]) -> _Aggregated:
+    groups: dict[tuple[str, str, str, str], Pattern] = {}
+    lines: dict[tuple[str, str], list[dict[str, Any]]] = {}  # each line's rows, newest first
+    for r in rows:  # newest first (``Store.feedback_rows``)
+        line = (r["vendor_key"], _normalise(r["description"]))
+        _counted(groups, r, _group_key(r, line), changed_account(r))
+        lines.setdefault(line, []).append(r)
+    _superseded(groups, lines)
+    return _Aggregated(list(groups.values()), lines, groups)
+
+
+def _updated_aggregate(kept_rows: list[dict[str, Any]], kept: _Aggregated,
+                       rows: list[dict[str, Any]]) -> _Aggregated | None:  # fmt: skip
+    """``_aggregated(rows)`` from ``kept``, that of ``kept_rows``, when ``rows`` is lessons added in front of them and
+    the oldest dropped (``added_in_front``): the same patterns in the same order, working out again only the lines
+    the lessons added and dropped are of (their patterns new, the others kept). None when ``rows`` is anything else
+    (D-171)."""
+    added = added_in_front(kept_rows, rows)
+    if added is None:
+        return None
+    left = len(rows) - added
+    new: dict[tuple[str, str], list[dict[str, Any]]] = {}  # the lines of the lessons added, their rows
+    for r in rows[:added]:
+        new.setdefault((r["vendor_key"], _normalise(r["description"])), []).append(r)
+    dropped: Counter[tuple[str, str]] = Counter(
+        (r["vendor_key"], _normalise(r["description"])) for r in kept_rows[left:]
+    )
+    lines, groups = dict(kept.lines), dict(kept.groups)
+    fresh: dict[tuple[str, str, str, str], Pattern] = {}
+    was: list[tuple[tuple[str, str, str, str], Pattern]] = []  # the changed lines' patterns kept before
+    for line in [*new, *(line for line in dropped if line not in new)]:
+        before = kept.lines.get(line, [])
+        for key in dict.fromkeys(_group_key(r, line) for r in before):
+            was.append((key, groups.pop(key)))
+        rs = new.get(line, []) + before[: len(before) - dropped[line]]
+        if not rs:
+            del lines[line]
+            continue
+        lines[line] = rs
+        made: dict[tuple[str, str, str, str], Pattern] = {}
+        for r in rs:
+            _counted(made, r, _group_key(r, line), changed_account(r))
+        _superseded(made, {line: rs})
+        groups.update(made)
+        fresh.update(made)
+    # In the order first met: the groups first met in the lessons added, then the others as they were.
+    front: dict[tuple[str, str, str, str], Pattern] = {}
+    for r in rows[:added]:
+        key = _group_key(r, (r["vendor_key"], _normalise(r["description"])))
+        front.setdefault(key, fresh[key])
+    gone = {id(p) for key, p in was if key in front or key not in fresh}
+    again = {id(p): fresh[key] for key, p in was if key not in front and key in fresh}
+    patterns = [*front.values(), *(again.get(id(p), p) for p in kept.patterns if id(p) not in gone)]
+    return _Aggregated(patterns, lines, groups)
 
 
 def current(patterns: list[Pattern]) -> list[Pattern]:
