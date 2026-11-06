@@ -1751,15 +1751,15 @@ def test_a_process_working_an_answer_out_renews_its_hold_so_the_others_wait_for_
     from ap_coder.core.store import reports
 
     assert reports.ANSWER_LEASE <= 15
-    monkeypatch.setattr(reports, "ANSWER_LEASE", 0.6)
-    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.2, raising=False)
+    monkeypatch.setattr(reports, "ANSWER_LEASE", 1.2)  # (room for a slow runner's renewals: ~150 ms a write)
+    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.3, raising=False)
     process = _Processes(monkeypatch)
     store = Store(tmp_path / "ap.db")
     working = threading.Event()
 
     def slow() -> list[str]:
         working.set()
-        time.sleep(1.5)  # longer than the hold
+        time.sleep(3.0)  # longer than the hold
         return ["first"]
 
     first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
@@ -1770,7 +1770,7 @@ def test_a_process_working_an_answer_out_renews_its_hold_so_the_others_wait_for_
     one = threading.Thread(target=lambda: found.append(first()))
     one.start()
     assert working.wait(5)
-    time.sleep(0.8)  # past the hold's first expiry
+    time.sleep(1.6)  # past the hold's first expiry
     monkeypatch.setattr(reports, "OWNER", "worker 2")
     process("worker 2")
     assert second() == ["first"] and second.worked == 0  # waited for the one working it out, then took its answer
@@ -1897,15 +1897,15 @@ def test_a_process_waits_for_an_answer_another_is_still_working_out_rather_than_
     from ap_coder.core.store import reports
 
     monkeypatch.setattr(reports, "ANSWER_WAIT", 0.3)
-    monkeypatch.setattr(reports, "ANSWER_LEASE", 0.6)
-    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.2)
+    monkeypatch.setattr(reports, "ANSWER_LEASE", 1.5)  # (room for a slow runner's renewals: ~150 ms a write)
+    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.3)
     process = _Processes(monkeypatch)
     store = Store(tmp_path / "ap.db")
     working = threading.Event()
 
     def slow() -> list[str]:
         working.set()
-        time.sleep(1.5)  # longer than the wait
+        time.sleep(2.0)  # longer than the wait, and than one hold unrenewed
         return ["first"]
 
     first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
