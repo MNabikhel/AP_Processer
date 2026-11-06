@@ -268,6 +268,84 @@ def test_a_stop_puts_the_bulk_approval_back_in_line_and_the_next_start_goes_on(s
         again.thread.join(10)
 
 
+SAM = {"name": "Sam", "login": "sam", "server": False, "as": {}}
+
+
+def _ends_failing(monkeypatch, times: int) -> list[int]:
+    """The first ``times`` ends of a bulk approval meet a database error (locked past the 30 s wait, a restore's
+    moment without the table, a full disk): the jobs whose end was tried."""
+    real, tried = Store.end_bulk_job, []
+
+    def end(self, job_id, *args, **kwargs):
+        tried.append(job_id)
+        if len(tried) <= times:
+            raise sqlite3.OperationalError("database is locked")
+        return real(self, job_id, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "end_bulk_job", end)
+    return tried
+
+
+def _until(seen, seconds: float = 10) -> None:
+    ends = time.monotonic() + seconds
+    while not seen() and time.monotonic() < ends:
+        time.sleep(0.02)
+    assert seen()
+
+
+def test_a_database_error_at_a_jobs_end_never_stops_the_laptops_later_bulk_approvals(store, monkeypatch):
+    """The error went out of the laptop's thread, which died still marked as the one at the database's bulk
+    approvals: every later one of the process waited for good, its page on "Approving…", a new one refused."""
+    ids = _clean(store, 2)
+    tried = _ends_failing(monkeypatch, 1)
+    first, _ = store.start_bulk_job("ann", SAM, _asked(store, ids[:1]), bulk.JOB_FORMAT)
+    jobs.approve_here(store, web_settings)
+    _until(lambda: tried == [first] and str(store.path) not in jobs._HERE)
+    second, _ = store.start_bulk_job("bo", SAM, _asked(store, ids[1:]), bulk.JOB_FORMAT)
+    jobs.approve_here(store, web_settings)
+    ended = _ended(store, second, seconds=10)
+    assert ended["state"] == bulk_jobs.DONE and ended["approved"] == ids[1:]
+
+
+def test_a_database_error_at_a_jobs_end_never_stops_the_background_processs_runners(store, monkeypatch):
+    """Each of the background process's runners that met such an error died, the last one leaving none."""
+    ids = _clean(store, jobs.BULK_RUNNERS + 1)
+    tried = _ends_failing(monkeypatch, jobs.BULK_RUNNERS)
+    for n, i in enumerate(ids[:-1]):
+        store.start_bulk_job(f"p{n}", SAM, _asked(store, [i]), bulk.JOB_FORMAT)
+    runner = jobs.BulkRunner(web_settings, lambda: store).start()
+    try:
+        _until(lambda: len(tried) == jobs.BULK_RUNNERS)
+        last, _ = store.start_bulk_job("last", SAM, _asked(store, ids[-1:]), bulk.JOB_FORMAT)
+        runner.wake()
+        assert _ended(store, last, seconds=10)["state"] == bulk_jobs.DONE
+    finally:
+        runner.stop()
+        runner.thread.join(10)
+
+
+def test_no_bulk_approval_is_taken_while_a_backup_is_restored(store, monkeypatch):
+    """The other background workers wait while a backup is restored (``Store.restoring``); the bulk approvals were
+    taken from the database being replaced, by the laptop's thread and the background process alike."""
+    ids = _clean(store, 2)
+    restoring = {"now": True}
+    monkeypatch.setattr(Store, "restoring", lambda self: restoring["now"])
+    here, _ = store.start_bulk_job("ann", SAM, _asked(store, ids[:1]), bulk.JOB_FORMAT)
+    jobs.approve_here(store, web_settings)
+    _until(lambda: str(store.path) not in jobs._HERE)
+    runner = jobs.BulkRunner(web_settings, lambda: store).start()
+    try:
+        runner.wake()
+        time.sleep(3 * jobs.BULK_POLL)
+        assert store.bulk_job(here)["state"] == bulk_jobs.WAITING and _approvals(store) == []
+        restoring["now"] = False
+        runner.wake()
+        assert _ended(store, here, seconds=10)["state"] == bulk_jobs.DONE
+    finally:
+        runner.stop()
+        runner.thread.join(10)
+
+
 def _server(store: Store, processes: int = 1) -> TestClient:
     app = create_app(web_settings(), store, start_reader=False, server=True, processes=processes)
     return TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000), follow_redirects=False)

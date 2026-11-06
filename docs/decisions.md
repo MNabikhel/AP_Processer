@@ -2858,6 +2858,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
     3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
     way; one of the database before a restore is no one's. What was done is kept and shown either way.
+    - None is taken while a backup is restored (`Store.restoring`, as the page reader, the Azure check, the imports
+      and the JD Edwards sync wait). A database error noting a job's end or putting it back (locked past the 30 s
+      wait, a restore's moment without the table, a full disk) is logged, never the end of the thread: the job is
+      ended once it is taken again (30 s on), and the laptop's thread, however it ends, no longer marks the database
+      as approved by it, so the next one asked starts another (B-1929).
   - **As the person who asked:** the job runs inside `identity.acting_as(kept)` (`person()`, the events' actor and
     address as their request's), their name and login on each approval and its learning: whether their session goes
     on or not. On the server it stops (with why) once their account may no longer approve (turned off, or a role below
