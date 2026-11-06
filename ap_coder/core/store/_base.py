@@ -839,55 +839,6 @@ class StoreCore:
                     if not done.rowcount and table == "supplier_profiles":  # one profile, the strictest state kept
                         _store_class()._merge_supplier_profiles(conn, r["k"], key)
 
-    @staticmethod
-    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
-        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
-        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
-        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
-        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
-        if kept is None or gone is None:
-            return
-        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
-        reasons = [r for r in (kept, gone) if r["explanation"]]
-        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
-        conn.execute(
-            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
-            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
-            "WHERE id = ?",
-            (
-                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
-                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
-                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
-                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
-            ),
-        )  # fmt: skip
-        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))
-
-    @staticmethod
-    def _merge_supplier_profiles(conn: sqlite3.Connection, old: str, key: str) -> None:
-        """The supplier profile under ``old`` folded into the one under ``key`` (the same supplier under today's
-        rules), then removed: the stricter state wins (held, then suspended, supervised, touchless), with its dates
-        and audit rate, so a held supplier never goes touchless by a key change; a field blank in one is filled from
-        the other."""
-        from ...capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
-
-        strict = {HELD: 3, SUSPENDED: 2, SUPERVISED: 1, AUTONOMOUS: 0}
-        kept = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
-        gone = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (old,)).fetchone()
-        if kept is None or gone is None:
-            return
-        state = gone if strict.get(gone["state"], 1) > strict.get(kept["state"], 1) else kept
-        conn.execute(
-            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
-            "display_name = ?, vendor_id = ?, template_json = ?, updated_at = ? WHERE key = ?",
-            (
-                state["state"], state["autonomous_since"], state["suspended_at"], state["audit_rate"],
-                kept["display_name"] or gone["display_name"], kept["vendor_id"] or gone["vendor_id"],
-                kept["template_json"] or gone["template_json"], _now(), key,
-            ),
-        )  # fmt: skip
-        conn.execute("DELETE FROM supplier_profiles WHERE key = ?", (old,))
-
     @contextmanager
     def session(self) -> Iterator[None]:
         """Every call on this database inside, in this thread, shares one connection: each still commits on its own as

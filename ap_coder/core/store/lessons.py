@@ -543,3 +543,27 @@ class LessonsMixin:
                 "requires_review": bool(validation.get("requires_review", True)),
             })  # fmt: skip
         return True
+
+    @staticmethod
+    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
+        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
+        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
+        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
+        if kept is None or gone is None:
+            return
+        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
+        reasons = [r for r in (kept, gone) if r["explanation"]]
+        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
+        conn.execute(
+            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
+            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
+                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
+                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
+                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))
