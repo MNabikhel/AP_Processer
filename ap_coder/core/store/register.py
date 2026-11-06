@@ -197,10 +197,11 @@ class RegisterMixin:
         return len(set(bills) - known)
 
     def jde_vouchers_unseen(self, since: str, seen: int, undated: bool = False) -> tuple[list[str], int]:
-        """(the JD Edwards vouchers dated from ``since`` that the sync's read ``seen`` did not list, how many are dated
-        from then): read only. ``undated``: with those without a date YYYY-MM-DD (none, or one that couldn't be read),
-        for a read of every voucher of the window."""
-        where = "(invoice_date >= ?1 AND invoice_date GLOB ?2" + (" OR NOT invoice_date GLOB ?2)" if undated else ")")
+        """(the JD Edwards vouchers dated after ``since`` that the sync's read ``seen`` did not list, how many are dated
+        after then): read only. The day ``since`` itself is left alone, whether JDE's FromInvoiceDate lists it or not.
+        ``undated``: with those without a date YYYY-MM-DD (none, or one that couldn't be read), for a read of every
+        voucher of the window."""
+        where = "(invoice_date > ?1 AND invoice_date GLOB ?2" + (" OR NOT invoice_date GLOB ?2)" if undated else ")")
         with self._conn() as conn:
             dated = conn.execute(f"SELECT COUNT(*) FROM erp_vouchers WHERE {where}", (since, ISO_DAY))
             window = int(dated.fetchone()[0])

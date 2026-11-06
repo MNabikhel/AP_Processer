@@ -467,7 +467,7 @@ def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
     gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"], undated=bool(read.get("undated")))
     if not run.allow_mass_close and _too_many(len(gone), there):
         run.report["refused_remove"] = (
-            f"JD Edwards' answer would remove {len(gone)} of the {there} vouchers dated from {read['sweep']} from the "
+            f"JD Edwards' answer would remove {len(gone)} of the {there} vouchers dated after {read['sweep']} from the "
             "register: none was removed. If that is right, sync again with --allow-mass-close (python -m ap_coder "
             "jde sync)."
         )

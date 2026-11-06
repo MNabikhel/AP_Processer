@@ -388,3 +388,25 @@ def test_a_full_page_ending_on_a_voucher_without_its_key_removes_nothing(store, 
     part = jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]
     assert part["removed"] == 0 and {"B-6", "B-8", "INV-7001"} <= _numbers(store)
     assert "none was removed" in part["refused_remove"]
+
+
+def test_a_voucher_dated_on_a_reads_first_day_stays_whether_jde_lists_that_day_or_not(store, ais, monkeypatch):
+    """B-1904: the sweep counted the vouchers dated from a read's FromInvoiceDate on, the day itself too, which is
+    right only if the orchestration lists that day: one that takes it as "after" left out the vouchers of the last
+    weeks' first day each night, and the sweep removed them (back at the week's whole read). That day is left
+    alone now, whichever way JDE takes it."""
+    real = FakeAis._listed
+
+    def after_the_day(key, r, given):  # FromInvoiceDate taken as "after"
+        on_it = key == "vouchers" and given.get("since") and str(r.get("invoice_date")) == str(given["since"])
+        return real(key, r, given) and not on_it
+
+    monkeypatch.setattr(FakeAis, "_listed", staticmethod(after_the_day))
+    for row in ais.data["vouchers"]:
+        row["_changed"] = LONG_AGO
+    _vouchers(ais, 4, _changed=LONG_AGO)
+    _vouchers(ais, 1, start=9, days_ago=jde_sync.RECENT_DAYS, _changed=LONG_AGO)
+    connect(store, ais)
+    jde_sync.sync(store, parts=("vouchers",))
+    part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]  # the next night: the last weeks' read
+    assert part["mode"] == jde_sync.CHANGES and part["removed"] == 0 and "B-9" in _numbers(store)
