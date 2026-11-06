@@ -27,7 +27,7 @@ from ._base import (
     _now,
     _store_class,
 )
-from .backup_files import RETENTION, Retention
+from .backup_files import Retention
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import carry_accounts, saved_accounts
@@ -148,7 +148,7 @@ class BackupsMixin:
         folder = self.backup_dir()
         return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
 
-    def backup_now(self, label: str = "", actor: str | None = None, keep: Retention = RETENTION) -> Path:
+    def backup_now(self, label: str = "", actor: str | None = None, keep: Retention | None = None) -> Path:
         """The database and the files of the data folder (``backup_files``, D-143): a state that restores whole.
         A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups), and
         on the server told to the system's log (D-187). ``keep``: the daily backups kept in the second backup folder
@@ -182,7 +182,7 @@ class BackupsMixin:
                 marker.unlink()  # left by a process that ended while making it
         return ""
 
-    def _backup_now(self, label: str, actor: str | None, keep: Retention) -> Path:
+    def _backup_now(self, label: str, actor: str | None, keep: Retention | None) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = f"-{label}" if label else ""
         dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
@@ -225,11 +225,12 @@ class BackupsMixin:
             self.copy_backup(made, keep=keep)
         return made
 
-    def copy_backup(self, made: Path, keep: Retention = RETENTION) -> Path | None:
+    def copy_backup(self, made: Path, keep: Retention | None = None) -> Path | None:
         """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), with the files
-        it needs that are not there yet (``backup_files.copy_files``), keeping the daily copies ``keep`` says and
-        the files they need. A copy that fails (folder offline) is recorded (and on the server told to the system's
-        log), never raised: the local backup is there either way."""
+        it needs that are not there yet (``backup_files.copy_files``), keeping the daily copies ``keep`` says (by
+        default this mode's, ``backup_files.retention``) and the files they need. A copy that fails (folder offline)
+        is recorded (and on the server told to the system's log), never raised: the local backup is there either
+        way."""
         folder = self.get_setting("backup_copy_dir").strip()
         if not folder:
             return None
@@ -274,10 +275,11 @@ class BackupsMixin:
         backup_files.record_copy(made, True, _now()[:16], str(target))
         return copied
 
-    def auto_backup(self, keep: Retention = RETENTION, min_hours: float = 20, window: tuple[int, int] | None = None,
+    def auto_backup(self, keep: Retention | None = None, min_hours: float = 20, window: tuple[int, int] | None = None,
                     now: dt.datetime | None = None) -> Path | None:  # fmt: skip
         """Back up at most once a day (call it at start-up) and keep the daily copies ``keep`` says
-        (``backup_files.drop_old``: the newest 14, one a week for 8 weeks, one a month for a year, D-187). Only a
+        (``backup_files.drop_old``; by default the newest 14, and on the company server also one a week for 8 weeks
+        and one a month for a year, D-187). Only a
         complete backup (with its list of files) is the day's: one cut short is made again at the next check (B-1557).
         None while another backup or a restore runs (B-1559). ``window`` (``backup_window``): it starts only in those
         hours of the business time zone (server.json's ``time_zone``, else the server's clock), unless the last daily
@@ -288,7 +290,7 @@ class BackupsMixin:
         except backup_files.Busy:
             return None
 
-    def _auto_backup(self, keep: Retention, min_hours: float, window: tuple[int, int] | None,
+    def _auto_backup(self, keep: Retention | None, min_hours: float, window: tuple[int, int] | None,
                      now: dt.datetime) -> Path | None:  # fmt: skip
         daily = [p for p in self.list_backups() if _daily(p) and backup_files.list_path(p).is_file()]
         newest: dt.timedelta | None = None

@@ -31,9 +31,10 @@
     <div>
       <h4>Backups</h4>
       <p class="muted">Each backup is AP Coder as it was at that moment: the database and every invoice file, saved email,
-        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts: the newest 14
-        are kept, then one a week for 8 weeks and one a month for a year (the backups you make yourself, and those made
-        before an update or a restore, are always kept). A file that did not change is stored once for all the backups, so a daily backup copies only what is
+        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts (the newest 14
+        are kept{% if server_mode %}, then one a week for 8 weeks and one a month for a year; the backups you make
+        yourself, and those made before an update or a restore, are always kept{% endif %}). A file that did not change
+        is stored once for all the backups, so a daily backup copies only what is
         new{% if backups %} (in all, the backups take {{ backups_size }}){% endif %}. Make one yourself before big changes,
         e.g. importing a new chart of accounts.</p>
       {% if backup_running %}<p><span class="ms" aria-hidden="true">hourglass_top</span> A backup is being made (started

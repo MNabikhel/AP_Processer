@@ -114,8 +114,16 @@ class Retention:
     monthly: int = 12
 
 
-RETENTION = Retention()
+RETENTION = Retention()  # the company server's
+LAPTOP_RETENTION = Retention(weekly=0, monthly=0)  # a laptop keeps its newest 14, as before
 _MADE_ON = re.compile(r"ap_coder-(\d{8})-")
+
+
+def retention() -> Retention:
+    """The daily backups kept here: on the company server 14 days, 8 weeks and 12 months; on a laptop 14 days."""
+    from ...ops.offline import server_mode
+
+    return RETENTION if server_mode() else LAPTOP_RETENTION
 
 
 def _made_on(backup: Path) -> dt.date | None:
@@ -148,9 +156,10 @@ def kept_dailies(dailies: list[Path], keep: Retention = RETENTION) -> set[Path]:
     return kept
 
 
-def drop_old(dailies: list[Path], keep: Retention = RETENTION) -> None:
-    """Retention of the daily backups ``dailies`` (``kept_dailies``): the others go, with their lists."""
-    kept = kept_dailies(dailies, keep)
+def drop_old(dailies: list[Path], keep: Retention | None = None) -> None:
+    """Retention of the daily backups ``dailies`` (``kept_dailies``; ``keep`` by default this mode's, ``retention``):
+    the others go, with their lists."""
+    kept = kept_dailies(dailies, keep or retention())
     for old in dailies:
         if old not in kept:
             old.unlink(missing_ok=True)

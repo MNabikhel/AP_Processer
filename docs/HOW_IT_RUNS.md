@@ -515,7 +515,7 @@ can corrupt an open SQLite database).
 | (deleted) | files an older version left (`prune_stale`); `private/` and `.env` (moved to the data folder) | `upgrade` |
 | **Data folder** `ap_coder.db` (`-wal`, `-shm`) | the database (`AP_DB_PATH` overrides) | `Store` |
 | `invoices/`, `invoices/deleted/`, `invoices/from-<folder>/` | invoice files; deleted ones; files copied out of an older folder | dashboard, `upgrade.repoint_files` |
-| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept; `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
+| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept (on the server also one a week for 8 weeks and one a month for 12: `backup_files.kept_dailies`, D-187); `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
 | `backups/ap_coder-<stamp>.files.json` | each backup's list of files: each one's place in the data folder, size, time and SHA-256, and the database's size and SHA-256 | `backup_files.snapshot` |
 | `backups/files/<2>/<sha256>` | the files of every backup, each content kept once, named by its SHA-256; one no backup kept lists is removed | `backup_files.snapshot`, `backup_files.prune` |
 | `backups/set-aside-<stamp>/` | the files a restore found that were not there at that backup (moved here, never deleted) | `backup_files.restore_files` |
@@ -533,7 +533,7 @@ can corrupt an open SQLite database).
 | **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6), and your name (per user) | `paths.write_user_settings` |
 | **`~/.ap_coder/logs/launch.log`** | everything each start said, pip's lines and the dashboard's output; `launch.previous.log` past 1 MB | `launch.log` |
 | **Desktop** `AP Coder.lnk` / `AP Coder.command` | the shortcut (Windows / Mac) | `launch.ensure_shortcut` |
-| **Second backup folder** (Settings → Data & backups) | copies of the daily backups, newest 14 | `Store.copy_backup` |
+| **Second backup folder** (Settings → Data & backups) | copies of the daily backups, kept by the same rule | `Store.copy_backup` |
 | Next to an older install | `<folder>.removing-<date>` while it is deleted | `upgrade.remove_folder` |
 | **Server mode only:** `server.json` | the server's settings (port, address, certificate, host names, proxy) | `service install`, `server-update` |
 | `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |

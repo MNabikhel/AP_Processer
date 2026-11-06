@@ -21,7 +21,7 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 [3. HTTPS](#3-the-https-certificate) · [4. The name](#4-the-name-staff-type) · [5. Firewall](#5-the-firewall) ·
 [6. The service](#6-the-service) · [7. First admin](#7-the-first-admin) · [8. LM Studio](#8-lm-studio-on-the-same-server)
 · [9. Backups](#9-backups) · [10. Users and roles](#10-users-and-roles) · [11. Updating](#11-updating-and-going-back)
-· [12. Troubleshooting](#12-troubleshooting)
+· [12. Health and monitoring](#12-health-and-monitoring) · [13. Troubleshooting](#13-troubleshooting)
 
 ## 1. What the server needs
 
@@ -318,6 +318,20 @@ milliseconds (10 MB, then up to 9 older files); with several workers, one file p
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 
+**The system's log** (D-187): what goes wrong is also written to Windows' *Application* log (the Event Viewer, and
+whatever monitoring reads it), source `AP Coder`, one event number for each kind, so a rule can pick one: **101** a
+backup failed, or its copy to the second folder (a warning); **102** a full disk (a backup refused, or invoices no
+longer read); **103** the background process or a capture process stopped (or, as `/readyz` finds, gives no
+heartbeat); **104** the HTTPS certificate expires within 30 days (a warning) or has expired; **105** a model server's
+calls moved to its backup (a warning). The same message at most once an hour by each process. Windows lets only an
+administrator make a new source, so make it once, in an administrator Command Prompt:
+
+```bat
+eventcreate /L APPLICATION /T INFORMATION /SO "AP Coder" /ID 1 /D "AP Coder may write to this log."
+```
+
+Until then these lines are in AP Coder's own logs only. (On macOS and Linux they go to syslog as `ap-coder`.)
+
 **HTTPS**: TLS 1.2 and 1.3 only; on TLS 1.2 only ECDHE with AES-GCM or ChaCha20 (no AES-CBC, no SHA-1 ciphers).
 Browsers from the last ten years have them. Answers carry no `server:` header.
 
@@ -404,13 +418,17 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept.
+  runs. Kept (D-187): the newest 14 daily ones, then the newest of each of the last 8 weeks and of each of the last
+  12 months that have one, so a mistake found at the month end or the year end can still be undone; a backup with a
+  label (yours, an update's, a restore's) is always kept, and the newest complete one is never deleted.
   - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
-    during the working day. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
+    during the working day. The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
+    server's clock. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
     during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
   - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
     to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
-  - Plan the disk for 14 daily copies of the database, plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  - Plan the disk for about 32 copies of the database (14 days, 8 weeks and 12 months, which overlap), plus the
+    invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
   *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
   made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
   restorable whole (D-143):
@@ -436,8 +454,9 @@ window, started at boot like AP Coder.
 - **A copy elsewhere**: an Admin sets *Settings* → *Data & backups* → *Also copy each backup to* a network share, for
   example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily
   backup and each update's backup is then copied there too, with the files it needs that the share does not have yet
-  (the same layout: the newest 14 daily ones kept), and the page says, for each backup, whether its copy was made or
-  why it failed. That folder alone restores the server on a new computer. The service's account must be able to write
+  (the same layout, and the same ones kept: 14 days, 8 weeks, 12 months), and the page says, for each backup, whether
+  its copy was made or why it failed. Choose a share on another server: a folder on the database's own disk does not
+  survive that disk's failure, and *Settings*, `doctor` and `/readyz` say so. That folder alone restores the server on a new computer. The service's account must be able to write
   there: a domain account (step 2), with *Modify* on that share folder.
 - **What each backup holds**: *Settings* → *Data & backups* lists every backup with when it was made, its invoices and
   files and their size, whether its second copy was made, and whether every file is there (*Complete*, or how many are
@@ -637,7 +656,67 @@ Two folders are kept: the current one and the previous one. After the next updat
 versions back, which you can delete. What was done, when, is in `D:\APCoderData\server.json` (`history`), and the
 installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.
 
-## 12. Troubleshooting
+## 12. Health and monitoring
+
+**`GET /readyz`** (D-187) is for your monitoring (PRTG, Zabbix, SCOM, Nagios...) or a load balancer: **200** when
+AP Coder is ready, **503** when it can't do its work, and a JSON body saying what was checked. Not ready means one of:
+the database can't be read; the data folder's disk has less than 512 MB free (no invoice is read, no backup made); the
+HTTPS certificate has expired; the background process gave no heartbeat for 2 minutes (it says it is alive every 30
+seconds); none of the capture processes runs. Everything else is a warning (still 200, `"status": "warn"`): the
+certificate expires within 30 days; the last backup failed, or the newest is over 36 hours old, or there is none; the
+next backup won't fit on its disk; no second backup folder, or one that can't be reached or is on the database's disk;
+fewer capture processes than started; a model server's calls on its backup; the server's clock in another time zone
+than the business's. The body holds no password, token, path, person's or vendor's name:
+
+```json
+{"ready": true, "status": "warn", "app": "ap-coder", "version": "0.3.0", "server": true,
+ "checked_at": "2026-11-06T09:00:05-05:00",
+ "problems": [{"check": "certificate", "status": "warn", "text": "The server's HTTPS certificate expires on ..."}],
+ "database": {"status": "ok"},
+ "data_disk": {"free_bytes": 412000000000, "total_bytes": 999000000000, "reserve_bytes": 536870912, "status": "ok"},
+ "backups_disk": {"same_disk_as_data": true, "free_bytes": 412000000000, "needed_bytes": 9100000000, "status": "ok"},
+ "backup": {"newest": "2026-11-06T02:00:41-05:00", "age_hours": 7.0, "last_failed": null, "being_made": false,
+            "status": "ok"},
+ "second_backup_folder": {"set": true, "reachable": true, "free_bytes": 2000000000000, "same_disk_as_data": false,
+                          "status": "ok"},
+ "certificate": {"days_left": 21, "expires": "2026-11-27T23:59:59+00:00", "status": "warn"},
+ "time_zone": {"business": "America/Toronto", "machine": "Eastern Standard Time (UTC-05:00)", "status": "ok"},
+ "background": {"heartbeat_age_seconds": 12.4, "status": "ok"},
+ "capture": {"alive": 6, "started": 6, "status": "ok"},
+ "imports": {"waiting": 40, "reading": 6, "oldest_wait_seconds": 95},
+ "page_reader": {"waiting": 310, "reading": 1, "oldest_wait_seconds": 5400},
+ "model_servers": {"status": "ok", "model_server": {"on": "primary", "since": null, "moves": 0}}}
+```
+
+Each process works it out at most every 5 seconds (several monitors every 10 seconds cost nothing), and the second
+backup folder (a share that is gone can take a minute to say so) is waited for 2 seconds at most.
+
+**Who it answers**: the server's own console (`https://localhost:8501/readyz` on the server, not through a proxy), and
+the monitors you name in `D:\APCoderData\server.json`; anyone else gets a 403. Add either or both (then `service
+stop` and `service start`, or wait: it is read at each request):
+
+- `"monitor_token": "<at least 24 characters>"`, which the monitor sends as the header `X-AP-Coder-Monitor: <token>`
+  (or `Authorization: Bearer <token>`). Make one with `.venv\Scripts\python.exe -c "import secrets;
+  print(secrets.token_urlsafe(32))"`, and keep it as private as a password.
+- `"monitor_addresses": ["10.1.2.30", "10.1.5.0/24"]`: a monitor or load balancer at one of these addresses (or in
+  one of these networks) is answered without a token, for a probe that can't send a header.
+
+The Host check still applies: the monitor opens AP Coder by one of its names or by the server's IP address.
+
+**`doctor --json`**: the same checks as `doctor`, as JSON (`{"checks": [{"area", "status", "detail"}], "failures",
+"warnings"}`), with the same exit code (1 when one failed). On the server `doctor` also says when the certificate
+expires, the time zone, the data folder's disk, the newest backup and the second backup folder.
+
+**The business time zone**: add `"time_zone": "America/Toronto"` (its IANA name: `America/Vancouver`,
+`America/Edmonton`, `America/Winnipeg`, `America/Halifax`...) to `server.json`. `doctor` and `/readyz` then warn
+when the server's clock keeps another time (a virtual machine left on UTC makes "today", the day's counts, the due
+dates and the backup hours wrong), and the daily backup's hours (`AP_BACKUP_HOURS`) are the business's. AP Coder
+does not change the clock: set the server's time zone in Windows (*Settings* → *Time & language* → *Date & time*).
+
+**The certificate**: from 30 days before it expires, an Admin sees a banner on every page, `doctor` and `/readyz`
+warn, and the system's log says so (step 6); once expired, the banner says so in red and `/readyz` answers 503.
+
+## 13. Troubleshooting
 
 | What you see | What to do |
 |---|---|
@@ -662,6 +741,7 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | "AP Coder can't check your authenticator codes on this server: its key file ... is missing, damaged or not the one your app was set up with" | `authenticator.key` was deleted or changed in the data folder. Put it back from a copy of the data folder if you have one; otherwise reset each person's authenticator (*Users* → *Reset authenticator*; the last Admin with `users reset-2fa`): they set their apps up again. |
 | Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
 | Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |
+| Your monitor gets 503 from `/readyz` | Its `problems` say which check failed and what to do (section 12). A 403: the monitor is not named in `server.json` (`monitor_token` or `monitor_addresses`). |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |
 
 **What `doctor` checks on the server** (when `AP_SERVER_MODE=1`, or `server.json` is in the data folder), besides
@@ -669,4 +749,5 @@ what it checks on a laptop: *dashboard network* (the address and port the server
 open), *server HTTPS certificate* and *private key* (set, there, and readable by the account you run it as; run it
 as `APCoderService` to check the service's own rights), *server names* (the allowed names, a warning when none is set)
 and, on Windows, *server service* (the scheduled task: installed, its state, the account, and whether it was stopped
-on purpose).
+on purpose); and (D-187) *server HTTPS certificate expiry*, *server time zone*, *data folder disk*, *backups* (the
+newest, and whether the last one failed) and *second backup folder* (set, reachable, on another disk).
