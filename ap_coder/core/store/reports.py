@@ -37,6 +37,7 @@ ANSWERS_KEPT = 8  # of each name (a report asked for a few period ends), the lat
 ANSWER_LEASE = 10.0  # seconds a process working an answer out holds it for the others, renewed while it works: one
 ANSWER_RENEW = 3.0  # that stopped (killed, B-1807) is passed over within ANSWER_LEASE; renewed every ANSWER_RENEW
 ANSWER_WAIT = 30.0  # seconds another process asking the same waits for that answer before working it out itself
+ANSWER_WAIT_MOST = 180.0  # ... and while the one working it out still renews its hold, at most this long (B-1914)
 ANSWER_POLL = 0.25
 OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the answers' leases name it
 
@@ -98,7 +99,7 @@ class ReportsMixin:
         than that many seconds ago on the same database is taken still, in whichever process it was made, so it is
         never older than that but by the time another takes to work it out: while another thread or process works it
         out, the answer before (this database's latest) is taken meanwhile (B-1834); with no such answer, or without
-        ``settle``, it is waited for (``ANSWER_WAIT``). ``encode``/``decode``: the value to JSON-ready data and back.
+        ``settle``, it is waited for (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``, B-1914). ``encode``/``decode``: the value to JSON-ready data and back.
         In a write under way (or a read transaction) it is worked out afresh, neither read nor kept. The value is
         shared: read it, don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
@@ -128,7 +129,7 @@ class ReportsMixin:
         if holds(hit):
             return hit[1]  # type: ignore[index]
         if not before(hit):
-            got = working.acquire(timeout=ANSWER_WAIT)
+            got = working.acquire(timeout=ANSWER_WAIT_MOST)  # (a thread here works it out: it is alive, B-1914)
         elif not (got := working.acquire(blocking=False)):
             return hit[1]  # type: ignore[index]  (another thread here works it out again: the one before meanwhile)
         try:
@@ -145,8 +146,9 @@ class ReportsMixin:
                 if other and before(hit) and not (before(found) and found[2] > hit[2]):  # type: ignore[index]
                     return hit[1]  # type: ignore[index]  (another process works it out again: the one before meanwhile)
                 took = other and before(found)  # (or the database's, when it is the latest)
-                until = time.monotonic() + ANSWER_WAIT
-                # another process works it out, with no answer before to show: taken once written
+                # another process works it out, with no answer before to show: taken once written, waited for while
+                # its hold is renewed (it is alive and working, B-1807), up to ANSWER_WAIT_MOST (B-1914)
+                until = time.monotonic() + ANSWER_WAIT_MOST
                 while not taken and not took and time.monotonic() < until:
                     time.sleep(ANSWER_POLL)
                     found = self.kept_answer(name, key, version)
