@@ -2008,3 +2008,85 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/load.py`; `tests/web/test_web_process_listing.py`, `tests/web/test_web_process.py`,
     `tests/intake/test_files.py`, `tests/intake/test_imports.py`, `tests/core/test_imports.py`,
     `tests/bench/test_bench_load.py`)
+- **D-177** · **Month-end's billing invoices' lines kept for every process by vendor and brought up to date from the
+  vendors' change log; a line matched by its description alone when no price can change it; the POs and their
+  billing read in one moment** (scale goal, phase 3 part 3, Q1; B-1818; changes D-166's and D-169's received POs).
+  - **Why (verified):** at 300,000 invoices and 100 people, month-end was 22% of the busiest web workers' CPU,
+    `_received_not_invoiced` 18.2% of it: `billing_codings` 9.3% (the SQL 4.5%, the JSON 4.1%), `positive_lines`
+    4.0%, `_accrued`'s `billed_on` 3.4%. Each received PO's accruals are kept by a digest holding the counts of
+    changes of its billing invoices' vendors (`_made_of`), so a change to any invoice of a vendor put every PO of the
+    vendor in `todo`, and every billing invoice of those POs (those quoting it, and every invoice of the vendor on
+    no PO: 23,000 for the biggest at 300,000) was decoded and its lines read again; nothing was kept per invoice.
+    Under load many vendors change between two computes: at 300,000, tens of thousands of invoices each time.
+  - **The choice: in the database, not each process** (measured on a 20,000-invoice seed of this code):
+    - What month-end reads of an invoice (its coding's date, its lines billing a quantity) is about 450 bytes held
+      in Python, 300 as JSON. Billing invoices are 70% of all (13,918 at 20,000, about 210,000 at 300,000: 95 MB in
+      each process), and the vendors with invoices in the review queue hold 81% of them.
+    - Simulated at 300,000 (the seed's vendors' billing invoices x15, changes drawn by the queue's share), with 60
+      changes between two computes: keeping none decodes 75,420 invoices a compute; a process keeping at most 50,000
+      (23 MB, its vendors asked longest ago going first) 74,935: it thrashes; 100,000 (45 MB) 9,736; 150,000 (68 MB)
+      1,198, most billing invoices in every worker. With 10 changes: 30,723, 14,223, 1,709, 464.
+    - A vendor's row read back from the database costs 4.6 us an invoice (2.8 the JSON), against 34 us to decode
+      its coding again; nothing held in any worker, no first decode in each.
+  - **What:**
+    - `report_answers`, a row a vendor (`purchasing.BILLING_ANSWER` and its key, `BILLING_FORMAT`): each billing
+      invoice's [id, date, lines], stamped (`summary_id`, the log's last change, the vendor's count of changes) as
+      `vendor_invoices`' rows are (D-174). `Store.billing_lines` reads it with the log in the same moment: a row of
+      another `summary_id` (a restore), from before the log's first change (pruned since), or whose vendor's count
+      moved by more than the log says (an older AP Coder, B-1811) is decoded whole; otherwise only the invoices the
+      log names since. A row is written again once `BILLING_REWRITE` (32) of its invoices, and a sixteenth of them,
+      were decoded since: until then each read decodes those again (the biggest vendor's row is 7 MB at 300,000).
+      Not kept: an invoice with no vendor key (no log follows it), a coding not read so (not an object, its lines
+      not lines: read as before at each use, failing where it did) and one with a NaN. Inside a write under way
+      nothing kept is used or kept.
+    - **One moment** (`Store.billing_moment`, B-1818): the received POs, the invoices billing them (the summary
+      brought up to date first), the log, the vendors' rows and the codings decoded, in one read
+      (`learning.one_snapshot`); the rows to keep are written once it is over, never in it. The answer's stamps are
+      as before (`changes/purchase_orders`, the summary's generation; each PO's digest with its vendors' counts): a
+      change of a vendor's invoice still works its POs out again, from the lines kept. A vendor's invoices on no PO
+      are digested once for all its POs.
+    - **Matching** (`coding/po.billed_on`, `_price_decides`): a PO line's price, when it is an invoice line's, can
+      change what the line matches only when that PO line resembles it, at the same price, at least as much as the
+      most alike does at any price and enough to match (`MATCH_THRESHOLD`). With none of them a line matches
+      nothing; with only the most alike, itself enough, that one: by its description alone (most lines); otherwise
+      only those PO lines' price bands are looked at. The same quantities to the last bit as matching each line in
+      turn (`billed_by_line`): random POs and lines with prices at each edge of a band, then with how alike they are
+      drawn from values that tie exactly at the same price (0.25 + 0.2 = 0.45); three mutations caught, two that only
+      look at more bands than needed survive (the same matches).
+  - **Proven** (`tests/erp/test_accruals.py`): random changes by two workers and plain SQL, with a log of 8 changes
+    and of 1,000 (an invoice added, approved with other lines, its lines, date or coding's date changed, moved to
+    another vendor, to none or to another PO, deleted, exported and undone, parked, rejected and reopened; the POs
+    imported again; an older AP Coder's change, logged nowhere; a write undone with month-end asked inside it; a
+    restore), each worker asking at either period end: the accruals CSV and the page byte for byte what working them
+    out afresh gives (nothing kept in any process or the database). Each rule of `billing_lines` mutated (the
+    count, the pruned log, the `summary_id`, the changed invoices left in, kept rows used or written in a write
+    under way), a PO's digest without its vendor's invoices on no PO or kept with an invoice of no vendor: each fails
+    it; the moment left out fails B-1818's test (another worker's approval while month-end reads).
+  - **Measured** (CPU of the second process, `time.process_time`, medians of 5; the first process parked, edited
+    (a line's quantity, plain SQL) or approved (a line's words changed) an invoice of the biggest vendor; a
+    20,000-invoice seed of its own, 4 cores shared with two other agents; before: 88d82e0, each pair run together).
+    Received, not invoiced, in seconds; month-end in all in brackets (the rest is its invoices not in the ERP yet):
+
+    | one change of the vendor's invoices | park | edit | approve |
+    |---|---:|---:|---:|
+    | its 1,560 billing invoices, before | 0.36 (1.04) | 0.38 (1.04) | 0.35 (0.97) |
+    | after | 0.22 (0.80) | 0.24 (0.82) | 0.25 (0.84) |
+    | made as big as 300,000's biggest (17,889 billing invoices), before | 0.96 (1.45) | 0.96 (1.48) | 0.93 (1.56) |
+    | after | 0.39 (0.97) | 0.38 (0.92) | 0.40 (1.02) |
+
+    60 changes of any vendors' invoices between two computes: 0.47 (1.08) before, 0.28 (0.84) after. The first
+    compute on the database, every vendor's row written: 1.10 (1.90) before, 1.16 (1.97) after.
+
+    What is left after a change at 20,000 is mostly the same at every compute: every received PO read (2,965), the
+    summary's 13,918 billing rows and their digests, the shared parts read and written again; at the vendor of
+    17,889, its row read back (60 ms) and its lines matched to its PO again.
+
+  - **Not done:**
+    - A compute still reads every received PO (3,000: 50 ms), the summary's billing rows (all of them: about 0.2 s
+      at 300,000), their digests, and matches each PO it works out again to all its billing lines. A PO's billed
+      quantities kept and updated would sum them in another order than a fresh compute: not the same to the last bit.
+    - The first compute on a database writes every vendor's row (about 63 MB at 300,000, once).
+    - The other half of month-end after a change, its invoices not in the ERP yet, still decodes each of them
+      (D-175's open item: their checks' `validation` is in no vendor's count).
+  - (`core/store/purchasing.py`, `erp/accruals.py`, `coding/po.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/erp/test_accruals.py`)
