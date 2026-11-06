@@ -688,7 +688,6 @@ def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chrom
     """A colleague on a laptop shared on the office network says who they are once; after AP Coder started again (a
     new key) their cookie is no longer good, and a look is sent on to "Who are you?": it kept asking every 0.8 s,
     answered by that page. It stops, and the job page goes there, to come back after it."""
-    import threading
     import time
 
     from tests.browser import browser_on, wait_until
@@ -698,8 +697,9 @@ def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chrom
     async def colleague(scope, receive, send):  # the browser is on another computer of the office
         await app({**scope, "client": ("10.0.0.5", 50000)} if scope["type"] == "http" else scope, receive, send)
 
-    release = threading.Event()
-    assert app.state.jobs.get("process").start(lambda job: release.wait(60) and None, total=3)
+    from tests.web.test_server_browser import _job_running
+
+    release = _job_running(app)  # (a file of the import queue being read, D-168)
     try:
         with browser_on(chromium, colleague) as (browser, base):
             page = browser.new_page()

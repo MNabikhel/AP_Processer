@@ -16,9 +16,9 @@ import contextvars
 import hashlib
 import logging
 import os
+import platform
 import secrets
 import shutil
-import socket
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -39,7 +39,7 @@ Read = tuple[str, int | None, int | None, str]  # (place, size, time in nanoseco
 def owner_id(kind: str) -> str:
     """What the queue's rows name a reader by: its kind, computer, process and a token (a process number given again
     after a restart is another reader)."""
-    return f"{kind}:{socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
+    return f"{kind}:{platform.node()}:{os.getpid()}:{secrets.token_hex(3)}"
 
 
 def noted(path: Path, content: bytes) -> Read:

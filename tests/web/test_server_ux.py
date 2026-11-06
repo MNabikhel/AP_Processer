@@ -18,7 +18,7 @@ from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.ops import offline
 from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
-from ap_coder.web.pages import learning, process
+from ap_coder.web.pages import learning
 from tests.conftest import SAMPLES, chromium_path
 from tests.webclient import PAGE, add_clean, enrol, post, sign_in
 
