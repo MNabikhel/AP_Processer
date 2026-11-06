@@ -117,18 +117,22 @@ class Reader:
 
     def read_all(self, stop: threading.Event | None = None, *, batch: int | None = None, workers: int = 1) -> int:
         """Read the files in line until none waits for this reader (``stop`` set: once the files under way are read).
-        ``batch``: that batch's only; ``workers``: files read at once (threads, one pipeline). How many it read."""
+        ``batch``: that batch's only; ``workers``: files read at once (threads, one pipeline). How many it read. With
+        nothing in line it costs one query: no heartbeat, no pipeline (a capture process looks every second)."""
         stop = stop or threading.Event()
+        first = self._next(batch)
+        if first is None:
+            return 0
         done = threading.Event()
         beat = threading.Thread(target=self._heartbeat, args=(done,), name="ap-coder-import-heartbeat", daemon=True)
         beat.start()
         counts: list[int] = []
         try:
             if workers <= 1:
-                return self._loop(stop, batch)
+                return self._loop(stop, batch, first)
             threads = [threading.Thread(target=contextvars.copy_context().run, name=f"ap-coder-import-{n + 1}",
-                                        args=(self._counted, stop, batch, counts), daemon=True)
-                       for n in range(workers)]  # fmt: skip
+                                        args=(self._counted, stop, batch, counts, first if n == 0 else None),
+                                        daemon=True) for n in range(workers)]  # fmt: skip
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -138,8 +142,8 @@ class Reader:
             done.set()
             self._pipeline = None  # the GL accounts and settings read again next time
 
-    def _counted(self, stop: threading.Event, batch: int | None, counts: list[int]) -> None:
-        counts.append(self._loop(stop, batch))
+    def _counted(self, stop: threading.Event, batch: int | None, counts: list[int], first: Any) -> None:
+        counts.append(self._loop(stop, batch, first))
 
     def _heartbeat(self, done: threading.Event) -> None:
         """Every lease/6 seconds: the files it reads, and its ``reader:`` lease (a batch of its own stays its own)."""
@@ -153,19 +157,28 @@ class Reader:
                 self.store.drop_lease(f"reader:{self.owner}", self.owner)
                 return
 
-    def _loop(self, stop: threading.Event, batch: int | None) -> int:
+    def _next(self, batch: int | None) -> dict[str, Any] | None:
+        """The next file this reader takes (None: none, or ``paused`` says why it takes none now)."""
+        self.paused = "" if has_room(self.store.path.parent) else NO_ROOM
+        if not self.paused and self.store.restoring():
+            self.paused = RESTORING
+        return None if self.paused else self.store.claim_import(self.owner, self.lease, batch)
+
+    def _loop(self, stop: threading.Event, batch: int | None, row: dict[str, Any] | None = None) -> int:
         read = 0
-        self.pipeline()  # (one that can't be made, the GL accounts open in Excel say, takes no file)
         while not stop.is_set():
-            self.paused = "" if has_room(self.store.path.parent) else NO_ROOM
-            if not self.paused and self.store.restoring():
-                self.paused = RESTORING
-            if self.paused:
-                return read
-            row = self.store.claim_import(self.owner, self.lease, batch)
+            row = row or self._next(batch)
             if row is None:
                 return read
+            try:
+                self.pipeline()
+            except BaseException:  # (the GL accounts open in Excel, say): the file goes back in line, unread
+                self.store.release_imports(self.owner, row["id"])
+                raise
             read += self._read(row)
+            row = None
+        if row is not None:  # (stopped before it was read)
+            self.store.release_imports(self.owner, row["id"])
         return read
 
     def pipeline(self) -> Any:

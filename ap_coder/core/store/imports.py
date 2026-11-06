@@ -130,6 +130,10 @@ class ImportsMixin:
         its batch's actor, account, origin and source; None when none waits for this reader. On the way, in the same
         transaction: a file whose reader stopped (its lease ran out) is put back in line, or failed the second time;
         a file already in AP Coder is skipped. ``batch``: that batch's files only."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            if conn.execute("SELECT 1 FROM import_files WHERE status = 'waiting' OR (status = 'reading' AND "
+                            "lease_until < julianday('now')) LIMIT 1").fetchone() is None:  # fmt: skip
+                return None  # (an idle reader's look every second takes no write lock)
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
             conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
             closed = self._expire_imports(conn)
@@ -182,13 +186,13 @@ class ImportsMixin:
             self._close_batches(conn, {row[0]})
         return True
 
-    def release_imports(self, owner: str) -> int:
-        """Put the files ``owner`` is reading back in line, their try not counted: the reader is stopping (a restart
-        of the server, Ctrl+C), not stopped by the file. How many."""
+    def release_imports(self, owner: str, file_id: int | None = None) -> int:
+        """Put the files ``owner`` is reading (``file_id``: that one) back in line, their try not counted: the reader
+        is stopping (a restart of the server, Ctrl+C), not stopped by the file. How many."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             return conn.execute(
                 "UPDATE import_files SET status = 'waiting', owner = '', lease_until = NULL, tries = MAX(tries - 1, 0) "
-                "WHERE owner = ? AND status = 'reading'", (owner,),
+                "WHERE owner = ? AND status = 'reading' AND (? IS NULL OR id = ?)", (owner, file_id, file_id),
             ).rowcount  # fmt: skip
 
     def imports_open(self, owner: str | None = None) -> dict[str, int]:

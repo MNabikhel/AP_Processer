@@ -83,18 +83,16 @@ def test_each_file_is_hashed_once_on_its_way_to_its_invoice(store, monkeypatch):
     """The SHA-256 read as a file comes in goes with it to its invoice: the queue checks it against the invoices
     stored without reading the file again, and the invoice is saved with it (it was read three times, once more each
     for ``find_by_hash`` and ``add_invoice``)."""
-    from ap_coder.core.store import invoices
-
     (read,) = _queued(store, PDFS[:1])
     saved, looked = [], []
-    real = invoices.InvoicesMixin.add_invoice
+    real = Store.add_invoice
 
     def add_invoice(self, *args, **kwargs):
         saved.append(kwargs.get("sha256"))
         return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(invoices.InvoicesMixin, "add_invoice", add_invoice)
-    monkeypatch.setattr(invoices.InvoicesMixin, "find_by_hash", lambda *a, **k: looked.append(a) or None)
+    monkeypatch.setattr(Store, "add_invoice", add_invoice)
+    monkeypatch.setattr(Store, "find_by_hash", lambda *a, **k: looked.append(a) or None)
     assert Reader(store, _settings(), "r").read_all() == 1
     assert saved == [read[3]] and looked == []
     with store._conn() as conn:
