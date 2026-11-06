@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.csvio import parse_date, read_csv_rows
+from .money import CENT, TAX_UNITS, add_up, half_up, nil, per_line, split, tax_band, times, within
 
 log = logging.getLogger(__name__)
 
@@ -342,10 +343,6 @@ def _invoice_date(coding: Any) -> dt.date | None:
         return None
 
 
-def _close(a: float, b: float, tol: float) -> bool:
-    return abs(a - b) <= tol + 1e-9
-
-
 # --- Checks ----------------------------------------------------------------------------------
 
 
@@ -416,17 +413,17 @@ def _start_tax_check(coding: Any, setup: TaxSetup) -> _TaxCheck:
     n_items = max(1, len(coding.line_items))
     return _TaxCheck(
         coding=coding, setup=setup, on=_invoice_date(coding), prov=prov, assumed=assumed, tax_lines=tax_lines,
-        charged={tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"},
-        posted={tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004},
-        n_items=n_items, tol=0.01 * n_items + 0.01,
+        charged={tl.tax_type for tl in tax_lines if not nil(tl.tax_amount) and tl.tax_type != "OTHER"},
+        posted={tl.tax_type for tl in tax_lines if not nil(tl.tax_amount)},
+        n_items=n_items, tol=per_line(n_items),
     )  # fmt: skip
 
 
 def _tax_lines_add_up(check: _TaxCheck) -> None:
     """The tax lines add up to the tax total."""
     coding = check.coding
-    lines_total = round(sum(tl.tax_amount for tl in check.tax_lines), 2)
-    if not _close(lines_total, coding.tax_total, 0.02):
+    lines_total = add_up(tl.tax_amount for tl in check.tax_lines)
+    if not within(lines_total, coding.tax_total, CENT):
         check.add(
             ERROR,
             "TAX_LINES_TOTAL_MISMATCH",
@@ -440,9 +437,9 @@ def _each_tax_line(check: _TaxCheck) -> None:
     for tl in check.tax_lines:
         _tax_line_amount(check, tl, places)
         if tl.tax_type == "OTHER":
-            check.foreign += tl.tax_amount if abs(tl.tax_amount) > 0.004 else 0.0  # said once, below (B-814)
+            check.foreign += tl.tax_amount if not nil(tl.tax_amount) else 0.0  # said once, below (B-814)
             continue
-        if abs(tl.tax_amount) <= 0.004:
+        if nil(tl.tax_amount):
             continue  # "GST 0.00" / "exempt" printed: nothing charged, nothing to allocate or verify
         _tax_line_rate(check, tl)
 
@@ -453,16 +450,16 @@ def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
     cent of rounding per line could add up to (tax rounded per unit, a line marked wrongly), never silently."""
     coding, tol = check.coding, check.tol
     unit = 10.0**-places
-    rounding = unit * (check.n_items / 2 + 1)
+    rounding = tax_band(unit, check.n_items)
     label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
-    expected = round(tl.taxable_amount * tl.rate, places)
+    expected = times(tl.taxable_amount, tl.rate, places)
     ways = [expected]
     if sum(1 for t in check.tax_lines if t.tax_type == tl.tax_type) == 1:
         flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
         if flagged:
-            ways.append(round(sum(round(li.amount * tl.rate, places) for li in flagged), places))
+            ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
     # A tax printed at 0.00 is nothing charged (LINE_TAX_NOT_CHARGED and the self-assessment say what follows).
-    if abs(tl.tax_amount) <= 0.004 or any(_close(way, tl.tax_amount, unit) for way in ways):
+    if nil(tl.tax_amount) or any(within(way, tl.tax_amount, TAX_UNITS * unit) for way in ways):
         return
     # The taxable is the lines marked with the tax (it follows them on the review screen) and one line's amount is
     # the difference: the tax charged is right for the other lines, a line's tax code is what to look at (a warning
@@ -470,9 +467,9 @@ def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
     marked = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
     # Worked in the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
     sign = -1 if (tl.taxable_amount or tl.tax_amount) < 0 else 1
-    gap = sign * round((tl.tax_amount - expected) / tl.rate, 2) if tl.rate else 0.0
+    gap = sign * half_up((tl.tax_amount - expected) / tl.rate) if tl.rate else 0.0
     suspect = None
-    if marked and _close(round(sum(li.amount for li in marked), 2), tl.taxable_amount, tol) and gap:
+    if marked and within(add_up(li.amount for li in marked), tl.taxable_amount, tol) and gap:
         suspect = (_gap_line(marked, -gap, tol, sign) if gap < 0 else
                    _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
     name = tax_name(tl.tax_type, tl.province or check.prov)
@@ -483,7 +480,7 @@ def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
         hint, explained = _unexplained(coding.line_items, tl.tax_type, tl.tax_amount, tl.rate, name)
         suspect = suspect if not explained else True  # a choice of lines makes it: a warning, no error
     check.add(
-        WARNING if _close(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
+        WARNING if within(expected, tl.tax_amount, rounding) or suspect is not None else ERROR,
         "TAX_CALC_MISMATCH",
         f"{label}: {tl.taxable_amount:.2f} x {pct(tl.rate)} = {expected:.2f} "
         f"but invoice charges {tl.tax_amount:.2f}{hint}",
@@ -522,18 +519,18 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
     for tax_type in sorted(check.charged):
         name = tax_name(tax_type, check.prov)
         flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
-        taxable = round(sum(t.taxable_amount for t in check.tax_lines if t.tax_type == tax_type), 2)
+        taxable = add_up(t.taxable_amount for t in check.tax_lines if t.tax_type == tax_type)
         if not flagged:
             check.add(WARNING, "TAX_NOT_ALLOCATED",
                       f"{name} is charged but no line is marked with it: pick the tax code of the lines it applies "
                       "to")  # fmt: skip
             continue
-        base = round(sum(li.amount for li in flagged), 2)
-        if _close(base, taxable, tol):
+        base = add_up(li.amount for li in flagged)
+        if within(base, taxable, tol):
             continue
         # In the size of the amounts: a credit note reverses an invoice line for line (ETA s.232).
         sign = -1 if (taxable or base) < 0 else 1
-        gap = sign * round(taxable - base, 2)
+        gap = sign * half_up(taxable - base)
         # A line marked exempt or zero-rated (from this tax, or from all) whose amount makes the tax add up: the
         # vendor taxed it, or it is not exempt after all (EXEMPT_LINE_TAXED says so instead of the difference).
         stated = [li for li in coding.line_items if tax_type not in li.taxes_applied
@@ -555,7 +552,7 @@ def _lines_carry_each_tax(check: _TaxCheck) -> None:
             said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"
             hint = f": {said} may be exempt from {name}" if gap < 0 else f": {said} may carry {name} too"
         else:
-            charged_amount = round(sum(t.tax_amount for t in check.tax_lines if t.tax_type == tax_type), 2)
+            charged_amount = add_up(t.tax_amount for t in check.tax_lines if t.tax_type == tax_type)
             rates = {round(t.rate, 6) for t in check.tax_lines if t.tax_type == tax_type}
             hint = (_unexplained(coding.line_items, tax_type, charged_amount, rates.pop(), name)[0]
                     if len(rates) == 1
@@ -597,8 +594,8 @@ def _qst_before_gst(check: _TaxCheck) -> None:
     """QST is calculated on the price excluding GST (no tax-on-tax since 2013)."""
     gst = next((t for t in check.tax_lines if t.tax_type == "GST"), None)
     qst = next((t for t in check.tax_lines if t.tax_type == "QST"), None)
-    if gst and qst and not _close(qst.taxable_amount, gst.taxable_amount, check.tol):
-        if _close(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, check.tol):
+    if gst and qst and not within(qst.taxable_amount, gst.taxable_amount, check.tol):
+        if within(qst.taxable_amount, gst.taxable_amount + gst.tax_amount, check.tol):
             check.add(ERROR, "QST_ON_GST_INCLUSIVE",
                       "QST was calculated on the GST-inclusive amount; it must exclude GST")  # fmt: skip
 
@@ -610,13 +607,13 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
         if charged:
             check.add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
         return
-    if abs(coding.subtotal) <= 0.004:  # credit notes (negative) are checked too
+    if nil(coding.subtotal):  # credit notes (negative) are checked too
         return
     expected_types = regime_on(prov, check.on, check.setup.rates)
     name = PROVINCE_NAMES[prov] + check.assumed
     # Every line says why it carries no tax (exempt, zero-rated, out of scope): no provincial tax was due either.
     all_stated = bool(coding.line_items) and all(not li.taxes_applied and li.tax_status for li in coding.line_items)
-    if not charged and abs(check.foreign) > 0.004:
+    if not charged and not nil(check.foreign):
         # A foreign vendor's own tax, none of Canada's: one finding, not "no sales tax charged" beside it (B-814).
         owed = " and ".join(tax_name(t, prov) for t in sorted(expected_types))
         check.add(
@@ -667,7 +664,7 @@ def _provincial_tax_due(check: _TaxCheck, expected_types: set[str], name: str, a
                if tax_state(li, provincial, sorted(check.charged)) == DUE]  # fmt: skip
         if not due or all_stated:
             continue
-        base = round(sum(li.amount for li in due), 2)
+        base = add_up(li.amount for li in due)
         pname = tax_name(provincial, prov)
         where = f"{_which_lines(due, all_of=coding.line_items)} ({base:,.2f}) of a supply in {name}"
         if provincial == "QST":  # B-718: a registrant generally owes nothing net
@@ -704,7 +701,7 @@ def _hst_where_it_applies(check: _TaxCheck, expected_types: set[str], name: str)
 
 def _foreign_tax(check: _TaxCheck) -> None:
     """A non-Canadian tax charged beside Canada's (said with the regime when it is the only tax)."""
-    if abs(check.foreign) > 0.004:
+    if not nil(check.foreign):
         check.add(WARNING, "TAX_NON_CANADIAN",
                   f"non-Canadian tax of {check.foreign:.2f} charged (e.g. US sales tax); it is not recoverable here "
                   "and is added to the expense lines. Confirm it should have been charged")  # fmt: skip
@@ -785,7 +782,7 @@ def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None) -> None:
 def gap_lines(lines: list[Any], gap: float, tol: float, sign: int = 1) -> list[Any]:
     """The lines whose amount is ``gap`` (within ``tol``; ``sign`` -1 on a credit note, whose amounts are negative):
     the lines a tax that does not add up may be missing, or carry wrongly (the Tax check's too, ``taxmath``)."""
-    return [li for li in lines if abs(sign * li.amount - gap) <= tol + 1e-9 and abs(li.amount) > 0.004]
+    return [li for li in lines if within(sign * li.amount, gap, tol) and not nil(li.amount)]
 
 
 def _gap_line(lines: list[Any], gap: float, tol: float, sign: int = 1) -> Any:
@@ -886,23 +883,6 @@ def currency_places(currency: str | None) -> int:
     return 0 if str(currency or "").strip().upper() in ZERO_DECIMAL_CURRENCIES else 2
 
 
-def _allocate(total: float, weights: list[float], places: int = 2) -> list[float]:
-    """Split ``total`` proportionally to ``weights`` in cents (whole units when ``places`` is 0); the remainder
-    goes to the largest weight."""
-    if not weights:
-        return []
-    base = sum(weights)
-    if abs(base) < 1e-9:
-        shares = [0.0] * len(weights)
-        shares[0] = round(total, 2)
-        return shares
-    shares = [round(total * w / base, places) for w in weights]
-    remainder = round(total - sum(shares), 2)  # to the cent: the shares always add up to the total as read
-    biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
-    shares[biggest] = round(shares[biggest] + remainder, 2)
-    return shares
-
-
 def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
     """Posting lines that add up to the grand total (what the ERP voucher would contain). Tax spread over the
     lines is spread in whole units for a currency without cents (the yen), so each line posts as printed."""
@@ -915,13 +895,13 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
             "gl_code": li.predicted_gl_code,
             "cost_center": li.predicted_cost_center,
             "description": li.description,
-            "net_amount": round(li.amount, 2),
+            "net_amount": half_up(li.amount),
             "non_recoverable_tax": 0.0,
-            "amount": round(li.amount, 2),
+            "amount": half_up(li.amount),
         }
     tax_entries = []
     for position, tl in enumerate(coding.tax_lines):
-        if abs(tl.tax_amount) < 0.005:
+        if nil(tl.tax_amount):
             continue
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
@@ -934,29 +914,29 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
                 or [(i, li) for i, li in items if tax_state(li, tl.tax_type) != NOT_DUE]
                 or items
             )
-            shares = _allocate(tl.tax_amount, [li.amount for _, li in targets], places)
+            shares = split(tl.tax_amount, [li.amount for _, li in targets], places)
             for (idx, _li), share in zip(targets, shares, strict=True):
                 e = entries[idx]
-                e["non_recoverable_tax"] = round(e["non_recoverable_tax"] + share, 2)
-                e["amount"] = round(e["amount"] + share, 2)
+                e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
+                e["amount"] = half_up(e["amount"] + share)
             continue
         moved = 0.0
         parts: list[tuple[dict[str, Any], float]] = []
         if t.treatment == RECOVERABLE and tl.tax_type in MEALS_RESTRICTED and setup.meals_gl_codes:
             for idx, part in meals_parts(coding.line_items, tl, setup.meals_gl_codes, places):
                 e = entries[idx]
-                e["non_recoverable_tax"] = round(e["non_recoverable_tax"] + part, 2)
-                e["amount"] = round(e["amount"] + part, 2)
-                e["meals_tax"] = round(e.get("meals_tax", 0.0) + part, 2)
-                moved = round(moved + part, 2)
+                e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + part)
+                e["amount"] = half_up(e["amount"] + part)
+                e["meals_tax"] = half_up(e.get("meals_tax", 0.0) + part)
+                moved = half_up(moved + part)
                 parts.append((e, part))
-        claimed = round(tl.tax_amount - moved, 2)
-        if moved and abs(claimed) < 0.005:
+        claimed = half_up(tl.tax_amount - moved)
+        if moved and nil(claimed):
             # A cent of tax on a meal: nothing left to claim, so no tax entry. The meals lines keep which tax line
             # their part came from, for the sales-tax report (``taxreturn.meals_by_tax_line``, B-893).
             for e, part in parts:
                 held = e.setdefault("meals_tax_lines", {})
-                held[str(position)] = round(held.get(str(position), 0.0) + part, 2)
+                held[str(position)] = half_up(held.get(str(position), 0.0) + part)
             continue
         entry = {
             "kind": "tax",
@@ -967,7 +947,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
             + (", less 50% on meals" if moved else "")
             + ")",
             "net_amount": 0.0,
-            "non_recoverable_tax": round(tl.tax_amount, 2) if t.treatment != RECOVERABLE else 0.0,
+            "non_recoverable_tax": half_up(tl.tax_amount) if t.treatment != RECOVERABLE else 0.0,
             "amount": claimed,
         }
         if moved:  # the half of this tax line's tax on meals that is expensed instead (D-90)
@@ -1016,7 +996,7 @@ def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[i
     )
     untipped = [(i, li) for i, li in targets if not is_tip(li)]
     targets = untipped or targets
-    shares = _allocate(tax_line.tax_amount, [li.amount for _, li in targets], places)
+    shares = split(tax_line.tax_amount, [li.amount for _, li in targets], places)
     return [(idx, share) for (idx, _li), share in zip(targets, shares, strict=True)]
 
 
@@ -1031,8 +1011,8 @@ def meals_parts(lines: list[Any], tax_line: Any, meals_gl_codes: Any, places: in
         return []
     out = []
     for idx, share in tax_shares(lines, tax_line, places):
-        if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and abs(share) > 0.004:
-            out.append((idx, round(share - half_down(share, places), 2)))
+        if is_meals(lines[idx].predicted_gl_code, meals_gl_codes) and not nil(share):
+            out.append((idx, half_up(share - half_down(share, places))))
     return out
 
 

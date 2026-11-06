@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from ap_coder.coding import line_tax
+from ap_coder.coding import line_tax, money
 from ap_coder.coding.line_tax import (
     apply_tax_code,
     code_for,
@@ -271,8 +271,8 @@ def test_forty_lines_are_solved_quickly_and_more_are_not_searched():
 
 
 def test_the_tolerance_grows_with_the_lines_and_the_rate():
-    assert line_tax.tolerance_cents(1, 0.05) == 12  # 2 cents, and 10 cents of base for half a cent of GST
-    assert line_tax.tolerance_cents(30, 0.13) == 34  # a cent a line, and 4 cents at 13%
+    assert money.solver_cents(1, 0.05) == 12  # 2 cents, and 10 cents of base for half a cent of GST
+    assert money.solver_cents(30, 0.13) == 34  # a cent a line, and 4 cents at 13%
     # Just inside, just outside: 5 lines at 7% allow 5 + 7 = 12 cents
     amounts = [100.0, 200.0, 300.0, 400.0, 57.0]
     assert solve(amounts, 1000.12, 0.07).lines == {0, 1, 2, 3}

@@ -2258,3 +2258,82 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
     `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
     `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)
+- **D-183** · **One money arithmetic, half up on the decimals printed, and one table of what counts as equal** (scale
+  goal, phase 4, T1; R10 and G9 of `docs/archive/scale-2026-11/coding_erp.md`; B-1864 to B-1868).
+  - **Why:** Python's `round` on a float is half-even on its binary value: 2.50 × 5% gave 0.12 and 0.30 × 5% gave
+    0.01, where the vendor and JD Edwards (`erp.jde.jde_amount`, Decimal half up) give 0.13 and 0.02. Of the bases
+    0.01 to 2,000.00, 1.1% at 5%, 1.5% at 6% and 3.5% at 15% came out a cent short. The checks' cent of tolerance
+    hid it; it landed in money: the self-assessment estimate AP books from, the Tax check's amount to self-assess,
+    the early-payment discount, a line split by percent, the PST spread onto the lines. And what counts as equal was
+    written in each check apart: the review screen's Tax check and the findings said different things of one sum
+    (N-07, N-40, the notes' verified 0.02 total).
+  - **What** (`coding/money.py`): `half_up`, `times` (an amount × a rate or a share), `add_up`, `split` (each share
+    half up, what is left over on the largest weight: `tax._allocate`'s rule, now on decimals) and `in_cents`, on
+    `Decimal(str(float))` with ROUND_HALF_UP (half away from zero: a credit note rounds as the invoice it reverses),
+    to the cent or to whole units (`places` 0, the yen). The quick way gives the same answer: a float more than
+    0.4999 of a unit from a tie, under 1e11 units (a billion dollars, its error after a product or an `fsum` under
+    1e-5 of a unit), is rounded as a float; a tie or what could be one in decimals
+    (`test_the_quick_way_is_the_decimals_answer_always`: ties, third decimals, credits, yen, 1e12, the sign of a
+    nothing).
+    - Used by `tax.check_taxes`, `build_gl_distribution`, `tax_shares`, `meals_parts`; `taxmath.math_check`;
+      `validation` (the totals, the posting, `off_text`, `prices_include_tax`); `line_tax` (the solver's cents, its
+      tolerance `money.solver_cents` (was `line_tax.tolerance_cents`), `_tax_base`, `can_explain`, prefill's target);
+      `taxreturn.self_assessment` (the base, and the estimate in the currency's units, B-1868); `terms.payment` (the
+      discount); `review.split_line` (a part by percent, the last part's remainder).
+    - Float `round` kept where no money is worked out or converting would cost more than it changes: rates
+      (`round(rate, 6)`, the % shown), confidences, quantities and unit prices at 6 places, the PO match (`po.py`,
+      compared within its own tolerance), the reports' running totals (`taxreturn.Report.totals`, `by_type`,
+      `meals_totals`: sums of amounts at the cent, the same either way), and the facts kept in the invoices' summary
+      (`tax_facts`, `meals_by_tax_line`, `self_assessed_base`: sums of amounts printed to the cent, different only
+      for an amount with a third decimal at a tie, while a change there moves `SUMMARY_RULES` and builds every
+      database's summary again at its next start, 86 s at 100,000 invoices: left for the next change that moves it).
+  - **What counts as equal** (`money`, old → new):
+    - nothing: `> 0.004`, `>= 0.005`, `< 0.005`, `<= 0.004` → `NIL` 0.005 (`nil`; the same at the cent);
+    - the GL posting against the total: `> 0.005` → `EXACT` 0.005 (the same);
+    - subtotal + tax = total: TOTAL_MISMATCH 0.02, the Tax check 0.015 → `CENT` 0.01 (B-1865); the tax lines = the
+      tax total: TAX_LINES_TOTAL_MISMATCH 0.02 → `CENT` (B-1865); the lines = the total when prices include the
+      tax: 0.011 (validation), 0.015 (the Tax check's hint) → `CENT` (the same at the cent). One sum of amounts
+      printed rounded: a vendor who adds before rounding is at most a cent off (two or three taxes included);
+    - the lines against the subtotal: SUBTOTAL_MISMATCH max(0.02, 0.01·n), the Tax check 0.015 →
+      `per_line(n)` = 0.01·max(1, n) + 0.01, the rule of a tax's base (B-1866; a cent more from two lines). Not the
+      Tax check's cent: SUBTOTAL_MISMATCH and TOTAL_MISMATCH are hard (Approve anyway never covers them, D-75), a
+      vendor's rounding line by line is no misread, and POSTING_UNBALANCED asks for every cent already;
+    - the lines against a tax's base, QST on GST's base, the line that is the difference: 0.01·n + 0.01 (tax,
+      taxmath) → `per_line` (the same; the Tax check's two-rate base with no lines 0.01 → 0.02);
+    - a tax against its base × rate, once or line by line: `check_taxes` one unit, `tax_band` (a unit × (n/2 + 1))
+      a warning not an error; the Tax check 1.5 units, or the band → `TAX_UNITS` one unit for both, the band only
+      the finding's severity (B-1867); one tax at two rates: a unit × (k + 0.5) → a unit per tax line (the same);
+    - Azure's amount: 0.02 → `READ_AGAIN` (the same); LINE_MATH: max(0.02, 0.5%) → max(`READ_AGAIN`,
+      `LINE_MATH_SHARE`) (the same); `line_tax._tax_base`: 0.05 → `PRINTED_BASE` (with the float error of the
+      difference); the solver: max(2, n) + 0.5/rate cents half-even → `solver_cents` half up (the same at every rate
+      in use, none ends in .5);
+    - left apart, outside this item: the review screen's ✓ on a tax line (`web/invoice_view.tax_check`,
+      0.01·max(1, n) + 0.01 on its amount, wider than TAX_CALC_MISMATCH), JD Edwards' PO-matched SUBTOTAL_MISMATCH (a
+      cent a line, `erp/jde.py`), capture's `amounts_equal` (0.005).
+  - **The intended output changes** (`scripts/same_behaviour.py --ref 5aa6014 tax approve pipeline`; every line of
+    the tax probe compared, and split by running this code with the old float arithmetic patched in):
+    - tax: 505 of 20,000 outputs. The tolerances alone, 44: a tax row of the Tax check ✓ within the band, now ✕
+      with its difference and why (B-1867); 43 beside a TAX_CALC_MISMATCH or TAX_BASE_MISMATCH of that tax, 1 (yen,
+      QST marked and not charged) beside LINE_TAX_NOT_CHARGED. Half up alone, 463, each with at least a tie rounded
+      the other way (none without): a tax row's expected a cent more or less, its detail, and its difference and
+      why when it doesn't add up, 337 invoices, and 0.5 yen now 1, 92; the amount to self-assess, 12; the line the
+      Tax check names as the difference, 3 lost and 3 gained (the base gap is the tax's gap over the rate: half a
+      cent of it is 6 cents at 8%, beyond the 2-line tolerance either way); a row turned right (#8134, yen line by
+      line) and one wrong (#19340); `check_taxes`: 24 messages with the expected tax half up (in 1 the line it named
+      gone, as above), TAX_CALC_MISMATCH added 3 (one error, two warnings: the probe's tax was Python's round ± a
+      cent, now 2 cents from half up) and removed 2 (yen), one error now a warning (#3905: 3 cents off → 2). 2
+      invoices change both ways;
+    - approve: the same; pipeline: 1 invoice of 20 files: SK PST 665.13 spread over 10 lines, 236.25 × 6% =
+      14.175 now 14.18 (14.17), the largest line its own 233.02 (233.03), in its output, AI output and final output.
+  - **Benches** (venv312, old and new): `bench coding --realistic` the same (`lines.jsonl` byte for byte: accuracy
+    93.8%, precision 98.2%, tax codes 97.4%, coverage 94.7%); `bench run --quick` the same (`evidence.jsonl` and
+    `failures.jsonl` byte for byte: field accuracy 100.0%, verified precision 100.0% at 55.0% coverage, ECE 0.0189).
+  - **CPU** (process time over the tax probe's 4,000 invoices, best of 5 × 3, old and new in turn): `check_taxes`
+    52.0 → 57.4 µs (+10%), `math_check` 55.4 → 61.6 µs (+11%), `build_gl_distribution` 12.4 → 13.5 µs (+9%); all
+    in decimals it was +22%, +40%, +54%. About 6 µs a review screen's checks.
+  - **Laptop and server:** the same: functions of the coding and the rates only, no setting or mode.
+  - **Left:** JD Edwards' pay items split cents their own way (`erp/jde.py` `_split`: each share cut toward zero, the
+    rest on the largest; the GL distribution rounds each half up), J2's file: `money.split` would place them alike.
+    The line named as a tax's difference could allow the tax's half unit over the rate, as the solver does.
+  - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`;
+    `tests/coding/test_money.py`, `tests/coding/test_line_tax.py`)

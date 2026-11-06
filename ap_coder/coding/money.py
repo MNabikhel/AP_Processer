@@ -1,0 +1,146 @@
+"""Money and tax arithmetic, one way for the tax checks, the Tax check, the GL distribution and the reports (D-183).
+
+An amount is the decimal it is printed as: a float is taken as the shortest decimal that is it (2.675, not the binary
+2.67499999999999982...), and a tax, a share or a sum is worked out on those decimals and rounded half up (half away
+from zero: a credit note rounds as the invoice it reverses) to the cent, or to the whole unit of a currency without
+cents (``places`` 0: the yen). Python's ``round`` on a float is half-even on its binary value: 2.50 x 5% gave 0.12 and
+0.30 x 5% gave 0.01, where the vendor's arithmetic and JD Edwards' (``erp.jde.jde_amount``) give 0.13 and 0.02
+(B-1864).
+
+What counts as equal is named once, below: the tax checks (``tax.check_taxes``), the Tax check
+(``taxmath.math_check``), the totals and the posting (``validation.validate_coding``) and the line tax codes
+(``line_tax``) all take it from here.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable
+from decimal import ROUND_HALF_UP, Decimal
+
+_UNITS = {places: Decimal(1).scaleb(-places) for places in range(7)}
+_SCALE = {places: 10.0**places for places in range(7)}
+# The quick way, the same answer: a float rounds as its decimal does unless that decimal is a tie, and a float of
+# fewer than _FAST units (a billion dollars) is off its decimal, after a product or a sum, by under 1e-5 of a unit.
+# So a float more than _NEAR_A_TIE from a tie is rounded as a float (a quarter of the time of the decimals, at every
+# check); a tie, or what could be one, is worked out in decimals (tests/coding/test_money.py holds them equal).
+_FAST = 1e11
+_NEAR_A_TIE = 0.4999
+
+
+def _dec(amount: float) -> Decimal:
+    return Decimal(str(amount))
+
+
+def _nearest(scaled: float) -> int | None:
+    """The whole units ``scaled`` rounds to when the float can tell, None when it is to be worked out in decimals."""
+    if -_FAST < scaled < _FAST:
+        nearest = round(scaled)
+        if abs(scaled - nearest) < _NEAR_A_TIE:
+            return nearest
+    return None
+
+
+def half_up(amount: float, places: int = 2) -> float:
+    """``amount`` rounded half up to ``places`` decimals: 2.675 is 2.68, -0.125 is -0.13."""
+    nearest = _nearest(amount * _SCALE[places])
+    if nearest is not None:
+        return nearest / _SCALE[places] if nearest else math.copysign(0.0, amount)
+    return float(_dec(amount).quantize(_UNITS[places], ROUND_HALF_UP))
+
+
+def times(amount: float, factor: float, places: int = 2) -> float:
+    """``amount`` x ``factor`` (a rate, a share), worked out on their decimals and rounded half up: a tax on its base
+    (2.50 x 5% is 0.13), a part of a line."""
+    product = amount * factor
+    nearest = _nearest(product * _SCALE[places])
+    if nearest is not None:
+        return nearest / _SCALE[places] if nearest else math.copysign(0.0, product)
+    return float((_dec(amount) * _dec(factor)).quantize(_UNITS[places], ROUND_HALF_UP))
+
+
+def add_up(amounts: Iterable[float], places: int = 2) -> float:
+    """The amounts added up on their decimals, rounded half up."""
+    amounts = amounts if isinstance(amounts, list) else list(amounts)
+    scale = _SCALE[places]
+    total = math.fsum(amounts)  # the float nearest the sum of the floats: off the decimals' by their own errors only
+    if sum(map(abs, amounts)) * scale < _FAST:
+        nearest = round(total * scale)
+        if abs(total * scale - nearest) < _NEAR_A_TIE:
+            return nearest / scale if nearest else math.copysign(0.0, total) if total else 0.0
+    return float(sum(map(_dec, amounts), Decimal(0)).quantize(_UNITS[places], ROUND_HALF_UP))
+
+
+def split(total: float, weights: list[float], places: int = 2) -> list[float]:
+    """``total`` in proportion to ``weights``, each share rounded half up to ``places`` (whole units when 0); what is
+    left over goes to the largest weight, so the shares always add up to the total as read, to the cent. No weight
+    at all (they add up to nothing): the first takes it all."""
+    if not weights:
+        return []
+    exact = [_dec(w) for w in weights]
+    base = sum(exact, Decimal(0))
+    if not base:
+        return [half_up(total), *[0.0] * (len(weights) - 1)]
+    whole, unit = _dec(total), _UNITS[places]
+    shares = [(whole * w / base).quantize(unit, ROUND_HALF_UP) for w in exact]
+    biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
+    shares[biggest] += (whole - sum(shares, Decimal(0))).quantize(_UNITS[2], ROUND_HALF_UP)
+    return [float(s) for s in shares]
+
+
+def in_cents(amount: float) -> int:
+    """``amount`` in whole cents, half up: 10.005 is 1001."""
+    nearest = _nearest(amount * 100)
+    return nearest if nearest is not None else int(_dec(amount).scaleb(2).quantize(_UNITS[0], ROUND_HALF_UP))
+
+
+# --- What counts as equal ------------------------------------------------------------------------------------------
+# Amounts, in a currency's unit (a cent, or a whole yen without cents). The differences compared are rounded to the
+# cent, so "within" allows only the float error beyond the tolerance.
+
+NIL = 0.005  # under half a cent an amount is nothing: a printed "GST 0.00" charges no GST
+# The GL posting against the invoice total, and the parts of a split against what is split: equal to the cent.
+EXACT = 0.005
+# One sum of amounts printed rounded, the vendor having added before rounding: a cent. Subtotal + tax = total (the
+# validation's TOTAL_MISMATCH, the Tax check's total row), the tax lines = the tax total (TAX_LINES_TOTAL_MISMATCH),
+# the lines = the total when the prices include the tax.
+CENT = 0.01
+# Another reader's amount (Azure's, DI_AMOUNT_DIFFERS), and the least quantity x unit price may be off (LINE_MATH).
+READ_AGAIN = 0.02
+LINE_MATH_SHARE = 0.005  # quantity x unit price: unit prices are printed rounded, 0.5% of the extension
+# A printed taxable amount is the base of its tax line when it makes the tax within this (line_tax._tax_base).
+PRINTED_BASE = 0.05
+# A tax against its base x rate, worked out once or line by line: within this many units (cents, or yen) either way
+# is right (TAX_CALC_MISMATCH, the Tax check's tax rows: a unit per tax line when one tax is printed at two rates).
+TAX_UNITS = 1
+
+
+def per_line(lines: int) -> float:
+    """The lines against what they add up to: the subtotal (SUBTOTAL_MISMATCH, the Tax check's lines row), a tax's
+    taxable amount (TAX_BASE_MISMATCH, QST_ON_GST_INCLUSIVE, the Tax check's tax rows), the line that is the
+    difference: a cent a line (the vendor rounds line by line), and a cent more."""
+    return 0.01 * max(1, lines) + 0.01
+
+
+def tax_band(unit: float, lines: int) -> float:
+    """Beyond ``TAX_UNITS``, a tax still within half a unit of rounding a line (tax rounded per unit, a line marked
+    wrongly) and one more: a warning, not an error (TAX_CALC_MISMATCH)."""
+    return unit * (max(1, lines) / 2 + 1)
+
+
+def solver_cents(lines: int, rate: float) -> int:
+    """How far the lines may be from a tax's base and still be its base, for the line tax codes' solver: a cent a
+    line (at least two), and the base's own uncertainty, half a cent of tax over the rate (10 cents at 5%), in whole
+    cents half up."""
+    rounding = 0.5 / rate if rate > 0 else 0.0
+    return int(Decimal(str(max(2.0, 1.0 * lines) + rounding)).quantize(_UNITS[0], ROUND_HALF_UP))
+
+
+def nil(amount: float) -> bool:
+    """Whether ``amount`` is nothing (under half a cent)."""
+    return abs(amount) < NIL
+
+
+def within(a: float, b: float, tolerance: float) -> bool:
+    """Whether ``a`` and ``b`` are equal within ``tolerance`` (and the float error of a difference)."""
+    return abs(a - b) <= tolerance + 1e-9
