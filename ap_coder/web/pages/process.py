@@ -725,13 +725,19 @@ def list_for_all(store: Store, place: Path) -> bool:
             taken = store.take_lease(lease, _OWNER, LISTING_LEASE)
     except sqlite3.Error:
         taken = False
-    if not taken:
-        with _LISTING_LOCK:
-            _LISTING.discard(str(place))
-        return False
-    threading.Thread(target=_list_for_all, args=(store, place, lease), name="ap-coder-folder-listing",
-                     daemon=True).start()  # fmt: skip
-    return True
+    if taken:
+        try:
+            threading.Thread(target=_list_for_all, args=(store, place, lease), name="ap-coder-folder-listing",
+                             daemon=True).start()  # fmt: skip
+            return True
+        except RuntimeError:  # no thread to be had just now (B-1816): let go of, for the next view that finds it due
+            logging.getLogger(__name__).warning("the invoices folder %s was not listed: no thread to list it", place,
+                                                exc_info=True)  # fmt: skip
+            with contextlib.suppress(sqlite3.Error), store.briefly():  # (else it runs out within LISTING_LEASE)
+                store.drop_lease(lease, _OWNER)
+    with _LISTING_LOCK:
+        _LISTING.discard(str(place))
+    return False
 
 
 def _list_for_all(store: Store, place: Path, lease: str) -> None:

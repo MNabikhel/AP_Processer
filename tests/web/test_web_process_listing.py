@@ -321,3 +321,27 @@ def test_a_folder_that_cannot_be_listed_says_why_on_every_web_worker(store, list
     assert "could not be listed" in one.get("/process").text  # due: listed again by a thread meanwhile
     _listed_again(store, began)
     assert _offered(two) == ["a.pdf"]
+
+
+def test_a_listing_thread_that_cannot_start_leaves_the_folder_to_be_listed_again(store, listed, monkeypatch):
+    """No thread to be had (``RuntimeError: can't start new thread``, a process at its limit): the folder stayed
+    marked as being listed by this process and its lease held, the view was a 500, and this process never listed the
+    folder again. Both are let go of: the view says the folder is being listed, and the next one lists it."""
+    monkeypatch.setattr(process, "SHARED_WAIT", 0.2)
+    _folder(store, "a.pdf")
+    client = _worker(store)
+    real = threading.Thread.start
+
+    def refused(self):
+        if self.name == "ap-coder-folder-listing":
+            raise RuntimeError("can't start new thread")
+        return real(self)
+
+    monkeypatch.setattr(threading.Thread, "start", refused)
+    answer = client.get("/process")
+    assert answer.status_code == 200 and process.BEING_LISTED in answer.text
+    assert not process._LISTING and Store(store.path).take_lease(_lease(store), "another:1", 60)
+    Store(store.path).drop_lease(_lease(store), "another:1")
+    monkeypatch.setattr(threading.Thread, "start", real)
+    monkeypatch.setattr(process, "SHARED_WAIT", 5.0)
+    assert _offered(client) == ["a.pdf"] and len(listed) == 1
