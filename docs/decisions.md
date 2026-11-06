@@ -1241,7 +1241,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       many files wait before it), then the file downloads from its own address with `job=<id>`, so the access log and
       Activity's "Downloaded" name it as before.
     - Asked without that header (a bookmark, a script, the load bench), the worker waits for the job holding no thread
-      (an async handler that looks at the job every 0.05 s, then up to every 0.5 s), then sends the file as before.
+      (an async handler that looks at the job every 0.05 s, then up to every 0.25 s), then sends the file as before.
     - The background process makes them (`Runner`, started by `app.start_background_work`: in `serve
       --background-work`, or in the one process of `--workers 1`), 2 at a time, oldest first, each written beside the
       others under a name of its own and renamed once whole. A server of one process whose background work was not

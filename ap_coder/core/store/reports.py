@@ -264,6 +264,9 @@ class ReportsMixin:
         One left by another AP Coder version, or tried ``TRIES`` times, fails with why."""
         now = time.time()
         with self._conn() as conn:  # type: ignore[attr-defined]
+            if conn.execute("SELECT 1 FROM report_jobs WHERE state = ? OR (state = ? AND renewed_at < ?) LIMIT 1",
+                            (WAITING, RUNNING, now - stale)).fetchone() is None:  # fmt: skip
+                return None  # (looked at twice a second while none waits: never the write lock for nothing)
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")
             db = self._database_id(conn)

@@ -76,7 +76,8 @@ AT_ONCE = 3  # a person's downloads waiting or being made at once
 KEEP = 3600.0  # seconds a file made is kept
 KEPT_EACH = 5  # files kept of each person, the latest
 RUNNERS = 2  # downloads the background process makes at once
-POLL = 0.5  # seconds between two looks for a job waiting (the background process), at most at one (a web worker)
+POLL = 0.5  # seconds between two looks for a job waiting (the background process)
+LOOK = 0.25  # seconds at most between two looks at a job its web worker waits for (one indexed read)
 RENEW = 1.0  # seconds between two notes of how far a job got
 STALE = 60.0  # seconds without a note: the background process making it stopped, the next one makes it again
 SWEEP = 60.0  # seconds between two looks for files no longer kept
@@ -133,7 +134,7 @@ async def answer(request: Request, address: str, inline: Callable[[Request], Res
         if await request.is_disconnected():
             break
         await anyio.sleep(wait)
-        wait = min(POLL, wait * 1.5)
+        wait = min(LOOK, wait * 1.5)
     raise HTTPException(status_code=503, detail="The file is still being made. Ask for it again in a few minutes.")
 
 

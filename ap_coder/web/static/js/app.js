@@ -364,7 +364,8 @@ document.addEventListener("click", async (event) => {
   }
   let snap = null;
   if (answer.ok && answer.status) {
-    snap = await pollJob(answer.status, (s) => s.state === "running" && say(s.note ? `Making the file: ${s.note}` : "Making the file…"));
+    const told = (s) => s.state === "running" && say(s.note ? `Making the file: ${s.note}` : "Making the file…");
+    snap = await pollJob(answer.status, told, 500);
     if (snap === null) return location.reload(); // the session ended: the login, then back here
   }
   link.removeAttribute("aria-busy");
