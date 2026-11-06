@@ -2393,12 +2393,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       everything again*); the business units always (a short list). The mapping file's GL, PO and voucher reads take
       `ChangedSince` (the suppliers' had it); an orchestration that ignores it still works, everything every night.
     - **What only a whole read can say.** A PO no longer listed is closed only after a whole read (a changed one
-      merges its lines by number, the changed lines alone or the whole PO: both work; closed lines, 999, close it). A
-      voucher leaves the register when a complete read of its dates no longer lists it: those of the last 31 days each
-      night, the rest at the week's whole read. Either refused when most or all at once (a wrong answer: a filter, row
-      security), as D-105's mass close, with `--allow-mass-close`. Nothing is removed before a read's last page:
-      marked, not staged and swapped (each voucher read is real and in the register as it comes; a half-read register
-      is never short of one).
+      merges its lines by number, the changed lines alone or the whole PO: both work; a PO's lines here are its open
+      ones, as a whole read lists them: a closed line, 999, leaves while another is open, and the last one closed
+      closes the PO). A voucher leaves the register when a complete read of its dates no longer lists it: those of
+      the last 31 days each night, the rest at the week's whole read, which also removes those without a date (none,
+      or one that can't be read) it no longer lists; a read's first day is left alone, whether JDE's FromInvoiceDate
+      includes it or not. Either refused when most or all at once (a wrong answer: a filter, row security), as
+      D-105's mass close, with `--allow-mass-close`. Nothing is removed before a read's last page: marked, not
+      staged and swapped (each voucher read is real and in the register as it comes; a half-read register is never
+      short of one).
+    - **A read is complete** when its last page is empty or shorter than the longest before it (what AIS gives:
+      its own maximum rows may be below the page size). So the reads that remove or close (the vouchers' sweeping
+      reads, the POs' whole read) ask again after a page as long as the longest so far (`pages(to_the_end=True)`:
+      one request more for a read of one page), and one that ends otherwise (its last row without its key: nothing
+      to ask the next page after) removes and closes nothing, said in the report. Kept with the read's progress.
     - **Every page, as it comes.** `AisClient.pages` yields each page with the key to ask the next after; no ceiling
       (a page ending on the key asked after raises, never a loop); `rows` keeps its `max_pages` for the live check.
       Each page's rows, where the read is (`jde_ais_sync_progress`: the reads planned, the step, the last key written,
@@ -2406,13 +2414,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       (a whole read left is taken whatever is due: it reads the changes too; begun less than 3 days ago). A PO's lines
       are held to the next page so each PO is written whole. One database connection for a part (closing the last
       one writes the log into the database: 40 ms a page). One sync at a time (lease `jde_sync`, renewed each page,
-      15 minutes): another is refused at once, nothing saved.
+      15 minutes): another is refused at once, nothing saved; one that can't renew it (it waited on JDE longer and
+      another took over) stops there, the page undone (renewed last in its transaction: the write lock is taken at
+      the page's first write, as before; renewed first, the lock waits went from 0.05 to 1.7 s), the sync's state
+      left to the other. A voucher keeps the newest read that listed it (`MAX(seen)`), so an older read writing late
+      never lets a newer one's sweep remove it.
     - **The register** (`core/store/register.py`, moved out of `invoices.py`, 994 lines): JD Edwards' vouchers by
       their key (`erp_vouchers`, made at every start, no schema version: an older AP Coder leaves it be) under their
-      bill (`erp_invoices`, what every check reads); a bill's copies are its vouchers' dates across pages, as the
-      file import counts dates; a voucher whose supplier was renamed or gross corrected moves to its new bill, the old
-      going with its last voucher; each bill keeps its supplier's number (`an8`), and `in_erp` finds a bill by the
-      vendor's ERP ID too, so a renamed supplier's vouchers are found before the week's read moves them.
+      bill (`erp_invoices`, what every check reads); a bill's copies are its vouchers (each by its key: one invoice
+      entered twice in JDE is two, whatever their dates; a file import still counts a bill's dates); a voucher whose
+      supplier was renamed or gross corrected moves to its new bill, the old going with its last voucher; each bill
+      keeps its supplier's number (`an8`), and `in_erp` finds a bill by the vendor's ERP ID too, so a renamed
+      supplier's vouchers are found before the week's read moves them. Its dates are read in the mapping's
+      `date_format`, as the dates sent. Cleared or replaced (Exports), the register keeps when
+      (`erp_register_cleared`), and the vouchers' next read after that is whole, one under way then not resumed.
     - **Suppliers a page at a time:** `import_vendor_master(by_erp_id=True)` takes the vendors already there as
       earlier rows of the same file: a row goes to the vendor of its name holding its AN8 ("Acme #4002", B-930), and
       another AN8's row of a vendor's name is merged into it or is the second vendor, as in one file.
@@ -2426,9 +2441,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `erp_register_imported`), as its CSV import logs, not one a page; none on a night that read nothing.
     - **One connection kept open** (`jde_ais`): a client keeps up to 4 open (one for each thread asking at once:
       the live check's client is shared), TLS as before; one AIS closed meanwhile is seen before it is used (readable
-      while no answer is awaited); a read that finds it closed as it is sent is asked again once on a new one, a
-      voucher's never (it is "unknown", looked up by its key, as before); after a timeout or any failure the
-      connection is closed. One signed-in client per worker for the live check (B-1603), one per sync.
+      while no answer is awaited), and one unused for 30 seconds (`IDLE_SECONDS`) is not used again (a firewall's idle
+      timeout or a VPN reconnecting drops it silently, no FIN: a request sent into it would wait its whole timeout);
+      a read that finds it closed as it is sent is asked again once on a new one, a voucher's never (it is
+      "unknown", looked up by its key, as before); after a timeout or any failure the connection is closed. One
+      signed-in client per worker for the live check (B-1603), one per sync. An orchestration that gives the same
+      page again (`PageRepeated`) fails the sync's read, and is the live check's question too wide, as too many
+      pages: asked by the invoice number, logged, the check left on.
   - **Measured** on the stand-in (`tests/erp/test_jde_sync_volume.py`, 4 cores shared with three other agents; the
     wait is a tiny write's from another connection every 20 ms, for the lock alone):
 
@@ -2443,14 +2462,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     voided this month; the 20 older went at the whole read. The register equalled the stand-in's after each.
     Before: 600,000 vouchers failed at page 200 every night. 30,000 suppliers: 1.9 s, a write held 0.44 to 0.53 s;
     now 2.4 s, 0.04 s. 30,000 open PO lines (10,000 POs): 22.3 s the first sync, 37.6 s the next; now 1.2 s, 1.5 s.
-  - **To confirm with the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 21 and 22): the update dates `ChangedSince`
-    covers on each read (a supplier's bank account, a receipt, a voucher paid or voided), the PO read listing the
-    lines closed since, each read's order by its key kept stable, and AIS (and a load balancer) keeping a connection
-    open. Left: a voucher entered with an invoice date older than the window is never read (as before); the
-    vendor's key is its name, so a renamed supplier is a second vendor in AP Coder (as before: only its register is
-    found by number); a bill a file import put in the register, or a sync before this version (no voucher key kept
-    for it), is never removed by the sync unless JDE lists it again: to start clean, clear the register (Exports)
-    and *Read everything again*.
+    After its review (B-1893 to B-1904), the same four: 50.3 s, 4.7 s, 27.5 s and 25.0 s, the longest wait for the
+    write lock 0.06, 0.03, 0.04 and 0.13 s, the same reads, 30 then 20 removed, the register right after each.
+  - **To confirm with the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 3, 4, 21 and 22): the update dates
+    `ChangedSince` covers on each read (a supplier's bank account, a receipt, a voucher paid or voided), the PO read
+    listing the lines closed since, each read's order by its key kept stable, every row given its key, whether
+    `FromInvoiceDate` includes its day, the output dates in `date_format`, AIS's maximum rows not below the page size
+    (else each read that removes nothing stops at its first page), and AIS (and a load balancer) keeping a
+    connection open, and how long unused. Left: a voucher entered with an invoice date older than the window is
+    never read (as before); the vendor's key is its name, so a renamed supplier is a second vendor in AP Coder (as
+    before: only its register is found by number); a bill a file import put in the register, or a sync before this
+    version (no voucher key kept for it), is never removed by the sync unless JDE lists it again: to start clean,
+    clear the register (Exports), and the next sync reads the vouchers whole; a connection dropped silently within
+    30 seconds of its last use still costs the request its timeout.
+  - **Amended** after its review (B-1893 to B-1904): the register cleared or replaced read whole again; dates read
+    in `date_format`; undated vouchers swept by the whole read; a read's first day left alone; a PO's lines its open
+    ones; a read complete only on an empty or shorter page; the lease checked each page, `MAX(seen)`; a bill's
+    copies its vouchers; a connection unused 30 seconds not used again; `PageRepeated` for the live check.
   - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
     purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
     `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,

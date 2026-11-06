@@ -240,3 +240,173 @@ def test_a_supplier_renamed_in_jde_has_its_vouchers_once_found_by_its_number(sto
     assert "CREDIT_NOTE_ORIGINAL_UNKNOWN" not in [c for _, c, _ in vendor_findings(credit, store)]
     jde_sync.sync(store, full=True)
     assert [r["vendor_name"] for r in store.erp_register()] == [renamed]
+
+
+@pytest.mark.parametrize("how", ["clear", "replace"])
+def test_a_register_cleared_or_replaced_is_read_whole_again_the_next_night(store, ais, monkeypatch, how):
+    """B-1893: clearing the register (Exports) or replacing it with a file deleted JD Edwards' vouchers but not the
+    sync's state, so the next night read only what changed and the last 31 days: every voucher older than that was
+    out of the register (the duplicate checks' fallback) until the week's whole read, six nights at most."""
+    for row in ais.data["vouchers"]:
+        row["_changed"] = LONG_AGO
+    _vouchers(ais, 3, days_ago=100, _changed=LONG_AGO)
+    connect(store, ais)
+    assert jde_sync.sync(store, parts=("vouchers",))["ok"] and "B-2" in _numbers(store)
+    if how == "clear":
+        store.clear_erp_register(actor="ap")
+    else:
+        store.import_erp_register([{"vendor_name": "Other Co", "invoice_number": "X-1", "total": 5.0,
+                                    "invoice_date": _day(3)}], replace_all=True, actor="ap")  # fmt: skip
+    night = dt.datetime.now() + dt.timedelta(days=1)
+    monkeypatch.setattr(jde_sync, "_now", lambda: night)
+    part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]
+    assert part["mode"] == jde_sync.FULL and {"INV-7001", "B-0", "B-1", "B-2"} <= _numbers(store)
+
+
+def test_the_dates_read_are_in_the_mappings_date_format_too(store, ais, monkeypatch):
+    """B-1894: the mapping's ``date_format`` (a JDE user's, %m/%d/%Y) was used for the dates sent and not for those
+    read: a voucher dated 10/07/2026 (7 October) was kept as that text, which sorts before every YYYY-MM-DD date, so
+    no sweep counted it, and voided in JDE it stayed in the register for good, a possible duplicate payment (one dated
+    after the 12th was read by its day)."""
+    monkeypatch.setattr(FakeAis, "_listed", staticmethod(lambda key, r, given: True))  # (it compares dates as text)
+    ais.mapping["ais"]["date_format"] = "%m/%d/%Y"
+    connect(store, ais)
+    _vouchers(ais, 4, invoice_date="10/20/2026")
+    void = _vouchers(ais, 1, start=9, invoice_date="10/07/2026")[0]
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    jde_sync.sync(store, parts=("vouchers",), client=client)
+    assert store.in_erp("Acme Office Supplies Ltd.", "B-9", 50.0)[0]["invoice_date"] == "2026-10-07"
+    ais.data["vouchers"].remove(void)  # voided in JDE
+    assert jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]["removed"] == 1
+    assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)
+
+
+def test_a_voucher_without_a_date_voided_in_jde_leaves_at_the_whole_read(store, ais):
+    """B-1895: a read's sweep counted the vouchers dated in its days, so one with no invoice date (or one that could
+    not be read) never left: voided in JDE, it stayed in the register for good. The whole read of the window removes
+    those it no longer lists too (the nightly read of the last weeks leaves them be)."""
+    connect(store, ais)
+    _vouchers(ais, 4)
+    undated = _vouchers(ais, 1, start=9, invoice_date="")[0]
+    jde_sync.sync(store, parts=("vouchers",))
+    assert "B-9" in _numbers(store)
+    ais.data["vouchers"].remove(undated)  # voided in JDE
+    assert jde_sync.sync(store, parts=("vouchers",), full=True)["parts"]["vouchers"]["removed"] == 1
+    assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)
+
+
+def test_a_po_whose_lines_jde_closes_on_different_days_closes_with_its_last(store, ais):
+    """B-1896: a PO's lines here have no status of their own, and the lines a read of what changed kept took the PO's,
+    open: a PO whose first line JDE closed one day and its last another stayed open here until the week's whole
+    read. A line JDE closed (999) leaves its PO's lines while another is open, as a whole read lists the open lines
+    alone; the last one closed closes the PO."""
+    for row in ais.data["purchase_orders"]:
+        row["_changed"] = LONG_AGO
+    connect(store, ais)
+    jde_sync.sync(store, parts=("purchase_orders",))
+    first, last = ais.data["purchase_orders"]
+    first.update(next_status=jde_sync.CLOSED_STATUS, _changed=_day(0))  # closed in JDE
+    jde_sync.sync(store, parts=("purchase_orders",))
+    po = store.purchase_order("4512")
+    assert po["status"] == "open" and [li["line_number"] for li in po["lines"]] == [2]
+    first["_changed"] = LONG_AGO  # (a later day: changed before the read's ChangedSince)
+    last.update(next_status=jde_sync.CLOSED_STATUS, _changed=_day(0))
+    assert jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]["mode"] == jde_sync.CHANGES
+    assert store.purchase_order("4512")["status"] == "closed"
+
+
+def test_a_sync_whose_lease_another_took_stops_there(store, ais):
+    """B-1898: a sync that waited on JD Edwards longer than its lease (a page slower than 15 minutes: AIS's timeout up
+    to 300 s, three tries) never noticed another had taken over (``renew_lease``'s answer ignored): both wrote, and
+    the older one's stamp on the vouchers both listed let the newer one's sweep remove vouchers JDE still holds. A
+    sync that can't renew its lease stops there, the page undone, the other's lease left be (and a voucher keeps the
+    newest stamp it was listed with: ``tests/core/test_store_register.py``)."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    _vouchers(ais, 5)
+
+    def taken() -> None:  # meanwhile this one's lease ran out and another sync took it
+        store.drop_lease(jde_sync.LEASE, None)
+        assert store.take_lease(jde_sync.LEASE, "another", jde_sync.LEASE_SECONDS)
+
+    ais.script("vouchers", None, taken)
+    report = jde_sync.sync(store, parts=("vouchers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
+    assert "another sync took over" in report["errors"]["vouchers"] and _numbers(store) == {"B-0", "B-1"}
+    assert not store.take_lease(jde_sync.LEASE, "a third", 1)  # the other sync's lease kept
+
+
+def test_an_orchestration_giving_the_same_page_again_never_switches_the_live_check_off(store, ais, monkeypatch,
+                                                                                       caplog):  # fmt: skip
+    """B-1899: the vouchers' orchestration giving the same page again (its After… input ignored) was taken by the
+    live check as JDE down: a supplier with more than a page of vouchers got JDE_NOT_REACHED, and the check was off
+    for every invoice for a minute. It is the live check's question too wide: asked by the invoice number instead,
+    and said in the log."""
+    connect(store, ais)
+    jde_sync.sync(store, parts=("suppliers",))
+    _vouchers(ais, int(ais.mapping["ais"]["page_size"]))  # Acme's: more than a page with INV-7001
+    real = ais._after
+    monkeypatch.setattr(ais, "_after", lambda key, after: real(key, ""))  # the first page, whatever is asked after
+    found = jde_sync.live_findings(store, _coding())
+    assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"] and not jde_sync._DOWN
+    assert "gave the same page again" in caplog.text
+
+
+def test_an_ais_giving_fewer_rows_a_page_than_asked_is_read_to_the_end_first(store, ais, monkeypatch):
+    """B-1902: a page shorter than MaxRows was taken as the last, and since D-181 that decides what leaves: an AIS
+    whose own maximum rows is below the page size (Server Manager) ended the read at its first page, and the sweep
+    removed the vouchers past it (fewer than half of them: not refused). A read that removes or closes what it no
+    longer lists asks again after a page as long as the longest before it, to an empty or a shorter one."""
+    connect(store, ais)
+    _vouchers(ais, 7)
+    jde_sync.sync(store, parts=("vouchers",))
+    real = ais._inputs
+    monkeypatch.setattr(ais, "_inputs", lambda key, body: {**real(key, body), "max_rows": 5})  # AIS's maximum: 5
+    part = jde_sync.sync(store, parts=("vouchers",), full=True)["parts"]["vouchers"]
+    assert part["read"] == 8 and part["removed"] == 0 and len(_numbers(store)) == 8
+    base = ais.data["purchase_orders"][0]  # the POs a whole read no longer lists are closed: the same
+    ais.data["purchase_orders"] += [{**base, "key": f"{6000 + n}-OP-00001-1", "order_number": str(6000 + n)}
+                                    for n in range(5)]  # fmt: skip
+    monkeypatch.setattr(ais, "_inputs", real)
+    jde_sync.sync(store, parts=("purchase_orders",))
+    monkeypatch.setattr(ais, "_inputs", lambda key, body: {**real(key, body), "max_rows": 4})
+    part = jde_sync.sync(store, parts=("purchase_orders",), full=True)["parts"]["purchase_orders"]
+    assert part["read"] == 7 and part["closed"] == [] and store.purchase_order("6004")["status"] == "open"
+
+
+def test_a_full_page_ending_on_a_voucher_without_its_key_removes_nothing(store, ais, monkeypatch):
+    """B-1903: a full page whose last voucher came without its Key ended the read there (no key to ask the next page
+    after), taken as complete, so the sweep removed every voucher past it (fewer than half: not refused). Only a read
+    that ended on an empty page or a shorter one than before removes anything; this one says why it removed none."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    _vouchers(ais, 9)
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    jde_sync.sync(store, parts=("vouchers",), client=client)
+    key, real = ais.mapping["orchestrations"]["vouchers"]["fields"]["key"], ais._out
+    monkeypatch.setattr(ais, "_out", lambda part, row: {**real(part, row), **({key: ""} if row.get(
+        "invoice_number") == "B-5" else {})})  # the third page's last voucher, without its key  # fmt: skip
+    part = jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]
+    assert part["removed"] == 0 and {"B-6", "B-8", "INV-7001"} <= _numbers(store)
+    assert "none was removed" in part["refused_remove"]
+
+
+def test_a_voucher_dated_on_a_reads_first_day_stays_whether_jde_lists_that_day_or_not(store, ais, monkeypatch):
+    """B-1904: the sweep counted the vouchers dated from a read's FromInvoiceDate on, the day itself too, which is
+    right only if the orchestration lists that day: one that takes it as "after" left out the vouchers of the last
+    weeks' first day each night, and the sweep removed them (back at the week's whole read). That day is left
+    alone now, whichever way JDE takes it."""
+    real = FakeAis._listed
+
+    def after_the_day(key, r, given):  # FromInvoiceDate taken as "after"
+        on_it = key == "vouchers" and given.get("since") and str(r.get("invoice_date")) == str(given["since"])
+        return real(key, r, given) and not on_it
+
+    monkeypatch.setattr(FakeAis, "_listed", staticmethod(after_the_day))
+    for row in ais.data["vouchers"]:
+        row["_changed"] = LONG_AGO
+    _vouchers(ais, 4, _changed=LONG_AGO)
+    _vouchers(ais, 1, start=9, days_ago=jde_sync.RECENT_DAYS, _changed=LONG_AGO)
+    connect(store, ais)
+    jde_sync.sync(store, parts=("vouchers",))
+    part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]  # the next night: the last weeks' read
+    assert part["mode"] == jde_sync.CHANGES and part["removed"] == 0 and "B-9" in _numbers(store)

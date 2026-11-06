@@ -40,6 +40,29 @@ def test_a_bill_counts_its_vouchers_dates_and_goes_with_its_last(tmp_path):
     assert store.remove_jde_vouchers(["1"], 4) == 1 and store.erp_register_count() == 0
 
 
+def test_a_voucher_keeps_the_newest_read_that_listed_it(tmp_path):
+    """B-1898: a voucher took the stamp of the last read that wrote it, so an older read (two syncs at once, the lease
+    lost) writing after a newer one put its older stamp back, and the newer read's sweep removed a voucher it had
+    listed: still in JDE, out of the register."""
+    store = Store(tmp_path / "ap.db")
+    store.import_jde_vouchers([_voucher("1")], seen=5)  # listed by a read begun later (Read everything again)
+    store.import_jde_vouchers([_voucher("1")], seen=3)  # then by an older, slower one
+    assert store.jde_vouchers_unseen("2026-01-01", 5) == ([], 1)
+
+
+def test_two_vouchers_of_a_bill_on_the_same_date_are_two_copies(tmp_path):
+    """B-1900: a bill's copies from JD Edwards were its vouchers' dates, as a file import counts them, so the same
+    invoice entered twice in JDE (two vouchers, its printed date on both) was one copy, and the duplicate audit never
+    listed it. Each voucher is kept by its key: a bill counts its vouchers; a file keeps its rule (a bill listed once
+    per GL line on one date is one)."""
+    store = Store(tmp_path / "ap.db")
+    store.import_jde_vouchers([_voucher("1"), _voucher("2")], seen=1)
+    assert store.erp_register_repeats() == 1
+    line = {"vendor_name": "Other Ltd", "invoice_number": "O-1", "total": 5.0, "invoice_date": "2026-10-01"}
+    store.import_erp_register([line, line])
+    assert store.erp_register_repeats() == 1
+
+
 def test_the_vouchers_go_with_their_bill_when_the_vendor_keys_are_worked_out_again(tmp_path):
     path = tmp_path / "ap.db"
     store = Store(path)

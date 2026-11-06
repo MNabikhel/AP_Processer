@@ -28,6 +28,15 @@ JDE_REGISTER = (
     "CREATE INDEX IF NOT EXISTS erp_vouchers_date ON erp_vouchers (invoice_date, seen)",
 )
 WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never long enough to hold up an approval
+# When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
+# gone, so its next read of the vouchers is whole.
+CLEARED_KEY = "erp_register_cleared"
+ISO_DAY = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"  # a voucher's date as the sweep compares it (GLOB)
+
+
+def _cleared(conn: sqlite3.Connection) -> None:
+    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                 "value = excluded.value", (CLEARED_KEY, _now()))  # fmt: skip
 
 
 def add_jde_register(conn: sqlite3.Connection, columns: Any) -> None:
@@ -66,6 +75,7 @@ class RegisterMixin:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
                 conn.execute("DELETE FROM erp_vouchers")
+                _cleared(conn)
             conn.executemany(
                 """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
                    imported_at, copies, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -95,6 +105,7 @@ class RegisterMixin:
         with self._conn() as conn:
             conn.execute("DELETE FROM erp_invoices")
             conn.execute("DELETE FROM erp_vouchers")
+            _cleared(conn)
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
     def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
@@ -144,8 +155,9 @@ class RegisterMixin:
     def import_jde_vouchers(self, rows: list[dict[str, Any]], seen: int) -> int:
         """JD Edwards' vouchers (``jde_sync.voucher_rows``: its key, the supplier's name and number, the invoice
         number, date and gross) listed by the sync's read ``seen``, into the register: each kept by its key under its
-        bill; one that moved (its supplier renamed in JDE, its gross corrected) leaves its old bill, which goes with
-        its last voucher. One transaction (the caller's: a page of the read). How many bills are new."""
+        bill, with the newest read that listed it; one that moved (its supplier renamed in JDE, its gross corrected)
+        leaves its old bill, which goes with its last voucher. One transaction (the caller's: a page of the read). How
+        many bills are new."""
         vouchers: dict[str, tuple[str, str, float, dict[str, Any]]] = {}
         for r in rows:
             key, name, number = str(r.get("key") or ""), vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"])
@@ -167,7 +179,7 @@ class RegisterMixin:
                 "INSERT INTO erp_vouchers (erp_key, vendor_key, number_key, total, invoice_date, seen) "
                 "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET vendor_key = excluded.vendor_key, "
                 "number_key = excluded.number_key, total = excluded.total, invoice_date = excluded.invoice_date, "
-                "seen = excluded.seen",
+                "seen = MAX(erp_vouchers.seen, excluded.seen)",  # (an older read writing after a newer one)
                 [(key, *v[:3], v[3].get("invoice_date") or "", seen) for key, v in vouchers.items()],
             )
             conn.executemany(
@@ -184,14 +196,17 @@ class RegisterMixin:
             self._recount(conn, set(bills) | moved)
         return len(set(bills) - known)
 
-    def jde_vouchers_unseen(self, since: str, seen: int) -> tuple[list[str], int]:
-        """(the JD Edwards vouchers dated from ``since`` that the sync's read ``seen`` did not list, how many are dated
-        from then): read only."""
+    def jde_vouchers_unseen(self, since: str, seen: int, undated: bool = False) -> tuple[list[str], int]:
+        """(the JD Edwards vouchers dated after ``since`` that the sync's read ``seen`` did not list, how many are dated
+        after then): read only. The day ``since`` itself is left alone, whether JDE's FromInvoiceDate lists it or not.
+        ``undated``: with those without a date YYYY-MM-DD (none, or one that couldn't be read), for a read of every
+        voucher of the window."""
+        where = "(invoice_date > ?1 AND invoice_date GLOB ?2" + (" OR NOT invoice_date GLOB ?2)" if undated else ")")
         with self._conn() as conn:
-            dated = conn.execute("SELECT COUNT(*) FROM erp_vouchers WHERE invoice_date >= ?", (since,))
+            dated = conn.execute(f"SELECT COUNT(*) FROM erp_vouchers WHERE {where}", (since, ISO_DAY))
             window = int(dated.fetchone()[0])
-            gone = [r[0] for r in conn.execute("SELECT erp_key FROM erp_vouchers WHERE invoice_date >= ? AND seen < ?",
-                                               (since, seen))]  # fmt: skip
+            gone = [r[0] for r in conn.execute(f"SELECT erp_key FROM erp_vouchers WHERE {where} AND seen < ?3",
+                                               (since, ISO_DAY, seen))]  # fmt: skip
         return gone, window
 
     def remove_jde_vouchers(self, keys: list[str], seen: int) -> int:
@@ -211,15 +226,14 @@ class RegisterMixin:
 
     @staticmethod
     def _recount(conn: sqlite3.Connection, bills: set[tuple[Any, ...]]) -> int:
-        """Each bill's copies counted again from its vouchers' dates; a bill left without a voucher removed. How many
-        were removed."""
+        """Each bill's copies counted again: its vouchers (each its own, by its key: one invoice entered twice in JDE
+        is two, whatever their dates); a bill left without a voucher removed. How many were removed."""
         gone = 0
         for bill in bills:
-            count, dates = conn.execute(
-                "SELECT COUNT(*), COUNT(DISTINCT NULLIF(invoice_date, '')) FROM erp_vouchers WHERE vendor_key = ? AND "
-                "number_key = ? AND total = ?", bill).fetchone()  # fmt: skip
+            count = conn.execute("SELECT COUNT(*) FROM erp_vouchers WHERE vendor_key = ? AND number_key = ? AND "
+                                 "total = ?", bill).fetchone()[0]  # fmt: skip
             if count:
-                copies = max(int(dates), 1)
+                copies = int(count)
                 conn.execute("UPDATE erp_invoices SET copies = ? WHERE vendor_key = ? AND number_key = ? AND total = ? "
                              "AND copies != ?", (copies, *bill, copies))  # fmt: skip
             else:

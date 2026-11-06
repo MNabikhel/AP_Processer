@@ -49,6 +49,7 @@ from ..coding import po as po_mod
 from ..coding.vendors import master_rows, norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
+from ..core.store.register import CLEARED_KEY
 from . import jde, jde_ais
 from .jde import ERROR, INFO
 from .registers import iso_date
@@ -129,6 +130,7 @@ class _Run:
     plan: dict[str, Any]
     actor: str | None
     allow_mass_close: bool = False
+    date_format: str = "%Y-%m-%d"  # the mapping's, of the dates sent and read
     cache: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -328,6 +330,14 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
     return out
 
 
+def _open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each PO's open lines, as a whole read lists them: a line JDE closed (999) leaves while another line of its PO
+    is open (a line here has no status of its own: one kept by a later read of what changed is taken as open); with
+    none open, every line stays and the PO is closed."""
+    open_pos = {po_mod.po_key(r["po_number"]) for r in rows if r.get("status") != po_mod.CLOSED}
+    return [r for r in rows if r.get("status") != po_mod.CLOSED or po_mod.po_key(r["po_number"]) not in open_pos]
+
+
 def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
     names = run.names(store)
     records = []
@@ -347,7 +357,7 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
     before = store.purchase_orders_by_key(keys)
     if run.mode == CHANGES:
         rows = _with_lines_kept(rows, before)
-    result = store.import_purchase_orders(rows, actor=run.actor, log=False)
+    result = store.import_purchase_orders(_open_lines(rows), actor=run.actor, log=False)
     after = store.purchase_orders_by_key(keys)
     _note(run.report, "added", [after[k]["po_number"] for k in keys if k in after and not _po_lines(before.get(k))])
     _note(run.report, "changed", [after[k]["po_number"] for k in keys if k in after and _po_lines(before.get(k))
@@ -357,9 +367,19 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
     run.cache.setdefault("seen", set()).update(keys)
 
 
-def voucher_rows(found: list[dict[str, Any]], names: dict[str, str]) -> list[dict[str, Any]]:
+def _date(value: Any, fmt: str) -> str:
+    """A date AIS gave as YYYY-MM-DD: in the mapping's ``date_format`` (its inputs' and outputs': "10/07/2026" in
+    %m/%d/%Y is 7 October), else as ``iso_date`` reads it ("" for none, the text when it can't be read)."""
+    text = _text(value)
+    try:
+        return dt.datetime.strptime(text, fmt).date().isoformat()
+    except ValueError:
+        return iso_date(text)
+
+
+def voucher_rows(found: list[dict[str, Any]], names: dict[str, str], fmt: str = "%Y-%m-%d") -> list[dict[str, Any]]:
     """F0411 rows as the ERP invoice register's rows (``registers.rows_from_records`` output), with the voucher's key
-    and its supplier's number."""
+    and its supplier's number; ``fmt``: the mapping's ``date_format``."""
     rows = []
     for r in found:
         name = _text(r.get("supplier_name")) or names.get(_text(r.get("an8")), "")
@@ -367,13 +387,13 @@ def voucher_rows(found: list[dict[str, Any]], names: dict[str, str]) -> list[dic
         key = _text(r.get("key")) or "-".join(_text(r.get(f)) for f in ("company", "doc_type", "document"))
         if name and number and total is not None:
             rows.append({"vendor_name": name, "invoice_number": number, "key": key, "an8": _text(r.get("an8")),
-                         "invoice_date": iso_date(_text(r.get("invoice_date"))), "total": total})  # fmt: skip
+                         "invoice_date": _date(r.get("invoice_date"), fmt), "total": total})  # fmt: skip
     return rows
 
 
 def _vouchers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
-    run.report["new"] = run.report.get("new", 0) + store.import_jde_vouchers(voucher_rows(found, run.names(store)),
-                                                                             read["seen"])  # fmt: skip
+    rows = voucher_rows(found, run.names(store), run.date_format)
+    run.report["new"] = run.report.get("new", 0) + store.import_jde_vouchers(rows, read["seen"])
 
 
 WRITE = {"suppliers": _suppliers, "gl_accounts": _gl_accounts, "business_units": _business_units,
@@ -386,16 +406,35 @@ def _too_many(gone: int, there: int) -> bool:
     return bool(gone) and (gone == there or gone > MASS_CLOSE_SHARE * there)
 
 
+def _removes(part: str, plan: dict[str, Any], read: dict[str, Any]) -> bool:
+    """Whether ``read`` decides what leaves (the POs a whole read no longer lists closed, the vouchers swept): it is
+    read to the end and must end complete."""
+    return bool(read.get("sweep")) or (part == "purchase_orders" and plan["mode"] == FULL)
+
+
+def _cut_short(run: _Run, read: dict[str, Any], what: str, done: str) -> bool:
+    """Whether ``read`` ended without being known complete (on a page as long as the longest before it: its last row
+    without its key, nothing to ask the next page after): then nothing is closed or removed, said in the report."""
+    if read.get("complete"):
+        return False
+    run.report[f"refused_{done}"] = (
+        f"JD Edwards' answer stopped at a {what} without its key, so the rest could not be asked for: none was "
+        f"{done}d. The JDE team should check that every row of the orchestration has its key."
+    )  # fmt: skip
+    log.warning("JD Edwards %s sync: %s", what, run.report[f"refused_{done}"])
+    return True
+
+
 def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
-    """The open POs synced before that a whole read no longer lists are closed (most or all at once: refused, and the
-    next whole read looks again); the POs known as synced kept in the state."""
+    """The open POs synced before that a whole read no longer lists are closed (most or all at once, or the read not
+    known complete: refused, and the next whole read looks again); the POs known as synced kept in the state."""
     before = set(state(store).get("po_keys") or [])
     seen = set(run.cache.get("seen") or ())
     if run.report.get("resumed"):  # the pages read before it stopped: the POs written since it began
         with store._conn() as conn:
             seen |= {r[0] for r in conn.execute("SELECT po_key FROM purchase_orders WHERE updated_at >= ?",
                                                 (run.plan["started"],))}  # fmt: skip
-    if run.mode != FULL:
+    if run.mode != FULL or _cut_short(run, read, "PO line", "close"):
         _save_state(store, po_keys=sorted(before | seen))
         return
     with store._conn() as conn:
@@ -421,13 +460,14 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
 
 def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
     """After a read of every voucher from a date: those of the register from then it no longer lists (voided or
-    deleted in JDE) leave it (most or all at once: refused, as a wrong answer)."""
-    if not read.get("sweep"):
+    deleted in JDE) leave it, and after the whole read of the window those without a date too (most or all at once:
+    refused, as a wrong answer; the read not known complete: none)."""
+    if not read.get("sweep") or _cut_short(run, read, "voucher", "remove"):
         return
-    gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"])
+    gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"], undated=bool(read.get("undated")))
     if not run.allow_mass_close and _too_many(len(gone), there):
         run.report["refused_remove"] = (
-            f"JD Edwards' answer would remove {len(gone)} of the {there} vouchers dated from {read['sweep']} from the "
+            f"JD Edwards' answer would remove {len(gone)} of the {there} vouchers dated after {read['sweep']} from the "
             "register: none was removed. If that is right, sync again with --allow-mass-close (python -m ap_coder "
             "jde sync)."
         )
@@ -438,6 +478,17 @@ def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
 
 
 AFTER_READ = {"purchase_orders": _close_pos, "vouchers": _remove_vouchers}
+
+
+class _LeaseLost(Exception):
+    """Another sync took this one's lease (it waited on JD Edwards longer than LEASE_SECONDS): it stops there."""
+
+
+def _hold(store: Any, lease: str) -> None:
+    """The sync's lease renewed, else _LeaseLost: nothing more written (the caller's transaction undone)."""
+    if lease and not store.renew_lease(LEASE, lease, LEASE_SECONDS):
+        raise _LeaseLost("stopped: another sync took over while this one waited on JD Edwards; it reads everything "
+                         "this one would.")  # fmt: skip
 
 
 def _log_part(store: Any, run: _Run) -> None:
@@ -471,15 +522,19 @@ def _log_part(store: Any, run: _Run) -> None:
 def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[str, Any]:
     """What to read of ``part``: the read left unfinished (its scope the same, begun less than RESUME ago) when it is
     the kind due or a whole one (which reads the changes too), else a new one: whole (``full``, never read whole, a
-    week since, its scope changed) or what changed since the last good read."""
+    week since, its scope changed) or what changed since the last good read. The register cleared or replaced since a
+    read of the vouchers began (Exports): what it wrote is gone, so the next is a new whole one."""
     cfg = client.cfg
     scope = {k: getattr(cfg, k) for k in SCOPE.get(part, ())}
     done = (state(store).get("parts") or {}).get(part) or {}
+    left = store.get_json(PROGRESS_KEY, {}).get(part)
+    if part == "vouchers" and (cleared := store.get_setting(CLEARED_KEY)):
+        done = {} if cleared >= str(done.get("at") or "") else done
+        left = None if cleared >= str((left or {}).get("started") or "") else left
     last, whole_at = _when(done.get("at")), _when(done.get("full"))
     whole = (full or part in WHOLE or last is None or whole_at is None or done.get("scope") != scope
              or _now() - whole_at >= dt.timedelta(days=FULL_DAYS))  # fmt: skip
     mode = FULL if whole else CHANGES
-    left = store.get_json(PROGRESS_KEY, {}).get(part)
     begun = _when((left or {}).get("started"))
     if left and left.get("mode") in (mode, FULL) and left.get("scope") == scope and begun and _now() - begun < RESUME:
         left["report"]["resumed"] = True
@@ -494,7 +549,7 @@ def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[
         window = today - dt.timedelta(days=cfg.voucher_days)
         report["since"] = window.strftime(fmt)
         reads = [{"inputs": {"since": window.strftime(fmt), "changed_since": changed},
-                  **({} if changed else {"sweep": window.isoformat()})}]  # fmt: skip
+                  **({} if changed else {"sweep": window.isoformat(), "undated": True})}]  # fmt: skip
         if changed:  # and every voucher of the last weeks, whole: one voided then leaves
             recent = today - dt.timedelta(days=min(RECENT_DAYS, cfg.voucher_days))
             reads.append({"inputs": {"since": recent.strftime(fmt), "changed_since": ""}, "sweep": recent.isoformat()})
@@ -516,7 +571,7 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
     database for it all (a connection opened and closed a page would write the database's log out each time)."""
     with store.session():
         plan = _plan(store, client, part, full)
-        run = _Run(part, plan, actor, allow_mass_close)
+        run = _Run(part, plan, actor, allow_mass_close, client.ais.get("date_format") or "%Y-%m-%d")
         spec = jde_ais.spec_of(client.mapping, part)
         progress = store.get_json(PROGRESS_KEY, {})
         for step in range(plan["step"], len(plan["reads"])):
@@ -524,18 +579,22 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
             read.setdefault("seen", time.time_ns() // 1_000_000)  # the read's stamp on what it lists (a resumed one's)
             plan["step"] = step
             held: list[dict[str, Any]] = []
-            for page, following in client.pages(part, read["inputs"], after=plan["after"]):
+            to_the_end = _removes(part, plan, read)
+            for page, following in client.pages(part, read["inputs"], after=plan["after"], to_the_end=to_the_end):
                 rows, held = _whole_pos(held + page) if part == "purchase_orders" and following else (held + page, [])
                 run.report["read"] += len(page)
+                # complete when it ends on an empty page or one shorter than the longest before it (AIS gives that)
+                read["complete"] = not page or len(page) < read.get("longest", 0)
+                read["longest"] = max(read.get("longest", 0), len(page))
                 with store._conn():  # the page, where the read is and the lease: one short transaction
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])
                     progress[part] = plan
                     store.set_setting(PROGRESS_KEY, json.dumps(progress))
-                    if lease:
-                        store.renew_lease(LEASE, lease, LEASE_SECONDS)
+                    _hold(store, lease)  # last (the write lock taken at the page's first write); lost: all undone
             if part in AFTER_READ:
+                _hold(store, lease)
                 AFTER_READ[part](store, run, read)
             plan["step"], plan["after"] = step + 1, ""
             store.set_setting(PROGRESS_KEY, json.dumps(progress))
@@ -553,7 +612,8 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
          actor: str | None = None, allow_mass_close: bool = False, full: bool = False) -> dict[str, Any]:  # fmt: skip
     """Read each part from JD Edwards into the store. {"ok", "at", "parts": {part: report}, "errors": {part: why}}.
     Step 1 must be on (else ``AisOff``, nothing sent). JDE unreachable: the parts left are not tried. Another sync
-    under way (here or on another computer of the company server): nothing is tried, nothing saved.
+    under way (here or on another computer of the company server): nothing is tried, nothing saved; one that took
+    over meanwhile (this one waited on JDE longer than its lease): this one stops there, nothing more saved.
     ``allow_mass_close``: close the POs (remove the vouchers) JDE no longer lists even when that is most or all of
     them. ``full``: every part read whole (what JDE deleted, closed or voided is seen only so)."""
     own = client is None
@@ -567,11 +627,16 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
         report["errors"] = dict.fromkeys(parts, busy)
         report["ok"] = False
         return report
+    lost = False
     try:
         for part in parts:
             try:
                 report["parts"][part] = _sync_part(store, client, part, actor, full=full,
                                                    allow_mass_close=allow_mass_close, lease=lease)  # fmt: skip
+            except _LeaseLost as exc:
+                lost = True
+                report["errors"].update(dict.fromkeys(parts[parts.index(part) :], str(exc)))
+                break
             except jde_ais.AisError as exc:
                 report["errors"][part] = str(exc)
                 if exc.kind in jde_ais.DOWN or exc.kind in (jde_ais.AUTH, jde_ais.CERTIFICATE, jde_ais.ADDRESS):
@@ -586,7 +651,8 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
     saved = {**state(store), "tried": report["at"], "report": report}
     if report["ok"]:
         saved["at"] = report["at"]
-    store.set_setting(STATE_KEY, json.dumps(saved))
+    if not lost:  # (else the sync that took over says how it went)
+        store.set_setting(STATE_KEY, json.dumps(saved))
     store.log_event("jde_synced", actor=actor, detail={
         "ok": report["ok"], **{p: {k: _count(r, k) if isinstance(v, list) else v for k, v in r.items()}
                                for p, r in report["parts"].items()}, "errors": sorted(report["errors"])})  # fmt: skip
@@ -650,6 +716,7 @@ CACHE_SECONDS = 300.0
 DOWN_SECONDS = 60.0
 LIVE_TIMEOUT = 5.0
 LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
+TOO_WIDE = (jde_ais.TooManyPages, jde_ais.PageRepeated)  # the live check's question too wide: JDE is not down
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
 _BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
@@ -707,8 +774,9 @@ def _ask(store: Any, an8: str, printed: str, big: bool) -> tuple[list[dict[str, 
         # any way): a supplier with more vouchers than a page is checked to the last one.
         try:
             return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
-        except jde_ais.TooManyPages:
-            pass
+        except TOO_WIDE as exc:
+            if isinstance(exc, jde_ais.PageRepeated):
+                log.warning("JD Edwards live check: %s Asked by the invoice number instead.", exc)
     # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
     return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
 
@@ -738,7 +806,7 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
             rows, by_number = _ask(store, an8, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
             dropped = None
-            if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
+            if not isinstance(exc, TOO_WIDE):  # too wide a question is this invoice's, not JDE down
                 with _LOCK:
                     _DOWN[where] = (now, str(exc))
                     if exc.kind in _NEW_CLIENT:

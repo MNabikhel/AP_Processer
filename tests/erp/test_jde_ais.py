@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import pytest
 
 from ap_coder.core.store import Store
 from ap_coder.erp import jde_ais
-from tests.fake_ais import CA_FILE, PASSWORD, USER, FakeAis
+from tests.fake_ais import CA_FILE, PASSWORD, SORTED_KEPT, USER, FakeAis
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +81,37 @@ def test_a_connection_found_closed_as_it_is_used_is_asked_again_for_a_read_never
         c.call("voucher_create", {"key": "k"}, idempotent=False)
     assert err.value.sent and err.value.kind == jde_ais.UNREACHABLE  # looked up by its key, never sent blind again
     assert ais.orchestration_calls("voucher_create") == []
+
+
+def test_a_connection_left_unused_a_while_is_not_used_again(ais, monkeypatch):
+    """B-1897: a connection kept open that was dropped silently on the way while unused (a firewall's idle timeout, a
+    VPN reconnecting: no FIN, no RST) still looked open, so the next request went into it and waited its whole
+    timeout, never asked again: the live check's 5 seconds, then JDE_NOT_REACHED and the check off for everyone for a
+    minute; a voucher's request left not knowing whether it was made. One unused longer than IDLE_SECONDS is not used
+    again."""
+    monkeypatch.setattr(jde_ais, "IDLE_SECONDS", 0.2)
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0  # (as the live check's)
+    c.call("suppliers", {})
+    ais.silence_open()  # nothing gets through it any more, and it is not closed
+    time.sleep(0.3)
+    began = time.monotonic()
+    c.call("voucher_status", {"key": "K-1"}, idempotent=False)  # (as a voucher's request: never sent twice)
+    assert time.monotonic() - began < 1 and ais.connections == 2
+
+
+def test_the_stand_in_serves_a_row_replaced_in_a_long_list(ais):
+    """B-1901 (the test stand-in): tests/fake_ais.py kept a list of more than SORTED_KEPT rows sorted while the list
+    and its length were the same, so a row replaced in it (a voucher voided and another entered) was served as it
+    was."""
+    base = ais.data["vouchers"][0]
+    ais.data["vouchers"] = [{**base, "key": f"00001-PV-{i:06d}-001", "invoice_number": f"N-{i}"}
+                            for i in range(SORTED_KEPT + 1)]  # fmt: skip
+    c = jde_ais.AisClient(ais.settings(), ais.mapping)
+    assert len(c.rows("vouchers", {})) == SORTED_KEPT + 1
+    ais.data["vouchers"][5] = {**base, "key": "00001-PV-999998-001", "invoice_number": "NEW-1"}
+    numbers = {r["invoice_number"] for r in c.rows("vouchers", {})}
+    assert "N-5" not in numbers and "NEW-1" in numbers
 
 
 def test_an_expired_token_is_asked_again_once(ais):

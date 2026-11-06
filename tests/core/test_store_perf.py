@@ -149,7 +149,7 @@ def test_the_lookups_by_batch_invoice_event_kind_account_expiry_and_erp_number_u
     from ap_coder.erp import jde_ais
 
     jde = type("Ais", (), {"cfg": jde_ais.AisSettings(), "ais": {}, "mapping": jde_ais.load_mapping(),
-                           "pages": lambda self, part, inputs, after="": iter([([
+                           "pages": lambda self, part, inputs, after="", to_the_end=False: iter([([
                                {"name": "Acme Ltd", "an8": "1001", "bank_last4": "1234"}], "")])})  # fmt: skip
     lookups = [
         (lambda: store.posting_refusal(batch, ann), "events", "export_batch =", "invoices_export_batch"),

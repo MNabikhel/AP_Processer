@@ -21,7 +21,8 @@ answers as AIS does, as far as AP Coder uses it:
 * ``plan(key, inputs)``: the step of a call nothing is scripted for (None: as usual), e.g. every tenth voucher late;
   ``latency``: seconds each voucher call takes before it is answered (R04110ZA's run).
 * HTTP/1.1, a connection kept open between requests as AIS does (``connections`` counts those opened); ``stop`` closes
-  them, as a server going down does.
+  them, as a server going down does; ``silence_open`` lets nothing through them any more, as a firewall that forgot
+  them.
 * The reads filter as the orchestrations do: the vouchers by ``FromInvoiceDate`` (a voucher with no date always), and
   every read by ``ChangedSince``: a row with a ``_changed`` date (never sent) is listed when it is that day or later,
   a row without one always (as an orchestration that does not filter by it would).
@@ -217,7 +218,7 @@ def sample_data() -> dict[str, list[dict[str, Any]]]:
 
 KEYS = {"suppliers": "an8", "gl_accounts": "account_id", "business_units": "business_unit",
         "purchase_orders": "key", "vouchers": "key"}  # fmt: skip
-SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its length is the same)
+SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its rows are the same)
 
 
 class Generated:
@@ -275,7 +276,8 @@ class FakeAis:
         self.thread: threading.Thread | None = None
         self.connections = 0  # connections opened to it (the client keeps one open, D-181)
         self.open: set[socket.socket] = set()
-        self.ordered: dict[str, tuple[tuple[int, int], list[dict[str, Any]], list[str]]] = {}  # big lists, sorted
+        self.silent: set[socket.socket] = set()  # connections nothing gets through any more (``silence_open``)
+        self.ordered: dict[str, tuple[list[tuple[int, str]], list[dict[str, Any]], list[str]]] = {}  # big lists, sorted
 
     # -- running
     def __enter__(self) -> FakeAis:
@@ -352,6 +354,12 @@ class FakeAis:
             except OSError:
                 pass
 
+    def silence_open(self) -> None:
+        """The connections open now get nothing through any more and are never closed, as a firewall that forgot them
+        (its idle timeout, a VPN reconnecting: no FIN, no RST): a request sent on one never reaches AIS, and waits."""
+        with self.lock:
+            self.silent |= self.open
+
     def expire_tokens(self) -> None:
         with self.lock:
             self.tokens = {t: 0.0 for t in self.tokens}
@@ -388,6 +396,8 @@ class FakeAis:
     def _handle(self, h: BaseHTTPRequestHandler, method: str) -> None:
         length = int(h.headers.get("Content-Length") or 0)
         raw = h.rfile.read(length) if length else b""
+        if h.connection in self.silent:  # lost on the way (``silence_open``): no answer, the connection left open
+            return None
         try:
             body = json.loads(raw or b"{}")
         except ValueError:
@@ -491,7 +501,7 @@ class FakeAis:
         if isinstance(data, Generated):
             return data.after(after)
         field = KEYS[key]
-        stamp = (id(data), len(data))
+        stamp = [(id(r), str(r[field])) for r in data]  # (a row replaced, added, removed or given another key)
         with self.lock:
             kept = self.ordered.get(key)
         if kept is None or kept[0] != stamp or len(data) <= SORTED_KEPT:
