@@ -130,7 +130,8 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     # they would be twice. The README lists them (the unknown ones: check in JD Edwards before loading).
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     settings, lookup = jde.load(store), store.vendor_ids()
-    created = (store.export_batch(batch) or {}).get("created_at") or ""
+    known = store.export_batch(batch) or {}
+    created = known.get("created_at") or ""
     kept = [i for i in invoices if i["id"] not in left_out]
     return jde.build_zip(
         kept,
@@ -143,6 +144,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         check_now=True,  # to_check: what the current settings would now refuse (B-21)
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
+        site=jde.batch_site(known, invoices),  # the keys the API sends too (D-182)
     )
 
 

@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import re
@@ -907,11 +908,38 @@ def _amount(cents: int, settings: JdeSettings, decimals: int) -> int | str:
     return jde_amount(Decimal(cents) / 100, settings.decimals == IMPLIED, decimals)
 
 
-def _keys(prefix: str, settings: JdeSettings, batch: int | str, inv_id: int) -> dict[str, Any]:
+def _code(*parts: Any) -> str:
+    """A short code of what makes a batch or an invoice that one and no other, in any data folder (D-182, R6)."""
+    return hashlib.blake2b("|".join(str(p or "") for p in parts).encode(), digest_size=4).hexdigest().upper()
+
+
+def batch_site(batch: Mapping[str, Any], invoices: Iterable[Mapping[str, Any]]) -> str:
+    """The code of export batch ``batch`` (its row) in VLEDBT: when it was made, its number and its invoices (their
+    ``invoice_site``), so another data folder's batch of that number, or the one a database put back from a backup
+    hands that number to again, has another (D-182)."""
+    return _code(batch.get("created_at"), batch.get("id"), *sorted(invoice_site(i) for i in invoices))
+
+
+def invoice_site(invoice: Mapping[str, Any]) -> str:
+    """The code of an invoice in VLEDTN: its file and when it was added (as a restore knows an invoice again, D-105):
+    the same each time it is sent or downloaded, another for another invoice under the same number (D-182)."""
+    return _code(invoice.get("file_sha256"), invoice.get("created_at"))
+
+
+def batch_number(settings: JdeSettings, batch: int | str, site: str = "") -> str:
+    """VLEDBT (15 characters): the prefix and AP Coder's batch number, then a dash and the batch's code
+    (``batch_site``), as many of its 4 characters as there is room for (none with a long prefix and number)."""
+    head = f"{settings.batch_prefix.strip()}{batch}"
+    room = min(4, 15 - len(head) - 1)
+    return f"{head}-{site[:room]}" if site and room >= 2 else head[:15]
+
+
+def _keys(prefix: str, settings: JdeSettings, batch: int | str, invoice: Mapping[str, Any], inv_id: int,
+          site: str = "") -> dict[str, Any]:  # fmt: skip
     return {
         f"{prefix}EDUS": settings.user.strip()[:10],
-        f"{prefix}EDBT": f"{settings.batch_prefix.strip()}{batch}"[:15],
-        f"{prefix}EDTN": f"APC{inv_id}"[:22],
+        f"{prefix}EDBT": batch_number(settings, batch, site),
+        f"{prefix}EDTN": f"APC{inv_id}-{invoice_site(invoice)}"[:22],
         f"{prefix}EDSP": "0",
         f"{prefix}EDTC": "A",
         f"{prefix}EDTR": "V",
@@ -947,15 +975,16 @@ def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings,
 def voucher_rows(
     invoice: dict[str, Any], vendor_an8: str, settings: JdeSettings, *, batch: int | str = "",
     fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None, prepared: _Voucher | None = None,
+    site: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
     ``validate`` first: an invoice with problems gives incomplete rows. ``prepared``: its voucher already prepared
-    for ``vendor_an8`` (``_vouchers``), not prepared again."""
+    for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT."""
     from .exports import entry_lines
 
     v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip())
     final = v.final
-    keys = _keys("VL", settings, batch, v.inv_id)
+    keys = _keys("VL", settings, batch, invoice, v.inv_id, site)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
     gl_date = (on or dt.date.today()) if settings.gl_date == GL_DATE_EXPORT else invoice_date
     due = sent_due(final, invoice)  # a credit note: its invoice date; a guessed one is not sent (B-924)
@@ -1030,7 +1059,7 @@ def voucher_rows(
         acct = account or GlMap(e.get("gl_code") or "")
         amount = _amount(e["cents"], settings, v.decimals)
         row = {
-            **_keys("VN", settings, batch, v.inv_id), "VNEDLN": n, "VNCO": settings.company_code,
+            **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": settings.company_code,
             "VNDGJ": julian(gl_date), "VNDCT": doc_type, "VNLT": "AA",
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
             "VNEXA": _text(e.get("description"), 30),
@@ -1493,7 +1522,7 @@ def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
 def export_batch(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
-    prepared: list[tuple[str, _Voucher]] | None = None,
+    prepared: list[tuple[str, _Voucher]] | None = None, site: str = "",
 ) -> dict[str, bytes]:  # fmt: skip
     """{"F0411Z1.csv": …, "F0911Z1.csv": …[, "F0411Z1T.csv": …]} for these invoices (validated first)."""
     headers: list[dict[str, Any]] = []
@@ -1502,7 +1531,7 @@ def export_batch(
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup)
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
-        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v)
+        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site)
         headers += h
         dists += d
         matches += m
@@ -1518,12 +1547,12 @@ UNDO_TEXT = "in AP Coder, Exports → Past batches → Undo this batch, fix, and
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    no_undo: str = "",
+    no_undo: str = "", site: str = "",
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
     ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
     Pay from account has no VLGLBA mapped are listed too (``bank_notes``). ``no_undo``: why the batch can't be undone
-    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203)."""
+    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203). ``site``: the batch's code (VLEDBT)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1533,7 +1562,7 @@ def readme(
     def count(name: str) -> int:
         return len(list(csv.reader(io.StringIO(files[name].decode("utf-8"))))) - 1 if name in files else 0
 
-    edbt = f"{settings.batch_prefix.strip()}{batch}"[:15]
+    edbt = batch_number(settings, batch, site)
     money = ", ".join(f"{c} {t:,.2f}" for c, t in sorted(totals.items())) or "-"
     decimals = "implied decimals (5.50 is written 550)" if settings.decimals == IMPLIED else "with a decimal point"
     amounts = {
@@ -1574,7 +1603,9 @@ def readme(
         "4. Post the voucher batch (P0011 / R09801) as usual.",
         "",
         f"If the load fails: {no_undo or UNDO_TEXT}",
-        "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number.",
+        "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number, a dash and a code of the",
+        "invoice; the batch number ends in a code of the batch: two AP Coder data folders, or one put back from a",
+        "backup, never give two vouchers the same keys.",
         "",
         "To confirm with your JDE team before the first live load: "
         + "; ".join(UNCONFIRMED)
@@ -1608,21 +1639,24 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False,
+    left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False, site: str = "",
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
     for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
-    ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all)."""
+    ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all);
+    ``site``: the batch's code in VLEDBT (``batch_site``)."""
     vouchers = _vouchers(invoices, settings, vendor_lookup)
     if check_now:
         to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
-    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
+    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
+                         site=site)  # fmt: skip
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo))
-        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
+        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo, site))
+        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
+                         site=site)  # fmt: skip
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
@@ -1677,18 +1711,19 @@ def dry_run(
     on: dt.date | None = None,
     prepared: list[tuple[str, _Voucher]] | None = None,
     rows: Mapping[int, tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] | None = None,
+    site: str = "",
 ) -> dict[str, Any]:
     """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}.
     ``prepared``: the invoices' vouchers already prepared (``_vouchers``); ``rows``: {invoice: ``voucher_rows``}
-    already made with the same batch, rates and date."""
+    already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``)."""
     blocking = settings_problems(settings)
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup)
     problems = validate(invoices, settings, vendor_lookup, prior, prepared=prepared)
     notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {
-        "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
+        "batch": batch_number(settings, batch, site),
         "user": settings.user.strip(),
         "company": settings.company_code,
         "blocking": blocking,
@@ -1715,7 +1750,7 @@ def dry_run(
             continue
         made = (rows or {}).get(inv_id)
         headers, dists, matches = made or voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
-                                                       prepared=v)  # fmt: skip
+                                                       prepared=v, site=site)  # fmt: skip
         aa_col = "VNACR" if v.foreign else "VNAA"
         dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
         posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100

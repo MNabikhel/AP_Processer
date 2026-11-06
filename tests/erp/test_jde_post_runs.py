@@ -4,12 +4,15 @@ the holds and the open period checked just before each voucher is sent; never a 
 
 from __future__ import annotations
 
+import io
 import json
 import time
+import zipfile
 
 import pytest
 
 from ap_coder.erp import jde, jde_ais, jde_post
+from ap_coder.web.pages import exports
 from tests.erp.test_jde import AB, BC, ON, QC
 from tests.erp.test_jde_post import batch_of, connect
 from tests.fake_ais import PASSWORD, FakeAis
@@ -153,6 +156,49 @@ def test_a_vendor_on_hold_in_ap_coder_is_not_sent_and_its_dry_run_says_so(tmp_pa
     row = jde_post.dry_run(store, batch)["rows"][0]
     assert row["status"] == jde_post.REFUSED and "on hold in AP Coder's vendor list" in row["error"]
     assert "bank details being checked" in row["error"] and ais.orchestration_calls("voucher_create") == []
+
+
+# --- The Z-tables' keys ----------------------------------------------------------------------------------------------
+
+
+def _zkeys(store, batch) -> list[tuple[str, str]]:
+    found = jde_post.payloads(store, batch)[0].values()
+    return [(p["pay_items"][0]["VLEDBT"], p["pay_items"][0]["VLEDTN"]) for p in found]
+
+
+def test_two_data_folders_and_a_restore_never_send_the_same_z_table_keys(tmp_path, ais):
+    """B-1860 (R6): VLEDBT (prefix + batch) and VLEDTN (APC + invoice id) carried nothing of the data folder, so a
+    pilot laptop and the server posting to one JD Edwards, or a database put back from a backup handing out its
+    numbers again, sent the same F0411Z1 keys for other vouchers: route (a) found the other's rows (EXISTS, then
+    "not this invoice") and a batch file load hit duplicate keys. Each now carries a code of its batch and invoice
+    (its file and when it was added), within JD Edwards' 15 and 22 characters, the same each time it is sent."""
+    for laptop in ("laptop1", "laptop2"):
+        (tmp_path / laptop).mkdir()
+        (tmp_path / laptop / "1.pdf").write_bytes(f"{laptop}'s invoice".encode())
+    a, ba = batch_of(tmp_path / "laptop1", ais, ON)
+    b, bb = batch_of(tmp_path / "laptop2", ais, ON)  # invoice 1 of batch 1 there too
+    (ka,), (kb,) = _zkeys(a, ba), _zkeys(b, bb)
+    assert ka[0] != kb[0] and ka[1] != kb[1], (ka, kb)
+    assert ka[0].startswith("APC1-") and len(ka[0]) <= 15 and ka[1].startswith("APC1-") and len(ka[1]) <= 22
+    assert _zkeys(a, ba) == [ka]  # the same each time (the dry run, the go-ahead, the queue, the ZIP)
+    with zipfile.ZipFile(io.BytesIO(exports.jde_file(a, ba)[0])) as zf:
+        header = zf.read(jde.HEADER_FILE).decode().splitlines()[1]
+        readme = zf.read("README.txt").decode()
+    assert ka[0] in header and ka[1] in header and f"Batch (EDBT): {ka[0]}" in readme
+    backup = a.backup_now("before batch 2")
+    (tmp_path / "laptop1" / "2.pdf").write_bytes(b"the second invoice")
+    final = a.get_invoice(1)["final_output"]
+    second = a.add_invoice(tmp_path / "laptop1" / "2.pdf", {**final, "invoice_number": "NW-2"}, {})
+    a.approve_invoice(second, {**final, "invoice_number": "NW-2"}, "Jane")
+    before = _zkeys(a, a.create_export_batch([second], jde.FORMAT))
+    a.restore_from(backup)
+    (tmp_path / "laptop1" / "2b.pdf").write_bytes(b"another invoice, after the restore")
+    again = a.add_invoice(tmp_path / "laptop1" / "2b.pdf", {**final, "invoice_number": "NW-3"}, {})
+    a.approve_invoice(again, {**final, "invoice_number": "NW-3"}, "Jane")
+    batch = a.create_export_batch([again], jde.FORMAT)
+    assert (again, batch) == (second, 2)  # the same numbers handed out again
+    (after,) = _zkeys(a, batch)
+    assert after[0] != before[0][0] and after[1] != before[0][1], (before, after)
 
 
 def test_a_voucher_waits_as_long_as_r04110za_may_take_not_the_connections_timeout(tmp_path, ais):

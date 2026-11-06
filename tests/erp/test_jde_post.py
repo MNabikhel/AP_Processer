@@ -73,7 +73,9 @@ def test_dry_run_then_post_keeps_the_voucher_number(tmp_path, ais):
     assert proof[0]["ProcessingMode"] == "PROOF" and proof[0]["IdempotencyKey"] == jde_post.idem_key(
         1, 1, jde_post.installation_id(store)
     )
-    assert proof[0]["PayItems"][0]["VLEDBT"] == f"APC{batch}" and proof[0]["PayItems"][0]["VLEDTN"] == "APC1"
+    head = proof[0]["PayItems"][0]  # the Z-tables' keys: of the batch and the invoice, each with its code (D-182)
+    assert head["VLEDBT"].startswith(f"APC{batch}-")
+    assert head["VLEDTN"] == f"APC1-{jde.invoice_site(store.get_invoice(1))}"
     assert proof[0]["GLLines"] and ais.vouchers()[-1]["invoice_number"] == "INV-7001"  # nothing posted by the proof
     result = jde_post.post(store, batch, actor="sam")
     assert result["posted"] == 1 and result["error"] == ""

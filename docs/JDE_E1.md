@@ -54,8 +54,8 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
       errors in the batch voucher revisions (P0411Z1 / Work Center).
    3. Run **R04110ZA in final mode**; post the voucher batch as usual.
 5. If the load fails: Exports → Past batches → **Undo this batch**, fix the cause, export again. Each invoice
-   keeps its transaction number (VLEDTN = `APC` + AP Coder invoice number) and gets a new batch number, so the
-   Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
+   keeps its transaction number (VLEDTN = `APC` + AP Coder invoice number and its code) and gets a new batch
+   number, so the Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
    with the current JD Edwards settings.
 
 ## How the mapping works
@@ -236,8 +236,8 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | Column | Value | Notes |
 | --- | --- | --- |
 | VLEDUS | User ID (setting, ≤10) | key |
-| VLEDBT | Batch prefix + AP Coder batch number (≤15) | key; one per export batch |
-| VLEDTN | `APC` + AP Coder invoice number (≤22) | key; unique per invoice |
+| VLEDBT | Batch prefix + AP Coder batch number, then `-` and a 4-character code of the batch as room allows (≤15, D-182) | key; one per export batch |
+| VLEDTN | `APC` + AP Coder invoice number, `-` and an 8-character code of the invoice (≤22, D-182) | key; unique per invoice, in any data folder and after a restore |
 | VLEDLN | 1 (or 1, 2, 3 … in *match header* mode) | key |
 | VLEDSP | `0` | not yet processed |
 | VLEDTC | `A` | add |
