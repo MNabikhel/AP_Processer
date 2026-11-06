@@ -1294,6 +1294,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     | `GET /review` p95 idle / during the drop | 18 / 204 ms | 20 / 130 ms |
     | failures | 0 | 0 |
 
+    At 1,250 invoices (after; the base wasn't run, about 2 h here at 673 an hour): all in the review queue after
+    78.2 min (959 an hour), the page reader drained after 78.3 min, the AI reviewer all 1,250, 0 failures; the web
+    workers 158 s of CPU in all (0.03 cores), the capture processes 1.57 cores, 495 MB each; `GET /review` p95 15 ms
+    idle, 219 ms during the drop (a queue grown to 1,250 invoices, the 4 cores full with the capture processes, the
+    background process and two other agents' tests). At the model machine's full latency (an estimate): drained
+    after 8.4 h, the model machine's 1,250 a day with 2 slots being the limit now.
+
     GIL probe (`p3_alpha/gil_probe.py` in the session's scratchpad: a 5 ms timer thread in a web worker while 20
     scans are imported; how late it woke): p50 0.08 → 0.08 ms, p95 3.0 → 0.24 ms, p99 11.0 → 3.8 ms, the longest
     818 → 100 ms, wake-ups over 50 ms 67 → 7 (of about 40,000; the 4 cores were shared, so a late wake-up after is
