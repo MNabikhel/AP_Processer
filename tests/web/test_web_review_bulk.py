@@ -268,6 +268,37 @@ def test_a_stop_puts_the_bulk_approval_back_in_line_and_the_next_start_goes_on(s
         again.thread.join(10)
 
 
+def test_quitting_the_laptop_while_it_approves_puts_the_job_back_without_using_a_try(store, monkeypatch):
+    """Closing AP Coder on a laptop left its bulk approval "being approved": each start put it back without giving its
+    try back, so the third time it ended, "AP Coder stopped 3 times", though the person only closed AP Coder (an
+    orderly stop, not counted). Now each close puts it back after the invoice under way, as the server's does."""
+    monkeypatch.setattr(review, "BULK_WAIT", 0.1)
+    ids = _clean(store, 2 * bulk_jobs.TRIES + 1)
+    gates: list[Gate] = []
+    real_stop = jobs.stop_here
+
+    def stop_here(store_):
+        thread = real_stop(store_)
+        gates[-1].go.set()  # (the invoice under way is done once AP Coder is told to stop)
+        return thread
+
+    monkeypatch.setattr(jobs, "stop_here", stop_here)
+    for closed in range(1, bulk_jobs.TRIES + 1):
+        gates.append(Gate(monkeypatch, hold=1))
+        with client_for(store) as client:  # (started: the bulk approval its last run left goes on)
+            if closed == 1:
+                client.post("/review/bulk-approve", data={"ids": [str(i) for i in ids]}, headers=PAGE)
+            gates[-1].reached(2)
+        job = store.latest_bulk_job("")
+        assert job["state"] == bulk_jobs.WAITING and job["tries"] == 0 and job["approved"] == ids[: 2 * closed]
+    gates.append(Gate(monkeypatch))
+    gates[-1].go.set()
+    with client_for(store):
+        ended = _ended(store, job["id"], seconds=10)
+    assert ended["state"] == bulk_jobs.DONE and ended["approved"] == ids and not ended["error"]
+    assert sorted(_approvals(store)) == ids
+
+
 SAM = {"name": "Sam", "login": "sam", "server": False, "as": {}}
 
 

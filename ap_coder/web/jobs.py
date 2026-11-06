@@ -349,7 +349,8 @@ class BulkRunner:
                 logging.getLogger(__name__).exception("bulk approval %s stopped", job["id"])
 
 
-_HERE: dict[str, threading.Thread] = {}  # the thread approving each database's bulk approvals here, while some wait
+# The thread approving each database's bulk approvals here while some wait, and what tells it to stop (``stop_here``).
+_HERE: dict[str, tuple[threading.Thread, threading.Event]] = {}
 _HERE_LOCK = threading.Lock()
 
 
@@ -359,12 +360,26 @@ def approve_here(store: Any, settings_factory: Callable[[], Any]) -> None:
     with _HERE_LOCK:
         if str(store.path) in _HERE:
             return  # (one is at it: it takes this one too before it ends)
-        here = _HERE[str(store.path)] = threading.Thread(target=_approve_until_none, args=(store, settings_factory),
-                                                         name="ap-coder-bulk-here", daemon=True)  # fmt: skip
+        halt = threading.Event()
+        here = threading.Thread(target=_approve_until_none, args=(store, settings_factory, halt),
+                                name="ap-coder-bulk-here", daemon=True)  # fmt: skip
+        _HERE[str(store.path)] = (here, halt)
     here.start()
 
 
-def _approve_until_none(store: Any, settings_factory: Callable[[], Any]) -> None:
+def stop_here(store: Any) -> threading.Thread | None:
+    """AP Coder stopping (the dashboard closed): the bulk approval under way here put back in line once the invoice
+    under way is done, as the background process's (an orderly stop: its try not counted). The thread, to wait for;
+    None when there is none."""
+    with _HERE_LOCK:
+        found = _HERE.get(str(store.path))
+    if found is None:
+        return None
+    found[1].set()
+    return found[0]
+
+
+def _approve_until_none(store: Any, settings_factory: Callable[[], Any], halt: threading.Event) -> None:
     from ap_coder.coding import bulk
 
     runner, key, me = f"{OWNER}:bulk-here", str(store.path), threading.current_thread()
@@ -372,19 +387,20 @@ def _approve_until_none(store: Any, settings_factory: Callable[[], Any]) -> None
         while True:
             with _HERE_LOCK:  # (one asked meanwhile is claimed here, or finds no thread at it and starts one)
                 try:  # (none taken from a database being replaced by a backup: its page's next look asks again)
-                    job = None if store.restoring() else store.claim_bulk_job(runner, BULK_STALE, bulk.JOB_FORMAT)
+                    taking = not halt.is_set() and not store.restoring()
+                    job = store.claim_bulk_job(runner, BULK_STALE, bulk.JOB_FORMAT) if taking else None
                 except Exception:  # noqa: BLE001 - a busy database: the next one asked, or looked at, starts another
                     job = None
                 if job is None:
                     del _HERE[key]
                     return
             try:
-                run_bulk(store, settings_factory(), job, runner)
+                run_bulk(store, settings_factory(), job, runner, halt)
             except Exception:  # noqa: BLE001 - never the end of the database's bulk approvals here
                 logging.getLogger(__name__).exception("bulk approval %s stopped", job["id"])
     finally:  # (whatever ends this thread: never the database left marked as approved by it)
         with _HERE_LOCK:
-            if _HERE.get(key) is me:
+            if _HERE.get(key, (None,))[0] is me:
                 del _HERE[key]
 
 

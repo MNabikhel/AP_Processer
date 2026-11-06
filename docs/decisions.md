@@ -2853,7 +2853,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted on meanwhile.
       So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
   - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
-    counted); at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
+    counted), and so does a laptop's dashboard closing (`jobs.stop_here`, waited for up to 5 s as the server's, B-1930);
+    at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
     background process a data folder, D-111). One whose process stopped noting its progress for 30 s is taken again by
     another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
     3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
@@ -2863,6 +2864,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       wait, a restore's moment without the table, a full disk) is logged, never the end of the thread: the job is
       ended once it is taken again (30 s on), and the laptop's thread, however it ends, no longer marks the database
       as approved by it, so the next one asked starts another (B-1929).
+    - What is not done again: an invoice's learning (`learn_from_approval`) follows its approval's commit, as the
+      review screen's Approve does, so a process that dies in between (killed, the power off: an orderly stop waits
+      for it) loses that one invoice's learning, the invoice approved and counted once. The job taken again does not
+      learn it again: learning is several writes, not one transaction, and not safe to make twice (it counts what was
+      kept and corrected, and teaches the template); it reads the invoice's pages (seconds for a scan), so it is never
+      made inside the approval's write lock either.
   - **As the person who asked:** the job runs inside `identity.acting_as(kept)` (`person()`, the events' actor and
     address as their request's), their name and login on each approval and its learning: whether their session goes
     on or not. On the server it stops (with why) once their account may no longer approve (turned off, or a role below
