@@ -273,7 +273,8 @@ def not_posted(store: Any) -> dict[int, str]:
     """{invoice: what its voucher is} of the exported invoices whose voucher went to JD Edwards through the API (its
     go-ahead given) and is not posted there yet: waiting in the queue, being sent, sent with its answer lost, held back
     for a new dry run, or refused (unless the batch's files were downloaded since: then loaded from them, as any
-    batch). Month end takes them as not in the ERP (R4, B-1862)."""
+    batch; ``file_downloaded`` takes their go-ahead off, B-1882). Month end takes them as not in the ERP (R4,
+    B-1862)."""
     with _conn(store) as conn:
         found = conn.execute(
             "SELECT p.invoice_id, p.status FROM jde_postings p JOIN invoices i ON i.id = p.invoice_id AND "
@@ -387,11 +388,17 @@ def forget_batch(store: Any, batch: int) -> None:
 def file_downloaded(store: Any, batch: int, actor: str | None) -> None:
     """The batch's JD Edwards ZIP is being downloaded: who and when, in the audit trail. Its vouchers waiting in the
     queue (approved, JDE never reached: the file holds them) go back to waiting for a go-ahead, which asks whether the
-    file was loaded. Called before the file is made: a voucher the queue claims meanwhile is left out of it."""
+    file was loaded; every other voucher the file holds loses its go-ahead too (held back for a new dry run, or
+    refused: loaded from the file, it is in JDE for month end, B-1882). Called before the file is made: a voucher
+    the queue claims meanwhile is left out of it."""
     why = "Not sent: the batch's JD Edwards file was downloaded. Post it only if the file was not loaded"
-    for row in postings(store, batch, statuses=(QUEUED,)):
-        _put(store, row["idem_key"], row["invoice_id"], batch, only_from=(QUEUED,), rev=row["rev"], status=CHECKED,
-             approved_at=None, approved_by=None, next_try=None, error=why)  # fmt: skip
+    for row in postings(store, batch, statuses=(QUEUED, CHECKED, FAILED, REFUSED)):
+        if row["status"] == QUEUED:
+            _put(store, row["idem_key"], row["invoice_id"], batch, only_from=(QUEUED,), rev=row["rev"],
+                 status=CHECKED, approved_at=None, approved_by=None, next_try=None, error=why)  # fmt: skip
+        elif row["approved_at"]:
+            _put(store, row["idem_key"], row["invoice_id"], batch, only_from=(row["status"],), rev=row["rev"],
+                 approved_at=None, approved_by=None, next_try=None)  # fmt: skip
     store.log_event(FILE_DOWNLOADED, actor=actor, detail={"batch": int(batch)})
 
 

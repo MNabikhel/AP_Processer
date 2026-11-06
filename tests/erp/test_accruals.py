@@ -138,6 +138,45 @@ def test_an_exported_invoice_whose_jde_voucher_is_not_posted_yet_is_not_in_the_e
         assert accrued() == {}
 
 
+def _api_accrued(store) -> set[int]:
+    """The invoices accrued at 31 October as not in the ERP."""
+    return {int(x.reference.split("(#")[1].rstrip(")")) for x in accruals.build(store, dt.date(2026, 10, 31))
+            if x.source == accruals.NOT_IN_ERP}  # fmt: skip
+
+
+@pytest.fixture
+def _quick_ais(monkeypatch):
+    from ap_coder.erp import jde_ais
+    from tests.fake_ais import PASSWORD
+
+    monkeypatch.setattr(jde_ais, "RETRY_PAUSE", 0)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+
+
+def test_a_voucher_held_back_then_loaded_from_the_batch_files_is_not_accrued(tmp_path, _quick_ais):
+    """B-1882: JD Edwards refused one voucher as in a closed period, so the other of the same month was held back for
+    a new dry run, its go-ahead kept; the batch's files were downloaded (it is in them: neither was locked) and
+    loaded, yet month end still counted the held-back one as not in the ERP: in JD Edwards and accrued, twice. A
+    download takes the go-ahead off every voucher the files hold."""
+    from ap_coder.erp import jde_post
+    from tests.erp.test_jde import BC, QC
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import FakeAis
+
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais, QC, BC)  # 1 and 5 October
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", ("refuse", "0005", "Error: G/L date is in a closed period (PBCO)"))
+        jde_post.post(store, batch)
+        assert [p["status"] for p in jde_post.postings(store, batch)] == [jde_post.FAILED, jde_post.CHECKED]
+        assert _api_accrued(store) == {1, 2}  # neither in JD Edwards
+        jde_post.file_downloaded(store, batch, "sam")  # both in the files, loaded into JD Edwards
+        assert _api_accrued(store) == set()
+        assert jde_post.left_out_of_files(store, batch) == {}
+        jde_post.dry_run(store, batch)  # and a dry run afterwards changes nothing of that
+        assert _api_accrued(store) == set()
+
+
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)

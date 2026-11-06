@@ -2497,7 +2497,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again).
     - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
       go-ahead, or refused (unless the batch's files were downloaded since) is not in the ERP; the kept answer's
-      question carries that set, as postings change no invoice.
+      question carries that set, as postings change no invoice. A download of the batch's files takes the go-ahead
+      off every voucher they hold (not locked: queued, held back, refused), so one loaded from them is never counted
+      as not in the ERP afterwards, a dry run again or not (B-1882).
     - **Lookups, not scans** (B-1863): `jde.account_for` by (GL code, cost center), `held_vendor` by what makes a
       number or account the same.
   - **Not done, for the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 15 to 20): the batch-level orchestration (one
