@@ -348,6 +348,7 @@ def test_500_vouchers_post_in_one_run_through_slow_and_late_answers_none_twice(t
     from tests.erp.test_jde import _invoice
 
     monkeypatch.setattr(jde_post, "LOOK_AFTER", 2.0)
+    monkeypatch.setattr(jde, "RESEND_MARGIN", 1.0)  # scaled as the waits are: a voucher's 0.3 s, the resend 3 s
     store = Store(tmp_path / "ap_coder.db")
     jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, voucher_timeout=0.3,
                                     resend_minutes=0.05))  # fmt: skip
