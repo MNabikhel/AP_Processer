@@ -49,6 +49,7 @@
     </details>
     {% endif %}
     {% if nav.position is not none %}
+    {% if nav.skipped %}<span class="rvw-pos small" data-skipped>{{ nav.skipped }}</span>{% endif %}{# those someone else has open (D-184) #}
     <a class="btn sm" href="{{ nav.prev }}" data-nav="prev" aria-keyshortcuts="Alt+ArrowLeft" title="Previous invoice (Alt+←)"><span class="ms" aria-hidden="true">chevron_left</span>Previous</a>
     <a class="btn sm" href="{{ nav.next }}" data-nav="next" aria-keyshortcuts="Alt+ArrowRight" title="Next invoice (Alt+→)">Next<span class="ms" aria-hidden="true">chevron_right</span></a>
     {% endif %}
@@ -78,7 +79,13 @@
   <input type="hidden" name="pay_from_for" value="{{ draft.pay_from_for }}" data-pay-from-for>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
+  {# The invoice's revision the screen was drawn at, and the screen's own id (D-184) #}
+  <input type="hidden" name="rev" value="{{ rev }}"><input type="hidden" name="screen" value="{{ screen }}">
 </form>
+
+{# Who else has it open (server mode, D-184): the screen's poll says it again #}
+<div class="inv-draft-note small" role="status" data-others{% if not others %} hidden{% endif %}><span class="ms" aria-hidden="true">group</span>
+  <span data-others-text>{{ others }}</span></div>
 
 <section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
 

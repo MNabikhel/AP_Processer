@@ -273,6 +273,8 @@
 {%- endmacro %}
 
 {% macro bar(live, invoice_id) -%}
+{# The draft revision the screen is at, drawn again by each check: sent back with the next one (D-184) #}
+{% if live.draft_rev %}<input type="hidden" name="draft_rev" form="inv" value="{{ live.draft_rev }}">{% endif %}
 {% if not live.ok %}
 <div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
 {% else %}

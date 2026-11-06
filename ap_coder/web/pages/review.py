@@ -226,10 +226,13 @@ def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[
 NO_VENDOR = "No vendor name"
 
 
-def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
-               reasons: dict[int, str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
-    """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``."""
-    reasons = reasons or {}
+def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reasons: dict[int, str] | None = None,
+               others: dict[int, list[str]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``.
+    ``others``: the names of those who have an invoice open (``invoice.open_elsewhere``, D-184)."""
+    from ap_coder.web.pages.invoice import names_text
+
+    reasons, others = reasons or {}, others or {}
     ids = [i["id"] for i in shown]
     outputs = {  # a sent-back invoice shows the first approver's corrections, as its review screen does
         r["id"]: r["final_output"] or r["ai_output"] or {}
@@ -268,6 +271,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
             "due": due,
             "due_tone": tone,
             "kind": document_kind(sources.get(inv["id"], "")),
+            "open": f"{names_text(names)} {'has' if len(names) == 1 else 'have'} it open"
+            if (names := others.get(inv["id"])) else "",
         })  # fmt: skip
     return rows
 
@@ -401,6 +406,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
+        from ap_coder.web.pages.invoice import open_elsewhere
+
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
         candidates, left = sort_for_bulk(store, pending, checks) if show != "attention" else ([], {})
@@ -408,7 +415,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             pending=pending,
             updating=updating,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
-            rows=queue_rows(store, shown[:limit], threshold, reasons),
+            rows=queue_rows(store, shown[:limit], threshold, reasons, open_elsewhere(request, store)),
             # the view, as this address has it, carried by each row's link: the invoice's count, Previous / Next and
             # Queue button follow it (B-1592), its rows too (Show more: the queue opens once coming back, B-1621)
             row_query="?" + view if (view := urlencode({

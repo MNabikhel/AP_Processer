@@ -47,6 +47,14 @@ from .learning import forget_past_lines
 from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
+# The events that change where an invoice stands or its stored coding (``coding_revision``, D-184): approving it
+# stores its coding, the others move it in or out of the review queue (managers.py logs the manager's three).
+REVISION_ACTIONS = (
+    "approved", "final_approved", "sent_back", "reopened", "parked", "unparked", "rejected", "deleted",
+    "sent_to_manager", "manager_confirmed", "manager_sent_back", "manager_request_withdrawn",
+)  # fmt: skip
+_REVISION_IN = "(" + ", ".join("?" * len(REVISION_ACTIONS)) + ")"
+
 
 class InvoicesMixin:
     # --- Invoices --------------------------------------------------------------------------------------
@@ -440,6 +448,17 @@ class InvoicesMixin:
                 (invoice_id, person, json.dumps(draft), _now()),
             )
 
+    def invoice_draft(self, invoice_id: int, person: str) -> dict[str, Any] | None:
+        """One person's draft of an invoice; None when none is kept (or it can't be read)."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT draft FROM invoice_drafts WHERE invoice_id = ? AND person = ?",
+                               (invoice_id, person)).fetchone()  # fmt: skip
+        try:
+            draft = json.loads(row["draft"]) if row is not None else None
+        except ValueError:
+            return None
+        return draft if isinstance(draft, dict) else None
+
     def invoice_drafts(self) -> list[tuple[int, str, dict[str, Any]]]:
         """(invoice id, person, draft) of every invoice still in the review queue; a draft that can't be read is left
         out."""
@@ -778,6 +797,24 @@ class InvoicesMixin:
         with self._conn() as conn:
             sql = "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'"
             return str(conn.execute(sql, (invoice_id,)).fetchone()[0] or "")
+
+    def coding_revision(self, invoice_id: int) -> int:
+        """The invoice's revision: the id of its last event that changed where it stands or its stored coding
+        (``REVISION_ACTIONS``; 0 when none), each logged with its change. A review screen drawn at another one is
+        out of date (D-184)."""
+        with self._conn() as conn:
+            sql = f"SELECT MAX(id) FROM events WHERE invoice_id = ? AND action IN {_REVISION_IN}"
+            return int(conn.execute(sql, (invoice_id, *REVISION_ACTIONS)).fetchone()[0] or 0)
+
+    def last_change(self, invoice_id: int) -> dict[str, Any] | None:
+        """The event of ``coding_revision`` (its action, actor and time), None when there is none."""
+        with self._conn() as conn:
+            row = conn.execute(
+                f"SELECT action, actor, created_at FROM events WHERE invoice_id = ? AND action IN "
+                f"{_REVISION_IN} ORDER BY id DESC LIMIT 1",
+                (invoice_id, *REVISION_ACTIONS),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "", *, shown: str | None) -> None:
         """The second approval: by someone other than the first approver (another name and, when the

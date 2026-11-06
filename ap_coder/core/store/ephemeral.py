@@ -8,6 +8,9 @@ import secrets
 import time
 
 _COLUMNS = "(kind, token, value, created_at, expires_at)"
+# The database's clock (B-1770) in seconds since 1970, as ``time.time()`` the other rows keep theirs.
+_DB_NOW = "((julianday('now') - 2440587.5) * 86400.0)"
+_OPEN = "kind >= 'open:' AND kind < 'open;'"  # every invoice's "open:<id>" rows, off the primary key
 
 
 class EphemeralMixin:
@@ -135,6 +138,37 @@ class EphemeralMixin:
                 return
             conn.execute("DELETE FROM ephemeral WHERE kind = 'lease' AND token = ? AND value = ?",
                          (name, owner.encode()))  # fmt: skip
+
+    # --- Who has an invoice open on its review screen, on the server (D-184) ---------------------------------------
+    # One row per invoice and person: kind "open:<invoice id>", the person's key as token, the name shown as value.
+    # The screen's poll renews it; gone ``ttl`` seconds after the last renewal (a tab closed or hidden).
+
+    def keep_open(self, invoice_id: int, person: str, name: str, ttl: float, renew: float) -> bool:
+        """``person`` (``name``) has invoice ``invoice_id`` open, for ``ttl`` seconds more. Written only when it was
+        last written ``renew`` seconds ago or more, or under another name: else nothing is (True when it is)."""
+        kind = f"open:{invoice_id}"
+        with self._conn() as conn:
+            row = conn.execute(f"SELECT value, expires_at - {_DB_NOW} AS left FROM ephemeral WHERE kind = ? AND "
+                               "token = ?", (kind, person)).fetchone()  # fmt: skip
+            if row is not None and bytes(row["value"]) == name.encode() and row["left"] > ttl - renew:
+                return False
+            conn.execute(f"DELETE FROM ephemeral WHERE {_OPEN} AND expires_at < {_DB_NOW}")
+            conn.execute(f"INSERT INTO ephemeral {_COLUMNS} VALUES (?, ?, ?, {_DB_NOW}, {_DB_NOW} + ?) ON CONFLICT"
+                         "(kind, token) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
+                         (kind, person, name.encode(), ttl))  # fmt: skip
+        return True
+
+    def open_by(self, invoice_id: int | None = None) -> dict[int, dict[str, str]]:
+        """Who has which invoice open now (``keep_open``): {invoice id: {person: name}}, the first to open it first;
+        one invoice's, or every one's."""
+        where, params = ("kind = ?", (f"open:{invoice_id}",)) if invoice_id is not None else (_OPEN, ())
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT kind, token, value FROM ephemeral WHERE {where} AND expires_at > {_DB_NOW} "
+                                "ORDER BY created_at", params).fetchall()  # fmt: skip
+        found: dict[int, dict[str, str]] = {}
+        for r in rows:
+            found.setdefault(int(r["kind"][5:]), {})[r["token"]] = bytes(r["value"]).decode("utf-8", "replace")
+        return found
 
     # --- What each account uploaded in the last hour, on the server (D-109, kept here since D-111) -------------------
 
