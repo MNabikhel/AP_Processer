@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from typing import Any
+from typing import Any, BinaryIO
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
@@ -17,6 +17,7 @@ from ap_coder.erp import accruals
 from ap_coder.web.core import address_day, get_store, money, page_router, reference_or_none, render
 from ap_coder.web.files import download
 from ap_coder.web.invoice_view import NEEDS_CC, NEEDS_GL
+from ap_coder.web.pages import downloads
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -130,7 +131,23 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
 
 
 @router.get("/month-end/accruals.csv")
-def accruals_csv(request: Request, end: str = "") -> Response:
-    period_end = address_day(end, accruals.default_period_end())
-    items = accruals.build(get_store(request), period_end)  # (never settled: booked from)
-    return download(accruals.to_csv(items, period_end), f"accruals_{period_end}.csv", "text/csv")
+async def accruals_csv(request: Request) -> Response:
+    """The accruals schedule as a CSV: on the company server made by its background process (``downloads``,
+    D-169)."""
+    return await downloads.answer(request, "/month-end/accruals.csv", _accruals_now)
+
+
+def _accruals_now(request: Request) -> Response:
+    params, name = accruals_params(request)
+    return download(downloads.written(write_accruals, get_store(request), params), name, "text/csv")
+
+
+def accruals_params(request: Request) -> tuple[dict[str, Any], str]:
+    period_end = address_day(request.query_params.get("end", ""), accruals.default_period_end())
+    return {"end": period_end.isoformat()}, f"accruals_{period_end}.csv"
+
+
+def write_accruals(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    step(0, 0, "Working out the accruals…")
+    period_end = dt.date.fromisoformat(params["end"])
+    out.write(accruals.to_csv(accruals.build(store, period_end), period_end))  # (never settled: booked from)

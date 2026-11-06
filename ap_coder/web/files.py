@@ -61,11 +61,15 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 def download(data: bytes, name: str, mime: str) -> Response:
     """``data`` as a file download called ``name`` (any characters: the plain-ASCII name is a fallback)."""
-    plain = "".join(c if c.isascii() and c.isprintable() and c not in '"\\' else "_" for c in name) or "download"
-    disposition = f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
     return Response(
-        content=data, media_type=mime, headers={"Content-Disposition": disposition, "Cache-Control": "no-store"}
+        content=data, media_type=mime, headers={"Content-Disposition": attachment(name), "Cache-Control": "no-store"}
     )
+
+
+def attachment(name: str) -> str:
+    """The Content-Disposition of a download called ``name`` (any characters: the plain-ASCII name is a fallback)."""
+    plain = "".join(c if c.isascii() and c.isprintable() and c not in '"\\' else "_" for c in name) or "download"
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
 # --- Uploads waiting for their columns to be picked -------------------------------------------------------------

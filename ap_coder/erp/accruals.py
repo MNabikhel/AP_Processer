@@ -28,13 +28,14 @@ import io
 import json
 import threading
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from ..coding.po import billed_on, po_label, positive_lines
 from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
 from ..core.safe import csv_row
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
+from ..core.store.reports import asked_key
 from ..core.store.summary import broken, whole
 from . import recurring
 from .exports import distribution
@@ -73,10 +74,26 @@ class Accrual:
 # Each received PO's accruals as last worked out in this process, by database and period end: {PO: (a digest of what
 # they were worked out from, the accruals)}. After a change only the POs whose lines, billing invoices or those
 # invoices' vendors' invoices changed (``changes/vendor/<key>``, D-159) are worked out again, not every PO (69,000
-# codings decoded at 100,000 invoices: 6.5 s); nothing worked out in a write under way is kept (D-166).
+# codings decoded at 100,000 invoices: 6.5 s); nothing worked out in a write under way is kept (D-166). The same
+# are kept for every process of the company server (``PARTS_ANSWER``, D-169): a process that has none of a PO kept
+# takes it from there while its digest is the same, instead of decoding its billing invoices again (3.4 s at 100,000
+# invoices the first time in each web worker).
 _PARTS: dict[tuple[str, str], dict[str, tuple[bytes | None, list[Accrual]]]] = {}
 _PARTS_LOCK = threading.Lock()
 PARTS_KEPT = 8  # the databases and period ends kept
+PARTS_ANSWER = "received_parts"
+# The accruals as they are kept for every process (``Store.shared_answer``, ``keep_answer``): each its fields in
+# ``Accrual``'s order. Another format when what is kept changes, so what an older AP Coder kept is worked out again.
+ACCRUALS_FORMAT = "accruals-1"
+_FIELDS = tuple(f.name for f in fields(Accrual))
+
+
+def _data(accruals: list[Accrual]) -> list[list[object]]:
+    return [[getattr(a, name) for name in _FIELDS] for a in accruals]
+
+
+def _of(data: list[list[object]]) -> list[Accrual]:
+    return [Accrual(*row) for row in data]  # type: ignore[arg-type]
 
 
 def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
@@ -108,6 +125,12 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
             parts[po_key] = hit
         else:
             todo[po_key] = (made_of, on + without)
+    if todo and stamp is not None:  # worked out in another process meanwhile, for the same digest (D-169)
+        shared = _shared_parts(store, end)
+        for po_key in [k for k, (made_of, _) in todo.items() if made_of is not None and k in shared]:
+            if shared[po_key][0] == todo[po_key][0]:
+                parts[po_key] = shared[po_key]
+                del todo[po_key]
     dates = {r[0]: r[1] for _, billing in todo.values() for r in billing}
     lines: dict[int, list] = {}  # each invoice's lines billing a quantity, by id (none: dated after the period end)
     for invoice_id, coding in store.billing_codings(sorted(dates)):
@@ -116,12 +139,26 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     for po_key, (made_of, billing) in todo.items():
         parts[po_key] = (made_of, _accrued(orders[po_key], [li for r in billing for li in lines.get(r[0], ())]))
     if stamp is not None:
+        kept_now = {po_key: part for po_key, part in parts.items() if part[0] is not None}
         with _PARTS_LOCK:
             _PARTS.pop(key, None)  # (the latest asked last: the oldest goes first)
-            _PARTS[key] = {po_key: part for po_key, part in parts.items() if part[0] is not None}
+            _PARTS[key] = kept_now
             while len(_PARTS) > PARTS_KEPT:
                 _PARTS.pop(next(iter(_PARTS)))
+        if any(made_of is not None for made_of, _ in todo.values()):  # some worked out here: for the others too
+            store.keep_answer(PARTS_ANSWER, asked_key(end), ACCRUALS_FORMAT, list(stamp),
+                              {po_key: [made_of.hex(), _data(found)] for po_key, (made_of, found) in kept_now.items()
+                               if made_of is not None})  # fmt: skip
     return [a for po_key in orders for a in parts[po_key][1]]
+
+
+def _shared_parts(store: Store, end: str) -> dict[str, tuple[bytes, list[Accrual]]]:
+    """Each received PO's accruals at ``end`` as a process last kept them for the others: {PO: (the digest of what
+    they were worked out from, the accruals)}; none when none were (or by another version)."""
+    found = store.kept_answer(PARTS_ANSWER, asked_key(end), ACCRUALS_FORMAT)
+    if found is None or not isinstance(found[1], dict):
+        return {}
+    return {po_key: (bytes.fromhex(made_of), _of(data)) for po_key, (made_of, data) in found[1].items()}
 
 
 def _made_of(stamp: tuple | None, full: dict, on: list[tuple], without: list[tuple], counts: dict[str, object]
@@ -323,10 +360,12 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
     out again at most every that many seconds (``SETTLE_SECONDS``, D-166); a change of the POs, the tax setup, JD
     Edwards' G/L date or the batches made after the period end is another question, worked out at once. The CSV, which
     is booked from, is never settled. Shared: read them, don't change them."""
-    # Each PO's lines worked out again only once its billing changed (``_received_not_invoiced``).
+    # Each PO's lines worked out again only once its billing changed (``_received_not_invoiced``). Both answers are
+    # worked out once for every process of the company server (D-169).
     pos = store.get_setting("changes/purchase_orders")
-    received = store.summary_memo("received_not_invoiced", lambda: _received_not_invoiced(store, period_end),
-                                  asked=(period_end, pos), settle=settle)  # fmt: skip
+    received = store.shared_answer("received_not_invoiced", lambda: _received_not_invoiced(store, period_end),
+                                   version=ACCRUALS_FORMAT, encode=_data, decode=_of, asked=(period_end, pos),
+                                   settle=settle)  # fmt: skip
 
     def not_in_erp() -> tuple[list[Accrual], list[Accrual]]:
         no_date: list[Accrual] = []
@@ -335,8 +374,11 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
     # The invoices not in the ERP yet: 0.9 s at 100,000 invoices, at every visit before.
     cutoff = late_after(store, period_end.isoformat())
     late = [r["id"] for r in store.summary_fetch(_LATE_BATCHES, (cutoff,))]
-    found, no_date = store.summary_memo("not_in_erp", not_in_erp, asked=(period_end, cutoff, late,
-                                        store.tax_treatments()), settle=settle)  # fmt: skip
+    found, no_date = store.shared_answer("not_in_erp", not_in_erp, version=ACCRUALS_FORMAT,
+                                         encode=lambda v: [_data(v[0]), _data(v[1])],
+                                         decode=lambda v: (_of(v[0]), _of(v[1])),
+                                         asked=(period_end, cutoff, late, store.tax_treatments()),
+                                         settle=settle)  # fmt: skip
     if undated is not None:
         undated.extend(no_date)
     expected = _expected_recurring(store, period_end, received, left_out, settle)

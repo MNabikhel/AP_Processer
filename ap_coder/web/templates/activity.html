@@ -65,7 +65,7 @@
   </form>
   <div class="card-head an-count">
     <span class="muted">{% if matching is none %}Those that match your search, newest first, of {{ total | plural("event") }}{% else %}{{ matching | num }} of {{ total | plural("event") }}{% endif %}</span>
-    <a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download CSV</a>
+    <a class="btn sm" href="{{ csv_url }}" download data-download-job><span class="ms" aria-hidden="true">download</span>Download CSV</a>
   </div>
   <nav class="tabs" aria-label="View">
     <a href="{{ url(view='timeline') }}#log" class="{{ 'on' if view == 'timeline' else '' }}"{% if view == 'timeline' %} aria-current="page"{% endif %}>Timeline</a>

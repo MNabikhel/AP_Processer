@@ -17,7 +17,7 @@ duplicate payment audit.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, BinaryIO
 
 from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -54,6 +54,7 @@ from ap_coder.web.files import (
     receive_sheet,
     sheet_context,
 )
+from ap_coder.web.pages import downloads
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -585,10 +586,24 @@ def register_clear(request: Request) -> JSONResponse:
 
 
 @router.get("/exports/duplicates.csv")
-def duplicates_csv(request: Request) -> Response:
-    """Every pair the duplicate payment audit finds, as a CSV."""
+async def duplicates_csv(request: Request) -> Response:
+    """Every pair the duplicate payment audit finds, as a CSV: on the company server made by its background process
+    (``downloads``, D-169)."""
+    return await downloads.answer(request, "/exports/duplicates.csv", _duplicates_now)
+
+
+def _duplicates_now(request: Request) -> Response:
     pairs = dupaudit.find(get_store(request))
     return download(dupaudit.to_csv(pairs), f"duplicate_audit_{dt.date.today()}.csv", "text/csv")
+
+
+def duplicates_params(request: Request) -> tuple[dict[str, Any], str]:
+    return {}, f"duplicate_audit_{dt.date.today()}.csv"
+
+
+def write_duplicates(store: Store, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    step(0, 0, "Looking for bills paid twice…")
+    out.write(dupaudit.to_csv(dupaudit.find(store)))
 
 
 # --- JD Edwards through the API (D-104) -----------------------------------------------------------------------------

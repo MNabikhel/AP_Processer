@@ -365,12 +365,15 @@ def run(store: Any, query: Query, *, page_size: int = PAGE_SIZE, everything: boo
 EXPORT_CHUNK = 1_000  # the rows an export reads at a time
 
 
-def export_rows(store: Any, query: Query) -> Iterator[dict[str, Any]]:
+def export_rows(store: Any, query: Query, step: Any = None) -> Iterator[dict[str, Any]]:
     """``run(store, query, everything=True)``'s rows, in its order, read a part at a time (an export writes each as
-    it comes, never holding them all)."""
+    it comes, never holding them all); ``step(done, total)`` before each part (how far an export made in the
+    background got, D-169)."""
     sql_where, params, _ = where(query)
     ids = store.directory_ids(ROWS_SQL, sql_where, params, order_by(query), EXPORT_LIMIT)
     for start in range(0, len(ids), EXPORT_CHUNK):
+        if step is not None:
+            step(start, len(ids))
         yield from store.directory_rows_of(ROWS_SQL, ROW_FIELDS, ids[start : start + EXPORT_CHUNK])
 
 

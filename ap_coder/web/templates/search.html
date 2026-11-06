@@ -70,8 +70,8 @@
       <div class="pop-body stack">
         <p class="muted small">Every row the filters keep ({{ result.total }}{% if result.total > export_limit %}, the first {{ export_limit }}{% endif %}), with the columns shown, in their order.</p>
         <div class="row">
-          <a class="btn" href="/search/export.xlsx?{{ here }}" download><span class="ms" aria-hidden="true">table_view</span>Excel</a>
-          <a class="btn" href="/search/export.csv?{{ here }}" download><span class="ms" aria-hidden="true">csv</span>CSV</a>
+          <a class="btn" href="/search/export.xlsx?{{ here }}" download data-download-job><span class="ms" aria-hidden="true">table_view</span>Excel</a>
+          <a class="btn" href="/search/export.csv?{{ here }}" download data-download-job><span class="ms" aria-hidden="true">csv</span>CSV</a>
         </div>
       </div>
     </details>

@@ -339,7 +339,7 @@
     </table>
   </div>
   {% if pair_count > pairs | length %}<p class="muted small">The first {{ pairs | length }} of {{ pair_count }}: download the CSV for all.</p>{% endif %}
-  <a class="btn" href="/exports/duplicates.csv" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  <a class="btn" href="/exports/duplicates.csv" download data-download-job><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
   <p class="muted small">Check each pair against the documents: a real duplicate that was paid is recovered from the vendor
     as a credit or refund.</p>
   {% endif %}

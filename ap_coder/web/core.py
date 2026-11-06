@@ -252,14 +252,15 @@ def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
 # JD Edwards): there they run on threads of their own, HEAVY_AT_ONCE at a time in each worker, so a few people's
 # reports never hold every thread while the others' pages wait. One that waits HEAVY_WAIT seconds for its turn is
 # told AP Coder is busy. On a laptop they run as any page does.
+# The long downloads made by the server's background process are not among them: their web worker only waits
+# (``pages/downloads.py``, D-169).
 HEAVY_ROUTES = frozenset({
     ("GET", "/activity"), ("GET", "/activity/controls-report"),
     ("GET", "/spend"), ("GET", "/spend/data.xlsx"),
-    ("GET", "/month-end"), ("GET", "/month-end/accruals.csv"),
+    ("GET", "/month-end"),
     ("GET", "/sales-tax"), ("GET", "/sales-tax/claims.csv"), ("GET", "/sales-tax/self-assessment.csv"),
     ("GET", "/insights"),
-    ("GET", "/search/export.csv"), ("GET", "/search/export.xlsx"),
-    ("GET", "/exports"), ("GET", "/exports/duplicates.csv"), ("GET", "/exports/jde/dry-run.txt"),
+    ("GET", "/exports"), ("GET", "/exports/jde/dry-run.txt"),
     ("GET", "/exports/batches/{batch:int}/download"), ("POST", "/exports/batches/{batch:int}/download"),
     ("GET", "/exports/batches/{batch:int}/approved-pdfs.zip"),
     ("GET", "/settings/jde/worksheet.xlsx"), ("GET", "/learning/training.zip"),

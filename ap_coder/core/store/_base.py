@@ -34,10 +34,11 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 25  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
-# index (B-1714)
+# index (B-1714), 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of
+# the company server, and the downloads its background process makes, reports.py, D-169)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -292,6 +293,18 @@ CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
 CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
     created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
 CREATE TABLE IF NOT EXISTS seen_files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
+    stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
+CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, kind TEXT NOT NULL,
+    params TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+    file TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 0, runner TEXT NOT NULL DEFAULT '',
+    tries INTEGER NOT NULL DEFAULT 0, db TEXT NOT NULL, version TEXT NOT NULL, created_at REAL NOT NULL,
+    renewed_at REAL NOT NULL DEFAULT 0, finished_at REAL NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS report_jobs_one ON report_jobs (owner, kind, params, db) WHERE state IN
+    ('waiting', 'running');
+CREATE INDEX IF NOT EXISTS report_jobs_state ON report_jobs (state, id);
+CREATE INDEX IF NOT EXISTS report_jobs_owner ON report_jobs (owner, state);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
