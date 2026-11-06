@@ -24,8 +24,9 @@ The flow, per export batch made in the JD Edwards format (Exports):
    * *unknown* / *sending* never go back to *queued* or *failed* unless a lookup by the key says JDE holds nothing
      (``maybe_sent`` is then cleared): JDE down, no client, a lookup that fails leave the row as it is (its next try
      only). A *sending* row is someone's live post; after ``SENDING_MINUTES`` it is looked up, never sent blind. A
-     "not there" for a send whose answer was lost is believed only once the send is ``resend_minutes`` old
-     (``_in_flight``, D-182): JDE may still be making it.
+     "not there" for a send whose answer was lost is believed only ``resend_minutes`` after the answer was lost, and
+     never sooner than a voucher's wait and a margin (``_in_flight``, ``JdeSettings.resend_seconds``, D-182): JDE
+     may still be making it.
    * **A run** (``_run``, D-182): the lookups first, then the sends, one after another, going on past a late answer
      (*unknown*), then the run's late ones looked up; it stops (the rest queued, saying why) when JDE can't be
      reached, after ``LATE_STOP`` late answers in a row, or after its time. Just before each voucher its supplier's
@@ -244,9 +245,9 @@ def _claim(store: Any, row: dict[str, Any], attempts: int) -> dict[str, Any] | N
     claimed, or None (someone else has it, the batch was undone or its file downloaded)."""
     with _conn(store) as conn:
         changed = conn.execute(
-            "UPDATE jde_postings SET status = ?, sending_at = ?, maybe_sent = 1, attempts = ?, next_try = NULL, "
-            "rev = rev + 1, updated_at = ? WHERE idem_key = ? AND rev = ? AND maybe_sent = 0 AND verify = 0 AND "
-            "status IN (SELECT value FROM json_each(?)) AND batch NOT IN "
+            "UPDATE jde_postings SET status = ?, sending_at = ?, lost_at = NULL, maybe_sent = 1, attempts = ?, "
+            "next_try = NULL, rev = rev + 1, updated_at = ? WHERE idem_key = ? AND rev = ? AND maybe_sent = 0 AND "
+            "verify = 0 AND status IN (SELECT value FROM json_each(?)) AND batch NOT IN "
             "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM events e "
             "WHERE e.action = ? AND json_extract(e.detail, '$.batch') = jde_postings.batch AND "
             "e.created_at > COALESCE(jde_postings.approved_at, ''))",
@@ -610,25 +611,32 @@ def _wait(store: Any, row: dict[str, Any], attempts: int, why: str = "") -> str:
     return row["status"]
 
 
-def _in_flight(row: dict[str, Any], wait_for: float) -> str:
-    """When a "not there" from JDE is believed for this row ("" now): a send whose answer never came (unknown, or left
-    sending) less than ``wait_for`` seconds ago may still be running in JDE (R04110ZA), its key not kept yet."""
-    if row["status"] not in (UNKNOWN, SENDING) or not row.get("sending_at") or wait_for <= 0:
+def _in_flight(row: dict[str, Any], wait_for: float, longest: float) -> str:
+    """When a "not there" from JDE is believed for this row ("" now): a send whose answer never came may still be
+    running in JDE (R04110ZA), its key not kept yet, until ``wait_for`` seconds after its answer was lost
+    (``lost_at``); when that is not known (left *sending* by a stop, or lost before AP Coder kept it), after the
+    longest the send could take (``longest`` seconds from ``sending_at``) and ``wait_for`` (D-182)."""
+    if row["status"] not in (UNKNOWN, SENDING) or wait_for <= 0:
         return ""
-    after = (dt.datetime.fromisoformat(str(row["sending_at"])) + dt.timedelta(seconds=wait_for)).isoformat(
-        timespec="seconds")  # fmt: skip
+    if row["status"] == UNKNOWN and row.get("lost_at"):
+        ended = dt.datetime.fromisoformat(str(row["lost_at"]))
+    elif row.get("sending_at"):
+        ended = dt.datetime.fromisoformat(str(row["sending_at"])) + dt.timedelta(seconds=longest)
+    else:
+        return ""
+    after = (ended + dt.timedelta(seconds=wait_for)).isoformat(timespec="seconds")
     return after if after > _now() else ""
 
 
-def _lookup(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str | None,
-            wait_for: float = 0.0) -> tuple[str | None, dict[str, Any] | None]:  # fmt: skip
+def _lookup(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str | None, wait_for: float = 0.0,
+            longest: float = 0.0) -> tuple[str | None, dict[str, Any] | None]:  # fmt: skip
     """Ask JDE for the row's key: (the status it now has, None) when JDE has a voucher under it, or says it has none
     while the row's send may still be running there (``_in_flight``: left as it is, asked again then); (None, the row
     cleared of maybe_sent) when JDE says it has none. AisError when JDE can't say."""
     found = _status(client, row["idem_key"])
     if found is not None:
         return _take(store, row, found, actor), None
-    if after := _in_flight(row, wait_for):  # never sent again, nor unlocked, before JDE could have finished it
+    if after := _in_flight(row, wait_for, longest):  # never sent again, nor unlocked, before JDE could have finished it
         _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], next_try=after)
         return row["status"], None
     if not _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], maybe_sent=0, verify=0):
@@ -643,7 +651,7 @@ def _look(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str
     sent; ("skipped", None, None) when it changed meanwhile; (its status, None, the error) when JDE can't say (only its
     next try is set)."""
     try:
-        status, cleared = _lookup(store, client, row, actor, run.resend)
+        status, cleared = _lookup(store, client, row, actor, run.resend, run.longest)
     except jde_ais.AisError as exc:
         return _wait(store, row, int(row.get("attempts") or 0) + 1), None, exc
     if status is not None:
@@ -684,7 +692,7 @@ def _failed_send(store: Any, client: jde_ais.AisClient, row: dict[str, Any], bef
             status, cleared = _lookup(store, client, row, actor)
         except jde_ais.AisError as lost:
             _put(store, key, inv, batch, status=UNKNOWN, error=f"{exc} (and JD Edwards could not be asked whether it "
-                 f"made it: {lost})", next_try=_later(row["attempts"]))  # fmt: skip
+                 f"made it: {lost})", next_try=_later(row["attempts"]), lost_at=_now())  # fmt: skip
             return UNKNOWN
         if status is not None:
             return status
@@ -698,7 +706,7 @@ def _failed_send(store: Any, client: jde_ais.AisClient, row: dict[str, Any], bef
              next_try=_later(row["attempts"]))  # fmt: skip
         return QUEUED
     # Sent and no answer (a timeout, the connection cut, 502 / 504, an answer that can't be read): JDE may have it.
-    _put(store, key, inv, batch, status=UNKNOWN, error=str(exc), next_try=_later(row["attempts"]))
+    _put(store, key, inv, batch, status=UNKNOWN, error=str(exc), next_try=_later(row["attempts"]), lost_at=_now())
     return UNKNOWN
 
 
@@ -717,7 +725,8 @@ def _answered(store: Any, client: jde_ais.AisClient, row: dict[str, Any], answer
         return FAILED
     said = f"JD Edwards answered {result.upper() or 'nothing'}" + (" without a voucher number" if result in (
         "created", "exists") else "")  # fmt: skip
-    _put(store, key, inv, batch, status=UNKNOWN, error=f"{said}: being checked", next_try=_later(row["attempts"]))
+    _put(store, key, inv, batch, status=UNKNOWN, error=f"{said}: being checked", next_try=_later(row["attempts"]),
+         lost_at=_now())  # fmt: skip
     if result in ("created", "exists"):
         current = _row(store, key)
         if current is not None:
@@ -792,7 +801,8 @@ class _Run:
         self.text = store.get_setting(jde.SETTING_KEY)
         self.settings = settings = jde.JdeSettings.from_json(self.text)
         self.refused: tuple[dt.date, int, dt.date, str] | None = None  # (through, invoice, its G/L date, JDE's words)
-        self.resend = settings.resend_minutes * 60
+        # a lost answer's "not there" believed only this long after it was lost (or after the send's longest), B-1880
+        self.resend, self.longest = settings.resend_seconds, settings.voucher_timeout
         self.minutes, self.began = settings.post_minutes, time.monotonic()
         self.total, self.progress = total, progress
         self.outcome: dict[str, str] = {}  # key -> its status now

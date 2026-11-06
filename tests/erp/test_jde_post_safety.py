@@ -16,7 +16,7 @@ import pytest
 from ap_coder.erp import jde, jde_ais, jde_post
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import ON, QC
-from tests.erp.test_jde_post import batch_of, connect
+from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
 from tests.fake_ais import PASSWORD, FakeAis
 
 
@@ -244,9 +244,12 @@ def test_502_or_504_on_a_voucher_is_never_sent_again_blind(tmp_path, ais, busy):
     assert statuses(store, batch)[1] == jde_post.UNKNOWN and jde_post.undo_problem(store, batch)
     ais.script("voucher_create")  # (nothing scripted any more)
     ais.scripts.clear()
+    jde_post.retry_queue(store)  # at once: JDE has none under the key, but may still be making it (B-1880)
+    assert statuses(store, batch)[1] == jde_post.UNKNOWN and len(finals(ais)) == 1
+    long_after_the_loss(store)
     jde_post.retry_queue(store)  # looked up first: JDE has none under the key, so it is sent, once
     assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 2
-    assert len(ais.orchestration_calls("voucher_status")) == 1
+    assert len(ais.orchestration_calls("voucher_status")) == 2
 
 
 # --- A6: compare-and-set --------------------------------------------------------------------------------------------

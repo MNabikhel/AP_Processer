@@ -14,7 +14,7 @@ import pytest
 from ap_coder.erp import jde, jde_ais, jde_post
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import AB, BC, ON, QC
-from tests.erp.test_jde_post import batch_of, connect
+from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
 from tests.fake_ais import PASSWORD, FakeAis
 
 
@@ -82,6 +82,31 @@ def test_a_lost_answer_is_never_sent_again_while_jde_may_still_be_making_it(tmp_
     assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1 and len(ais.vouchers()) == 2
 
 
+def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wait(tmp_path, monkeypatch):
+    """B-1880: the wait before believing JD Edwards' "not there" was counted from the send's start, and Settings let
+    it be shorter than a voucher's own wait: with a voucher's wait of 900 seconds and the resend wait of 10 minutes,
+    an answer lost after 15 minutes was "not there" at its first lookup and sent again while JD Edwards could still
+    be making the first. It is counted from when the answer was lost, and is never less than a voucher's wait and a
+    margin (here the voucher's wait 0.5 s, the margin 1 s, the resend wait set to 0.1 s)."""
+    monkeypatch.setattr(jde, "RESEND_MARGIN", 1.0)
+    with FakeAis(slow_seconds=1.8) as ais:  # JD Edwards makes it 1.8 s after the request arrived
+        store, batch = batch_of(tmp_path, ais)
+        connect(store, ais, timeout=0.5)
+        settings(store, resend_minutes=0.1 / 60)
+        assert jde.load(store).resend_seconds == 1.5
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", "late-made")
+        jde_post.post(store, batch)
+        lost = time.monotonic()
+        jde_post.retry_queue(store)  # "Try again now" right after: JD Edwards hasn't it yet, and may still make it
+        row = jde_post.postings(store, batch)[0]
+        assert len(finals(ais)) == 1 and row["status"] == jde_post.UNKNOWN and row["maybe_sent"] == 1
+        time.sleep(max(0.0, 1.7 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
+        jde_post.retry_queue(store)
+        assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
+    assert jde.JdeSettings(voucher_timeout=900, resend_minutes=10).resend_seconds == 900 + jde.RESEND_MARGIN
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""
@@ -108,6 +133,7 @@ def test_late_answers_one_after_another_stop_the_run_and_the_rest_wait_saying_wh
     assert len(finals(ais)) == jde_post.LATE_STOP == 3 and "3 vouchers in a row late" in result["error"]
     assert "in a row late" in jde_post.postings(store, batch)[3]["error"]  # said on the batch's panel
     ais.plan = None
+    long_after_the_loss(store)
     jde_post.retry_queue(store)  # JD Edwards answers again: the three looked up (none made), then each sent once
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 7
 

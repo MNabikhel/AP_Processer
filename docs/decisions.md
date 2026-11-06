@@ -2472,9 +2472,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       or `LATE_STOP` (3) late answers in a row stop it, the rest queued saying why; so does the run's time
       (`post_minutes`, 60). A voucher's request waits `voucher_timeout` (120 s), the connection's 30 s stays for the
       reads and lookups. The exports page's job shows done of total, posted, being checked, refused, waiting, held.
-    - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only once the send is
-      `resend_minutes` (10) old (`_in_flight`): before, the row stays unknown and locked (B-1858). A refusal that JDE
-      answered (its error shape) is looked up and believed at once, as before.
+    - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only `resend_minutes` (10)
+      after the answer was lost (`lost_at`; a send whose end is not known, from its start and the longest it could
+      take), never sooner than a voucher's wait and `RESEND_MARGIN` (a minute): Settings refuses less, and a run takes
+      the larger (`JdeSettings.resend_seconds`, B-1880). Before, the row stays unknown and locked (B-1858). A refusal
+      that JDE answered (its error shape) is looked up and believed at once, as before.
     - **Holds** (`coding.vendors.voucher_hold`): AP Coder's own and JD Edwards' as the last supplier sync left it,
       indexed until the vendor list changes; held, the voucher is queued saying why, the dry run refuses it.
     - **The open period** (`open_from`, `open_to`, `closed_period` in Settings → JD Edwards E1; none read from JDE:

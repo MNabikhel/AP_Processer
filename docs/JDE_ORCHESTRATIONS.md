@@ -237,8 +237,8 @@ twice.
 ### Never twice
 
 AP Coder sends a voucher again only after a lost answer, and then only after `APC_Voucher_Status` said JDE does not
-have its key, asked at least 10 minutes after the send (Settings → JD Edwards E1): a request whose answer AIS lost may
-still be running R04110ZA, its key not kept yet (D-182). CONFIRM how long an orchestration can go on after AIS gave
+have its key, asked at least 10 minutes after the answer was lost, and never sooner than a voucher's wait and a minute
+(Settings → JD Edwards E1): a request whose answer AIS lost may still be running R04110ZA, its key not kept yet (D-182). CONFIRM how long an orchestration can go on after AIS gave
 up on it (AIS's own orchestration timeout). JDE keeps one voucher per key all the same: the orchestration looks for the key first (route (a): the
 F0411Z1 rows of that VLEDUS / VLEDBT / VLEDTN, which also stops a batch file loaded after the API posted it; route
 (b): the key stored with the voucher) and answers EXISTS. JDE's own duplicate-invoice edit (supplier + invoice
@@ -314,7 +314,7 @@ dry runs agree with what AP expects.
 14. That batch approval (*Manager Approval of Input*) is on for AP Coder's batch type, so each batch it creates
     stays pending until AP approves it.
 15. How long R04110ZA takes for one voucher (AP Coder waits 120 seconds), and how long an orchestration can still run
-    after AIS gave up on it (AP Coder believes a "not there" only 10 minutes after the send).
+    after AIS gave up on it (AP Coder believes a "not there" only 10 minutes after the answer was lost).
 16. The VLEDBT / VLEDTN keys with their codes (`APC12-4F2A`, `APC345-1A2B3C4D`): taken by your loads and R04110ZA's
     data selection; route (a)'s R04110ZA run selecting VLEDUS + VLEDBT + VLEDTN for one voucher.
 17. Whether VLPST `A` overrides a supplier's hold (F0401 A6HDPY) in R04110ZA, or should be sent blank.

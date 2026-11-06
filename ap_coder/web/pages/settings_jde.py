@@ -205,6 +205,11 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
             if not low <= value <= high:
                 return refuse(f"Give {label} as a number from {low} to {high}.")
             setattr(new, name, value)
+    least = new.voucher_timeout + jde.RESEND_MARGIN  # JD Edwards may still be making a voucher (D-182)
+    if ("resend_minutes" in form or "voucher_timeout" in form) and new.resend_minutes * 60 < least:
+        return refuse(f"Give the wait before sending a lost one again as at least {least / 60:g} minutes: a "
+                      f"voucher's wait ({new.voucher_timeout:g} seconds) and {jde.RESEND_MARGIN:g} seconds more, as "
+                      "JD Edwards may still be making it then.")  # fmt: skip
     for name in TOGGLES:
         setattr(new, name, str(form.get(name) or "") in ("1", "on", "true"))
     new.default_bu = text("default_bu")
