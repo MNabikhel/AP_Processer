@@ -775,13 +775,11 @@ class Failover:
         while not done.wait(WATCH_SECONDS):
             if self.state()["on"] != PRIMARY:  # (moved before it began, too: it was sent on the way out)
                 with guard:
-                    box["dropped"] = True
-                    value = box.get("value")
-                if value is not None:  # (answered just now: closed, the backup is asked instead)
-                    with contextlib.suppress(Exception):
-                        value.close()
-                raise ServerLeft(f"{self.title} at {self.primary} stopped answering: its "
-                                 f"backup at {self.backup} is asked instead")  # fmt: skip
+                    box["dropped"] = "value" not in box and "error" not in box  # (answered just now: taken)
+                if box["dropped"]:
+                    raise ServerLeft(f"{self.title} at {self.primary} stopped answering: its "
+                                     f"backup at {self.backup} is asked instead")  # fmt: skip
+                break
         if "error" in box:
             raise box["error"]
         return box["value"]
