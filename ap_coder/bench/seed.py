@@ -660,6 +660,16 @@ def logging_off() -> None:
     logging.disable(logging.INFO)
 
 
+def _logging_level(level: int | None = None) -> int:
+    """The level ``logging.disable`` holds now; with ``level``, put back to it (a seed made in this process leaves the
+    caller's logging as it was, B-1759)."""
+    import logging
+
+    if level is not None:
+        logging.disable(level)
+    return logging.root.manager.disable
+
+
 def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
@@ -935,6 +945,7 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
     totals: dict[int, float] = {}
     at_id, at_total = columns.index("id"), columns.index("grand_total")
     conn = _bulk(store.path)
+    quiet = _logging_level()  # the clones' quiet (``_init``), meant for their own processes: undone here (B-1759)
     try:
         if workers > 1:
             pool = get_context("spawn").Pool(workers, initializer=_init, initargs=(context,))
@@ -970,6 +981,7 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
         conn.execute("COMMIT")
     finally:
         conn.close()
+        _logging_level(quiet)
     return counts, totals
 
 

@@ -31,6 +31,31 @@ def seeded(tmp_path_factory):
     return data
 
 
+def test_a_seed_made_in_this_process_leaves_its_logging_as_it_was(tmp_path):
+    """B-1759: a seed made in the caller's own process (``--workers 1``: the tests, the load bench's small folder)
+    turned its INFO logging off for good (the clones' quiet, meant for their worker processes): every later test of
+    the run that reads a log (the access log, the background process's, the launcher window's) read nothing."""
+    import logging
+
+    before = logging.root.manager.disable
+    with isolated(tmp_path):
+        assert main(["seed", "--out", str(tmp_path / "data"), "--invoices", "200", "--vendors", "40", "--master",
+                     "300", "--gl", "200", "--cost-centers", "30", "--pos", "20", "--users", "8", "--queue", "60",
+                     "--register", "500", "--workers", "1"]) == 0  # fmt: skip
+    assert logging.root.manager.disable == before
+    said: list[str] = []
+    log = logging.getLogger("ap_coder.test.seed_logging")
+    handler = logging.Handler()
+    handler.emit = lambda record: said.append(record.getMessage())  # type: ignore[method-assign]
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    try:
+        log.info("an INFO line still reaches its log")
+    finally:
+        log.removeHandler(handler)
+    assert said == ["an INFO line still reaches its log"]
+
+
 def test_the_seed_makes_the_folder_it_says(seeded):
     report = json.loads((seeded / "seed.json").read_text(encoding="utf-8"))
     counts = report["counts"]
