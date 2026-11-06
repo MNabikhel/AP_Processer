@@ -2855,8 +2855,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
     counted), and so does a laptop's dashboard closing (`jobs.stop_here`, waited for up to 5 s as the server's, B-1930);
     at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
-    background process a data folder, D-111). One whose process stopped noting its progress for 30 s is taken again by
-    another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
+    background process a data folder, D-111). Its progress is noted at each invoice's start and at its approval
+    (`renew_bulk_job`, `bulk_step`); one whose process stopped noting it for 30 s is taken again by another
+    (`claim_bulk_job`), which goes on from the next invoice. So an invoice's learning taking long never lets another
+    take it (B-1931); one invoice whose own check and approval take over 30 s still does (as a process that hung).
+    Three stops end it, saying so ("AP Coder stopped
     3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
     way; one of the database before a restore is no one's. What was done is kept and shown either way.
     - None is taken while a backup is restored (`Store.restoring`, as the page reader, the Azure check, the imports

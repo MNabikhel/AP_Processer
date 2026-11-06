@@ -302,6 +302,33 @@ def test_quitting_the_laptop_while_it_approves_puts_the_job_back_without_using_a
 SAM = {"name": "Sam", "login": "sam", "server": False, "as": {}}
 
 
+def test_a_slow_learning_never_lets_another_runner_take_the_job(store, monkeypatch):
+    """``renew_bulk_job`` was never called: the job's progress was noted only at each invoice's approval, so one whose
+    learning (or check) took over 30 s (its pages read again, a lock waited for) let the background process's other
+    runner take the job meanwhile, and three takeovers ended it "AP Coder stopped 3 times". Each invoice's start
+    notes it too."""
+    ids = _clean(store, 3)
+    job, _ = store.start_bulk_job("", SAM, _asked(store, ids), bulk.JOB_FORMAT)
+    real_learn, real_check, taken = bulk.learn_from_approval, bulk._still_clean, []
+
+    def slow_learning(*args, **kwargs):
+        learned = real_learn(*args, **kwargs)
+        with sqlite3.connect(store.path) as conn:  # (it took a minute)
+            conn.execute("UPDATE bulk_jobs SET renewed_at = ? WHERE id = ?", (time.time() - 2 * jobs.BULK_STALE, job))
+        return learned
+
+    def checked(*args, **kwargs):
+        taken.append(store.claim_bulk_job("another runner", jobs.BULK_STALE, bulk.JOB_FORMAT))
+        return real_check(*args, **kwargs)
+
+    monkeypatch.setattr(bulk, "learn_from_approval", slow_learning)
+    monkeypatch.setattr(bulk, "_still_clean", checked)
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    ended = store.bulk_job(job)
+    assert taken == [None] * len(ids) and ended["state"] == bulk_jobs.DONE and ended["approved"] == ids
+    assert ended["tries"] == 1
+
+
 def _ends_failing(monkeypatch, times: int) -> list[int]:
     """The first ``times`` ends of a bulk approval meet a database error (locked past the 30 s wait, a restore's
     moment without the table, a full disk): the jobs whose end was tried."""

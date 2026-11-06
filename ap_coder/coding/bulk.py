@@ -544,7 +544,9 @@ def approve_in_job(
     for invoice_id, identity, listed in job["ids"]:
         if invoice_id in taken:
             continue
-        if stopping():
+        # Its progress noted at each invoice's start too, not only at each approval: the last one's learning taking
+        # long never lets another runner take the job meanwhile (one that did goes on with it).
+        if stopping() or not store.renew_bulk_job(job["id"], runner):
             raise Stopping
         why = refused()
         if why:
