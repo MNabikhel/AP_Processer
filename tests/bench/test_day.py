@@ -120,7 +120,7 @@ def test_each_drill_makes_the_model_machine_misbehave_then_puts_it_back():
         reader.check(4.0, 9)
         assert fake.settings()["models"] == [day.CHAT_MODEL, day.SWAP_READER] and reader.reader == day.SWAP_READER
     never = day.Drill(_drill("kill", at=99), None).report([], 0.0, [], {}, set(), {})
-    assert never["started"] is None and never["failover"].startswith("not supported")
+    assert never["started"] is None and never["failover"].startswith("not run: no backup")
 
 
 @pytest.mark.slow
@@ -165,3 +165,30 @@ def test_the_reader_of_the_server_s_database_lets_go_of_it(tmp_path):
     reader.close()  # twice: nothing to do
     assert reader.counts()["invoices"] == 0  # reads again when asked
     reader.close()
+
+
+def test_with_a_backup_the_drill_says_when_the_calls_moved_there_and_back(tmp_path):
+    """D-180: the backup's first answer after the drill began (from its start, and from the first request the primary
+    didn't answer), the primary's first after it ended, and what each answered meanwhile; the server gets the
+    backup's address."""
+    drill = day.Drill(_drill("kill", length=60.0), None)
+    drill.started, drill.ended = 10.0, 70.0
+
+    def h(t, kind, outcome, server, seconds=1.0):
+        return {"t": t, "kind": kind, "model": day.READER, "image": f"{t}", "wait": 0.0, "seconds": seconds,
+                "outcome": outcome, "server": server}  # fmt: skip
+
+    history = [h(5.0, "page", "served", "primary"), h(10.5, "page", "dropped", "primary", 0.0),
+               h(12.0, "page", "served", "backup"), h(11.0, "suggest", "served", "backup"),
+               h(40.0, "review", "served", "backup"), h(85.0, "page", "served", "primary")]  # fmt: skip
+    out = drill.report(history, 0.0, [], {}, set(), {}, stored_twice=0, backup=True)
+    f = out["failover"]
+    assert f["seconds"] == 2.0 and f["by_kind"] == {"page": 3.0, "suggest": 2.0, "review": 31.0}
+    assert f["after_first_failure"] == 1.5 and f["back_seconds"] == 16.0
+    assert f["answered_from_drill_to_back"] == {"primary": {"page": 1}, "backup": {"page": 1, "suggest": 1,
+                                                                                   "review": 1}}  # fmt: skip
+    assert out["stored_twice"] == 0 and out["reads_lost"] == 0
+    a = argparse.Namespace(no_scale_timeouts=True, time_scale=1.0, no_shared_failover=True)
+    with FakeModel() as primary, FakeModel() as backup:
+        env = day._server_env(primary, 2, a, backup)
+        assert env["AP_LLM_BACKUP_URL"] == backup.base_url and env["AP_FAILOVER_SHARED"] == "0"

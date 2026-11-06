@@ -185,6 +185,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](PILOT.md)
 | --- | --- | --- |
 | `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1`. On this computer or the office network only: a server on the internet is never asked (developers: `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
+| `AP_LLM_BACKUP_URL` | empty | a second model server with the same models (D-180): the calls go there while the first doesn't answer, and back once it answers well again. The page reader's too, unless `AP_PAGE_READER_BASE_URL` gives it a server of its own (then `AP_PAGE_READER_BACKUP_URL`). On the office network only, as `AP_LLM_BASE_URL`; *Settings → Reading → For IT*, or server.json's `llm_backup_url` / `page_reader_backup_url` |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 

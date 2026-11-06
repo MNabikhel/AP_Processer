@@ -11,8 +11,11 @@ new computer. The Azure Document Intelligence check is a card of its own (``part
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import functools
+import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +93,10 @@ DI_MODELS = {
     "prebuilt-invoice": "prebuilt-invoice · also invoice fields, used as cross-checks",
 }
 DOCTOR_JOB = "settings-doctor"
+SERVERS_KEY = "model_servers_checked"  # each model server's last check (D-180), as JSON: {"when", "checks": [...]}
+BACKUPS = (("chat_backup", "AP_LLM_BACKUP_URL", "The chat model's backup server"),
+           ("pages_backup", "AP_PAGE_READER_BACKUP_URL", "The page reader's backup server"))  # fmt: skip
+KIND_LABELS = {"chat": "Chat model", "pages": "Page reader (OvisOCR2)"}
 
 
 # --- What the tab shows ---------------------------------------------------------------------------------------------
@@ -327,6 +334,59 @@ def page_reader_context(settings: Settings, store: Store, status: Any, server: b
     }
 
 
+def _set_by_service(var: str, env: dict[str, str]) -> bool:
+    """Whether ``var`` was given by the server's own settings (server.json), which win over the .env (D-180)."""
+    given = (os.environ.get(var) or "").strip()
+    return bool(given) and given != (env.get(var) or "").strip()
+
+
+def servers_context(settings: Settings, store: Store) -> dict[str, Any]:
+    """The model servers and their backups (D-180): the backup addresses' form, and with a backup each server's
+    state (its models as last listed, how it answered the last Check again) and where its breaker sends the calls."""
+    from ap_coder.ai import local_llm
+    from ap_coder.web.pages.settings import env_path
+
+    env = read_env(env_path())
+    fields = []
+    for name, var, label in BACKUPS:
+        locked = _set_by_service(var, env)
+        value = (os.environ.get(var) if locked else env.get(var)) or ""
+        fields.append({"name": name, "label": label, "value": value.strip(), "locked": locked})
+    breakers = {"chat": local_llm.chat_failover(settings.llm), "pages": page_reader.reader_failover(settings)}
+    rows: list[dict[str, Any]] = []
+    if any(breakers.values()):
+        checked = store.get_json(SERVERS_KEY, {}) or {}
+        asked = {(c.get("kind"), c.get("base_url")): c for c in checked.get("checks") or [] if isinstance(c, dict)}
+        try:
+            found = page_reader.server_checks(settings, ask=False)
+        except Exception:  # noqa: BLE001 - shown as not checked
+            found = []
+        for check in found:
+            if breakers.get(check.kind) is None:
+                continue
+            last = asked.get((check.kind, check.base_url)) or {}
+            rows.append({"server": f"{KIND_LABELS.get(check.kind, check.kind)}, {check.role}",
+                         "address": check.base_url, "in_use": check.in_use, "listed": check.detail,
+                         "reachable": check.answered, "asked": last.get("detail") or "",
+                         "answered": last.get("answered")})  # fmt: skip
+    shared = breakers["chat"] is breakers["pages"]  # (one machine with both models and one backup: one breaker)
+    notes = [page_reader.failover_text(b) for b in ([breakers["chat"]] if shared else breakers.values()) if b]
+    return {"fields": fields, "rows": rows, "notes": notes, "checked": str((store.get_json(SERVERS_KEY, {}) or {})
+            .get("when") or "") if rows else "", "untrusted": page_worker.chat_untrusted(settings, store)}  # fmt: skip
+
+
+def check_servers(settings: Settings, store: Store) -> None:
+    """Each model server and its backup asked a one-word question (``page_reader.server_checks``), kept for the page
+    to show (``SERVERS_KEY``). Nothing without a backup."""
+    from ap_coder.ai import local_llm
+
+    if local_llm.chat_failover(settings.llm) is None and page_reader.reader_failover(settings) is None:
+        return
+    checks = [dataclasses.asdict(c) for c in page_reader.server_checks(settings, use_cache=False)]
+    when = dt.datetime.now().isoformat(timespec="seconds")[11:19]
+    store.set_setting(SERVERS_KEY, json.dumps({"when": when, "checks": checks}))
+
+
 def secret_hint(value: str) -> str:
     return f"set (ending …{value[-4:]})" if len(value) > 8 else ("set" if value else "not set: signs in with az login")
 
@@ -378,6 +438,10 @@ def reading_context(request: Request) -> dict[str, Any]:
     }
     if status is not None:
         context["reader"] = page_reader_context(settings, store, status, server_mode(request))
+    try:
+        context["servers"] = servers_context(settings, store)
+    except Exception:  # noqa: BLE001 - the backup servers' card is left out, never the page
+        context["servers"] = None
     from ap_coder.ai import verifier
 
     context["ai_reviewer"] = verifier.load_settings(store)
@@ -425,11 +489,46 @@ def check_again(request: Request, back: str = Form(URL)) -> JSONResponse:
     forget_status()
     forget_setup_report()  # Report a problem's setup report says what is true now
     status = reading_status_or_none(get_settings(request), get_store(request), use_cache=False)
+    try:
+        check_servers(get_settings(request), get_store(request))  # each model server and its backup (D-180)
+    except Exception:  # noqa: BLE001 - the servers' card says "not checked" then
+        pass
     if status is not None and not status.lm_studio:
         said, tone = "Checked again just now: LM Studio still isn't running.", "warn"
     else:
         said, tone = "Checked again just now.", "info"
     return done(request, local_url(back, URL), said, tone=tone)
+
+
+@router.post("/settings/reading/servers")
+def save_servers(request: Request, chat_backup: str = Form(""), pages_backup: str = Form("")) -> JSONResponse:
+    """The backup model servers (D-180), into the .env: on the company network only (the offline rule's checks, as
+    the main address has them), never the main server itself. One the server's own settings (server.json) give is
+    left as it is."""
+    from ap_coder.ai import local_llm
+    from ap_coder.core.config import backup_url
+    from ap_coder.web.pages.settings import env_path, save_env, saved_line
+
+    settings, env = get_settings(request), read_env(env_path())
+    mains = {"AP_LLM_BACKUP_URL": settings.llm.base_url, "AP_PAGE_READER_BACKUP_URL": page_reader.reader_servers(
+        settings)[0]}  # fmt: skip
+    given = {"chat_backup": chat_backup, "pages_backup": pages_backup}
+    updates = {}
+    for name, var, label in BACKUPS:
+        if _set_by_service(var, env):
+            continue
+        url = backup_url(given[name])
+        if url:
+            refused = local_llm.refused_address(url)
+            if refused:
+                return refuse(f"{label}: {refused}.")
+            if url.rstrip("/") == mains[var].rstrip("/"):
+                return refuse(f"{label}: {url} is the main server itself. A backup is another computer.")
+        updates[var] = url
+    changed = save_env(get_store(request), updates)
+    if changed:
+        page_reader.forget_status()
+    return done(request, URL + "#backup", saved_line(changed))
 
 
 @router.post("/settings/reading/self-test")

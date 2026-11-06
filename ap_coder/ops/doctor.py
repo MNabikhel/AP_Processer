@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from ..ai import local_llm
 from ..ai.extraction import ExtractionResult, build_credential
 from ..ai.inference import CodingError, InvoiceCoder, ModelProfile
 from ..ai.local_llm import check_server, resolve_provider
@@ -186,6 +187,8 @@ def run_checks(
     if llm_checks:
         add(*_local_check(settings, provider))
         add(*_page_reader_check(settings))
+        for check in _server_checks(settings, provider):
+            add(*check)
     add(
         "engine",
         PASS,
@@ -402,6 +405,35 @@ def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
     if state == "passed":
         return "page reader", PASS, f"{found}; self-test passed: it reads every page of every invoice"
     return "page reader", WARN, f"{found}; self-test {state}: {detail}"
+
+
+def _server_checks(settings: Settings, provider: str) -> list[tuple[str, str, str]]:
+    """With a backup model server (D-180): each server, primary and backup, asked a one-word question (which one the
+    calls go to, how it answered), and where each breaker sends the calls. None without a backup: as before."""
+    try:
+        from ..ai.page_reader import failover_text, reader_failover, server_checks
+
+        chat = local_llm.chat_failover(settings.llm) if provider == "local" else None
+        pages = reader_failover(settings)
+        if chat is None and pages is None:
+            return []
+        rows = []
+        for check in server_checks(settings):
+            if check.kind == local_llm.CHAT and chat is None or check.kind == local_llm.PAGES and pages is None:
+                continue
+            area = f"{'chat model' if check.kind == local_llm.CHAT else 'page reader'} server ({check.role})"
+            where = check.base_url if _on_this_network(urlparse(check.base_url).netloc) else "its address"
+            used = "; the calls go to it now" if check.in_use else ""
+            rows.append((area, PASS if check.answered else WARN, f"{where}: {check.detail}{used}"))
+        named = (("model server failover", chat),) if chat is pages else (("chat model failover", chat),
+                                                                           ("page reader failover", pages))  # fmt: skip
+        for name, breaker in named:  # (one machine with both models and one backup: one breaker)
+            if breaker is not None:
+                moved = breaker.state()["on"] == local_llm.BACKUP
+                rows.append((name, WARN if moved else PASS, failover_text(breaker)))
+        return rows
+    except Exception as exc:  # optional: a problem here never stops the doctor
+        return [("model servers", WARN, f"not checked ({type(exc).__name__})")]
 
 
 def _aoai_dry_run(settings: Settings, reference: ReferenceData) -> tuple[str, str, str]:

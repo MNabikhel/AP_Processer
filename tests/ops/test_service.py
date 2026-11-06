@@ -402,3 +402,16 @@ def test_on_windows_the_task_is_installed_and_removed(data):
         subprocess.run([*base, "remove", "--task-name", name], capture_output=True, text=True, timeout=120)
     gone = subprocess.run(["schtasks", "/query", "/tn", name], capture_output=True, text=True, timeout=60)
     assert gone.returncode != 0
+
+
+def test_a_backup_model_server_in_server_json_reaches_the_dashboard(data):
+    """D-180: server.json's ``llm_backup_url`` and ``page_reader_backup_url`` are given to the dashboard (whose
+    environment wins over the .env), as AP_LLM_BACKUP_URL and AP_PAGE_READER_BACKUP_URL."""
+    service.write_config(data, llm_backup_url=" http://macmini.local:1234/v1 ")
+    s = service.settings(data, env={})
+    assert s.llm_backup_url == "http://macmini.local:1234/v1" and s.page_reader_backup_url == ""
+    env = service.serve_env(s, data)
+    assert env["AP_LLM_BACKUP_URL"] == "http://macmini.local:1234/v1" and "AP_PAGE_READER_BACKUP_URL" not in env
+    given = service.settings(data, env={"AP_PAGE_READER_BACKUP_URL": "http://macmini.local:8081/v1"})
+    assert service.serve_env(given, data)["AP_PAGE_READER_BACKUP_URL"] == "http://macmini.local:8081/v1"
+    assert "AP_LLM_BACKUP_URL" not in service.serve_env(service.settings(data, env={}, llm_backup_url=""), data)

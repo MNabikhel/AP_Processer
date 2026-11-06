@@ -374,7 +374,13 @@ window, started at boot like AP Coder.
    (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
    needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
    while every address it has is private, AP Coder connects to the very addresses it checked (never to a second
-   lookup's), and no other name is looked up.
+   lookup's), and no other name is looked up. **A second model machine as the backup** (a Mac mini beside the Mac
+   Studio, the same models in its LM Studio): its address in `AP_LLM_BACKUP_URL` (and `AP_PAGE_READER_BACKUP_URL` for
+   a page reader on a server of its own), in *Settings* → *Reading* → *For IT*, or server.json's `llm_backup_url` and
+   `page_reader_backup_url`. After two calls in a row the main one doesn't answer, the calls go to the backup (the
+   calls under way are asked again there); the main one is asked every few seconds and taken back once it answered
+   three times, after a minute at least (D-180). The Reading tab and `python -m ap_coder doctor` say which one answers,
+   and how fast.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two

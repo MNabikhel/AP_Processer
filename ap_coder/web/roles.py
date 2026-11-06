@@ -166,6 +166,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",
+        "POST /settings/reading/servers",  # the backup model servers (D-180)
         "POST /settings/automation/limit", "POST /settings/jde", "POST /settings/jde/gl-map",
         "POST /settings/jde/gl-map/import", "POST /settings/jde/tax-map", "POST /settings/jde/terms",
         "POST /settings/jde/an8", "GET /settings/jde/worksheet.xlsx", "POST /settings/jde/worksheet",

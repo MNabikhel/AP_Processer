@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import functools
 import hashlib
 import io
 import json
@@ -122,11 +123,13 @@ def reader_name(model: str) -> str:
 class PageReaderError(RuntimeError):
     """The page couldn't be read: no model can read pages, the server failed, or the reading wasn't usable.
     ``temporary``: the model server's trouble (stopped, the model unloaded, no answer in time), not the page's: reading
-    it again later may well work."""
+    it again later may well work. ``failed``: the server didn't answer at all (refused or dropped, no word in time, a
+    5xx), which its breaker counts (D-180)."""
 
-    def __init__(self, message: str = "", *, temporary: bool = False) -> None:
+    def __init__(self, message: str = "", *, temporary: bool = False, failed: bool = False) -> None:
         super().__init__(message)
         self.temporary = temporary
+        self.failed = failed
 
 
 class CutOff(PageReaderError):
@@ -148,15 +151,41 @@ class _NothingWritten(PageReaderError):
 # --- Which model reads pages ----------------------------------------------------------------------------------------
 
 
+def reader_servers(settings: Settings) -> tuple[str, str]:
+    """(the page reader's server, its backup or ""): AP_PAGE_READER_BASE_URL and AP_PAGE_READER_BACKUP_URL, else the
+    chat model's (AP_LLM_BASE_URL and AP_LLM_BACKUP_URL: one machine with both models, another as their backup)."""
+    pr, llm = settings.page_reader, settings.llm
+    primary = pr.base_url or llm.base_url
+    backup = pr.backup_url or ("" if pr.base_url else llm.backup_url)
+    return primary, "" if backup.rstrip("/") == primary.rstrip("/") else backup
+
+
+def reader_failover(settings: Settings) -> local_llm.Failover | None:
+    """The page reader's server's breaker (D-180); None without a backup."""
+    primary, backup = reader_servers(settings)
+    return local_llm.failover(local_llm.PAGES, primary, backup, settings.llm.api_key)
+
+
 def reader_base_url(settings: Settings) -> str:
-    """The page reader's server: AP_PAGE_READER_BASE_URL, else the chat model's (AP_LLM_BASE_URL)."""
-    return settings.page_reader.base_url or settings.llm.base_url
+    """The page reader's server in use: AP_PAGE_READER_BASE_URL, else the chat model's (AP_LLM_BASE_URL); its backup
+    while its breaker has moved the calls there (D-180)."""
+    breaker = reader_failover(settings)
+    return breaker.serving() if breaker is not None else reader_servers(settings)[0]
 
 
-def _reader_llm(settings: Settings) -> LocalLLMSettings:
-    """``settings.llm`` pointed at the page reader's server; the chat model's own name only on its own server."""
+def on_server(settings: Settings, base_url: str) -> Settings:
+    """``settings`` with the page reader on ``base_url`` alone (no backup): to test or check that one server."""
+    page = replace(settings.page_reader, base_url=base_url, backup_url="")
+    if base_url.rstrip("/") == settings.llm.base_url.rstrip("/"):
+        return replace(settings, page_reader=page, llm=replace(settings.llm, backup_url=""))
+    return replace(settings, page_reader=page)
+
+
+def _reader_llm(settings: Settings, base: str = "") -> LocalLLMSettings:
+    """``settings.llm`` pointed at the page reader's server (``base``, else the one in use); the chat model's own name
+    only on its own server."""
     llm = settings.llm
-    base = reader_base_url(settings)
+    base = base or reader_base_url(settings)
     timeout = settings.page_reader.timeout_seconds
     if base.rstrip("/") == llm.base_url.rstrip("/"):
         return replace(llm, timeout_seconds=timeout)
@@ -233,13 +262,24 @@ NOT_DOWNLOADED = (
 TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are saved."
 
 
+_LIST_FAILED: dict[str, Any] = {}  # the primary's last status that gave no model list, counted by its breaker
+
+
 def reader_status(settings: Settings, *, use_cache: bool = True) -> ReaderStatus:
     """The model that reads pages and its state. Automatic (always, but for a developer's AP_PAGE_READER_MODEL): a
     document reader LM Studio has downloaded (OvisOCR2: any model whose key has "ovisocr" in it), unless it couldn't
     load it lately; else none. A general model that can see is never used instead: the page reader is then simply
-    not available, and invoices wait for it. Asks the server (cached briefly)."""
+    not available, and invoices wait for it. Asks the server (cached briefly). With a backup (D-180), a primary that
+    didn't give its model list (asked afresh) is a failure its breaker counts: once the calls move, the backup's."""
     base = reader_base_url(settings)
     status = local_llm.check_server(_reader_llm(settings), use_cache=use_cache)
+    breaker = reader_failover(settings)
+    if not status.reachable and breaker is not None and breaker.role(base) == local_llm.PRIMARY:
+        if _LIST_FAILED.get(base) is not status:  # (a status kept 10 s is one failure, however often it is read)
+            _LIST_FAILED[base] = status
+            breaker.failed(base, "its model list didn't come")
+        if reader_base_url(settings) != base:
+            return reader_status(settings, use_cache=use_cache)
     out = ReaderStatus(status.reachable, False, "", False, "down", base_url=base)
     listing = _listing_for(settings, status)
     out.lm_studio = listing is not None
@@ -642,18 +682,30 @@ def _attr(obj: Any, name: str) -> Any:
     return value
 
 
-def _client(settings: Settings) -> Any:
-    """The OpenAI client for the page reader's server. It waits up to AP_PAGE_READER_TIMEOUT_SECONDS for each word
-    (the model looks at the page for minutes before the first one) and never retries on its own: a page that failed is
-    read again later, not at once (a retry would double a ten-minute wait)."""
+def _client(settings: Settings, base: str = "") -> Any:
+    """The OpenAI client for the page reader's server (``base``, else the one in use). It waits up to
+    AP_PAGE_READER_TIMEOUT_SECONDS for each word (the model looks at the page for minutes before the first one; with a
+    backup, HANG_SECONDS on the primary) and never retries on its own: a page that failed is read again later, not at
+    once (a retry would double a ten-minute wait), unless its server's breaker moved the calls to the backup."""
     import openai
 
-    client = local_llm.build_local_client(_reader_llm(settings))
-    timeout = settings.page_reader.timeout_seconds
+    llm = _reader_llm(settings, base)
+    client = local_llm.build_local_client(llm)
+    timeout = _word_limit(settings, llm.base_url)
     return client.with_options(timeout=openai.Timeout(timeout, connect=10.0), max_retries=0)
 
 
-def _failure(exc: Exception, settings: Settings) -> str:
+def _word_limit(settings: Settings, base: str) -> float:
+    """The most a page read on ``base`` waits for its next word: AP_PAGE_READER_TIMEOUT_SECONDS, or HANG_SECONDS on a
+    primary with a backup, which reads the page instead of a hung primary (D-180)."""
+    timeout = settings.page_reader.timeout_seconds
+    breaker = reader_failover(settings)
+    if breaker is not None and breaker.role(base) == local_llm.PRIMARY:
+        return min(timeout, local_llm.HANG_SECONDS)
+    return timeout
+
+
+def _failure(exc: Exception, settings: Settings, base: str = "") -> str:
     """What went wrong talking to the model server, in a sentence (never the page's text). A stream that fails part
     way raises the HTTP library's own errors (httpx's, or httpx2's under newer OpenAI SDKs): known by their names."""
     import openai
@@ -661,11 +713,11 @@ def _failure(exc: Exception, settings: Settings) -> str:
     kinds = {kind.__name__ for kind in type(exc).__mro__}
     if isinstance(exc, (openai.APITimeoutError, TimeoutError)) or "TimeoutException" in kinds:
         return (
-            f"no word from the model in {settings.page_reader.timeout_seconds:.0f} s "
+            f"no word from the model in {_word_limit(settings, base or reader_base_url(settings)):.0f} s "
             "(AP_PAGE_READER_TIMEOUT_SECONDS allows longer)"
         )
     if isinstance(exc, (openai.APIConnectionError, ConnectionError)) or "TransportError" in kinds:
-        return f"the model server isn't answering at {reader_base_url(settings)}"
+        return f"the model server isn't answering at {base or reader_base_url(settings)}"
     if local_llm.context_overflow(exc):
         return "the page didn't fit the model's context: load it in LM Studio with a longer context"
     status = getattr(exc, "status_code", None)
@@ -686,7 +738,9 @@ def _open_stream(client: Any, base: str, model: str, params: dict[str, Any], sam
         if extra:
             kwargs["extra_body"] = extra
         try:
-            return client.chat.completions.create(**kwargs)
+            call = functools.partial(client.chat.completions.create, **kwargs)
+            breaker = reader_failover(settings)
+            return call() if breaker is None else breaker.watched(base, call)
         except Exception as exc:  # noqa: BLE001 - every failure becomes a PageReaderError the page can show
             if "extra_body" in kwargs:
                 if sampling and local_llm.refuses_extra_fields(exc, local_llm.SAMPLING_FIELDS):
@@ -697,7 +751,8 @@ def _open_stream(client: Any, base: str, model: str, params: dict[str, Any], sam
                 if thinking and local_llm.refuse_thinking_off(base, model):
                     log.info("%s refused the thinking switch (%s); asking without it", model, exc)
                     continue
-            raise PageReaderError(_failure(exc, settings), temporary=True) from exc
+            failed = bool(local_llm.server_failure(exc) or isinstance(exc, local_llm.ServerLeft))
+            raise PageReaderError(_failure(exc, settings, base), temporary=True, failed=failed) from exc
 
 
 def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
@@ -719,18 +774,51 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
             "content": [{"type": "image_url", "image_url": {"url": data_url}}, {"type": "text", "text": reader.prompt}],
         }
     ]
-    client = _client(settings)
+    base = reader_base_url(settings)
+    breaker = reader_failover(settings)
+    tries = 1 if breaker is None else 2  # with a backup: once more there, when the calls moved to it meanwhile
     with READ_LOCK.held(settings.llm.parallel):  # one page at a time by default: LM Studio is shared with CloseDesk
-        text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
-        if not looped:
+        while True:
+            try:
+                text = _read_page(settings, base, model, reader, messages, should_stop)
+            except PageReaderError as exc:
+                if breaker is None:
+                    raise
+                if not exc.failed:
+                    breaker.answered(base)
+                    raise
+                breaker.failed(base, str(exc))
+                tries -= 1
+                other = reader_base_url(settings)
+                if not tries or other == base or not _has_model(settings, other, model):
+                    raise
+                log.info("Page reader %s: the page is read on the backup at %s (%s)", model, other, exc)
+                base = other
+                continue
+            if breaker is not None:
+                breaker.answered(base, model)
             return text
-        log.info("Page reader %s looped on a page; reading it once more with sampling", model)
-        try:
-            again, looped_again = _transcribe_once(
-                settings, client, model, reader, messages, RETRY_SAMPLING, should_stop
-            )
-        except (CutOff, Blank, _NothingWritten):
-            again, looped_again = "", True
+
+
+def _has_model(settings: Settings, base: str, model: str) -> bool:
+    """Whether the model server at ``base`` lists ``model``."""
+    return model in local_llm.check_server(_reader_llm(settings, base)).models
+
+
+def _read_page(settings: Settings, base: str, model: str, reader: Reader, messages: list[dict[str, Any]],
+               should_stop: Callable[[], bool] | None) -> str:  # fmt: skip
+    """``transcribe`` on the server at ``base``: greedy, then once more with Qwen's sampling when it loops."""
+    client = _client(settings, base)
+    text, looped = _transcribe_once(settings, client, base, model, reader, messages, None, should_stop)
+    if not looped:
+        return text
+    log.info("Page reader %s looped on a page; reading it once more with sampling", model)
+    try:
+        again, looped_again = _transcribe_once(
+            settings, client, base, model, reader, messages, RETRY_SAMPLING, should_stop
+        )
+    except (CutOff, Blank, _NothingWritten):
+        again, looped_again = "", True
     if not looped_again:
         return again
     best = max(text, again, key=len)
@@ -741,8 +829,8 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
     return f"{best}\n{PARTIAL_MARK}"  # what it read before the loop: the rest of the page never read (B-1518)
 
 
-def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader, messages: list[dict[str, Any]],
-                     sampling: dict[str, Any] | None,
+def _transcribe_once(settings: Settings, client: Any, base: str, model: str, reader: Reader,
+                     messages: list[dict[str, Any]], sampling: dict[str, Any] | None,
                      should_stop: Callable[[], bool] | None) -> tuple[str, bool]:  # fmt: skip
     """One reading of the page, stopped early when it loops: (its text without the loop, whether it looped)."""
     params: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": reader.max_tokens,
@@ -751,7 +839,7 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
     if sampling:
         params["temperature"], params["top_p"] = sampling["temperature"], sampling["top_p"]
         extra = {key: sampling[key] for key in _EXTRA_SAMPLING}
-    stream = _open_stream(client, reader_base_url(settings), model, params, extra, settings)
+    stream = _open_stream(client, base, model, params, extra, settings)
     written: list[str] = []
     finish = ""
     thought = looped = False
@@ -779,7 +867,7 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
     except PageReaderError:
         raise
     except Exception as exc:  # noqa: BLE001 - the server failed part way (an error in the stream, a dropped link)
-        raise PageReaderError(_failure(exc, settings), temporary=True) from exc
+        raise PageReaderError(_failure(exc, settings, base), temporary=True, failed=True) from exc
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
@@ -799,7 +887,9 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
                 else "the model only thought and wrote nothing"
             )
         if not finish or finish == "length":
-            raise _NothingWritten("the model server ended the reading without a word", temporary=True)
+            raise _NothingWritten(
+                "the model server ended the reading without a word", temporary=True, failed=not finish
+            )
         raise Blank("the page has nothing on it to read")
     if finish == "length" and not looped:
         # Half a page would hide the rest of it: the reading is not kept.
@@ -807,7 +897,7 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
     if not finish and not looped:
         # The stream ended without the server saying the reply was done: it stopped part way down the page (the
         # model unloaded, a dropped link). Half a page is not kept, nor cached: it is read again later.
-        raise PageReaderError("the model server ended the reading part way down the page", temporary=True)
+        raise PageReaderError("the model server ended the reading part way down the page", temporary=True, failed=True)
     return text, looped
 
 
@@ -1367,6 +1457,72 @@ def test_reader(settings: Settings, *, model: str | None = None,
 
 
 test_reader.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
+
+
+# --- Each model server, primary and backup (D-180) ----------------------------------------------------------------
+
+
+@dataclass
+class ServerCheck:
+    """How one model server answers: the chat model's or the page reader's (``kind``), the primary or its backup
+    (``role``), whether the calls go to it now, and how it answered (``detail``, plain words)."""
+
+    kind: str
+    role: str
+    base_url: str
+    in_use: bool
+    answered: bool
+    model: str = ""
+    seconds: float | None = None
+    detail: str = ""
+
+
+def server_checks(settings: Settings, *, ask: bool = True, use_cache: bool = True) -> list[ServerCheck]:
+    """Each model server and its backup: its models, then (``ask``) its model asked a one-word question, timed
+    (``local_llm.probe``). The chat model's servers first, then the page reader's (the same machines, maybe)."""
+    pairs = [(local_llm.CHAT, settings.llm.base_url, settings.llm.backup_url, local_llm.chat_failover(settings.llm))]
+    pairs.append((local_llm.PAGES, *reader_servers(settings), reader_failover(settings)))
+    checks = []
+    for kind, primary, backup, breaker in pairs:
+        serving = breaker.serving() if breaker is not None else primary.rstrip("/")
+        for role, base in ((local_llm.PRIMARY, primary), (local_llm.BACKUP, backup)):
+            if not base:
+                continue
+            one = on_server(settings, base)
+            if kind == local_llm.CHAT:
+                status = local_llm.check_server(replace(settings.llm, base_url=base), use_cache=use_cache)
+                model, what = status.model, "chat model"
+            else:
+                status = local_llm.check_server(_reader_llm(one, base), use_cache=use_cache)
+                model, what = reader_status(one, use_cache=use_cache).model, "OvisOCR2"
+            check = ServerCheck(kind, role, base.rstrip("/"), base.rstrip("/") == serving, status.reachable, model)
+            if not status.reachable:
+                check.detail = f"not answering: {status.error or 'no answer'}"
+            elif not model:
+                check.detail = f"answers, but has no {what}"
+            elif ask:
+                check.answered, how, seconds = local_llm.probe(base, settings.llm.api_key, model)
+                check.seconds = round(seconds, 2)
+                check.detail = f"{model} answered in {seconds:.1f} s" if check.answered else f"{model}: {how}"
+            else:
+                check.detail = f"lists {model}"
+            checks.append(check)
+    return checks
+
+
+def failover_text(breaker: local_llm.Failover | None) -> str:
+    """Where a server's calls go and why, in a sentence ("" without a backup)."""
+    if breaker is None:
+        return ""
+    s = breaker.state()
+    if s["on"] != local_llm.BACKUP:
+        return (f"The calls go to {breaker.primary}; its backup {breaker.backup} takes over after "
+                f"{local_llm.FAILOVER_FAILURES} calls in a row it doesn't answer.")  # fmt: skip
+    since = dt.datetime.fromtimestamp(s["since"]).strftime("%H:%M:%S") if s["since"] else "a moment ago"
+    probed = f" Its last check: {s['probed']}." if s.get("probed") else ""
+    return (f"The calls go to the backup {breaker.backup} since {since}: {breaker.primary} didn't answer "
+            f"({s['why']}). It is asked every {local_llm.PROBE_SECONDS:g} s and taken back once it answered "
+            f"{local_llm.PROBES_TO_RETURN} times in a row, after {s['hold']:g} s on the backup.{probed}")  # fmt: skip
 
 
 # --- What LM Studio has, and loading a model ------------------------------------------------------------------------
