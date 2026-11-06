@@ -1297,7 +1297,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     GIL probe (`p3_alpha/gil_probe.py` in the session's scratchpad: a 5 ms timer thread in a web worker while 20
     scans are imported; how late it woke): p50 0.08 → 0.08 ms, p95 3.0 → 0.24 ms, p99 11.0 → 3.8 ms, the longest
     818 → 100 ms, wake-ups over 50 ms 67 → 7 (of about 40,000; the 4 cores were shared, so a late wake-up after is
-    the machine's, not the import's); the import 262 → 209 s.
+    the machine's, not the import's); the import 262 → 209 s. `scripts/same_behaviour.py --ref
+    claude/epic-feynman-r6ns86 pipeline read approve` (Python 3.12, both OCR models): the same.
   - **No new dependency.**
   - **Not done:**
     - `server.json` has no `capture_processes` key (`ops/service.py`): `AP_CAPTURE_PROCESSES` in the .env sets it.

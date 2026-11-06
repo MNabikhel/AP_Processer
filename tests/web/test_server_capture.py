@@ -36,6 +36,34 @@ def test_as_many_capture_processes_as_the_cores_less_two_each_with_its_share_of_
     assert server.capture_env(1, 30, cores=32)[server.OCR_THREADS_ENV] == "4"
 
 
+def test_the_background_and_capture_processes_are_started_and_stopped_together(tmp_path):
+    """The server starts its background process and its capture processes as one, and a stop asks them all before it
+    waits for any (15 s for all, not 15 s each); each is a fresh Python (spawn, on every system)."""
+    said = []
+
+    class Work(server.BackgroundWork):
+        def start(self):
+            said.append(("start", self.NAME))
+
+        def ask_to_stop(self):
+            said.append(("ask", self.NAME))
+
+        def wait_stopped(self, deadline):
+            said.append(("wait", self.NAME))
+
+    class Capture(Work, server.CaptureWork):
+        pass
+
+    works = server.Together([Work(tmp_path / "ap.db"), *(Capture(tmp_path / "ap.db", n, 2) for n in (1, 2))])
+    works.start()
+    works.stop()
+    names = ["background work", "capture process 1", "capture process 2"]
+    assert said == [("start", n) for n in names] + [("ask", n) for n in names] + [("wait", n) for n in names]
+    capture = works.works[1]
+    assert capture.command[-1] == "--capture-work" and capture.command[:3] == [sys.executable, "-m", "ap_coder"]
+    assert capture.env[server.CAPTURE_NUMBER_ENV] == "1" and works.works[0].command[-1] == "--background-work"
+
+
 def test_the_ocr_threads_are_given_to_onnx_runtime(monkeypatch):
     from ap_coder.ops import offline
 
@@ -61,8 +89,10 @@ def test_a_capture_process_reads_the_queue_and_stops_when_its_input_closes(tmp_p
         read.append(read_file(folder / path.name))
     store.queue_imports(read, source="upload", person=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith("AP_")}
-    env.update({"AP_PRIVATE_DIR": str(data), "PYTHONPATH": str(ROOT), "AP_LLM_BASE_URL": "http://127.0.0.1:9/v1",
-                **{k: v for k, v in server.capture_env(1, 1).items() if k.startswith(("AP_CAPTURE", "AP_OCR"))}})
+    own = {k: v for k, v in server.capture_env(1, 1).items() if k.startswith(("AP_CAPTURE", "AP_OCR"))}
+    env.update(
+        {"AP_PRIVATE_DIR": str(data), "PYTHONPATH": str(ROOT), "AP_LLM_BASE_URL": "http://127.0.0.1:9/v1", **own}
+    )
     command = [sys.executable, "-m", "ap_coder", "--db", str(store.path), "serve", "--capture-work"]
     process = subprocess.Popen(command, stdin=subprocess.PIPE, env=env, cwd=ROOT)
     try:

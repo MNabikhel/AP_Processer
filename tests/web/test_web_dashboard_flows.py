@@ -338,16 +338,17 @@ def test_second_approval_on_an_invoice_someone_else_just_handled(client, store, 
 
 
 def _fake_pipeline(monkeypatch, vendor="Northwind"):
+    from ap_coder.ai import pipeline
     from ap_coder.web.pages import process
 
     class Pipeline:
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):  # (sha256: as the import queue read it, D-168)
             return SimpleNamespace(ok=True, output={"vendor_name": vendor}, report=None, error=None)
 
-    monkeypatch.setattr(process, "InvoicePipeline", Pipeline)
+    monkeypatch.setattr(pipeline, "InvoicePipeline", Pipeline)  # what the import queue's reader makes
     return process
 
 

@@ -440,9 +440,14 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         me = identity.person()
         if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
-        if not registry.known(name):
+        if name == "process":  # the imports' progress is the import queue's, the same in every web worker (D-168)
+            from ap_coder.web.pages.process import import_status
+
+            snapshot = import_status(core.get_store(request), core.get_settings(request))
+        elif not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
-        snapshot = registry.get(name).snapshot()
+        else:
+            snapshot = registry.get(name).snapshot()
         if only:  # a page following the job asks for what it shows (app.js watchJob): its state and these
             snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
