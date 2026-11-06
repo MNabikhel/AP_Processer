@@ -164,6 +164,91 @@ def test_files_left_in_line_by_a_restart_are_read_when_ap_coder_starts(store):
     assert snap["result"]["ok"] == 2 and len(store.list_invoices(REVIEW)) == 2
 
 
+def _card(client, until, seconds=10.0):
+    """The Process page's card once ``until(card)`` (or as it is after ``seconds``)."""
+    ends = time.monotonic() + seconds
+    while True:
+        snap = client.get("/process/status").json()
+        if until(snap) or time.monotonic() > ends:
+            return snap
+        time.sleep(0.05)
+
+
+def test_a_file_that_cannot_be_read_now_says_why_and_is_read_once_it_can(app, client, store, monkeypatch):
+    """The GL accounts open in Excel: the file goes back in line. The laptop's job ended in error, and the card said
+    "1 file in line to be read" for good: the error never shown, nothing read until a restart or another import
+    (B-1764). The card says why now, and the job looks again every few seconds, as the server's capture processes
+    do: once the file is closed, it is read."""
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "LOOK_AGAIN_SECONDS", 0.1)
+    real, locked = store.reference_data, [True]
+
+    def reference_data(*args, **kwargs):
+        if locked[0]:
+            raise PermissionError(13, "Permission denied: 'gl_accounts.xlsx'")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "reference_data", reference_data)
+    upload(client, f"{STEM}.pdf")
+    snap = _card(client, lambda snap: "Permission denied" in snap["note"])
+    assert snap["state"] == "running" and snap["note"].startswith("1 file in line to be read"), snap
+    assert "Permission denied: 'gl_accounts.xlsx'" in snap["note"] and "tries again" in snap["note"]
+    locked[0] = False
+    assert finished(app, client)["result"]["ok"] == 1
+
+
+def test_once_there_is_room_again_the_files_in_line_are_read(app, client, store, monkeypatch):
+    """The data folder's disk nearly full: nothing is read, and the card says why. Once there was room again,
+    nothing read the file until another import or a restart, and "Process N files" was off, a file in line not
+    being new (B-1764): the job looks again every few seconds now (a restore's pause likewise)."""
+    from ap_coder.intake import imports
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "LOOK_AGAIN_SECONDS", 0.1)
+    room = [False]
+    for module in (imports, process):
+        monkeypatch.setattr(module, "has_room", lambda folder: room[0])
+    upload(client, f"{STEM}.pdf")
+    assert _card(client, lambda snap: snap["note"] == imports.NO_ROOM)["note"] == imports.NO_ROOM
+    time.sleep(0.3)
+    assert store.imports_open() == {"waiting": 1, "reading": 0} and store.list_invoices() == []
+    room[0] = True
+    assert finished(app, client)["result"]["ok"] == 1
+
+
+def test_stopping_the_dashboard_puts_the_file_under_way_back_in_line(store, monkeypatch):
+    """The dashboard stopped (its window closed, Ctrl+C) while its import reads a file: the file goes back in line,
+    its try not counted, and nothing more is taken, as a capture process's stop does. It stayed "reading" as the
+    dashboard's: after a quick restart the card said "Reading and coding" it for up to 2 minutes while nothing read
+    it, and a second stop failed it as stopped twice (B-1766)."""
+    from types import SimpleNamespace
+
+    from ap_coder.ai import pipeline
+
+    started, go = threading.Event(), threading.Event()
+
+    def slow(self, path, *args, **kwargs):  # (a long scan)
+        started.set()
+        go.wait(30)
+        return SimpleNamespace(ok=True, error="", output={"vendor_name": "V"}, report=None, invoice_id=None)
+
+    def files():
+        with store._conn() as conn:
+            return [tuple(r) for r in conn.execute("SELECT status, owner, tries FROM import_files ORDER BY id")]
+
+    monkeypatch.setattr(pipeline.InvoicePipeline, "process", slow)
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store)
+    with TestClient(app, base_url="http://localhost") as client:
+        upload(client, f"{STEM}.pdf", f"{OTHER}.pdf")
+        assert started.wait(30)
+    assert files() == [("waiting", "", 0), ("waiting", "", 0)]
+    go.set()  # (its read ends after the stop: nothing of it is stored, nothing more taken)
+    assert app.state.jobs.get("process").wait(30)
+    assert files() == [("waiting", "", 0), ("waiting", "", 0)] and store.list_invoices() == []
+
+
 def test_upload_needs_gl_accounts_first(tmp_path):
     bare = Store(tmp_path / "private" / "ap_coder.db")
     s = Settings()

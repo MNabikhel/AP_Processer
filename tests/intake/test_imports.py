@@ -4,11 +4,13 @@ nothing and keeps the files in line, each file hashed once on its way to its inv
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import threading
 import time
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -151,3 +153,58 @@ def test_a_reader_stalled_past_its_lease_stores_nothing_once_another_took_its_fi
         stored = conn.execute("SELECT id FROM invoices").fetchone()[0]
         assert conn.execute("SELECT invoice_id, status FROM import_files").fetchone()[:] == (stored, "done")
     assert store.import_run()["counts"] == {"done": 1}
+
+
+class _Quick:
+    """A pipeline that reads a file in ``seconds[name]`` (default none) and stores nothing."""
+
+    def __init__(self, seconds: dict[str, float] | None = None) -> None:
+        self.seconds = seconds or {}
+
+    def process(self, path, sha256=None):
+        time.sleep(self.seconds.get(path.name, 0.0))
+        return SimpleNamespace(ok=True, error="", output={"vendor_name": path.stem}, report=None, invoice_id=None)
+
+
+def test_a_file_whose_end_was_not_noted_is_not_renewed_by_the_next_reads(store, monkeypatch):
+    """Noting a file's end fails (the database locked just then): the file stays "reading" as the reader's. The
+    heartbeat renewed every file of its reader, so the next reads kept it "reading" for as long as the reader read
+    (B-1767); it renews only the files under way now, and the one left over is taken again once its lease ran out."""
+    first, second = PDFS[:2]
+    _queued(store, [first])
+    real, calls = store.finish_import, []
+
+    def locked_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "finish_import", locked_once)
+    reader = Reader(store, _settings(), "r", lease=0.6, pipeline=lambda: _Quick({second: 1.5}))
+    with pytest.raises(sqlite3.OperationalError):
+        reader.read_all()
+    assert store.imports_open() == {"waiting": 0, "reading": 1}
+    _queued(store, [second])
+    assert reader.read_all() == 2  # the second, then the first again once its lease ran out meanwhile
+    with store._conn() as conn:
+        files = {r[0]: r[1] for r in conn.execute("SELECT name, status FROM import_files")}
+    assert files == {first: "done", second: "done"} and store.imports_open() == {"waiting": 0, "reading": 0}
+
+
+def test_the_heartbeat_ends_with_the_read_and_a_database_gone_meanwhile_is_only_logged(store, monkeypatch):
+    """The heartbeat's last act lets go of the reader's lease: it raised when the database was gone just then (a test's
+    folder removed, a disk unplugged: "Exception in thread ap-coder-import-heartbeat"), and it outlived ``read_all``
+    (B-1768). The lease runs out anyway: it is logged, and the heartbeat ends before ``read_all`` returns."""
+    raised = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: raised.append(args.exc_value))
+    _queued(store, PDFS[:1])
+
+    def gone(*args, **kwargs):
+        time.sleep(0.3)
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(store, "drop_lease", gone)
+    assert Reader(store, _settings(), "r", pipeline=lambda: _Quick()).read_all() == 1
+    assert not [t for t in threading.enumerate() if t.name == "ap-coder-import-heartbeat"]
+    assert raised == []

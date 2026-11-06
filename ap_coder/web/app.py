@@ -327,6 +327,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
             process.resume(app)
         yield
+        if app.state.processes == 1:  # the dashboard's own import: the file under way back in line (B-1766)
+            from ap_coder.web.pages import process
+
+            process.stop_reading(app)
         for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads"):
             worker = getattr(app.state, name, None)
             if worker is not None:
@@ -348,6 +352,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.settings_factory = settings_factory
     app.state.processes = max(1, int(processes))  # web workers serving this database (D-111)
     app.state.jobs = Jobs(store if app.state.processes > 1 else None)
+    app.state.import_stop = threading.Event()  # set as the dashboard stops: its own import takes no more files
     app.state.reader = None
     app.state.azure_checker = None  # the Azure check's thread (ap_coder/ai/azure_check.py), started with the reader
     app.state.jde_worker = None  # the JD Edwards API's nightly sync and queue (ap_coder/erp/jde_sync.py), likewise

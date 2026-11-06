@@ -111,6 +111,8 @@ class Reader:
         self.paused = ""
         self._pipeline: Any = None
         self._lock = threading.Lock()
+        self._under_way: set[int] = set()  # the files it reads now: the heartbeat renews only these (B-1767)
+        self._under_way_lock = threading.Lock()
 
     def settings(self) -> Any:
         return self._settings() if callable(self._settings) else self._settings
@@ -140,21 +142,29 @@ class Reader:
             return sum(counts)
         finally:
             done.set()
+            beat.join()  # (no thread of it outlives the call)
             self._pipeline = None  # the GL accounts and settings read again next time
 
     def _counted(self, stop: threading.Event, batch: int | None, counts: list[int], first: Any) -> None:
         counts.append(self._loop(stop, batch, first))
 
     def _heartbeat(self, done: threading.Event) -> None:
-        """Every lease/6 seconds: the files it reads, and its ``reader:`` lease (a batch of its own stays its own)."""
+        """Every lease/6 seconds: the files it reads now, and its ``reader:`` lease (a batch of its own stays its
+        own). A file left "reading" by a read whose end could not be noted is not renewed: it is taken again."""
         while True:
             try:
                 self.store.take_lease(f"reader:{self.owner}", self.owner, self.lease)
-                self.store.renew_imports(self.owner, self.lease)
+                with self._under_way_lock:
+                    ids = sorted(self._under_way)
+                if ids:
+                    self.store.renew_imports(self.owner, self.lease, ids)
             except Exception:  # noqa: BLE001 - a busy database: renewed next time, well within the lease
                 log.warning("the import queue's leases of %s were not renewed just now", self.owner, exc_info=True)
             if done.wait(self.lease / 6):
-                self.store.drop_lease(f"reader:{self.owner}", self.owner)
+                try:
+                    self.store.drop_lease(f"reader:{self.owner}", self.owner)
+                except Exception:  # noqa: BLE001 - the database gone or busy just now: the lease runs out anyway
+                    log.warning("the reader's lease of %s was not let go of", self.owner, exc_info=True)
                 return
 
     def _next(self, batch: int | None) -> dict[str, Any] | None:
@@ -162,7 +172,20 @@ class Reader:
         self.paused = "" if has_room(self.store.path.parent) else NO_ROOM
         if not self.paused and self.store.restoring():
             self.paused = RESTORING
-        return None if self.paused else self.store.claim_import(self.owner, self.lease, batch)
+        row = None if self.paused else self.store.claim_import(self.owner, self.lease, batch)
+        if row is not None:
+            with self._under_way_lock:
+                self._under_way.add(row["id"])
+        return row
+
+    def _done_with(self, row: dict[str, Any], release: bool = False, error: str = "") -> None:
+        """The file is no longer under way here (``release``: put back in line first, unread; ``error``: why)."""
+        try:
+            if release:
+                self.store.release_imports(self.owner, row["id"], error=error)
+        finally:
+            with self._under_way_lock:
+                self._under_way.discard(row["id"])
 
     def _loop(self, stop: threading.Event, batch: int | None, row: dict[str, Any] | None = None) -> int:
         read = 0
@@ -172,13 +195,17 @@ class Reader:
                 return read
             try:
                 self.pipeline()
-            except BaseException:  # (the GL accounts open in Excel, say): the file goes back in line, unread
-                self.store.release_imports(self.owner, row["id"])
+            except BaseException as exc:  # (the GL accounts open in Excel, say): the file goes back in line, unread
+                why = (str(exc) or type(exc).__name__) if isinstance(exc, Exception) else ""  # (not a Ctrl+C)
+                self._done_with(row, release=True, error=why)
                 raise
-            read += self._read(row)
+            try:
+                read += self._read(row)
+            finally:
+                self._done_with(row)
             row = None
         if row is not None:  # (stopped before it was read)
-            self.store.release_imports(self.owner, row["id"])
+            self._done_with(row, release=True)
         return read
 
     def pipeline(self) -> Any:

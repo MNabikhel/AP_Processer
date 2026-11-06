@@ -587,6 +587,9 @@ def import_status(store: Store, settings: Settings | None = None) -> dict[str, A
             snap["note"] = f"Reading and coding {shown} ({read + 1}/{read + in_line})"
         else:
             snap["note"] = f"{ui.plural(in_line, 'file')} in line to be read"
+            if run["held"]:  # what stopped the last try (the GL accounts open in Excel), said, not a spinner alone
+                snap["note"] += f". It could not be read just now: {run['held']}. AP Coder tries again every few " \
+                                "seconds."  # fmt: skip
         return snap
     skipped = [name for b in batches for name in json.loads(b["skipped"] or "[]")] + run["skipped"]
     notes = [m for b in batches for m in json.loads(b["notes"] or "[]")]
@@ -726,6 +729,9 @@ def process_page(request: Request) -> HTMLResponse:
 
 READER = owner_id("dashboard")  # this process's own reader, as the queue's rows name it
 FOLLOW_SECONDS = 1.0  # while another reader holds the last files, the job looks again this often
+# Paused (the disk nearly full, a backup being restored) or stopped by an error (the GL accounts open in Excel), the job
+# looks again this often while files wait, as the server's capture processes do (B-1764).
+LOOK_AGAIN_SECONDS = 5.0
 
 
 def capture_elsewhere(app: Any) -> bool:
@@ -752,34 +758,54 @@ def queue_files(request: Request, read: list[Any], *, source: str, include_faile
 def start_reading(app: Any) -> bool:
     """See that the queue is read: here, the job "process" started unless it runs (True when it started); on the
     company server, nothing (its capture processes look every second)."""
-    if capture_elsewhere(app):
+    if capture_elsewhere(app) or app.state.import_stop.is_set():
         return False
     job = app.state.jobs.get(JOB)
     store = app.state.store
-    return job.start(_read_here(store, app.state.settings_factory), then=lambda: _again(app, job))
+    return job.start(_read_here(store, app.state.settings_factory, app.state.import_stop),
+                     then=lambda: _again(app, job))  # fmt: skip
 
 
 def _again(app: Any, job: Job) -> None:
-    """After the job: files put in line as it ended are read too (unless it stopped for want of room)."""
+    """After the job: files put in line as it ended are read too."""
     store = app.state.store
-    if job.error or (job.result or {}).get("paused") or not store.imports_open(READER)["waiting"]:
+    if job.error or app.state.import_stop.is_set() or not store.imports_open(READER)["waiting"]:
         return  # (a job that failed is not started again in a loop: the next import or start does)
     start_reading(app)
 
 
-def _read_here(store: Store, settings: Any) -> Any:
+def _read_here(store: Store, settings: Any, stop: threading.Event) -> Any:
     def work(job: Job) -> dict[str, Any]:
         reader = Reader(store, settings, READER, attention=needs_attention, cache_dir=cache_dir(store))
-        while True:
-            reader.read_all()
-            if reader.paused:
-                return {"paused": reader.paused}
-            found = store.imports_open(READER)
+        said = ""
+        while not stop.is_set():
+            try:
+                reader.read_all(stop)
+                found = store.imports_open(READER)
+            except Exception as exc:  # noqa: BLE001 - the GL accounts open in Excel, a busy database: the files wait
+                if str(exc) != said:  # (logged once, not every few seconds; the Process page says why)
+                    logging.getLogger(__name__).warning("the import queue could not be read just now", exc_info=True)
+                said = str(exc)
+                stop.wait(LOOK_AGAIN_SECONDS)
+                continue
+            said = ""
             if not found["waiting"] and not found["reading"]:
                 return {}
-            time.sleep(FOLLOW_SECONDS)  # another reader holds the last ones (a watch): until they are done
+            # Paused (no room, a restore) or another reader holds the last ones (a watch): until they are done.
+            stop.wait(LOOK_AGAIN_SECONDS if reader.paused else FOLLOW_SECONDS)
+        return {}
 
     return work
+
+
+def stop_reading(app: Any) -> None:
+    """As the dashboard stops (a laptop's): its import takes no more files, and the one under way goes back in line,
+    its try not counted, as a capture process's stop does (B-1766)."""
+    app.state.import_stop.set()
+    try:
+        app.state.store.release_imports(READER)
+    except Exception:  # noqa: BLE001 - a busy database: its lease runs out, and it is read again
+        logging.getLogger(__name__).warning("the file under way was not put back in line", exc_info=True)
 
 
 def resume(app: Any) -> None:
