@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,7 +17,10 @@ from ..memory import (
     CODED,
     CORRECTED,
     PAST_KEPT,
+    PAST_LINES_BYTES,
+    PAST_LINES_KEPT,
     PAST_ROWS_KEPT,
+    PastLines,
     Pattern,
     WithPast,
     _aggregate,
@@ -27,6 +31,7 @@ from ._base import (
     _FEEDBACK,
     _FEEDBACK_LOCK,
     _METRICS,
+    _PAST_LINES,
     _PAST_MEMORY,
     _VENDOR_LESSONS,
     APPROVED,
@@ -48,6 +53,16 @@ VENDOR_LESSONS_KEPT = 32  # vendors whose lessons are kept worked out in each pr
 # What ``vendor_lessons`` reads of each lesson: what ``memory.aggregate``, the accounts and the cost centers need.
 _VENDOR_COLUMNS = "vendor_key, vendor_name, description, final_gl, final_cc, outcome, suggested_gl, created_at"
 _DECIDED = (ACCEPTED, CORRECTED, CODED, BULK, "history")  # what a person decided (or the ERP's history)
+# What ``PastLines`` reads of a lesson, and the version of what the database keeps of them (``past_lines``, D-178).
+_LINE_COLUMNS = "vendor_key, description, final_gl, final_cc, outcome, suggested_gl"
+PAST_LINES_FORMAT = "1"
+PAST_WRITE_AFTER = 64  # lessons a process carries a vendor's ``_past_lines`` on before it writes the database's copy
+
+
+def _past_lines_version() -> str:
+    from ... import __version__
+
+    return f"{__version__}/{PAST_LINES_FORMAT}"
 
 
 @dataclass(frozen=True)
@@ -130,14 +145,27 @@ def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], s
 def _carried(conn: Any, key: str, kept: tuple[tuple[Any, ...], list[dict[str, Any]]],
              stamp: tuple[Any, ...]) -> list[dict[str, Any]] | None:  # fmt: skip
     """``_past_memory``'s rows ``kept`` (their stamp, the rows) carried forward to ``stamp``: what reading them again
-    gives, reading only the vendor's lessons the whole memory just let go (from its last before to its new one). In
-    the memory's order (decisions, then history, each newest first) the rows past its last are a vendor's tail: once
-    the last moved forward and the vendor only gained decisions (ahead of all its lessons in that order), the lessons
-    let go go in front of those kept (with a decision just added, when more were added than the memory holds), and of
-    the vendor's newest ``FEEDBACK_READ`` as many of the oldest drop as it gained. None when anything else happened:
-    one of its lessons removed (or moved to another vendor), history of it imported, the memory's last moved back
-    (lessons forgotten), a database restored; then they are read again."""
-    (count, newest, text, last, history), rows = kept
+    gives, reading only the vendor's lessons the whole memory just let go (``_moved``). None when they are read
+    again."""
+    moved = _moved(conn, key, kept[0], len(kept[1]), stamp)
+    if moved is None:
+        return None
+    (left, keep), rows = moved, kept[1]
+    return rows if not left and keep == len(rows) else (left + rows)[:keep]
+
+
+def _moved(conn: Any, key: str, kept: tuple[Any, ...], had: int, stamp: tuple[Any, ...],
+           columns: str = "*") -> tuple[list[dict[str, Any]], int] | None:  # fmt: skip
+    """What a vendor's lessons past the memory, ``had`` of them under the stamp ``kept``, became under ``stamp``: (the
+    lessons to put in front of them, newest first, with these ``columns``; how many of them all to keep). In the
+    memory's order (decisions, then history, each newest first) the rows past its last are a vendor's tail: once the
+    last moved forward and the vendor only gained decisions (ahead of all its lessons in that order), the lessons the
+    whole memory let go (from its last before to its new one) go in front of those kept (with a decision just added,
+    when more were added than the memory holds), and of the vendor's newest ``FEEDBACK_READ`` as many of the oldest
+    drop as it gained. None when anything else happened: one of its lessons removed (or moved to another vendor),
+    history of it imported, the memory's last moved back (lessons forgotten), a database restored; then they are read
+    again."""
+    count, newest, text, last, history = kept
     count_now, _, _, last_now, history_now = stamp
     gained = count_now - count
     if newest is None or gained < 0 or (history_now, -last_now) > (history, -last):
@@ -152,17 +180,16 @@ def _carried(conn: Any, key: str, kept: tuple[tuple[Any, ...], list[dict[str, An
     if (history_now, last_now) == (history, last):
         left = []
     elif history_now == history:
-        left = fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ? AND (outcome = 'history') = ? AND "
-                          "id >= ? AND id < ?" + _ORDER, (key, history, last, last_now))  # fmt: skip
+        left = fetch_rows(conn, f"SELECT {columns} FROM feedback WHERE vendor_key = ? AND (outcome = 'history') = ? "
+                          "AND id >= ? AND id < ?" + _ORDER, (key, history, last, last_now))  # fmt: skip
     else:  # the last moved from the history to the decisions: the decisions after it, then the history up to the last
-        left = fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ? AND (((outcome = 'history') = 0 AND id "
-                          "< ?) OR ((outcome = 'history') = 1 AND id >= ?))" + _ORDER,
+        left = fetch_rows(conn, f"SELECT {columns} FROM feedback WHERE vendor_key = ? AND (((outcome = 'history') = 0 "
+                          "AND id < ?) OR ((outcome = 'history') = 1 AND id >= ?))" + _ORDER,
                           (key, last_now, last))  # fmt: skip
     # The vendor's newest FEEDBACK_READ: the decisions it gained, those it had that the memory still holds, then those
     # past the memory's last, as many as are left.
-    held = min(FEEDBACK_READ, count) - len(rows) - len(left)  # those it had that the memory still holds
-    keep = min(FEEDBACK_READ - gained, count) - held
-    return rows if not left and keep == len(rows) else (left + rows)[:keep]
+    held = min(FEEDBACK_READ, count) - had - len(left)  # those it had that the memory still holds
+    return left, min(FEEDBACK_READ - gained, count) - held
 
 
 class LearningMixin:
@@ -275,17 +302,22 @@ class LearningMixin:
     def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
         """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
         with. Past ``FEEDBACK_READ`` lessons the whole memory holds only the newest, so a vendor whose history was
-        imported first would have none of its own; its older lessons then follow the shared list (in a new list,
-        the rows themselves shared: ``WithPast``, which says which rows are which). The shared list itself while it
-        holds them all."""
+        imported first would have none of its own; its older lessons then follow the shared list (``WithPast``, which
+        says which rows are which, the rows themselves shared), by line at once (``_past_lines``: what the GL
+        suggestions read), the rows themselves read only when they are read (``_past_memory``: the examples, the
+        history check and the tax codes of an invoice read; never a check of the review screen, D-178). The shared
+        list itself while it holds them all."""
         rows = self.feedback_rows()
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
-        key = key or vendor_key(vendor_name)
+        key, db = key or vendor_key(vendor_name), str(self.path.resolve())
         with _FEEDBACK_LOCK:  # (the stamp the whole memory was read with, B-1809)
-            whole = _FEEDBACK.get((str(self.path.resolve()), FEEDBACK_READ, None, ()))
-        missing = self._past_memory(key, rows[-1], whole[0] if whole is not None and whole[1] is rows else None)
-        return WithPast(rows, missing, (str(self.path.resolve()), key, FEEDBACK_READ)) if missing else rows
+            whole = _FEEDBACK.get((db, FEEDBACK_READ, None, ()))
+        read_with, last = whole[0] if whole is not None and whole[1] is rows else None, rows[-1]
+        older = self._past_lines(key, last, read_with)
+        if not older.n:
+            return rows
+        return WithPast(rows, lambda: self._past_memory(key, last, read_with), (db, key, FEEDBACK_READ), older)
 
     def _past_memory(
         self, key: str, last: dict[str, Any], read_with: tuple[Any, ...] | None = None
@@ -309,14 +341,99 @@ class LearningMixin:
                     return self._past_read(conn, key, last)
                 return self._past_kept(conn, key, last, history, writing, kept_key)
 
-    def _past_read(self, conn: Any, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
-        """The vendor's lessons the whole memory, whose last lesson is ``last``, does not hold, read whole."""
+    def _past_read(self, conn: Any, key: str, last: dict[str, Any], columns: str = "*") -> list[dict[str, Any]]:
+        """The vendor's lessons the whole memory, whose last lesson is ``last``, does not hold, read whole (these
+        ``columns`` of them)."""
         history = last["outcome"] == "history"
         return fetch_rows(
-            conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
+            conn, f"SELECT {columns} FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
             "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
             (key, FEEDBACK_READ, history, history, last["id"]),
         )  # fmt: skip
+
+    def _past_lines(self, key: str, last: dict[str, Any], read_with: tuple[Any, ...] | None) -> PastLines:
+        """This vendor's lessons the whole memory, whose last lesson is ``last``, does not hold (``_past_memory``'s
+        rows), by line (``PastLines``): what the GL suggestions read of them, on every check of the review screen. At
+        300,000 invoices most vendors had thousands of them, read whole on nearly every check (about 115 ms of CPU
+        each), as each process kept 32 vendors' and the review queue's invoices came from a thousand (D-178).
+        Kept in each process (``PAST_LINES_KEPT`` vendors, ``PAST_LINES_BYTES``) and for every process in the database
+        (``past_lines``: as JSON, with the stamp it was worked out under), and carried forward as the memory moves on
+        (``_moved``, ``PastLines.carried``: only the lessons it let go are read), read whole only when nothing kept
+        can be carried forward (a lesson of the vendor removed, history of it imported, an upgrade). The database's
+        copy is written again once a process carried it ``PAST_WRITE_AFTER`` lessons on (or read them whole), never
+        inside a write under way. ``read_with``: as ``_past_memory``'s (B-1809)."""
+        kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
+        history = last["outcome"] == "history"
+        with self._conn() as conn:
+            writing = conn.in_transaction
+            with one_snapshot(conn):
+                if read_with is None or _feedback_stamp(conn) != read_with:
+                    return PastLines.of(self._past_read(conn, key, last, _LINE_COLUMNS))  # for this once, not kept
+                stamp = (*self._lessons_stamp(conn, key, writing), last["id"], history)
+                with _FEEDBACK_LOCK:
+                    kept = _PAST_LINES.pop(kept_key, None)
+                    if kept is not None:
+                        _PAST_LINES[kept_key] = kept  # the latest used, kept the longest
+                if kept is not None and kept[0] == stamp:
+                    return kept[1]
+
+                def carried(was: tuple[Any, ...], lines: PastLines, behind: int) -> tuple[PastLines, int] | None:
+                    """(``lines``, under the stamp ``was``, carried forward; the lessons it moved by since the
+                    database's copy, ``behind`` before), or None."""
+                    moved = _moved(conn, key, was, lines.n, stamp, _LINE_COLUMNS)
+                    if moved is None:
+                        return None
+                    found, front = lines.carried(*moved), len(moved[0])
+                    return found, behind + front + (lines.n + front - found.n)  # (put in front, and dropped)
+
+                found = carried(*kept) if kept is not None else None
+                if found is None and (stored := self._stored_past_lines(conn, key)) is not None:
+                    found = (stored[1], 0) if stored[0] == stamp else carried(*stored, 0)
+                if found is None:
+                    found = (PastLines.of(self._past_read(conn, key, last, _LINE_COLUMNS)), PAST_WRITE_AFTER)
+        lines, behind = found
+        if behind >= PAST_WRITE_AFTER and not writing and self._keep_past_lines(key, stamp, lines):
+            behind = 0
+        with _FEEDBACK_LOCK:
+            _PAST_LINES.pop(kept_key, None)
+            _PAST_LINES[kept_key] = (stamp, lines, behind)
+            held = sum(kept[1].size for kept in _PAST_LINES.values())
+            while len(_PAST_LINES) > 1 and (len(_PAST_LINES) > PAST_LINES_KEPT or held > PAST_LINES_BYTES):
+                held -= _PAST_LINES.pop(next(iter(_PAST_LINES)))[1].size
+        return lines
+
+    def _stored_past_lines(self, conn: Any, key: str) -> tuple[tuple[Any, ...], PastLines] | None:
+        """(the stamp, the lines) of the vendor's ``_past_lines`` kept in the database by any process; None when there
+        are none, or of another version (or ``FEEDBACK_READ``), or they can't be read."""
+        try:
+            row = conn.execute("SELECT stamp, body FROM past_lines WHERE vendor_key = ?", (key,)).fetchone()
+        except sqlite3.OperationalError:  # (a backup of an older version restored, before its upgrade: none yet)
+            return None
+        if row is None:
+            return None
+        try:
+            stamp = json.loads(row[0])
+            if stamp[:2] != [_past_lines_version(), FEEDBACK_READ]:
+                return None
+            count, newest, text, last, history = stamp[2:]
+            return (count, newest, text, last, bool(history)), PastLines.decoded(json.loads(row[1]))
+        except (ValueError, TypeError, KeyError, IndexError):
+            return None
+
+    def _keep_past_lines(self, key: str, stamp: tuple[Any, ...], lines: PastLines) -> bool:
+        """The vendor's ``_past_lines`` kept in the database for every process, with the stamp they were worked out
+        under; False when the database was busy just now (they are written again later)."""
+        body = json.dumps(lines.encoded(), separators=(",", ":"))
+        stamped = json.dumps([_past_lines_version(), FEEDBACK_READ, *stamp], separators=(",", ":"))
+
+        def write() -> bool:
+            with self._conn() as conn:
+                conn.execute("INSERT INTO past_lines (vendor_key, stamp, body) VALUES (?, ?, ?) ON CONFLICT "
+                             "(vendor_key) DO UPDATE SET stamp = excluded.stamp, body = excluded.body",
+                             (key, stamped, body))  # fmt: skip
+            return True
+
+        return bool(self._briefly_or(write, False))  # type: ignore[attr-defined]
 
     def _past_kept(self, conn: Any, key: str, last: dict[str, Any], history: bool, writing: bool,
                    kept_key: tuple[Any, ...]) -> list[dict[str, Any]]:  # fmt: skip
@@ -388,6 +505,7 @@ class LearningMixin:
 
     def forget_history(self, actor: str | None = None) -> int:
         with self._conn() as conn:
+            conn.execute("DELETE FROM past_lines")  # (what is kept of the lessons forgotten goes with them)
             count = conn.execute("DELETE FROM feedback WHERE outcome = 'history'").rowcount
             if count:
                 self._log(conn, "lessons_forgotten", actor=actor, detail={"count": count, "history": True})
@@ -404,6 +522,8 @@ class LearningMixin:
                 "SELECT invoice_id, description FROM feedback WHERE invoice_id IS NOT NULL AND id IN "
                 "(SELECT value FROM json_each(?))", (json.dumps([int(i) for i in ids]),)
             ).fetchall()  # fmt: skip
+            conn.execute("DELETE FROM past_lines WHERE vendor_key IN (SELECT vendor_key FROM feedback WHERE id IN "
+                         "(SELECT value FROM json_each(?)))", (json.dumps([int(i) for i in ids]),))  # fmt: skip
             cur = conn.executemany("DELETE FROM feedback WHERE id = ?", [(i,) for i in ids])
             withdrawn = 0
             for invoice_id, pattern in {(r["invoice_id"], line_pattern(r["description"])) for r in gone}:

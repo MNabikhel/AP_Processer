@@ -444,11 +444,16 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
     behind a change (D-167); what decides with them (the queue is clear, the demo may load) counts exactly.
 
   Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
-  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the
-  lessons themselves (`Store.learning_rows`), for 32 vendors and 60,000 of their lessons a process (about 80 MB,
-  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`). An approval moves the memory's last lesson: those lessons and their lines
-  are carried forward, only the lessons the memory let go read and gone over (D-173); anything else reads them again.
-  And each memory's answers for 1,024 lines (`_Memory.said`, with the reference data they came from).
+  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), for 32
+  vendors a process (`memory.PAST_KEPT`, `PAST_BYTES_KEPT`). It reads those older lessons by line
+  (`memory.PastLines`, `Store._past_lines`): kept in each process for up to 4,096 vendors and about 64 MB
+  (`PAST_LINES_KEPT`, `PAST_LINES_BYTES`), and in the database for every process (`past_lines`, JSON with the stamp
+  they were worked out under), so a check of the review screen never reads them row by row (D-178). The rows
+  themselves are read only when an invoice's reading asks for them (its examples, its history check, its tax codes),
+  for 32 vendors and 60,000 of their lessons a process (`PAST_ROWS_KEPT`). An approval moves the memory's last
+  lesson: the lines and the rows are carried forward, only the lessons the memory let go read (D-173); anything else
+  reads them again, once for every process. And each memory's answers for 1,024 lines (`_Memory.said`, with the
+  reference data they came from).
 
   Kept for the reports and long pages (D-162), with what each held at 100,000 invoices: every vendor's supplier
   learning record (Supplier learning, Settings → Automation; `changes/suppliers`), about 28 MB a worker, and the
