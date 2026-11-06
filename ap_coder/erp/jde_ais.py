@@ -104,6 +104,11 @@ class TooManyPages(AisError):
     """A read whose answer has more pages than the caller reads: this question is too wide, JDE is not down."""
 
 
+class PageRepeated(AisError):
+    """A read orchestration that gave the same page again (its After… input ignored): it can't be read past its first
+    page, so a question of more than a page is too wide for it; JDE is not down."""
+
+
 class AisOff(AisError):
     def __init__(self, message: str = "") -> None:
         super().__init__(OFF, message or "The JD Edwards API connection is off (Settings → JD Edwards E1 → API "
@@ -786,7 +791,7 @@ class AisClient:
         page after ("" after the last): ``after`` = the last row's key ("" for the first page, or where a read that
         stopped left off), ``max_rows`` = the page size. Every page, however many (D-181), unless ``max_pages``:
         TooManyPages past that many. An answer whose last key is the one asked after (an orchestration that does not
-        page) raises rather than asking for ever."""
+        page) raises PageRepeated rather than asking for ever."""
         spec = spec_of(self.mapping, key)
         size = int(self.ais.get("page_size") or 500)
         read = 0
@@ -796,8 +801,8 @@ class AisClient:
             read += 1
             following = row_key(spec, page[-1]) if len(page) >= size else ""
             if following and following == after:
-                raise AisError(ANSWER, f"{spec['name']} gave the same page again after {after}: its paging (the "
-                               "After… input) does not work, so it can't be read to the end.")  # fmt: skip
+                raise PageRepeated(ANSWER, f"{spec['name']} gave the same page again after {after}: its paging (the "
+                                   "After… input) does not work, so it can't be read to the end.")  # fmt: skip
             yield page, following
             if not following:
                 return

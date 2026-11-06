@@ -333,3 +333,19 @@ def test_a_sync_whose_lease_another_took_stops_there(store, ais):
     report = jde_sync.sync(store, parts=("vouchers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
     assert "another sync took over" in report["errors"]["vouchers"] and _numbers(store) == {"B-0", "B-1"}
     assert not store.take_lease(jde_sync.LEASE, "a third", 1)  # the other sync's lease kept
+
+
+def test_an_orchestration_giving_the_same_page_again_never_switches_the_live_check_off(store, ais, monkeypatch,
+                                                                                       caplog):  # fmt: skip
+    """B-1899: the vouchers' orchestration giving the same page again (its After… input ignored) was taken by the
+    live check as JDE down: a supplier with more than a page of vouchers got JDE_NOT_REACHED, and the check was off
+    for every invoice for a minute. It is the live check's question too wide: asked by the invoice number instead,
+    and said in the log."""
+    connect(store, ais)
+    jde_sync.sync(store, parts=("suppliers",))
+    _vouchers(ais, int(ais.mapping["ais"]["page_size"]))  # Acme's: more than a page with INV-7001
+    real = ais._after
+    monkeypatch.setattr(ais, "_after", lambda key, after: real(key, ""))  # the first page, whatever is asked after
+    found = jde_sync.live_findings(store, _coding())
+    assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"] and not jde_sync._DOWN
+    assert "gave the same page again" in caplog.text

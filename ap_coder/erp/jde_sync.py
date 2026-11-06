@@ -693,6 +693,7 @@ CACHE_SECONDS = 300.0
 DOWN_SECONDS = 60.0
 LIVE_TIMEOUT = 5.0
 LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
+TOO_WIDE = (jde_ais.TooManyPages, jde_ais.PageRepeated)  # the live check's question too wide: JDE is not down
 _CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _DOWN: dict[str, tuple[float, str]] = {}
 _BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
@@ -750,8 +751,9 @@ def _ask(store: Any, an8: str, printed: str, big: bool) -> tuple[list[dict[str, 
         # any way): a supplier with more vouchers than a page is checked to the last one.
         try:
             return c.rows("vouchers", {"supplier": an8, "since": since}, max_pages=LIVE_PAGES), False
-        except jde_ais.TooManyPages:
-            pass
+        except TOO_WIDE as exc:
+            if isinstance(exc, jde_ais.PageRepeated):
+                log.warning("JD Edwards live check: %s Asked by the invoice number instead.", exc)
     # More than LIVE_PAGES even so: by the supplier and the invoice number as printed (JDE matches it exactly)
     return c.rows("vouchers", {"supplier": an8, "invoice": printed}, max_pages=LIVE_PAGES), True
 
@@ -781,7 +783,7 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
             rows, by_number = _ask(store, an8, str(coding.invoice_number or "").strip(), big)
         except jde_ais.AisError as exc:
             dropped = None
-            if not isinstance(exc, jde_ais.TooManyPages):  # too wide a question is this invoice's, not JDE down
+            if not isinstance(exc, TOO_WIDE):  # too wide a question is this invoice's, not JDE down
                 with _LOCK:
                     _DOWN[where] = (now, str(exc))
                     if exc.kind in _NEW_CLIENT:
