@@ -25,8 +25,9 @@ restore, D-105), ``summary`` (the invoices' summary the lists, the search and th
 (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
 pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
 (the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every
-process of the company server, and the downloads its background process makes, D-169). A test that patches a
-module-level name (``_now``, ``json``...) patches it in the part that uses it.
+process of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk
+approvals as jobs, D-185). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that
+uses it.
 """
 
 from ._base import (  # noqa: F401  (what other modules import from here, and every name the one module had:
@@ -105,6 +106,7 @@ from ._base import (  # noqa: F401  (what other modules import from here, and ev
 )
 from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: for web/identity.py)
 from .backups import BackupsMixin
+from .bulk_jobs import BulkJobsMixin
 from .capture import CaptureMixin
 from .ephemeral import EphemeralMixin
 from .folder import FolderMixin
@@ -145,6 +147,7 @@ class Store(
     FolderMixin,
     ImportsMixin,
     ReportsMixin,
+    BulkJobsMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

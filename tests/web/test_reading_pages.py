@@ -438,7 +438,8 @@ def test_a_reading_that_arrives_while_the_invoice_is_open_is_shown(client, store
     outcome = page_worker.read_one(settings, store)  # the background thread's work
     assert outcome.updated, outcome
     progress = client.get(f"/review/{invoice_id}/reader").json()
-    assert progress["state"] not in ("waiting", "reading") and not progress["poll"]
+    # the reading is over (the screen still asks: who else has it open, whether it is out of date, D-184)
+    assert progress["state"] not in ("waiting", "reading") and progress.get("reading", progress["poll"]) is False
     shown = _text(client.get(f"/review/{invoice_id}").text)
     assert "OvisOCR2 read this invoice: " in shown and " fields agree" in shown
     assert "figures on the page read the same" in shown

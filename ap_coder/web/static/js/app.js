@@ -13,13 +13,17 @@
      a[data-busy="Gathering…"]        a link to a slow page says so until the page comes
      form[data-job]                   after it starts a job, show its progress (#job card), reload when done
      form[data-long]                  an action the server runs whole in the request (a restore, an import):
-                                      waited for however long it takes (any other gives up after ACTION_MS)
+                                      waited for up to LONG_MS (any other gives up after ACTION_MS)
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      [data-dismiss]                   removes its message
      [data-job-status="/jobs/name"]   background work under way: says how far it got, reloads the page when done
      a[data-download-job]             on the company server, a download its background process makes: asked for, its
                                       progress said on the link, the file downloaded once made (D-169)
+
+   Every request goes through fetchWithin (a deadline, D-161; tests/meta checks no other fetch is left). An answer that
+   is the login's (the session ended: a 401, or a look sent on to /login) leaves the page as it is: it says so once,
+   with a link to log in again that comes back here, and the review screen keeps its edits in the tab (D-185).
 */
 
 export const HEADERS = { "X-AP-Coder": "1" };
@@ -58,15 +62,22 @@ export function messageElement(msg) {
   return el;
 }
 
-/** Show a short message in the corner; returns its element (gone after ``ms``). */
-export function toast(msg, ms = 6000) {
+/** The corner the messages show in, above a bar fixed at the window's foot (the review screen's approve bar), never
+    over its buttons; null on a page without one. */
+function toastBox() {
   const box = document.getElementById("toasts");
   if (!box) return null;
-  const el = messageElement(typeof msg === "string" ? { text: msg, tone: "info" } : msg);
-  // Above a bar fixed at the window's foot (the review screen's approve bar), never over its buttons.
   const bar = document.querySelector(".inv-actionbar");
   const top = bar ? bar.getBoundingClientRect().top : window.innerHeight;
   box.style.bottom = `${Math.max(20, window.innerHeight - top + 12)}px`;
+  return box;
+}
+
+/** Show a short message in the corner; returns its element (gone after ``ms``). */
+export function toast(msg, ms = 6000) {
+  const box = toastBox();
+  if (!box) return null;
+  const el = messageElement(typeof msg === "string" ? { text: msg, tone: "info" } : msg);
   box.appendChild(el);
   setTimeout(() => el.remove(), ms);
   return el;
@@ -82,14 +93,19 @@ export function noAnswer() {
 
 // Every request has a deadline (D-161): past it, it is given up as one that got no answer (noAnswer's words).
 export const LOOK_MS = 30000; // a look: a poll, the vendor list
-export const ACTION_MS = 5 * 60000; // an action (post), the setup report, the words on the page; data-long: none
+export const ACTION_MS = 5 * 60000; // an action (post), the setup report, the words on the page
+export const LONG_MS = 2 * 3600000; // data-long: a restore of gigabytes, a big import (D-185: no request waits for ever)
 
-/** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body; 0: never. */
+/** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body. The only
+    fetch of the pages' scripts: an answer that is the login's is said on the page (``sessionEnded``). */
 export function fetchWithin(url, options = {}, ms = LOOK_MS) {
-  if (!ms) return fetch(url, options);
+  const said = (response) => {
+    if (loggedOut(response)) sessionEnded(response.redirected && new URL(response.url).pathname === "/who" ? "/who" : "/login");
+    return response;
+  };
   const deadline = new AbortController();
   setTimeout(() => deadline.abort(), ms); // (once the body is read, aborting changes nothing)
-  return fetch(url, { ...options, signal: deadline.signal });
+  return fetch(url, { ...options, signal: deadline.signal }).then(said);
 }
 
 /** Whether an answer is the login's, the session having ended: a 401, or a look (a GET) sent on to the login page,
@@ -100,9 +116,52 @@ export function loggedOut(response) {
   return path === "/login" || path.startsWith("/login/") || path === "/who";
 }
 
-/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure, or past ``ms``: 0
-    waits however long it takes). An answer that is a file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is
-    saved under its name. */
+/** Whether this page is one of the login's own (the login, its steps, "Who are you?"): its answers are its own. */
+function loginPage() {
+  const path = location.pathname;
+  return path === "/login" || path.startsWith("/login/") || path === "/who";
+}
+
+const ENDED = "apc-session-ended";
+
+/** The session ended (server mode), or the laptop shared on the office network asks again who this is (``where``:
+    "/who"): the page stays as it is and says so, once, with a link to log in again that comes back to it; the review
+    screen keeps its edits in this tab first ("apc:session-ended", B-1594), each time this is said and as the link is
+    followed (D-185). */
+export function sessionEnded(where = "/login") {
+  if (loginPage()) return;
+  document.dispatchEvent(new CustomEvent("apc:session-ended"));
+  if (document.getElementById(ENDED)) return;
+  const box = toastBox();
+  if (!box) return;
+  let kept = false;
+  try {
+    kept = Object.keys(sessionStorage).some((key) => key.startsWith("apc-unsaved-"));
+  } catch {
+    /* (no storage: nothing said kept) */
+  }
+  const who = where === "/who";
+  const back = `${where}?next=${encodeURIComponent(location.pathname + location.search)}`;
+  const said = who ? "AP Coder asks who you are again: say who you are" : "Your session ended: sign in again";
+  const el = messageElement({
+    tone: "warn",
+    icon: "lock",
+    text: `${said}${kept ? "; your edits are kept" : ""}.`,
+    action: {
+      label: who ? "Say who you are" : "Sign in again",
+      run: () => {
+        document.dispatchEvent(new CustomEvent("apc:session-ended")); // (the latest edits)
+        location.assign(back);
+      },
+    },
+  });
+  el.id = ENDED;
+  el.setAttribute("role", "alert");
+  box.appendChild(el);
+}
+
+/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure, or past ``ms``). An
+    answer that is a file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is saved under its name. */
 export async function post(url, body, { ms = ACTION_MS } = {}) {
   let response;
   let file = null;
@@ -130,12 +189,9 @@ export async function post(url, body, { ms = ACTION_MS } = {}) {
   } catch {
     return { ok: false, error: response.ok ? "" : `That didn't work (${response.status}).` };
   }
-  if (response.status === 401 && answer.redirect) {
-    // The session ended (server mode): logging in again comes back to this page, and the page keeps what is on it
-    // first (the review screen's edits, B-1594).
-    answer.redirect += `?next=${encodeURIComponent(location.pathname + location.search)}`;
-    document.dispatchEvent(new CustomEvent("apc:session-ended"));
-  }
+  // The session ended (server mode): said on the page (fetchWithin), which stays as it is, its edits kept; nothing to
+  // follow or show besides (D-185). A login step's own 401 is followed as it is (B-1925).
+  if (response.status === 401 && answer.session_ended) return { ok: false, sessionEnded: true };
   return answer;
 }
 
@@ -173,7 +229,8 @@ function pause(ms) {
 }
 
 /** Look at ``url`` (its JSON) until ``onAnswer(answer)`` says it is done (true; it may be async): returns that answer,
-    or null once a look was answered by the login (``loggedOut``): nothing more is asked then (B-1712). Nothing is
+    or null once a look was answered by the login (``loggedOut``, said on the page): nothing more is asked then
+    (B-1712), and the page stays as it is (D-185). Nothing is
     asked while the tab is hidden. After an answer the same as the last (or none), the wait is half as long again, up
     to ``mostMs`` (three times ``everyMs``); a change starts again at ``everyMs``. ``firstMs``: the wait before the
     first look. ``url`` may be a function, asked at each look (the reader panel's says what it shows, D-160). */
@@ -201,8 +258,8 @@ export async function poll(url, onAnswer, { everyMs, mostMs = 3 * everyMs, first
 }
 
 /** Poll a job's status URL until it is no longer running; onUpdate(snapshot) after each answer. Returns the last
-    snapshot, or null when the session ended (the page is then drawn again: the login, back here after it). While
-    nothing changes it is asked less often, up to 5 seconds apart. */
+    snapshot, or null when the session ended (said on the page, which stays as it is). While nothing changes it is
+    asked less often, up to 5 seconds apart. */
 export function pollJob(url, onUpdate, everyMs = 800) {
   const done = (snap) => {
     onUpdate(snap);
@@ -236,13 +293,13 @@ function setBusy(form, busy, submitter) {
   }
 }
 
-/** Follow a running job, and reload the page when it is done (or the session ended). It asks only for the job's state,
-    done and note (``?only=``), never its 500 lines. */
+/** Follow a running job, and reload the page when it is done (not when the session ended: the page says so and stays,
+    D-185). It asks only for the job's state, done and note (``?only=``), never its 500 lines. */
 export function watchJob(statusUrl, onUpdate) {
   const url = new URL(statusUrl, location.href);
   url.searchParams.set("only", "done,note");
   return pollJob(url.pathname + url.search, onUpdate || (() => {})).then((snap) => {
-    location.reload();
+    if (snap !== null) location.reload();
     return snap;
   });
 }
@@ -257,7 +314,7 @@ async function submitForm(form, submitter) {
   setBusy(form, true, submitter);
   // A button with its own formaction sends the form there (the review screen's "Send to manager", D-138).
   const action = submitter && submitter.hasAttribute && submitter.hasAttribute("formaction") ? submitter.formAction : form.action;
-  const answer = await post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS });
+  const answer = await post(action, body, { ms: form.hasAttribute("data-long") ? LONG_MS : ACTION_MS });
   if (answer.ask_why) {
     // The server asks a question before going on (invoice.js answers it, then sends the form again).
     delete form.dataset.sending;
@@ -353,11 +410,16 @@ document.addEventListener("click", async (event) => {
   link.setAttribute("aria-busy", "true");
   link.classList.add("busy");
   say("Making the file…");
+  const again = () => {
+    link.removeAttribute("aria-busy");
+    link.classList.remove("busy");
+    link.innerHTML = label;
+  };
   let answer;
   try {
     const asked = { headers: { ...HEADERS, Accept: "application/json" }, cache: "no-store", credentials: "same-origin" };
     const response = await fetchWithin(link.href, asked);
-    if (loggedOut(response)) return location.reload();
+    if (loggedOut(response)) return again(); // the session ended: said on the page, which stays (D-185)
     answer = await response.json();
   } catch {
     answer = { ok: false, error: noAnswer() };
@@ -366,11 +428,9 @@ document.addEventListener("click", async (event) => {
   if (answer.ok && answer.status) {
     const told = (s) => s.state === "running" && say(s.note ? `Making the file: ${s.note}` : "Making the file…");
     snap = await pollJob(answer.status, told, 500);
-    if (snap === null) return location.reload(); // the session ended: the login, then back here
+    if (snap === null) return again(); // (likewise)
   }
-  link.removeAttribute("aria-busy");
-  link.classList.remove("busy");
-  link.innerHTML = label;
+  again();
   if (snap && snap.state === "done") return location.assign(answer.file);
   follow({ error: (snap && snap.error) || answer.error || "The file could not be made. Try again." });
 });

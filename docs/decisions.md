@@ -2757,3 +2757,141 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
     `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
     `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)
+- **D-184** · **Many people on one review queue: who else has an invoice open, Previous / Next past those, a screen out
+  of date said once, and two revisions on every check** (scale goal, phase 5, S1; `docs/archive/scale-2026-11/
+  web_frontend.md` §3.1, its bugs 7 and 8 and ideas 7 to 9, `web_backend.md` §9.1 and idea 13; B-1915 to B-1917).
+  - **Who has it open** (server mode only; `core/store/ephemeral.py` `keep_open`, `open_by`):
+    - one row of the `ephemeral` table per invoice and person: kind `open:<id>`, the person's draft key, the name
+      shown; written as the screen is drawn (in the page's own brief transaction, with its draft) and renewed by the
+      screen's poll (`GET /review/<id>/reader`, every 30 s, a minute apart at most while nothing changes);
+    - written only when its last write is 45 s old or more (`OPEN_RENEW_SECONDS`): a read, then one upsert, else
+      nothing; gone 120 s after it (`OPEN_SECONDS`): a tab closed, or hidden (the poll pauses);
+    - its times are the database's clock (`julianday('now')`, as B-1770), in seconds since 1970 as the table's
+      other rows keep theirs: the expired ones go with any of them;
+    - only a role that may edit the invoice counts (a Read-only person looking is not working on it); never oneself;
+      the display name, an email's part before its @;
+    - said on the screen ("Ann Lee is working on this invoice too.", its poll says it again) and on the queue row
+      ("Ann Lee has it open");
+    - why not from the drafts (`invoice_drafts`): a draft lasts until the approval, days, and someone who opened an
+      invoice without editing it yet is working on it too.
+  - **Previous / Next** pass over the ones someone else has open, the screen saying so ("Next skips 2 that Ann Lee
+    and Bo Chen have open."); every other one open, none is skipped. The invoice an action goes to next
+    (`next_url`) is never one someone else has open, the screen's `next_id` included when it was opened since.
+    - A tab left is not said: an invoice opened and passed with Next stays "open" up to 2 minutes (no write when
+      leaving; the expiry says it).
+  - **The invoice's revision** (`Store.coding_revision`): the id of its last event that moved it in or out of the
+    queue or stored its coding (`REVISION_ACTIONS`: approved, its second approval, sent back, reopened (an approval
+    undone too), parked, brought back, rejected, deleted, and the manager's three), as the second approval's `shown`
+    is its last approval's id. The screen's form carries it (`rev`).
+    - Why events, not a counter column: each of those changes logs its event in its own transaction already, so no
+      path that moves an invoice can leave the revision behind; no schema 28, no upgrade, no backup; and the event
+      says who did it and when. A note, a reading, the AI reviewer's verdict move no revision: a reading coming in
+      keeps its own way (the panel draws the page again, the edits kept).
+  - **The draft's revision**: the person's draft's edits in 12 letters (blake2b), "0" for none; the same edits keep
+    it (two tabs typing the same thing lose nothing). It is in the approve bar (`draft_rev`), drawn again by each
+    check, so the screen sends back the revision its last check answered (and the load bench's browsers follow it as
+    a browser does); a line action answers it (`draft_rev`).
+    - The screen's own id (`screen`, made with the page) is kept with each draft it writes: its poll, check or
+      approval sent while its own check was under way carries the revision from before it, and is no other tab's.
+    - The page's first revision allows the one before it too ("<new> <old>"): the page keeps its draft once drawn,
+      unless another writer holds the database (left to the next check).
+  - **Out of date**: behind either revision, or the invoice gone from the queue, a check (409, `stale`), a line
+    action (409) or the poll says once what was done, by whom and when (`ui.day_and_time`: "Approved by Ann Lee
+    today at 10:41 a.m.", "Edited in another tab or window today at 10:41 a.m.", "Deleted by …"); the screen turns
+    read-only (its boxes read-only, the approve bar gone, nothing more checked or sent) with what was typed still in
+    its boxes to copy, and "Open it as it is now" opens the invoice as it is now in a new tab, beside them.
+    - An action from it (approve, send to the manager) is "changed meanwhile", as before (`changed_meanwhile`).
+    - A form posted without the revisions (not the screen's) is checked as before: "no longer in the review queue".
+  - **Laptop**: one person: nobody else is shown and nothing of it is written; the revisions and the out-of-date
+    screen hold between its tabs (the screen's poll asks every 30 to 60 s there too).
+  - **Measured** (`bench load --users 100 --duration 300 --workers 4`, a 20,000-invoice seed of 3,000 queued and
+    400 accounts (`bench seed --invoices 20000 --queue 3000 --users 400 --history 0.3 --seed 7`, made again for
+    each run), before (6152f8a) and after; write transactions counted from a connection of their own (PRAGMA
+    data_version every 2 ms: a lower bound), and the writes of who has it open exactly (each write's row seen):
+    - who has it open: 413 writes in the 300 s, **1.38 a second** (0.014 a person); write transactions seen 13.2 →
+      14.2 a second (+0.97: most of those writes share the page's own transaction with its draft and confidence;
+      the run also made 1,004 checks, 904 before);
+    - the screen's poll: 0 → 55 (p50 11 ms, p95 44 ms through uvicorn; the bench's people seldom keep a screen 30 s);
+      invoices opened 681 → 706, p50 66 → 76 ms, p95 295 → 303 ms; pages p95 477 → 425 ms; 5xx, "database is
+      locked", tracebacks: none either time;
+    - a day's use, a screen open all the time: a write when an invoice opens and one a minute while it stays open
+      (the poll at 30, 75, 135 s…, written at 45 s or more): about 1.7 a second at 100 people and 7 at 400, plus
+      the invoices opened, each a small upsert of one row.
+  - **Left**: a tab left could drop its row at once (`pagehide`, a write more per invoice opened); "Take it" or
+    assigning invoices to people; the queue row's note is as of the queue's drawing (no poll there); the load
+    bench's browsers poll every `data-poll` seconds without the page's backing off (a little more than a browser).
+  - (`core/store/ephemeral.py`, `core/store/invoices.py` (`coding_revision`, `last_change`, `invoice_draft`),
+    `web/pages/invoice.py`, `web/pages/review.py` (`queue_rows`), `web/static/js/invoice.js`,
+    `web/templates/{invoice,review,_invoice_document,_invoice_live}.html`; `tests/web/test_web_invoice_together.py`,
+    `tests/core/test_store_ephemeral.py`)
+- **D-185** · **Bulk approval as a background job; a session that ended keeps the page; every request of the pages'
+  scripts has a deadline** (scale goal, phase 5, S2; items 6, 11 and 15 of `docs/archive/scale-2026-11/web_frontend.md`;
+  B-1925 to B-1927).
+  - **Why:** a person approving 200 clean invoices held a web worker's thread for the whole run (6.6 s at 200 on this
+    machine, one request with no progress, cut by a proxy's timeout while it went on behind); a check, an approval or a
+    poll answered by the login sent the page to the login (the review screen kept its edits in the tab, B-1594; any
+    other page was lost); and one request had no deadline (the upload, B-1926), the data-long actions none either.
+  - **The job** (`core/store/bulk_jobs.py`, table `bulk_jobs` by `_SCHEMA`, no schema version of its own, as
+    `past_lines`): the invoices asked, each with its `row_identity` as the page listed it, who asked (their name and
+    login, and the person as `identity.kept_person` keeps them), what was approved and what was left with why.
+    - One open (waiting or being approved) a person (a unique index and one write transaction: four web workers asking
+      at once get one job); asked again meanwhile, the page of the one under way says so.
+    - Done by the company server's background process (`jobs.BulkRunner`, started by `app.start_background_work`, two
+      at a time, oldest first), as D-169's downloads; on a laptop, or a server of one process without its background
+      work, by a thread of the process asked (`jobs.approve_here`), which ends once none waits.
+    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`) → "changed
+      meanwhile"; not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
+      `bulk_approve`, which the tests and the bench still use); else approved as coded. The approval and the job's
+      record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only while the job is still
+      that runner's, and in it the review screens' drafts are looked at (someone's edits kept → "it has edits open on
+      its review screen"; the queue's request read them once at its start, now each invoice's own moment); the
+      approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted on meanwhile.
+      So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
+  - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
+    counted); at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
+    background process a data folder, D-111). One whose process stopped noting its progress for 30 s is taken again by
+    another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
+    3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
+    way; one of the database before a restore is no one's. What was done is kept and shown either way.
+  - **As the person who asked:** the job runs inside `identity.acting_as(kept)` (`person()`, the events' actor and
+    address as their request's), their name and login on each approval and its learning: whether their session goes
+    on or not. On the server it stops (with why) once their account may no longer approve (turned off, or a role below
+    Clerk): an Admin's change applies to the invoices not approved yet.
+  - **The request:** `POST /review/bulk-approve` starts it and waits up to `BULK_WAIT` (3 s, as Process waits at most
+    3 s, D-172) holding no thread (an async loop on an event set by the thread of this process, or, with several web
+    workers, a look at the job every 0.05 to 0.25 s). Done by then: the same answer as before (the queue, "Approved N
+    invoices", the ones not approved and why), so the tests, the bench and a small approval are unchanged. Not yet: to
+    `/review/bulk`. The form is no longer data-long.
+  - **The page** (`/review/bulk`, `review_bulk.html`): "Approving: 37 of 200 approved, 2 need a look", followed by
+    `app.js`'s `data-job-status` from `/review/bulk/status` (an automatic look: it keeps no session going); once done,
+    what was done and each invoice left, linked while it is still in the queue. Safe to leave: the queue says "Your
+    bulk approval is under way: …, See how far it got", then once "…is done: …" until the page is seen. Its routes are
+    Clerk's, and a person's job is theirs alone.
+  - **The session ended** (server mode; and a laptop shared on the office network that asks who it is again): every
+    request goes through `fetchWithin`, which sees the login's answer (a 401, or a look sent on to /login or /who) and
+    says so once, on the page, which stays as it is: "Your session ended: sign in again; your edits are kept" (the
+    last part only when the review screen kept them in the tab), with "Sign in again" to `/login?next=<this page>`.
+    The review screen keeps its edits in the tab (B-1594's `apc:session-ended`) at every refused check and as the
+    link is followed, then puts them back as the person's draft after the login. `post` answers such a 401 (the
+    middleware's, marked `session_ended`) with nothing to follow or show; a login step's own 401 is followed as it is
+    (B-1925). Polls stop (B-1712) without reloading the page; the download link and the upload keep the page too.
+    - What the server keeps: each check of the review screen saves its coding as the person's draft (`invoice_drafts`,
+      D-86), so everything up to the last check answered before the session ended is on the server; Approve sends the
+      whole form. Edits after it are only in the tab (sessionStorage) until the login: a tab closed meanwhile loses
+      them. Elsewhere nothing is kept: a settings form, a note typed, a file picked for upload stays on the page while
+      it is open, but following "Sign in again" leaves it (sign in in another tab to keep it).
+  - **Deadlines:** `fetchWithin` is the pages' one fetch (`tests/meta/test_code_rules.py`: no bare `fetch(` outside
+    it, an XMLHttpRequest only with an abort); the review screen's last check sent as the page closes goes through it.
+    A look 30 s, an action 5 minutes (the Process POST answers within 3 s, D-172; the bulk approval within
+    `BULK_WAIT`), a data-long action (a restore, a big import) 2 hours (`LONG_MS`, it had none). The upload: 30 s
+    without its files moving on, or without the answer once they are all sent (B-1926). Long downloads are jobs
+    (D-169).
+  - **Measured** (`scripts/ci/perf_timing.py --invoices 600 --bulk 200`, which now waits for the job's end): before,
+    6.6 s in the request, one thread held; now the answer after 3 s holding none, the 200 approved in 6.3 s by the
+    job's thread (6 connections in all). `scripts/same_behaviour.py --ref 6152f8a approve`: same.
+  - **Left:** the queue still lists and posts every candidate (a cap and "select all N" are item 12); the page doesn't
+    warn before the idle limit; the job's progress is a line, not a bar.
+  - (`core/store/bulk_jobs.py`, `coding/bulk.py`, `web/jobs.py`, `web/pages/review.py` (the bulk route and its page),
+    `web/identity.py`, `web/pages/login.py`, `web/app.py`, `web/roles.py`, `web/static/js/{app,process,settings}.js`,
+    one call of `invoice.js`, `review.html`, `review_bulk.html`; `tests/core/test_bulk_jobs.py`,
+    `tests/web/test_web_review_bulk.py`, `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)

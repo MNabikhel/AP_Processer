@@ -169,11 +169,26 @@ def _session_ends(store: Store, username: str) -> None:
     store.end_sessions(store.find_user(username)["id"])
 
 
+def _said_ended(page, kept: bool = True) -> None:
+    """The page says the session ended, once, and stays as it is (D-185)."""
+    said = page.locator("#apc-session-ended")
+    said.wait_for()
+    words = "Your session ended: sign in again" + ("; your edits are kept." if kept else ".")
+    assert words in said.inner_text() and page.locator("#apc-session-ended").count() == 1
+
+
+def _sign_in_again(page) -> None:
+    """The message's own link to the login, which comes back to this page."""
+    page.click("#apc-session-ended .flash-act")
+
+
 @pytest.mark.parametrize("by", ["check", "approve"])
 def test_in_a_browser_edits_made_after_the_session_ended_come_back_after_logging_in_again(browser, store, by):
     """B-1594: an edit made after the session had ended was lost (its check refused, the edit kept nowhere), and
     Approve sent the person to /login with no way back: logging in again opened the queue, not the invoice. The
-    edits are kept in the tab, the login comes back to the invoice, and they are its draft again."""
+    edits are kept in the tab, the login comes back to the invoice, and they are its draft again. D-185: the page
+    stays as it is and says so ("Your session ended: sign in again; your edits are kept"), the edits made after that
+    kept too, until the person follows its link to the login."""
     invoice = store.list_invoices("review")[0]["id"]
     path = f"/review/{invoice}?sort=amount"
     page, errors = _log_in(browser, store, "clara", path=path)
@@ -183,13 +198,20 @@ def test_in_a_browser_edits_made_after_the_session_ended_come_back_after_logging
     box.fill("AFTER-THE-END")
     if by == "approve":
         page.click("[data-approve]")  # at once: the check of the edit is not sent first
+    _said_ended(page)
+    assert page.url.endswith(path) and box.input_value() == "AFTER-THE-END"
+    box.fill("AFTER-IT-WAS-SAID")
+    page.wait_for_timeout(600)  # (its check refused too: the edit kept in the tab)
+    _sign_in_again(page)
     _again(page, store, "clara")
     page.wait_for_url(f"**{path}")
-    page.wait_for_function("() => document.querySelector('[form=inv][name=invoice_number]').value === 'AFTER-THE-END'")
+    page.wait_for_function(
+        "() => document.querySelector('[form=inv][name=invoice_number]').value === 'AFTER-IT-WAS-SAID'"
+    )
     page.wait_for_load_state("networkidle")
     assert store.get_invoice(invoice)["status"] == "review"  # nothing approved behind the login
     page.reload()  # kept on the server as the draft, not only in the tab
-    assert page.locator('[form="inv"][name="invoice_number"]').input_value() == "AFTER-THE-END"
+    assert page.locator('[form="inv"][name="invoice_number"]').input_value() == "AFTER-IT-WAS-SAID"
     assert errors == []
 
 
@@ -203,6 +225,8 @@ def test_in_a_browser_edits_kept_when_the_session_ended_are_never_shown_to_someo
     number = page.locator('[form="inv"][name="invoice_number"]').input_value()
     _session_ends(store, "clara")
     page.locator('[form="inv"][name="invoice_number"]').fill("CLARAS-EDIT")
+    _said_ended(page)
+    _sign_in_again(page)
     page.wait_for_url("**/login?next=*")
     kept = json.loads(page.evaluate(f"sessionStorage.getItem('apc-unsaved-{invoice}')") or "null")
     assert kept and kept["account"] == "clara" and ["invoice_number", "CLARAS-EDIT"] in kept["fields"]  # kept: B-1678
@@ -261,7 +285,7 @@ def _job_running(app) -> threading.Event:
 def test_in_a_browser_a_job_page_stops_asking_once_the_session_ended(chromium, store):
     """B-1712: after the session ended, a page following a job (Import invoices) kept asking for its progress every
     0.8 s, each answered by the login page, for as long as the tab stayed open. Its look sent on to the login stops
-    it: the page goes to the login, and comes back after it."""
+    it; the page says so and stays as it is (D-185), and its link to the login comes back after it."""
     app = create_app(web_settings(), store, start_reader=False, server=True)
     release = _job_running(app)
     try:
@@ -272,10 +296,12 @@ def test_in_a_browser_a_job_page_stops_asking_once_the_session_ended(chromium, s
             wait_until(page, lambda: looks)
             _session_ends(store, "boss")
             ended = time.monotonic()
-            wait_until(page, lambda: "/login" in page.url, timeout=6)
-            assert "/login?next=%2Fprocess" in page.url
+            _said_ended(page, kept=False)
             page.wait_for_timeout(2500)
             assert len([t for t in looks if t > ended]) <= 1, looks
+            assert page.url.endswith("/process")
+            _sign_in_again(page)
+            page.wait_for_url("**/login?next=%2Fprocess")
             _again(page, store, "boss")
             page.wait_for_url("**/process")
             assert errors == []
@@ -306,4 +332,5 @@ def test_in_a_browser_the_review_screen_stops_following_the_reading_once_the_ses
         page.wait_for_timeout(50)
     assert len([u for u in looks if u.split("?", 1)[0].endswith("/reader")]) == 2, looks  # (?seen=: D-160)
     assert "/review/" in page.url  # the screen stays as it is, with the edits
+    _said_ended(page)  # (and says why, the screen kept in the tab: D-185)
     assert errors == []

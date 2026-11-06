@@ -2,7 +2,7 @@
    The server reads and codes the import queue in the background (D-168); this polls /process/status (the queue's
    latest run) and draws each invoice as it is done, then reloads the page (the job card stays, with the summary). */
 
-import { HEADERS, escapeHtml, follow, messageElement, noAnswer, pollJob, toast } from "./app.js";
+import { HEADERS, LOOK_MS, escapeHtml, follow, messageElement, noAnswer, pollJob, sessionEnded, toast } from "./app.js";
 
 const form = document.getElementById("upload-form");
 const input = document.getElementById("upload-files");
@@ -71,9 +71,9 @@ function drawJob(snap) {
 
 async function follow_job(statusUrl) {
   card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  // The import queue's run: every file in line, a colleague's too (D-168), then the page is drawn again.
-  await pollJob(statusUrl, drawJob);
-  location.reload();
+  // The import queue's run: every file in line, a colleague's too (D-168), then the page is drawn again (not when the
+  // session ended: the page says so and stays, D-185).
+  if ((await pollJob(statusUrl, drawJob)) !== null) location.reload();
 }
 
 /* ---- Uploading ---- */
@@ -88,11 +88,29 @@ function upload() {
     xhr.open("POST", form.action);
     for (const [k, v] of Object.entries(HEADERS)) xhr.setRequestHeader(k, v);
     xhr.responseType = "json";
+    // A deadline, as every request has (D-161): LOOK_MS without the files moving on, or without the answer once they
+    // are all sent (the server answers within a few seconds, D-172), is no answer. However long the upload takes while
+    // it moves, it goes on.
+    let quiet = 0;
+    const still = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => xhr.abort(), LOOK_MS);
+    };
     xhr.upload.onprogress = (e) => {
+      still();
       if (e.lengthComputable) label.textContent = `Uploading… ${Math.round((100 * e.loaded) / e.total)}%`;
     };
-    xhr.onload = () => resolve(xhr.response || { ok: false, error: `That didn't work (${xhr.status}).` });
-    xhr.onerror = () => resolve({ ok: false, error: noAnswer() });
+    xhr.upload.onload = still;
+    xhr.onloadend = () => clearTimeout(quiet);
+    xhr.onload = () => {
+      if (xhr.status === 401 && xhr.response?.session_ended) {
+        sessionEnded(); // the files stay picked: sent again once logged in (D-185)
+        return resolve({ ok: false });
+      }
+      resolve(xhr.response || { ok: false, error: `That didn't work (${xhr.status}).` });
+    };
+    xhr.onerror = xhr.onabort = () => resolve({ ok: false, error: noAnswer() });
+    still();
     xhr.send(body);
   });
 }

@@ -121,6 +121,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /review/{invoice_id:int}/correct",
         # The queue: bulk approval, reopen, back from parked.
         "POST /review/bulk-approve", "POST /review/{invoice_id}/reopen", "POST /review/{invoice_id}/unpark",
+        "GET /review/bulk", "GET /review/bulk/status",  # how far the person's own bulk approval got (D-185)
         "POST /search/{invoice_id:int}/unpark",
         "POST /search/presets", "POST /search/presets/default", "POST /search/presets/delete",  # their saved views
         # Export batches and their downloads.

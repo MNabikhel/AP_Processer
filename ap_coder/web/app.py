@@ -267,9 +267,9 @@ def own_work_running(state: Any) -> bool:
 def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, ...]:
     """The work the dashboard does on its own: the page reader and the AI reviewer (``page_worker``), the optional
     Azure check, the JD Edwards API's nightly sync and voucher queue, the review queue checked again after a change
-    of settings, and on the company server the long downloads (``pages/downloads.py``, D-169). In the dashboard's own
-    process (the laptop), or, with several web workers, in the server's background process only
-    (``server.run_background``, D-111)."""
+    of settings, and on the company server the bulk approvals (``jobs.BulkRunner``, D-185) and the long downloads
+    (``pages/downloads.py``, D-169). In the dashboard's own process (the laptop), or, with several web workers, in the
+    server's background process only (``server.run_background``, D-111)."""
     from ap_coder.ai import azure_check, page_worker
     from ap_coder.coding.bulk import RECHECK_LEASE, QueueRecheck
     from ap_coder.erp import jde_sync
@@ -286,9 +286,11 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     recheck = QueueRecheck(settings_factory, lambda: store).start()
     if not offline.server_mode():
         return reader, azure, jde, recheck
+    from ap_coder.web.jobs import BulkRunner
     from ap_coder.web.pages.downloads import Runner
 
-    return reader, azure, jde, recheck, Runner(lambda: store).start()
+    bulk = BulkRunner(settings_factory, lambda: store).start()
+    return reader, azure, jde, recheck, bulk, Runner(lambda: store).start()
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
@@ -321,17 +323,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         if start_reader and background:
             (app.state.reader, app.state.azure_checker, app.state.jde_worker, app.state.queue_recheck,
              *made) = start_background_work(settings_factory, store)  # fmt: skip
-            app.state.downloads = made[0] if made else None
+            app.state.bulk_runner, app.state.downloads = made if made else (None, None)
         if background and app.state.processes == 1:  # files left in the import queue by the last run (D-168)
             from ap_coder.web.pages import process
 
             process.resume(app)
+            if not server:  # a laptop's bulk approvals its last run left go on (D-185)
+                from ap_coder.web.jobs import resume_bulk
+
+                resume_bulk(store, settings_factory)
         yield
         if app.state.processes == 1:  # the dashboard's own import: the file under way back in line (B-1766)
             from ap_coder.web.pages import process
 
             process.stop_reading(app)
-        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads"):
+        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads", "bulk_runner"):
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
@@ -340,6 +346,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
             ends = time.monotonic() + RECHECK_STOP_SECONDS
             while app.state.queue_recheck.thread.is_alive() and time.monotonic() < ends:
+                await anyio.sleep(0.05)
+            # (the bulk approvals under way: the invoice being approved is done, the rest put back in line, D-185)
+            while app.state.bulk_runner is not None and app.state.bulk_runner.thread.is_alive() and (
+                    time.monotonic() < ends):  # fmt: skip
                 await anyio.sleep(0.05)
         # One of the server's web workers: its connections are closed now, so no request starts more. What one
         # started after Recycle looked (a JD Edwards send, a backup, imports) ends with the process: it is waited for.
@@ -358,6 +368,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.jde_worker = None  # the JD Edwards API's nightly sync and queue (ap_coder/erp/jde_sync.py), likewise
     app.state.queue_recheck = None  # the review queue checked again after a change of settings (coding/bulk.py)
     app.state.downloads = None  # the server's long downloads (ap_coder/web/pages/downloads.py), likewise
+    app.state.bulk_runner = None  # the server's bulk approvals (ap_coder/web/jobs.py), likewise
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
