@@ -481,7 +481,7 @@ class InvoicePipeline:
         is read as before."""
         import hashlib
 
-        from ..core.paths import private_dir
+        from ..core.paths import private_dir, prune_kept
         from .inference import read_header
 
         try:
@@ -515,6 +515,8 @@ class InvoicePipeline:
             part.replace(kept)
         except OSError:
             pass
+        else:
+            prune_kept(kept.parent, kept)  # by age and size (D-171)
         return values
 
     def _reads_locally(self, path: Path) -> bool:

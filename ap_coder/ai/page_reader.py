@@ -972,6 +972,8 @@ def _cache_put(digest: str, page: int, model: str, text: str, seconds: float) ->
         os.replace(temporary, path)
     except OSError as exc:
         log.warning("Page reader: couldn't keep a reading in %s (%s)", cache_dir(), exc)
+    else:
+        paths.prune_kept(cache_dir(), path)  # by age and size (D-171)
     _log_timing(model, seconds)
 
 

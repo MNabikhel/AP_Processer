@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..core.config import Settings
+from ..core.paths import prune_kept
 from ..core.reference_data import ReferenceData
 from ..core.schema import SCHEMA_NAME, InvoiceCoding, build_json_schema, response_format
 from . import local_llm
@@ -576,6 +577,8 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
             part.replace(path)
         except OSError:
             pass
+        else:
+            prune_kept(kept, path)  # by age and size (D-171)
     return _picks(reply.data, lines, valid_gl, valid_cc)
 
 
