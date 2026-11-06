@@ -617,6 +617,19 @@ def _api_job(request: Request, note: str, work: Any) -> JSONResponse:
     return JSONResponse({"ok": True, "job": API_JOB, "status": f"/jobs/{API_JOB}"})
 
 
+def _progress(job: Any) -> Any:
+    """Each voucher's outcome as the job's progress (D-182): how many of the run's vouchers are done, and of them how
+    many posted, are being checked (answered late), were refused and wait in the queue."""
+
+    def step(found: dict[str, Any]) -> None:
+        parts = [f"{found[k]} {label}" for k, label in (("posted", "posted"), ("unknown", "being checked"),
+                 ("failed", "refused"), ("queued", "waiting")) if found.get(k)]  # fmt: skip
+        job.step(found["done"], found["total"], f"{found['note']} {found['done']} of {found['total']}"
+                 + (f": {', '.join(parts)}" if parts else ""))  # fmt: skip
+
+    return step
+
+
 def _api_messages(result: dict[str, Any]) -> list[dict[str, str]]:
     parts = [f"{result[k]} {label}" for k, label in (("posted", "posted"), ("failed", "refused by JD Edwards"),
              ("queued", "waiting in the queue"), ("unknown", "sent, being checked")) if result.get(k)]  # fmt: skip
@@ -684,7 +697,8 @@ def jde_api_post(request: Request, batch: int, not_loaded: str = Form(""), why: 
     def work(job: Any) -> dict[str, Any]:
         job.step(0, 1, "Posting the vouchers to JD Edwards…")
         try:
-            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor, not_loaded=why))}
+            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor, not_loaded=why,
+                                                            progress=_progress(job)))}  # fmt: skip
         except (ValueError, jde_ais.AisError) as exc:
             return {"messages": [{"text": str(exc), "tone": "warn"}]}
 
@@ -714,6 +728,6 @@ def jde_api_retry(request: Request) -> JSONResponse:
 
     def work(job: Any) -> dict[str, Any]:
         job.step(0, 1, "Sending the queue to JD Edwards…")
-        return {"messages": _api_messages(jde_post.retry_queue(store, actor=actor))}
+        return {"messages": _api_messages(jde_post.retry_queue(store, actor=actor, progress=_progress(job)))}
 
     return _api_job(request, "Sending the JD Edwards queue", work)

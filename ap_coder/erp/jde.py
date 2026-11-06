@@ -226,6 +226,12 @@ class JdeSettings:
     terms_codes: dict[str, str] = field(default_factory=dict)
     send_due_date: bool = True
     gl_date: str = GL_DATE_INVOICE
+    # Posting through the API (D-182): how long a voucher's request may take (R04110ZA runs in it), how long one run
+    # may send, and how long after a send whose answer was lost JDE's "not there" is believed (it may still be making
+    # it): sent again only after that.
+    voucher_timeout: float = 120.0
+    post_minutes: float = 60.0
+    resend_minutes: float = 10.0
     default_bu: str = ""
     bu_from_cost_center: bool = True
     use_default_rule: bool = True
@@ -292,6 +298,12 @@ class JdeSettings:
             out.line_numbering = SEQUENTIAL
         if out.gl_date not in GL_DATES:
             out.gl_date = GL_DATE_INVOICE
+        for name, low, high in (("voucher_timeout", 0.1, 900.0), ("post_minutes", 0.01, 1440.0),
+                                ("resend_minutes", 0.0, 1440.0)):  # fmt: skip
+            try:
+                setattr(out, name, min(high, max(low, float(getattr(out, name)))))
+            except (TypeError, ValueError):
+                setattr(out, name, getattr(base, name))
         return out
 
     @property
