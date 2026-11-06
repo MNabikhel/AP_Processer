@@ -361,8 +361,12 @@ def _vendor_reads(store: Store, monkeypatch) -> list[str]:
     None for all of them)."""
     read: list[tuple[str, list[int] | None]] = []
     real = type(store)._vendor_invoices
-    monkeypatch.setattr(type(store), "_vendor_invoices",
-                        lambda self, key, ids=None: read.append((key, ids)) or real(self, key, ids))  # fmt: skip
+
+    def reading(self, key, ids=None, **kw):
+        read.append((key, ids))
+        return real(self, key, ids, **kw)
+
+    monkeypatch.setattr(type(store), "_vendor_invoices", reading)
     return read
 
 

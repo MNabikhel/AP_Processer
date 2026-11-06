@@ -24,6 +24,7 @@ from ._base import (
     _now,
 )
 from .capture import capture_lookup
+from .learning import one_snapshot
 from .summary import fetch_rows
 
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
@@ -34,15 +35,15 @@ _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, '
 # most VENDOR_ROWS_KEPT rows in all (about 1 KB a row: 50 MB), one vendor up to half of them (a year's biggest vendor
 # has about 23,000), and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is asked for, most with no
 # invoices), the rows held counted as they are kept and dropped. Each with its stamp: (the database's ``summary_id``,
-# the last change of the vendors' change log the rows hold, D-174).
+# the last change of the vendors' change log the rows hold, D-174, and the vendor's count of changes then, B-1811).
 VENDOR_ROWS_KEPT = 50_000
 VENDOR_KEYS_KEPT = 4_096
-_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, int], list[Any]]] = OrderedDict()
+_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, int, int], list[Any]]] = OrderedDict()
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
 
 
-def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int], rows: list[Any]) -> None:
+def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
     """``rows`` kept as the newest; the vendors asked longest ago go while over either cap. A vendor of more rows than
     half the cap is not kept (what was kept of it goes): the other half stays for the others (B-1721)."""
     global _VENDOR_ROWS_HELD
@@ -56,6 +57,33 @@ def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int], rows: list[A
         while _VENDOR_ROWS_HELD > VENDOR_ROWS_KEPT or len(_VENDOR_ROWS) > VENDOR_KEYS_KEPT:
             _, (_, dropped) = _VENDOR_ROWS.popitem(last=False)
             _VENDOR_ROWS_HELD -= len(dropped)
+
+
+def _vendor_invoice_rows(conn: sqlite3.Connection, key: str, ids: list[int] | None) -> list[dict[str, Any]]:
+    """``Store._vendor_invoices`` on ``conn``."""
+    doc = _DOC
+    fields = ", ".join(
+        f"json_extract({doc}, '$.{field}') AS {name}"
+        for field, name in (
+            ("gst_hst_registration_number", "gst_hst_number"), ("qst_registration_number", "qst_number"),
+            ("pst_registration_number", "pst_number"), ("remit_bank_account", "bank_account"),
+            ("original_invoice_number", "original_invoice_number"),
+        )
+    )  # fmt: skip
+    some = "" if ids is None else f" AND {_in_list('id')}"
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
+                      grand_total, created_at, reviewed_at, {fields}
+               FROM invoices WHERE vendor_key = ?{some} ORDER BY id DESC""",
+            (key,) if ids is None else (key, json.dumps(ids)),
+        )
+    ]
+    for r in rows:
+        for name in ("gst_hst_number", "qst_number", "pst_number", "bank_account", "original_invoice_number"):
+            r[name] = r[name] or ""
+    return rows
 
 
 def _read_only(rows: list[dict[str, Any]]) -> list[Any]:
@@ -527,20 +555,27 @@ class VendorsMixin:
         kept = (str(self.path), key)
         with _VENDOR_ROWS_LOCK:
             hit = _VENDOR_ROWS.get(kept)
-        with self._conn() as conn:  # (``seq > NULL``: none, when none is kept)
-            summary_id, first, last, changed = conn.execute(
-                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM vendor_changes), "
-                "(SELECT MAX(seq) FROM vendor_changes), (SELECT json_group_array(DISTINCT invoice_id) FROM "
-                "vendor_changes WHERE seq > ? AND vendor_key = ?)", (hit[0][1] if hit else None, key),
-            ).fetchone()  # fmt: skip
-            writing = conn.in_transaction
-        if writing:
-            return self._vendor_invoices(key)
-        stamp = (summary_id, last or 0)
-        if hit is not None and hit[0][0] == summary_id and hit[0][1] >= (first or 1) - 1:  # no change since left out
-            ids = json.loads(changed)
-            rows = self._vendor_rows_changed(key, hit[1], ids) if ids else hit[1]
-        else:
+        rows = None
+        with self._conn() as conn:
+            if conn.in_transaction:
+                return self._vendor_invoices(key, conn=conn)
+            with one_snapshot(conn):  # (the log and the invoices it names read in one moment, B-1812)
+                summary_id, first, last, count, logged, changed = conn.execute(
+                    "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM "
+                    "vendor_changes), (SELECT MAX(seq) FROM vendor_changes), (SELECT COALESCE(CAST(value AS INTEGER), "
+                    "0) FROM settings WHERE key = 'changes/vendor/' || ?2), (SELECT COUNT(*) FROM vendor_changes WHERE "
+                    "seq > ?1 AND vendor_key = ?2), (SELECT json_group_array(DISTINCT invoice_id) FROM vendor_changes "
+                    "WHERE seq > ?1 AND vendor_key = ?2)",
+                    (hit[0][1] if hit else None, key),
+                ).fetchone()  # fmt: skip  (``seq > NULL``: none, when none is kept)
+                stamp = (summary_id, last or 0, count or 0)
+                # Every change since logged: the log still holds them all, and the vendor's count of changes (which
+                # an older AP Coder's triggers keep too, writing no log) moved by as many (B-1811).
+                if hit is not None and hit[0][0] == summary_id and hit[0][1] >= (first or 1) - 1 and (
+                        stamp[2] - hit[0][2] == logged):  # fmt: skip
+                    ids = json.loads(changed)
+                    rows = self._vendor_rows_changed(key, hit[1], ids, conn) if ids else hit[1]
+        if rows is None:
             rows = self._session_memo(("vendor_invoices", key, stamp), lambda: _read_only(self._vendor_invoices(key)),
                                       shared=True)  # fmt: skip
         if hit is not None and hit[0] == stamp:
@@ -551,10 +586,11 @@ class VendorsMixin:
             _keep_vendor_rows(kept, stamp, rows)
         return rows if shared else [r.copy() for r in rows]
 
-    def _vendor_rows_changed(self, key: str, rows: list[Any], ids: list[int]) -> list[Any]:
-        """``rows``, this vendor's invoices as kept (newest first), with the invoices ``ids`` read again: each changed,
-        added, deleted, or moved to or from this vendor. A copy: the rows kept may be another caller's meanwhile."""
-        fresh = _read_only(self._vendor_invoices(key, ids))
+    def _vendor_rows_changed(self, key: str, rows: list[Any], ids: list[int], conn: sqlite3.Connection) -> list[Any]:
+        """``rows``, this vendor's invoices as kept (newest first), with the invoices ``ids`` read again (on ``conn``,
+        in the moment the log was read): each changed, added, deleted, or moved to or from this vendor. A copy: the
+        rows kept may be another caller's meanwhile."""
+        fresh = _read_only(self._vendor_invoices(key, ids, conn=conn))
         rows = list(rows)
         for invoice_id in ids:  # found by its place in the order, not by looking at each row
             at = bisect.bisect_left(rows, -invoice_id, key=_newest_first)
@@ -592,32 +628,14 @@ class VendorsMixin:
             out.setdefault(key, {})[(gst or "", bank or "")] = None
         return {key: list(numbers) for key, numbers in out.items()}
 
-    def _vendor_invoices(self, key: str, ids: list[int] | None = None) -> list[dict[str, Any]]:
-        """``vendor_invoices`` read from the invoices; with ``ids``, only those of them still this vendor's."""
-        doc = _DOC
-        fields = ", ".join(
-            f"json_extract({doc}, '$.{field}') AS {name}"
-            for field, name in (
-                ("gst_hst_registration_number", "gst_hst_number"), ("qst_registration_number", "qst_number"),
-                ("pst_registration_number", "pst_number"), ("remit_bank_account", "bank_account"),
-                ("original_invoice_number", "original_invoice_number"),
-            )
-        )  # fmt: skip
-        some = "" if ids is None else f" AND {_in_list('id')}"
-        with self._conn() as conn:
-            rows = [
-                dict(r)
-                for r in conn.execute(
-                    f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
-                              grand_total, created_at, reviewed_at, {fields}
-                       FROM invoices WHERE vendor_key = ?{some} ORDER BY id DESC""",
-                    (key,) if ids is None else (key, json.dumps(ids)),
-                )
-            ]
-        for r in rows:
-            for name in ("gst_hst_number", "qst_number", "pst_number", "bank_account", "original_invoice_number"):
-                r[name] = r[name] or ""
-        return rows
+    def _vendor_invoices(self, key: str, ids: list[int] | None = None, *,
+                         conn: sqlite3.Connection | None = None) -> list[dict[str, Any]]:  # fmt: skip
+        """``vendor_invoices`` read from the invoices; with ``ids``, only those of them still this vendor's (on
+        ``conn``, when given)."""
+        if conn is None:
+            with self._conn() as own:
+                return _vendor_invoice_rows(own, key, ids)
+        return _vendor_invoice_rows(conn, key, ids)
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:
         """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``), read for the work

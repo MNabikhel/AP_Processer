@@ -91,7 +91,7 @@ def _feedback_stamp(conn: Any) -> tuple[Any, ...]:
 
 
 @contextmanager
-def _one_snapshot(conn: Any) -> Iterator[None]:
+def one_snapshot(conn: Any) -> Iterator[None]:
     """The reads inside see the database as it was at the first of them (one read transaction), so that a stamp and
     the rows read with it agree; inside the caller's own transaction, they do already."""
     if conn.in_transaction:
@@ -205,7 +205,7 @@ class LearningMixin:
         # those are read.
         got = reading.acquire(timeout=MEMO_WAIT)
         try:
-            with self._conn() as conn, _one_snapshot(conn):
+            with self._conn() as conn, one_snapshot(conn):
                 stamp = _feedback_stamp(conn)
                 with _FEEDBACK_LOCK:
                     kept = _FEEDBACK.get(kept_key)
@@ -243,7 +243,7 @@ class LearningMixin:
         reading = _VENDOR_READING[hash(kept_key) % len(_VENDOR_READING)]
         got = reading.acquire(timeout=MEMO_WAIT)
         try:
-            with self._conn() as conn, _one_snapshot(conn):
+            with self._conn() as conn, one_snapshot(conn):
                 stamp = self._lessons_stamp(conn, key, writing)
                 with _FEEDBACK_LOCK:
                     kept = _VENDOR_LESSONS.get(kept_key)
@@ -304,7 +304,7 @@ class LearningMixin:
         history = last["outcome"] == "history"
         with self._conn() as conn:
             writing = conn.in_transaction
-            with _one_snapshot(conn):
+            with one_snapshot(conn):
                 if read_with is None or _feedback_stamp(conn) != read_with:
                     return self._past_read(conn, key, last)
                 return self._past_kept(conn, key, last, history, writing, kept_key)

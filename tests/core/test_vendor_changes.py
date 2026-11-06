@@ -216,9 +216,9 @@ def test_a_change_reads_again_only_the_invoices_it_changed_and_the_log_keeps_the
     read: list = []
     real = Store._vendor_invoices
 
-    def reading(self, vendor, some=None):
+    def reading(self, vendor, some=None, **kw):
         read.append(some)
-        return real(self, vendor, some)
+        return real(self, vendor, some, **kw)
 
     with first.running() as store, pytest.MonkeyPatch.context() as mp:
         mp.setattr(Store, "_vendor_invoices", reading)
@@ -318,3 +318,55 @@ def test_while_a_backup_made_before_the_log_is_restored_another_workers_change_i
     assert seen["after"] == seen["fresh"] and seen["after"][-1]["status"] == "parked"
     with second.running() as worker:
         assert worker.vendor_invoices(key) == _fresh(worker, key)
+
+
+def test_a_change_an_older_ap_coder_made_without_the_log_reads_the_vendors_invoices_again(
+    workers, tmp_path, ground_truth
+):
+    """B-1811: an older AP Coder opening the database (a command run from an older copy against the live data folder)
+    makes the vendors' triggers again as it knew them, writing no log, while the database stays at the same schema:
+    a change then made was not logged, and every process kept the vendor's invoices as they were. The vendor's own
+    count of changes (which every version's triggers keep) moving more than the log says reads them again."""
+    first, _ = workers
+    with first.running() as store:
+        invoice = _add(store, tmp_path, ground_truth, random.Random(2), 1)
+        key = store.get_invoice(invoice)["vendor_key"]
+        assert store.vendor_invoices(key)[0]["grand_total"] != 999
+        with sqlite3.connect(store.path) as conn:  # the older version's triggers: counting only
+            for name in _LOGGING:
+                conn.execute(f"DROP TRIGGER {name}")
+                conn.execute(re.sub(r"; INSERT INTO vendor_changes .*? - \d+", "", SUMMARY_TRIGGERS[name]))
+        _plain(store.path, "UPDATE invoices SET grand_total = 999, status = 'approved' WHERE id = ?", invoice)
+        assert store.vendor_invoices(key) == _fresh(store, key)
+
+
+def test_a_vendors_invoices_brought_up_to_date_are_those_of_one_moment(workers, tmp_path, ground_truth):
+    """B-1812: the invoices the log names were read again a moment after the log, so another worker's change between
+    the two gave a list of no one moment (one invoice as after it, another as before). They are read in the same
+    moment as the log; the change after it is taken at the next ask."""
+    first, _ = workers
+    with first.running() as store:
+        rng = random.Random(3)
+        one = _add(store, tmp_path, ground_truth, rng, 1)
+        key = store.get_invoice(one)["vendor_key"]
+        two = _add(store, tmp_path, ground_truth, rng, 2)
+        _plain(store.path, "UPDATE invoices SET vendor_key = ?, vendor_name = ? WHERE id = ?", key,
+               store.get_invoice(one)["vendor_name"], two)  # fmt: skip
+        store.vendor_invoices(key)
+        _plain(store.path, "UPDATE invoices SET grand_total = 110 WHERE id = ?", one)
+        before = _fresh(store, key)
+        real, raced = vendors_module.VendorsMixin._vendor_invoices, []
+
+        def racing(self, vendor, ids=None, *args, **kwargs):
+            if ids is not None and not raced:  # another worker's change, just after the log was read
+                raced.append(1)
+                _plain(store.path, "UPDATE invoices SET grand_total = grand_total + 1000 WHERE vendor_key = ?", vendor)
+            return real(self, vendor, ids, *args, **kwargs)
+
+        vendors_module.VendorsMixin._vendor_invoices = racing
+        try:
+            got = store.vendor_invoices(key)
+        finally:
+            vendors_module.VendorsMixin._vendor_invoices = real
+        assert raced and got == before
+        assert store.vendor_invoices(key) == _fresh(store, key)
