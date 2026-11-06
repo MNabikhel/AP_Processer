@@ -1298,8 +1298,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Schema 27:** `report_answers` and `report_jobs`, made by `_SCHEMA` at every start. Another change takes 26; its
     migration comes before this one at the integration. Going back: an older version refuses a database of schema 27
     (`DatabaseTooNew`), and `server-update --back` restores the pre-update backup.
-  - **Measured:** below, from `scratchpad/p3_delta/` of the session (a copy of the 100,000-invoice database at
-    schema 27, the machine shared with two other agents' work).
+  - **Measured** (`p3_delta/` in the session's scratchpad: a copy of the 100,000-invoice database at schema 27,
+    against fd5d166 on the seed itself; the machine shared with two other agents' work, its load 3 to 9, so each
+    figure beside the one it is compared with):
+    - **A web worker's part** of each download on the server, asked by the page: 8-80 ms (7-46 ms of CPU). Before, it
+      made the whole file: search to Excel 8.6 s, to CSV 1.1 s, the Activity CSV 8.6 s, the duplicates CSV 6.8 s
+      the first time in each worker (`bench volume`, admin).
+    - **The background process's:** search to Excel 8.6-9.2 → 2.2-2.3 s (8.2-8.5 → 2.2 s of CPU: the writer), to CSV
+      1.1-1.3 s, the Activity CSV 5.4-5.7 s, the duplicates CSV 0.02 s (the pairs shared), the accruals CSV 0.8 s the
+      first time, 0.04 s after.
+    - **The first time in a process** (a fresh Python each, the month-end page's answers and the audit's pairs):
+      before, 5.0-6.2 s and 6.7-7.2 s in every process; now 5.0 s and 6.4 s in the server's first, then 0.8 s (the
+      recurring vendors, not shared) and 0.01 s in each other.
+    - **`bench volume --roles admin --only` the changed routes** (one process; asked without the page's header, so
+      the time to the file, made beside the request on a thread of its own): search to Excel 8.57 → 2.26-2.58 s,
+      to CSV 1.12 → 1.59-1.79 s (the file written, then sent; a look at the job every 0.25 s at most), the
+      Activity CSV 8.56 → 7.54-7.75 s, the accruals CSV 0.05 → 0.16 s, the duplicates CSV's and month-end's first
+      6.8 and 5.4 s → 7.0-7.4 and 5.4-5.7 s (the server's first: the same work), Exports and month-end after it the
+      same.
   - **Not done:**
     - The load bench asks for the downloads without the page's header (`bench/load.py` `export_search`): its worker
       then waits holding no thread while the background process makes the file.
