@@ -465,7 +465,7 @@ def prune_kept(folder: Path, newest: Path | None = None) -> int:
 
 def _unlinked(path: Path) -> int:
     try:
-        path.unlink()
+        path.unlink(missing_ok=True)  # one gone already (another process pruning) is gone too (B-1779)
         return 1
     except OSError:
         return 0

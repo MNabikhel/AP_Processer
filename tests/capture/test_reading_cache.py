@@ -386,6 +386,38 @@ def test_fifty_pdfs_read_in_eight_threads_read_as_in_one(engine, tmp_path, monke
         assert a_pictures == b_pictures and a_png == b_png and a_words == b_words and a_sizes == b_sizes
 
 
+def test_every_pymupdf_call_in_capture_holds_the_one_lock(engine, tmp_path, monkeypatch):
+    """B-1780: the PDF's table read from its text layer (``tables.text_table_items``: every digital PDF read with its
+    tables, the pipeline's way) opened the PDF and took its pages and their drawings without ``layout.PDF_LOCK``,
+    beside another thread drawing a page (N-14). Each PyMuPDF call of a reading holds it: a digital PDF's, a scan's
+    and its second read's, the table finder's pictures."""
+    from ap_coder.capture import analyze
+    from tests.conftest import SAMPLE_STEM, SAMPLES
+
+    scan = _scan(tmp_path / "scan.pdf", size=(288, 360))
+    calls: list[tuple[str, bool]] = []
+
+    def watched(owner, name):
+        real = getattr(owner, name)
+
+        def call(*args, **kwargs):
+            calls.append((name, layout.PDF_LOCK._is_owned()))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, call)
+
+    watched(pymupdf, "open")
+    for name in ("__getitem__", "load_page"):
+        watched(pymupdf.Document, name)
+    for name in ("get_drawings", "get_text", "get_pixmap", "get_image_info", "get_images"):
+        watched(pymupdf.Page, name)
+    assert analyze(SAMPLES / f"{SAMPLE_STEM}.pdf", tables={}).line_items  # the table from its text layer
+    assert analyze(scan, tables={}).layout_source == "ocr"
+    assert table_finder.page_pictures(scan)
+    assert {"open", "__getitem__", "get_drawings", "get_text", "get_pixmap", "get_image_info"} <= {n for n, _ in calls}
+    assert [name for name, held in calls if not held] == []
+
+
 def test_pymupdf_outside_capture_holds_the_one_lock_too(tmp_path, monkeypatch, ground_truth):
     """Every PDF opened outside ``capture/`` holds ``layout.PDF_LOCK`` too: the page reader's pages (its own lock is
     gone), the AI reviewer's page images, the pipeline's look at a PDF, a picture made a PDF and a scan turned, an
