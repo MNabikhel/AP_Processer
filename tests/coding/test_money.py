@@ -19,6 +19,7 @@ from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import validate_coding
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.web.invoice_view import tax_check
 from tests.conftest import SAMPLES
 
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
@@ -200,10 +201,12 @@ def test_a_total_two_cents_off_is_a_difference_in_the_tax_check_and_a_finding(re
 def test_the_tax_checks_lines_row_allows_the_cent_a_line_the_subtotal_check_does(reference):
     """Three lines a vendor rounded one by one may be cents from a subtotal worked out before rounding: no
     SUBTOTAL_MISMATCH up to a cent a line and one more, and the Tax check said "Lines = subtotal" was off (B-1866,
-    N-40). Five cents is beyond both."""
+    N-40). Five cents is beyond both. The total is the posting's (the lines and the tax): when the posting can't
+    balance, the row asks for every cent (B-1910)."""
     lines = [(33.33, ["HST"]), (33.33, ["HST"]), (33.33, ["HST"])]
     for subtotal, flagged in ((100.0, False), (100.02, False), (100.03, False), (100.04, True)):
-        coding = _coding(lines, [("HST", 0.13, subtotal, money.times(subtotal, 0.13))], subtotal=subtotal)
+        tax = money.times(subtotal, 0.13)
+        coding = _coding(lines, [("HST", 0.13, subtotal, tax)], subtotal=subtotal, total=money.add_up([99.99, tax]))
         assert _row(math_check(coding), "Lines = subtotal")["ok"] is not flagged
         assert ("SUBTOTAL_MISMATCH" in _codes(validate_coding(coding, reference).issues)) is flagged
 
@@ -267,22 +270,141 @@ TAX_ROW_FINDINGS = {"TAX_CALC_MISMATCH", "TAX_BASE_MISMATCH", "TAX_NOT_ALLOCATED
 
 def test_the_tax_check_and_the_findings_agree_on_every_sum(reference):
     """Generated invoices (credit notes, yen, cents off, more off): each row of the Tax check is right exactly when its
-    finding is not there: the lines and SUBTOTAL_MISMATCH, the total and TOTAL_MISMATCH, each tax and its findings;
-    the PST or QST to self-assess is the report's arithmetic on the same lines."""
+    finding is not there: the lines and SUBTOTAL_MISMATCH (and every cent when the posting can't balance, B-1910),
+    the total and TOTAL_MISMATCH (and TAX_LINES_TOTAL_MISMATCH, B-1911), each tax and its findings, the tick on each
+    tax line and TAX_CALC_MISMATCH; the PST or QST to self-assess is the report's arithmetic on the same lines."""
     rng = random.Random(183)
     for _ in range(400):
         coding = _random_coding(rng)
         codes = {i.code for i in validate_coding(coding, reference).issues}
         m = math_check(coding, reference.tax)
-        assert _row(m, "Lines = subtotal")["ok"] is ("SUBTOTAL_MISMATCH" not in codes), coding
-        assert _row(m, "Subtotal + tax = total")["ok"] is ("TOTAL_MISMATCH" not in codes), coding
+        exact = "POSTING_UNBALANCED" not in codes or money.within(
+            money.add_up(li.amount for li in coding.line_items), coding.subtotal, money.EXACT
+        )
+        assert _row(m, "Lines = subtotal")["ok"] is ("SUBTOTAL_MISMATCH" not in codes and exact), coding
+        total_ok = not codes & {"TOTAL_MISMATCH", "TAX_LINES_TOTAL_MISMATCH"}
+        assert _row(m, "Subtotal + tax = total")["ok"] is total_ok, coding
         findings = check_taxes(coding, reference.tax)
         for row in (r for r in m["rows"] if r["kind"] == "tax"):
             said = {f.code for f in findings if f.code in TAX_ROW_FINDINGS and f.message.startswith(row["tax_type"])}
             assert row["ok"] is not said, (row, said, coding)
+        for tl, tick in zip(coding.tax_lines, tax_check(coding, reference), strict=True):
+            said = any(f.code == "TAX_CALC_MISMATCH" and f.message.startswith(tl.tax_type) for f in findings)
+            assert money.nil(tl.tax_amount) or tick["math_ok"] is not said, (tl, tick, coding)
         places = 0 if coding.currency == "JPY" else 2
         doc = coding.model_dump()
         for row in (r for r in m["rows"] if r["kind"] == "selfassess"):
             base = taxreturn.self_assessed_base(doc, doc["line_items"], row["tax_type"])
             rate = float(row["rate"].rstrip("%")) / 100
             assert row["expected"] == f"{money.times(base, rate, places):,.2f}", row
+
+
+# --- The review of D-183: nothing worse than before -----------------------------------------------------------------
+
+
+def test_two_amounts_a_cent_apart_are_within_a_cent_at_any_size(reference):
+    """B-1906: ``within`` allowed a billionth beyond the tolerance, and two amounts printed to the cent a cent apart
+    differ in floats by a cent and up to 2e-9 at 2**23 dollars and above: a 22-million-dollar invoice from Quebec
+    whose total taxes (printed on the combined 14.975%) is a cent from its GST + QST got TOTAL_MISMATCH, hard."""
+    for cents in (838_860_801, 2_522_121_503, 100_000_000_000):
+        a = cents / 100
+        assert money.within(a, (cents + 1) / 100, money.CENT) and money.within((cents - 1) / 100, a, money.CENT)
+        assert not money.within(a, (cents + 2) / 100, money.CENT)
+        assert money.within(a, a, money.EXACT) and not money.within(a, (cents + 1) / 100, money.EXACT)
+    s, g, q = 22005151.02, 1100257.55, 2195013.81
+    coding = _coding([(s, ["GST", "QST"])], [("GST", 0.05, s, g), ("QST", 0.09975, s, q)], province="QC",
+                     tax_total=3295271.37, total=25300422.38)  # fmt: skip
+    codes = _codes(validate_coding(coding, reference).issues)
+    assert not codes & {"TOTAL_MISMATCH", "TAX_LINES_TOTAL_MISMATCH", "POSTING_UNBALANCED"}, codes
+    assert _row(math_check(coding, reference.tax), "Subtotal + tax = total")["ok"]
+
+
+def _cash(lines, hst, total):
+    """A receipt in Ontario: ``lines`` (the last the cash rounding, out of scope, when it is not taxed)."""
+    coding = _coding(lines, [("HST", 0.13, money.add_up(a for a, tx in lines if tx), hst)],
+                     subtotal=money.add_up(a for a, tx in lines if tx), total=total)  # fmt: skip
+    for li in coding.line_items:
+        if not li.taxes_applied:
+            li.tax_status = "out_of_scope"
+    return coding
+
+
+def test_a_cash_receipt_rounded_to_the_nickel_with_its_rounding_as_a_line_adds_up(reference):
+    """B-1907: subtotal 52.37 + HST 6.81 = 59.18, paid 59.20 in cash (to the nickel, Canada since 2013), the 0.02
+    entered as a line so that the posting balances: TOTAL_MISMATCH (hard) since a cent was its tolerance, where 0.02
+    passed before. A total 2 cents off that is not the cash rounding is still the difference."""
+    for lines, hst, total in (([(52.37, ["HST"]), (0.02, [])], 6.81, 59.20),
+                              ([(52.36, ["HST"]), (-0.02, [])], 6.81, 59.15),
+                              ([(-52.37, ["HST"]), (-0.02, [])], -6.81, -59.20)):  # fmt: skip
+        coding = _cash(lines, hst, total)
+        codes = _codes(validate_coding(coding, reference).issues)
+        assert not codes & {"TOTAL_MISMATCH", "POSTING_UNBALANCED", "SUBTOTAL_MISMATCH"}, (lines, codes)
+        row = _row(math_check(coding, reference.tax), "Subtotal + tax = total")
+        assert row["ok"] and "cash" in row["hint"], row
+    for lines, hst, total, why in (
+        ([(52.39, ["HST"])], 6.81, 59.20, "the subtotal read 52.37: no rounding line"),
+        ([(52.37, ["HST"]), (0.02, [])], 6.81, 59.21, "59.20 is not the total"),
+        ([(52.37, ["HST"]), (0.03, [])], 6.81, 59.21, "3 cents: no nickel"),
+        ([(52.36, ["HST"]), (0.04, [])], 6.81, 59.21, "59.17 is the nickel 59.15"),
+    ):
+        coding = _cash(lines, hst, total)
+        if why.startswith("the subtotal"):
+            coding.subtotal = 52.37
+        assert "TOTAL_MISMATCH" in _codes(validate_coding(coding, reference).issues), why
+        assert not _row(math_check(coding, reference.tax), "Subtotal + tax = total")["ok"], why
+
+
+def test_the_tick_on_a_tax_line_is_the_tax_checks_and_tax_calc_mismatchs(reference):
+    """B-1908: the review screen's tax lines table ticked a tax within a cent a line and one more of its taxable x
+    rate, the Tax check beside it a unit either way (B-1867): GST 30.02 on 600.00 at 5% was "GST ✓" in the one and
+    "check" in the other. Both, and TAX_CALC_MISMATCH, are one rule now (``money.tax_right``)."""
+    lines = [(200.0, ["GST"])] * 3
+    for charged, right in ((30.0, True), (30.01, True), (29.99, True), (30.02, False), (29.98, False), (30.04, False)):
+        coding = _coding(lines, [("GST", 0.05, 600, charged)], province="AB")
+        assert tax_check(coding, reference)[0]["math_ok"] is right, charged
+        assert _row(math_check(coding, reference.tax), "GST")["ok"] is right, charged
+        assert ("TAX_CALC_MISMATCH" in _codes(check_taxes(coding, reference.tax))) is not right, charged
+    by_line = _coding([(0.1, ["GST"])] * 10, [("GST", 0.05, 1.0, 0.1)], province="AB")  # 0.005 a line: 0.01 each
+    assert tax_check(by_line, reference)[0]["math_ok"] and _row(math_check(by_line, reference.tax), "GST")["ok"]
+
+
+def test_the_tick_on_a_tax_in_yen_is_in_whole_yen(reference):
+    """B-1909: the tax lines table worked out a tax in yen to the hundredth: HST on 10,001 yen at 13% charged 1,300
+    yen (1,300.13 rounded to the yen) was ✕, where the Tax check and check_taxes say it is right."""
+    for charged, right in ((1300, True), (1301, True), (1302, False)):
+        coding = _coding([(10001, ["HST"])], [("HST", 0.13, 10001, charged)], currency="JPY")
+        assert tax_check(coding, reference)[0]["math_ok"] is right, charged
+        assert _row(math_check(coding, reference.tax), "HST")["ok"] is right, charged
+
+
+def test_a_line_read_off_is_the_tax_checks_difference_when_the_posting_cannot_balance(reference):
+    """B-1910: since the lines row allows a cent a line and one more (B-1866), a line read 2 cents off (54.25 read
+    54.23) gave a Tax check all ✓ beside a hard POSTING_UNBALANCED; before, "Lines = subtotal" said -0.02. A posting
+    that can't balance needs every cent of the lines: the row says the difference. SUBTOTAL_MISMATCH keeps the cent
+    a line."""
+    lines = [(120.0, ["HST"]), (80.5, ["HST"]), (45.25, ["HST"]), (300.0, ["HST"]), (54.23, ["HST"])]
+    coding = _coding(lines, [("HST", 0.13, 600.0, 78.0)], subtotal=600.0, total=678.0)
+    codes = _codes(validate_coding(coding, reference).issues)
+    assert "POSTING_UNBALANCED" in codes and "SUBTOTAL_MISMATCH" not in codes
+    row = _row(math_check(coding, reference.tax), "Lines = subtotal")
+    assert not row["ok"] and row["diff"] == "-0.02"
+    balanced = _coding(lines, [("HST", 0.13, 600.0, 78.0)], subtotal=600.0, total=677.98)  # the posting's total
+    assert _row(math_check(balanced, reference.tax), "Lines = subtotal")["ok"]
+    assert "SUBTOTAL_MISMATCH" not in _codes(validate_coding(balanced, reference).issues)
+
+
+def test_the_tax_checks_total_adds_the_tax_total_as_total_mismatch_does(reference):
+    """B-1911: a tax total read 2 cents off (78.02, its tax lines 78.00) is TOTAL_MISMATCH (hard: subtotal + tax =
+    678.02), while the Tax check's "Subtotal + tax = total" added the tax lines and said it adds up. The row adds the
+    tax total, and is a difference too when the tax lines are not it (TAX_LINES_TOTAL_MISMATCH), saying so: a tax
+    line read 2 cents off still shows there, as before."""
+    coding = _coding([(600.0, ["HST"])], [("HST", 0.13, 600.0, 78.0)], tax_total=78.02, total=678.0)
+    assert "TOTAL_MISMATCH" in _codes(validate_coding(coding, reference).issues)
+    row = _row(math_check(coding, reference.tax), "Subtotal + tax = total")
+    assert not row["ok"] and (row["tax"], row["computed"], row["diff"]) == ("78.02", "678.02", "-0.02"), row
+    assert "78.00" in row["hint"]
+    line_off = _coding([(600.0, ["HST"])], [("HST", 0.13, 600.0, 77.98)], tax_total=78.0, total=678.0)
+    row = _row(math_check(line_off, reference.tax), "Subtotal + tax = total")
+    assert not row["ok"] and row["diff"] == "0.02" and "77.98" in row["hint"], row  # the total less the tax lines'
+    codes = _codes(validate_coding(line_off, reference).issues)
+    assert "TOTAL_MISMATCH" not in codes and "TAX_LINES_TOTAL_MISMATCH" in codes

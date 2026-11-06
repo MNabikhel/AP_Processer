@@ -18,7 +18,7 @@ from typing import Any
 from ..ai.extraction import ExtractionResult
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
-from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, half_up, nil, per_line, within
+from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
 from .tax import build_gl_distribution, check_taxes
 from .vendors import norm_tax_number  # letters and digits, lower case
 
@@ -188,7 +188,10 @@ def validate_coding(
     if coding.line_items and not within(line_sum, coding.subtotal, per_line(len(coding.line_items))):
         add(ERROR, "SUBTOTAL_MISMATCH", f"the lines add up to {line_sum:.2f} but the subtotal is {coding.subtotal:.2f}"
             + (TAX_INCLUDED_HINT if prices_include_tax(coding) else ""))  # fmt: skip
-    if not within(computed_total, coding.grand_total, CENT):
+    # A cent, or a total rounded to the nickel for cash with its rounding a line (B-1907).
+    if not within(computed_total, coding.grand_total, CENT) and not cash_rounded(
+        computed_total, coding.grand_total, (li.amount for li in coding.line_items)
+    ):
         add(
             ERROR,
             "TOTAL_MISMATCH",

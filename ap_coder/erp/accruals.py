@@ -31,6 +31,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 
+from ..coding.money import times
 from ..coding.po import billed_on, po_label, positive_lines
 from ..coding.vendors import norm_invoice_number
 from ..core.memory import vendor_key
@@ -212,7 +213,7 @@ def _accrued(full: dict, lines: list) -> list[Accrual]:
                 li["description"],
                 li["gl_code"],
                 li["cost_center"],
-                round(qty * li["unit_price"], 2),
+                times(qty, li["unit_price"]),
                 note=f"{qty:g} received and not invoiced at {li['unit_price']:,.2f}",
             )  # fmt: skip
         )

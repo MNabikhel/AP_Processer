@@ -13,7 +13,7 @@ from typing import Any
 from ..core.schema import InvoiceCoding
 from ..core.ui import plural
 from .line_tax import tax_name
-from .money import CENT, TAX_UNITS, add_up, half_up, nil, per_line, times, within
+from .money import CENT, EXACT, TAX_UNITS, add_up, cash_rounded, half_up, nil, per_line, tax_right, times, within
 from .tax import PROVINCES, REGIME, TAX_TYPES, currency_places, gap_lines, short, supply_source
 
 
@@ -48,10 +48,11 @@ class _Sums:
 def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
     """Every sum on the invoice, worked out again from the lines as they are on screen: the lines add up to the
     subtotal; each tax is its rate on the lines whose tax code carries it (a PST-exempt line is "GST only"; QST on the
-    price before GST); subtotal + taxes = total. ``ok`` when all of it does, else each difference. Tax is allowed a
-    cent of rounding, or a cent per line when the vendor rounded line by line (a whole yen in a currency without
-    cents). What counts as equal is the findings' (``money``, D-183): a row is right exactly when ``validate_coding``
-    and ``check_taxes`` say nothing of its sum.
+    price before GST); subtotal + the tax total = total. ``ok`` when all of it does, else each difference. Tax is
+    allowed a cent of rounding, or a cent per line when the vendor rounded line by line (a whole yen in a currency
+    without cents). What counts as equal is the findings' (``money``, D-183): a row is right exactly when
+    ``validate_coding`` and ``check_taxes`` say nothing of its sum (the lines row: to the cent when the posting can't
+    balance, B-1910).
 
     With ``setup`` (``TaxSetup``), each tax is worked out at the official rate in force on the invoice's date where
     it is supplied (D-61), the Tax check table's "expected"; without it, at the rate printed. Each row of a tax
@@ -77,11 +78,17 @@ def math_check(coding: InvoiceCoding, setup: Any = None) -> dict[str, Any]:
 
 
 def _lines_row(sums: _Sums, taxes_total: float) -> dict[str, Any]:
-    """The lines add up to the subtotal."""
+    """The lines add up to the subtotal: within a cent a line and one more, as SUBTOTAL_MISMATCH (B-1866), but to the
+    cent when the posting can't balance (POSTING_UNBALANCED: the lines and the tax lines as posted are not the total),
+    so that the row points at a line read off (B-1910)."""
     coding = sums.coding
     lines_total = add_up(li.amount for li in sums.items)
     diff = half_up(lines_total - coding.subtotal)
-    ok = within(diff, 0, per_line(sums.n))  # a cent a line, as SUBTOTAL_MISMATCH (B-1866)
+    ok = within(diff, 0, per_line(sums.n))
+    if ok and sums.items and not within(diff, 0, EXACT):  # a cent a line: right when the posting balances
+        posted = add_up([*(half_up(li.amount) for li in sums.items),
+                         *(half_up(t.tax_amount) for t in coding.tax_lines if not nil(t.tax_amount))])  # fmt: skip
+        ok = within(posted, coding.grand_total, EXACT)
     row = {"kind": "lines", "what": "Lines = subtotal", "ok": ok,
            "detail": f"{plural(sums.n, 'line')} add up to {money(lines_total)}; the subtotal is "
                      f"{money(coding.subtotal)}",
@@ -126,10 +133,10 @@ def _tax_row(sums: _Sums, tax_type: str) -> dict[str, Any]:
         return row
     # Rounded as the tax checks round it (tax.check_taxes): to cents, or to whole yen and the like; right within a unit
     # either way, as TAX_CALC_MISMATCH (B-1867).
-    places, unit = sums.places, sums.unit
+    places = sums.places
     expected = times(base, rate, places)
     line_by_line = add_up((times(li.amount, rate, places) for li in flagged), places)
-    ok = any(within(way, charged, TAX_UNITS * unit) for way in (expected, line_by_line))
+    ok = tax_right(charged, (expected, line_by_line), places)
     gap = half_up(charged - expected)
     row.update(ok=ok, rate=f"{rate * 100:.4g}%", expected=money(expected), diff="" if ok else money(gap),
                detail=f"{which} ({money(base)}) × {rate * 100:.4g}% = {money(expected)}; charged "
@@ -234,12 +241,24 @@ def _self_assess_rows(sums: _Sums) -> list[dict[str, Any]]:
 
 
 def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
-    """Subtotal + taxes = total."""
-    computed = half_up(coding.subtotal + taxes_total)
+    """Subtotal + tax = total: the tax total, as TOTAL_MISMATCH adds it, and the tax lines, as
+    TAX_LINES_TOTAL_MISMATCH holds them to it, the row saying which is off (B-1911). Within a cent, as TOTAL_MISMATCH
+    (B-1865), or a total rounded to the nickel for cash with its rounding a line (B-1907)."""
+    computed = half_up(coding.subtotal + coding.tax_total)
     diff = half_up(coding.grand_total - computed)
-    ok = within(diff, 0, CENT)  # a cent, as TOTAL_MISMATCH (B-1865)
-    return {"kind": "total", "what": "Subtotal + tax = total", "ok": ok,
-            "diff": money(diff) if not ok else "", "subtotal": money(coding.subtotal),
-            "tax": money(taxes_total), "computed": money(computed), "total": money(coding.grand_total),
-            "detail": f"{money(coding.subtotal)} + {money(taxes_total)} = {money(computed)}; the total is "
-                      f"{money(coding.grand_total)}", "lines": []}  # fmt: skip
+    cash = not within(diff, 0, CENT) and cash_rounded(computed, coding.grand_total,
+                                                      [li.amount for li in coding.line_items])  # fmt: skip
+    adds_up = within(diff, 0, CENT) or cash
+    taxes_agree = within(taxes_total, coding.tax_total, CENT)
+    shown = diff if not adds_up else half_up(coding.grand_total - half_up(coding.subtotal + taxes_total))
+    row = {"kind": "total", "what": "Subtotal + tax = total", "ok": adds_up and taxes_agree,
+           "diff": "" if adds_up and taxes_agree else money(shown), "subtotal": money(coding.subtotal),
+           "tax": money(coding.tax_total), "computed": money(computed), "total": money(coding.grand_total),
+           "detail": f"{money(coding.subtotal)} + {money(coding.tax_total)} = {money(computed)}; the total is "
+                     f"{money(coding.grand_total)}", "lines": []}  # fmt: skip
+    hints = [f"Rounded to the nickel for cash: the rounding, {money(diff)}, is a line of its own."] if cash else []
+    if not taxes_agree:
+        hints.append(f"The tax lines add up to {money(taxes_total)}, not the tax total {money(coding.tax_total)}.")
+    if hints:
+        row["hint"] = " ".join(hints)
+    return row

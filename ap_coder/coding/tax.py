@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.csvio import parse_date, read_csv_rows
-from .money import CENT, TAX_UNITS, add_up, half_up, nil, per_line, split, tax_band, times, within
+from .money import CENT, add_up, half_up, nil, per_line, split, tax_band, tax_right, times, within
 
 log = logging.getLogger(__name__)
 
@@ -444,6 +444,17 @@ def _each_tax_line(check: _TaxCheck) -> None:
         _tax_line_rate(check, tl)
 
 
+def tax_line_ways(coding: Any, tl: Any, places: int) -> list[float]:
+    """The ways a tax line's tax is worked out: once on its taxable amount, and, when it is the only line of its tax,
+    line by line on the lines marked with it, each rounded (``money.tax_right`` holds the tax to them)."""
+    ways = [times(tl.taxable_amount, tl.rate, places)]
+    if sum(1 for t in coding.tax_lines if t.tax_type == tl.tax_type) == 1:
+        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+        if flagged:
+            ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
+    return ways
+
+
 def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
     """Tax is worked out once on the taxable amount (a cent of rounding), or line by line and added up (each line
     rounded). An amount neither way gives is a wrong charge: an error, or a warning when it is within what half a
@@ -452,14 +463,10 @@ def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
     unit = 10.0**-places
     rounding = tax_band(unit, check.n_items)
     label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
-    expected = times(tl.taxable_amount, tl.rate, places)
-    ways = [expected]
-    if sum(1 for t in check.tax_lines if t.tax_type == tl.tax_type) == 1:
-        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
-        if flagged:
-            ways.append(add_up((times(li.amount, tl.rate, places) for li in flagged), places))
+    ways = tax_line_ways(coding, tl, places)
+    expected = ways[0]
     # A tax printed at 0.00 is nothing charged (LINE_TAX_NOT_CHARGED and the self-assessment say what follows).
-    if nil(tl.tax_amount) or any(within(way, tl.tax_amount, TAX_UNITS * unit) for way in ways):
+    if nil(tl.tax_amount) or tax_right(tl.tax_amount, ways, places):
         return
     # The taxable is the lines marked with the tax (it follows them on the review screen) and one line's amount is
     # the difference: the tax charged is right for the other lines, a line's tax code is what to look at (a warning
@@ -471,7 +478,8 @@ def _tax_line_amount(check: _TaxCheck, tl: Any, places: int) -> None:
     suspect = None
     if marked and within(add_up(li.amount for li in marked), tl.taxable_amount, tol) and gap:
         suspect = (_gap_line(marked, -gap, tol, sign) if gap < 0 else
-                   _gap_line([li for li in coding.line_items if li not in marked], gap, tol, sign))  # fmt: skip
+                   _gap_line([li for li in coding.line_items if tl.tax_type not in li.taxes_applied], gap, tol,
+                             sign))  # fmt: skip
     name = tax_name(tl.tax_type, tl.province or check.prov)
     if suspect is not None:
         said = f"line {suspect.line_number} ({short(suspect.description)}, {suspect.amount:,.2f})"

@@ -259,6 +259,18 @@ def test_received_not_invoiced_gives_what_matching_each_po_in_turn_gave(tmp_path
     assert not any(a.reference.startswith(("PO-73 ", "PO-75 ")) for a in found)  # closed, nothing received
 
 
+def test_received_not_invoiced_is_accrued_half_up(tmp_path):
+    """B-1912: 3 received at 2.675 was accrued 8.02 (Python's round on the float's binary value), where the vendor,
+    JD Edwards and the rest of AP Coder (D-183) make it 8.03."""
+    store = Store(tmp_path / "a.db")
+    store.import_purchase_orders([{"po_number": "PO-80", "vendor_name": "Ridge Office Supply", "line_number": 1,
+                                   "description": "Bolts", "quantity": 3.0, "unit_price": 2.675, "amount": 8.03,
+                                   "received_quantity": 3.0, "gl_code": "6010", "cost_center": "", "status": "open",
+                                   "amount_only": False, "open_amount": None}])  # fmt: skip
+    (accrual,) = accruals._received_not_invoiced(store, END)
+    assert accrual.amount == 8.03
+
+
 def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_changed(tmp_path, monkeypatch):
     """D-166: each received PO's accruals are kept in each process (``accruals._PARTS``) and worked out again only
     once its lines, its billing invoices (which, their dates and PO) or those invoices' vendors' invoices changed,

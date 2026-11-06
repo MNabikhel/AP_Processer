@@ -95,8 +95,8 @@ def in_cents(amount: float) -> int:
 
 
 # --- What counts as equal ------------------------------------------------------------------------------------------
-# Amounts, in a currency's unit (a cent, or a whole yen without cents). The differences compared are rounded to the
-# cent, so "within" allows only the float error beyond the tolerance.
+# Amounts, in a currency's unit (a cent, or a whole yen without cents). "within" allows only the float error of a
+# difference beyond the tolerance, at the size of the amounts compared.
 
 NIL = 0.005  # under half a cent an amount is nothing: a printed "GST 0.00" charges no GST
 # The GL posting against the invoice total, and the parts of a split against what is split: equal to the cent.
@@ -105,13 +105,17 @@ EXACT = 0.005
 # validation's TOTAL_MISMATCH, the Tax check's total row), the tax lines = the tax total (TAX_LINES_TOTAL_MISMATCH),
 # the lines = the total when the prices include the tax.
 CENT = 0.01
+# A total paid in cash is rounded to the nickel (Canada since 2013: 1 or 2 cents down, 3 or 4 up), the rounding
+# entered as a line of its own so that the posting balances: subtotal + tax 59.18, paid 59.20 (``cash_rounded``).
+CASH_ROUNDING = 0.02
 # Another reader's amount (Azure's, DI_AMOUNT_DIFFERS), and the least quantity x unit price may be off (LINE_MATH).
 READ_AGAIN = 0.02
 LINE_MATH_SHARE = 0.005  # quantity x unit price: unit prices are printed rounded, 0.5% of the extension
 # A printed taxable amount is the base of its tax line when it makes the tax within this (line_tax._tax_base).
 PRINTED_BASE = 0.05
 # A tax against its base x rate, worked out once or line by line: within this many units (cents, or yen) either way
-# is right (TAX_CALC_MISMATCH, the Tax check's tax rows: a unit per tax line when one tax is printed at two rates).
+# is right (TAX_CALC_MISMATCH, the Tax check's tax rows: a unit per tax line when one tax is printed at two rates;
+# the review screen's tick on a tax line: ``tax_right``).
 TAX_UNITS = 1
 
 
@@ -136,11 +140,28 @@ def solver_cents(lines: int, rate: float) -> int:
     return int(Decimal(str(max(2.0, 1.0 * lines) + rounding)).quantize(_UNITS[0], ROUND_HALF_UP))
 
 
+def cash_rounded(computed: float, total: float, lines: Iterable[float]) -> bool:
+    """Whether ``total`` is ``computed`` (subtotal + tax) rounded to the nickel for cash, its rounding one of
+    ``lines`` (the line amounts): TOTAL_MISMATCH and the Tax check's total row (B-1907)."""
+    rounding = half_up(total - computed)
+    return (not nil(rounding) and within(rounding, 0, CASH_ROUNDING) and in_cents(total) % 5 == 0
+            and any(within(amount, rounding, EXACT) for amount in lines))  # fmt: skip
+
+
+def tax_right(charged: float, ways: Iterable[float], places: int = 2) -> bool:
+    """Whether a tax charged is one of the ``ways`` it is worked out (once on its base, line by line) within
+    ``TAX_UNITS`` of the currency's unit: TAX_CALC_MISMATCH, the Tax check's tax rows and the review screen's tick on
+    a tax line (B-1867, B-1908)."""
+    return any(within(way, charged, TAX_UNITS * 10.0**-places) for way in ways)
+
+
 def nil(amount: float) -> bool:
     """Whether ``amount`` is nothing (under half a cent)."""
     return abs(amount) < NIL
 
 
 def within(a: float, b: float, tolerance: float) -> bool:
-    """Whether ``a`` and ``b`` are equal within ``tolerance`` (and the float error of a difference)."""
-    return abs(a - b) <= tolerance + 1e-9
+    """Whether ``a`` and ``b`` are equal within ``tolerance``, and the float error of their difference: a billionth
+    (a tolerance worked out in floats, 0.01 x 7 + 0.01) and a few parts in 10^16 of the amounts, as that error grows
+    with them (two amounts a cent apart differ by a cent and up to 2e-9 from 2**23 dollars on, B-1906)."""
+    return abs(a - b) <= tolerance + 1e-9 + 2e-15 * max(abs(a), abs(b))
