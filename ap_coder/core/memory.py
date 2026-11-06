@@ -354,7 +354,8 @@ class PastLines:
         lines = {names[i]: tuple((str(gl), int(k), int(n), str(d), str(cc), bool(ch)) for gl, k, n, d, cc, ch in runs)
                  for i, runs in value["lines"]}  # fmt: skip
         found = cls(int(value["n"]), int(value["head"]), lines, names, order)
-        if found.n != len(order) or found.n != sum(run[1] for runs in lines.values() for run in runs):
+        each = Counter(names[i] for i in order)  # (a place past the names: IndexError)
+        if found.n != len(order) or each != {line: sum(run[1] for run in runs) for line, runs in lines.items()}:
             raise ValueError("not the lessons it says")
         return found
 

@@ -2008,3 +2008,92 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/load.py`; `tests/web/test_web_process_listing.py`, `tests/web/test_web_process.py`,
     `tests/intake/test_files.py`, `tests/intake/test_imports.py`, `tests/core/test_imports.py`,
     `tests/bench/test_bench_load.py`)
+- **D-178** · **A vendor's older lessons read by line, kept in the database for every process and carried forward;
+  their rows read only when an invoice's reading asks for them** (scale goal, phase 3 part 3, Q2; changes D-173's
+  `_OLDER` and what `learning_rows` reads at once).
+  - **Why:** at 300,000 invoices `_past_read` was 12.9% of the web workers' CPU. A probe of 400 checks of the review
+    queue's invoices (no writes): 380 read the vendor's lessons past the memory's cap whole, 8,200 rows and about
+    115 ms of CPU each. Each process kept 32 vendors' and 60,000 of their rows (22 vendors there) while the queue's
+    invoices came from 1,041; most vendors have thousands past the memory (`FEEDBACK_READ` 50,000 of 1.29 million).
+    D-173's carry forward held for the vendors kept, and most were not. A check only needs them for the GL
+    suggestions (`invoice_view.suggestions`), which read of them each line's decisions, not the rows.
+  - **The candidates, measured** (one vendor of a 20,000-invoice seed with 800,000 older lessons added for 100
+    vendors with invoices in review, half on their own few lines, half with 2,500 lines each; CPU by
+    `time.process_time`, 11,500 / 8,908 rows):
+    - as before (`SELECT *`, a dict a row): 195 / 127 ms, SQLite alone 120 / 83 ms (it sorts all the vendor's rows);
+    - (a) only the columns the consumers read: 106 / 76 ms; still a cost a row, and rows of a byte cap still miss;
+    - (b) the rows kept for every process as JSON: decoded in 32 / 24 ms, but 5.7 / 4.3 MB a vendor to write again
+      at each change (the biggest vendors change with nearly every approval);
+    - (b) the same lessons by line: 1 KB / 0.19 MB of JSON, decoded in 0.0 / 2.9 ms (11 ms into objects with 5,160
+      runs). Taken;
+    - (c) a read of only the lines an invoice's lines can match: not built. The index's word weights (one over the
+      accounts each word's lines go to) and the vendor's usual account count every line, so leaving out the lines
+      that can't match changes the suggestions of those that can.
+  - **What** (`core/memory.py` `PastLines`, `core/store/learning.py` `_past_lines`, `ai/suggest.py` `_extended`):
+    - `PastLines`: the lessons past the memory by line (vendor key, description normalised), each line's runs of
+      lessons in a row on one account, newest first, each with its newest's number, description, cost center and
+      whether it changed the account (`changed_account`); whatever the chart (the suggestions take the runs on its
+      accounts). And each lesson's line in their order (an `array` of 4 bytes a lesson), which says whose oldest goes
+      when the vendor's newest `FEEDBACK_READ` drop one. `carried(front, keep)` is `of(front + rows)[:keep]` going
+      over those only, the lines it doesn't change keeping their runs (the same tuples).
+    - `Store._past_lines`: read with the stamp of `_past_memory` (the vendor's lessons stamp, the memory's last, in
+      one snapshot with the whole memory's stamp, B-1809's lesson: read across a change, used once and not kept).
+      Kept in each process (`_base._PAST_LINES`, `PAST_LINES_KEPT` 4,096 vendors and `PAST_LINES_BYTES` 64 MB by
+      `PastLines.size`, within 10% of tracemalloc), else taken from the database's copy (`past_lines`: the stamp,
+      with this version and `FEEDBACK_READ`, and the lines as JSON; never pickle), carried forward from either by
+      D-173's rule (`_moved`, shared with the rows: only the lessons the memory let go are read, six columns of them),
+      read whole only when neither can be (a lesson of the vendor removed or moved, history of it imported, the memory's
+      last moved back, a restore whose lessons took other ids). The copy is written again once a process carried it
+      `PAST_WRITE_AFTER` (64) lessons on, or read them whole; never inside a write under way, and only if the database
+      is free within `BRIEF_WAIT_MS` (`_briefly_or`). One that can't be read, or doesn't add up, is worked out again.
+    - `WithPast` is no longer a list: the rows past the cap are read (`_past_memory`, as before) only when it is read
+      as one (an arrival's examples, history check and tax codes), never by the suggestions, which read `older`.
+    - `suggest._extended` goes over the lines of `PastLines`, a line's pattern made again only when its runs or its
+      decisions in the shared rows are other objects than when it was made (`_OLDER`: the patterns made, by vendor);
+      D-173's `_Older`, `_grouped` and `_carried` go.
+    - What changes lessons in place clears the copies with them: the upgrades that recompute vendor keys and clean
+      the memory (`_base._migrate`), Forget history and a lesson forgotten on the Learning page (the vendor's).
+      Schema 27 still: the table is made by `_SCHEMA` (an older version leaves it be; a backup has it, consistent
+      with its lessons, so a restore carries it forward).
+  - **Measured** (the seed above; 300 checks drawn from the 100 vendors, their mean; the 4 cores shared):
+
+    | CPU per check (mean) | before | after |
+    |---|---:|---:|
+    | a vendor on few lines, nothing approved meanwhile | 160 ms | 14 ms (39 in the first process) |
+    | a vendor on 2,500 lines | 225 ms | 52 ms (84) |
+    | under a stream, an approval every third check: few lines | 174 ms | 21 ms |
+    | the same: 2,500 lines | 245 ms | 73 ms |
+    | an approval | 20.6 ms | 19.3 ms |
+
+    The probe of the 300k seed (`learning_rows` of 400 invoices of the review queue, here from its 957 vendors, a
+    process that keeps nothing yet): read whole 354 times (1.59 million rows) → never (147 times where no process
+    had asked before: 1,211 lessons, the copies made), about 69 → 3.4 ms of CPU an ask.
+    Under the stream: 248 of 300 checks read the rows whole before; after, 90 took the lines from the database's
+    copy (14.5 ms mean, the 2,500-line vendors' JSON), one wrote it again, none read the rows. What is left on the
+    2,500-line vendors is the extended memory's patterns made once in a process (64 ms cold, 14 ms warm). A web
+    worker after 200 checks of the 100 vendors (tracemalloc, beyond the shared memory): 155 → 149 MB, holding 62
+    vendors' lines and 32 vendors' patterns instead of 7 vendors' rows. The real seeds' vendors are on few lines (41
+    descriptions in all on the 20,000-invoice seed), the first case.
+  - **The proof:**
+    - `tests/core/test_memory_store.py`: two processes on one database (each its own caches), 250 random steps
+      (approvals, some vendors past the cap of their own, invoices approved again, lessons forgotten by the Learning
+      page and by plain SQL, history imported, an upgrade, more than the memory holds at once, a restore), vendors
+      asked in either: the lines are what reading the lessons whole gives, the rows too when read, and the GL
+      suggestions those of a memory built of all the rows (480 asks, 151 from the copy, 206 copies written). D-173's
+      300 steps, its edges and B-1809's race now check the lines too; a copy of another version or memory size, or
+      one that can't be read or doesn't add up, or no table, is worked out again. Twelve sabotages (a drop, a number
+      off, a run's newest kept, runs merged across accounts, a flag lost in the JSON, a copy's stamp not compared, one
+      of another memory size, the lean read without `suggested_gl`, the race kept, three of `_extended`'s reuse),
+      each caught.
+    - On the seed above, 400 invoices of the queue (300 of the 100 vendors): every line's suggestions, and on 100 of
+      them the examples chosen and the history check, the same byte for byte as before.
+    - `scripts/same_behaviour.py --ref 88d82e0 approve pipeline` (Python 3.12): the same. `bench coding
+      --realistic`: the same lines, byte for byte (the reports but their time).
+  - **Not done:**
+    - A capture process reading an invoice of a vendor past the cap reads its lines too (from the copy, or whole once
+      for every process), besides its rows as before.
+    - Two processes finding no copy they can carry forward each read the lessons whole (no lease between them).
+    - Reopening, rejecting or deleting an invoice forgetting its lessons (`core/store/invoices.py`) leaves the
+      vendor's copy until its next ask writes it again (it is never used: its stamp is another).
+  - (`core/memory.py`, `core/store/{learning,_base}.py`, `ai/suggest.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/core/test_memory_store.py`, `tests/ai/test_coding_no_ai.py`)

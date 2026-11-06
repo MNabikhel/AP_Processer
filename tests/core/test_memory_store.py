@@ -1044,7 +1044,9 @@ def test_the_lines_kept_for_every_process_are_taken_only_as_this_version_made_th
     # D-178: the database's copy of a vendor's older lessons by line is JSON with the stamp it was worked out under.
     # One another version made, or for another size of the memory, one that can't be read or doesn't add up, or none
     # at all (a backup of an older version restored, before its upgrade made the table) is worked out again.
+    import base64
     import sqlite3
+    from array import array
 
     from ap_coder.core.memory import PastLines
     from ap_coder.core.store import _base, learning
@@ -1073,6 +1075,8 @@ def test_the_lines_kept_for_every_process_are_taken_only_as_this_version_made_th
         (stamp, body.replace('"n":5', '"n":4')),  # doesn't add up
         (stamp, body[:-3]),  # can't be read
         (stamp, json.dumps({**json.loads(body), "order": "!"})),
+        (stamp, json.dumps({**json.loads(body), "order": base64.b64encode(array("I", [9] * 5).tobytes()).decode()})),
+        (stamp, json.dumps({**json.loads(body), "order": base64.b64encode(array("I", [0] * 5).tobytes()).decode()})),
     ]:  # fmt: skip
         with sqlite3.connect(store.path) as conn:
             conn.execute("UPDATE past_lines SET stamp = ?, body = ?", (stamped, kept))
