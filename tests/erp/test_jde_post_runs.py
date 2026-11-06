@@ -208,7 +208,7 @@ def test_the_safety_waits_hold_the_night_the_clocks_go_forward(tmp_path, ais, mo
     ais.script("voucher_create", "slow")  # its answer lost, never made
     jde_post.post(store, batch)
     assert statuses(store, batch)[1] == jde_post.UNKNOWN
-    real_now = dt.datetime(2027, 3, 14, 7, 1, tzinfo=dt.timezone.utc)  # 3:01 in Toronto, 3 real minutes after 1:58
+    real_now = dt.datetime(2027, 3, 14, 7, 1, tzinfo=dt.UTC)  # 3:01 in Toronto, 3 real minutes after 1:58
     monkeypatch.setattr(jde_post, "_clock", lambda: real_now)
     monkeypatch.setattr(jde_post, "_now", lambda: "2027-03-14T03:01:00")
     for lost in ("2027-03-14T06:58:00+00:00", "2027-03-14T01:58:00"):  # in UTC, and in local time (an older row)

@@ -99,7 +99,7 @@ def _now() -> str:
 # The safety waits (a live send's, a lost answer's) are kept and compared in UTC, which a change of the clocks doesn't
 # move (B-1887): ``sending_at`` and ``lost_at`` with their offset; one an older AP Coder kept is local time.
 def _clock() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 def _stamp() -> str:
@@ -108,7 +108,7 @@ def _stamp() -> str:
 
 def _at(text: str) -> dt.datetime:
     """A time kept on a row, in UTC (a time without its offset is local: kept by an older AP Coder)."""
-    return dt.datetime.fromisoformat(text).astimezone(dt.timezone.utc)
+    return dt.datetime.fromisoformat(text).astimezone(dt.UTC)
 
 
 def idem_key(invoice_id: int, batch: int, installation: str = "") -> str:
