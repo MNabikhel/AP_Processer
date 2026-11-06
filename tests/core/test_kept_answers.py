@@ -471,6 +471,29 @@ def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_
     assert [key for _, key in kept] == ["small 1", "small 2", "half"] and vendors_module._VENDOR_ROWS_HELD == 8
 
 
+def test_a_vendor_grown_past_half_the_rows_kept_is_no_longer_kept(tmp_path, monkeypatch):
+    """A vendor kept at half ``VENDOR_ROWS_KEPT`` that grew past it kept its last rows (up to 25,000: 25 MB in each
+    worker) until other vendors pushed them out, counted in the cap and never answered from again (B-1790). They go
+    when it is next read."""
+    from ap_coder.core.store import vendors as vendors_module
+
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
+    store = Store(tmp_path / "ap.db")
+
+    def add(count: int) -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.executemany("INSERT INTO invoices (source_path, file_name, status, created_at, vendor_key, "
+                             "vendor_name) VALUES ('x', 'x', 'review', ?, 'half', 'Half')", [(NOW,)] * count)  # fmt: skip
+
+    add(5)
+    assert len(store.vendor_invoices("half")) == 5 and vendors_module._VENDOR_ROWS_HELD == 5
+    add(1)
+    assert len(store.vendor_invoices("half")) == 6
+    assert (str(store.path), "half") not in vendors_module._VENDOR_ROWS and vendors_module._VENDOR_ROWS_HELD == 0
+
+
 def test_a_vendor_too_big_to_keep_is_read_once_by_a_check(tmp_path, ground_truth, monkeypatch):
     """A check asks for its vendor's invoices twice (``vendor_findings``, ``expected_tax_numbers``). A vendor of more
     rows than one is kept up to was read by both, 1.1 s each for one of 23,000 invoices: it is read once in a page's
@@ -565,27 +588,60 @@ def test_the_masters_vendors_found_by_a_tax_number_are_the_whole_lists_and_follo
     assert [v["vendor_key"] for v in store.master_by_tax_number("987654321RT0001")] == ["gamma"]
 
 
-def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(tmp_path, ground_truth):
-    """``approved_numbers``, kept on ``changes/approved`` and the vendors asked: an approval through another Store,
-    an approved coding changed by plain SQL, are in the next answer; other vendors asked get their own; each caller
-    gets lists of its own."""
+def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
+    """``approved_numbers``, kept on the vendors asked and their own counts (``changes/vendor/<key>``, D-174): an
+    approval through another Store, an approved coding changed by plain SQL, are in the next answer; another vendor's
+    approval (each one, under 100 people) works nothing out again, where every approval did; other vendors asked get
+    their own; each pair of numbers once; each caller gets lists of its own."""
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
-    invoice = _invoice(store, tmp_path, ground_truth, "H-1", "Acme Supply")
+    invoice, again, beta = (_invoice(store, tmp_path, ground_truth, n, v)
+                            for n, v in (("H-1", "Acme Supply"), ("H-2", "Acme Supply"), ("H-3", "Beta Ltd")))  # fmt: skip
     key = store.get_invoice(invoice)["vendor_key"]
-    assert store.approved_numbers([key]) == {}
+    worked = []
+    real = type(store)._approved_numbers
+    monkeypatch.setattr(type(store), "_approved_numbers", lambda self, keys: worked.append(keys) or real(self, keys))
+    assert store.approved_numbers([key]) == {} and len(worked) == 1
     coding = {**ground_truth, "vendor_name": "Acme Supply", "gst_hst_registration_number": "123456789RT0001",
               "remit_bank_account": "004-12345-1234567"}  # fmt: skip
     other.approve_invoice(invoice, coding, "Jordan Lee")
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]}
+    other.approve_invoice(again, coding, "Jordan Lee")
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]} and len(worked) == 2
+    other.approve_invoice(beta, {**coding, "vendor_name": "Beta Ltd"}, "Jordan Lee")  # another vendor's
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]} and len(worked) == 2
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.remit_bank_account', '999') "
                      "WHERE id = ?", (invoice,))  # fmt: skip
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
-    assert store.approved_numbers(["beta"]) == {} and store.approved_numbers(["beta", key])[key]
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567"),
+                                                   ("123456789RT0001", "999")]}  # fmt: skip
+    beta_key = store.get_invoice(beta)["vendor_key"]
+    assert store.approved_numbers(["gamma"]) == {} and set(store.approved_numbers([beta_key, key])) == {beta_key, key}
     mine = store.approved_numbers([key])
     mine[key].append(("changed", "by the caller"))
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+    assert store.approved_numbers([key])[key][-1] == ("123456789RT0001", "999")
+
+
+def test_the_vendors_on_hold_are_kept_until_the_vendor_list_changes_and_are_the_callers_own(tmp_path, monkeypatch):
+    """``held_vendors`` (every check asks it) read the 20,000 vendors of the vendor master each time: kept until the
+    vendor list changes (``changes/vendors``), through another Store or plain SQL (D-174)."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "acme", "100", "")
+        _master(conn, "beta", "200", "")
+    read = []
+    real = type(store)._held_vendors
+    monkeypatch.setattr(type(store), "_held_vendors", lambda self: read.append(1) or real(self))
+    assert store.held_vendors() == [] and store.held_vendors() == [] and len(read) == 1
+    other.save_vendor("acme", "Acme", status="on_hold", notes="fraud check")
+    assert [v["vendor_key"] for v in store.held_vendors()] == ["acme"] and len(read) == 2
+    with sqlite3.connect(store.path) as conn:  # JD Edwards' own hold, synced
+        conn.execute("UPDATE vendors SET erp_hold = 'H' WHERE vendor_key = 'beta'")
+    mine = store.held_vendors()
+    assert sorted(v["vendor_key"] for v in mine) == ["acme", "beta"]
+    mine[0]["status"] = "changed by its caller"
+    assert {v["status"] for v in store.held_vendors()} == {"on_hold", "active"}
 
 
 def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_elsewhere_and_are_the_callers_own(
