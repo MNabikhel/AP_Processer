@@ -890,4 +890,4 @@ and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms 
 | `service status` says "not loaded" | Stopped on purpose (`apc service start`), or it could not load: `sudo launchctl print system/com.apcoder.server`, and `logs/launchd.err.log`. |
 | Nothing answers after a power cut | FileVault: the Mac waits at its unlock screen; or *Start up automatically after a power failure* is off. |
 | The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
-| launchd says "last exit code = 75" | Another service host runs (someone ran `service run` in Terminal): end it; launchd starts its own within 10 seconds. |
+| launchd says "last exit code = 75" | The host asked to be started again: another service host runs (someone ran `service run` in Terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. launchd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |

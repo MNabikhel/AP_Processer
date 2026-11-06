@@ -64,7 +64,9 @@ ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certf
 OVER_ENV_FILE = ("llm_backup_url", "page_reader_backup_url")
 RESTART_FIRST, RESTART_MOST, STEADY = 5.0, 300.0, 600.0  # seconds: first wait, longest wait, a run that counts as fine
 STOP_WAIT = 45.0  # seconds the dashboard has to stop once the host is asked to (its workers give requests 25: D-111)
-HOST_BUSY = 75  # the host's exit code off Windows when another host runs (EX_TEMPFAIL): launchd tries again later
+# The host's exit code off Windows for "start me again" (EX_TEMPFAIL; ``again``): launchd's KeepAlive starts it again
+# 10 s later, where a 0 would leave it stopped. Another host runs, or the folder to run changed (an update's recovery).
+HOST_AGAIN = 75
 # The Windows task's names, found here as before they moved to service_windows.py (``__getattr__``).
 WINDOWS_NAMES = ("BUILT_IN", "runner_path", "task_file", "runner_text", "write_runner", "account_sid", "task_xml",
                  "create_command", "tie_to_host")  # fmt: skip
@@ -130,14 +132,46 @@ def read_config(data: Path) -> dict:
 
 
 def write_config(data: Path, **values: Any) -> Path:
-    """Set these values in server.json, keeping every other one (written whole, then renamed)."""
-    path = config_path(data)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Set these values in server.json, keeping every other one (``write_whole``)."""
     merged = {**read_config(data), **values}
-    part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    part.write_text(json.dumps(merged, indent=2), encoding="utf-8")
-    os.replace(part, path)
+    return write_whole(config_path(data), json.dumps(merged, indent=2).encode("utf-8"))
+
+
+def write_whole(path: Path, content: bytes, mode: int | None = None,
+                prepare: Callable[[Path], None] | None = None) -> Path:  # fmt: skip
+    """``path`` written whole or not at all, a power cut included: a temporary file beside it, flushed to the disk
+    (fsync), then renamed over it (``os.replace``), the folder flushed too (``sync_folder``). What the service starts
+    from (server.json, Windows' run.cmd, the Mac's LaunchDaemon) is never left empty or cut short. ``mode`` and
+    ``prepare`` (its owner) are set on the temporary file, before it takes the name."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f".{path.name}.{os.getpid()}.part")  # (a dot first, and not .plist: launchd reads none)
+    try:
+        with open(part, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        if mode is not None:
+            os.chmod(part, mode)
+        if prepare is not None:
+            prepare(part)
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    sync_folder(path.parent)
     return path
+
+
+def sync_folder(folder: Path) -> None:
+    """A rename in ``folder`` flushed to the disk (off Windows: Windows opens no folder, and NTFS logs a rename)."""
+    if WINDOWS:
+        return
+    with contextlib.suppress(OSError):
+        fd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _hosts(value: Any) -> tuple[str, ...]:
@@ -573,6 +607,14 @@ def _wait(seconds: float, ended: Callable[[], bool], sleep: Callable[[float], No
         left -= step
 
 
+def again() -> int:
+    """The host's exit code when it must not run now but be started again soon (another host runs; the folder to
+    run changed, so the one it names starts next): 0 on Windows, as before, its task comes back every 5 minutes by
+    itself; elsewhere :data:`HOST_AGAIN`, as launchd's KeepAlive starts again only a host that ended with another
+    code than 0 (a 0 is a stop on purpose, left stopped)."""
+    return 0 if WINDOWS else HOST_AGAIN
+
+
 def run_host(
     data: Path,
     popen: Callable[..., Any] = subprocess.Popen,
@@ -582,14 +624,14 @@ def run_host(
     """Keep the dashboard running until the service is stopped: the ``stopped`` file, or (off Windows) SIGTERM or
     SIGINT (``StopSignals``). Settings are read again at each start, so a change in server.json applies at the next
     restart. The exit code is what launchd's KeepAlive (SuccessfulExit false) goes by: 0 when stopped on purpose (left
-    stopped); off Windows :data:`HOST_BUSY` when another host runs (tried again); a crash or a kill, started again."""
+    stopped); ``again()`` to be started again soon; a crash or a kill, started again."""
     if stop_flag(data).exists():
         return 0  # stopped on purpose: the repeating trigger (the Mac's next start) starts nothing
     # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
     # kill that number may be another program's, and the service would stay down (B-1585).
     lock = try_lock(host_lock(data))
     if lock is None:
-        return 0 if WINDOWS else HOST_BUSY  # (Windows' task comes back in 5 minutes; launchd within 10 s)
+        return again()  # (Windows' task comes back in 5 minutes; launchd within 10 s)
     record = host_record(data)  # at once: while the lock is held, host.json is this host's (``stop`` relies on it)
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"),

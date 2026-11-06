@@ -139,6 +139,47 @@ def test_the_runner_points_at_the_folder_and_the_data_folder(data, tmp_path):
     assert python.replace("\\", "/") in text.replace("\\", "/") and "-m ap_coder service run" in text
 
 
+class PowerCut(OSError):
+    """The computer stopped here."""
+
+
+@pytest.mark.parametrize("which", ["run.cmd", "server.json"])
+def test_run_cmd_and_server_json_are_never_left_cut_short(data, tmp_path, monkeypatch, which):
+    """B-1935: run.cmd was written in place: a power cut while server-update (or its recovery at the host's start)
+    rewrote it could leave it empty or cut short, the task then started nothing, and no host started to deal with the
+    update cut short. It, and server.json, are now written whole beside, flushed (fsync), then renamed over: cut
+    before the rename, the old one is there, whole, and no part of the new one is left."""
+    old, new = tmp_path / "APProcessor", tmp_path / "APProcessor-0.5.0"
+
+    def write(folder):
+        if which == "run.cmd":
+            return service.write_runner(data, folder)
+        return service.write_config(data, folder=str(folder))
+
+    path = write(old)
+    before = path.read_bytes()
+    done: list[str] = []
+    real_fsync = os.fsync
+
+    def cut(src, dst):
+        done.append("rename")
+        raise PowerCut("the power went off")
+
+    with monkeypatch.context() as power:
+        power.setattr(os, "fsync", lambda fd: (done.append("fsync"), real_fsync(fd))[1])
+        power.setattr(os, "replace", cut)
+        with pytest.raises(PowerCut):
+            write(new)
+    assert path.read_bytes() == before  # the old one, whole: the task starts it, and its host recovers the update
+    assert done[:2] == ["fsync", "rename"]  # the new one on the disk before it takes the name
+    assert [p.name for p in path.parent.iterdir() if p.name.endswith(".part")] == []
+    write(new)
+    if which == "run.cmd":
+        assert str(new) in path.read_text(encoding="utf-8")
+    else:
+        assert service.read_config(data)["folder"] == str(new)
+
+
 def test_the_dashboard_is_started_with_the_server_settings(data):
     s = service.settings(data, port=8443, certfile="c.pem", keyfile="k.pem", proxy="10.0.0.5",
                          allowed_hosts=("apcoder.company.local",))  # fmt: skip
@@ -284,16 +325,16 @@ def test_the_host_does_nothing_while_the_service_is_stopped(data):
 def test_a_second_host_steps_aside_for_the_one_running(data, monkeypatch):
     """The running host holds the operating system's lock on service/host.lock (B-1585): it, not host.json, says a
     host runs. On Windows the second one ends with 0, as before (the task comes back every 5 minutes); on a Mac with
-    HOST_BUSY, not 0, so launchd's KeepAlive starts it again once the other has ended (D-186)."""
+    HOST_AGAIN, not 0, so launchd's KeepAlive starts it again once the other has ended (D-186)."""
     held = paths.try_lock(service.host_lock(data))
     assert held is not None
     try:
-        for windows, code in ((True, 0), (False, service.HOST_BUSY)):
+        for windows, code in ((True, 0), (False, service.HOST_AGAIN)):
             monkeypatch.setattr(service, "WINDOWS", windows)
             assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == code
     finally:
         held.close()
-    assert service.HOST_BUSY != 0
+    assert service.HOST_AGAIN != 0
 
 
 def test_a_stale_host_record_never_keeps_the_service_down(data):

@@ -455,21 +455,68 @@ def test_sigterm_or_sigint_ends_the_dashboard_then_the_host_with_exit_code_0(dat
 
 def test_the_host_ends_with_0_only_when_stopped_on_purpose(data):
     """KeepAlive (SuccessfulExit false) goes by the host's exit code: 0 for a stop on purpose (the ``stopped`` file,
-    SIGTERM above), HOST_BUSY while another host runs (launchd tries again), and a crash is no 0."""
+    SIGTERM above), HOST_AGAIN while another host runs (launchd tries again), and a crash is no 0."""
     (data / "server.json").write_text(json.dumps({"insecure_http": True}), encoding="utf-8")
     service.write_stop_flag(data)
     assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
     service.stop_flag(data).unlink()
     held = paths.try_lock(service.host_lock(data))
     try:
-        assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started")) == service.HOST_BUSY
+        assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started")) == service.HOST_AGAIN
     finally:
         held.close()
     crash = subprocess.run([sys.executable, "-c", "from ap_coder.ops import service; service.host_logger = None; "
                             "import sys, pathlib; sys.exit(service.run_host(pathlib.Path(sys.argv[1])))", str(data)],
                            cwd=ROOT, env={**os.environ, "PYTHONPATH": str(ROOT)}, capture_output=True,
                            timeout=60)  # fmt: skip
-    assert crash.returncode not in (0, service.HOST_BUSY)  # a host that broke: launchd starts it again
+    assert crash.returncode not in (0, service.HOST_AGAIN)  # a host that broke: launchd starts it again
+
+
+def test_a_host_that_must_be_started_again_never_ends_with_0_on_a_mac(data, monkeypatch):
+    """``service.again()`` is what the host ends with to be started again soon: another host runs, or an update's
+    recovery at its start (D-188) has switched the folder to run, so the host the ``current`` link now names must
+    start. On a Mac never 0: launchd's KeepAlive (SuccessfulExit false) leaves a host that ended with 0 stopped. On
+    Windows 0, as before: its task comes back every 5 minutes, through run.cmd."""
+    monkeypatch.setattr(service, "WINDOWS", False)
+    assert service.again() == service.HOST_AGAIN != 0
+    s = service.settings(data, account="_apcoder", insecure_http=True)
+    assert service_macos.daemon(s, data)["KeepAlive"] == {"SuccessfulExit": False}  # (an exit but 0: started again)
+    monkeypatch.setattr(service, "WINDOWS", True)
+    assert service.again() == 0
+
+
+class PowerCut(OSError):
+    """The Mac stopped here."""
+
+
+def test_the_plist_and_the_current_link_are_never_left_cut_short(mac, monkeypatch):
+    """Cut before its rename, the plist and the ``current`` link are the old ones, whole, and nothing of the new ones
+    is left; the plist is flushed to the disk before it takes the name, the link's folder once it is renamed."""
+    assert install(mac, "--no-start") == 0
+    before, link = mac.plist.read_bytes(), mac.folder.parent / "current"
+    new = mac.folder.parent / "APProcessor-1.5.0"
+    new.mkdir()
+    done: list[str] = []
+
+    def cut(src, dst):
+        done.append("rename")
+        raise PowerCut("the power went off")
+
+    with monkeypatch.context() as power:
+        power.setattr(os, "fsync", lambda fd: done.append("fsync"))
+        power.setattr(os, "replace", cut)
+        with pytest.raises(PowerCut):
+            service_macos.write_plist("AP Coder", {"Label": "com.apcoder.server"})
+        assert done[:2] == ["fsync", "rename"]
+        with pytest.raises(PowerCut):
+            service_macos.point_current(new)
+    assert mac.plist.read_bytes() == before and os.readlink(link) == mac.folder.name
+    left = [p.name for p in (*mac.plist.parent.iterdir(), *link.parent.iterdir()) if p.name.endswith(".part")]
+    assert left == []
+    synced: list[Path] = []
+    monkeypatch.setattr(service, "sync_folder", synced.append)
+    service_macos.point_current(new)
+    assert os.readlink(link) == new.name and synced == [link.parent]
 
 
 # --- CI's check on GitHub's macOS runner: scripts/ci/macos_service.py -------------------------------------------------

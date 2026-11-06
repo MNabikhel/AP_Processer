@@ -2776,14 +2776,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bootout system/<label>`, `kickstart -k`, `print` (its top level read), `enable` before a start.
   - **The host's exit code is the contract with KeepAlive:** 0 only when stopped on purpose: the `stopped` file, or
     SIGTERM / SIGINT (`StopSignals`, off Windows: the dashboard asked to stop, ended STOP_WAIT, 45 s, later if it
-    won't, then exit 0); `HOST_BUSY` (75) off Windows when another host holds the lock, so launchd tries again
-    (Windows keeps its 0: its task comes back every 5 minutes); a crash or a kill is started again. `service stop`
-    is the flag, `/shutdown`, then `bootout`: it stays stopped after a reboot (the host launchd starts at load ends
-    at once). `service start` bootstraps it, or `kickstart -k` when it is loaded.
+    won't, then exit 0); "start me again", `service.again()`: `HOST_AGAIN` (75) off Windows, so launchd starts it
+    again 10 s later, 0 on Windows as before (its task comes back every 5 minutes), when another host holds the lock
+    or when the folder to run has changed (an update's recovery at the host's start, D-188, returns `again()`: the
+    host started by the `current` link's new target is the right one); a crash or a kill is started again.
+    `service stop` is the flag, `/shutdown`, then `bootout`: it stays stopped after a reboot (the host launchd starts
+    at load ends at once). `service start` bootstraps it, or `kickstart -k` when it is loaded.
   - **server-update:** `switch_to` asks the backend (`service.switch_folder`): Windows rewrites run.cmd as before;
     the Mac points `current` at the new folder by one rename (`os.symlink` to a temporary name, then `os.replace`)
     while the service is stopped. `Server.installed` asks the backend too (the plist there). The plist never changes
     with a version.
+  - **Through a power cut:** what the service starts from is written whole or not at all (`service.write_whole`: a
+    temporary file, fsync, `os.replace`, the folder fsynced): server.json, run.cmd (written in place before, a cut
+    could leave it empty and no host would start to recover an update) and the plist; the `current` link's folder is
+    fsynced after its rename.
   - **Root on a Mac:** sudo leaves the environment out, so the plist (root's) gives the other service commands the
     data folder when `AP_PRIVATE_DIR` is not given, and `install` refuses with neither. A file root's sudo makes in
     the data folder is root's (a Windows folder gives its rights to what is made in it): `install` and `start` hand

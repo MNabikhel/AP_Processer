@@ -74,10 +74,9 @@ def runner_text(folder: Path, data: Path) -> str:
 
 
 def write_runner(data: Path, folder: Path) -> Path:
-    path = runner_path(data)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(runner_text(folder, data), encoding="utf-8", newline="")
-    return path
+    """run.cmd written whole or not at all (``service.write_whole``): cut short by a power cut, the task would start
+    nothing, and no host would start to deal with the update cut short with it."""
+    return service.write_whole(runner_path(data), runner_text(folder, data).encode("utf-8"))
 
 
 def account_sid(account: str) -> str:
