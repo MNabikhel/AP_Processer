@@ -357,46 +357,51 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
 
 
 def _vendor_reads(store: Store, monkeypatch) -> list[str]:
-    """Each vendor whose invoices are read from the database from now on."""
-    read: list[str] = []
+    """Each vendor whose invoices are read from the database from now on: (its key, the invoices of it read again, or
+    None for all of them)."""
+    read: list[tuple[str, list[int] | None]] = []
     real = type(store)._vendor_invoices
-    monkeypatch.setattr(type(store), "_vendor_invoices", lambda self, key: read.append(key) or real(self, key))
+    monkeypatch.setattr(type(store), "_vendor_invoices",
+                        lambda self, key, ids=None: read.append((key, ids)) or real(self, key, ids))  # fmt: skip
     return read
 
 
-def test_each_vendors_invoices_are_kept_until_its_count_moves_whoever_changed_it(tmp_path, ground_truth, monkeypatch):
+def test_each_vendors_invoices_are_kept_and_only_those_changed_read_again_whoever_changed_them(
+    tmp_path, ground_truth, monkeypatch
+):
     """Every check read all of its vendor's invoices twice (220 ms for a vendor of 7,800 on the 100k database): they
-    are kept per vendor while ``summary_id`` and its ``changes/vendor/<key>`` hold, a change by another worker or plain
-    SQL included; another vendor's change, or a check's confidence, reads nothing again."""
+    are kept per vendor on the database (``summary_id``), and a change by another worker or plain SQL reads again only
+    the invoice it changed (the vendors' change log, D-174); another vendor's change, or a check's confidence, reads
+    nothing again; a restore reads them all."""
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
     beta = _invoice(store, tmp_path, ground_truth, "V-2", "Beta Ltd")
     key = store.get_invoice(acme)["vendor_key"]
     read = _vendor_reads(store, monkeypatch)
     first = store.vendor_invoices(key)
-    assert [r["id"] for r in first] == [acme] and read == [key]
+    assert [r["id"] for r in first] == [acme] and read == [(key, None)]
     first[0]["status"] = "changed by its caller"  # each caller's own rows
-    assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+    assert store.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]
     assert "adjusted_confidence" not in first[0] and "requires_review" not in first[0]  # (read by nothing)
     store.refresh_confidence(acme, 0.12, True)
     other.park_invoice(beta, "Ann", "waiting")  # another vendor's
-    assert other.vendor_invoices(key)[0]["status"] == "review" and read == [key]  # (one process: one copy kept)
+    assert other.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]  # (one process: one copy)
     other.park_invoice(acme, "Ann", "waiting for the PO")  # another worker's change
-    assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+    assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [(key, None), (key, [acme])]
     with sqlite3.connect(store.path) as conn:  # plain SQL
         conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 3
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and read[2:] == [(key, [acme])]
     backup = store.backup_now("manual")
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET invoice_date = '2026-03-03' WHERE id = ?", (acme,))
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-03-03" and len(read) == 4
-    store.restore_from(backup)  # the backup's count, under a new summary_id
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 5
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-03-03" and read[3:] == [(key, [acme])]
+    store.restore_from(backup)  # the backup's log, under a new summary_id: all read again
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and read[4:] == [(key, None)]
 
 
 def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_path, ground_truth, monkeypatch):
-    """Inside a write under way the vendor's count includes that write, and the rows read show it: kept, they would be
-    served once a later change brought the count back to that number, though the write was undone."""
+    """Inside a write under way the vendors' change log holds that write, and the rows read show it: kept, they would
+    be served once a later change took the undone write's place in the log, though the write was undone."""
     store = Store(tmp_path / "ap.db")
     acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
     key = store.get_invoice(acme)["vendor_key"]
@@ -406,7 +411,7 @@ def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_p
         assert store.vendor_invoices(key)[0]["status"] == "rejected"
         assert store.vendor_invoices(key)[0]["status"] == "rejected" and len(read) == 2  # afresh each time
         raise RuntimeError("undone")
-    with sqlite3.connect(store.path) as conn:  # another worker's change: the count is again the undone write's
+    with sqlite3.connect(store.path) as conn:  # another worker's change, in the undone write's place in the log
         conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
     found = store.vendor_invoices(key)[0]
     assert (found["status"], found["invoice_date"]) == ("review", "2026-02-02") and len(read) == 3
@@ -466,6 +471,30 @@ def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_
     assert [key for _, key in kept] == ["small 1", "small 2", "half"] and vendors_module._VENDOR_ROWS_HELD == 8
 
 
+def test_a_vendor_grown_past_half_the_rows_kept_is_no_longer_kept(tmp_path, monkeypatch):
+    """A vendor kept at half ``VENDOR_ROWS_KEPT`` that grew past it kept its last rows (up to 25,000: 25 MB in each
+    worker) until other vendors pushed them out, counted in the cap and never answered from again (B-1790). They go
+    when it is next read."""
+    from ap_coder.core.store import vendors as vendors_module
+
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
+    store = Store(tmp_path / "ap.db")
+
+    def add(count: int) -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.executemany("INSERT INTO invoices (source_path, file_name, status, created_at, vendor_key, "
+                             "vendor_name) VALUES ('x', 'x', 'review', ?, 'half', 'Half')",
+                             [(NOW,)] * count)  # fmt: skip
+
+    add(5)
+    assert len(store.vendor_invoices("half")) == 5 and vendors_module._VENDOR_ROWS_HELD == 5
+    add(1)
+    assert len(store.vendor_invoices("half")) == 6
+    assert (str(store.path), "half") not in vendors_module._VENDOR_ROWS and vendors_module._VENDOR_ROWS_HELD == 0
+
+
 def test_a_vendor_too_big_to_keep_is_read_once_by_a_check(tmp_path, ground_truth, monkeypatch):
     """A check asks for its vendor's invoices twice (``vendor_findings``, ``expected_tax_numbers``). A vendor of more
     rows than one is kept up to was read by both, 1.1 s each for one of 23,000 invoices: it is read once in a page's
@@ -483,11 +512,11 @@ def test_a_vendor_too_big_to_keep_is_read_once_by_a_check(tmp_path, ground_truth
     with store.session():  # one page
         vendor_findings(coding, store)
         expected_tax_numbers(coding, store)
-        assert read == [key]
+        assert read == [(key, None)]
         store.vendor_invoices(key)[0]["status"] = "changed by its caller"
-        assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+        assert store.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]
         store.park_invoice(ids[2], "Ann", "waiting for the PO")  # a change: read again
-        assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+        assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [(key, None), (key, None)]
     assert (str(store.path), key) not in vendors_module._VENDOR_ROWS
     assert len(store.vendor_invoices(key)) == 3 and len(read) == 3  # (outside a page's session: each time)
 
@@ -560,27 +589,60 @@ def test_the_masters_vendors_found_by_a_tax_number_are_the_whole_lists_and_follo
     assert [v["vendor_key"] for v in store.master_by_tax_number("987654321RT0001")] == ["gamma"]
 
 
-def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(tmp_path, ground_truth):
-    """``approved_numbers``, kept on ``changes/approved`` and the vendors asked: an approval through another Store,
-    an approved coding changed by plain SQL, are in the next answer; other vendors asked get their own; each caller
-    gets lists of its own."""
+def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and_what_is_asked(
+    tmp_path, ground_truth, monkeypatch
+):
+    """``approved_numbers``, kept on the vendors asked and their own counts (``changes/vendor/<key>``, D-174): an
+    approval through another Store, an approved coding changed by plain SQL, are in the next answer; another vendor's
+    approval (each one, under 100 people) works nothing out again, where every approval did; other vendors asked get
+    their own; each pair of numbers once; each caller gets lists of its own."""
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
-    invoice = _invoice(store, tmp_path, ground_truth, "H-1", "Acme Supply")
+    invoice, again, beta = (_invoice(store, tmp_path, ground_truth, n, v) for n, v in
+                            (("H-1", "Acme Supply"), ("H-2", "Acme Supply"), ("H-3", "Beta Ltd")))  # fmt: skip
     key = store.get_invoice(invoice)["vendor_key"]
-    assert store.approved_numbers([key]) == {}
+    worked = []
+    real = type(store)._approved_numbers
+    monkeypatch.setattr(type(store), "_approved_numbers", lambda self, keys: worked.append(keys) or real(self, keys))
+    assert store.approved_numbers([key]) == {} and len(worked) == 1
     coding = {**ground_truth, "vendor_name": "Acme Supply", "gst_hst_registration_number": "123456789RT0001",
               "remit_bank_account": "004-12345-1234567"}  # fmt: skip
     other.approve_invoice(invoice, coding, "Jordan Lee")
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]}
+    other.approve_invoice(again, coding, "Jordan Lee")
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]} and len(worked) == 2
+    other.approve_invoice(beta, {**coding, "vendor_name": "Beta Ltd"}, "Jordan Lee")  # another vendor's
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567")]} and len(worked) == 2
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.remit_bank_account', '999') "
                      "WHERE id = ?", (invoice,))  # fmt: skip
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
-    assert store.approved_numbers(["beta"]) == {} and store.approved_numbers(["beta", key])[key]
+    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "004-12345-1234567"),
+                                                   ("123456789RT0001", "999")]}  # fmt: skip
+    beta_key = store.get_invoice(beta)["vendor_key"]
+    assert store.approved_numbers(["gamma"]) == {} and set(store.approved_numbers([beta_key, key])) == {beta_key, key}
     mine = store.approved_numbers([key])
     mine[key].append(("changed", "by the caller"))
-    assert store.approved_numbers([key]) == {key: [("123456789RT0001", "999")]}
+    assert store.approved_numbers([key])[key][-1] == ("123456789RT0001", "999")
+
+
+def test_the_vendors_on_hold_are_kept_until_the_vendor_list_changes_and_are_the_callers_own(tmp_path, monkeypatch):
+    """``held_vendors`` (every check asks it) read the 20,000 vendors of the vendor master each time: kept until the
+    vendor list changes (``changes/vendors``), through another Store or plain SQL (D-174)."""
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    with sqlite3.connect(store.path) as conn:
+        _master(conn, "acme", "100", "")
+        _master(conn, "beta", "200", "")
+    read = []
+    real = type(store)._held_vendors
+    monkeypatch.setattr(type(store), "_held_vendors", lambda self: read.append(1) or real(self))
+    assert store.held_vendors() == [] and store.held_vendors() == [] and len(read) == 1
+    other.save_vendor("acme", "Acme", status="on_hold", notes="fraud check")
+    assert [v["vendor_key"] for v in store.held_vendors()] == ["acme"] and len(read) == 2
+    with sqlite3.connect(store.path) as conn:  # JD Edwards' own hold, synced
+        conn.execute("UPDATE vendors SET erp_hold = 'H' WHERE vendor_key = 'beta'")
+    mine = store.held_vendors()
+    assert sorted(v["vendor_key"] for v in mine) == ["acme", "beta"]
+    mine[0]["status"] = "changed by its caller"
+    assert {v["status"] for v in store.held_vendors()} == {"on_hold", "active"}
 
 
 def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_elsewhere_and_are_the_callers_own(

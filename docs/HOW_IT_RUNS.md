@@ -429,7 +429,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   plain SQL, moves the stamp, and the next request works the answer out again; nothing is kept from inside a write
   under way. The latest answer of each name is kept, 64 at most. Kept so (sizes at 100,000 invoices):
   * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
-    about 7 MB each) and the held vendors' approved numbers (`approved_numbers`; `changes/approved`);
+    about 7 MB each), the vendors on hold (`held_vendors`; `changes/vendors`) and their approved numbers
+    (`approved_numbers`; each one's own `changes/vendor/<key>`, D-174);
   * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
     laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
     with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
@@ -470,8 +471,10 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
   `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its
   own: the vendors asked most recently, at most 50,000 rows and 4,096 vendors, about 50 MB, one vendor up to half the
-  rows, a bigger one read once a page; stamped by `summary_id` and `changes/vendor/<key>`). The page pictures are not kept in a server worker's memory: they are drawn once into the
-  data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
+  rows, a bigger one read once a page; kept on the database's `summary_id`, and brought up to date from the vendors'
+  change log the triggers keep, `vendor_changes`: only the invoices changed since are read again, D-174; the check
+  reads them read-only, not a copy). The page pictures are not kept in a server worker's memory: they are drawn once
+  into the data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
 
 ## 9. The data folder and everything AP Coder writes
 

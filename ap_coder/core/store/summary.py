@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from time import monotonic
 from typing import Any
 
-from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, _in_list
+from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, VENDOR_CHANGES, VENDOR_LOGGED, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -206,11 +206,12 @@ _LEGACY = "INSERT OR IGNORE INTO summary_dirty (id) SELECT id FROM invoice_summa
 # transaction as the change, however it is made: what ``summary_memo``'s ``changes`` stamps an answer with.
 _COUNT = ("INSERT INTO settings (key, value) VALUES ('changes/{}', '1') ON CONFLICT(key) DO UPDATE SET "
           "value = CAST(value AS INTEGER) + 1")  # fmt: skip
-# Each vendor's own count (``changes/vendor/<key>``): an invoice of its added or deleted, or one of these changed (what
-# ``Store.vendor_invoices`` lists; a check's confidence is not one of them). A move between vendors counts for both.
+# Each vendor's own count (``changes/vendor/<key>``) and the invoice in its log (``vendor_changes``, D-174): an invoice
+# of its added or deleted, or one of these changed (what ``Store.vendor_invoices`` lists; a check's confidence is not
+# one of them). A move between vendors counts for both.
 _VENDOR_COUNT = ("INSERT INTO settings (key, value) SELECT 'changes/vendor/' || {0}.vendor_key, '1' WHERE "
                  "{0}.vendor_key IS NOT NULL{1} ON CONFLICT(key) DO UPDATE SET "
-                 "value = CAST(value AS INTEGER) + 1")  # fmt: skip
+                 "value = CAST(value AS INTEGER) + 1; " + VENDOR_LOGGED)  # fmt: skip
 _VENDOR_LISTED = ("status, export_batch, vendor_key, vendor_name, invoice_number, invoice_date, currency, grand_total, "
                   "created_at, reviewed_at, final_output, ai_output")  # fmt: skip
 # An invoice approved or no longer approved, or its vendor or coding changed while approved (an export changes none).
@@ -289,7 +290,9 @@ def make_triggers(conn: sqlite3.Connection, missing: bool = True, counts: bool =
     under its name) is dropped and made again; with ``missing``, one not there is made too (at every start,
     ``_summary_schema``). Without it (a backup's copy being restored, ``backups._own_triggers``), only those there are
     made again: an older backup may lack their tables, which its migration makes first. With ``counts``, also the
-    counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720)."""
+    counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720). In either, the
+    vendors' change log the vendors' counts' triggers write is made first (``vendor_changes``, D-174)."""
+    conn.execute(VENDOR_CHANGES)
     made = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} if counts else set()
     for name, sql in SUMMARY_TRIGGERS.items():

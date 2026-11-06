@@ -5,11 +5,13 @@ each vendor's invoices and terms, the Vendors page's summaries, and where we are
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import sqlite3
 import threading
 from collections import OrderedDict
+from types import MappingProxyType
 from typing import Any
 
 from ..memory import vendor_key
@@ -31,27 +33,39 @@ _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, '
 # Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
 # most VENDOR_ROWS_KEPT rows in all (about 1 KB a row: 50 MB), one vendor up to half of them (a year's biggest vendor
 # has about 23,000), and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is asked for, most with no
-# invoices), the rows held counted as they are kept and dropped.
+# invoices), the rows held counted as they are kept and dropped. Each with its stamp: (the database's ``summary_id``,
+# the last change of the vendors' change log the rows hold, D-174).
 VENDOR_ROWS_KEPT = 50_000
 VENDOR_KEYS_KEPT = 4_096
-_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = OrderedDict()
+_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, int], list[Any]]] = OrderedDict()
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
 
 
-def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, ...], rows: list[dict[str, Any]]) -> None:
+def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int], rows: list[Any]) -> None:
     """``rows`` kept as the newest; the vendors asked longest ago go while over either cap. A vendor of more rows than
-    half the cap is not kept: the other half stays for the others (B-1721)."""
+    half the cap is not kept (what was kept of it goes): the other half stays for the others (B-1721)."""
     global _VENDOR_ROWS_HELD
-    if len(rows) > VENDOR_ROWS_KEPT // 2:
-        return
     with _VENDOR_ROWS_LOCK:
         before = _VENDOR_ROWS.pop(key, None)
+        _VENDOR_ROWS_HELD -= len(before[1]) if before else 0
+        if len(rows) > VENDOR_ROWS_KEPT // 2:
+            return
         _VENDOR_ROWS[key] = (stamp, rows)
-        _VENDOR_ROWS_HELD += len(rows) - (len(before[1]) if before else 0)
+        _VENDOR_ROWS_HELD += len(rows)
         while _VENDOR_ROWS_HELD > VENDOR_ROWS_KEPT or len(_VENDOR_ROWS) > VENDOR_KEYS_KEPT:
             _, (_, dropped) = _VENDOR_ROWS.popitem(last=False)
             _VENDOR_ROWS_HELD -= len(dropped)
+
+
+def _read_only(rows: list[dict[str, Any]]) -> list[Any]:
+    """Rows as kept for every caller: each read-only (``MappingProxyType``), so none changes another's."""
+    return [MappingProxyType(r) for r in rows]
+
+
+def _newest_first(row: Any) -> int:
+    """A vendor's invoice's place in ``vendor_invoices``' order (the newest first)."""
+    return -row["id"]
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -165,7 +179,13 @@ class VendorsMixin:
         return dict(row) if row else None
 
     def held_vendors(self) -> list[dict[str, Any]]:
-        """The vendors on hold, here or in JD Edwards."""
+        """The vendors on hold, here or in JD Edwards: kept in each process until the vendor list changes
+        (``changes/vendors``, D-159), not read out of 20,000 vendors at each check (D-174). Each caller gets rows of
+        its own."""
+        kept = self.summary_memo("held_vendors", self._held_vendors, topic="", changes="vendors")
+        return [dict(r) for r in kept]
+
+    def _held_vendors(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR COALESCE(erp_hold, '') != ''")
 
@@ -494,41 +514,70 @@ class VendorsMixin:
             row = conn.execute("SELECT terms FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
         return row[0] if row else ""
 
-    def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
+    def vendor_invoices(self, key: str, shared: bool = False) -> list[dict[str, Any]]:
         """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried: the vendor
         checks and the tax-number notes both ask, at every check of the review screen. Kept in this process for each
-        vendor (``_keep_vendor_rows``, D-160) while its stamp, read before the rows, holds: the database's
-        ``summary_id`` and the vendor's count of changes (``changes/vendor/<key>``, kept by triggers: an invoice of its
-        added or deleted, or a column listed here changed, whoever changed it). A vendor too big to keep is read once in
-        a page's session (``_session_memo``, B-1721). Inside a write under way they are read afresh and not kept: it
-        may yet be undone. Each caller gets rows of its own."""
-        with self._conn() as conn:
-            stamp = tuple(conn.execute(
-                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), "
-                "(SELECT value FROM settings WHERE key = ?)", (f"changes/vendor/{key}",),
-            ).fetchone())  # fmt: skip
-            writing = conn.in_transaction
-        if writing:
-            return self._vendor_invoices(key)
+        vendor (``_keep_vendor_rows``, D-160) on the same database (its ``summary_id``), and brought up to date from the
+        vendors' change log (``vendor_changes``, kept by triggers: an invoice of its added or deleted, or a column
+        listed here changed, whoever changed it), read with the stamp in one statement: only the invoices changed since
+        are read again (D-174), all of them once the log no longer holds every change since (``VENDOR_CHANGES_KEPT``).
+        A vendor too big to keep is read once in a page's session (``_session_memo``, B-1721). Inside a write under way
+        they are read afresh and not kept: it may yet be undone. Each caller gets rows of its own; ``shared``: the rows
+        kept, read-only (a check reads 23,000 of them, twice)."""
         kept = (str(self.path), key)
         with _VENDOR_ROWS_LOCK:
             hit = _VENDOR_ROWS.get(kept)
-            if hit is not None and hit[0] == stamp:
-                _VENDOR_ROWS.move_to_end(kept)
-        if hit is None or hit[0] != stamp:
-            rows = self._session_memo(("vendor_invoices", key, stamp), lambda: self._vendor_invoices(key), shared=True)
-            hit = (stamp, rows)
-            _keep_vendor_rows(kept, *hit)
-        return [dict(r) for r in hit[1]]
+        with self._conn() as conn:  # (``seq > NULL``: none, when none is kept)
+            summary_id, first, last, changed = conn.execute(
+                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM vendor_changes), "
+                "(SELECT MAX(seq) FROM vendor_changes), (SELECT json_group_array(DISTINCT invoice_id) FROM "
+                "vendor_changes WHERE seq > ? AND vendor_key = ?)", (hit[0][1] if hit else None, key),
+            ).fetchone()  # fmt: skip
+            writing = conn.in_transaction
+        if writing:
+            return self._vendor_invoices(key)
+        stamp = (summary_id, last or 0)
+        if hit is not None and hit[0][0] == summary_id and hit[0][1] >= (first or 1) - 1:  # no change since left out
+            ids = json.loads(changed)
+            rows = self._vendor_rows_changed(key, hit[1], ids) if ids else hit[1]
+        else:
+            rows = self._session_memo(("vendor_invoices", key, stamp), lambda: _read_only(self._vendor_invoices(key)),
+                                      shared=True)  # fmt: skip
+        if hit is not None and hit[0] == stamp:
+            with _VENDOR_ROWS_LOCK:
+                if kept in _VENDOR_ROWS:
+                    _VENDOR_ROWS.move_to_end(kept)
+        else:
+            _keep_vendor_rows(kept, stamp, rows)
+        return rows if shared else [r.copy() for r in rows]
+
+    def _vendor_rows_changed(self, key: str, rows: list[Any], ids: list[int]) -> list[Any]:
+        """``rows``, this vendor's invoices as kept (newest first), with the invoices ``ids`` read again: each changed,
+        added, deleted, or moved to or from this vendor. A copy: the rows kept may be another caller's meanwhile."""
+        fresh = _read_only(self._vendor_invoices(key, ids))
+        rows = list(rows)
+        for invoice_id in ids:  # found by its place in the order, not by looking at each row
+            at = bisect.bisect_left(rows, -invoice_id, key=_newest_first)
+            if at < len(rows) and rows[at]["id"] == invoice_id:
+                del rows[at]
+        for row in fresh:
+            bisect.insort(rows, row, key=_newest_first)
+        return rows
 
     def approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
-        """{vendor key: [(the GST/HST number, the bank account) each approved invoice of it carried]}, for the vendors
-        ``keys`` (the vendors on hold: ``coding.vendors.held_vendor``), in one read; "" for one not carried. Kept in
-        each process until an approved invoice changes (``changes/approved``) or other vendors are asked (D-159):
+        """{vendor key: [(the GST/HST number, the bank account) its approved invoices carried, each pair once, the
+        latest first]}, for the vendors ``keys`` (the vendors on hold: ``coding.vendors.held_vendor``), in one read; ""
+        for one not carried. Kept in each process until an invoice of one of them changes (their counts,
+        ``changes/vendor/<key>``, read first; not any approval of any vendor's, D-174) or other vendors are asked:
         each check asks it twice. Each caller gets lists of its own."""
         asked = tuple(keys)
+        with self._conn() as conn:
+            counts = tuple(tuple(r) for r in conn.execute(
+                "SELECT key, value FROM settings WHERE key IN (SELECT 'changes/vendor/' || value FROM json_each(?)) "
+                "ORDER BY key", (json.dumps(asked),),
+            ))  # fmt: skip
         kept = self.summary_memo("approved_numbers", lambda: self._approved_numbers(list(asked)), topic="",
-                                 changes="approved", asked=asked)  # fmt: skip
+                                 asked=(asked, counts))  # fmt: skip
         return {key: list(numbers) for key, numbers in kept.items()}
 
     def _approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
@@ -538,12 +587,13 @@ class VendorsMixin:
                 "'$.remit_bank_account') FROM invoices WHERE vendor_key IN (SELECT value FROM json_each(?)) AND "
                 "+status = 'approved' ORDER BY id DESC", (json.dumps(keys),)
             ).fetchall()  # fmt: skip
-        out: dict[str, list[tuple[Any, Any]]] = {}
+        out: dict[str, dict[tuple[Any, Any], None]] = {}
         for key, gst, bank in rows:
-            out.setdefault(key, []).append((gst or "", bank or ""))
-        return out
+            out.setdefault(key, {})[(gst or "", bank or "")] = None
+        return {key: list(numbers) for key, numbers in out.items()}
 
-    def _vendor_invoices(self, key: str) -> list[dict[str, Any]]:
+    def _vendor_invoices(self, key: str, ids: list[int] | None = None) -> list[dict[str, Any]]:
+        """``vendor_invoices`` read from the invoices; with ``ids``, only those of them still this vendor's."""
         doc = _DOC
         fields = ", ".join(
             f"json_extract({doc}, '$.{field}') AS {name}"
@@ -553,14 +603,15 @@ class VendorsMixin:
                 ("original_invoice_number", "original_invoice_number"),
             )
         )  # fmt: skip
+        some = "" if ids is None else f" AND {_in_list('id')}"
         with self._conn() as conn:
             rows = [
                 dict(r)
                 for r in conn.execute(
                     f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
                               grand_total, created_at, reviewed_at, {fields}
-                       FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
-                    (key,),
+                       FROM invoices WHERE vendor_key = ?{some} ORDER BY id DESC""",
+                    (key,) if ids is None else (key, json.dumps(ids)),
                 )
             ]
         for r in rows:

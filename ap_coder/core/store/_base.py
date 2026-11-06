@@ -153,6 +153,19 @@ _SNAPSHOTS_SCHEMA = (
     "CREATE INDEX IF NOT EXISTS template_snapshots_supplier ON template_snapshots (supplier_key, seq)",
 )
 
+# Each vendor's invoices changed, in the order they were (D-174): (the vendor, the invoice) logged by the triggers that
+# count each vendor's changes (``summary.SUMMARY_TRIGGERS``: an invoice of its added or deleted, or a column
+# ``Store.vendor_invoices`` lists changed; a move between vendors for both), in the same transaction as the change,
+# however it is made: a process keeping a vendor's invoices reads again only those changed since. The latest
+# VENDOR_CHANGES_KEPT are kept (each change removes the one that many before it). Made with those triggers, at every
+# start and in a backup's copy being restored (``summary.make_triggers``).
+VENDOR_CHANGES_KEPT = 20_000
+VENDOR_CHANGES = ("CREATE TABLE IF NOT EXISTS vendor_changes (seq INTEGER PRIMARY KEY, vendor_key TEXT NOT NULL, "
+                  "invoice_id INTEGER NOT NULL)")  # fmt: skip
+VENDOR_LOGGED = ("INSERT INTO vendor_changes (vendor_key, invoice_id) SELECT {0}.vendor_key, {0}.id WHERE "
+                 "{0}.vendor_key IS NOT NULL{1}; DELETE FROM vendor_changes WHERE seq <= (SELECT MAX(seq) FROM "
+                 f"vendor_changes) - {VENDOR_CHANGES_KEPT}")  # fmt: skip
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
