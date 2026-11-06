@@ -232,7 +232,8 @@ class LearningMixin:
         key = key or vendor_key(vendor_name)
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         with self._conn() as conn:
-            stamp = self._lessons_stamp(conn, key)
+            writing = conn.in_transaction
+            stamp = self._lessons_stamp(conn, key, writing)
         with _FEEDBACK_LOCK:
             kept = _VENDOR_LESSONS.pop(kept_key, None)
             if kept is not None:
@@ -243,7 +244,7 @@ class LearningMixin:
         got = reading.acquire(timeout=MEMO_WAIT)
         try:
             with self._conn() as conn, _one_snapshot(conn):
-                stamp = self._lessons_stamp(conn, key)
+                stamp = self._lessons_stamp(conn, key, writing)
                 with _FEEDBACK_LOCK:
                     kept = _VENDOR_LESSONS.get(kept_key)
                 if kept is not None and kept[0] == stamp:
@@ -261,10 +262,14 @@ class LearningMixin:
             if got:
                 reading.release()
 
-    def _lessons_stamp(self, conn: Any, key: str) -> tuple[Any, ...]:
+    def _lessons_stamp(self, conn: Any, key: str, writing: bool) -> tuple[Any, ...]:
         """``_vendor_stamp``, read once a page while the database does not change (``_session_memo``): a check asks it
         three or four times (the history check, the accounts and cost centers used for the vendor, its older lessons),
-        and it counts all of the vendor's lessons (8 ms for the biggest at 300,000 invoices, 179,000 lessons)."""
+        and it counts all of the vendor's lessons (8 ms for the biggest at 300,000 invoices, 179,000 lessons). Inside a
+        write under way (``writing``: it may yet be undone, which moves neither of the session's counts) read afresh
+        and not kept (B-1810)."""
+        if writing:
+            return _vendor_stamp(conn, key)
         return self._session_memo(("vendor_stamp", key), lambda: _vendor_stamp(conn, key), shared=True)
 
     def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
@@ -277,34 +282,55 @@ class LearningMixin:
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
         key = key or vendor_key(vendor_name)
-        missing = self._past_memory(key, rows[-1])
+        with _FEEDBACK_LOCK:  # (the stamp the whole memory was read with, B-1809)
+            whole = _FEEDBACK.get((str(self.path.resolve()), FEEDBACK_READ, None, ()))
+        missing = self._past_memory(key, rows[-1], whole[0] if whole is not None and whole[1] is rows else None)
         return WithPast(rows, missing, (str(self.path.resolve()), key, FEEDBACK_READ)) if missing else rows
 
-    def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
+    def _past_memory(
+        self, key: str, last: dict[str, Any], read_with: tuple[Any, ...] | None = None
+    ) -> list[dict[str, Any]]:
         """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
         it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Once the memory's last moved on (an
         approval, past the memory's cap) and the vendor only gained decisions, those kept are carried forward
         (``_carried``, D-173); read again whole once anything else changed. The GL suggestions' index extended by them
         (``suggest._PAST``) knows the same list at once, and the list carried forward by what moved in front of it.
         Kept for ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` of their lessons, as that index is, the latest used
-        always (D-159)."""
+        always (D-159). ``read_with``: the stamp the whole memory was read with (``_feedback_stamp``); when the
+        database moved on since (a lesson added between the two reads), or it isn't known, they are read for this
+        once, not kept nor carried forward: kept, they would be carried forward from a moment they were not read at
+        (B-1809)."""
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         history = last["outcome"] == "history"
-        with self._conn() as conn, _one_snapshot(conn):
-            stamp = (*self._lessons_stamp(conn, key), last["id"], history)
-            with _FEEDBACK_LOCK:
-                kept = _PAST_MEMORY.pop(kept_key, None)
-                if kept is not None:
-                    _PAST_MEMORY[kept_key] = kept  # the latest used, kept the longest
-            if kept is not None and kept[0] == stamp:
-                return kept[1]
-            missing = _carried(conn, key, kept, stamp) if kept is not None else None
-            if missing is None:
-                missing = fetch_rows(
-                    conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
-                    "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
-                    (key, FEEDBACK_READ, history, history, last["id"]),
-                )  # fmt: skip
+        with self._conn() as conn:
+            writing = conn.in_transaction
+            with _one_snapshot(conn):
+                if read_with is None or _feedback_stamp(conn) != read_with:
+                    return self._past_read(conn, key, last)
+                return self._past_kept(conn, key, last, history, writing, kept_key)
+
+    def _past_read(self, conn: Any, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
+        """The vendor's lessons the whole memory, whose last lesson is ``last``, does not hold, read whole."""
+        history = last["outcome"] == "history"
+        return fetch_rows(
+            conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
+            "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
+            (key, FEEDBACK_READ, history, history, last["id"]),
+        )  # fmt: skip
+
+    def _past_kept(self, conn: Any, key: str, last: dict[str, Any], history: bool, writing: bool,
+                   kept_key: tuple[Any, ...]) -> list[dict[str, Any]]:  # fmt: skip
+        """``_past_memory``'s rows from what is kept (as it is, or carried forward), else read whole; kept."""
+        stamp = (*self._lessons_stamp(conn, key, writing), last["id"], history)
+        with _FEEDBACK_LOCK:
+            kept = _PAST_MEMORY.pop(kept_key, None)
+            if kept is not None:
+                _PAST_MEMORY[kept_key] = kept  # the latest used, kept the longest
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        missing = _carried(conn, key, kept, stamp) if kept is not None else None
+        if missing is None:
+            missing = self._past_read(conn, key, last)
         with _FEEDBACK_LOCK:
             _PAST_MEMORY.pop(kept_key, None)
             _PAST_MEMORY[kept_key] = (stamp, missing)

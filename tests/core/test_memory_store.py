@@ -799,3 +799,72 @@ def test_a_vendors_lessons_are_counted_once_a_page_while_nothing_changes(tmp_pat
     parts()
     parts()  # outside a page: each time
     assert counted == ["acme"] * 5
+
+
+def test_a_vendors_older_lessons_kept_from_a_race_with_an_approval_are_not_carried_forward(tmp_path, monkeypatch):
+    # B-1809: the whole memory and the vendor's own lessons are read a moment apart (``learning_rows``); an approval
+    # of the vendor between the two, past the memory's cap, had its older lessons kept for a memory they were not read
+    # with, and D-173's carry forward then gave it lessons too many at every approval after (the GL suggestions'
+    # counts with them) until something made them be read whole. What is read across such a moment is used once and
+    # not kept: the next ask reads them again from one moment.
+    import sqlite3
+
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 5)
+    store = Store(tmp_path / "ap.db")
+    sql = ("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+           "VALUES ('acme', 'acme', 'line', '6100', 'corrected', datetime('now'))")  # fmt: skip
+
+    def add() -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.execute(sql)
+
+    def fresh() -> list[int]:
+        with sqlite3.connect(store.path) as conn:
+            memory = [
+                r[0] for r in conn.execute("SELECT id FROM feedback ORDER BY outcome = 'history', id DESC LIMIT 5")
+            ]
+            own = [r[0] for r in conn.execute("SELECT id FROM feedback WHERE vendor_key = 'acme' ORDER BY "
+                                              "outcome = 'history', id DESC LIMIT 5")]  # fmt: skip
+        return memory + [i for i in own if i < memory[-1]]
+
+    for _ in range(6):
+        add()
+    real, raced = store.feedback_rows, []
+
+    def racing(*a, **k):
+        rows = real(*a, **k)
+        if not raced:  # an approval of the vendor lands just after the whole memory was read
+            raced.append(1)
+            add()
+        return rows
+
+    monkeypatch.setattr(store, "feedback_rows", racing)
+    store.learning_rows("acme", key="acme")
+    for _ in range(4):
+        assert [r["id"] for r in store.learning_rows("acme", key="acme")] == fresh()
+        add()
+
+
+def test_a_vendors_lessons_read_inside_a_write_that_is_undone_are_not_answered_after_it(tmp_path):
+    # B-1810: the vendor's lessons' stamp, read once a page while the database does not change (D-173), was also
+    # kept from inside a write: one undone moves neither of the session's counts, so the rest of the page was told
+    # of the lesson that was undone. Inside a write it is read afresh.
+    import sqlite3
+
+    store = Store(tmp_path / "ap.db")
+    sql = ("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+           "VALUES ('acme', 'acme', ?, ?, 'corrected', datetime('now'))")  # fmt: skip
+    with sqlite3.connect(store.path) as conn:
+        conn.execute(sql, ("gloves", "6100"))
+    with store.session():
+        assert store.vendor_lessons("acme", "acme").accounts == ["6100"]
+        try:
+            with store._conn() as conn:
+                conn.execute(sql, ("toner", "7200"))
+                assert "7200" in store.vendor_lessons("acme", "acme").accounts
+                raise RuntimeError("undone")
+        except RuntimeError:
+            pass
+        assert store.vendor_lessons("acme", "acme").accounts == ["6100"]
