@@ -31,6 +31,7 @@ WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never lo
 # When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
 # gone, so its next read of the vouchers is whole.
 CLEARED_KEY = "erp_register_cleared"
+ISO_DAY = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"  # a voucher's date as the sweep compares it (GLOB)
 
 
 def _cleared(conn: sqlite3.Connection) -> None:
@@ -194,14 +195,16 @@ class RegisterMixin:
             self._recount(conn, set(bills) | moved)
         return len(set(bills) - known)
 
-    def jde_vouchers_unseen(self, since: str, seen: int) -> tuple[list[str], int]:
+    def jde_vouchers_unseen(self, since: str, seen: int, undated: bool = False) -> tuple[list[str], int]:
         """(the JD Edwards vouchers dated from ``since`` that the sync's read ``seen`` did not list, how many are dated
-        from then): read only."""
+        from then): read only. ``undated``: with those without a date YYYY-MM-DD (none, or one that couldn't be read),
+        for a read of every voucher of the window."""
+        where = "(invoice_date >= ?1 AND invoice_date GLOB ?2" + (" OR NOT invoice_date GLOB ?2)" if undated else ")")
         with self._conn() as conn:
-            dated = conn.execute("SELECT COUNT(*) FROM erp_vouchers WHERE invoice_date >= ?", (since,))
+            dated = conn.execute(f"SELECT COUNT(*) FROM erp_vouchers WHERE {where}", (since, ISO_DAY))
             window = int(dated.fetchone()[0])
-            gone = [r[0] for r in conn.execute("SELECT erp_key FROM erp_vouchers WHERE invoice_date >= ? AND seen < ?",
-                                               (since, seen))]  # fmt: skip
+            gone = [r[0] for r in conn.execute(f"SELECT erp_key FROM erp_vouchers WHERE {where} AND seen < ?3",
+                                               (since, ISO_DAY, seen))]  # fmt: skip
         return gone, window
 
     def remove_jde_vouchers(self, keys: list[str], seen: int) -> int:

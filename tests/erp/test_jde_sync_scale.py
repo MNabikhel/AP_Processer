@@ -279,3 +279,17 @@ def test_the_dates_read_are_in_the_mappings_date_format_too(store, ais, monkeypa
     ais.data["vouchers"].remove(void)  # voided in JDE
     assert jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]["removed"] == 1
     assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)
+
+
+def test_a_voucher_without_a_date_voided_in_jde_leaves_at_the_whole_read(store, ais):
+    """B-1895: a read's sweep counted the vouchers dated in its days, so one with no invoice date (or one that could
+    not be read) never left: voided in JDE, it stayed in the register for good. The whole read of the window removes
+    those it no longer lists too (the nightly read of the last weeks leaves them be)."""
+    connect(store, ais)
+    _vouchers(ais, 4)
+    undated = _vouchers(ais, 1, start=9, invoice_date="")[0]
+    jde_sync.sync(store, parts=("vouchers",))
+    assert "B-9" in _numbers(store)
+    ais.data["vouchers"].remove(undated)  # voided in JDE
+    assert jde_sync.sync(store, parts=("vouchers",), full=True)["parts"]["vouchers"]["removed"] == 1
+    assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)

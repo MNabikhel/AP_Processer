@@ -433,10 +433,11 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
 
 def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
     """After a read of every voucher from a date: those of the register from then it no longer lists (voided or
-    deleted in JDE) leave it (most or all at once: refused, as a wrong answer)."""
+    deleted in JDE) leave it, and after the whole read of the window those without a date too (most or all at once:
+    refused, as a wrong answer)."""
     if not read.get("sweep"):
         return
-    gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"])
+    gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"], undated=bool(read.get("undated")))
     if not run.allow_mass_close and _too_many(len(gone), there):
         run.report["refused_remove"] = (
             f"JD Edwards' answer would remove {len(gone)} of the {there} vouchers dated from {read['sweep']} from the "
@@ -510,7 +511,7 @@ def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[
         window = today - dt.timedelta(days=cfg.voucher_days)
         report["since"] = window.strftime(fmt)
         reads = [{"inputs": {"since": window.strftime(fmt), "changed_since": changed},
-                  **({} if changed else {"sweep": window.isoformat()})}]  # fmt: skip
+                  **({} if changed else {"sweep": window.isoformat(), "undated": True})}]  # fmt: skip
         if changed:  # and every voucher of the last weeks, whole: one voided then leaves
             recent = today - dt.timedelta(days=min(RECENT_DAYS, cfg.voucher_days))
             reads.append({"inputs": {"since": recent.strftime(fmt), "changed_since": ""}, "sweep": recent.isoformat()})
