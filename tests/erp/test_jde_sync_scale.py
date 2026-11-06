@@ -137,6 +137,28 @@ def test_each_page_is_written_in_a_transaction_of_its_own(store, ais):
     assert seen == [2, 4] and len(store.master_vendors()) == 6
 
 
+def test_a_long_page_of_vouchers_is_written_a_few_hundred_at_a_time(store, ais, monkeypatch):
+    """B-1918: a page of vouchers was one transaction whatever its size (the orchestration's page_size: 500, 1,000 or
+    more): a whole read writing over the register held the write lock 0.4-0.5 s a page on a slow disk, as long as an
+    approval's whole budget. A page is written ``VOUCHERS_A_WRITE`` at a time, each committed with the lease checked,
+    where the read is kept with its last; the register ends the same."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 10
+    monkeypatch.setattr(jde_sync, "VOUCHERS_A_WRITE", 4, raising=False)
+    made = _vouchers(ais, 23)
+    written, imported = [], store.import_jde_vouchers
+
+    def import_jde_vouchers(rows, seen):
+        written.append(len(rows))
+        return imported(rows, seen)
+
+    monkeypatch.setattr(store, "import_jde_vouchers", import_jde_vouchers)
+    report = jde_sync.sync(store, parts=("vouchers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
+    assert report["ok"], report["errors"]
+    assert max(written) == 4 and sum(written) == 24  # the 23 and the stand-in's own
+    assert _numbers(store) == {"INV-7001", *(v["invoice_number"] for v in made)}
+
+
 def test_the_po_sync_reads_the_pos_a_page_at_a_time_with_jdes_line_numbers(store, ais, monkeypatch):
     """B-1854: the PO sync read each PO's lines before and after its import and every synced open PO again: three or
     four queries a PO (40,000 POs, 160,000 queries a night). And a split line's number (JDE's 1.500) was cut to 1:
