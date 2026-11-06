@@ -6,8 +6,9 @@ waited. On the server each of ``KINDS`` is a job instead (``core/store/reports.p
 
 * The page's link asks for it with the page's header (``X-AP-Coder``, ``app.js``): the web worker reads what the file
   is of (the page's filters, the person's own default layout) and answers at once with the job, its status and its
-  file's address; the page says how far it got (``GET /downloads/<id>``) and downloads it once made
-  (``GET /downloads/<id>/file``). The same link asked again while it waits, from any web worker, is the same job.
+  file's address; the page says how far it got (``GET /downloads/<id>``) and downloads it once made, from the
+  download's own address with ``job=<id>`` (so the access log and Activity's "Downloaded" name it as before). The
+  same link asked again while it waits, from any web worker, is the same job.
 * Asked for without that header (a bookmark, a script), the web worker waits for the job without holding a thread,
   then sends the file.
 * The background process (``Runner``, started by ``app.start_background_work``) makes ``RUNNERS`` at a time, oldest
@@ -109,12 +110,19 @@ async def answer(request: Request, address: str, inline: Callable[[Request], Res
     file once made (waited for, holding no thread)."""
     if not server_mode(request):
         return await run_in_threadpool(_inline, inline, request)
-    started = await run_in_threadpool(_start, request, address)
+    asked = request.query_params.get("job", "")
+    if asked:  # the file of a job of the person's own (``_made`` checks it is): waited for while it is made
+        if not asked.isdigit() or len(asked) > 18:
+            raise HTTPException(status_code=404, detail="No such download.")
+        started: int | Response = int(asked)
+    else:
+        started = await run_in_threadpool(_start, request, address)
     if isinstance(started, Response):
         return started
-    if request.headers.get("x-ap-coder"):  # the page's script: it follows the job and downloads the file
+    if request.headers.get("x-ap-coder") and not asked:  # the page's script: it follows the job, then downloads
+        query = "&".join(part for part in [request.url.query, f"job={started}"] if part)
         return JSONResponse({"ok": True, "job": started, "status": f"/downloads/{started}",
-                             "file": f"/downloads/{started}/file"}, headers={"Cache-Control": "no-store"})  # fmt: skip
+                             "file": f"{address}?{query}"}, headers={"Cache-Control": "no-store"})  # fmt: skip
     ends, wait = time.monotonic() + WAIT_MOST, 0.05
     while time.monotonic() < ends:
         found = await run_in_threadpool(_made, request, started)
@@ -188,6 +196,8 @@ def _made(request: Request, job_id: int) -> tuple[Path, Kind, str] | Response | 
     """(the file, its kind, its name) once the job is made; the reason as an answer when it failed or is gone; None
     while it waits or is being made."""
     job = _own_job(request, job_id)
+    if job["kind"] != request.url.path and request.url.path in KINDS:  # (another download's address)
+        raise HTTPException(status_code=404, detail="No such download.")
     if job["state"] == reports.FAILED:
         return refuse(job["error"] or NOT_MADE.format(why="it stopped"), status=500)
     if job["state"] != reports.MADE:
@@ -215,19 +225,7 @@ def download_status(request: Request, job_id: int) -> JSONResponse:
     if job["state"] == reports.WAITING:
         note = f"Waiting for {ui.plural(job['ahead'], 'other file')} to be made first…" if job["ahead"] else note
     return JSONResponse({"state": state, "done": job["done"], "total": job["total"], "note": note,
-                         "error": job["error"], "file": f"/downloads/{job_id}/file" if state == "done" else ""},
-                        headers={"Cache-Control": "no-store"})  # fmt: skip
-
-
-@router.get("/downloads/{job_id:int}/file")
-def download_file(request: Request, job_id: int) -> Response:
-    """The person's download, once made."""
-    found = _made(request, job_id)
-    if isinstance(found, Response):
-        return found
-    if found is None:
-        return refuse("The file is still being made.", status=409)
-    return _file(*found)
+                         "error": job["error"]}, headers={"Cache-Control": "no-store"})  # fmt: skip
 
 
 # --- In the background process ------------------------------------------------------------------------------------

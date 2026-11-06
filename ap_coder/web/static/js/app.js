@@ -370,7 +370,7 @@ document.addEventListener("click", async (event) => {
   link.removeAttribute("aria-busy");
   link.classList.remove("busy");
   link.innerHTML = label;
-  if (snap && snap.state === "done") return location.assign(snap.file || answer.file);
+  if (snap && snap.state === "done") return location.assign(answer.file);
   follow({ error: (snap && snap.error) || answer.error || "The file could not be made. Try again." });
 });
 

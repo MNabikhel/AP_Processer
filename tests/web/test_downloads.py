@@ -81,9 +81,10 @@ def test_on_the_server_the_page_asks_the_background_process_makes_it_and_the_fil
     laptop = client_for(store)
     for address in ADDRESSES:
         job = _asked(ann, address)
-        assert job["ok"] and job["status"] == f"/downloads/{job['job']}" and job["file"].endswith("/file")
+        assert job["ok"] and job["status"] == f"/downloads/{job['job']}"
+        assert job["file"].startswith(address) and job["file"].endswith(f"job={job['job']}")
         snap = _followed(ann, job["status"])
-        assert snap["state"] == "done" and snap["file"] == job["file"], (address, snap)
+        assert snap["state"] == "done", (address, snap)
         made, here = ann.get(job["file"]), laptop.get(address)
         assert made.status_code == here.status_code == 200, address
         named = [r.headers["content-disposition"].split(";")[1] for r in (made, here)]  # (filename="…")
@@ -98,6 +99,9 @@ def test_on_the_server_the_page_asks_the_background_process_makes_it_and_the_fil
             assert made.content == here.content, address
     assert len(list(downloads.folder(store).iterdir())) == len(ADDRESSES)
     assert all(row["state"] == reports.MADE for row in _jobs(store))
+    # Activity's "Downloaded" names each by its own address, as before (D-109): the file comes from it, ?job=<id>.
+    seen = [e["detail"]["path"] for e in store.find_events(actions=["downloaded"]) if e["actor"] == "Boss"]
+    assert sorted(seen) == sorted(a.split("?")[0] for a in ADDRESSES)
     app.state.downloads.stop()
 
 
@@ -127,6 +131,8 @@ def test_another_persons_download_is_no_such_download_and_a_reader_makes_their_o
     for address in (job["status"], job["file"]):
         assert bob.get(address).status_code == 404 and reader.get(address).status_code == 404
     assert ann.get(job["file"]).status_code == 200
+    assert ann.get(f"/search/export.csv?job={job['job']}").status_code == 404  # (her job, another download's address)
+    assert ann.get("/exports/duplicates.csv?job=1e9").status_code == 404
     own = _asked(reader, "/exports/duplicates.csv")  # (Read-only downloads the reports: its own job)
     assert own["job"] != job["job"] and _followed(reader, own["status"])["state"] == "done"
     app.state.downloads.stop()
