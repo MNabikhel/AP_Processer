@@ -32,12 +32,14 @@ from ..core.safe import csv_row
 from ..core.schema import FROM_VENDOR_LIST
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from ..core.store.summary import broken, computed
+from .money import half_up, times
 from .tax import (
     DEFAULT_TREATMENTS,
     RECOVERABLE,
     TaxRateTable,
     TaxSetup,
     TaxTreatment,
+    currency_places,
     gst_check_digit_ok,
     place_of_supply,
     regime_on,
@@ -438,8 +440,10 @@ def self_assessment(
             if not rate:
                 continue
             note = accrued(r["export_batch"], lambda r=r: _final(store, r["id"])) if tax_type == "PST" else ""
-            out.append(SelfAssessment(r["id"], f["vendor"], f["number"], date, province, tax_type, round(base, 2),
-                                      rate, round(base * rate, 2), f["cur"], note))  # fmt: skip
+            # Half up, to the cent or the whole yen, as the Tax check says it (D-183, B-1864, B-1868).
+            estimate = times(base, rate, currency_places(f["cur"]))
+            out.append(SelfAssessment(r["id"], f["vendor"], f["number"], date, province, tax_type, half_up(base),
+                                      rate, estimate, f["cur"], note))  # fmt: skip
     return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
 
 
