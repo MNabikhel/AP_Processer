@@ -2123,8 +2123,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - `Store._past_lines`: read with the stamp of `_past_memory` (the vendor's lessons stamp, the memory's last, in
       one snapshot with the whole memory's stamp, B-1809's lesson: read across a change, used once and not kept).
       Kept in each process (`_base._PAST_LINES`, `PAST_LINES_KEPT` 4,096 vendors and `PAST_LINES_BYTES` 64 MB by
-      `PastLines.size`, within 10% of tracemalloc), else taken from the database's copy (`past_lines`: the stamp,
-      with this version and `FEEDBACK_READ`, and the lines as JSON; never pickle), carried forward from either by
+      `PastLines.size`, counting each run's words: 0.87-1.01 of tracemalloc, B-1841), else taken from the database's
+      copy (`past_lines`: the stamp, with this version and `FEEDBACK_READ`, and the lines as JSON; never pickle; AP
+      Coder's version rarely moves, so a change to what a copy means, its runs or how a line is normalised, must move
+      `PAST_LINES_FORMAT` in `core/store/learning.py`), carried forward from either by
       D-173's rule (`_moved`, shared with the rows: only the lessons the memory let go are read, six columns of them),
       read whole only when neither can be (a lesson of the vendor removed or moved, history of it imported, the memory's
       last moved back, a restore whose lessons took other ids). The copy is written again once a process carried it
