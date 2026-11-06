@@ -467,11 +467,13 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   the recurring vendors and Insights are worked out once for every process (below).
 
   **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, month-end's received, not
-  invoiced lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the
-  ERP yet, Spend's figures and currencies, the recurring vendors (the queue's late pill, Vendors, Month-end), the
-  Insights page's figures, what the Sales tax page shows (30 s) and the Learning page's coding accuracy figures and
-  corrections (60 s, D-179) are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's
-  `report_answers` as JSON, with the stamp they were worked out under, read before the work as `summary_memo`'s; a
+  invoiced lines (and each received PO's accruals, by the digest of what they come from, and what it reads of each
+  invoice billing them, a row a vendor brought up to date from the vendors' change log: after a change only the
+  invoices changed since are decoded again, D-177) and its invoices not in the ERP yet, Spend's figures and
+  currencies, the recurring vendors (the queue's late pill, Vendors, Month-end), the Insights page's figures, what the
+  Sales tax page shows (30 s) and the Learning page's coding accuracy figures and corrections (60 s, D-179) are kept
+  by `Store.shared_answer` (`core/store/reports.py`) in the database's `report_answers` as JSON, with the stamp they
+  were worked out under, read before the work as `summary_memo`'s; a
   process with none of them kept takes them from there while the stamp holds (0.01 s for the audit and 0.8 s for
   month-end's page in a second worker, at 100,000 invoices, instead of 6-7 s and 5-6 s in each one; Spend's 3 ms
   instead of 0.47 s at 20,000). Those a page only shows settle as before (D-164), by when their work began in

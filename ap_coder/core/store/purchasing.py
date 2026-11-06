@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
-from ...coding.po import CLOSED, OPEN, po_key
+from ...coding.po import CLOSED, OPEN, po_key, positive_lines
 from ...coding.rules import Rule
 from ..memory import vendor_key
 from ._base import (
@@ -18,6 +21,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .learning import one_snapshot
 from .summary import BIT, fetch_rows
 
 BILLING_BATCH = 500  # the codings ``billing_codings`` reads at a time
@@ -31,6 +35,53 @@ read AS (SELECT id, doc, CASE WHEN NOT json_valid(doc) THEN 0 ELSE json_type(doc
 SELECT json_group_array(CASE WHEN ok THEN json_array(id, json_extract(doc, '$.invoice_date', '$.line_items'), NULL)
                              ELSE json_array(id, NULL, doc) END) FROM read
 """
+# What month-end reads of each invoice billing a received PO (``billing_lines``), kept for every process in the
+# database by the invoice's vendor (``report_answers``: a row a vendor, BILLING_ANSWER and its key; about 300 bytes an
+# invoice) and brought up to date from the vendors' change log (``vendor_changes``, D-174) as ``vendor_invoices`` is:
+# after a change only the invoices changed since are decoded again, not every invoice of the vendor (23,000 at 300,000
+# invoices, D-177). Its stamp: (the database's ``summary_id``, the last change of the log it is as of, the vendor's
+# count of changes then, B-1811). Written again once BILLING_REWRITE of its invoices, and a BILLING_REWRITE_SHARE of
+# them, were decoded since (until then each read decodes those again: a vendor of 23,000 is 7 MB to write).
+BILLING_ANSWER = "billing/"
+BILLING_FORMAT = "billing-1"
+BILLING_REWRITE = 32
+BILLING_REWRITE_SHARE = 1 / 16
+
+
+@dataclass
+class BillingMoment:
+    """What ``billing_moment`` yields: whether its reads are inside a write under way (which may yet be undone:
+    nothing read in it is kept), and each vendor's billing lines to keep once the read is over (``billing_lines``)."""
+
+    writing: bool
+    keep: list[tuple[str, list[Any], list[Any]]] = field(default_factory=list)  # (vendor, stamp, value)
+
+
+def _billing(coding: Any) -> Any:
+    """What month-end reads of an invoice's coding (``billing_codings``): (its invoice date, its lines billing a
+    positive quantity: ``positive_lines``); the coding itself when it can't be read so (not an object, its lines not
+    lines), for the caller to read as before at each use, failing where it did (an invoice dated after the period end
+    is not read further)."""
+    if not isinstance(coding, dict):
+        return coding
+    try:
+        lines = positive_lines([{"coding": coding}])
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return coding
+    return coding.get("invoice_date"), lines
+
+
+def _plain(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int)) or (isinstance(value, float) and math.isfinite(value))
+
+
+def _keepable(facts: Any) -> bool:
+    """Whether what ``_billing`` read of an invoice is kept for every process: read so, and each value plain JSON (a
+    coding Python reads and SQLite doesn't may carry a NaN), so that its vendor's row is always written, and read
+    back as it was."""
+    return isinstance(facts, tuple) and _plain(facts[0]) and all(
+        _plain(description) and math.isfinite(price) and math.isfinite(quantity)
+        for description, price, quantity in facts[1])  # fmt: skip
 
 
 class PurchasingMixin:
@@ -132,17 +183,33 @@ class PurchasingMixin:
                 "l.po_key = p.po_key AND l.received_quantity IS NOT NULL) ORDER BY po_number", (CLOSED,),
             )]  # fmt: skip
 
+    @contextmanager
+    def billing_moment(self) -> Iterator[BillingMoment]:
+        """Month-end's reads of the received POs and the invoices billing them inside (``billing_rows``,
+        ``billing_lines``), in this thread, all of one moment of the database (one read: the invoices billing each PO
+        and their codings agree, B-1818, and the vendors' change log and the invoices it names, B-1812), the invoices'
+        summary brought up to date first. What ``billing_lines`` read to keep for every process is written once the
+        read is over; never in a write under way, which may yet be undone (``BillingMoment.writing``: not this
+        bringing up to date)."""
+        with self.session():
+            with self._conn() as conn:
+                moment = BillingMoment(conn.in_transaction)
+                self._summary_fresh(conn)
+                if not moment.writing:
+                    conn.commit()  # (the summary's own update: done before the read, not held through it)
+                with one_snapshot(conn):
+                    yield moment
+            for vendor, stamp, value in moment.keep:  # (the database too busy just now: kept at a later read)
+                self.keep_answer(BILLING_ANSWER + vendor, "", BILLING_FORMAT, stamp, value)
+
     def billing_rows(self, po_keys: list[str], vendor_keys: list[str]
-                     ) -> tuple[list[tuple[Any, ...]], dict[str, Any], tuple[Any, ...] | None]:  # fmt: skip
+                     ) -> tuple[list[tuple[Any, ...]], dict[str, Any], Any]:  # fmt: skip
         """(the invoices ``po_invoices`` gives for each of ``po_keys`` and ``vendor_invoices_without_po`` for each of
         ``vendor_keys``, by id, each once: (id, invoice date, ``po_key``, ``vendor_key``); the count of changes of each
         of their vendors, an invoice of its added, deleted or changed: ``changes/vendor/<key>``, D-159; the database's
-        ``summary_id``, or None when read in a write under way, which may yet be undone, not this read's own bringing
-        the summary up to date), from the invoices' summary in one read: most invoices, read in order, not by an
-        index. Their codings: ``billing_codings``."""
+        ``summary_id``), from the invoices' summary in one read: most invoices, read in order, not by an index. Inside
+        ``billing_moment``, which brings the summary up to date. What month-end reads of each: ``billing_lines``."""
         with self._conn() as conn:
-            writing = conn.in_transaction
-            self._summary_fresh(conn)
             rows = [tuple(r) for r in conn.execute(
                 f"SELECT id, invoice_date, po_key, vendor_key FROM invoice_summary WHERE +status IN {_ACTIVE_IN} AND "
                 "(+po_key IN (SELECT value FROM json_each(?)) OR (+po_key = '' AND +vendor_key IN (SELECT value FROM "
@@ -155,7 +222,74 @@ class PurchasingMixin:
                 "json_each(?))", (json.dumps(vendors),),
             ).fetchall())  # fmt: skip
             found = conn.execute("SELECT value FROM settings WHERE key = 'summary_id'").fetchone()
-        return rows, counts, None if writing else (found[0] if found else None,)
+        return rows, counts, found[0] if found else None
+
+    def billing_lines(self, rows: list[tuple[Any, ...]], moment: BillingMoment) -> dict[int, Any]:
+        """{id: what month-end reads of its coding (``_billing``: its invoice date and its lines billing a positive
+        quantity)} of each of ``rows`` (``billing_rows``') still there, inside ``moment`` (``billing_moment``). Kept
+        for every process by vendor (BILLING_ANSWER) and brought up to date from the vendors' change log, read in the
+        same moment: only the invoices changed since are decoded again (``billing_codings``, D-177); all of a vendor's
+        once the log no longer holds every change since, its count of changes moved by more than the log says
+        (B-1811), or on another database (``summary_id``: a restore). An invoice with no vendor, whose changes no log
+        follows, is decoded each time. In a write under way each is decoded, and nothing kept is read or kept."""
+        by_vendor: dict[str, list[int]] = {}
+        loose: list[int] = []
+        for r in rows:
+            if r[3] is None:
+                loose.append(r[0])
+            else:
+                by_vendor.setdefault(r[3], []).append(r[0])
+        held: dict[str, tuple[list[Any], list[Any]]] = {}
+        logged: dict[str, list[tuple[int, int]]] = {}
+        with self._conn() as conn:
+            summary_id, first, last = conn.execute(
+                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM vendor_changes), "
+                "(SELECT MAX(seq) FROM vendor_changes)").fetchone()  # fmt: skip
+            counts = dict(conn.execute(
+                "SELECT substr(key, 16), COALESCE(CAST(value AS INTEGER), 0) FROM settings WHERE key IN (SELECT "
+                "'changes/vendor/' || value FROM json_each(?))", (json.dumps(sorted(by_vendor)),),
+            ).fetchall())  # fmt: skip
+            for vendor in by_vendor if not moment.writing else ():
+                found = self.kept_answer(BILLING_ANSWER + vendor, "", BILLING_FORMAT)
+                if found is not None:
+                    held[vendor] = (found[0], found[1])
+            if held:  # (what changed since the oldest kept, of these vendors only)
+                for seq, vendor, invoice_id in conn.execute(
+                    "SELECT seq, vendor_key, invoice_id FROM vendor_changes WHERE seq > ? AND vendor_key IN (SELECT "
+                    "value FROM json_each(?))", (min(stamp[1] for stamp, _ in held.values()), json.dumps(sorted(held))),
+                ):  # fmt: skip
+                    logged.setdefault(vendor, []).append((seq, invoice_id))
+        read: dict[int, Any] = {}
+        kept: dict[str, dict[int, Any]] = {}  # each vendor's, as it is to be kept
+        current: set[str] = set()  # the vendors whose row kept the log brings up to date
+        todo = list(loose)
+        for vendor, ids in by_vendor.items():
+            facts = kept[vendor] = {}
+            if vendor in held:
+                (was, since, count), value = held[vendor]
+                changes = [invoice_id for seq, invoice_id in logged.get(vendor, ()) if seq > since]
+                # Every change since logged: the log still holds them all, and the vendor's count of changes (which
+                # an older AP Coder's triggers keep too, writing no log) moved by as many (B-1811).
+                if was == summary_id and since >= (first or 1) - 1 and counts.get(vendor, 0) - count == len(changes):
+                    current.add(vendor)
+                    changed = set(changes)
+                    facts.update((n, (date, lines)) for n, date, lines in value if n not in changed)
+            for n in ids:
+                if n in facts:
+                    read[n] = facts[n]
+                else:
+                    todo.append(n)
+        vendors, decoded = {r[0]: r[3] for r in rows}, dict.fromkeys(by_vendor, 0)
+        for n, coding in self.billing_codings(todo):
+            read[n] = _billing(coding)
+            if vendors[n] is not None and _keepable(read[n]):
+                kept[vendors[n]][n] = read[n]
+                decoded[vendors[n]] += 1
+        for vendor, facts in kept.items() if not moment.writing else ():
+            if vendor not in current or decoded[vendor] >= max(BILLING_REWRITE, len(facts) * BILLING_REWRITE_SHARE):
+                moment.keep.append((vendor, [summary_id, last or 0, counts.get(vendor, 0)],
+                                    [[n, *facts[n]] for n in sorted(facts)]))  # fmt: skip
+        return read
 
     def billing_codings(self, ids: list[int]) -> Iterator[tuple[int, dict[str, Any]]]:
         """(id, what billing a PO reads of its coding: its invoice date and lines, read out by SQLite, the rest of it
