@@ -122,6 +122,39 @@ def test_a_run_keeps_to_its_time_and_the_queue_sends_the_rest(tmp_path, ais):
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 3
 
 
+# --- Holds ------------------------------------------------------------------------------------------------------------
+
+
+def test_a_vendor_put_on_hold_after_the_dry_run_is_not_paid(tmp_path, ais):
+    """B-1859 (R3): a supplier JD Edwards put on hold after its invoice was approved was posted all the same: the
+    hold was not looked at again before sending. Just before each voucher, the hold as the last supplier sync left it
+    (or AP Coder's own) is read: held, it is not sent but waits in the queue, saying why, until the hold is lifted."""
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    jde_post.dry_run(store, batch)
+    with store._conn() as conn:  # the nightly supplier sync: 4001 has hold code H in JD Edwards now
+        conn.execute("UPDATE vendors SET erp_hold = 'H' WHERE erp_id = '4001' AND in_master = 1")
+    result = jde_post.post(store, batch)
+    assert finals(ais) == [] and result["queued"] == 2 and result["posted"] == 0
+    row = jde_post.postings(store, batch)[0]
+    assert row["status"] == jde_post.QUEUED and "on hold in JD Edwards (hold code H" in row["error"]
+    assert row["maybe_sent"] == 0 and any("on hold" in s for s in result["skipped"])
+    jde_post.retry_queue(store)
+    assert finals(ais) == []  # still on hold
+    with store._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_hold = '' WHERE erp_id = '4001'")
+    jde_post.retry_queue(store)
+    assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 2
+
+
+def test_a_vendor_on_hold_in_ap_coder_is_not_sent_and_its_dry_run_says_so(tmp_path, ais):
+    store, batch = batch_of(tmp_path, ais)
+    key = store.get_invoice(1)["vendor_key"]
+    store.save_vendor(key, "Northwind IT Solutions Inc.", "on_hold", notes="bank details being checked")
+    row = jde_post.dry_run(store, batch)["rows"][0]
+    assert row["status"] == jde_post.REFUSED and "on hold in AP Coder's vendor list" in row["error"]
+    assert "bank details being checked" in row["error"] and ais.orchestration_calls("voucher_create") == []
+
+
 def test_a_voucher_waits_as_long_as_r04110za_may_take_not_the_connections_timeout(tmp_path, ais):
     store, batch = batch_of(tmp_path, ais)
     connect(store, ais, timeout=0.2)

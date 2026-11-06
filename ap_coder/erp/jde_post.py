@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from ..coding.vendors import norm_invoice_number
+from ..coding.vendors import norm_invoice_number, voucher_hold
 from ..core.safe import parse_amount
 from ..core.store import postings as ledger
 from . import jde, jde_ais
@@ -155,7 +155,7 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
                                                    prepared=v)  # fmt: skip
         out[inv["id"]] = {"key": idem_key(inv["id"], batch, installation), "pay_items": headers, "gl_lines": dists,
                           "matches": matches, "_expect": _expect(inv, headers, settings),
-                          "_timeout": settings.voucher_timeout}  # fmt: skip
+                          "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or ""}  # fmt: skip
     made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates,
             "vouchers": {inv["id"]: pv for inv, pv in zip(invoices, prepared, strict=True)}}  # fmt: skip
     return out, problems, invoices, made
@@ -485,6 +485,8 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
                 continue  # posted, on its way, or JDE may have it: a dry run changes nothing of it
             key = row["idem_key"] if row else (found[inv_id]["key"] if inv_id in found else
                                                idem_key(inv_id, batch, installation_id(store)))  # fmt: skip
+            if inv_id not in problems and (on_hold := _held(store, found[inv_id])):  # (R3, B-1859)
+                problems[inv_id] = [f"{on_hold}: dry run again once the hold is lifted"]
             if inv_id in problems:
                 _put(store, key, inv_id, batch, only_from=DRY_RUN_OVER, status=REFUSED, payload_hash="",
                      error="; ".join(problems[inv_id]), checked_at=_now(), checked_by=actor)  # fmt: skip
@@ -615,6 +617,11 @@ def _look(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str
     if status is not None:
         return status, None, None
     return ("skipped", None, None) if cleared is None else ("", cleared, None)
+
+
+def _held(store: Any, payload: dict[str, Any]) -> str:
+    """Why the voucher's vendor is on hold now, here or in JD Edwards ("" when not, ``vendors.voucher_hold``)."""
+    return voucher_hold(store, payload.get("_vendor"), (payload["pay_items"] or [{}])[0].get("VLAN8"))
 
 
 def _deliver(store: Any, client: jde_ais.AisClient, row: dict[str, Any], payload: dict[str, Any] | None,
@@ -814,6 +821,25 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
                        "undone, or its JD Edwards file downloaded)")  # fmt: skip
         run.done(row, "skipped")
 
+    def send(row: dict[str, Any], payload: dict[str, Any] | None) -> None:
+        """One voucher JDE has none of, its vendor's hold read just before (R3: put on hold since its approval, it
+        waits in the queue, saying why, B-1859)."""
+        if payload is not None and (held := _held(store, payload)):
+            if _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], status=QUEUED,
+                    next_try=_later(int(row.get("attempts") or 0) + 1, sent=False),
+                    error=f"Not sent: {held}: it waits in the queue until the hold is lifted"):  # fmt: skip
+                skipped.append(f"AP Coder #{row['invoice_id']}: not sent: {held}")
+                run.done(row, QUEUED)
+            else:
+                changed(row)
+            return
+        status, exc = _deliver(store, client, row, payload, actor)
+        run.after(row, exc, sent=True)
+        if status == "skipped":
+            changed(row)
+        else:
+            run.done(row, status)
+
     try:
         sends = []
         for row, payload in ready:
@@ -834,13 +860,8 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
         for row, payload in sends:
             if run.over():
                 run.done(row, _wait(store, row, int(row.get("attempts") or 0), run.why))
-                continue
-            status, exc = _deliver(store, client, row, payload, actor)
-            run.after(row, exc, sent=True)
-            if status == "skipped":
-                changed(row)
             else:
-                run.done(row, status)
+                send(row, payload)
         run.note = "Looking up the vouchers JD Edwards answered late…"
         for key, at in list(run.late.items()):  # looked up, and sent again only once JDE could have finished it
             if run.over() or time.monotonic() - at < LOOK_AFTER:
@@ -851,9 +872,8 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
             status, cleared, exc = _look(store, client, row, actor, run)
             run.after(row, exc, sent=False)
             if cleared is not None:
-                status, exc = _deliver(store, client, cleared, payloads_of.get(key), actor)
-                run.after(row, exc, sent=True)
-            if status == "skipped":
+                send(cleared, payloads_of.get(key))
+            elif status == "skipped":
                 changed(row)
             else:
                 run.done(row, status)
