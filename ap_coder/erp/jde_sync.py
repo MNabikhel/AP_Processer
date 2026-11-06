@@ -130,6 +130,7 @@ class _Run:
     plan: dict[str, Any]
     actor: str | None
     allow_mass_close: bool = False
+    date_format: str = "%Y-%m-%d"  # the mapping's, of the dates sent and read
     cache: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -358,9 +359,19 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
     run.cache.setdefault("seen", set()).update(keys)
 
 
-def voucher_rows(found: list[dict[str, Any]], names: dict[str, str]) -> list[dict[str, Any]]:
+def _date(value: Any, fmt: str) -> str:
+    """A date AIS gave as YYYY-MM-DD: in the mapping's ``date_format`` (its inputs' and outputs': "10/07/2026" in
+    %m/%d/%Y is 7 October), else as ``iso_date`` reads it ("" for none, the text when it can't be read)."""
+    text = _text(value)
+    try:
+        return dt.datetime.strptime(text, fmt).date().isoformat()
+    except ValueError:
+        return iso_date(text)
+
+
+def voucher_rows(found: list[dict[str, Any]], names: dict[str, str], fmt: str = "%Y-%m-%d") -> list[dict[str, Any]]:
     """F0411 rows as the ERP invoice register's rows (``registers.rows_from_records`` output), with the voucher's key
-    and its supplier's number."""
+    and its supplier's number; ``fmt``: the mapping's ``date_format``."""
     rows = []
     for r in found:
         name = _text(r.get("supplier_name")) or names.get(_text(r.get("an8")), "")
@@ -368,13 +379,13 @@ def voucher_rows(found: list[dict[str, Any]], names: dict[str, str]) -> list[dic
         key = _text(r.get("key")) or "-".join(_text(r.get(f)) for f in ("company", "doc_type", "document"))
         if name and number and total is not None:
             rows.append({"vendor_name": name, "invoice_number": number, "key": key, "an8": _text(r.get("an8")),
-                         "invoice_date": iso_date(_text(r.get("invoice_date"))), "total": total})  # fmt: skip
+                         "invoice_date": _date(r.get("invoice_date"), fmt), "total": total})  # fmt: skip
     return rows
 
 
 def _vouchers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
-    run.report["new"] = run.report.get("new", 0) + store.import_jde_vouchers(voucher_rows(found, run.names(store)),
-                                                                             read["seen"])  # fmt: skip
+    rows = voucher_rows(found, run.names(store), run.date_format)
+    run.report["new"] = run.report.get("new", 0) + store.import_jde_vouchers(rows, read["seen"])
 
 
 WRITE = {"suppliers": _suppliers, "gl_accounts": _gl_accounts, "business_units": _business_units,
@@ -521,7 +532,7 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
     database for it all (a connection opened and closed a page would write the database's log out each time)."""
     with store.session():
         plan = _plan(store, client, part, full)
-        run = _Run(part, plan, actor, allow_mass_close)
+        run = _Run(part, plan, actor, allow_mass_close, client.ais.get("date_format") or "%Y-%m-%d")
         spec = jde_ais.spec_of(client.mapping, part)
         progress = store.get_json(PROGRESS_KEY, {})
         for step in range(plan["step"], len(plan["reads"])):

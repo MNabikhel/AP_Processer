@@ -261,3 +261,21 @@ def test_a_register_cleared_or_replaced_is_read_whole_again_the_next_night(store
     monkeypatch.setattr(jde_sync, "_now", lambda: night)
     part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]
     assert part["mode"] == jde_sync.FULL and {"INV-7001", "B-0", "B-1", "B-2"} <= _numbers(store)
+
+
+def test_the_dates_read_are_in_the_mappings_date_format_too(store, ais, monkeypatch):
+    """B-1894: the mapping's ``date_format`` (a JDE user's, %m/%d/%Y) was used for the dates sent and not for those
+    read: a voucher dated 10/07/2026 (7 October) was kept as that text, which sorts before every YYYY-MM-DD date, so
+    no sweep counted it, and voided in JDE it stayed in the register for good, a possible duplicate payment (one dated
+    after the 12th was read by its day)."""
+    monkeypatch.setattr(FakeAis, "_listed", staticmethod(lambda key, r, given: True))  # (it compares dates as text)
+    ais.mapping["ais"]["date_format"] = "%m/%d/%Y"
+    connect(store, ais)
+    _vouchers(ais, 4, invoice_date="10/20/2026")
+    void = _vouchers(ais, 1, start=9, invoice_date="10/07/2026")[0]
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    jde_sync.sync(store, parts=("vouchers",), client=client)
+    assert store.in_erp("Acme Office Supplies Ltd.", "B-9", 50.0)[0]["invoice_date"] == "2026-10-07"
+    ais.data["vouchers"].remove(void)  # voided in JDE
+    assert jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]["removed"] == 1
+    assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)
