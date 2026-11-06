@@ -406,16 +406,35 @@ def _too_many(gone: int, there: int) -> bool:
     return bool(gone) and (gone == there or gone > MASS_CLOSE_SHARE * there)
 
 
+def _removes(part: str, plan: dict[str, Any], read: dict[str, Any]) -> bool:
+    """Whether ``read`` decides what leaves (the POs a whole read no longer lists closed, the vouchers swept): it is
+    read to the end and must end complete."""
+    return bool(read.get("sweep")) or (part == "purchase_orders" and plan["mode"] == FULL)
+
+
+def _cut_short(run: _Run, read: dict[str, Any], what: str, done: str) -> bool:
+    """Whether ``read`` ended without being known complete (on a page as long as the longest before it: its last row
+    without its key, nothing to ask the next page after): then nothing is closed or removed, said in the report."""
+    if read.get("complete"):
+        return False
+    run.report[f"refused_{done}"] = (
+        f"JD Edwards' answer stopped at a {what} without its key, so the rest could not be asked for: none was "
+        f"{done}d. The JDE team should check that every row of the orchestration has its key."
+    )  # fmt: skip
+    log.warning("JD Edwards %s sync: %s", what, run.report[f"refused_{done}"])
+    return True
+
+
 def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
-    """The open POs synced before that a whole read no longer lists are closed (most or all at once: refused, and the
-    next whole read looks again); the POs known as synced kept in the state."""
+    """The open POs synced before that a whole read no longer lists are closed (most or all at once, or the read not
+    known complete: refused, and the next whole read looks again); the POs known as synced kept in the state."""
     before = set(state(store).get("po_keys") or [])
     seen = set(run.cache.get("seen") or ())
     if run.report.get("resumed"):  # the pages read before it stopped: the POs written since it began
         with store._conn() as conn:
             seen |= {r[0] for r in conn.execute("SELECT po_key FROM purchase_orders WHERE updated_at >= ?",
                                                 (run.plan["started"],))}  # fmt: skip
-    if run.mode != FULL:
+    if run.mode != FULL or _cut_short(run, read, "PO line", "close"):
         _save_state(store, po_keys=sorted(before | seen))
         return
     with store._conn() as conn:
@@ -442,8 +461,8 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
 def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
     """After a read of every voucher from a date: those of the register from then it no longer lists (voided or
     deleted in JDE) leave it, and after the whole read of the window those without a date too (most or all at once:
-    refused, as a wrong answer)."""
-    if not read.get("sweep"):
+    refused, as a wrong answer; the read not known complete: none)."""
+    if not read.get("sweep") or _cut_short(run, read, "voucher", "remove"):
         return
     gone, there = store.jde_vouchers_unseen(read["sweep"], read["seen"], undated=bool(read.get("undated")))
     if not run.allow_mass_close and _too_many(len(gone), there):
@@ -560,9 +579,13 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
             read.setdefault("seen", time.time_ns() // 1_000_000)  # the read's stamp on what it lists (a resumed one's)
             plan["step"] = step
             held: list[dict[str, Any]] = []
-            for page, following in client.pages(part, read["inputs"], after=plan["after"]):
+            to_the_end = _removes(part, plan, read)
+            for page, following in client.pages(part, read["inputs"], after=plan["after"], to_the_end=to_the_end):
                 rows, held = _whole_pos(held + page) if part == "purchase_orders" and following else (held + page, [])
                 run.report["read"] += len(page)
+                # complete when it ends on an empty page or one shorter than the longest before it (AIS gives that)
+                read["complete"] = not page or len(page) < read.get("longest", 0)
+                read["longest"] = max(read.get("longest", 0), len(page))
                 with store._conn():  # the lease, the page and where the read is: one short transaction
                     _hold(store, lease)
                     if rows:

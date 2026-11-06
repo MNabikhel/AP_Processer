@@ -349,3 +349,42 @@ def test_an_orchestration_giving_the_same_page_again_never_switches_the_live_che
     found = jde_sync.live_findings(store, _coding())
     assert [c for _, c, _ in found] == ["DUPLICATE_IN_ERP"] and not jde_sync._DOWN
     assert "gave the same page again" in caplog.text
+
+
+def test_an_ais_giving_fewer_rows_a_page_than_asked_is_read_to_the_end_first(store, ais, monkeypatch):
+    """B-1902: a page shorter than MaxRows was taken as the last, and since D-181 that decides what leaves: an AIS
+    whose own maximum rows is below the page size (Server Manager) ended the read at its first page, and the sweep
+    removed the vouchers past it (fewer than half of them: not refused). A read that removes or closes what it no
+    longer lists asks again after a page as long as the longest before it, to an empty or a shorter one."""
+    connect(store, ais)
+    _vouchers(ais, 7)
+    jde_sync.sync(store, parts=("vouchers",))
+    real = ais._inputs
+    monkeypatch.setattr(ais, "_inputs", lambda key, body: {**real(key, body), "max_rows": 5})  # AIS's maximum: 5
+    part = jde_sync.sync(store, parts=("vouchers",), full=True)["parts"]["vouchers"]
+    assert part["read"] == 8 and part["removed"] == 0 and len(_numbers(store)) == 8
+    base = ais.data["purchase_orders"][0]  # the POs a whole read no longer lists are closed: the same
+    ais.data["purchase_orders"] += [{**base, "key": f"{6000 + n}-OP-00001-1", "order_number": str(6000 + n)}
+                                    for n in range(5)]  # fmt: skip
+    monkeypatch.setattr(ais, "_inputs", real)
+    jde_sync.sync(store, parts=("purchase_orders",))
+    monkeypatch.setattr(ais, "_inputs", lambda key, body: {**real(key, body), "max_rows": 4})
+    part = jde_sync.sync(store, parts=("purchase_orders",), full=True)["parts"]["purchase_orders"]
+    assert part["read"] == 7 and part["closed"] == [] and store.purchase_order("6004")["status"] == "open"
+
+
+def test_a_full_page_ending_on_a_voucher_without_its_key_removes_nothing(store, ais, monkeypatch):
+    """B-1903: a full page whose last voucher came without its Key ended the read there (no key to ask the next page
+    after), taken as complete, so the sweep removed every voucher past it (fewer than half: not refused). Only a read
+    that ended on an empty page or a shorter one than before removes anything; this one says why it removed none."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    _vouchers(ais, 9)
+    client = jde_ais.AisClient(ais.settings(), ais.mapping)
+    jde_sync.sync(store, parts=("vouchers",), client=client)
+    key, real = ais.mapping["orchestrations"]["vouchers"]["fields"]["key"], ais._out
+    monkeypatch.setattr(ais, "_out", lambda part, row: {**real(part, row), **({key: ""} if row.get(
+        "invoice_number") == "B-5" else {})})  # the third page's last voucher, without its key  # fmt: skip
+    part = jde_sync.sync(store, parts=("vouchers",), client=client, full=True)["parts"]["vouchers"]
+    assert part["removed"] == 0 and {"B-6", "B-8", "INV-7001"} <= _numbers(store)
+    assert "none was removed" in part["refused_remove"]
