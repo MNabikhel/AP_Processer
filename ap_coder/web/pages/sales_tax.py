@@ -1,23 +1,32 @@
 """Sales tax: the GST/HST and QST to claim back for a period, the claims to check first, and PST / QST possibly to
 self-assess. ``GET /sales-tax?start=&end=&show=risky|all&rows=&self_rows=``: each list ``ROWS_SHOWN`` rows at a time
-("Show more", D-162); the claims and the self-assessment list download as CSVs, every row
+("Show more", D-162), what the page shows worked out once for every process and settling for ``SETTLE_SECONDS`` after
+a change (``shown``, D-179); the claims and the self-assessment list download as CSVs, every row, never settled
 (``taxreturn.to_csv`` / ``taxreturn.self_assessment_csv``)."""
 
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import astuple
+from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.coding import taxreturn
 from ap_coder.core import ui
+from ap_coder.core.store import Store
 from ap_coder.web.core import address_day, get_store, money, page_router, render, shown_count
 from ap_coder.web.files import download
 
 router = page_router()  # each plain handler: one connection a request
 
 ROWS_SHOWN = 500  # the claims, and the self-assessments, listed at first and how many more each time ("Show more")
+# Seconds what the page shows may be behind a change of the invoices (D-164): the quarter's claims are read whole
+# (3.5 s at 300,000 invoices), and the queue's approvals change them all day. A change of what they are worked out
+# with (``taxreturn.setup_key``) shows at once; the CSVs, filed from, are worked out afresh.
+SETTLE_SECONDS = 30.0
+SHOWN_FORMAT = "sales-tax-1"  # what is kept for every process (``shown``); another when that changes
 
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
@@ -57,46 +66,63 @@ def sales_tax_page(request: Request, start: str = "", end: str = "", show: str =
     context = {"start": first.isoformat(), "end": last.isoformat(), "backwards": first > last}
     if first > last:
         return render(request, "sales_tax.html", "sales_tax", **context)
-    report = taxreturn.build(store, first, last)
-    totals, at_risk, rates = report.totals(), report.at_risk(), store.fx_rates()
-    itc, itc_hint = amounts(totals[taxreturn.ITC], rates)
-    itr, itr_hint = amounts(totals[taxreturn.ITR], rates)
-    invoices = len({c.invoice_id for c in report.claims})
-    risky = len({c.invoice_id for c in at_risk})
+    count, self_count = shown_count(rows, ROWS_SHOWN), shown_count(self_rows, ROWS_SHOWN)
+    view, rates = shown(store, first, last, show, count, self_count), store.fx_rates()
+    itc, itc_hint = amounts(view["totals"][taxreturn.ITC], rates)
+    itr, itr_hint = amounts(view["totals"][taxreturn.ITR], rates)
+    risky = view["risky"]
     tiles = [
-        ("GST/HST to claim", itc, "ITCs · " + (itc_hint or ui.plural(invoices, "invoice"))),
+        ("GST/HST to claim", itc, "ITCs · " + (itc_hint or ui.plural(view["invoices"], "invoice"))),
         ("QST to claim", itr, "ITRs" + (f" · {itr_hint}" if itr_hint else "")),
         (
             "Claims to check",
             risky,
             (("invoice" if risky == 1 else "invoices") + " with something to check") if risky else "nothing to check",
         ),
-        ("Not approved yet", report.not_approved, "dated in the period, not claimed"),
+        ("Not approved yet", view["not_approved"], "dated in the period, not claimed"),
     ]
-    only_risky = (show or ("risky" if at_risk else "all")) == "risky"
-    items = taxreturn.self_assessment(store, first, last)
-    listed = at_risk if only_risky else report.claims
-    count, self_count = shown_count(rows, ROWS_SHOWN), shown_count(self_rows, ROWS_SHOWN)
-    return render(
-        request,
-        "sales_tax.html",
-        "sales_tax",
-        **context,
-        report=report,
-        tiles=tiles,
-        by_type=report.by_type(),
-        shown=listed[:count],
-        shown_total=len(listed),
-        rows=count,
-        only_risky=only_risky,
-        risky=risky,
-        tones=ISSUE_TONES,
-        self_items=items,
-        self_shown=items[:self_count],
-        self_rows=self_count,
-        step=ROWS_SHOWN,
-        self_tiles=self_tiles(items),
-    )
+    return render(request, "sales_tax.html", "sales_tax", **context, **view, tiles=tiles, rows=count,
+                  tones=ISSUE_TONES, self_rows=self_count, step=ROWS_SHOWN)  # fmt: skip
+
+
+def shown(store: Store, first: dt.date, last: dt.date, show: str, count: int, self_count: int) -> dict[str, Any]:
+    """What the page shows of the period's claims (``taxreturn.build``) and self-assessments (``self_assessment``):
+    their totals and counts, the first ``count`` claims of the list ``show`` picks, the first ``self_count``
+    self-assessments. Worked out once for every process (D-169) and under a stream of approvals at most every
+    ``SETTLE_SECONDS`` (D-164), for these dates and rows and what they are worked out with (``taxreturn.setup_key``:
+    a change of the tax setup shows at once). Shared: read it, don't change it."""
+
+    def work() -> dict[str, Any]:
+        report = taxreturn.build(store, first, last)
+        items = taxreturn.self_assessment(store, first, last)
+        at_risk = report.at_risk()
+        only_risky = (show or ("risky" if at_risk else "all")) == "risky"
+        listed = at_risk if only_risky else report.claims
+        return {"totals": report.totals(), "invoices": len({c.invoice_id for c in report.claims}),
+                "risky": len({c.invoice_id for c in at_risk}), "not_approved": report.not_approved,
+                "not_recoverable": report.not_recoverable, "meals": report.meals_totals(),
+                "claimed": bool(report.claims), "by_type": report.by_type(), "only_risky": only_risky,
+                "shown": listed[:count], "shown_total": len(listed), "self_shown": items[:self_count],
+                "self_total": len(items), "self_accrued": sum(1 for s in items if s.note),
+                "self_tiles": self_tiles(items)}  # fmt: skip
+
+    asked = (first, last, show, count, self_count, taxreturn.setup_key(store))
+    return store.shared_answer("sales_tax", work, version=SHOWN_FORMAT, encode=_data, decode=_of, asked=asked,
+                               settle=SETTLE_SECONDS)  # fmt: skip
+
+
+_ROWS = {"shown": taxreturn.Claim, "self_shown": taxreturn.SelfAssessment}  # kept as lists of their fields
+_TUPLES = ("by_type", "self_tiles")
+
+
+def _data(view: dict[str, Any]) -> dict[str, Any]:
+    return {**view, **{k: [list(astuple(row)) for row in view[k]] for k in _ROWS}}
+
+
+def _of(data: dict[str, Any]) -> dict[str, Any]:
+    """``shown`` as kept for every process (JSON) made what it was: its claims and self-assessments, and tuples."""
+    return {**data, **{k: [kind(*row) for row in data[k]] for k, kind in _ROWS.items()},
+            **{k: [tuple(row) for row in data[k]] for k in _TUPLES}}  # fmt: skip
 
 
 def self_tiles(items: list[taxreturn.SelfAssessment]) -> list[tuple[str, str, str]]:
