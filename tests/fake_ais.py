@@ -223,6 +223,18 @@ KEYS = {"suppliers": "an8", "gl_accounts": "account_id", "business_units": "busi
 SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its rows are the same)
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """The stand-in's server, quiet when a client hung up first (a test's timeout, a dropped connection): what AIS
+    sees then is nothing, and no traceback belongs in the tests' output."""
+
+    def handle_error(self, request, client_address):  # noqa: ANN001
+        import sys
+
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Generated:
     """Rows made from their position as they are asked, in the order of their key: ``make(i)`` the row at position
     ``i`` (its key growing with ``i``), ``key(i)`` its key alone. ``gone``: positions deleted (voided in JDE);
@@ -319,7 +331,7 @@ class FakeAis:
             def do_POST(self) -> None:  # noqa: N802
                 fake._handle(self, "POST")
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = _QuietServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         if self.https:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
