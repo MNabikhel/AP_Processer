@@ -194,6 +194,7 @@ tests/erp/test_jde.py::test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_b
 tests/erp/test_jde.py::test_a_jde_batch_downloads_again_with_the_same_vouchers
 tests/erp/test_jde.py::test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export
 tests/erp/test_jde.py::test_exports_page_jde_flow
+tests/erp/test_jde_sync_volume.py::test_the_sync_at_the_companys_size
 tests/erp/test_search.py::test_find_by_vendor_number_po_and_amount
 tests/erp/test_search.py::test_french_amounts_zeros_accents_and_punctuation
 tests/erp/test_spend.py::test_control_characters_do_not_break_the_workbooks

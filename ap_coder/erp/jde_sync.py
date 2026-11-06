@@ -352,7 +352,8 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
     _note(run.report, "added", [after[k]["po_number"] for k in keys if k in after and not _po_lines(before.get(k))])
     _note(run.report, "changed", [after[k]["po_number"] for k in keys if k in after and _po_lines(before.get(k))
                                   and _po_lines(before[k]) != _po_lines(after[k])])  # fmt: skip
-    run.report["lines"] = run.report.get("lines", 0) + result["lines"]
+    for counted in ("orders", "updated", "lines"):
+        run.report[counted] = run.report.get(counted, 0) + result[counted]
     run.cache.setdefault("seen", set()).update(keys)
 
 
@@ -457,8 +458,8 @@ def _log_part(store: Any, run: _Run) -> None:
             store.log_event("settings_changed", actor=run.actor, detail={"keys": [jde.SETTING_KEY]})
     elif run.part == "purchase_orders":
         store.log_event("pos_imported", actor=run.actor, detail={
-            "added": _count(r, "added"), "updated": _count(r, "changed"), "lines": r.get("lines", 0),
-            "closed": _count(r, "closed"), "replace_all": False})  # fmt: skip
+            "orders": r.get("orders", 0), "added": _count(r, "added"), "updated": r.get("updated", 0),
+            "lines": r.get("lines", 0), "closed": _count(r, "closed"), "replace_all": False})  # fmt: skip
     else:
         store.log_event("erp_register_imported", actor=run.actor, detail={
             "rows": r["read"], "total": store.erp_register_count(), "removed": r.get("removed", 0)})  # fmt: skip
@@ -468,9 +469,9 @@ def _log_part(store: Any, run: _Run) -> None:
 
 
 def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[str, Any]:
-    """What to read of ``part``: the read left unfinished when it is the one due (the same kind and scope, begun less
-    than RESUME ago), else a new one: whole (``full``, never read whole, a week since, its scope changed) or
-    what changed since the last good read."""
+    """What to read of ``part``: the read left unfinished (its scope the same, begun less than RESUME ago) when it is
+    the kind due or a whole one (which reads the changes too), else a new one: whole (``full``, never read whole, a
+    week since, its scope changed) or what changed since the last good read."""
     cfg = client.cfg
     scope = {k: getattr(cfg, k) for k in SCOPE.get(part, ())}
     done = (state(store).get("parts") or {}).get(part) or {}
@@ -480,7 +481,7 @@ def _plan(store: Any, client: jde_ais.AisClient, part: str, full: bool) -> dict[
     mode = FULL if whole else CHANGES
     left = store.get_json(PROGRESS_KEY, {}).get(part)
     begun = _when((left or {}).get("started"))
-    if left and (left.get("mode"), left.get("scope")) == (mode, scope) and begun and _now() - begun < RESUME:
+    if left and left.get("mode") in (mode, FULL) and left.get("scope") == scope and begun and _now() - begun < RESUME:
         left["report"]["resumed"] = True
         return left
     fmt = client.ais.get("date_format") or "%Y-%m-%d"
