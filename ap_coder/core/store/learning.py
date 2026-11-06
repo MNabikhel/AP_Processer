@@ -232,7 +232,7 @@ class LearningMixin:
         key = key or vendor_key(vendor_name)
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         with self._conn() as conn:
-            stamp = _vendor_stamp(conn, key)
+            stamp = self._lessons_stamp(conn, key)
         with _FEEDBACK_LOCK:
             kept = _VENDOR_LESSONS.pop(kept_key, None)
             if kept is not None:
@@ -243,7 +243,7 @@ class LearningMixin:
         got = reading.acquire(timeout=MEMO_WAIT)
         try:
             with self._conn() as conn, _one_snapshot(conn):
-                stamp = _vendor_stamp(conn, key)
+                stamp = self._lessons_stamp(conn, key)
                 with _FEEDBACK_LOCK:
                     kept = _VENDOR_LESSONS.get(kept_key)
                 if kept is not None and kept[0] == stamp:
@@ -260,6 +260,12 @@ class LearningMixin:
         finally:
             if got:
                 reading.release()
+
+    def _lessons_stamp(self, conn: Any, key: str) -> tuple[Any, ...]:
+        """``_vendor_stamp``, read once a page while the database does not change (``_session_memo``): a check asks it
+        three or four times (the history check, the accounts and cost centers used for the vendor, its older lessons),
+        and it counts all of the vendor's lessons (8 ms for the biggest at 300,000 invoices, 179,000 lessons)."""
+        return self._session_memo(("vendor_stamp", key), lambda: _vendor_stamp(conn, key), shared=True)
 
     def learning_rows(self, vendor_name: str | None, key: str | None = None) -> list[dict[str, Any]]:
         """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
@@ -285,7 +291,7 @@ class LearningMixin:
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         history = last["outcome"] == "history"
         with self._conn() as conn, _one_snapshot(conn):
-            stamp = (*_vendor_stamp(conn, key), last["id"], history)
+            stamp = (*self._lessons_stamp(conn, key), last["id"], history)
             with _FEEDBACK_LOCK:
                 kept = _PAST_MEMORY.pop(kept_key, None)
                 if kept is not None:

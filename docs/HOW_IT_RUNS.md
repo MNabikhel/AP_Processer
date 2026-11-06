@@ -444,8 +444,9 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
   lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the
   lessons themselves (`Store.learning_rows`), for 32 vendors and 60,000 of their lessons a process (about 80 MB,
-  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`); and each memory's answers for 1,024 lines (`_Memory.said`, with the reference
-  data they came from).
+  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`). An approval moves the memory's last lesson: those lessons and their lines
+  are carried forward, only the lessons the memory let go read and gone over (D-173); anything else reads them again.
+  And each memory's answers for 1,024 lines (`_Memory.said`, with the reference data they came from).
 
   Kept for the reports and long pages (D-162), with what each held at 100,000 invoices: every vendor's supplier
   learning record (Supplier learning, Settings → Automation; `changes/suppliers`), about 28 MB a worker, and the

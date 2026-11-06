@@ -764,3 +764,38 @@ def test_a_vendors_older_lessons_are_read_again_when_more_than_the_memorys_last_
         for _ in range(5):
             _lesson(conn, "z")  # 23 to 27
     same("carried")
+
+
+def test_a_vendors_lessons_are_counted_once_a_page_while_nothing_changes(tmp_path, monkeypatch):
+    # A check asked for the stamp of the vendor's lessons three or four times (the history check, the accounts and
+    # cost centers used for it, its older lessons past the memory), each counting all of them: 8 ms each for the
+    # biggest vendor at 300,000 invoices. Once a page now while the database does not change; a change meanwhile, by
+    # another process or the page itself, counts them again.
+    import sqlite3
+
+    from ap_coder.core.store import learning
+
+    monkeypatch.setattr(learning, "FEEDBACK_READ", 5)
+    store = Store(tmp_path / "ap.db")
+    with store._conn() as conn:
+        for n in range(12):
+            _lesson(conn, "acme" if n % 2 else "beta", f"Part {n}")
+    counted, real = [], learning._vendor_stamp
+    monkeypatch.setattr(learning, "_vendor_stamp", lambda conn, key: counted.append(key) or real(conn, key))
+
+    def parts():
+        return {p.description for p in store.vendor_lessons("Acme").patterns}
+
+    with store.session():
+        assert len(parts()) == 5 and store.learning_rows("Acme").past and parts()  # (its newest FEEDBACK_READ)
+        assert counted == ["acme"]
+        with sqlite3.connect(store.path) as other:  # another process's approval meanwhile
+            _lesson(other, "acme", "Freight")
+        assert "Freight" in parts() and store.learning_rows("Acme").past
+        assert counted == ["acme"] * 2
+        with store._conn() as conn:  # the page's own
+            _lesson(conn, "acme", "Toner")
+        assert "Toner" in parts() and counted == ["acme"] * 3
+    parts()
+    parts()  # outside a page: each time
+    assert counted == ["acme"] * 5
