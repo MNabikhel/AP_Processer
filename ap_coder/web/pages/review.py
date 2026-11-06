@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+import anyio
+from fastapi import Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from ap_coder.coding.bulk import bulk_approve, needs_a_person, queue_checks, sort_for_bulk
+from ap_coder.coding import bulk
+from ap_coder.coding.bulk import needs_a_person, queue_checks, sort_for_bulk
 from ap_coder.coding.review import uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, LONG_OVERDUE_DAYS, overdue_since, payment
@@ -33,11 +36,14 @@ from ap_coder.core.store import (
     REJECTED,
     REVIEW,
     Store,
+    bulk_jobs,
     fold_text,
     load_sample_setup,
 )
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import recurring
+from ap_coder.web import identity, jobs
+from ap_coder.web.access import person_key
 from ap_coder.web.core import (
     TARGET_ACCURACY,
     accuracy_note,
@@ -400,6 +406,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "kpis": kpis(store, pending, flagged, awaiting, settings),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
+    context["bulk_job"] = bulk_notice(store)  # the person's bulk approval under way, or ended since (D-185)
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
@@ -504,49 +511,183 @@ def changed_meanwhile(request: Request, exc: Exception, back: str = "/review",
     return done(request, back, f"Not done: someone else changed this invoice meanwhile ({exc}).", tone="warn")
 
 
+# --- Bulk approval: a job done in the background, as the person who asked (D-185) ----------------------------------
+
+BULK_PAGE = "/review/bulk"
+BULK_WAIT = 3.0  # seconds a bulk approval is waited for, holding no thread, before its page says how far it got
+BULK_LOOK = 0.25  # seconds at most between two looks at it meanwhile
+STILL_UNDER_WAY = ("Your bulk approval asked before is still under way: this page says how far it got. Approve the "
+                   "others once it is done.")  # fmt: skip
+
+
+def _bulk_owner() -> str:
+    """Whose bulk approvals: the person asking, as their review screens' edits are theirs ("" this computer's)."""
+    key = person_key()
+    return "" if key is None else json.dumps(list(key))
+
+
 @router.post("/review/bulk-approve")
 async def review_bulk_approve(request: Request) -> JSONResponse:
-    """Approve the clean invoices the page listed, exactly as coded. Each is re-checked first; any that is no
-    longer clean is left for a person, with the reason."""
+    """Approve the clean invoices the page listed, exactly as coded: a job done in the background as the person asking
+    (D-185), the web worker holding no thread for it. Each is re-checked first; any that is no longer clean is left
+    for a person, with the reason. One done within ``BULK_WAIT`` is answered as before, with what was done; a longer
+    one goes to its page, which says how far it got (it goes on when the page is left)."""
     try:  # one field per invoice the page lists, however many (B-461)
         ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
     except ValueError:
         return refuse("Nothing to approve.")
-    return await run_in_threadpool(_bulk_approve, request, ids)
+    started = await run_in_threadpool(_start_bulk, request, ids)
+    if not isinstance(started, int):
+        return started
+    store, elsewhere = get_store(request), request.app.state.processes > 1  # (approved by the background process)
+    here = jobs.ended(store, started)
+    try:
+        ends, wait = time.monotonic() + BULK_WAIT, 0.05
+        while time.monotonic() < ends:
+            if here.is_set() or (elsewhere and await run_in_threadpool(_bulk_ended, store, started)):
+                return await run_in_threadpool(_bulk_done, request, started)
+            await anyio.sleep(wait)
+            wait = min(BULK_LOOK, wait * 1.5)
+    finally:
+        jobs.forget_ended(store, started)
+    return done(request, BULK_PAGE)
 
 
-def _bulk_approve(request: Request, ids: list[int]) -> JSONResponse:
-    with get_store(request).session():  # one connection for the whole approval, however many invoices
-        return _bulk_approve_now(request, ids)
+def _start_bulk(request: Request, ids: list[int]) -> int | JSONResponse:
+    """The bulk approval of ``ids`` asked for: the job started (its id), or the answer when none is."""
+    store = get_store(request)
+    with store.session():
+        if reference_or_none(store) is None or not ids:
+            return refuse("Nothing to approve.")
+        person = {"name": reviewer(), "login": login(), "server": server_mode(request), "as": identity.kept_person()}
+        asked = [[i, list(store.row_identity(i) or [])] for i in dict.fromkeys(ids)]  # each one as the page listed it
+        job, new = store.start_bulk_job(_bulk_owner(), person, asked, bulk.JOB_FORMAT)
+    if not new:
+        return done(request, BULK_PAGE, flash_message(STILL_UNDER_WAY, "info", icon="hourglass_top"))
+    jobs.ended(store, job)  # (before it can end)
+    _approve_bulk(request)
+    return job
 
 
-def _bulk_approve_now(request: Request, ids: list[int]) -> JSONResponse:
-    store, settings = get_store(request), get_settings(request)
-    reference = reference_or_none(store)
-    if reference is None or not ids:
-        return refuse("Nothing to approve.")
-    # an invoice with edits open on its review screen would be approved without them: leave it for that screen
-    from ap_coder.web.pages.invoice import unsaved_edits
+def _approve_bulk(request: Request) -> None:
+    """The bulk approvals waiting looked at now: by this process's runner, or by a thread of its own when it is the
+    only process and has none (a laptop; a first test of the server); else the server's background process does."""
+    runner = request.app.state.bulk_runner
+    if runner is not None:
+        runner.wake()
+    elif request.app.state.processes == 1:
+        jobs.approve_here(get_store(request), request.app.state.settings_factory)
 
-    editing = unsaved_edits(request)
-    result = bulk_approve(store, reference, settings, [i for i in ids if i not in editing], reviewer(), login=login(),
-                          server=server_mode(request))  # fmt: skip
-    result["skipped"] = [(i, "it has edits open on its review screen") for i in ids if i in editing] + result["skipped"]
-    waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
+
+def _bulk_left(request: Request, job: dict[str, Any]) -> None:
+    """``job`` taken up again when it was left waiting, or by a process that stopped while approving it (a restart):
+    only a new one asked started a thread (as B-1777's downloads)."""
+    if job["state"] == bulk_jobs.WAITING or (
+            job["state"] == bulk_jobs.RUNNING and job["renewed_at"] < time.time() - jobs.BULK_STALE):  # fmt: skip
+        _approve_bulk(request)
+
+
+def _bulk_ended(store: Store, job_id: int) -> bool:
+    job = store.bulk_job(job_id)
+    return job is None or job["state"] in (bulk_jobs.DONE, bulk_jobs.STOPPED)
+
+
+def _bulk_done(request: Request, job_id: int) -> JSONResponse:
+    """The answer to a bulk approval done while it was waited for: back to the queue, saying what was done."""
+    store = get_store(request)
+    with store.session():
+        job = store.bulk_job(job_id)
+        if job is None:  # (a restore meanwhile)
+            return done(request, "/review")
+        store.saw_bulk_job(job_id)
+        return done(request, "/review", *_bulk_messages(store, job))
+
+
+def _waiting_second(store: Store, approved: list[int]) -> int:
+    """How many of the invoices ``approved`` wait for their second approval."""
+    if not approved:
+        return 0
+    return sum(1 for r in store.invoice_columns(("id", "status"), ids=approved) if r["status"] == PENDING)
+
+
+def _left_for_a_person(store: Store, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The invoices of ``job`` not approved: each its id, name (vendor · number), why, and whether it is still in the
+    queue (its link opens it)."""
+    rows = []
+    for i, why in job["skipped"]:
+        inv = store.get_invoice(i) or {}
+        name = " · ".join(x for x in (inv.get("vendor_name"), inv.get("invoice_number")) if x) or f"#{i}"
+        rows.append({"id": i, "name": name, "why": why, "open": inv.get("status") == REVIEW})
+    return rows
+
+
+def _bulk_messages(store: Store, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """What a bulk approval did, as the queue says it: how many approved (and wait for a second approval), why it
+    stopped, and the invoices that need a look, each with why."""
+    approved, waiting = job["approved"], _waiting_second(store, job["approved"])
     messages = [flash_message(
-        f"Approved {ui.plural(len(result['approved']), 'invoice')}"
+        f"Approved {ui.plural(len(approved), 'invoice')}"
         + (f"; {waiting} wait{'s' if waiting == 1 else ''} for a second approval." if waiting else "."),
         "ok", icon="done_all")]  # fmt: skip
-    if result["skipped"]:
-        details = []
-        for i, why in result["skipped"]:
-            inv = store.get_invoice(i) or {}
-            name = " · ".join(x for x in (inv.get("vendor_name"), inv.get("invoice_number")) if x) or f"#{i}"
-            details.append(f"{name}: {why}")
-        n = len(result["skipped"])
+    if job["error"]:
+        messages.append(flash_message(job["error"], "warn"))
+    if job["skipped"]:
+        details = [f"{row['name']}: {row['why']}" for row in _left_for_a_person(store, job)]
+        n = len(job["skipped"])
         messages.append(flash_message(f"{ui.plural(n, 'invoice')} {'was' if n == 1 else 'were'} not approved: "
                                       f"{'it needs' if n == 1 else 'they need'} a look.", "warn", details))  # fmt: skip
-    return done(request, "/review", *messages)
+    return messages
+
+
+def bulk_note(job: dict[str, Any]) -> str:
+    """How far a bulk approval got: "37 of 200 approved, 2 need a look"."""
+    look = len(job["skipped"])
+    return f"{len(job['approved']):,} of {len(job['ids']):,} approved, {look:,} need{'s' if look == 1 else ''} a look"
+
+
+def bulk_notice(store: Store) -> dict[str, str] | None:
+    """What the queue says of the person's bulk approval: under way, how far it got; or ended since they last looked.
+    None when there is nothing to say."""
+    job = store.latest_bulk_job(_bulk_owner())
+    if job is None or (job["state"] not in (bulk_jobs.WAITING, bulk_jobs.RUNNING) and job["seen"]):
+        return None
+    if job["state"] in (bulk_jobs.WAITING, bulk_jobs.RUNNING):
+        return {"text": f"Your bulk approval is under way: {bulk_note(job)}.", "link": "See how far it got",
+                "tone": "info", "icon": "hourglass_top"}  # fmt: skip
+    ended = "stopped" if job["error"] else "done"
+    return {"text": f"Your bulk approval is {ended}: {bulk_note(job)}.", "link": "See what was done",
+            "tone": "warn" if job["error"] or job["skipped"] else "ok", "icon": "done_all"}  # fmt: skip
+
+
+@router.get(BULK_PAGE, response_class=HTMLResponse)
+def review_bulk_page(request: Request) -> Response:
+    """The person's bulk approval: how far it got while it goes on (safe to leave and come back), then what was done,
+    and the invoices that need a look."""
+    store = get_store(request)
+    job = store.latest_bulk_job(_bulk_owner())
+    if job is None:
+        return RedirectResponse("/review", status_code=303)
+    _bulk_left(request, job)
+    running = job["state"] in (bulk_jobs.WAITING, bulk_jobs.RUNNING)
+    if not running:
+        store.saw_bulk_job(job["id"])
+    return render(request, "review_bulk.html", "review", reading_status=None, title="Bulk approval", job=job,
+                  running=running, note=bulk_note(job), status_url=f"{BULK_PAGE}/status?job={job['id']}",
+                  approved=len(job["approved"]), waiting=_waiting_second(store, job["approved"]),
+                  look=_left_for_a_person(store, job))  # fmt: skip
+
+
+@router.get(BULK_PAGE + "/status")
+def review_bulk_status(request: Request, job: int = 0) -> JSONResponse:
+    """How far the person's bulk approval got, as ``app.js`` follows a job: running (waiting counts), done or error."""
+    found = get_store(request).bulk_job(job)
+    if found is None or found["owner"] != _bulk_owner():
+        raise HTTPException(status_code=404, detail="No such bulk approval.")  # (another person's is as none)
+    _bulk_left(request, found)
+    state = {bulk_jobs.DONE: "done", bulk_jobs.STOPPED: "error"}.get(found["state"], "running")
+    return JSONResponse({"state": state, "done": len(found["approved"]) + len(found["skipped"]),
+                         "total": len(found["ids"]), "note": bulk_note(found), "error": found["error"]},
+                        headers={"Cache-Control": "no-store"})  # fmt: skip
 
 
 @router.post("/review/sample-gl")

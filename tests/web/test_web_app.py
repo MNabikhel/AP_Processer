@@ -722,9 +722,9 @@ def test_in_a_browser_a_poll_stops_once_the_laptop_asks_who_they_are_again(chrom
 
 
 # The actions the server runs whole in their request, however long they take: a restore (a safety backup first, of a
-# database of gigabytes), years of past coding taught, the imports of large lists, a finance hub run, the bulk
-# approval of a long queue, the page reader's model loaded. Their forms are marked data-long: app.js waits for them
-# (any other action gives up after five minutes, with "didn't answer").
+# database of gigabytes), years of past coding taught, the imports of large lists, a finance hub run, the page
+# reader's model loaded. Their forms are marked data-long: app.js waits for them (any other action gives up after five
+# minutes, with "didn't answer"). Not the bulk approval: a job, answered within a few seconds (D-185).
 LONG_ACTIONS = {
     "settings_data.html": ["/settings/data/restore"],
     "learning.html": ["/learning/history/teach"],
@@ -734,7 +734,6 @@ LONG_ACTIONS = {
     "purchase_orders.html": ["/purchase-orders/import"],
     "settings_jde.html": ["/settings/jde/gl-map/import", "/settings/jde/worksheet"],
     "settings_hub.html": ["/settings/hub/run"],
-    "review.html": ["/review/bulk-approve"],
     "settings_reading.html": ["/settings/reading/load-model"],  # up to 5 minutes a try, after the long lane (B-1717)
 }
 
@@ -745,6 +744,9 @@ def test_the_actions_the_server_runs_whole_are_waited_for_however_long_they_take
         for action in actions:
             forms = re.findall(r'<form[^>]*action="' + re.escape(action) + '"[^>]*>', text)
             assert forms and all(" data-long" in f for f in forms), (name, action, forms)
+    queue = (core.TEMPLATES_DIR / "review.html").read_text(encoding="utf-8")
+    bulk = re.findall(r'<form[^>]*action="/review/bulk-approve"[^>]*>', queue)
+    assert bulk and all(" data-long" not in f for f in bulk), bulk  # (a job: its deadline is an action's)
     app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
     assert 'post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS })' in app_js
 

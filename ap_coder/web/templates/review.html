@@ -8,6 +8,10 @@
   <div>Approvals are recorded under {{ unnamed }} (this computer's login) until you add your name.
     <a href="/settings/review">Add your name <span class="ms" aria-hidden="true">arrow_forward</span></a></div></div>
 {% endif %}
+{% if bulk_job %}
+<div class="flash {{ bulk_job.tone }}" role="status"><span class="ms" aria-hidden="true">{{ bulk_job.icon }}</span>
+  <div>{{ bulk_job.text }} <a href="/review/bulk">{{ bulk_job.link }} <span class="ms" aria-hidden="true">arrow_forward</span></a></div></div>
+{% endif %}
 <div class="rq-kpis apc-anim" role="group" aria-label="The queue at a glance">
   {% for k in kpis %}
   <div class="rq-kpi">
@@ -69,7 +73,7 @@
             <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th></tr></thead>
             <tbody>{% for i in candidates %}<tr><td>{{ i.vendor_name }}</td><td>{{ i.invoice_number }}</td><td class="r">{{ i.grand_total | money }}</td></tr>{% endfor %}</tbody>
           </table></div>
-          <form method="post" action="/review/bulk-approve" data-busy="Approving…" data-long>
+          <form method="post" action="/review/bulk-approve" data-busy="Approving…">
             {% for i in candidates %}<input type="hidden" name="ids" value="{{ i.id }}">{% endfor %}
             <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">done_all</span>Approve them</button>
           </form>
