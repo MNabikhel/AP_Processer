@@ -1512,3 +1512,140 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`capture/layout.py`, `capture/table_finder.py`, `capture/reader/totals.py`, `web/document.py`,
     `ai/local_llm.py`, `docs/HOW_IT_RUNS.md`, `docs/CAPTURE_DESIGN.md`; `tests/capture/test_reading_cache.py`,
     `tests/capture/test_totals_solver.py`, `tests/capture/test_reading_once.py`, `tests/ai/test_local_llm.py`)
+- **D-171** · **The page reader's and the AI reviewer's queues renewed while read, taken in order, the reviewer not
+  starved on the server; an import stored only by the reader holding it; the model's kept answers pruned; the
+  learning memory updated, not built again, after an approval; a vendor's extended index kept within bytes** (phase
+  3, item γ; B-1762, B-1763).
+  - **The queues** (`core/store/page_queue.py`: the page reader's queue moved out of `capture.py` as it was, then
+    changed; the reviewer's in `lessons.py`):
+    - **A heartbeat:** a read (`page_reads`, "reading") or a review ("verifying") under way is renewed every
+      `READING_RENEW_SECONDS` (60 s) by a thread of its reader (`page_worker.renewed`, `renew_page_read`,
+      `renew_verification`, only while it is still that reader's) and is in line again once not renewed for
+      `READING_STALE_SECONDS` (5 minutes; it was `STALE_READING_HOURS`, 2 hours, the row never renewed). A reader whose
+      process is gone is still put back at once (`release_interrupted`). The Azure check keeps its 2 hours (not
+      renewed: a check taken again would send its pages to Azure twice).
+    - **The order:** a person's first (the page reader: `requested_by`, the invoice's "Add it to OvisOCR2's queue" or
+      `read-pages --invoice`; the reviewer: "asked by <name>"), then an invoice touchless processing waits on (a
+      touchless supplier's new invoice, reason `TOUCHLESS_NEXT`, from the arrival's `WAITING_FOR_PAGE_READER`; the
+      reviewer's "held for touchless"), then the earliest due date (none last: a credit note), then the oldest. One
+      SQL order (`_ORDER`, `_REVIEW_ORDER`, on the invoice's `due_date`); where an invoice is in line
+      (`page_reads_ahead`) counts by the same order (row values). Before, the oldest first: a person's request
+      went to the back of the line.
+    - **The AI reviewer's turn** (the choice: interleaved, not a thread of its own): on the company server each
+      reader thread gives the reviewer the next turn after each invoice it read, when it has one ready
+      (`BackgroundReader._round`), and goes on reading at once after it, even when the chat model didn't answer (the
+      minute's pause is for a reader with nothing left to read); a reader thread still asks the model server one
+      thing at a time, so `llm_parallel` stays what the model machine is asked at once. A thread of its own would
+      ask N + 1 at once, beside the arrival's chat calls. On a laptop it reviews once nothing is left to read, as
+      before: one LM Studio there may hold one model at a time, and switching OvisOCR2 and the chat model after each
+      invoice would load one each time.
+    - **The wait** (`wait_seconds`): the rounds of the `llm_parallel` readers, the queue's (its count over the
+      readers, rounded up) or an invoice's (those ahead over the readers, then its own); one reader as before
+      (B-1763).
+    - **Measured** (`python -m ap_coder.bench day --n 100 --scanned 0.5`, the fake model 8-20 s a page, 2 slots,
+      time ×0.05; before: aad1b61 with this bench's new figures; the 4 cores shared with other agents' work):
+
+      | | before | after |
+      |---|---:|---:|
+      | reviews done while the page reader had invoices in line | 23 of 100 | 94 of 100 |
+      | an invoice's wait for its review once read, median / max | 21.5 / 44 s | 1.0 / 17 s |
+      | the first review after the drop | 49 s | 24 s |
+      | the longest stretch reads waited and no review ended | 77 s | 30 s |
+      | all in the review queue / the page reader drained after | 5.3 / 5.4 min | 5.2 / 5.4 min |
+      | failures | 0 | 0 |
+
+  - **An import stored once** (B-1762, D-168's "not done"): the import queue's reader sets `IMPORT_CLAIM` (the file
+    and its reader) around the pipeline, and `add_invoice` notes the invoice on that file in its own transaction
+    (`ImportsMixin._claim_noted`), only while the file is still that reader's; else `ClaimLost`, nothing of it is
+    stored (its event neither) and the pipeline says so. A capture process stalled past its 120 s lease (a long OCR
+    holding Python's lock, a paused VM) whose file another took stores nothing, whichever stores first.
+  - **The model's answers kept, pruned** (`paths.prune_kept`): `.cache/page_reader` (a folder a file),
+    `.cache/model_reading` and `.cache/model_accounts` were never pruned (a few hundred thousand files a year at the
+    server's volume, all invoice data). Each answer kept prunes its folder, at a process's first and then at most
+    hourly: an answer written more than `KEPT_DAYS` (30) ago goes, then the oldest past `KEPT_MAX_BYTES` (512 MB, about
+    3 months of a busy server's), a half-written one an hour old, a folder left empty; the page reader's timings stay.
+    By age, not as an invoice is decided: an answer is asked for again within days (the arrival, the page reader's
+    pass, a reading again), a decided invoice's only if it is read again, which then costs one model call; age needs
+    no database.
+  - **The learning memory updated, not built again** (`suggest._updated_memory`, `memory._updated_aggregate`,
+    `Index.updated`, `RowsCache.get(update=)`): after an approval the store's memory is the new lessons in front of
+    the rows kept, the oldest past the cap dropped (D-154's `_with_added`); every process then built the GL
+    suggestions' index and the examples' patterns again from all of them. Now the memory kept is updated: only the
+    lines of the lessons added and dropped are worked out again; the patterns in a build's order, ranks in the same
+    order (a rank is a row's place less the memory's `offset`: those kept stay as they were), the index renumbered,
+    its words in the order a build meets them, so `similar` finds the same lines in the same order and the ties
+    break alike. Exactly what a build gives: `tests/ai/test_coding_no_ai.py` compares everything both hold over 80
+    approvals of random lessons past a cap, and each of four sabotages of the update fails it. More than
+    `UPDATE_MOST` (1,000) lessons at once, or any other change (lessons forgotten, the memory read again, a history
+    import's rows in the middle), builds it as before. A slot's fingerprint is worked out once compared (it was at
+    each build: ~20 ms at 50,000 lessons).
+    - **Measured** (`p3_gamma/memory_after_approval.py`: 50,000 of the 100k seed's lessons, five approvals, the
+      machine quiet): the index after an approval 0.15-0.22 s → 6-8 ms, the patterns 0.17-0.18 s → 3 ms, in every
+      web worker, capture process and the background process; held 4.7 → 10.9 MB and 1.9 → 4.9 MB (each line's
+      decisions, kept for the updates). `bench coding --quick` 2.1 → 1.8 s.
+  - **A web worker's memory** (`p3_gamma/worker_memory.py` on a copy of the 100k seed: each per-process cache worked
+    out in turn, under tracemalloc, what it holds after a gc; then the queue, 20 invoices twice and the reports in
+    one server-mode worker; before aad1b61, after this):
+
+    | what a web worker keeps | held (traced) | bounded by |
+    |---|---:|---|
+    | the learning memory, 50,000 lessons (`_FEEDBACK`) | 64.1 MB | `FEEDBACK_READ` |
+    | the GL suggestions' index of it (`suggest._MEMORY`, 2 slots) | 4.7 → 10.9 MB | 2 slots |
+    | the examples' patterns (`memory._AGGREGATED`, 2 slots) | 1.9 → 4.9 MB | 2 slots |
+    | 32 vendors' lessons worked out (`_VENDOR_LESSONS`) | 0.2 MB | `VENDOR_LESSONS_KEPT` |
+    | 26 vendors' older lessons (`_PAST_MEMORY`) and extended indexes (`suggest._PAST`) | 80.1 MB | 60,000 rows; bytes |
+    | an approval: the memory, its index and patterns again | +6.9 MB, 1.40 s → +3.6 MB, 0.08 s | |
+    | the app's modules (server mode) | 49 MB | |
+    | the review queue: the vendors' invoice dates (24 MB) and the recurring vendors' (19 MB) | 66 MB | one each |
+    | 20 invoices: the worker's vendors' older lessons (45 MB), their extended indexes (27 MB) | 81 MB | as above |
+    | the reports (insights, month-end, vendors, purchase orders) | 20 MB | |
+    | in all at the end, traced / RSS | 380 → 386 MB / 1,491 → 1,593 MB | |
+
+    - **What holds it:** Python's objects are about a quarter of the RSS (the RSS of three runs of this probe ended
+      1,392 to 1,593 MB: the allocator's, not a difference between the code before and after). The kept rows
+      dominate them (the learning memory and the vendors' older lessons: 1.3 KB a lesson, 64 + 77 MB); the rest of
+      the RSS is what the requests' peaks freed and the allocator keeps (D-153: 4 threads a worker, about 110 MB
+      each a request in flight; one invoice's first opening after the memory changed read a vendor's older lessons
+      again: 43,000 rows, a 50 MB JSON text in SQLite and its rows decoded).
+    - **SQLite:** a connection a request (its session), closed after it, with SQLite's default page cache (2 MB,
+      `cache_size` -2000); at most a worker's 4 threads at once: about 8 MB. Not what holds it.
+    - **Bounded now:** a vendor's extended index (`_own_bytes`: the lists and dicts `_extended` copied, of the
+      shared memory's size: 0.35 MB a vendor on the seed, whose 9,850 lines have only 167 words; with a real
+      vocabulary, its words' dicts too, several MB) within `PAST_BYTES_KEPT` (32 MB) besides its 32 vendors and
+      60,000 rows, the latest always. On the seed it never bites (26 vendors kept: 9 MB).
+    - **Load** (`bench load --users 25 --duration 300 --ramp 30 --think 10 --workers 4` on the 100k seed, run once,
+      after all of phase 3: α, β, δ and this): pages p50 148 ms, p95 1.37 s; actions p95 254 ms; 0 errors, 0 over
+      30 s; the web workers 125 → 684-782 MB in 5 minutes, 0.09-0.24 cores each; the background process 213 → 454 MB.
+      Phase 2 part 2's same run (`knee_25`, before phase 3): pages p50 300 ms, p95 4.45 s, actions p95 1.37 s, the
+      workers 125 → 787-916 MB at 0.4-0.5 cores. The 100-person run's 1.25-1.4 GB in 10 minutes was 4 workers
+      saturated (D-153's requests in flight), not a cache that grows.
+  - **Follow-ups of phase 3's other parts:**
+    - PyMuPDF holds `layout.PDF_LOCK` outside `capture/` too: the page reader's pages (its `_RENDER_LOCK` gone), the
+      AI reviewer's page images (`imaging`), the pipeline's look at a PDF, a picture made a PDF and a scan turned, an
+      email's PDF text, the approved invoice's stamp (a picture is decoded outside the lock).
+      `tests/capture/test_reading_cache.py` holds every `pymupdf.open` there to it.
+    - `server.json` has `capture_processes` (1-64; 0 or none: `server.capture_processes()`'s own), passed to the
+      dashboard as `AP_CAPTURE_PROCESSES` (the .env's still wins, as for the other keys).
+    - The day bench's arrival at full latency waits for each chat answer side by side across the capture processes,
+      each at most `pipeline.ARRIVAL_SECONDS` (it added them one after another, uncut): 100 invoices on aad1b61, 29.0
+      min the old way, 16.4 min this way (two runs). It also says whether the reviewer kept up (the rows above).
+  - **The proof that nothing else changed:** `scripts/same_behaviour.py --ref claude/epic-feynman-r6ns86 tax approve
+    read pipeline` (Python 3.12, both OCR engines): the same, all four (20,000 tax, 1 approve, 60 read and 1
+    pipeline outputs). `bench coding --quick` and `bench learn --quick`: the same bytes but the timings.
+  - **Not done:**
+    - After each approval the memory's last lesson moves (past the cap): every vendor past it reads its older lessons
+      again (`_past_memory`'s stamp holds the memory's last row), up to 43,000 rows on the seed in each process; they
+      could be updated as the memory is.
+    - The vendors' invoice dates and the recurring vendors' memos (43 MB a worker at 100,000 invoices) grow with the
+      database: shared across processes (`shared_answer`) or in SQL, they would be one copy.
+    - A reader thread with nothing in line looks again after 30 s (`IDLE_SECONDS`): during a drop that trickles in,
+      the page reader may wait that long for a new invoice.
+    - The reviewer's turn is per reader thread: with `llm_parallel` 1 on the server the page reader reads every
+      other turn under a backlog of reviews.
+  - (`core/store/{page_queue,capture,lessons,imports,invoices,_base,__init__}.py`, `core/{memory,paths}.py`,
+    `ai/{page_worker,verifier,pipeline,suggest,line_match,inference,page_reader,imaging}.py`, `intake/{imports,
+    pictures,triage}.py`, `erp/stamp.py`, `ops/service.py`, `bench/day.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/capture/test_page_reads.py`, `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`,
+    `tests/ai/test_uniform_reading.py`, `tests/ai/test_coding_no_ai.py`, `tests/intake/test_imports.py`,
+    `tests/core/test_paths.py`, `tests/capture/test_reading_cache.py`, `tests/web/test_server_capacity.py`,
+    `tests/bench/test_day.py`)

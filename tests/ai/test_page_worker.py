@@ -751,6 +751,21 @@ def test_on_the_server_the_reviewer_takes_every_other_turn(store, monkeypatch, s
         assert turns == ["read"] * 5
 
 
+def test_on_the_server_a_review_the_chat_model_did_not_answer_never_holds_up_the_page_reader(store, monkeypatch):
+    """The chat model not loaded, OvisOCR2 reading: the review is put back (a minute's pause when nothing is left to
+    read, as before), but the reviewer's turn after an invoice read gives the page reader its next turn at once, not
+    a minute later each time."""
+    from ap_coder.ops import offline
+
+    monkeypatch.setattr(offline, "server_mode", lambda: True)
+    monkeypatch.setattr(page_worker, "read_one", lambda *a, **k: page_worker.ReadOutcome(1, "done", MODEL))
+    monkeypatch.setattr(
+        page_worker.BackgroundReader, "_review_one", lambda self, settings, store: page_worker.OFF_SECONDS
+    )
+    reader = page_worker.BackgroundReader(_settings, lambda: store)
+    assert [reader._round(_settings(), store) for _ in range(4)] == [0.0] * 4
+
+
 # --- The second review's findings (the page reader run for real on a laptop) ---------------------------------------
 
 

@@ -829,13 +829,13 @@ class BackgroundReader(threading.Thread):
 
     def _round(self, settings: Settings, store: Any) -> float:
         """One invoice read, or reviewed: on the company server the AI reviewer's turn after each one read, while it
-        has one (D-171); else the page reader's, the reviewer's when it has nothing. The pause before the next."""
+        has one (D-171); else the page reader's, the reviewer's when it has nothing. The pause before the next: none
+        after the reviewer's turn, even when the chat model didn't answer (the page reader reads on meanwhile)."""
         from ..ops.offline import server_mode
 
         reviews_next, self._reviews_next = self._reviews_next, False
-        pause = self._review_one(settings, store) if reviews_next else None
-        if pause is not None:
-            return pause
+        if reviews_next and self._review_one(settings, store) is not None:
+            return 0.0
         outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set,
                            **({"reader": self.mark} if self.slot else {}))  # fmt: skip
         if outcome is None:

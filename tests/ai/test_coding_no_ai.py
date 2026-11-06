@@ -375,8 +375,8 @@ def test_once_the_lessons_change_the_vendors_memories_extended_from_the_older_on
     assert [key[1] for key in suggest._PAST] == [vendor_key(vendors[2])]
     asked(vendors[0])  # extended again from the new ones
     assert len(suggest._PAST) == 2 and all(kept[0] is shared for kept in suggest._PAST.values())
-    # Within their bytes too (D-171): each extended memory copies the shared index's lists and dicts it changes (about
-    # 1.3 MB a vendor on the 100k seed); past PAST_BYTES_KEPT the oldest go, the latest always kept.
+    # Within their bytes too (D-171): each extended memory copies the shared index's lists and dicts it changes (0.35
+    # MB a vendor on the 100k seed, more with a real vocabulary); past PAST_BYTES_KEPT the oldest go, the latest kept.
     own = [kept[4] for kept in suggest._PAST.values()]
     assert all(size > 0 for size in own)
     monkeypatch.setattr(suggest, "PAST_BYTES_KEPT", own[-1])

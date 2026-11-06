@@ -232,8 +232,8 @@ def added_in_front(kept: list[dict[str, Any]], rows: list[dict[str, Any]]) -> in
 # The vendors whose lessons go past the whole memory's cap (``Store.learning_rows``): their older lessons (the store's
 # ``_PAST_MEMORY``) and the GL suggestions' index extended by them (``suggest._PAST``) are kept for this many vendors
 # and this many of their lessons at most in each process, the latest used always (D-159). The indexes extended are
-# kept within PAST_BYTES_KEPT too (D-171): each copies the lists and dicts of the shared index it changes, about 1.3
-# MB a vendor on the 100k seed's vocabulary, more with a bigger one.
+# kept within PAST_BYTES_KEPT too (D-171): each copies the lists and dicts of the shared index it changes, 0.35 MB a
+# vendor on the 100k seed (9,850 lines but 167 words), several MB with a real vocabulary.
 PAST_KEPT, PAST_ROWS_KEPT, PAST_BYTES_KEPT = 32, 60_000, 32 * 1024 * 1024
 
 
