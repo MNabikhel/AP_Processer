@@ -177,6 +177,9 @@ def test_launcher_scripts_download_nothing_without_the_opt_in():
 
 _URL = re.compile(r"""(?:https?:|wss?:)?//[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9](?::\d+)?[^\s"'`)<>]*""")
 _NAMESPACES = ("http://www.w3.org/2000/svg", "http://www.w3.org/1999/xlink")
+# The XML namespaces of an Excel workbook's parts (``erp.exports.sheet_workbook``, D-169), as openpyxl writes them.
+_XLSX_NAMESPACES = ("http://schemas.openxmlformats.org/", "http://purl.org/dc/elements/", "http://purl.org/dc/terms/",
+                    "http://www.w3.org/2001/XMLSchema-instance")  # fmt: skip
 
 
 def test_pages_styles_and_scripts_name_no_other_host():
@@ -221,6 +224,8 @@ def test_python_written_html_names_no_other_host():
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
                 if rel == "ap_coder/ops/service.py" and url == "http://schemas.microsoft.com/windows/2004/02/mit/task":
                     continue  # the scheduled task's XML namespace: a name, never fetched
+                if rel == "ap_coder/erp/exports.py" and url.startswith(_XLSX_NAMESPACES):
+                    continue  # the parts of a workbook written as text (D-169): namespaces, names never fetched
                 if rel == "ap_coder/web/qrcodegen.py" and url == "https://www.nayuki.io/page/qr-code-generator-library":
                     continue  # the licence header of the QR code generator kept as published (D-146): never fetched
                 if rel == "ap_coder/erp/hub/onelake.py" and re.match(

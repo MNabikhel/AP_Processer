@@ -5,9 +5,10 @@ Automation, D-157): worked out by SQLite in a few queries, not three a supplier 
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
-from ._base import _in_list
+from ._base import _in_list, _now
 
 
 def _ranked(where: str = "1") -> str:
@@ -102,3 +103,28 @@ class SuppliersMixin:
                     row[column] = json.loads(row[column]) if row[column] else None
                 found[r["supplier_key"]].append({**row, "correct": bool(row["correct"])})
         return found
+
+    @staticmethod
+    def _merge_supplier_profiles(conn: sqlite3.Connection, old: str, key: str) -> None:
+        """The supplier profile under ``old`` folded into the one under ``key`` (the same supplier under today's
+        rules), then removed: the stricter state wins (held, then suspended, supervised, touchless), with its dates
+        and audit rate, so a held supplier never goes touchless by a key change; a field blank in one is filled from
+        the other."""
+        from ...capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
+
+        strict = {HELD: 3, SUSPENDED: 2, SUPERVISED: 1, AUTONOMOUS: 0}
+        kept = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
+        gone = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (old,)).fetchone()
+        if kept is None or gone is None:
+            return
+        state = gone if strict.get(gone["state"], 1) > strict.get(kept["state"], 1) else kept
+        conn.execute(
+            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
+            "display_name = ?, vendor_id = ?, template_json = ?, updated_at = ? WHERE key = ?",
+            (
+                state["state"], state["autonomous_since"], state["suspended_at"], state["audit_rate"],
+                kept["display_name"] or gone["display_name"], kept["vendor_id"] or gone["vendor_id"],
+                kept["template_json"] or gone["template_json"], _now(), key,
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM supplier_profiles WHERE key = ?", (old,))
