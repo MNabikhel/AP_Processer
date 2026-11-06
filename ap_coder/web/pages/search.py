@@ -181,14 +181,10 @@ def write_csv(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> N
 
 def write_xlsx(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
     """The filtered rows (all pages, up to 50,000), with the columns shown, as an Excel workbook to ``out``."""
-    from openpyxl import Workbook
-
-    from ap_coder.erp.exports import streamed_sheet
+    from ap_coder.erp.exports import sheet_workbook
 
     columns, rows = _export_rows(store, _query_of(params), _rows_step(step))
-    wb = Workbook(write_only=True)  # each row written as it comes, not the whole sheet held (D-157)
-    streamed_sheet(wb.create_sheet(), "Invoices", columns, rows)
-    wb.save(out)
+    sheet_workbook(out, "Invoices", columns, rows)  # each row written as it comes, not the whole sheet held (D-157)
 
 
 def _made_now(write: Any, media: str) -> Any:
