@@ -485,7 +485,8 @@ def test_a_vendor_grown_past_half_the_rows_kept_is_no_longer_kept(tmp_path, monk
     def add(count: int) -> None:
         with sqlite3.connect(store.path) as conn:
             conn.executemany("INSERT INTO invoices (source_path, file_name, status, created_at, vendor_key, "
-                             "vendor_name) VALUES ('x', 'x', 'review', ?, 'half', 'Half')", [(NOW,)] * count)  # fmt: skip
+                             "vendor_name) VALUES ('x', 'x', 'review', ?, 'half', 'Half')",
+                             [(NOW,)] * count)  # fmt: skip
 
     add(5)
     assert len(store.vendor_invoices("half")) == 5 and vendors_module._VENDOR_ROWS_HELD == 5
@@ -597,8 +598,8 @@ def test_the_held_vendors_approved_numbers_follow_an_approval_made_elsewhere_and
     their own; each pair of numbers once; each caller gets lists of its own."""
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
-    invoice, again, beta = (_invoice(store, tmp_path, ground_truth, n, v)
-                            for n, v in (("H-1", "Acme Supply"), ("H-2", "Acme Supply"), ("H-3", "Beta Ltd")))  # fmt: skip
+    invoice, again, beta = (_invoice(store, tmp_path, ground_truth, n, v) for n, v in
+                            (("H-1", "Acme Supply"), ("H-2", "Acme Supply"), ("H-3", "Beta Ltd")))  # fmt: skip
     key = store.get_invoice(invoice)["vendor_key"]
     worked = []
     real = type(store)._approved_numbers

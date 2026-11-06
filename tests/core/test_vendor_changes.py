@@ -1,9 +1,11 @@
-"""The vendors' change log (``vendor_changes``, D-174): each process keeps its vendors' invoices (``Store.vendor_invoices``)
-and brings them up to date from the invoices the log says changed since. Whatever wrote (another worker, plain SQL, a
-write undone, a restore), in whatever order, what a process answers is what a fresh read gives."""
+"""The vendors' change log (``vendor_changes``, D-174): each process keeps its vendors' invoices
+(``Store.vendor_invoices``) and brings them up to date from the invoices the log says changed since. Whatever wrote
+(another worker, plain SQL, a write undone, a restore), in whatever order, what a process answers is what a fresh read
+gives."""
 
 from __future__ import annotations
 
+import json
 import random
 import re
 import sqlite3
@@ -74,14 +76,18 @@ def _add(store: Store, tmp_path, ground_truth, rng: random.Random, n: int) -> in
     path = tmp_path / f"in-{n}.pdf"
     path.write_bytes(f"invoice {n}".encode())
     doc = {**ground_truth, "invoice_number": f"N-{n}", "vendor_name": rng.choice(VENDORS),
-           "grand_total": rng.choice((100.0, 250.5, -40.0)), "remit_bank_account": rng.choice(("", "004-1-22"))}  # fmt: skip
+           "grand_total": rng.choice((100.0, 250.5, -40.0)),
+           "remit_bank_account": rng.choice(("", "004-1-22"))}  # fmt: skip
     return store.add_invoice(path, doc, {"requires_review": True})
 
 
 def _ids(path, *statuses: str) -> list[int]:
     with sqlite3.connect(path) as conn:
-        return [r[0] for r in conn.execute(
-            f"SELECT id FROM invoices WHERE status IN ({', '.join('?' * len(statuses))}) ORDER BY id", statuses)]  # fmt: skip
+        rows = conn.execute(
+            "SELECT id FROM invoices WHERE status IN (SELECT value FROM json_each(?)) ORDER BY id",
+            (json.dumps(statuses),),
+        )
+        return [r[0] for r in rows]
 
 
 def _plain(path, sql: str, *args) -> None:
@@ -89,12 +95,13 @@ def _plain(path, sql: str, *args) -> None:
         conn.execute(sql, args)
 
 
-_ACTIONS = ("add", "park", "unpark", "approve", "reject", "reopen", "delete", "export", "undo export", "sql column",
-            "sql coding", "sql move", "sql merge", "sql insert", "sql delete", "undone", "confidence", "restore")  # fmt: skip
+_ACTIONS = ("add", "park", "unpark", "approve", "reject", "reopen", "delete", "export", "undo export",
+            "sql column", "sql coding", "sql move", "sql merge", "sql insert", "sql delete", "undone", "confidence",
+            "restore")  # fmt: skip
 
 
 def _step(rng: random.Random, store: Store, tmp_path, ground_truth, n: int, backup) -> str:
-    """One write, picked at random among the ways an invoice changes: through a Store (another worker's) or plain SQL."""
+    """One write, picked at random among the ways an invoice changes: through a Store (a worker's) or plain SQL."""
     path = store.path
     review, approved = _ids(path, "review"), _ids(path, "approved")
     action = rng.choices(_ACTIONS, [0.1 if a == "restore" else 1 for a in _ACTIONS])[0]
@@ -195,7 +202,9 @@ def test_each_workers_kept_invoices_equal_a_fresh_read_after_any_writes_in_any_o
     assert {"export", "undo export", "sql move", "sql merge", "undone"} <= set(done) and patched > 100
 
 
-def test_a_change_reads_again_only_the_invoices_it_changed_and_the_log_keeps_the_latest(workers, tmp_path, ground_truth):
+def test_a_change_reads_again_only_the_invoices_it_changed_and_the_log_keeps_the_latest(
+    workers, tmp_path, ground_truth
+):
     """A vendor kept is brought up to date by reading the invoices changed since (one, here); the log keeps its latest
     ``VENDOR_CHANGES_KEPT`` changes, so one kept before more changes than that is read whole again, never missing
     one."""
@@ -219,8 +228,10 @@ def test_a_change_reads_again_only_the_invoices_it_changed_and_the_log_keeps_the
             other.park_invoice(mine[0], "Ann", "waiting")
         assert store.vendor_invoices(key) == _fresh(store, key) and read == [None, [mine[0]]]
         with sqlite3.connect(store.path) as conn:  # more changes than the log keeps, of another invoice
-            conn.executemany("UPDATE invoices SET invoice_date = ? WHERE id = ?",
-                             [(f"2026-01-{n % 28 + 1:02d}", mine[-1]) for n in range(VENDOR_CHANGES_KEPT + 1)])
+            conn.executemany(
+                "UPDATE invoices SET invoice_date = ? WHERE id = ?",
+                [(f"2026-01-{n % 28 + 1:02d}", mine[-1]) for n in range(VENDOR_CHANGES_KEPT + 1)],
+            )
             first_seq, last_seq, logged = conn.execute(
                 "SELECT MIN(seq), MAX(seq), COUNT(*) FROM vendor_changes").fetchone()  # fmt: skip
         assert logged == VENDOR_CHANGES_KEPT and first_seq == last_seq - VENDOR_CHANGES_KEPT + 1
