@@ -263,7 +263,7 @@ def zone_check(data: Path | None = None, now: dt.datetime | None = None) -> dict
     return {**found, "status": WARN, "problem": f"This computer's clock is on {found['machine']}, not {name} "
             f"(UTC{_offset(now.astimezone(zone).utcoffset())} now), the business time zone in server.json: \"today\", "
             "the day's counts and due dates follow this computer's clock. Set its time zone to the business's "
-            "(Windows: Settings → Time & language → Date & time)."}  # fmt: skip
+            "(Windows: the Settings app's Time & language, then Date & time)."}  # fmt: skip
 
 
 # --- Disks and backups ---------------------------------------------------------------------------------------------

@@ -968,7 +968,8 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    Coder runs on the same Mac). Anything else on the network can reach that port too: let the Mac's firewall, or the
    network, allow only the Mac mini.
 
-2. **Its LaunchDaemon**, `/Library/LaunchDaemons/com.apcoder.lmstudio.plist`:
+2. **Its LaunchDaemon**, `/Library/LaunchDaemons/com.apcoder.lmstudio.plist` (replace each `<account>`, brackets
+   too, with the account it runs as, `lmstudio` above; `plutil -lint` finds one left):
 
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
@@ -976,12 +977,12 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    <dict>
      <key>Label</key><string>com.apcoder.lmstudio</string>
      <key>ProgramArguments</key><array><string>/Library/APCoder/lm-studio-start.sh</string></array>
-     <key>UserName</key><string>lmstudio</string>
-     <key>EnvironmentVariables</key><dict><key>HOME</key><string>/Users/lmstudio</string></dict>
+     <key>UserName</key><string><account></string>
+     <key>EnvironmentVariables</key><dict><key>HOME</key><string>/Users/<account></string></dict>
      <key>RunAtLoad</key><true/>
      <key>AbandonProcessGroup</key><true/>
-     <key>StandardOutPath</key><string>/Users/lmstudio/Library/Logs/lm-studio-start.log</string>
-     <key>StandardErrorPath</key><string>/Users/lmstudio/Library/Logs/lm-studio-start.log</string>
+     <key>StandardOutPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
+     <key>StandardErrorPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
    </dict>
    </plist>
    ```
@@ -998,7 +999,7 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    sudo launchctl bootstrap system /Library/LaunchDaemons/com.apcoder.lmstudio.plist
    ```
 
-4. **Check it after a restart with nobody logged in**: `sudo -u lmstudio /Users/lmstudio/.lmstudio/bin/lms server
+4. **Check it after a restart with nobody logged in**: `sudo -u <account> /Users/<account>/.lmstudio/bin/lms server
    status` and `... lms ps` (the model loaded); on the Mac mini, AP Coder's *Settings* → *Reading* → *Check again*.
    AP Coder is told where it is in the data folder's `.env` (`AP_LLM_BASE_URL=http://10.0.0.20:1234/v1`, and
    `AP_PAGE_READER_BASE_URL`), and the backup machine as in step 8, point 5.
