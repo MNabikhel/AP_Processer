@@ -18,7 +18,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from fastapi import File, Form, Request, UploadFile
@@ -722,8 +722,7 @@ def folder_names(folder: Path) -> tuple[list[str], list[str], list[str]]:
             shown = not lower.startswith(_UNLISTED)
             if suffix in SUPPORTED_EXTENSIONS and shown and entry.is_file():
                 names.append(name)
-            if lower.endswith(tuple(EMAIL_EXTENSIONS)) and PurePath(name).suffix.lower() in EMAIL_EXTENSIONS and (
-                    entry.is_file()):  # fmt: skip
+            if suffix in EMAIL_EXTENSIONS and not lower.startswith(".") and entry.is_file():  # (``emails_in``)
                 emails.append(name)
             if suffix not in known and shown and lower not in NOT_A_FILE_TO_MENTION and entry.is_file():
                 others.append(name)

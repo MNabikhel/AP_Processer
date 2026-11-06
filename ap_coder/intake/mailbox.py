@@ -504,8 +504,10 @@ def triage_log(folder: Path, limit: int = 500, keep: Callable[[dict], bool] | No
 def emails_in(folder: Path) -> list[Path]:
     if not folder.is_dir():
         return []
-    # the name first: whether it is a file is asked of the saved emails only, not of a year of invoices (D-157)
-    return sorted(p for p in folder.iterdir() if p.suffix.lower() in EMAIL_EXTENSIONS and p.is_file())
+    # the name first: whether it is a file is asked of the saved emails only, not of a year of invoices (D-157); a
+    # hidden file (a Mac's "._mail.eml") is never one, as it is never an invoice (B-1758)
+    return sorted(p for p in folder.iterdir()
+                  if p.suffix.lower() in EMAIL_EXTENSIONS and not p.name.startswith(".") and p.is_file())  # fmt: skip
 
 
 def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:

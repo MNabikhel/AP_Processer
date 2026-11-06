@@ -147,9 +147,11 @@ def test_the_saved_emails_are_found_by_their_names_first(tmp_path):
     for name in ("a.pdf", "C.PDF", "note.docx", "mail.eml", "MAIL2.MSG", ".hidden.eml", "plain", "dot.eml."):
         (folder / name).write_bytes(name.encode())
     (folder / "folder.eml").mkdir()
-    old = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
-    # Windows drops the trailing dot of "dot.eml." (so it is an email there) and sorts its paths without case.
-    expected = {".hidden.eml", "MAIL2.MSG", "mail.eml"} | ({"dot.eml"} if os.name == "nt" else set())
+    old = sorted(p for p in folder.iterdir()
+                 if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS and not p.name.startswith("."))  # fmt: skip
+    # Windows drops the trailing dot of "dot.eml." (so it is an email there) and sorts its paths without case. A hidden
+    # file is never a saved email (B-1758).
+    expected = {"MAIL2.MSG", "mail.eml"} | ({"dot.eml"} if os.name == "nt" else set())
     assert emails_in(folder) == old and {p.name for p in old} == expected
 
 
@@ -443,7 +445,8 @@ def test_the_import_page_lists_the_folder_once_by_name_as_the_pick_up_and_its_wa
         [p.name for p in other_files(tmp_path, EMAIL_EXTENSIONS)],
     )
     documents, emails, others = process.folder_names(tmp_path)
-    assert "a.txt" not in documents and "alone.txt" in documents and "..eml" in emails and "letter.docx" in others
+    assert "a.txt" not in documents and "alone.txt" in documents and "letter.docx" in others
+    assert sorted(emails, key=str.lower) == ["mail.eml", "Note.MSG", "zz.Eml"]  # hidden ones never (B-1758)
 
 
 def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoever_changed_them(tmp_path):
