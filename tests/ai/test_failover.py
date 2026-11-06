@@ -573,6 +573,43 @@ def test_the_doctor_says_which_model_server_answers_and_how(two):
     assert doctor._server_checks(_settings(primary.base_url), "local") == []
 
 
+def test_the_doctor_from_a_console_on_the_server_sees_its_breakers_and_server_json(two, tmp_path, monkeypatch):
+    """B-1874: ``python -m ap_coder doctor`` from IT's console on the company server had a breaker of its own, new
+    and in memory (only ``serve --server`` sets AP_LLM_SLOTS_DIR), so it said the calls go to the primary while the
+    server's processes had moved them; and a backup given only in server.json wasn't seen at all. It reads the
+    server's shared state and its server.json as the dashboard does."""
+    import argparse
+
+    from ap_coder.ops import cli, doctor, service
+
+    primary, backup = two
+    data = tmp_path / "private"  # (the data folder, AP_PRIVATE_DIR)
+    data.mkdir(exist_ok=True)
+    service.write_config(data, llm_backup_url=backup.base_url)  # the console's .env names no backup
+    monkeypatch.setenv(local_llm.SLOTS_ENV, "")
+    monkeypatch.delenv(local_llm.SLOTS_ENV)  # the console: not set (and none left behind)
+    code = ("import sys; from ap_coder.ai import local_llm\n"
+            "b = local_llm.failover(local_llm.CHAT, sys.argv[1], sys.argv[2])\n"
+            "for _ in range(local_llm.FAILOVER_FAILURES): b.failed(sys.argv[1], 'not answering')\n")  # fmt: skip
+    subprocess.run([sys.executable, "-c", code, primary.base_url, backup.base_url], check=True, timeout=60,
+                   cwd=PROJECT_DIR, env={**os.environ, local_llm.SLOTS_ENV: str(data / "llm")})  # fmt: skip
+    seen: dict = {}
+
+    def checks(settings, *args, **kwargs):  # the doctor's model server rows, with the settings it runs with
+        rows = doctor._server_checks(settings, "local")
+        seen["rows"] = {area: (status, detail) for area, status, detail in rows}
+        return [doctor.Check(*row) for row in rows] or [doctor.Check("model servers", doctor.SKIP, "no backup")]
+
+    monkeypatch.setattr(cli, "run_checks", checks)
+    monkeypatch.setattr(doctor, "store_checks", lambda store, server: [])
+    cli.cmd_doctor(argparse.Namespace(online=False, coa=None, db=str(tmp_path / "ap.db")), _settings(primary.base_url))
+    rows = seen["rows"]
+    assert "the calls go to it now" in rows["chat model server (backup)"][1]
+    assert "the calls go to it now" not in rows["chat model server (primary)"][1]
+    assert rows["model server failover"][0] == doctor.WARN
+    assert "The calls go to the backup " + backup.base_url in rows["model server failover"][1]
+
+
 def test_a_review_asked_of_a_chat_model_lm_studio_no_longer_has_waits_in_line_not_unsure(store):
     """B-1844: a review asked of the chat model LM Studio had a moment ago (swapped since, its status kept 30 s)
     got a 404 on its first question and ended unsure, its invoice sent to a person: a model the server no longer

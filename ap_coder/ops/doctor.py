@@ -8,9 +8,11 @@ URLs), and summarises reference data by counts and column names only.
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -405,6 +407,29 @@ def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
     if state == "passed":
         return "page reader", PASS, f"{found}; self-test passed: it reads every page of every invoice"
     return "page reader", WARN, f"{found}; self-test {state}: {detail}"
+
+
+def as_the_server(settings: Settings, data: Path) -> Settings:
+    """``settings`` with the model servers' backups as the company server's dashboard has them, for the doctor run
+    from a console there (D-180): server.json's (``service.serve_env``), and the breakers' state its processes share
+    (AP_LLM_SLOTS_DIR, which only ``serve --server`` sets, in the data folder: set for this process)."""
+    from dataclasses import replace
+
+    from ..core.config import backup_url
+    from .service import SettingsError, serve_env
+    from .service import settings as server_settings
+
+    os.environ.setdefault(local_llm.SLOTS_ENV, str(data / "llm"))
+    try:
+        given = serve_env(server_settings(data), data)
+    except SettingsError:  # (its own line says why)
+        return settings
+    llm, pages = settings.llm, settings.page_reader
+    if given.get("AP_LLM_BACKUP_URL"):
+        llm = replace(llm, backup_url=backup_url(given["AP_LLM_BACKUP_URL"]))
+    if given.get("AP_PAGE_READER_BACKUP_URL"):
+        pages = replace(pages, backup_url=backup_url(given["AP_PAGE_READER_BACKUP_URL"]))
+    return replace(settings, llm=llm, page_reader=pages)
 
 
 def _server_checks(settings: Settings, provider: str) -> list[tuple[str, str, str]]:

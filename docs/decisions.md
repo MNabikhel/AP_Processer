@@ -2323,7 +2323,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Which one answers, and how** (item 4): `page_reader.server_checks` lists each model's server and its backup: the
     model it would use there, then (Check again, the doctor) a one-word question, timed. *Settings → Reading*: a card
     "Model servers" (in use or standing by, how each answered at the last Check again, where the breaker sends the
-    calls and why); `python -m ap_coder doctor`: a line for each server and one for the breaker. Without a backup:
+    calls and why); `python -m ap_coder doctor`: a line for each server and one for the breaker. Run from a console
+    on the company server it takes the server's own (`doctor.as_the_server`): server.json's backups and the state its
+    processes share, in the data folder's `llm` folder, where `serve --server` keeps it (B-1874). Without a backup:
     neither, as before.
   - **A swapped model** (item 5): the page reader's self-test was already its model's (`confirmed(store, model)`):
     another OvisOCR2 build reads nothing until it passed, on whichever server it is; the backup's with the same key is
