@@ -2008,3 +2008,75 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/load.py`; `tests/web/test_web_process_listing.py`, `tests/web/test_web_process.py`,
     `tests/intake/test_files.py`, `tests/intake/test_imports.py`, `tests/core/test_imports.py`,
     `tests/bench/test_bench_load.py`)
+- **D-179** · **What the pages only show at 300,000 invoices: Sales tax and Learning worked out once for every process
+  and settled; a settled answer's askers take the one before while another works it out; Previous and Next read the
+  queue's ids; the duplicate check and the parked list off the summary** (scale goal phase 3 part 3, Q3; B-1832 to
+  B-1837).
+  - **Why:** the profile of the two busiest web workers with 100 people on 300,000 invoices (phase 3 part 2,
+    [phase3b-load-100-people.md](archive/scale-2026-11/phase3b-load-100-people.md)) had, beside month-end's accruals
+    and a vendor's older lessons (other work): an invoice's page 16.8% and its check 15.7% (`list_invoices` 5.1%,
+    `vendor_findings` 4.6%, `find_duplicates` 3.3%), the queue 14.8%, Sales tax 6.3%, Learning 5.9%; and at
+    100,000 Spend's and month-end's p95 (4.7 s, 7.5 s) were the others asking waiting for the one working them out.
+  - **What:**
+    - **The duplicate check** seeks the invoice number as it compares (the summary's `number_key`, its index), not
+      every invoice of the vendor read and compared in Python (B-1832).
+    - **Previous and Next** in the queue's own order (no search, sort or view of its own: the queue's links) read
+      its ids alone off `summary_queue_order` (`Store.listed_ids`), not the whole list again after each approval
+      (B-1833).
+    - **A settled answer** (`shared_answer(..., settle=)`, D-164): while another thread or process works it out
+      again, the others asking take the answer before, this database's latest (in the process, or the database's
+      when later), instead of waiting up to `ANSWER_WAIT`; with none, or an exact answer, they wait as before
+      (B-1834). Its age is then at most the settle and the time the other takes to work it out: D-164's "at most
+      that old" now reads "at most that old, but for the work under way". Month-end's settled answers too.
+    - **Sales tax:** what the page shows (totals, counts, the rows listed: `sales_tax.shown`) is one shared answer
+      for the dates, the view and its rows, settling 30 s as Spend's; `taxreturn.setup_key` (the tax setup, the rate
+      table, our provinces, JD Edwards' settings and batches) is part of what it is asked for, so a change of one
+      shows at once. The CSVs, filed from, are worked out afresh, as month-end's (B-1835). Kept whole, the quarter's
+      claims would pass `ANSWER_MOST_BYTES` at 300,000 invoices and hold 100,000 claims in each worker: what the page
+      shows is a few hundred rows.
+    - **Learning:** the Coding accuracy tab's metrics, approval counts and corrections are shared answers settling
+      60 s as Insights' (`changes/lessons`, `changes/situations` and the summary's generation), with the count of the
+      page's own changes (`lessons_forgotten`, `history_imported`) as what they are asked for: a lesson forgotten or
+      taught there shows at once. The latest lessons and the memory list are read at each visit, as before (B-1836).
+    - **The parked list** (the queue's follow-up pill and Parked tab) is read off the summary, not the invoices'
+      whole rows, whose reason and follow-up day come last (B-1837).
+  - **Kept exact, or not done (measured at 20,000 invoices, scaled by the vendor sizes at 300,000):**
+    - **A check's vendor history** (`vendor_invoices`, 3.6% at 300,000): each vendor's rows are kept and brought up
+      to date from the vendors' change log (D-174), but the queue's 1,041 vendors hold about 237,000 invoices and a
+      worker keeps 50,000 (`VENDOR_ROWS_KEPT`): most checks read their vendor again, the big ones' thousands of rows
+      (an expected few thousand a check). Reading them is 9 ms of plain columns and 23 ms of `json_extract` of their
+      five numbers from each coding for the biggest vendor at 20,000 (1,577 rows); the same rows off the summary take
+      3.9 ms. The numbers kept in the summary (the GST/HST number is, `gst_number`; QST, PST, the bank account and the
+      original invoice number are not) would make that read 8 times cheaper: a summary rule and schema change, its
+      rebuild at the upgrade, in `core/store/{summary,vendors}.py` (not this work's files).
+    - **The recurring vendors** (the queue's late pill, 3.9%): worked out once a minute for every process (about 2 s
+      at 300,000); kept up to date by each vendor's count of changes (D-175's estimate: a third of it) is
+      `erp/recurring.py`'s, not this work's. Their askers now take the answer before while it is worked out (above).
+    - **The queue's lists** (`list_invoices` of the three queues, 45 ms at 20,000 after each approval or park): the
+      queue's size, not the database's, sets it; brought up to date by the invoices changed would need a change log of
+      the summary.
+    - **Sales tax kept up to date** rather than settled: under 100 people the queue's approvals of invoices dated in
+      the default quarter change it all day, and the summary keeps no list of the invoices changed since (D-175).
+    - In an invoice's analysis the rest that grows with the database is the learning memory's (`learning_rows`,
+      `suggest_gl`: other work).
+  - **Measured** (CPU by `time.process_time`, the 4 cores shared with two other agents; a 20,000-invoice seed of this
+    code; a change made in another process before each ask):
+
+    | | before (88d82e0) | after |
+    |---|---:|---:|
+    | an invoice's page after a park elsewhere (20 invoices, each its first) | 86.5 ms | 43.8 ms |
+    | its check | 32.2 ms | 31.4 ms |
+    | the duplicate check, the biggest vendor (1,577 invoices) | 6.3 ms | 1.1 ms |
+    | Sales tax after an approval elsewhere, within the settle | 113 ms | 17 ms |
+    | Sales tax with nothing changed | 119 ms | 15 ms |
+    | Learning after an approval elsewhere, within the settle | 57 ms | 17 ms |
+    | a second worker asking Spend 0.1 s after a first, past the settle (wall) | 0.53 s | 0.02 s |
+    | month-end's two workers so (wall) | 1.09 / 1.05 s | 0.56 / 0.69 s |
+    | the parked list, 146 invoices, on a request's own connection | 3.6 ms | 2.1 ms |
+
+    The same bodies, byte for byte, from the code before and now on the same seed: 14 Sales tax pages and CSVs, 6
+    Learning pages, 8 queue pages (its tabs and views), 12 invoice pages (the queue's own view and five others),
+    and 20 invoice pages and checks in a row; `scripts/same_behaviour.py --ref 88d82e0 tax approve`: same.
+  - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
+    `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
+    `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)

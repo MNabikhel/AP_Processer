@@ -133,34 +133,21 @@ class InvoicesMixin:
             row = conn.execute(sql + " ORDER BY id DESC", (sha, sha)).fetchone()
         return dict(row) if row else None
 
-    def find_duplicates(
-        self,
-        vendor_name: str,
-        invoice_number: str,
-        exclude_id: int | None = None,
-        grand_total: float | None = None,
-        key: str | None = None,
-    ) -> list[int]:
+    def find_duplicates(self, vendor_name: str, invoice_number: str, exclude_id: int | None = None,
+                        grand_total: float | None = None, key: str | None = None) -> list[int]:  # fmt: skip
         """Other invoices with the same vendor and invoice number (possible duplicate payment), in the order they came.
         With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses. ``key``: the
         vendor's own (``vendor_key_for``: the second of two vendors by one name has its own, B-1408), else the name's.
-        The number is sought as it compares (the summary's ``number_key``), not each of the vendor's invoices read
-        (B-1832)."""
+        The number is sought as it compares (the summary's ``number_key``, by its index), not each of the vendor's
+        invoices read (B-1832)."""
         key, number = key or vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
-        with self._conn() as conn:
-            self._summary_fresh(conn)
-            rows = conn.execute(
-                "SELECT id, grand_total FROM invoice_summary WHERE number_key = ? AND +vendor_key = ? "
-                "AND +status NOT IN (?, ?) ORDER BY id",  # by the number's index
-                (number, key, FAILED, REJECTED),
-            ).fetchall()
-
-        def same_sign(other: float | None) -> bool:
-            return grand_total is None or other is None or (grand_total < 0) == (other < 0)
-
-        return [r["id"] for r in rows if r["id"] != exclude_id and same_sign(r["grand_total"])]
+        sql = "SELECT id, grand_total FROM invoice_summary WHERE number_key = ? AND +vendor_key = ? AND +status NOT IN "
+        rows = self.summary_query(sql + "(?, ?) ORDER BY id", (number, key, FAILED, REJECTED))
+        credit = None if grand_total is None else grand_total < 0
+        return [r["id"] for r in rows if r["id"] != exclude_id
+                and (credit is None or r["grand_total"] is None or (r["grand_total"] < 0) == credit)]  # fmt: skip
 
     def default_terms_days(self) -> int:
         """Days to pay when an invoice prints neither a due date nor terms (Settings → Review)."""
