@@ -39,7 +39,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
 # index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
 # 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of the company
-# server, and the downloads its background process makes, reports.py, D-169)
+# server, and the downloads its background process makes, reports.py, D-169); past_lines came later in 27 (by
+# _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -122,14 +123,18 @@ _VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
 # A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows), the
 # latest used last, ``memory.PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` lessons at most (``Store.learning_rows``).
 _PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+# The same lessons by line (``memory.PastLines``), per (database, vendor key): (their stamp, the lines, the lessons they
+# were carried on by since the database's copy, ``past_lines``), the latest used last (``Store._past_lines``, D-178).
+_PAST_LINES: dict[tuple[str, str], tuple[tuple[Any, ...], Any, int]] = {}
 
 
 def _forget_learning(path: Path) -> None:
     """The learning memory kept for this database (``feedback_rows``, ``metrics``, ``vendor_lessons``) dropped: an
-    upgrade changed lessons in place, which the stamps (lessons are otherwise only added or removed) don't see."""
+    upgrade changed lessons in place, which the stamps (lessons are otherwise only added or removed) don't see. (What
+    the database keeps of them for every process goes with the change itself: ``past_lines``.)"""
     key = str(path.resolve())
     with _FEEDBACK_LOCK:
-        for kept in (_FEEDBACK, _METRICS, _VENDOR_LESSONS, _PAST_MEMORY):
+        for kept in (_FEEDBACK, _METRICS, _VENDOR_LESSONS, _PAST_MEMORY, _PAST_LINES):
             for k in [k for k in kept if (k[0] if isinstance(k, tuple) else k) == key]:
                 kept.pop(k, None)
 
@@ -327,6 +332,7 @@ CREATE TABLE IF NOT EXISTS import_files (id INTEGER PRIMARY KEY AUTOINCREMENT, b
 CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
     stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
+CREATE TABLE IF NOT EXISTS past_lines (vendor_key TEXT PRIMARY KEY, stamp TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, kind TEXT NOT NULL,
     params TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
@@ -716,6 +722,7 @@ class StoreCore:
         row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
         if (row["value"] if row else "") != VENDOR_KEY_RULES:
             self._recompute_vendor_keys(conn)
+            conn.execute("DELETE FROM past_lines")  # (the lessons by line, D-178: worked out again)
             _forget_learning(self.path)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
@@ -739,6 +746,7 @@ class StoreCore:
                 "AND COALESCE(suggested_cc, '') IN ('', ?)",
                 (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
             )
+            conn.execute("DELETE FROM past_lines")
             _forget_learning(self.path)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('feedback_cleanup', ?) "
