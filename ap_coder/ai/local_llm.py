@@ -656,11 +656,11 @@ class Failover:
             return None  # being written by another process: the last one read stands
         return {**_fresh(), **found} if isinstance(found, dict) else None
 
-    def state(self) -> dict[str, Any]:
-        """The state now (read again from the shared file at most every STATE_SECONDS)."""
+    def state(self, fresh: bool = False) -> dict[str, Any]:
+        """The state now (read again from the shared file at most every STATE_SECONDS; ``fresh``: now)."""
         path = self._file()
         with self._lock:
-            if path is not None and time.monotonic() - self._read_at >= STATE_SECONDS:
+            if path is not None and (fresh or time.monotonic() - self._read_at >= STATE_SECONDS):
                 found = self._read(path)
                 if found is not None:
                     self._state = found
@@ -717,11 +717,12 @@ class Failover:
 
     def answered(self, base_url: str, model: str = "") -> None:
         """A call to ``base_url`` was answered (``model``: the model that answered; the probe asks the primary's first
-        one, any of its models telling whether it answers)."""
+        one, any of its models telling whether it answers). The shared state is read afresh: another process's
+        failure a moment ago is reset, so two failures with an answer between move nothing."""
         role = self.role(base_url)
         if role is None:
             return
-        s = self.state()
+        s = self.state(fresh=True)
         if not s["failures"].get(role) and not (role == PRIMARY and model and not s["model"]):
             return
 

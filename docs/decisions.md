@@ -2315,7 +2315,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       asked of it: B-1872). Calls under way on the backup end there.
     - **Shared** by the company server's processes, as the minute needs (measured below): a small JSON file in
       `AP_LLM_SLOTS_DIR` (the slot locks' folder `serve --server` gives them all), written under its lock
-      (`paths.try_lock`), read at most every 0.5 s; times on the server's clock (one machine). Not the database: the
+      (`paths.try_lock`), read at most every 0.5 s (an answer reads it afresh, so another process's failure a moment
+      before is reset: B-1876); times on the server's clock (one machine). Not the database: the
       model calls have no store at hand (`local_llm` opens none), and it is no row's state. `AP_FAILOVER_SHARED=0`
       gives each process its own (to measure). On a laptop, each process its own.
     - **D-168's arrival breaker** counts for the server in use (`ArrivalBreaker.asks(server)`): its two timeouts in a

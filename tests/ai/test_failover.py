@@ -292,6 +292,23 @@ def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypat
     assert kept["on"] == BACKUP and kept["moves"] == 1
 
 
+def test_an_answer_in_another_process_between_two_failures_keeps_the_calls_where_they_are(tmp_path, monkeypatch):
+    """B-1876: across the company server's processes, an answer between two failures didn't reset the count: the
+    process answered looked at its own copy of the state (read again every STATE_SECONDS) and, seeing no failure
+    there, wrote nothing. Not two failures in a row, yet the calls moved."""
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    primary, backup = "http://10.0.0.5:1234/v1", "http://10.0.0.6:1234/v1"
+    one = local_llm.Failover(local_llm.CHAT, primary, backup)  # one process's breaker
+    other = local_llm.Failover(local_llm.CHAT, primary, backup)  # another's, on the same file
+    one.answered(primary, CHAT)
+    time.sleep(local_llm.STATE_SECONDS)
+    other.state()  # it looked a moment ago (every call does)
+    one.failed(primary, "no answer in time")
+    other.answered(primary, CHAT)
+    one.failed(primary, "no answer in time")
+    assert one.state()["on"] == PRIMARY and one.state()["failures"][PRIMARY] == 1
+
+
 def test_a_failure_of_a_server_already_left_or_a_refusal_moves_nothing(two):
     primary, backup = two
     breaker = local_llm.failover(local_llm.PAGES, primary.base_url, backup.base_url)
