@@ -1718,18 +1718,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     that vendor made as big as the 300k seed's (19,088), the check's vendor path took 477 ms after a change.
   - **The choice: a change log, not a narrow table.** A narrow table of what the check reads, kept by triggers, would
     parse both codings in the trigger at each write of one, and every worker would still read all of a big vendor's
-    rows after each change (its columns alone: about 55 ms for 19,000); the log costs a row of three columns per
-    change, and a worker reads again only the invoices changed (about 1 ms here).
+    rows after each change (as the columns before the documents read: 4.6 ms for 1,577, so about 55 ms for 19,000);
+    the log costs a row of three columns per change, and a worker reads again only the invoices changed (about 1 ms
+    for the vendor of 19,088).
     - `vendor_changes (seq INTEGER PRIMARY KEY, vendor_key, invoice_id)` (`_base.VENDOR_CHANGES`), written by the
       triggers that count each vendor's changes (`changes_vendor_invoice_*`, D-159: an insert, a delete, an update of
       a column `vendor_invoices` lists; a move logged for both vendors), in the same statements: every way an invoice
       changes is logged, whoever changes it (another worker, the background process, plain SQL): an arrival, an
       approval, a park, a rejection, a delete, an export's batch and its undo, a vendor renamed or merged
       (`_recompute_vendor_keys`), a restore's migration. A check's confidence is not listed, so not logged.
-    - In those triggers, not one of its own: measured raw (20,000 invoices inserted, their batch set, 10,000
-      parked): 0.84, 0.28, 0.25 s without the log; a trigger of its own 0.96, 0.36, 0.30; in the counts' 0.85, 0.34,
-      0.30; and without an index by vendor 0.82, 0.32, 0.26 (pruned as below). No index: a worker reads the changes
-      since its own off the primary key, 5 µs, 0.6 ms with 20,000 changes of other vendors since (the most).
+    - In those triggers, not one of its own, and with no index by vendor: measured raw, without the store (20,000
+      invoices inserted, their batch set, 10,000 parked): 0.84, 0.28, 0.25 s without the log; a trigger of its own
+      and an index 0.96, 0.36, 0.30; in the counts' triggers with the index 0.85, 0.34, 0.30, without it (pruned as
+      below) 0.82, 0.32, 0.26. A worker reads the changes since its own off the primary key: 5 µs, 0.6 ms with 20,000
+      changes of other vendors since (the most).
     - **Pruned in the same triggers:** each change removes the one `VENDOR_CHANGES_KEPT` (20,000) before it, a seek
       (not measurable above). The log never empties, so `seq` never goes back.
   - **The read:** `vendor_invoices` reads in one statement (one snapshot) the `summary_id`, the log's first and last
@@ -1759,7 +1761,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `expected_tax_numbers` and `moved_off_hold` in a page's session, right after another Store parked or unparked one
     of the vendor's invoices; before: 1c73b77, the same seed):
     - the vendor of 1,577 invoices: 52.4 → 5.5 ms (nothing changed since: 9.9 → 5.3 ms);
-    - the vendor of 19,088: 477 → 18.7 ms (41.3 → 17.5 ms);
+    - the vendor of 19,088: 477 → 18.7 ms (41.3 → 17.5 ms); the whole check's coding (`finalise_coding` with the
+      store, as the review screen's check runs it): 529 → 78 ms (96 → 79 ms);
     - bulk writes: 200,000 ERP register rows imported 3.4-3.5 → 3.5-3.7 s of CPU (no change: the log is on the
       invoices); an export batch of 10,000 invoices and its undo 5.6-5.8 s either way (the summary's work).
   - **Not done:**
