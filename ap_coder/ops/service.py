@@ -150,7 +150,8 @@ def write_whole(path: Path, content: bytes, mode: int | None = None,
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.{os.getpid()}.part")  # (a dot first, and not .plist: launchd reads none)
     try:
-        with open(part, "wb") as f:
+        part.unlink(missing_ok=True)  # never written through what is at that name: O_EXCL below (B-1964)
+        with open(part, "xb") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())

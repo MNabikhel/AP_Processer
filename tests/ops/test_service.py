@@ -191,6 +191,23 @@ def test_run_cmd_and_server_json_are_never_left_cut_short(data, tmp_path, monkey
         assert service.read_config(data)["folder"] == str(new)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a link planted in a folder: POSIX")
+def test_a_whole_write_never_follows_a_link_left_at_its_temporary_name(data, tmp_path):
+    """B-1964: ``write_whole`` opened its temporary file with ``open(part, "wb")``, which follows a link already at
+    that name. Run as root (a Mac's ``sudo service install``) beside files the service account may write, it would
+    have written root's content through a link into any file. A file already at that name is removed and the new one
+    made with O_EXCL (never through a link): the file the link named stays as it was."""
+    other = tmp_path / "elsewhere.txt"
+    other.write_text("as it was", encoding="utf-8")
+    path = data / "service" / "run.cmd"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f".{path.name}.{os.getpid()}.part")
+    part.symlink_to(other)
+    service.write_whole(path, b"the new runner")
+    assert other.read_text(encoding="utf-8") == "as it was"
+    assert path.read_bytes() == b"the new runner" and not path.is_symlink() and not part.exists()
+
+
 def test_server_json_is_replaced_even_while_another_process_has_it_open(data, monkeypatch):
     """Windows refuses to rename over a file another process has open without delete sharing (as Python opens files;
     an antivirus; a monitor's /readyz reading server.json): server-update's record failed on that PermissionError
