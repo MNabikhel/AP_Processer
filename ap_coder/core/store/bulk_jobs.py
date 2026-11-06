@@ -18,6 +18,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from ._base import _in_list
+from .invoices import REVISION_ACTIONS
+
 WAITING, RUNNING, DONE, STOPPED = "waiting", "running", "done", "stopped"
 _OPEN = f"('{WAITING}', '{RUNNING}')"
 TRIES = 3  # a job whose process stopped while approving is taken again, this many times in all
@@ -25,6 +28,11 @@ KEEP = 86400.0  # seconds a job ended is kept
 KEPT_EACH = 5  # jobs ended kept of each person, the latest
 GONE = "no longer in the queue (someone else acted on it meanwhile)"
 EDITED = "it has edits open on its review screen"
+CHANGED = "changed meanwhile: it is no longer the invoice the queue showed"
+# What moves an invoice's stamp (``bulk_stamps``): its revision (``REVISION_ACTIONS``, D-184), and a new reading
+# of it (``replace_proposal``). One whose stamp moved since the queue listed it is no longer the invoice asked.
+STAMP_ACTIONS = (*REVISION_ACTIONS, "proposal_updated")
+_STAMP_IN = "(" + ", ".join("?" * len(STAMP_ACTIONS)) + ")"
 
 
 def stopped_twice(tries: int) -> str:
@@ -46,10 +54,10 @@ def _decoded(row: Any) -> dict[str, Any]:
 class BulkJobsMixin:
     def start_bulk_job(self, owner: str, person: dict[str, Any], ids: list[list[Any]], version: str
                        ) -> tuple[int, bool]:  # fmt: skip
-        """(the job, whether it is new) approving ``ids`` (each ``[id, its row_identity]``) for ``owner`` as
-        ``person`` (who each approval names): theirs already open when they have one (asked again, or from another web
-        worker at once), else a new one waiting. The jobs ended past ``KEEP`` and ``KEPT_EACH``, and those of another
-        database, go now."""
+        """(the job, whether it is new) approving ``ids`` (each ``[id, its row_identity, its stamp]``: ``bulk_stamps``)
+        for ``owner`` as ``person`` (who each approval names): theirs already open when they have one (asked again, or
+        from another web worker at once), else a new one waiting. The jobs ended past ``KEEP`` and ``KEPT_EACH``, and
+        those of another database, go now."""
         now = time.time()
         with self._conn() as conn:  # type: ignore[attr-defined]
             if not conn.in_transaction:
@@ -125,12 +133,25 @@ class BulkJobsMixin:
                                    (time.time(), job_id, runner, RUNNING))  # fmt: skip
             return changed.rowcount == 1
 
-    def bulk_step(self, job_id: int, runner: str, invoice_id: int, why: str,
-                  approve: Callable[[], Any] | None = None) -> str | None:  # fmt: skip
+    def bulk_stamps(self, invoice_ids: list[int]) -> dict[int, int]:
+        """{invoice: its stamp} for each of ``invoice_ids``, in one query: the id of its last event that moved it in or
+        out of the queue, stored its coding or read it again (``STAMP_ACTIONS``; 0 when none)."""
+        ids = list(dict.fromkeys(int(i) for i in invoice_ids))
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"SELECT invoice_id, MAX(id) FROM events WHERE {_in_list('invoice_id')} AND action IN {_STAMP_IN} "
+                "GROUP BY invoice_id",
+                (json.dumps(ids), *STAMP_ACTIONS),
+            ).fetchall()
+        return dict.fromkeys(ids, 0) | {int(r[0]): int(r[1]) for r in rows}
+
+    def bulk_step(self, job_id: int, runner: str, invoice_id: int, why: str, approve: Callable[[], Any] | None = None,
+                  expect: tuple[Any, int] | None = None) -> str | None:  # fmt: skip
         """One invoice of the job done: ``approve()`` (the approval, in this same transaction) when given, and its
         outcome kept with it: "approved", or "skipped" with ``why`` (``EDITED`` when someone has edits of it kept on
-        its review screen: they are approved there; ``GONE`` when the approval found it no longer in the queue). None,
-        and nothing done, when the job is no longer ``runner``'s, or has this invoice already."""
+        its review screen: they are approved there; ``CHANGED`` when it is no longer ``expect``, its row identity and
+        stamp as the queue listed it; ``GONE`` when the approval found it no longer in the queue). None, and nothing
+        done, when the job is no longer ``runner``'s, or has this invoice already."""
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")  # the job's own, and the approval with it: one at a time
@@ -143,6 +164,8 @@ class BulkJobsMixin:
             if conn.execute("SELECT 1 FROM invoice_drafts d JOIN invoices i ON i.id = d.invoice_id WHERE "
                             "d.invoice_id = ? AND i.status = 'review' LIMIT 1", (invoice_id,)).fetchone():  # fmt: skip
                 approve, why = None, EDITED  # (a draft kept before this moment; one after finds it approved)
+            if approve is not None and expect is not None and self._bulk_moved(conn, invoice_id, expect):
+                approve, why = None, CHANGED  # (its coding checked before this moment is not the one stored now)
             if approve is not None:
                 conn.execute("SAVEPOINT bulk_one")
                 try:
@@ -160,6 +183,14 @@ class BulkJobsMixin:
             conn.execute("UPDATE bulk_jobs SET approved = ?, skipped = ?, renewed_at = ? WHERE id = ?",
                          (json.dumps(approved), json.dumps(skipped), time.time(), job_id))  # fmt: skip
             return outcome
+
+    @staticmethod
+    def _bulk_moved(conn: Any, invoice_id: int, expect: tuple[Any, int]) -> bool:
+        """Invoice ``invoice_id`` (still there) is no longer ``expect``: (its row identity, its stamp)."""
+        row = conn.execute("SELECT file_sha256, created_at FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        stamp = conn.execute(f"SELECT MAX(id) FROM events WHERE invoice_id = ? AND action IN {_STAMP_IN}",
+                             (invoice_id, *STAMP_ACTIONS)).fetchone()[0]  # fmt: skip
+        return row is not None and ([row[0], row[1]] != list(expect[0]) or int(stamp or 0) != expect[1])
 
     def end_bulk_job(self, job_id: int, runner: str, error: str = "") -> None:
         """The job ended: done, or stopped with ``error`` (why), while it is ``runner``'s."""

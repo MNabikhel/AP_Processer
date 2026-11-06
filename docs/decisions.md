@@ -2826,21 +2826,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/core/test_store_ephemeral.py`)
 - **D-185** · **Bulk approval as a background job; a session that ended keeps the page; every request of the pages'
   scripts has a deadline** (scale goal, phase 5, S2; items 6, 11 and 15 of `docs/archive/scale-2026-11/web_frontend.md`;
-  B-1925 to B-1927).
+  B-1925 to B-1927; after its review, B-1928 to B-1934).
   - **Why:** a person approving 200 clean invoices held a web worker's thread for the whole run (6.6 s at 200 on this
     machine, one request with no progress, cut by a proxy's timeout while it went on behind); a check, an approval or a
     poll answered by the login sent the page to the login (the review screen kept its edits in the tab, B-1594; any
     other page was lost); and one request had no deadline (the upload, B-1926), the data-long actions none either.
   - **The job** (`core/store/bulk_jobs.py`, table `bulk_jobs` by `_SCHEMA`, no schema version of its own, as
-    `past_lines`): the invoices asked, each with its `row_identity` as the page listed it, who asked (their name and
-    login, and the person as `identity.kept_person` keeps them), what was approved and what was left with why.
+    `past_lines`): the invoices asked, each with its `row_identity` and its stamp as the page listed them, who asked
+    (their name and login, and the person as `identity.kept_person` keeps them), what was approved and what was left
+    with why. The stamp (`Store.bulk_stamps`) is the id of the invoice's last event that moved it in or out of the
+    queue or stored its coding (`coding_revision`'s, D-184) or read it again (`proposal_updated`); the queue's form
+    carries each one's as it drew it (a form without them: as they are when it is posted, B-1928).
     - One open (waiting or being approved) a person (a unique index and one write transaction: four web workers asking
       at once get one job); asked again meanwhile, the page of the one under way says so.
     - Done by the company server's background process (`jobs.BulkRunner`, started by `app.start_background_work`, two
       at a time, oldest first), as D-169's downloads; on a laptop, or a server of one process without its background
       work, by a thread of the process asked (`jobs.approve_here`), which ends once none waits.
-    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`) → "changed
-      meanwhile"; not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
+    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`, or its stamp moved:
+      approved and undone, reopened, parked and brought back, a manager's answer, read again) → "changed
+      meanwhile", looked at again inside the approval's transaction, so coding stored after the job checked it is
+      never written over (B-1928); not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
       `bulk_approve`, which the tests and the bench still use); else approved as coded. The approval and the job's
       record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only while the job is still
       that runner's, and in it the review screens' drafts are looked at (someone's edits kept → "it has edits open on

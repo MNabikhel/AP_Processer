@@ -4,6 +4,7 @@ far it got; safe to leave and come back, one at a time a person, each invoice ap
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 import time
@@ -31,6 +32,12 @@ def store(tmp_path):
 def _clean(store: Store, n: int) -> list[int]:
     store.import_vendor_master([{"vendor_name": f"Bulk Supplier {i}", "erp_id": f"B{i}"} for i in range(n)])
     return [add_clean(store, vendor_name=f"Bulk Supplier {i}", invoice_number=f"B-{i}") for i in range(n)]
+
+
+def _asked(store: Store, ids: list[int]) -> list[list]:
+    """``ids`` as a job keeps them: each with its row identity and stamp as they are now."""
+    stamps = store.bulk_stamps(ids)
+    return [[i, list(store.row_identity(i)), stamps[i]] for i in ids]
 
 
 class Gate:
@@ -139,12 +146,74 @@ def test_an_invoice_edited_or_acted_on_while_the_job_ran_is_left_for_a_person(st
     assert f'href="/review/{ids[2]}"' in page and f'href="/review/{ids[3]}"' not in page  # (only those still waiting)
 
 
+def _bulk_form(client: TestClient) -> dict[str, list[str]]:
+    """The queue's bulk approval form, as the page drew it: each invoice and its stamp."""
+    page = client.get("/review").text
+    form = page[page.index('action="/review/bulk-approve"') :]
+    form = form[: form.index("</form>")]
+    return {name: re.findall(f'name="{name}" value="([^"]*)"', form) for name in ("ids", "revs")}
+
+
+def test_an_invoice_whose_coding_moved_after_the_queue_listed_it_is_left_for_a_person(store, monkeypatch):
+    """The job compared only which invoice it was, not its coding: one approved by Bob with his correction and the
+    approval undone (back in the queue, his coding kept), one parked and brought back, one read again by the page
+    reader, all after the queue listed them, were approved as the person asking with coding they never saw."""
+    monkeypatch.setattr(review, "BULK_WAIT", 5.0)
+    ids = _clean(store, 4)
+    client = client_for(store)
+    form = _bulk_form(client)
+    assert form["ids"] == [str(i) for i in ids] and len(form["revs"]) == len(ids)
+    corrected = {**store.get_invoice(ids[0])["ai_output"], "invoice_number": "BOB-HALF-DONE"}
+    store.approve_invoice(ids[0], corrected, "Bob")
+    store.reopen(ids[0], "Bob", "Approval undone")
+    store.park_invoice(ids[1], "Bob", "Waiting for the PO")
+    store.unpark_invoice(ids[1], "Bob")
+    inv = store.get_invoice(ids[2])
+    read = {**inv["ai_output"], "invoice_number": "READ-AGAIN"}
+    assert store.replace_proposal(ids[2], read, inv["validation"], None, expect=store.row_identity(ids[2]))
+    client.post("/review/bulk-approve", data=form, headers=PAGE)
+    job = _ended(store)
+    assert job["approved"] == ids[3:] and job["skipped"] == [[i, bulk.CHANGED] for i in ids[:3]]
+    assert [store.get_invoice(i)["status"] for i in ids[:3]] == [REVIEW] * 3
+    assert store.get_invoice(ids[0])["final_output"]["invoice_number"] == "BOB-HALF-DONE"
+
+
+def test_coding_stored_while_the_job_checks_an_invoice_is_never_written_over(store, monkeypatch):
+    """Between the job's check of an invoice and its approval, Bob's correction (approved and undone) or the page
+    reader's new reading landed: the job approved the coding it had checked, over theirs, and the approval recorded
+    the difference as the asker's corrections."""
+    ids = _clean(store, 2)
+    real = bulk._still_clean
+
+    def meanwhile(store_, reference, settings, invoice_id, stamp, server):
+        out = real(store_, reference, settings, invoice_id, stamp, server)
+        inv = store_.get_invoice(invoice_id)
+        if invoice_id == ids[0]:
+            store_.approve_invoice(invoice_id, {**inv["ai_output"], "invoice_number": "BOB-CORRECTED"}, "Bob")
+            store_.reopen(invoice_id, "Bob", "Approval undone")
+        else:
+            assert store_.replace_proposal(invoice_id, {**inv["ai_output"], "invoice_number": "READ-AGAIN"},
+                                           inv["validation"], None, expect=store_.row_identity(invoice_id))  # fmt: skip
+        return out
+
+    monkeypatch.setattr(bulk, "_still_clean", meanwhile)
+    job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
+                                  _asked(store, ids),
+                                  bulk.JOB_FORMAT)  # fmt: skip
+    jobs.run_bulk(store, web_settings(), store.claim_bulk_job("r", jobs.BULK_STALE, bulk.JOB_FORMAT), "r")
+    assert store.bulk_job(job)["skipped"] == [[i, bulk.CHANGED] for i in ids]
+    first, second = store.get_invoice(ids[0]), store.get_invoice(ids[1])
+    assert first["status"] == second["status"] == REVIEW and first["final_output"]["invoice_number"] == "BOB-CORRECTED"
+    assert second["ai_output"]["invoice_number"] == "READ-AGAIN" and not second["final_output"]
+    assert _approvals(store) == [ids[0]]  # (Bob's)
+
+
 def test_a_bulk_approval_left_by_a_process_that_stopped_goes_on_and_approves_each_invoice_once(store, monkeypatch):
     """A process stopped (or hung) while it approved: once its job is stale another takes it again and goes on from
     the next invoice; the first, coming back, finds it is no longer its own and approves nothing more."""
     ids = _clean(store, 6)
     job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
-                                  [[i, list(store.row_identity(i))] for i in ids], bulk.JOB_FORMAT)  # fmt: skip
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
     gate = Gate(monkeypatch, hold=2)
     first = store.claim_bulk_job("process-a", jobs.BULK_STALE, bulk.JOB_FORMAT)
     stuck = threading.Thread(target=jobs.run_bulk, args=(store, web_settings(), first, "process-a"), daemon=True)
@@ -167,7 +236,7 @@ def test_a_bulk_approval_left_by_a_process_that_stopped_goes_on_and_approves_eac
 def test_a_laptop_started_again_goes_on_with_the_bulk_approval_its_last_run_left(store, monkeypatch):
     ids = _clean(store, 3)
     job, _ = store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
-                                  [[i, list(store.row_identity(i))] for i in ids], bulk.JOB_FORMAT)  # fmt: skip
+                                  _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
     left = store.claim_bulk_job("the last run", jobs.BULK_STALE, bulk.JOB_FORMAT)
     store.bulk_step(job, "the last run", ids[0], "", lambda: store.approve_invoice(ids[0], left["ids"] and
                     store.get_invoice(ids[0])["ai_output"], "Sam", bulk=True, login="sam"))  # fmt: skip
@@ -182,7 +251,7 @@ def test_a_stop_puts_the_bulk_approval_back_in_line_and_the_next_start_goes_on(s
     ids = _clean(store, 4)
     gate = Gate(monkeypatch, hold=1)
     store.start_bulk_job("", {"name": "Sam", "login": "sam", "server": False, "as": {}},
-                         [[i, list(store.row_identity(i))] for i in ids], bulk.JOB_FORMAT)  # fmt: skip
+                         _asked(store, ids), bulk.JOB_FORMAT)  # fmt: skip
     runner = jobs.BulkRunner(web_settings, lambda: store).start()
     gate.reached(2)
     runner.stop()
