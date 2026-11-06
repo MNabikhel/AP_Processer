@@ -2472,6 +2472,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       or `LATE_STOP` (3) late answers in a row stop it, the rest queued saying why; so does the run's time
       (`post_minutes`, 60). A voucher's request waits `voucher_timeout` (120 s), the connection's 30 s stays for the
       reads and lookups. The exports page's job shows done of total, posted, being checked, refused, waiting, held.
+      A run cut short: each voucher of a go-ahead has when its run is over at the latest as its next try
+      (`_run_over`: the run's time, the last send it began, a margin), and one not sent by then (AP Coder stopped)
+      is the queue's (`waiting`); stopped by an error, the run queues the rest at once. A dry run since the go-ahead
+      takes that off: a new go-ahead sends it (B-1886).
     - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only `resend_minutes` (10)
       after the answer was lost (`lost_at`; a send whose end is not known, from its start and the longest it could
       take), never sooner than a voucher's wait and `RESEND_MARGIN` (a minute): Settings refuses less, and a run takes

@@ -143,6 +143,46 @@ def test_the_queue_builds_each_batch_once_not_once_per_voucher_waiting(tmp_path,
     assert built == [batch] and set(statuses(store, batch).values()) == {jde_post.POSTED}
 
 
+class _Stopped(BaseException):
+    """AP Coder stopping in the middle of a run."""
+
+
+def test_a_run_cut_short_leaves_the_vouchers_it_had_not_sent_in_the_queue(tmp_path, ais, monkeypatch):
+    """B-1886: a go-ahead's run cut short (AP Coder stopped or restarted while it ran) left the vouchers it had not
+    reached *dry run passed* with their go-ahead, in no queue: neither the queue nor "Try again now" sent them. Cut
+    short by an error, they wait in the queue at once; gone with its process, once the run would have been over (its
+    time, its last send and a margin), never while it may still be sending them."""
+    store, batch = batch_of(tmp_path, ais, ON, QC, BC)
+    jde_post.dry_run(store, batch)
+
+    def stop(found):
+        if found["done"] == 1:
+            raise _Stopped
+
+    with pytest.raises(_Stopped):
+        jde_post.post(store, batch, progress=stop)
+    assert statuses(store, batch) == {1: jde_post.POSTED, 2: jde_post.QUEUED, 3: jde_post.QUEUED}
+    assert [p["invoice_id"] for p in jde_post.waiting(store)] == [2, 3]
+    jde_post.retry_queue(store)
+    assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 3
+
+    with FakeAis() as other:
+        store, batch = batch_of(tmp_path / "gone", other, ON, QC)
+        jde_post.dry_run(store, batch)
+        real = jde_post._run
+        monkeypatch.setattr(jde_post, "_run", lambda *a, **k: {})  # the process ended as the run began
+        jde_post.post(store, batch)
+        monkeypatch.setattr(jde_post, "_run", real)
+        assert statuses(store, batch) == {1: jde_post.CHECKED, 2: jde_post.CHECKED}
+        assert jde_post.waiting(store) == []  # its run may still be sending them
+        ago = (dt.datetime.now() - dt.timedelta(minutes=1)).isoformat(timespec="seconds")
+        with store._conn() as conn:  # the run's time, its last send and a margin are over
+            conn.execute("UPDATE jde_postings SET next_try = ?", (ago,))
+        assert [p["invoice_id"] for p in jde_post.waiting(store, due_only=True)] == [1, 2]
+        jde_post.retry_queue(store)
+        assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(other)) == 2
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""

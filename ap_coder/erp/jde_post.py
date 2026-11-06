@@ -434,6 +434,15 @@ def _live_seconds(store: Any) -> float:
     return max(SENDING_MINUTES * 60, send_seconds(jde.load(store), cfg) + jde.RESEND_MARGIN)
 
 
+def _run_over(store: Any) -> str:
+    """When a go-ahead's run is over at the latest (its time, the last send it began, a margin), as a next try: a
+    voucher it approved and had not sent by then was left by a run cut short, and the queue sends it (B-1886)."""
+    settings = jde.load(store)
+    cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
+    seconds = settings.post_minutes * 60 + send_seconds(settings, cfg) + jde.RESEND_MARGIN
+    return (dt.datetime.now() + dt.timedelta(seconds=seconds)).isoformat(timespec="seconds")
+
+
 def _fresh_sending(row: dict[str, Any], live: float) -> bool:
     """A row someone is sending now (not left by a stop: claimed less than ``live`` seconds ago): nobody else touches
     it."""
@@ -444,9 +453,15 @@ def _fresh_sending(row: dict[str, Any], live: float) -> bool:
 
 
 def waiting(store: Any, due_only: bool = False) -> list[dict[str, Any]]:
-    """The queue: approved and not finished, without the rows being sent right now."""
+    """The queue: approved and not finished, without the rows being sent right now; with the vouchers of a go-ahead
+    whose run is over without sending them (cut short: AP Coder stopped, ``_run_over``)."""
     live = _live_seconds(store)
-    found = [p for p in postings(store, statuses=IN_FLIGHT) if not _fresh_sending(p, live)]
+    with _conn(store) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM jde_postings WHERE status IN (SELECT value FROM json_each(?)) OR (status = ? AND "
+            "approved_at IS NOT NULL AND maybe_sent = 0 AND next_try <= ?) ORDER BY batch, invoice_id",
+            (json.dumps(IN_FLIGHT), CHECKED, _now()))]  # fmt: skip
+    found = [p for p in rows if not _fresh_sending(p, live)]
     if due_only:
         now = _now()
         found = [p for p in found if not p.get("next_try") or p["next_try"] <= now]
@@ -548,7 +563,7 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
                 problems[inv_id] = [f"{on_hold}: dry run again once the hold is lifted"]
             if inv_id in problems:
                 _put(store, key, inv_id, batch, only_from=DRY_RUN_OVER, status=REFUSED, payload_hash="",
-                     error="; ".join(problems[inv_id]), checked_at=_now(), checked_by=actor)  # fmt: skip
+                     error="; ".join(problems[inv_id]), checked_at=_now(), checked_by=actor, next_try=None)  # fmt: skip
                 continue
             payload, error, held = found[inv_id], "", 0
             if client is not None and not jde_note:
@@ -568,10 +583,11 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
                         error = "; ".join(exc.messages) or str(exc)
                     else:
                         jde_note = str(exc)
-            # passed with its G/L date moved into the open period: said, and the go-ahead confirms it (D-182)
+            # passed with its G/L date moved into the open period: said, and the go-ahead confirms it (D-182); a
+            # go-ahead given before it is for the voucher it checked then: the queue doesn't send it (B-1886)
             _put(store, key, inv_id, batch, only_from=DRY_RUN_OVER, status=REFUSED if error else CHECKED,
                  error=error or payload["_moved"], payload_hash=_hash(payload), expect=json.dumps(payload["_expect"]),
-                 checked_at=_now(), checked_by=actor, maybe_sent=held)  # fmt: skip
+                 checked_at=_now(), checked_by=actor, maybe_sent=held, next_try=None)  # fmt: skip
     finally:
         if own and client is not None:
             client.close()
@@ -800,10 +816,10 @@ def post(store: Any, batch: int, actor: str | None = None, client: jde_ais.AisCl
     if not ready:
         raise ValueError("Nothing in this batch is ready to post: run the dry run first (every voucher that passed it "
                          "and has not changed since is posted).")  # fmt: skip
-    approved = []
+    approved, over = [], _run_over(store)  # (the queue's once the run is over without sending it, B-1886)
     for row, payload in ready:
         if _put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"], approved_at=_now(),
-                approved_by=actor):  # fmt: skip
+                approved_by=actor, next_try=over):  # fmt: skip
             approved.append((_row(store, row["idem_key"]) or row, payload))
     # the vouchers whose G/L date the dry run moved into the open period, confirmed by this go-ahead (D-182)
     moved = [row["invoice_id"] for row, payload in approved if payload["_moved"]]
@@ -995,6 +1011,13 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
                 changed(row)
             else:
                 run.done(row, status)
+    except BaseException:  # cut short (an error, AP Coder stopping): what it had not reached waits in the queue now
+        for row, _payload in ready:  # (B-1886)
+            if row["status"] == CHECKED and row["idem_key"] not in run.outcome:
+                _put(store, row["idem_key"], row["invoice_id"], row["batch"], only_from=(CHECKED,), rev=row["rev"],
+                     status=QUEUED, next_try=None, error="Not sent: the posting run stopped before it: it waits in "
+                     "the queue")  # fmt: skip
+        raise
     finally:
         if own and client is not None:
             client.close()
