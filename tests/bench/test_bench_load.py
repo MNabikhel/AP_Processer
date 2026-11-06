@@ -293,3 +293,47 @@ def test_a_search_export_is_asked_for_followed_and_downloaded_as_the_page_does(m
     assert [s[0] for s in run.samples[1:8]] == [f"GET /search/export.{kind}", *["GET /downloads/{id}"] * 5,
                                                 f"GET /search/export.{kind}?job={{id}}"]  # fmt: skip
     assert run.counts["search exports downloaded"] == 1 and run.counts["search exports refused (too many at once)"] == 1
+
+
+def test_a_search_export_whose_job_failed_or_whose_file_is_gone_fails_the_gate(monkeypatch):
+    """A job the background process could not make answers 200 ``{"state": "error"}`` at its status: the bench counted
+    a search export "not made" and the gate passed, where the plain address it asked before answered a 500 and the
+    gate failed. A file no longer kept (404) was counted downloaded. Both are now an export not made, which fails the
+    gate; one still being made when the person stops waiting for it (the run's end) does not."""
+    monkeypatch.setattr(load, "JOB_MOST", 0.0)  # (the person stops waiting after the first look)
+
+    def server(state: str, file_status: int):
+        def answer(request):
+            path, query = request.url.path, request.url.query.decode()
+            if path == "/search":
+                return httpx.Response(200, html="<html><body>Search</body></html>")
+            if path == "/downloads/7":
+                return httpx.Response(200, json={"state": state, "done": 0, "total": 9, "note": "",
+                                                 "error": "The file could not be made (it stopped)."})  # fmt: skip
+            if query == "job=7":
+                return httpx.Response(file_status, content=b"PK the workbook")
+            return httpx.Response(200, json={"ok": True, "job": 7, "status": "/downloads/7", "file": f"{path}?job=7"})
+
+        return answer
+
+    async def export(server):
+        run = _run()
+        run.deadline = time.monotonic() + 60
+        me = load.Person(run, load.Account("pat", "pw", "secret", "clerk"), 0, time.monotonic())
+        await me.client.aclose()
+        me.client = httpx.AsyncClient(base_url=run.base, transport=httpx.MockTransport(server))
+        me.think = lambda share=1.0: 0.0
+        try:
+            await me.export_search()
+        finally:
+            await me.close()
+        return load.build_report(run, {}, {})
+
+    for state, file_status in (("error", 200), ("done", 404)):
+        report = asyncio.run(export(server(state, file_status)))
+        assert report["counts"] == {"search exports not made": 1}, (state, file_status)
+        assert load.gate(report, None, 1.5) == ["search exports not made: 1"]
+    report = asyncio.run(export(server("running", 200)))
+    assert report["counts"] == {"search exports still being made when left": 1} and load.gate(report, None, 1.5) == []
+    report = asyncio.run(export(server("done", 200)))
+    assert report["counts"] == {"search exports downloaded": 1} and load.gate(report, None, 1.5) == []

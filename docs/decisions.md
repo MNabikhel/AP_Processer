@@ -1971,7 +1971,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **The load bench's search to Excel and CSV** (B-1805) go as the page's link sends them on the server (D-169): the
     job asked for with the page's header, followed as `app.js` follows it (at once, then 0.5 s, half as long again
     while nothing changes, 5 s at most), then the file downloaded; the report's format is the same, with the file's
-    own route (`GET /search/export.xlsx?job={id}`) beside the asking one and `GET /downloads/{id}`.
+    own route (`GET /search/export.xlsx?job={id}`) beside the asking one and `GET /downloads/{id}`. A job that failed
+    or is gone, or a file not there once made, is counted "search exports not made" and fails the gate, as the plain
+    address's 500 did (B-1813); one still being made when the person stops waiting (3 minutes, the run's end) does
+    not.
   - **Measured** (process CPU, 4 cores shared with three other agents; a seed of 20,000 invoices with 280,000 empty
     files added to its invoices folder, each noted as read, 300,000 in all):
 
