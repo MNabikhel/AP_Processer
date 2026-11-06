@@ -2283,9 +2283,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Moves the calls** after `FAILOVER_FAILURES` (2) calls in a row the primary didn't answer: refused or dropped,
       a 5xx, no answer within the call's limit (the arrival's 20 s, the reviewer's time left, AP_LLM_TIMEOUT_SECONDS;
       a page read's next word within `HANG_SECONDS`, 45 s, on a primary with a backup, instead of its 20 minutes), or
-      its model list not given when asked afresh (a status kept 10 s is one failure, `page_reader.reader_status`). A
-      4xx is an answer (a model it doesn't have, a field refused): a swap moves nothing. A slow answer within its
-      limit is no failure: the backup is the smaller machine.
+      its model list not given when asked afresh (a status kept 10 s is one failure, `local_llm.unlisted`: asked by
+      `page_reader.reader_status`, and by `InvoiceCoder._prepare_local` when it finds no model, so a chat model on a
+      server of its own moves too, B-1869). A 4xx is an answer (a model it doesn't have, a field refused): a swap
+      moves nothing. A slow answer within its limit is no failure: the backup is the smaller machine.
     - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
       looking at the breaker every 0.25 s): `ServerLeft`, and the call is asked once more on the backup when that has
       the same model (`InvoiceCoder._local_create`, the arrival only within its deadline; `page_reader.transcribe`).

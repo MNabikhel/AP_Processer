@@ -305,6 +305,27 @@ def test_a_primary_that_gives_no_model_list_moves_the_page_reader_to_its_backup(
     assert status.base_url == backup.base_url and status.model == READER and status.usable
 
 
+def test_a_chat_model_on_a_server_of_its_own_moves_to_its_backup_when_its_model_list_doesnt_come(reference):
+    """B-1869: the chat model's server killed, with the page reader on another machine: each review (a coder of its
+    own) found no model in the dead server's list and stopped before any call was sent, so its breaker counted
+    nothing, never moved, and the backup with the same model was never asked. A list asked afresh that doesn't come
+    is a failure of the chat model's server too."""
+    with FakeModel(models=[CHAT]) as chat, FakeModel(models=[CHAT]) as spare, FakeModel(models=[READER]) as pages:
+        s = _settings(chat.base_url, spare.base_url)
+        settings = replace(s, page_reader=replace(s.page_reader, base_url=pages.base_url))
+        assert InvoiceCoder(settings, reference, provider="local")._prepare_local() == CHAT
+        chat.set(down=True)
+        local_llm.forget_status()
+        with pytest.raises(CodingError):  # the first: the invoice's lines left for AP, as before
+            suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        with pytest.raises(CodingError):  # the same status, kept: no second failure
+            suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        local_llm.forget_status()  # (what DOWN_TTL_SECONDS does)
+        assert suggest_accounts(InvoiceCoder(settings, reference, provider="local"), "Acme Supplies", LINES)
+        assert local_llm.chat_failover(settings.llm).state()["on"] == BACKUP
+        assert _served(spare, "suggest") == 1 and page_reader.reader_base_url(settings) == pages.base_url
+
+
 @pytest.fixture
 def store(tmp_path):
     store = Store(tmp_path / "ap.db")

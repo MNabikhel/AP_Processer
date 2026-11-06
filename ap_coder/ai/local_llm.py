@@ -881,6 +881,25 @@ def serving_llm(llm: LocalLLMSettings) -> LocalLLMSettings:
     return replace(llm, base_url=base)
 
 
+_UNLISTED: dict[str, ModelStatus] = {}  # each primary's last status that gave no model list, counted by its breaker
+
+
+def unlisted(breaker: Failover | None, status: ModelStatus) -> bool:
+    """A primary with a backup that didn't give its model list (``status``, asked afresh) is a failure its breaker
+    counts: killed, it lists nothing, so nothing is asked of it and no call fails. A status kept DOWN_TTL_SECONDS is one
+    failure, however often it is read (by the page reader or the chat model on one machine). Whether the calls go to
+    another server now (D-180)."""
+    base = status.base_url
+    if breaker is None or status.reachable or breaker.role(base) != PRIMARY:
+        return False
+    with _lock:
+        counted = _UNLISTED.get(base) is status
+        _UNLISTED[base] = status
+    if not counted:
+        breaker.failed(base, "its model list didn't come")
+    return breaker.serving() != base
+
+
 NO_MODEL_MESSAGE = (
     "No AI model answers to code this invoice. Start LM Studio's server with a chat model loaded; invoices are still "
     "read and coded from AP's history without it."

@@ -206,6 +206,8 @@ class InvoiceCoder:
             self._local_model, self.profile = kept
             return kept[0]
         if not model:
+            if local_llm.unlisted(local_llm.chat_failover(self.settings.llm), status):  # moved to the backup (D-180)
+                return self._prepare_local()
             if status.reachable:
                 raise CodingError(
                     f"{status.server_title} is running but no model is loaded. Load Gemma 4 12B (or Qwen "
