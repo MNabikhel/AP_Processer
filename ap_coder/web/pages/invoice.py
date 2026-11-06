@@ -238,8 +238,10 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
             kept["screen"] = writer
         get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
         _drafts(request)[invoice_id] = kept
-    elif invoice_id in _drafts(request):
-        forget_draft(request, invoice_id)
+    elif invoice_id in _drafts(request):  # (the screen's own requests sent meanwhile are still at it: ``_at_draft``)
+        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), None, screen=screen,
+                                              seconds=UNDONE_SECONDS)  # fmt: skip
+        _drafts(request).pop(invoice_id, None)
 
 
 def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
@@ -258,6 +260,7 @@ def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
 OPEN_SECONDS = 120  # someone's invoice open: forgotten this long after the screen's last renewal (a closed tab)
 OPEN_RENEW_SECONDS = 45  # renewed at most this often (the screen asks every 30 to 60 s)
 WATCH_SECONDS = 30  # how often the screen asks while nothing is being read
+UNDONE_SECONDS = 120  # a draft a screen's own check dropped: the requests it sent meanwhile are its own this long
 NO_DRAFT = "0"  # the draft revision of no draft kept
 
 
@@ -346,15 +349,22 @@ def _out_of_date(request: Request, store: Store, invoice_id: int, inv: dict[str,
     if rev is not None and (inv is None or inv["status"] != REVIEW or str(store.coding_revision(invoice_id)) != rev):
         return _stale(store, invoice_id, query, inv is None)
     kept = _drafts(request).get(invoice_id)
-    if drawn is not None and not _at_draft(kept, str(drawn), str(form.get("screen") or "")):
+    if drawn is not None and not _at_draft(store, invoice_id, kept, str(drawn), _screen(form)):
         return _stale(store, invoice_id, query, False, kept, mine=True)
     return None
 
 
-def _at_draft(kept: dict[str, Any] | None, drawn: str, screen: str) -> bool:
-    """Whether a screen at revisions ``drawn`` is at the person's draft ``kept``: one of them, or the draft written
-    by that screen itself (``screen``: a check of its own answered after it asked)."""
-    return _draft_rev(kept) in drawn.split() or bool(kept and screen and kept.get("screen") == screen)
+def _at_draft(store: Store, invoice_id: int, kept: dict[str, Any] | None, drawn: str, screen: str) -> bool:
+    """Whether a screen at revisions ``drawn`` is at the person's draft ``kept``: one of them, the draft written by
+    that screen itself (``screen``: a check of its own answered after it asked), or none since that screen's own check
+    dropped it (its edits put back as stored, B-1937)."""
+    if _draft_rev(kept) in drawn.split():
+        return True
+    if not screen:
+        return False
+    if kept:
+        return kept.get("screen") == screen
+    return store.draft_dropped_by(invoice_id, _person(person_key())) == screen
 
 
 class _OutOfDate(Exception):
@@ -1039,7 +1049,7 @@ def reader_progress(request: Request, invoice_id: int, seen: str = "", rev: str 
         answer["stale"] = _stale(store, invoice_id, query, False)
     elif draft is not None and inv["status"] == REVIEW:
         kept = store.invoice_draft(invoice_id, _person(person_key()))
-        if not _at_draft(kept, draft, screen):
+        if not _at_draft(store, invoice_id, kept, draft, screen):
             answer["stale"] = _stale(store, invoice_id, query, False, kept, mine=True)
     return JSONResponse(answer, headers={"Cache-Control": "no-store"})
 

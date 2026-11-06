@@ -2793,6 +2793,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     a browser does); a line action answers it (`draft_rev`).
     - The screen's own id (`screen`, made with the page) is kept with each draft it writes: its poll, check or
       approval sent while its own check was under way carries the revision from before it, and is no other tab's.
+      A draft its own check dropped (its edits put back as stored, Undo after a line action) names that screen for
+      2 minutes (`UNDONE_SECONDS`, an `ephemeral` row "draft-dropped:<id>" of the person), so the same holds then
+      (B-1937); and Approve or Send to the manager clicked while a check is under way waits for its answer.
     - The page's first revision allows the one before it too ("<new> <old>"): the page keeps its draft once drawn,
       unless another writer holds the database (left to the next check).
   - **Out of date**: behind either revision, or the invoice gone from the queue, a check (409, `stale`), a line

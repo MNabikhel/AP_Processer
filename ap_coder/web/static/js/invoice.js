@@ -244,14 +244,15 @@ document.addEventListener(
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
       clearTimeout(timer);
       timer = 0;
-      return;
-    }
-    if (!form || passing === f || !(timer || running)) return;
+      // A check under way: the approval waits for its answer, which draws the draft's revision it is at (B-1937)
+      if (passing === f || !running) return;
+    } else if (!form || passing === f || !(timer || running)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     waiting.add(f);
-    flush().then(() => {
+    (f === form ? running : flush()).then(() => {
       waiting.delete(f);
+      if (f === form && stale) return; // out of date, said by that check: nothing is sent from it
       passing = f;
       f.requestSubmit(e.submitter || undefined);
       passing = null;

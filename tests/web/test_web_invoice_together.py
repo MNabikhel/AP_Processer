@@ -112,6 +112,24 @@ def test_a_screen_whose_own_check_answered_after_its_poll_asked_is_not_out_of_da
     assert laptop.post(f"/review/{inv_id}/check", data=data, headers=PAGE).status_code == 200
 
 
+def test_a_screen_whose_own_check_undid_its_edits_is_not_out_of_date(laptop, store):
+    """B-1937: a screen's own check that dropped the draft (its edits put back as stored, Undo after a line action)
+    made that screen out of date: its poll sent meanwhile said "Edits undone in another tab or window" and turned it
+    read-only, and an approval sent meanwhile was refused. The screen that dropped it is remembered as its own; another
+    tab at those edits is still told."""
+    inv_id = clean_invoice(laptop, store)
+    kept = laptop.post(f"/review/{inv_id}/check", data=form_of(store, inv_id, invoice_number="TYPED-BEFORE"),
+                       headers=PAGE)  # fmt: skip
+    assert kept.json()["draft"]  # edits from an earlier visit
+    screen, other = _open(laptop, inv_id), _open(laptop, inv_id)
+    back = laptop.post(f"/review/{inv_id}/check", data={**form_of(store, inv_id), **screen}, headers=PAGE)
+    assert back.status_code == 200 and not back.json()["draft"] and store.invoice_draft(inv_id, "") is None
+    assert "stale" not in _poll(laptop, inv_id, screen)  # (sent while its check was under way)
+    assert _poll(laptop, inv_id, other)["stale"]["text"] == "Edits undone in another tab or window."
+    answer = laptop.post(f"/review/{inv_id}/approve", data={**form_of(store, inv_id), **screen}, headers=PAGE)
+    assert answer.json()["ok"] and store.get_invoice(inv_id)["status"] == APPROVED
+
+
 def test_the_first_check_of_a_screen_whose_draft_was_left_to_it_is_not_out_of_date(laptop, store, monkeypatch):
     """The page keeps its draft once drawn, unless another writer holds the database then (left to the next check):
     the screen is at the draft either way."""
@@ -363,6 +381,39 @@ def test_in_a_browser_typed_then_approved_at_once_from_a_tab_behind_keeps_what_w
     assert store.get_invoice(inv_id)["status"] == REVIEW
     assert store.invoice_draft(inv_id, "")["header"]["po_number"] == "PO-FROM-ONE"
     assert errors_one == [] and errors_two == []
+
+
+def test_in_a_browser_an_approval_clicked_while_a_check_runs_waits_for_its_answer(browser, store, monkeypatch):
+    """B-1937: Approve clicked while the screen's check was under way was sent at once, with the draft revision from
+    before that check: refused when the check dropped the draft. It waits for the check's answer, then goes."""
+    import time
+
+    from ap_coder.web.pages import invoice
+
+    real = invoice._check
+
+    def slow(*args: Any) -> Any:
+        answer = real(*args)
+        time.sleep(1.5)  # its answer comes late: the approval is clicked meanwhile
+        return answer
+
+    monkeypatch.setattr(invoice, "_check", slow)
+    chromium, base = browser
+    inv_id = clean_invoice(client_for(store), store)
+    context = chromium.new_context(viewport={"width": 1400, "height": 1000})
+    page, errors = _tab(context, base, inv_id)
+    sent: list[str] = []
+    page.on("request", lambda r: sent.append("asked " + r.url.split("/")[-1]) if r.method == "POST" else None)
+    page.on("response", lambda r: sent.append("answered " + r.url.split("/")[-1]) if r.request.method == "POST"
+            else None)  # fmt: skip
+    page.fill("[form=inv][name=po_number]", "PO-TYPED")
+    wait_until(page, lambda: "asked check" in sent)
+    page.click("[data-approve]")
+    page.wait_for_url(lambda url: f"/review/{inv_id}" not in url or "undo" in url, timeout=10000)
+    assert sent.index("asked approve") > sent.index("answered check"), sent
+    inv = store.get_invoice(inv_id)
+    assert inv["status"] == APPROVED and inv["final_output"]["po_number"] == "PO-TYPED"
+    assert errors == []
 
 
 def test_in_a_browser_a_screen_approved_in_another_tab_says_so_from_its_poll(browser, store, monkeypatch):
