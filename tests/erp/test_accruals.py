@@ -222,11 +222,12 @@ def test_received_not_invoiced_gives_what_matching_each_po_in_turn_gave(tmp_path
 
 
 def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_changed(tmp_path, monkeypatch):
-    """D-166: each received PO's accruals are kept in each process (``accruals._PARTS``) and worked out again, its
-    invoices' codings decoded, only once its lines, its billing invoices (which, their dates and PO) or those
-    invoices' vendors' invoices changed, whoever changed them (another Store, plain SQL); never past a restore or a
-    write under way, which may yet be undone. Each time, what working every PO out afresh gives (6.5 s of decoding at
-    100,000 invoices, at every change before)."""
+    """D-166: each received PO's accruals are kept in each process (``accruals._PARTS``) and worked out again only
+    once its lines, its billing invoices (which, their dates and PO) or those invoices' vendors' invoices changed,
+    whoever changed them (another Store, plain SQL); never past a restore or a write under way, which may yet be
+    undone. Of its billing invoices only those whose coding or date changed since are decoded again (D-177: an invoice
+    only moved to another PO is not). Each time, what working every PO out afresh gives (6.5 s of decoding at 100,000
+    invoices, at every change before)."""
     from tests.core.test_kept_answers import _plain, _po_line
 
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
@@ -248,10 +249,10 @@ def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_change
     def received() -> tuple[list[tuple], list[int]]:
         decoded.clear()
         found = accruals._received_not_invoiced(store, end)
-        read, kept = sorted(decoded), dict(accruals._PARTS)
+        read = sorted(decoded)
         accruals._PARTS.clear()
+        _plain(store, "DELETE FROM report_answers")  # (nothing kept for any process either)
         assert found == accruals._received_not_invoiced(store, end)  # what working every PO out afresh gives
-        accruals._PARTS.update(kept)
         return [(a.reference, a.amount) for a in found], read
 
     a = other.add_invoice(tmp_path / "a.pdf", bill("Acme Supply", "PO-1", 4), {})
@@ -263,9 +264,9 @@ def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_change
     _plain(store, "UPDATE invoices SET ai_output = ? WHERE id = ?", json.dumps(bill("Acme Supply", "PO-1", 1)), a)
     assert received() == ([("PO-1 line 1", 6.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 4.0)], [a])
     _plain(store, "UPDATE invoices SET po_key = ? WHERE id = ?", bolt, a)  # (its PO alone: no count moves)
-    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 2.0)], [a, b])
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 2.0)], [])  # (its lines kept)
     _plain(store, "UPDATE invoices SET invoice_date = '2026-11-02' WHERE id = ?", b)  # after the period end
-    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 8.0)], [a, b])
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 8.0)], [b])
     backup = store.backup_now("manual")
     _plain(store, "UPDATE invoices SET invoice_date = '2026-10-02' WHERE id = ?", b)
     assert received()[0][-1] == ("PO-2 line 1", 2.0)

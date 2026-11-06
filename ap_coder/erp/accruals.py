@@ -28,6 +28,7 @@ import io
 import json
 import threading
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
 
 from ..coding.po import billed_on, po_label, positive_lines
@@ -74,10 +75,11 @@ class Accrual:
 # Each received PO's accruals as last worked out in this process, by database and period end: {PO: (a digest of what
 # they were worked out from, the accruals)}. After a change only the POs whose lines, billing invoices or those
 # invoices' vendors' invoices changed (``changes/vendor/<key>``, D-159) are worked out again, not every PO (69,000
-# codings decoded at 100,000 invoices: 6.5 s); nothing worked out in a write under way is kept (D-166). The same
-# are kept for every process of the company server (``PARTS_ANSWER``, D-169): a process that has none of a PO kept
-# takes it from there while its digest is the same, instead of decoding its billing invoices again (3.4 s at 100,000
-# invoices the first time in each web worker).
+# codings decoded at 100,000 invoices: 6.5 s), and of their billing invoices only those changed since are decoded
+# again (``Store.billing_lines``, D-177); nothing worked out in a write under way is kept (D-166). The same are kept
+# for every process of the company server (``PARTS_ANSWER``, D-169): a process that has none of a PO kept takes it
+# from there while its digest is the same, instead of working it out again (3.4 s at 100,000 invoices the first time
+# in each web worker).
 _PARTS: dict[tuple[str, str], dict[str, tuple[bytes | None, list[Accrual]]]] = {}
 _PARTS_LOCK = threading.Lock()
 PARTS_KEPT = 8  # the databases and period ends kept
@@ -98,44 +100,46 @@ def _of(data: list[list[object]]) -> list[Accrual]:
 
 def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     end = period_end.isoformat()
-    orders = store.purchase_orders_by_key(store.received_po_keys())
-    # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here; the vendor's
-    # invoices that quote no PO may still bill these lines ("PO-90155" in a description). Invoices dated after the
-    # period end do not count: the goods were received, not yet invoiced, by then. Each invoice's lines are read once
-    # (``billing_codings``, not once for each PO of its vendor), only those billing a quantity kept.
-    vendors = {full["vendor_key"] for full in orders.values()}
-    rows, counts, stamp = store.billing_rows(list(orders), list(vendors))
-    on_po: dict[str, list] = {}
-    without_po: dict[str, list] = {}  # by vendor
-    for r in rows:  # (id, invoice date, PO, vendor)
-        if r[2] in orders:
-            on_po.setdefault(r[2], []).append(r)
-        if r[2] == "" and r[3] in vendors:
-            without_po.setdefault(r[3], []).append(r)
     key = (str(store.path), end)
     with _PARTS_LOCK:
         kept = _PARTS.get(key, {})
     parts: dict[str, tuple[bytes | None, list[Accrual]]] = {}
     todo: dict[str, tuple[bytes | None, list[tuple]]] = {}
-    for po_key, full in orders.items():
-        on, without = on_po.get(po_key, []), without_po.get(full["vendor_key"], [])
-        made_of = _made_of(stamp, full, on, without, counts)
-        hit = kept.get(po_key)
-        if made_of is not None and hit is not None and hit[0] == made_of:
-            parts[po_key] = hit
-        else:
-            todo[po_key] = (made_of, on + without)
-    if todo and stamp is not None:  # worked out in another process meanwhile, for the same digest (D-169)
-        shared = _shared_parts(store, end)
-        for po_key in [k for k, (made_of, _) in todo.items() if made_of is not None and k in shared]:
-            if shared[po_key][0] == todo[po_key][0]:
-                parts[po_key] = shared[po_key]
-                del todo[po_key]
-    dates = {r[0]: r[1] for _, billing in todo.values() for r in billing}
-    lines: dict[int, list] = {}  # each invoice's lines billing a quantity, by id (none: dated after the period end)
-    for invoice_id, coding in store.billing_codings(sorted(dates)):
-        dated = str(dates[invoice_id] or coding.get("invoice_date") or "")
-        lines[invoice_id] = [] if dated > end else positive_lines([{"coding": coding}])
+    # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here; the vendor's
+    # invoices that quote no PO may still bill these lines ("PO-90155" in a description). Invoices dated after the
+    # period end do not count: the goods were received, not yet invoiced, by then. Each invoice's lines are read once
+    # for all the POs it may bill, only those billing a quantity, and kept until it changes (``billing_lines``, D-177).
+    with store.billing_moment() as moment:  # (the POs, the invoices billing them and their lines: of one moment)
+        orders = store.purchase_orders_by_key(store.received_po_keys())
+        vendors = {full["vendor_key"] for full in orders.values()}
+        rows, counts, summary_id = store.billing_rows(list(orders), list(vendors))
+        stamp = None if moment.writing else (summary_id,)
+        on_po: dict[str, list] = {}
+        without_po: dict[str, list] = {}  # by vendor
+        for r in rows:  # (id, invoice date, PO, vendor)
+            if r[2] in orders:
+                on_po.setdefault(r[2], []).append(r)
+            if r[2] == "" and r[3] in vendors:
+                without_po.setdefault(r[3], []).append(r)
+        alone = {vendor: (billing, _digest(billing)) for vendor, billing in without_po.items()}  # (once a vendor)
+        for po_key, full in orders.items():
+            on, without = on_po.get(po_key, []), alone.get(full["vendor_key"], ([], b""))
+            made_of = _made_of(stamp, full, on, without, counts)
+            hit = kept.get(po_key)
+            if made_of is not None and hit is not None and hit[0] == made_of:
+                parts[po_key] = hit
+            else:
+                todo[po_key] = (made_of, on + without[0])
+        if todo and stamp is not None:  # worked out in another process meanwhile, for the same digest (D-169)
+            shared = _shared_parts(store, end)
+            for po_key in [k for k, (made_of, _) in todo.items() if made_of is not None and k in shared]:
+                if shared[po_key][0] == todo[po_key][0]:
+                    parts[po_key] = shared[po_key]
+                    del todo[po_key]
+        billing_of = {r[0]: r for _, billing in todo.values() for r in billing}
+        read = store.billing_lines(list(billing_of.values()), moment)
+    # Each invoice's lines billing a quantity, by id (none: dated after the period end).
+    lines = {n: _billed(r[1], read[n], end) for n, r in billing_of.items() if n in read}
     for po_key, (made_of, billing) in todo.items():
         parts[po_key] = (made_of, _accrued(orders[po_key], [li for r in billing for li in lines.get(r[0], ())]))
     if stamp is not None:
@@ -161,17 +165,32 @@ def _shared_parts(store: Store, end: str) -> dict[str, tuple[bytes, list[Accrual
     return {po_key: (bytes.fromhex(made_of), _of(data)) for po_key, (made_of, data) in found[1].items()}
 
 
-def _made_of(stamp: tuple | None, full: dict, on: list[tuple], without: list[tuple], counts: dict[str, object]
-             ) -> bytes | None:  # fmt: skip
+def _digest(value: object) -> bytes:
+    return hashlib.blake2b(repr(value).encode(), digest_size=16).digest()
+
+
+def _made_of(stamp: tuple | None, full: dict, on: list[tuple], without: tuple[list[tuple], bytes],
+             counts: dict[str, object]) -> bytes | None:  # fmt: skip
     """A digest of what a PO's accruals are worked out from: the database (its ``summary_id``: another after a
-    restore), the PO and its lines, its billing invoices (``on`` it, and ``without`` a PO from its vendor: which,
-    their dates), and their vendors' counts of changes (any change to one of them, whoever made it). None: not to be
-    kept (read in a write under way, or an invoice with no vendor key, whose changes no count follows)."""
-    vendors = {r[3] for r in on} | {r[3] for r in without}
+    restore), the PO and its lines, its billing invoices (``on`` it, and ``without`` a PO from its vendor: those rows
+    and their ``_digest``, worked out once for all its POs: which, their dates), and their vendors' counts of changes
+    (any change to one of them, whoever made it). None: not to be kept (read in a write under way, or an invoice with
+    no vendor key, whose changes no count follows)."""
+    vendors = {r[3] for r in on} | {r[3] for r in without[0][:1]}  # (each row ``without`` is of the PO's vendor)
     if stamp is None or None in vendors:
         return None
-    made = (stamp, full, on, without, [(v, counts.get(v)) for v in sorted(vendors)])
-    return hashlib.blake2b(repr(made).encode(), digest_size=16).digest()
+    return _digest((stamp, full, on, without[1], [(v, counts.get(v)) for v in sorted(vendors)]))
+
+
+def _billed(dated: object, read: object, end: str) -> Sequence[tuple]:
+    """An invoice's lines billing a quantity by ``end``, from what ``Store.billing_lines`` read of its coding: none
+    when it is dated after ``end`` (``dated``, its date as the summary has it, else its coding's). A coding not read
+    so (not an object, its lines not lines) is read as before, failing where it did."""
+    if isinstance(read, tuple):
+        coding_date, lines = read
+        return () if str(dated or coding_date or "") > end else lines
+    coding: dict = read  # type: ignore[assignment]
+    return [] if str(dated or coding.get("invoice_date") or "") > end else positive_lines([{"coding": coding}])
 
 
 def _accrued(full: dict, lines: list) -> list[Accrual]:
