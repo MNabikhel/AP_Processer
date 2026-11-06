@@ -586,13 +586,13 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
                 # complete when it ends on an empty page or one shorter than the longest before it (AIS gives that)
                 read["complete"] = not page or len(page) < read.get("longest", 0)
                 read["longest"] = max(read.get("longest", 0), len(page))
-                with store._conn():  # the lease, the page and where the read is: one short transaction
-                    _hold(store, lease)
+                with store._conn():  # the page, where the read is and the lease: one short transaction
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])
                     progress[part] = plan
                     store.set_setting(PROGRESS_KEY, json.dumps(progress))
+                    _hold(store, lease)  # last (the write lock taken at the page's first write); lost: all undone
             if part in AFTER_READ:
                 _hold(store, lease)
                 AFTER_READ[part](store, run, read)

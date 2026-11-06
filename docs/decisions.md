@@ -2415,8 +2415,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       are held to the next page so each PO is written whole. One database connection for a part (closing the last
       one writes the log into the database: 40 ms a page). One sync at a time (lease `jde_sync`, renewed each page,
       15 minutes): another is refused at once, nothing saved; one that can't renew it (it waited on JDE longer and
-      another took over) stops before writing the page, the sync's state left to the other. A voucher keeps the
-      newest read that listed it (`MAX(seen)`), so an older read writing late never lets a newer one's sweep remove it.
+      another took over) stops there, the page undone (renewed last in its transaction: the write lock is taken at
+      the page's first write, as before; renewed first, the lock waits went from 0.05 to 1.7 s), the sync's state
+      left to the other. A voucher keeps the newest read that listed it (`MAX(seen)`), so an older read writing late
+      never lets a newer one's sweep remove it.
     - **The register** (`core/store/register.py`, moved out of `invoices.py`, 994 lines): JD Edwards' vouchers by
       their key (`erp_vouchers`, made at every start, no schema version: an older AP Coder leaves it be) under their
       bill (`erp_invoices`, what every check reads); a bill's copies are its vouchers (each by its key: one invoice
@@ -2460,6 +2462,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     voided this month; the 20 older went at the whole read. The register equalled the stand-in's after each.
     Before: 600,000 vouchers failed at page 200 every night. 30,000 suppliers: 1.9 s, a write held 0.44 to 0.53 s;
     now 2.4 s, 0.04 s. 30,000 open PO lines (10,000 POs): 22.3 s the first sync, 37.6 s the next; now 1.2 s, 1.5 s.
+    After its review (B-1893 to B-1904), the same four: 50.3 s, 4.7 s, 27.5 s and 25.0 s, the longest wait for the
+    write lock 0.06, 0.03, 0.04 and 0.13 s, the same reads, 30 then 20 removed, the register right after each.
   - **To confirm with the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 3, 4, 21 and 22): the update dates
     `ChangedSince` covers on each read (a supplier's bank account, a receipt, a voucher paid or voided), the PO read
     listing the lines closed since, each read's order by its key kept stable, every row given its key, whether

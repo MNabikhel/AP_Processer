@@ -319,7 +319,7 @@ def test_a_sync_whose_lease_another_took_stops_there(store, ais):
     """B-1898: a sync that waited on JD Edwards longer than its lease (a page slower than 15 minutes: AIS's timeout up
     to 300 s, three tries) never noticed another had taken over (``renew_lease``'s answer ignored): both wrote, and
     the older one's stamp on the vouchers both listed let the newer one's sweep remove vouchers JDE still holds. A
-    sync that can't renew its lease stops before writing the page, the other's lease left be (and a voucher keeps the
+    sync that can't renew its lease stops there, the page undone, the other's lease left be (and a voucher keeps the
     newest stamp it was listed with: ``tests/core/test_store_register.py``)."""
     connect(store, ais)
     ais.mapping["ais"]["page_size"] = 2
