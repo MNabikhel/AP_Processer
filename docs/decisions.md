@@ -2513,6 +2513,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       as not in the ERP afterwards, a dry run again or not (B-1882).
     - **Lookups, not scans** (B-1863): `jde.account_for` by (GL code, cost center), `held_vendor` by what makes a
       number or account the same.
+    - **One rule for a tax's shares** (B-1889): a pay item per line (`MATCH_HEADER`), the tax not on G/L lines, takes
+      its share of each recoverable tax and of the taxable amount by `money.split`'s rule (each half up, what is
+      left over on the largest), the shares the lines have (`tax.tax_shares`), where `jde._split` truncated each and
+      put the rest on the largest. Changed outputs, the totals and the G/L lines the same: two lines of 10.10 with
+      GST 1.01, VLSTAM 51 / 50 → 50 / 51; of the 19 sample vouchers in that layout, the two of Quebec (GST and QST
+      each split): SIL-4471 VLSTAM 17971 / 5091 / 12878 → 17969 / 5092 / 12879 (VLAG with the gross amounts the
+      same cents), ACMR-2026-1187 lines 2, 3 and 5 31447 / 52412 / 71133 → 31448 / 52413 / 71131; in whole yen, 3
+      over two equal lines 2 / 1 → 1 / 2. Neither `scripts/same_behaviour.py`'s tax nor its approve probe makes
+      pay items.
   - **Not done, for the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 15 to 20): the batch-level orchestration (one
     R04110ZA per batch) and a status lookup of many keys at once; R04110ZA's error IDs for a closed period; whether
     VLPST `A` overrides a supplier's hold; how long a voucher request can still run after AIS gave up (the 10

@@ -67,6 +67,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 from typing import Any
 
+from ..coding import money
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.terms import terms_key
@@ -447,16 +448,9 @@ def _units(x: Any, decimals: int = 2) -> int:
 
 def _split(total: int, weights: list[int], unit: int = 1) -> list[int]:
     """``total`` cents split in proportion to ``weights``, in steps of ``unit`` cents (100 for a currency without
-    cents). Exact: the remainder goes to the largest."""
-    if not weights:
-        return []
-    base = sum(weights)
-    if base == 0:
-        return [total] + [0] * (len(weights) - 1)
-    shares = [int(Decimal(total * w) / Decimal(base * unit)) * unit for w in weights]
-    biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
-    shares[biggest] += total - sum(shares)
-    return shares
+    cents): ``money.split``'s rule, each share half up and what is left over on the largest, so a pay item takes the
+    share of a tax its line has (``tax.tax_shares``, B-1889). Exact: the shares add up to the total."""
+    return [money.in_cents(share) for share in money.split(total / 100, weights, 0 if unit == 100 else 2)]
 
 
 def from_julian(value: Any) -> dt.date | None:
