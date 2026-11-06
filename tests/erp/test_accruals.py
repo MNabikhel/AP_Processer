@@ -579,11 +579,15 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
                 assert mine[0].count(b"Received, not invoiced") or not page
     assert {"approve", "lines", "vendor", "po", "delete", "older", "restore"} <= set(done) or seed != 1
     assert read < asked / 2  # (most invoices' lines as they were kept)
+
+
+def test_matching_a_line_by_its_description_alone_when_no_price_can_change_it_bills_what_each_line_matched_gave():
     """D-177: ``billed_on`` takes a line's PO line from its description alone when no price can change it (none
     resembles it enough even at the same price, or one more at another price than any other at the same), and works
-    the price out otherwise. Over random POs and lines (descriptions the same, alike or not, prices at either edge of
-    a PO line's band), the same quantities, to the last bit, as matching each line in turn (``billed_by_line``); both
-    ways taken."""
+    out otherwise which of the PO lines whose price may change it have the same price. Over random POs and lines
+    (descriptions the same, alike or not, prices at either edge of a PO line's band; then with how alike they are
+    drawn from values that tie exactly at the same price), the same quantities, to the last bit, as matching each line
+    in turn (``billed_by_line``); both ways taken."""
     import random
 
     from ap_coder.coding import po
@@ -592,14 +596,14 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
     words = ["Toner cartridge", "toner cartridge black", "Paper A4 case", "Paper A4", "Delivery", "Delivery charge",
              "Printer service visit", "Service visit", "Bolts size 1", "Bolts size 2", "", None]  # fmt: skip
     taken = {"description": 0, "price": 0}
-    real = po._whatever_price
+    real = po._price_decides
 
     def watched(description, lines):
         found = real(description, lines)
-        taken["description" if found is not None else "price"] += 1
+        taken["description" if found[0] is not None else "price"] += 1
         return found
 
-    for _ in range(300):
+    for round_ in range(600):
         prices = [rng.choice((0.0, 0.1, 2.0, 25.0, 80.0, 95.0, 150.0)) for _ in range(rng.randint(1, 5))]
         order = {"lines": [{"line_number": n, "description": rng.choice(words[:-2]), "unit_price": p}
                            for n, p in enumerate(prices, 1)]}  # fmt: skip
@@ -611,11 +615,15 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
                           "quantity": rng.choice((1, 2, 0.1, 0.7, 3.3, -1)),
                           "amount": rng.choice((10.0, -5.0))})  # fmt: skip
         invoices = [{"coding": {"line_items": lines}}]
-        expected = po.billed_by_line(order, invoices, positive_only=True)
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(po, "_whatever_price", watched)
+            if round_ >= 300:  # (0.25, 0.3 and 0.45 at the same price tie with 0.45, 0.5 and 0.65 exactly)
+                alike: dict = {}
+                patch.setattr(po, "similarity", lambda a, b, alike=alike: alike.setdefault(
+                    (a, b), rng.choice((0.0, 0.25, 0.3, 0.45, 0.5, 0.65))))  # fmt: skip
+            expected = po.billed_by_line(order, invoices, positive_only=True)
+            patch.setattr(po, "_price_decides", watched)
             assert po.billed_on(order, po.positive_lines(invoices)) == expected
-    assert taken["description"] > 100 and taken["price"] > 100
+    assert taken["description"] > 200 and taken["price"] > 200
     # A tie: line 1 at the same price (0.3 + 0.2) resembles it exactly as much as line 2 at another: the first wins.
     order = {"lines": [{"line_number": 1, "description": "one", "unit_price": 10.0},
                        {"line_number": 2, "description": "two", "unit_price": 50.0}]}  # fmt: skip
