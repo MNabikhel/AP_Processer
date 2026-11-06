@@ -1706,3 +1706,69 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/intake/test_imports.py`, `tests/web/test_web_process.py`, `tests/capture/test_page_reads.py`,
     `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`, `tests/ai/test_pipeline_arrival.py`,
     `tests/bench/test_day.py`)
+- **D-174** · **A vendor's invoices brought up to date from a log of what changed, not read whole; the check reads
+  them read-only; the vendors on hold and their approved numbers kept on their own changes** (scale goal, phase 3
+  part 2, item (c); B-1790; changes D-160's stamp of `vendor_invoices` and D-159's of `approved_numbers`).
+  - **Why (verified):** at 300k invoices and 100 people the check's `vendor_findings` was 10.6% of the busiest web
+    workers' CPU, `_vendor_invoices` 9.3% of it. D-160 kept each vendor's invoices in each worker, stamped by the
+    vendor's count of changes: any change to one of its invoices read all of them again, in every worker. A row is
+    about 13 KB (the two codings 7.4 KB, the checks, the reading, the metadata), and `created_at`, `reviewed_at` and
+    `export_batch` come after them, so each row's overflow pages are walked. On the 20k seed's biggest vendor (1,577
+    invoices): the read 37 ms, without the JSON 13 ms, the columns before the documents 4.6 ms, the ids 0.8 ms. With
+    that vendor made as big as the 300k seed's (19,088), the check's vendor path took 477 ms after a change.
+  - **The choice: a change log, not a narrow table.** A narrow table of what the check reads, kept by triggers, would
+    parse both codings in the trigger at each write of one, and every worker would still read all of a big vendor's
+    rows after each change (its columns alone: about 55 ms for 19,000); the log costs a row of three columns per
+    change, and a worker reads again only the invoices changed (about 1 ms here).
+    - `vendor_changes (seq INTEGER PRIMARY KEY, vendor_key, invoice_id)` (`_base.VENDOR_CHANGES`), written by the
+      triggers that count each vendor's changes (`changes_vendor_invoice_*`, D-159: an insert, a delete, an update of
+      a column `vendor_invoices` lists; a move logged for both vendors), in the same statements: every way an invoice
+      changes is logged, whoever changes it (another worker, the background process, plain SQL): an arrival, an
+      approval, a park, a rejection, a delete, an export's batch and its undo, a vendor renamed or merged
+      (`_recompute_vendor_keys`), a restore's migration. A check's confidence is not listed, so not logged.
+    - In those triggers, not one of its own: measured raw (20,000 invoices inserted, their batch set, 10,000
+      parked): 0.84, 0.28, 0.25 s without the log; a trigger of its own 0.96, 0.36, 0.30; in the counts' 0.85, 0.34,
+      0.30; and without an index by vendor 0.82, 0.32, 0.26 (pruned as below). No index: a worker reads the changes
+      since its own off the primary key, 5 µs, 0.6 ms with 20,000 changes of other vendors since (the most).
+    - **Pruned in the same triggers:** each change removes the one `VENDOR_CHANGES_KEPT` (20,000) before it, a seek
+      (not measurable above). The log never empties, so `seq` never goes back.
+  - **The read:** `vendor_invoices` reads in one statement (one snapshot) the `summary_id`, the log's first and last
+    `seq`, and this vendor's invoices logged since the `seq` its rows hold. Rows of another `summary_id` (a restore, a
+    summary built again), or from before the log's first change (pruned since), are read whole; otherwise only those
+    invoices are read again and put in their place (found by bisection: no sort of 23,000 rows), kept with the last
+    `seq` read. Inside a write under way they are read afresh and not kept, as before: an undone write's place in
+    the log is the next write's. Proven equal to a fresh read by random writes of two workers (each its own cache)
+    and plain SQL, writes undone and restores among them, with a log of 8 changes and of 1,000; mutations of the
+    triggers (the batch not logged, a move not logged for the new vendor) and of the read (pruning not seen, a
+    deleted row left) each fail it (`tests/core/test_vendor_changes.py`).
+  - **Old databases, restores:** the log is made with those triggers (`summary.make_triggers`), at every start and in
+    a backup's copy being restored, which gets the counts' triggers its tables allow (B-1720): a copy of a backup
+    made before the log gets the log first (otherwise every invoice write while its files were copied failed, "no
+    such table"). The schema stays 27.
+  - **The check reads the rows kept** (`vendor_invoices(key, shared=True)`), each read-only (`MappingProxyType`,
+    about 56 bytes a row more): a copy of each, twice a check, was 21 ms for 23,000 rows (D-160). Other callers still
+    get copies of their own. A vendor grown past half the rows a worker keeps lets go of what was kept (B-1790).
+  - **Also in the check's vendor path:**
+    - `approved_numbers` (the approved numbers of the vendors on hold, twice a check): stamped by those vendors' own
+      counts (`changes/vendor/<key>`, read first), not `changes/approved`, which every approval of any vendor moves (a
+      few a second under 100 people; 19 ms each at 100k); each pair of numbers once (`held_vendor` asks if any is).
+    - `held_vendors`: kept until the vendor list changes (`changes/vendors`), not read out of 20,000 vendors each
+      check (about 3 ms).
+    - `vendor_findings` looks at each bank account its approved invoices carry once, not once an invoice.
+  - **Measured** (one process's CPU, `time.process_time`, medians; the check's vendor path, `vendor_findings`,
+    `expected_tax_numbers` and `moved_off_hold` in a page's session, right after another Store parked or unparked one
+    of the vendor's invoices; before: 1c73b77, the same seed):
+    - the vendor of 1,577 invoices: 52.4 → 5.5 ms (nothing changed since: 9.9 → 5.3 ms);
+    - the vendor of 19,088: 477 → 18.7 ms (41.3 → 17.5 ms);
+    - bulk writes: 200,000 ERP register rows imported 3.4-3.5 → 3.5-3.7 s of CPU (no change: the log is on the
+      invoices); an export batch of 10,000 invoices and its undo 5.6-5.8 s either way (the summary's work).
+  - **Not done:**
+    - What is left of the check's vendor path is its loops over the vendor's invoices (the invoice checked left out,
+      the totals in its currency and their median, the same-amount look): about 17 ms at 19,000. Facts kept per
+      vendor would need the invoice checked taken out of them.
+    - `vendor_invoice_dates` (recurring invoices for the queue's pills and month-end, 4.1% at 300k) is still read
+      whole after any change of the summary's `dates` topic: phase 3 part 2's (a), with `erp/recurring.py`.
+    - The vendor master's answers (`vendor_ids`, `master_by_tax_number`, the vendor list) are still worked out whole
+      after any change of the vendor list (a few a day; a JD Edwards sync rewrites every vendor: D-160's open item).
+  - (`core/store/vendors.py`, `core/store/_base.py`, `core/store/summary.py`, `coding/vendors.py`,
+    `docs/HOW_IT_RUNS.md`; `tests/core/test_vendor_changes.py`, `tests/core/test_kept_answers.py`)
