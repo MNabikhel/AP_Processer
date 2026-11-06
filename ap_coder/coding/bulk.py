@@ -524,6 +524,19 @@ class Stopping(Exception):
     """The job stops for now: AP Coder is stopping (it is put back in line), or it is no longer this runner's."""
 
 
+def _open_elsewhere(store: Store, invoice_id: int, owner: str) -> str:
+    """Why invoice ``invoice_id`` is left when someone other than ``owner`` (whose job it is) has it open on their
+    review screen now (``Store.open_by``, the server's, D-184): "Ann Lee has it open on the review screen"; "" when
+    nobody else has."""
+    people = store.open_by(invoice_id).get(invoice_id, {})
+    # (each as the screens show it to the others: never an email)
+    names = list(dict.fromkeys(str(name).split("@")[0] for who, name in people.items() if who != owner))
+    if not names:
+        return ""
+    who = f"{', '.join(names[:-1])} and {names[-1]}" if len(names) > 1 else names[0]
+    return f"{who} {'has' if len(names) == 1 else 'have'} it open on the review screen"
+
+
 def approve_in_job(
     store: Store, settings: Settings, job: dict[str, Any], runner: str, *, stopping: Callable[[], bool] = lambda: False,
     refused: Callable[[], str] = lambda: "",
@@ -534,9 +547,9 @@ def approve_in_job(
     An invoice is left for a person, with why, when it is no longer the one asked (``CHANGED``: another
     ``row_identity``, or its stamp moved since the queue listed it, ``Store.bulk_stamps``: approved and undone,
     parked, read again; ``bulk_step`` looks again in the approval's own transaction), when it is no longer clean, or
-    when someone has edits of it kept on its review screen (``bulk_step`` looks there too). Raises ``Stopping`` once
-    ``stopping()`` is true, or the job is no longer ``runner``'s. Returns "" once every invoice is done, else why it
-    stopped: what ``refused()`` says (the person may no longer approve)."""
+    when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there (``bulk_step``
+    looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer ``runner``'s. Returns ""
+    once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve)."""
     person = job["person"]
     taken = set(job["approved"]) | {s[0] for s in job["skipped"]}
     reference = store.reference_data()
@@ -559,6 +572,8 @@ def approve_in_job(
             why = CHANGED
         else:
             output, why = _still_clean(store, reference, settings, invoice_id, stamp, bool(person.get("server")))
+        if output is not None and (why := _open_elsewhere(store, invoice_id, job["owner"])):
+            output = None  # (theirs to approve as they see it, though nothing of theirs is checked yet)
 
         def approve(invoice_id: int = invoice_id, output: dict[str, Any] | None = output) -> None:
             store.approve_invoice(invoice_id, output or {}, person["name"], bulk=True, login=person.get("login") or "")

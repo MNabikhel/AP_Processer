@@ -2846,12 +2846,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       approved and undone, reopened, parked and brought back, a manager's answer, read again) → "changed
       meanwhile", looked at again inside the approval's transaction, so coding stored after the job checked it is
       never written over (B-1928); not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
-      `bulk_approve`, which the tests and the bench still use); else approved as coded. The approval and the job's
+      `bulk_approve`, which the tests and the bench still use); open on someone else's review screen now (the
+      server's presence, `Store.open_by`, D-184), nothing of theirs checked yet → "Ann Lee has it open on the review
+      screen", theirs to approve (B-1934; the person asking may have it open themselves); else approved as coded.
+      The approval and the job's
       record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only while the job is still
       that runner's, and in it the review screens' drafts are looked at (someone's edits kept → "it has edits open on
       its review screen"; the queue's request read them once at its start, now each invoice's own moment); the
       approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted on meanwhile.
-      So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
+      Nothing in that lock reads a whole list (whether there are cost centers is one row looked for, B-1933). So an
+      invoice is approved at most once, and counted once, however the job is stopped or taken again.
   - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
     counted), and so does a laptop's dashboard closing (`jobs.stop_here`, waited for up to 5 s as the server's, B-1930);
     at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one

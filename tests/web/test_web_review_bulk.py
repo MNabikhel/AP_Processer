@@ -444,6 +444,24 @@ def test_on_the_server_the_job_goes_on_as_the_person_who_asked_after_their_sessi
     assert "Done: 4 of 4 approved, 0 need a look." in client.get("/review/bulk").text
 
 
+def test_on_the_server_an_invoice_someone_else_has_open_is_left_for_them(store, monkeypatch):
+    """The job approved an invoice a colleague had open on their review screen, nothing of theirs checked yet (only an
+    edit checked, kept as their draft, was looked at): it is left for them, saying who has it; one open only by the
+    person asking is approved."""
+    monkeypatch.setattr(review, "BULK_WAIT", 5.0)
+    ids = _clean(store, 3)
+    _account(store, "ann")
+    clara_id = _account(store, "clara")
+    ann, clara = _server(store), _server(store)
+    sign_in(ann, "ann", GOOD), sign_in(clara, "clara", GOOD)
+    assert ann.get(f"/review/{ids[0]}").status_code == clara.get(f"/review/{ids[1]}").status_code == 200
+    answer = clara.post("/review/bulk-approve", data={"ids": [str(i) for i in ids]}, headers=PAGE).json()
+    job = store.latest_bulk_job(f'["", "user:{clara_id}"]')
+    assert job["approved"] == ids[1:] and job["skipped"] == [[ids[0], "Ann has it open on the review screen"]]
+    assert store.get_invoice(ids[0])["status"] == REVIEW
+    assert "Ann has it open on the review screen" in clara.get(answer["redirect"]).text
+
+
 def test_on_the_server_a_bulk_approval_stops_once_the_account_may_no_longer_approve(store, monkeypatch):
     monkeypatch.setattr(review, "BULK_WAIT", 0.1)
     ids = _clean(store, 4)
