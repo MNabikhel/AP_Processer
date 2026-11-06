@@ -1136,3 +1136,245 @@ def test_the_lessons_tabs_rows_follow_the_lessons_and_each_approvals_word_on_the
     assert rows() == [(key, 2, False, 1)]
     _plain(store, "DELETE FROM lessons")
     assert rows() == []
+
+
+# --- Answers worked out once for every process of the company server (``Store.shared_answer``, D-169) ---------------
+
+
+class _Processes:
+    """The server's processes, in this one: each with its own memory of the shared answers and month-end's POs (what
+    another web worker, or the background process, holds), the database the same."""
+
+    def __init__(self, monkeypatch) -> None:
+        self.monkeypatch, self.memory = monkeypatch, {}
+
+    def __call__(self, name: str) -> None:
+        from ap_coder.core.store import reports
+        from ap_coder.erp import accruals
+
+        kept, parts = self.memory.setdefault(name, ({}, {}))
+        self.monkeypatch.setattr(reports, "_KEPT", kept)
+        self.monkeypatch.setattr(reports, "_WORKING", {})
+        self.monkeypatch.setattr(accruals, "_PARTS", parts)
+
+
+class Shared(Kept):
+    """``store.shared_answer(name, ...)`` of ``compute``, counting how many times it is worked out (in any process)."""
+
+    def __call__(self):
+        def work():
+            self.worked += 1
+            return self.compute()
+
+        return self.store.shared_answer(self.name, work, **self.stamp)
+
+
+def _vendor_rows(store: Store) -> list[list]:
+    return [list(r) for r in _rows(store, "vendors")]
+
+
+def test_a_shared_answer_is_worked_out_once_for_every_process_and_follows_each_change_made_elsewhere(
+    tmp_path, monkeypatch
+):
+    """D-169: a process that has nothing kept takes the answer another one worked out (``report_answers``) while the
+    stamp read before the work is the same; a change through another Store or plain SQL has it worked out again, once
+    for all of them."""
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    kept = Shared(store, "rows/vendors", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",))
+    process("worker 1")
+    assert kept() == [] and kept.worked == 1
+    process("worker 2")
+    assert kept() == [] and kept() == [] and kept.worked == 1  # (taken from the database, then its own)
+    with other._conn() as conn:
+        conn.execute("INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", (NOW,))
+    assert kept() == _vendor_rows(store) != [] and kept.worked == 2
+    process("worker 1")  # (it kept the answer before the change)
+    assert kept() == _vendor_rows(store) and kept.worked == 2
+    _plain(store, "UPDATE vendors SET notes = 'a note'")
+    process("background")
+    assert kept() == _vendor_rows(store) and kept.worked == 3
+    for name in ("worker 1", "worker 2"):
+        process(name)
+        assert kept() == _vendor_rows(store) and kept.worked == 3
+
+
+def test_a_shared_answer_worked_out_in_a_write_that_is_undone_is_neither_kept_nor_shared(tmp_path, monkeypatch):
+    """Inside a write under way the answer reads that write's changes, which may yet be undone: worked out afresh,
+    neither taken from the database nor written there, so no other process takes it once the count comes back."""
+    from ap_coder.core.store.reports import asked_key
+
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+
+    def names():
+        with store._conn() as conn:  # (the session's connection, inside the write)
+            return dict(conn.execute("SELECT vendor_key, display_name FROM vendors").fetchall())
+
+    kept = Shared(store, "names", names, version="t-1", topic="", changes=("vendors",))
+    process("worker 1")
+    assert kept() == {"acme": "Acme"} and kept.worked == 1
+    with pytest.raises(RuntimeError), store.session(), store._conn() as conn:
+        conn.execute("UPDATE vendors SET display_name = 'UNDONE'")
+        assert kept() == {"acme": "UNDONE"} and kept.worked == 2
+        raise RuntimeError("undone")
+    assert store.kept_answer("names", asked_key(None), "t-1")[1] == {"acme": "Acme"}
+    _plain(store, "UPDATE vendors SET notes = 'a note'")  # another worker's change: the count is the undone write's
+    process("worker 2")
+    assert kept() == {"acme": "Acme"} and kept.worked == 3
+
+
+def test_a_restore_gives_a_new_summary_id_so_no_shared_answer_from_before_is_taken(tmp_path, monkeypatch):
+    """A backup holds the answers kept when it was made, and after a restore the counts are the backup's: neither
+    that answer nor any process's from before the restore is taken (another ``summary_id``)."""
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+    kept = Shared(store, "vendors", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",))
+    process("worker 1")
+    assert kept()[0][1] == "Acme" and kept.worked == 1
+    backup = store.backup_now("manual")  # (with that answer in it)
+    _plain(store, "UPDATE vendors SET display_name = 'Acme after'")
+    assert kept()[0][1] == "Acme after" and kept.worked == 2
+    store.restore_from(backup)
+    process("worker 2")
+    assert kept()[0][1] == "Acme" and kept.worked == 3  # (not the backup's answer: worked out again)
+    process("worker 1")
+    assert kept()[0][1] == "Acme" and kept.worked == 3  # (not its own from before the restore: worker 2's)
+    _plain(store, "UPDATE vendors SET display_name = 'Acme restored'")  # the count again the one from before
+    process("background")
+    assert kept()[0][1] == "Acme restored"
+
+
+def test_an_answer_another_ap_coder_version_or_format_kept_or_not_json_is_worked_out_again(tmp_path, monkeypatch):
+    """A row an older AP Coder wrote (or another format of the answer, or one that is not JSON) is never taken: the
+    answer is worked out again and kept as this version's."""
+    import json
+
+    from ap_coder.core.store import reports
+
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    kept = Shared(store, "rows", lambda: [1, 2], version="t-2", topic="", changes=("vendors",))
+    stamp = json.dumps(store._answer_stamp("", ("vendors",))[0])
+    rows = [("0.0.1/t-2", "[9]"), (reports._version("t-1"), "[9]"), (reports._version("t-2"), "not JSON")]
+    for n, (version, value) in enumerate(rows, start=1):
+        process(f"worker {n}")
+        _plain(store, "INSERT OR REPLACE INTO report_answers (name, asked, version, stamp, value, made_at) VALUES "
+                      "('rows', ?, ?, ?, ?, ?)", reports.asked_key(None), version, stamp, value, 0.0)  # fmt: skip
+        assert kept() == [1, 2] and kept.worked == n
+    process("background")
+    assert kept() == [1, 2] and kept.worked == 3  # (kept by this version now)
+
+
+def test_an_answer_over_the_size_cap_is_not_kept_for_the_other_processes(tmp_path, monkeypatch):
+    """An answer bigger than ``ANSWER_MOST_BYTES`` as JSON is kept in its process only: each other works it out."""
+    from ap_coder.core.store import reports
+
+    monkeypatch.setattr(reports, "ANSWER_MOST_BYTES", 100)
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    kept = Shared(store, "big", lambda: ["x" * 200], version="t-1", topic="", changes=("vendors",))
+    process("worker 1")
+    assert kept() == ["x" * 200] and kept() == ["x" * 200] and kept.worked == 1
+    assert store.kept_answer("big", reports.asked_key(None), "t-1") is None
+    process("worker 2")
+    assert kept() == ["x" * 200] and kept.worked == 2
+
+
+def test_a_shared_answer_only_shown_settles_across_processes_but_never_past_its_age(tmp_path, monkeypatch):
+    """With ``settle`` (D-164), once what it depends on changed, an answer whose work began less than that long ago, in
+    any process, is taken still; past that it is worked out again; asked without it, never taken (exact)."""
+    from ap_coder.core.store import reports
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    settled = Shared(store, "rows", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",),
+                     settle=30)  # fmt: skip
+    exact = Shared(store, "rows", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",))
+    process("worker 1")
+    assert settled() == [] and settled.worked == 1
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+    clock[0] += 29
+    process("worker 2")
+    assert settled() == [] and settled.worked == 1  # (worker 1's, 29 s old)
+    clock[0] += 1
+    assert settled() == _vendor_rows(store) and settled.worked == 2  # (30 s: not even worker 2's own copy)
+    _plain(store, "UPDATE vendors SET notes = 'a note'")
+    process("worker 1")
+    assert exact() == _vendor_rows(store) and exact.worked == 1  # (exact: worked out at once)
+
+
+def test_a_process_waits_for_another_working_the_same_shared_answer_out(tmp_path, monkeypatch):
+    """While another process holds the answer's lease (it is working it out), one asking the same waits and takes the
+    answer it writes, instead of reading everything at once."""
+    from ap_coder.core.store import reports
+
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    kept = Shared(store, "slow", lambda: ["mine"], version="t-1", topic="", changes=("vendors",))
+    assert store.take_lease(f"answer/slow/{reports.asked_key(None)}", "another process", 60)
+    process("worker 1")
+    found = []
+    asking = threading.Thread(target=lambda: found.append(kept()))
+    asking.start()
+    time.sleep(0.5)
+    stamp = store._answer_stamp("", ("vendors",))[0]
+    store.keep_answer("slow", reports.asked_key(None), "t-1", stamp, ["theirs"])
+    asking.join(10)
+    assert found == [["theirs"]] and kept.worked == 0
+
+
+def test_month_ends_received_pos_worked_out_in_one_process_are_taken_by_the_others_for_each_change(
+    tmp_path, monkeypatch
+):
+    """D-169: each received PO's accruals, kept for every process by the digest of what they come from (D-166): a
+    process with none kept decodes no billing invoice another one decoded, and after a change only the POs whose
+    billing changed; each answer is what working every PO out afresh gives."""
+    from ap_coder.erp import accruals
+
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    second = [{**_po_line(n, 4.0), "po_number": "PO-2", "vendor_name": "Bolt Works"} for n in (1, 2)]
+    other.import_purchase_orders([_po_line(1, 4.0), _po_line(2, 1.0), *second])
+    october = dt.date(2026, 10, 31)
+    bills = {}
+    for number, (po, vendor) in enumerate((("PO-1", "Acme Supply"), ("PO-2", "Bolt Works"))):
+        line = {"line_number": 1, "description": "Bolts size 1", "quantity": 2, "unit_price": 2.0, "amount": 4.0}
+        bills[po] = other.add_invoice(tmp_path / f"{po}.pdf", {
+            "vendor_name": vendor, "invoice_number": f"B-{number}", "po_number": po, "invoice_date": "2026-10-03",
+            "currency": "CAD", "line_items": [line], "subtotal": 4.0, "grand_total": 4.2}, {})  # fmt: skip
+    decoded: list[int] = []
+    real = Store.billing_codings
+    monkeypatch.setattr(Store, "billing_codings", lambda self, ids: decoded.extend(ids) or real(self, ids))
+
+    def received(name: str) -> list[tuple]:
+        process(name)
+        return [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, october)]
+
+    def afresh() -> list[tuple]:
+        with sqlite3.connect(store.path) as conn:
+            kept = conn.execute("SELECT * FROM report_answers").fetchall()
+            conn.execute("DELETE FROM report_answers")
+        found = received(f"afresh {len(decoded)}")  # (nothing kept anywhere: worked out whole)
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("DELETE FROM report_answers")
+            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?)", kept)
+        return found
+
+    first = received("worker 1")
+    assert first == [("PO-1 line 1", 4.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 4.0), ("PO-2 line 2", 8.0)]
+    assert sorted(decoded) == sorted(bills.values())
+    decoded.clear()
+    assert received("worker 2") == first and decoded == []  # (each PO's from worker 1: nothing decoded)
+    _plain(store, "UPDATE invoices SET final_output = json_set(ai_output, '$.line_items[0].quantity', 4) "
+                  "WHERE id = ?", bills["PO-2"])  # fmt: skip
+    decoded.clear()
+    changed = received("worker 3")
+    assert decoded == [bills["PO-2"]]  # (only the changed PO's billing invoice)
+    assert changed == [("PO-1 line 1", 4.0), ("PO-1 line 2", 2.0), ("PO-2 line 2", 8.0)] == afresh()
+    decoded.clear()
+    assert received("worker 2") == changed and decoded == []  # (worker 3's for that PO, its own for the other)

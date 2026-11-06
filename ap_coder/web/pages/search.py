@@ -10,11 +10,12 @@ APPROVED stamp (``GET /search/<id>/approved.pdf``).
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, BinaryIO
 
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder.core import ui
 from ap_coder.core.safe import csv_row
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
 from ap_coder.erp import directory, search
@@ -22,6 +23,7 @@ from ap_coder.web.access import is_admin
 from ap_coder.web.core import done, get_store, local_url, page_router, refuse, render, reviewer, server_mode
 from ap_coder.web.files import XLSX, download
 from ap_coder.web.identity import person
+from ap_coder.web.pages import downloads
 from ap_coder.web.pages.invoice import approved_pdf_download, changed_meanwhile
 
 router = page_router()  # each plain handler: one connection a request
@@ -127,14 +129,13 @@ def search_page(request: Request) -> HTMLResponse:
     )
 
 
-def _export_rows(request: Request) -> tuple[list[tuple[str, str]], Iterator[dict[str, Any]]]:
+def _export_rows(store: Any, query: directory.Query, step: Any = None
+                 ) -> tuple[list[tuple[str, str]], Iterator[dict[str, Any]]]:  # fmt: skip
     """(the columns shown, the filtered rows' cells as they come: read a part at a time while the file is written)."""
-    store = get_store(request)
-    query = _query(request)
     columns = [(k, directory.COLUMNS[k].label) for k in query.columns]
 
     def rows() -> Iterator[dict[str, Any]]:
-        for r in directory.export_rows(store, query):
+        for r in directory.export_rows(store, query, step):
             row = {k: directory.cell(r, k) for k, _ in columns}
             if row.get("status") in STATUS:  # the status in plain words, as the page says it (B-1186)
                 row["status"] = STATUS[row["status"]][0]
@@ -143,39 +144,73 @@ def _export_rows(request: Request) -> tuple[list[tuple[str, str]], Iterator[dict
     return columns, rows()
 
 
-@router.get("/search/export.csv")
-def export_csv(request: Request) -> Response:
-    """The filtered rows (all pages, up to 50,000), with the columns shown, as CSV."""
+def export_params(request: Request) -> tuple[dict[str, Any], str]:
+    """What an export of the filtered rows is of (the page's query, or the person's default layout) and its file's
+    name: on the company server it is made by the background process from these (D-169)."""
+    suffix = "xlsx" if request.url.path.endswith(".xlsx") else "csv"
+    return {"query": _query(request).query_string()}, f"invoice_directory.{suffix}"
+
+
+def _query_of(params: dict[str, Any]) -> directory.Query:
+    from urllib.parse import parse_qsl
+
+    return directory.Query.from_params(parse_qsl(params["query"]))
+
+
+def _rows_step(step: Any) -> Any:
+    return lambda done, total: step(done, total, f"{done:,} of {ui.plural(total, 'invoice')} written")
+
+
+def write_csv(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    """The filtered rows (all pages, up to 50,000), with the columns shown, as CSV (UTF-8 with BOM) to ``out``."""
     import csv
     import io
 
     from ap_coder.erp.exports import csv_amount
 
-    columns, rows = _export_rows(request)
-    buf = io.StringIO()
-    writer = csv.writer(buf)
+    columns, rows = _export_rows(store, _query_of(params), _rows_step(step))
+    text = io.TextIOWrapper(out, encoding="utf-8-sig", newline="")
+    writer = csv.writer(text)
     writer.writerow([label for _, label in columns])
     for r in rows:
         writer.writerow(csv_row([csv_amount(r.get(k)) if directory.COLUMNS[k].kind == directory.MONEY else r.get(k)
                                  if r.get(k) is not None else "" for k, _ in columns]))  # fmt: skip
-    return download(buf.getvalue().encode("utf-8-sig"), "invoice_directory.csv", "text/csv")
+    text.flush()
+    text.detach()  # (``out`` stays open: its owner closes it)
 
 
-@router.get("/search/export.xlsx")
-def export_xlsx(request: Request) -> Response:
-    """The filtered rows (all pages, up to 50,000), with the columns shown, as an Excel workbook."""
-    import io
-
+def write_xlsx(store: Any, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    """The filtered rows (all pages, up to 50,000), with the columns shown, as an Excel workbook to ``out``."""
     from openpyxl import Workbook
 
     from ap_coder.erp.exports import streamed_sheet
 
-    columns, rows = _export_rows(request)
+    columns, rows = _export_rows(store, _query_of(params), _rows_step(step))
     wb = Workbook(write_only=True)  # each row written as it comes, not the whole sheet held (D-157)
     streamed_sheet(wb.create_sheet(), "Invoices", columns, rows)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return download(buf.getvalue(), "invoice_directory.xlsx", XLSX)
+    wb.save(out)
+
+
+def _made_now(write: Any, media: str) -> Any:
+    def made(request: Request) -> Response:
+        params, name = export_params(request)
+        return download(downloads.written(write, get_store(request), params), name, media)
+
+    return made
+
+
+@router.get("/search/export.csv")
+async def export_csv(request: Request) -> Response:
+    """The filtered rows (all pages, up to 50,000), with the columns shown, as CSV: on the company server made by its
+    background process (``downloads``, D-169)."""
+    return await downloads.answer(request, "/search/export.csv", _made_now(write_csv, "text/csv"))
+
+
+@router.get("/search/export.xlsx")
+async def export_xlsx(request: Request) -> Response:
+    """The filtered rows (all pages, up to 50,000), with the columns shown, as an Excel workbook: on the company
+    server made by its background process (``downloads``, D-169)."""
+    return await downloads.answer(request, "/search/export.xlsx", _made_now(write_xlsx, XLSX))
 
 
 @router.post("/search/presets")

@@ -189,7 +189,7 @@ PAGES: list[Page] = [
 # (/settings/azure-check); the "Who are you?" page of a colleague on the office network (/who); in server mode
 # (D-97), logging in and out and one's own password (/login, /logout, /account/password) and the Users page
 # (/admin/users).
-MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users"]
+MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users", "downloads"]
 
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
