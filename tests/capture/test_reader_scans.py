@@ -363,7 +363,7 @@ def test_a_percent_sign_ocr_read_as_hao_is_a_percent_sign(monkeypatch):
     # Scan seed 9811: "QST/ TVQ (9,975号)" made the rate 9,975.00 the QST.
     quad = [[10, 10], [200, 10], [200, 30], [10, 30]]
     found = [(quad, "QST/ TVQ (9,975号)", 0.9), (quad, "(19.56号% per annum)", 0.9)]
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: found)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: found)
     png = io.BytesIO()
     Image.new("RGB", (400, 400), "white").save(png, format="PNG")
     page = layout.ocr_image(png.getvalue(), 1)

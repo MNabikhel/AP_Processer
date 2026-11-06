@@ -95,7 +95,7 @@ def test_a_page_scanned_upside_down_is_known_by_its_letters(monkeypatch, upside_
     The letters say it: capitals and tall letters rise above the small letters' band, few letters hang below."""
     pytest.importorskip("cv2")
     png, result = _printed_page(upside_down)
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: result)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: result)
     page = layout.ocr_image(png, 1)
     assert page.turn == (180 if upside_down else 0)
     if upside_down:
@@ -163,7 +163,7 @@ def test_on_a_steeply_tilted_scan_two_lines_close_together_stay_apart(monkeypatc
         ([[173, 235], [442, 258], [439, 287], [170, 264]], "BC PST# PST-3634-7542"),
     ]
     result = [[q, t, 0.97] for q, t in quads]
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: result)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: result)
     png = io.BytesIO()
     Image.new("RGB", (1700, 2200), "white").save(png, "PNG")
     page = layout.ocr_image(png.getvalue(), 1)

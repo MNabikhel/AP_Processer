@@ -381,9 +381,10 @@ Text-layer capture takes about 20 ms per invoice on one CPU core, and a digital 
 pipeline (read, checked, coded, stored) in about 0.13 s: each file is opened, read and searched for tables once per
 invoice, and the database is opened once per invoice (`Store.session`). A scanned page takes two local
 OCR reads, several seconds per page per core (about 30 s per scanned invoice per worker on the
-4-core test machine with all cores busy). The OCR is kept in the data folder (`.cache/ocr/`, by image hash and engine
-version, at most 4,000 files), so when the page reader's text arrives the invoice is read again in about 2 s instead of
-13 s. `python -m ap_coder.bench speed` measures both passes. At volume, scans should go to Document Intelligence or a
+4-core test machine with all cores busy). The OCR is kept in the data folder (`.cache/ocr/`, by what was asked: the
+file's SHA-256, the page, how it is drawn, the engine and its models, the libraries' versions; at most 512 MB, D-170),
+looked up before a page is drawn, so when the page reader's text arrives the invoice is read again without a page
+drawn or OCR'd. `python -m ap_coder.bench speed` measures both passes. At volume, scans should go to Document Intelligence or a
 GPU OCR service. A million invoices a month is ~23 per minute in a working month: one core for digital
 PDFs, a handful of OCR workers (or Document Intelligence) for scans. Capture is stateless per
 invoice, so it runs in parallel workers behind a queue; supplier templates and statistics are small
@@ -567,7 +568,7 @@ BMP, WEBP and GIF losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG
 the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
 was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
 the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels
-(`layout._scan_png`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
+(`layout._scan_picture`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
 older version and read again by the page reader stays where it is.
 
 **The table finder** (`capture/table_finder.py`) is RapidAI's YOLOv8n "general6" layout model, as CloseDesk uses
