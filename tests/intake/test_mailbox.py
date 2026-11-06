@@ -44,7 +44,7 @@ def test_a_hidden_file_named_like_an_email_is_never_unpacked_whatever_the_python
     the invoices folder's other hidden files are."""
     for name in ("mail.eml", "._mail.eml", ".x.eml", "..eml", ".eml", "Note.MSG", ".hidden.msg"):
         (tmp_path / name).write_bytes(_email().as_bytes())
-    assert [p.name for p in emails_in(tmp_path)] == ["Note.MSG", "mail.eml"]
+    assert {p.name for p in emails_in(tmp_path)} == {"mail.eml", "Note.MSG"}  # (Windows sorts paths without case)
 
 
 def test_unpack_saves_attachments_and_files_the_email(tmp_path):
