@@ -34,10 +34,10 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 25  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 26  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
-# index (B-1714)
+# index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -65,6 +65,13 @@ _INDEXES_24 = (
 _INDEXES_25 = (
     "DROP INDEX IF EXISTS lesson_approvals_situation",
     "CREATE INDEX IF NOT EXISTS lesson_approvals_counted ON lesson_approvals (situation, corrected, value)",
+)
+# Schema 26's indexes (D-168): the import queue's files waiting or being read, and those of the same content (a file
+# is never read twice), off the index; a run's files and batches (the Process page's card).
+_INDEXES_26 = (
+    "CREATE INDEX IF NOT EXISTS import_files_status ON import_files (status, sha256)",
+    "CREATE INDEX IF NOT EXISTS import_files_batch ON import_files (batch, status)",
+    "CREATE INDEX IF NOT EXISTS import_batches_run ON import_batches (run)",
 )
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -292,6 +299,17 @@ CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
 CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
     created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
 CREATE TABLE IF NOT EXISTS seen_files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS import_batches (id INTEGER PRIMARY KEY AUTOINCREMENT, run INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL, uploader TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '', account TEXT NOT NULL
+    DEFAULT '', origin TEXT NOT NULL DEFAULT '', person INTEGER NOT NULL DEFAULT 0, include_failed INTEGER NOT NULL
+    DEFAULT 0, force INTEGER NOT NULL DEFAULT 0, only_owner TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '[]',
+    lines TEXT NOT NULL DEFAULT '[]', skipped TEXT NOT NULL DEFAULT '[]', emails INTEGER NOT NULL DEFAULT 0,
+    to_person INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS import_files (id INTEGER PRIMARY KEY AUTOINCREMENT, batch INTEGER NOT NULL, path TEXT NOT
+    NULL, name TEXT NOT NULL, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL, status TEXT NOT NULL DEFAULT
+    'waiting', owner TEXT NOT NULL DEFAULT '', lease_until REAL, tries INTEGER NOT NULL DEFAULT 0, invoice_id INTEGER,
+    line TEXT, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEGER NOT NULL);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -576,6 +594,9 @@ class StoreCore:
                 conn.execute(sql)
         if version < 25:  # a lesson's approvals counted off an index (B-1714)
             for sql in _INDEXES_25:
+                conn.execute(sql)
+        if version < 26:  # the import queue (D-168): its tables are made by _SCHEMA, its indexes here
+            for sql in _INDEXES_26:
                 conn.execute(sql)
         # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
         # schema 15: looked for whatever the version).

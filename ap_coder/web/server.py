@@ -341,7 +341,38 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
 # processes answer, all on the one port (uvicorn's own supervisor, which works on Windows: the port is opened here
 # and handed to each worker, started afresh with "spawn"); a worker that stops is started again. The work the
 # dashboard does on its own (page reader, AI reviewer, Azure check, JD Edwards, daily backup, hub schedule) runs in
-# one background process beside them, also started again when it stops. What the workers share is in the database.
+# one background process beside them, also started again when it stops. The invoices brought in are read by capture
+# processes of their own (D-168), never in a web worker. What the processes share is in the database.
+
+CAPTURE_ENV = "AP_CAPTURE_PROCESSES"  # how many capture processes (default: one per core but two)
+OCR_THREADS_ENV = "AP_OCR_THREADS"  # ONNX Runtime's threads in each capture process (ops/offline.py)
+CAPTURE_NUMBER_ENV = "AP_CAPTURE_NUMBER"  # which one a capture process is (its log)
+CAPTURE_LEASE_SECONDS = 30.0  # a capture process renews its ``capture:`` lease: ``Store.capture_processes``
+CAPTURE_IDLE_SECONDS = 1.0  # between two looks at an empty import queue
+CAPTURE_STOP_SECONDS = 12.0  # a stop gives the file under way this long, then puts it back in line (within 15 s)
+
+
+def capture_processes(cores: int | None = None) -> int:
+    """How many capture processes the company server starts (D-168): AP_CAPTURE_PROCESSES, else one per core but two
+    (the web workers, the background process and the database keep those), at least one. 4 cores: 2; 32: 30."""
+    try:
+        asked = int((os.environ.get(CAPTURE_ENV) or "").strip())
+    except ValueError:
+        asked = 0
+    if asked > 0:
+        return min(asked, 64)
+    return max(1, (cores or os.cpu_count() or 1) - 2)
+
+
+def capture_env(number: int, count: int, cores: int | None = None) -> dict[str, str]:
+    """A capture process's environment: which it is, and the threads its OCR and numerics use, so ``count`` of them
+    share the cores they are given instead of each taking them all (ONNX Runtime's default: every core). A value the
+    environment sets already is kept."""
+    threads = str(max(1, ((cores or os.cpu_count() or 1) - 2) // max(1, count)))
+    env = {**os.environ, CAPTURE_NUMBER_ENV: str(number)}
+    for name in (OCR_THREADS_ENV, "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env.setdefault(name, threads)
+    return env
 
 
 def stop_file(data: Path | None = None) -> Path:
@@ -368,7 +399,9 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
                            workers=workers, timeout_worker_healthcheck=30)  # fmt: skip
     supervisor = Supervisor(config, sockets=[listening_socket(config)])
     write_server_file(port, token)
-    background = BackgroundWork(store.path)
+    count = capture_processes()
+    background = Together([BackgroundWork(store.path),
+                           *(CaptureWork(store.path, n, count) for n in range(1, count + 1))])  # fmt: skip
     background.start()
     threading.Thread(target=_stop_when_asked, args=(supervisor, data, token), daemon=True).start()
     threading.Thread(target=_stop_background_when_asked, args=(supervisor.should_exit, background),
@@ -718,11 +751,14 @@ class BackgroundWork:
     """The server's background process (``serve --background-work``), started again when it stops (5 s, doubling
     up to a minute). It stops when its input closes: this process stopping, or ending in any way."""
 
-    def __init__(self, db: Path) -> None:
-        self.command = [sys.executable, "-m", "ap_coder", "--db", str(db), "serve", "--background-work"]
+    FLAG, NAME = "--background-work", "background work"
+
+    def __init__(self, db: Path, env: dict[str, str] | None = None) -> None:
+        self.command = [sys.executable, "-m", "ap_coder", "--db", str(db), "serve", self.FLAG]
+        self.env = env
         self.process: subprocess.Popen | None = None
         self._halt = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="ap-coder-background", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=f"ap-coder-{self.FLAG[2:]}", daemon=True)
 
     def start(self) -> None:
         self._thread.start()
@@ -732,29 +768,68 @@ class BackgroundWork:
         while not self._halt.is_set():
             started = time.monotonic()
             try:
-                self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE)
+                self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, env=self.env)
                 code = self.process.wait()
             except OSError as exc:
                 code = f"not started: {exc}"
             if self._halt.is_set():
                 return
             delay = 5.0 if time.monotonic() - started > 600 else min(delay * 2, 60.0)
-            print(f"AP Coder's background work stopped (exit code {code}): started again in {delay:.0f} s",
+            print(f"AP Coder's {self.NAME} stopped (exit code {code}): started again in {delay:.0f} s",
                   file=sys.stderr, flush=True)  # fmt: skip
             self._halt.wait(delay)
 
     def stop(self) -> None:
+        self.ask_to_stop()
+        self.wait_stopped(time.monotonic() + 15)
+
+    def ask_to_stop(self) -> None:
         self._halt.set()
+        process = self.process
+        if process is not None and process.poll() is None:
+            with contextlib.suppress(OSError):
+                process.stdin.close()  # its signal to stop: it finishes the page under way, at most 15 seconds
+
+    def wait_stopped(self, deadline: float) -> None:
         process = self.process
         if process is None or process.poll() is not None:
             return
-        with contextlib.suppress(OSError):
-            process.stdin.close()  # its signal to stop: it finishes the page under way, at most 15 seconds
         try:
-            process.wait(15)
+            process.wait(max(0.1, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(5)
+
+
+class CaptureWork(BackgroundWork):
+    """One of the server's capture processes (``serve --capture-work``, D-168): it reads the import queue's files,
+    ``number`` of ``count``, its OCR's threads its share of the cores (``capture_env``). Started again when it
+    stops, as the background process is."""
+
+    FLAG = "--capture-work"
+
+    def __init__(self, db: Path, number: int, count: int) -> None:
+        self.NAME = f"capture process {number}"
+        super().__init__(db, capture_env(number, count))
+
+
+class Together:
+    """The background process and the capture processes, started and stopped as one: a stop asks them all at once,
+    then waits for them together (15 s at most, not 15 s each)."""
+
+    def __init__(self, works: list[BackgroundWork]) -> None:
+        self.works = works
+
+    def start(self) -> None:
+        for work in self.works:
+            work.start()
+
+    def stop(self) -> None:
+        for work in self.works:
+            work.ask_to_stop()
+        deadline = time.monotonic() + 15
+        for work in self.works:
+            work.wait_stopped(deadline)
 
 
 BACKGROUND_LOG = "background.log"
@@ -762,12 +837,13 @@ STACK_DUMP_LOG = "background-stacks.log"
 STACK_DUMP_ENV = "AP_STACK_DUMP_SECONDS"  # a bench's look inside a background process that seems stuck
 
 
-def background_log(folder: Path) -> logging.Handler:
+def background_log(folder: Path, name: str = BACKGROUND_LOG) -> logging.Handler:
     """The background process's own log, ``logs/background.log`` beside the database (5 MB, then up to 5 older
     files): the page reader, the AI reviewer, JD Edwards and the backup say there what they do (INFO and up), so IT
-    can see the work nobody waits on, and a failure leaves a trace. Warnings still reach the server's window too."""
+    can see the work nobody waits on, and a failure leaves a trace. Warnings still reach the server's window too.
+    ``name``: a capture process's own (``capture-<n>.log``: one file a process, each rotated by its own)."""
     folder.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(folder / BACKGROUND_LOG, maxBytes=5_000_000, backupCount=5,
+    handler = logging.handlers.RotatingFileHandler(folder / name, maxBytes=5_000_000, backupCount=5,
                                                    encoding="utf-8")  # fmt: skip
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     handler.setLevel(logging.INFO)
@@ -887,3 +963,78 @@ def run_background(store: Store) -> int:
                 thread.join(max(0.1, deadline - time.monotonic()))
         lock.close()
     return 0
+
+
+def run_capture(store: Store) -> int:
+    """One of the company server's capture processes (D-168): it reads the import queue's files into the review queue,
+    one at a time, until its input closes (the server stopping), as ``run_background`` runs. Its models are loaded once
+    (the OCR engines and the table finder are kept for the process's life); its OCR's threads are pinned to its share
+    of the cores (``capture_env``). A stop gives the file under way CAPTURE_STOP_SECONDS, then puts it back in line,
+    its try not counted. Several of them read at once: the queue gives each file to one."""
+    from ap_coder.intake.imports import Reader, owner_id
+    from ap_coder.web.app import EnvSettings
+    from ap_coder.web.core import cache_dir
+    from ap_coder.web.pages.process import needs_attention
+
+    halt = threading.Event()
+    threading.Thread(target=until_input_closes, args=(halt.set,), name="ap-coder-capture-input",
+                     daemon=True).start()  # fmt: skip
+    number = os.environ.get(CAPTURE_NUMBER_ENV) or "1"
+    background_log(store.path.parent / "logs", f"capture-{number}.log")
+    _pin_threads()
+    log = logging.getLogger("ap_coder.capture")
+    owner = owner_id("capture")
+    log.info("capture process %s (%s) started for %s", number, owner, store.path)
+    reader = Reader(store, EnvSettings(), owner, attention=needs_attention, cache_dir=cache_dir(store))
+    work = threading.Thread(target=_capture_loop, args=(store, reader, halt), name="ap-coder-capture", daemon=True)
+    alive = threading.Thread(target=_say_alive, args=(store, owner, halt), name="ap-coder-capture-alive", daemon=True)
+    work.start()
+    alive.start()
+    try:
+        while not halt.wait(1.0):
+            if not work.is_alive():
+                return 1  # (started again by the server)
+    except KeyboardInterrupt:
+        halt.set()
+    work.join(CAPTURE_STOP_SECONDS)
+    with contextlib.suppress(Exception):
+        if work.is_alive():  # the file under way goes back in line, for the next start
+            log.info("capture process %s stopping: the file under way is put back in line", number)
+            store.release_imports(owner)
+        store.drop_lease(f"capture:{owner}", owner)
+    return 0
+
+
+def _capture_loop(store: Store, reader: Any, halt: threading.Event) -> None:
+    log = logging.getLogger("ap_coder.capture")
+    while not halt.is_set():
+        try:
+            read = reader.read_all(halt)
+        except Exception:  # noqa: BLE001 - the GL accounts unreadable, a busy database: looked at again shortly
+            log.exception("the import queue could not be read just now")
+            halt.wait(5.0)
+            continue
+        if not read:
+            halt.wait(5.0 if reader.paused else CAPTURE_IDLE_SECONDS)
+
+
+def _say_alive(store: Store, owner: str, halt: threading.Event) -> None:
+    """The ``capture:`` lease this process renews while it runs: ``watch`` reads nothing itself then (D-168)."""
+    while True:
+        with contextlib.suppress(Exception):
+            store.take_lease(f"capture:{owner}", owner, CAPTURE_LEASE_SECONDS)
+        if halt.wait(CAPTURE_LEASE_SECONDS / 3):
+            return
+
+
+def _pin_threads() -> None:
+    """OpenCV's own threads, as many as ONNX Runtime's in this process (``capture_env``)."""
+    try:
+        threads = int(os.environ.get(OCR_THREADS_ENV) or 0)
+    except ValueError:
+        return
+    if threads > 0:
+        with contextlib.suppress(Exception):
+            import cv2
+
+            cv2.setNumThreads(threads)

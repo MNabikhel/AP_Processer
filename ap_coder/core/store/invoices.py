@@ -59,11 +59,13 @@ class InvoicesMixin:
         meta: dict[str, Any] | None = None,
         error: str | None = None,
         original_sha256: str | None = None,
+        sha256: str | None = None,
     ) -> int:
         """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake/pictures.py``), so the same
-        photo sent again is found as this invoice (``find_by_hash``)."""
+        photo sent again is found as this invoice (``find_by_hash``). ``sha256``: the file's own, when the caller read
+        it already (the import queue's, D-168)."""
         source_path = Path(source_path)
-        sha = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None
+        sha = sha256 or (hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None)
         out = output or {}
         if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
             validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}

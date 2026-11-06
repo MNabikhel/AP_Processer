@@ -461,15 +461,20 @@ class Slots:
         self._busy = 0
 
     @contextlib.contextmanager
-    def held(self, limit: int = 1) -> Iterator[None]:
+    def held(self, limit: int = 1, deadline: float | None = None) -> Iterator[None]:
+        """``deadline``: a ``time.monotonic()`` by which a slot must be had, else ``TimeoutError`` (an arriving invoice
+        waits only so long, D-168); None: as long as it takes."""
         limit = max(1, int(limit or 1))
         with self._cond:
             while self._busy >= limit:
-                self._cond.wait()
+                left = None if deadline is None else deadline - time.monotonic()
+                if left is not None and left <= 0:
+                    raise TimeoutError(f"no {self.name} slot free in time")
+                self._cond.wait(left)
             self._busy += 1
         lock = None
         try:
-            lock = self._across_processes(limit)
+            lock = self._across_processes(limit, deadline)
             yield
         finally:
             if lock is not None:
@@ -478,7 +483,7 @@ class Slots:
                 self._busy -= 1
                 self._cond.notify_all()
 
-    def _across_processes(self, limit: int) -> Any:
+    def _across_processes(self, limit: int, deadline: float | None = None) -> Any:
         folder = (os.environ.get(SLOTS_ENV) or "").strip()
         if not folder:
             return None
@@ -492,6 +497,8 @@ class Slots:
                     return None  # a folder that can't be written: this process's limit only
                 if lock is not None:
                     return lock
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"no {self.name} slot free in time")
             time.sleep(0.2)
 
 

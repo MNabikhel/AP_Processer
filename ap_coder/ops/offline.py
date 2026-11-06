@@ -256,6 +256,13 @@ def _engine_params(params: dict, models: tuple[ModelFile, ...]) -> dict:
     if folder is not None:
         for task, model in zip(("Det", "Cls", "Rec"), models, strict=False):
             params[f"{task}.model_path"] = str(folder / model.name)
+    try:
+        threads = int(os.environ.get("AP_OCR_THREADS") or 0)
+    except ValueError:
+        threads = 0
+    if threads > 0:  # a capture process of the company server: its share of the cores, not all of them (D-168)
+        params["EngineConfig.onnxruntime.intra_op_num_threads"] = threads
+        params["EngineConfig.onnxruntime.inter_op_num_threads"] = 1
     return params
 
 

@@ -257,12 +257,11 @@ class EnvSettings:
 
 
 def own_work_running(state: Any) -> bool:
-    """Whether something this process runs on a thread of its own would end with it: a job, a backup, imports
-    waiting their turn (a web worker of the server waits for them before it ends: ``server.Recycle``)."""
+    """Whether something this process runs on a thread of its own would end with it: a job, a backup (a web worker
+    of the server waits for them before it ends: ``server.Recycle``). Imports waiting their turn are in the database
+    (D-168): nothing of theirs ends with it."""
     backup = getattr(state.daily_backup, "thread", None)
-    queue = getattr(state, "import_queue", None)
-    return (state.jobs.running_here() or (backup is not None and backup.is_alive())
-            or bool(queue is not None and queue.waiting))  # fmt: skip
+    return state.jobs.running_here() or (backup is not None and backup.is_alive())
 
 
 def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, Any, Any, Any]:
@@ -317,6 +316,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         if start_reader and background:
             (app.state.reader, app.state.azure_checker, app.state.jde_worker,
              app.state.queue_recheck) = start_background_work(settings_factory, store)  # fmt: skip
+        if background and app.state.processes == 1:  # files left in the import queue by the last run (D-168)
+            from ap_coder.web.pages import process
+
+            process.resume(app)
         yield
         for name in ("reader", "azure_checker", "jde_worker", "queue_recheck"):
             worker = getattr(app.state, name, None)

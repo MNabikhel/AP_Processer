@@ -3,9 +3,9 @@
 {% block content %}
 <div class="grid-3-2">
   <div class="col">
-    {# Progress of the reading job: drawn here when it runs or ran, kept up to date by static/js/process.js #}
-    <section class="card job{% if job.state == 'idle' and not waiting %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
-             data-waiting="{{ waiting }}" data-status-url="/process/status" aria-live="polite">
+    {# Progress of the import queue's latest run (D-168): drawn here when it runs or ran, kept up to date by static/js/process.js #}
+    <section class="card job{% if job.state == 'idle' %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
+             data-status-url="/process/status" aria-live="polite">
       <div class="card-head">
         <h4 id="job-title">{% if job.state == 'running' %}Processing…{% elif job.state == 'error' %}Processing stopped{% else %}{{ (job.result or {}).label or "Processed" }}{% endif %}</h4>
         <span class="muted" id="job-when">{% if job.finished_at %}{{ job.finished_at | time_ago }}{% endif %}</span>
@@ -14,8 +14,6 @@
         <div id="job-bar" style="width: {{ (100 * job.done / job.total) | round | int if job.total else (100 if job.state == 'done' else 0) }}%"></div>
       </div>
       <div class="muted" id="job-note">{% if job.state == 'running' %}{{ job.note }}{% elif job.error %}{{ job.error }}{% endif %}</div>
-      <p class="muted" id="job-waiting"{% if not waiting %} hidden{% endif %}><span class="ms" aria-hidden="true">hourglass_top</span>
-        <span>{{ waiting_text if waiting else "" }}</span></p>
       <ul class="lines" id="job-lines">
         {% for line in job.lines %}
         <li class="{{ line.tone }}"><span class="ms" aria-hidden="true">{{ line.icon or "chevron_right" }}</span><span>{{ line.text }}</span></li>
