@@ -915,9 +915,9 @@ def process_folder(request: Request) -> JSONResponse:
     folder = invoice_dir(store)
     # One pick-up at a time (a scheduled watch): each only lists, unpacks the emails and puts files in line (B-1587).
     lock = wait_for_pickup(data_dir(store), lambda: None)
-    try:
-        mails = unpack_folder(folder) if folder.exists() else []
+    try:  # (the folder listed before the emails are unpacked: their attachments are read once, as theirs)
         read, unreadable, saving = pick_up(store, folder, still_being_saved) if folder.exists() else ([], [], [])
+        mails = unpack_folder(folder) if folder.exists() else []
         attached = _read_saved(mails, unreadable)
         read += attached
         notes = []

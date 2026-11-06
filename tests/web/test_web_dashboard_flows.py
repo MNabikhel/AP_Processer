@@ -407,7 +407,8 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(client, store, monkeyp
     snap = _finished(client)
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
     assert any("Invoice; 1 invoice to the review queue" in line["text"] for line in snap["lines"])
-    assert snap["result"]["ok"] == 1
+    assert snap["result"]["ok"] == 1 and snap["result"]["label"] == "Processed 1 of 1"  # its attachment read once,
+    assert [m for m in snap["result"]["messages"] if m["tone"] != "ok"] == []  # as its own, never as a new file
 
 
 def _nested_email(depth: int) -> bytes:
