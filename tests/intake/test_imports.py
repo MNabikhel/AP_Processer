@@ -126,6 +126,24 @@ def test_the_pick_up_reads_only_the_files_it_has_not_read(store, monkeypatch):
     assert hashed == [PDFS[2]] and [Path(r[0]).name for r in found] == [PDFS[2]] and not unreadable and not saving
 
 
+def test_the_pick_up_keeps_what_it_listed_for_the_import_page_of_every_process(store):
+    """A pick-up (the Process button, a scheduled watch) lists the folder anyway: what it found is kept for every
+    process's import page (D-176): the files new then, the saved emails, the files of a kind not read, when it began
+    and the folder's time read before it, and how long it took."""
+    folder = store.path.parent / "invoices"
+    folder.mkdir(parents=True)
+    shutil.copy(SAMPLES / PDFS[0], folder / PDFS[0])
+    (folder / "mail.eml").write_bytes(b"Subject: hi\n\nhello")
+    (folder / "plan.dwg").write_bytes(b"x")
+    before = time.time()
+    pick_up(store, folder, lambda path: True)  # (still being written: listed, not read)
+    began, mtime_ns, found = store.kept_listing(str(folder.resolve()))
+    assert before <= began <= time.time() and mtime_ns == folder.stat().st_mtime_ns and 0 <= found.pop("took") < 5
+    seen = (folder / PDFS[0]).stat()
+    assert found == {"files": [[PDFS[0], seen.st_size, seen.st_mtime_ns]], "emails": [["mail.eml", 18]],
+                     "others": ["plan.dwg"]}  # fmt: skip
+
+
 def test_an_uploaded_file_is_noted_from_its_bytes(tmp_path):
     path = tmp_path / "a.pdf"
     path.write_bytes(b"%PDF-1.4 a")

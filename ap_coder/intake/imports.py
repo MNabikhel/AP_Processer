@@ -57,7 +57,8 @@ def noted(path: Path, content: bytes) -> Read:
 class Listing:
     """One look at a folder (``list_folder``): its resolved place, when the look began (``time.time``), the folder's
     time read before it (nanoseconds), the invoice files new then (place, size, time in nanoseconds), the saved emails
-    (name, size) and the names of the files of a kind not read, each sorted as ``folder_names`` sorts them."""
+    (name, size) and the names of the files of a kind not read, each sorted as ``folder_names`` sorts them; the seconds
+    it took."""
 
     place: str
     began: float
@@ -65,11 +66,13 @@ class Listing:
     new: list[tuple[str, int, int]]
     emails: list[tuple[str, int]]
     others: list[str]
+    took: float
 
     def keep(self, store: Any) -> None:
         """Kept for every process (``Store.keep_listing``, D-176): the import page of each shows it."""
         found = {"files": [[os.path.basename(place), size, at] for place, size, at in self.new],
-                 "emails": [list(e) for e in self.emails], "others": self.others}  # fmt: skip
+                 "emails": [list(e) for e in self.emails], "others": self.others,
+                 "took": round(self.took, 3)}  # fmt: skip
         store.keep_listing(self.place, self.began, self.mtime_ns, found)
 
 
@@ -95,7 +98,8 @@ def list_folder(store: Any, folder: Path, beat: Callable[[], None] | None = None
         with contextlib.suppress(OSError):
             mails.append((name, os.stat(os.path.join(folder, name)).st_size))
     new = store.unseen_files(listed, str(folder))
-    return Listing(str(folder), began, mtime_ns, [f for f in listed if f[0] in new], mails, others)
+    new_files = [f for f in listed if f[0] in new]
+    return Listing(str(folder), began, mtime_ns, new_files, mails, others, max(0.0, time.time() - began))
 
 
 def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool],

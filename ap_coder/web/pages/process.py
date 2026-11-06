@@ -620,7 +620,7 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
 
 NOT_LISTED = "The invoices folder could not be listed just now ({why}): its new files show here once it can be."
 BEING_LISTED = "The invoices folder is being listed: its new files show here in a moment."
-LISTED_AT = "As the invoices folder was at {when}: it is being listed again, which takes a while for this folder."
+LISTED_AT = "As the invoices folder was at {when}: files saved since show once it is listed again."
 # The folder's new files and saved emails (None: not listed), the names of its files not read, what to say of it.
 Shown = tuple[list[dict[str, Any]] | None, list[str], str]
 
@@ -629,9 +629,10 @@ Shown = tuple[list[dict[str, Any]] | None, list[str], str]
 _LISTED: dict[str, tuple[tuple[Any, ...], tuple[list[dict[str, Any]], list[str]], float]] = {}
 LISTED_SECONDS = 60.0
 # On the company server, the folder as listed for every process (``shared_files``, D-176): listed again once the
-# folder changed and the listing is SHARED_REFRESH seconds old, or whatever changed once it is SHARED_MOST old; a
-# view waits SHARED_WAIT at most for the next one when the one kept is older than that. A file saved in the folder
-# shows within a minute.
+# folder changed and the listing is SHARED_REFRESH seconds old, or whatever changed once it is SHARED_MOST old (each
+# counted from its end: a slow folder is not listed back to back); a view waits SHARED_WAIT at most for the next one
+# when the one kept is older than that. A file saved in the folder shows within a minute; a listing shown older than
+# SHARED_MOST says when it was made.
 SHARED_REFRESH = 20.0
 SHARED_MOST = 45.0
 SHARED_WAIT = 5.0
@@ -675,19 +676,20 @@ def shared_files(store: Store) -> Shown:
     """``folder_files`` on the company server, where no view lists the folder (D-176): the latest listing kept for
     every process (``Store.kept_listing``), the files a pick-up put in line or read since left out at once (one
     query on those files only). When it is due (``SHARED_REFRESH``, ``SHARED_MOST``) a thread of this process lists
-    the folder again (``list_for_all``) while the view shows the one kept, unless that is too old: the view then
-    waits a few seconds for the new one, or says when the one it shows was made."""
+    the folder again (``list_for_all``) while the view shows the one kept, unless that is too old: the view that
+    started the listing (or with none to show) waits a few seconds for it; the others say when the one they show was
+    made (a stopped process's lease, a slow folder: none waits on another's listing)."""
     place = invoice_dir(store).resolve()
     try:
         mtime_ns = os.stat(place).st_mtime_ns
     except OSError:  # no invoices folder yet
         return [], [], ""
     kept = store.kept_listing(str(place))
-    age = time.time() - kept[0] if kept is not None else -1.0
+    age = time.time() - kept[0] - kept[2].get("took", 0) if kept is not None else -1.0  # (since it ended)
     current = kept is not None and 0 <= age < SHARED_MOST
     if not current or (kept[1] != mtime_ns and age >= SHARED_REFRESH):  # type: ignore[index]
-        list_for_all(store, place)
-        if not current:
+        started = list_for_all(store, place)
+        if not current and (started or kept is None):
             kept = _next_listing(store, str(place), kept)
     if kept is None:
         return None, [], BEING_LISTED
@@ -698,18 +700,19 @@ def shared_files(store: Store) -> Shown:
     new = store.unseen_files(listed) if listed else set()
     rows = _rows([(name, size) for (name, size, _), f in zip(found["files"], listed, strict=True) if f[0] in new],
                  found["emails"])  # fmt: skip
-    shown = 0 <= time.time() - began < SHARED_MOST + SHARED_WAIT
+    shown = 0 <= time.time() - began < SHARED_MOST
     return rows, found["others"], "" if shown else LISTED_AT.format(when=time.strftime("%H:%M", time.localtime(began)))
 
 
-def list_for_all(store: Store, place: Path) -> None:
+def list_for_all(store: Store, place: Path) -> bool:
     """The invoices folder at ``place`` listed again for every process (``list_folder``, kept: ``Listing.keep``) by a
     thread of this one, unless another thread or process lists it now (its lease, renewed as it lists: a slow network
-    folder, minutes at 300,000 files, is listed once). A folder that can't be listed is kept as such, with why."""
+    folder, minutes at 300,000 files, is listed once); whether it was started. A folder that can't be listed is kept
+    as such, with why."""
     lease = f"folder-listing:{place}"
     with _LISTING_LOCK:
         if str(place) in _LISTING:
-            return
+            return False
         _LISTING.add(str(place))
     try:
         with store.briefly():  # (a busy database: the next view)
@@ -719,9 +722,10 @@ def list_for_all(store: Store, place: Path) -> None:
     if not taken:
         with _LISTING_LOCK:
             _LISTING.discard(str(place))
-        return
+        return False
     threading.Thread(target=_list_for_all, args=(store, place, lease), name="ap-coder-folder-listing",
                      daemon=True).start()  # fmt: skip
+    return True
 
 
 def _list_for_all(store: Store, place: Path, lease: str) -> None:
