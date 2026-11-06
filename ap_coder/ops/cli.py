@@ -347,7 +347,7 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         server = is_server_here(private_dir())
         if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
             checks.extend(store_checks(Store(db), server))
-    if args.json:
+    if getattr(args, "json", False):  # (a caller of its own may give none)
         from .doctor import as_json
 
         print(as_json(checks, source))

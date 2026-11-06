@@ -19,6 +19,7 @@ is looked at in a thread of its own, its answer kept ``FOLDER_KEEP`` seconds."""
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import hmac
 import ipaddress
@@ -398,6 +399,12 @@ def second_folder(store: Any, wait: float = FOLDER_WAIT) -> dict[str, Any]:
 
 
 # --- The server's processes, queues and model servers --------------------------------------------------------------
+
+
+def beat(store: Any) -> None:
+    """The background process's heartbeat (``server.run_background``, every 30 s); a busy database: the next one."""
+    with contextlib.suppress(Exception):  # (well within STALE_SECONDS)
+        store.beat(HEARTBEAT)
 
 
 def background(store: Any, processes: int) -> dict[str, Any]:
