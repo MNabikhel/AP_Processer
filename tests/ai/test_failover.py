@@ -606,6 +606,31 @@ def test_a_chat_model_that_cant_see_pages_is_not_tested_nor_kept_from_touchless(
     assert "chat_model_tested" not in [e["action"] for e in store.events()]
 
 
+def test_the_azure_check_approves_nothing_whose_header_an_untested_chat_model_read(store, monkeypatch):
+    """B-1877: with the Azure check on and the AI reviewer off, the page reader's pass held an invoice for Azure (so
+    the chat model's trust was never asked), and Azure agreeing approved it without a person, though a chat model not
+    yet tested had read its header. Azure's approval needs that model trusted too."""
+    from ap_coder.ai import azure_check
+    from ap_coder.capture import workflow
+    from ap_coder.core.store import REVIEW
+    from tests.ai.test_azure_check import FakeClient, _raw_from, _turn_on
+
+    assert page_worker.chat_trust(store, CHAT) == ""  # the one AP Coder was qualified with
+    with FakeModel(models=[{"id": SWAPPED, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        _turn_on(store, monkeypatch, rate=100)
+        monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)  # a spot-check, every one
+        outcome = _read_touchless(store, settings, monkeypatch)
+        iid = outcome.invoice_id
+        assert not outcome.auto_approved and store.get_invoice(iid)["meta"]["capture"]["azure_hold"]  # held for it
+        assert _models_asked(fake, "header") == [SWAPPED]  # it read the header
+        monkeypatch.setattr(workflow, "still_touchless", lambda *a, **k: True)  # (its other gates passed)
+        checked = azure_check.check_one(settings, store, client=FakeClient(_raw_from(store.get_capture(iid))))
+    assert checked.status == "done" and not checked.differ and not checked.approved
+    assert store.get_invoice(iid)["status"] == REVIEW
+    assert SWAPPED in store.get_invoice(iid)["meta"]["capture"]["reason"]  # the person sees why
+
+
 # --- The doctor (item 4) --------------------------------------------------------------------------------------------
 
 

@@ -140,6 +140,7 @@ class PipelineResult:
     original: dict[str, Any] | None = None  # the picture this PDF was made from (intake/pictures): name, kept, sha256
     sha256: str | None = None  # the file's SHA-256 as the import queue read it (None: read when it is saved, D-168)
     chat_deferred: bool = False  # the chat model wasn't asked on arrival, or gave no answer in time (D-168)
+    header_model: str = ""  # the chat model that read the header from the pages (the page reader's pass; D-180)
 
     @property
     def ok(self) -> bool:
@@ -695,6 +696,8 @@ class InvoicePipeline:
         # images too, when it can see pages: one more independent reader of every field.
         model_values = self._model_reading(path, result.sha256) if page_text is not None and provider == "local" \
             else None  # fmt: skip
+        if model_values:  # its trust decides whether anything is approved without a person (D-180)
+            result.header_model = getattr(self.coder, "_local_model", "")
         local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
                                                  ai_values=model_values, today=received)  # fmt: skip
         vendor = local[0].fields.get("vendor_name")

@@ -657,7 +657,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     meta = pipeline_meta(result)
     meta["page_reader"] = {"model": model, "pages": len(reading.pages), "seconds": round(seconds, 1),
                            "cached": reading.cached, "at": dt.datetime.now().isoformat(timespec="seconds"),
-                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()}}  # fmt: skip
+                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()},
+                           **({"chat_model": result.header_model} if result.header_model else {})}  # fmt: skip
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
@@ -1134,6 +1135,12 @@ def chat_untrusted(settings: Settings, store: Any) -> str:
         return why if why and chat_sees_pages(settings, model) else ""
     except Exception as exc:  # noqa: BLE001 - not known: nothing approved on it this time
         return f"the chat model's self-test couldn't be looked up ({type(exc).__name__})"
+
+
+def header_untrusted(store: Any, meta: dict[str, Any] | None) -> str:
+    """``chat_trust`` of the chat model that read the invoice's header from its pages in the page reader's pass (its
+    ``meta``): why a check agreeing approves nothing without a person yet ("" when none read it, or it is trusted)."""
+    return chat_trust(store, str(((meta or {}).get("page_reader") or {}).get("chat_model") or ""))
 
 
 def chat_test_due(store: Any, model: str, now: dt.datetime | None = None) -> bool:
