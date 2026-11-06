@@ -324,15 +324,26 @@ def test_late_answers_one_after_another_stop_the_run_and_the_rest_wait_saying_wh
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 7
 
 
-def test_a_run_keeps_to_its_time_and_the_queue_sends_the_rest(tmp_path, ais):
+def test_a_run_keeps_to_its_time_and_the_queue_sends_the_rest(tmp_path, ais, monkeypatch):
+    """The run's clock is the stand-in's: each voucher R04110ZA takes 70 s over, against a run of 2 minutes. So two are
+    sent (the second starts at 70 s, within the time) and the third waits in the queue. (A clock of seconds slept went
+    wrong on a slow runner, whose own writes for each voucher took more than the margin left.)"""
     store, batch = batch_of(tmp_path, ais, ON, QC, BC)
-    settings(store, post_minutes=0.03)  # 1.8 s: a 1.2 s send fits, and what a slow runner adds to it (< 0.6 s)
+    settings(store, post_minutes=2)
     jde_post.dry_run(store, batch)
-    ais.latency = 1.2  # R04110ZA's run
+    now = [1000.0]
+    monkeypatch.setattr(jde_post, "time", type("Clock", (), {"monotonic": staticmethod(lambda: now[0])}))
+
+    def runs_long(key, inputs):
+        if key == "voucher_create":
+            now[0] += 70  # R04110ZA's run
+        return None
+
+    ais.plan = runs_long
     result = jde_post.post(store, batch)
-    assert (result["posted"], result["queued"]) == (2, 1) and "time (0.03 minutes" in result["error"]
+    assert (result["posted"], result["queued"]) == (2, 1) and "time (2 minutes" in result["error"]
     assert statuses(store, batch)[3] == jde_post.QUEUED and "ran out" in jde_post.postings(store, batch)[2]["error"]
-    ais.latency = 0
+    ais.plan = None
     jde_post.retry_queue(store)
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 3
 
