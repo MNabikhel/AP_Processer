@@ -965,10 +965,15 @@ def _cache_put(digest: str, page: int, model: str, text: str, seconds: float) ->
     entry = {"model": model, "prompt_version": version, "page": page, "text": text, "seconds": round(seconds, 1),
              "at": _now()}  # fmt: skip
     path = _cache_path(digest, page, model, version)
+    data = json.dumps(entry, ensure_ascii=False)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
-        temporary.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        try:
+            temporary.write_text(data, encoding="utf-8")
+        except FileNotFoundError:  # its folder, found empty, removed just then by another process pruning (B-1782)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(data, encoding="utf-8")
         os.replace(temporary, path)
     except OSError as exc:
         log.warning("Page reader: couldn't keep a reading in %s (%s)", cache_dir(), exc)

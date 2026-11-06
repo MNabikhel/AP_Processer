@@ -65,6 +65,25 @@ def test_each_answer_kept_prunes_its_folder(tmp_path, monkeypatch, reference):
     assert len(kept) == 3 and json.loads((cache / "model_reading" / f"{'cc' * 32}-qwen3.5-9b-v1.json").read_text())
 
 
+def test_a_reading_kept_as_another_process_prunes_its_folder_is_kept(monkeypatch):
+    """B-1782: pruning removes the page reader's folders left empty (a folder a file read). One a pruner found empty
+    and removed just after the page reader made it again, before its reading was written there, lost that reading:
+    the page was read again. The page reader makes its folder again then."""
+    from ap_coder.ai import page_reader
+
+    real, removed = Path.mkdir, []
+
+    def mkdir(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        if self.parent == page_reader.cache_dir() and not removed:
+            removed.append(self)
+            self.rmdir()  # another process pruning, which found it empty, removes it just then
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    page_reader._cache_put("dd" * 32, 1, "ath-maas_ovisocr2", "a page", 12.0)
+    assert removed and (page_reader._cache_get("dd" * 32, 1, "ath-maas_ovisocr2") or {}).get("text") == "a page"
+
+
 def test_two_processes_pruning_a_folder_at_once_leave_what_one_leaves(tmp_path, monkeypatch):
     """B-1779: each capture process, web worker and the background process prunes the folders it keeps things in; two
     at once each list the folder, and the second found the oldest files already gone, didn't count them as gone and
