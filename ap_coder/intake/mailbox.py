@@ -535,13 +535,18 @@ def pickup_lock(data: Path) -> object | None:
     return try_lock(data / PICKUP_LOCK)
 
 
-def wait_for_pickup(data: Path, waiting: Callable[[], None]) -> object:
+def wait_for_pickup(data: Path, waiting: Callable[[], None], most: float | None = None) -> object | None:
     """``pickup_lock``, once the pick-up holding it has finished: ``waiting()`` says so first when one holds it. For
-    a person's import (the dashboard's, ``ap_coder process``): what was listed before is then checked again."""
+    a person's import (the dashboard's, ``ap_coder process``): what was listed before is then checked again.
+    ``most``: the seconds it waits at most (then None; the Process button's request, B-1771), else as long as it
+    takes."""
     lock = pickup_lock(data)
     if lock is None:
         waiting()
+    ends = None if most is None else time.monotonic() + most
     while lock is None:
-        time.sleep(PICKUP_WAIT)
+        if ends is not None and time.monotonic() >= ends:
+            return None
+        time.sleep(PICKUP_WAIT if ends is None else 0.2)
         lock = pickup_lock(data)
     return lock

@@ -390,6 +390,28 @@ def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, 
     assert finished(app, client)["result"]["processed"] == 1 and read == [new.name]
 
 
+def test_the_process_button_waits_a_few_seconds_at_most_for_another_pick_up(app, client, store):
+    """A scheduled watch or ``ap_coder process`` holds the pick-up lock while it lists the folder, unpacks the emails
+    and hashes the files (a minute for a big folder): the Process button's request waited for it as long, a thread
+    of the web worker held, the button busy and nothing said; before D-168 the job said "Waiting for another pick-up".
+    It waits a few seconds at most now, then says why (B-1771)."""
+    from ap_coder.intake.mailbox import pickup_lock
+
+    held, answers = pickup_lock(store.path.parent), []
+    pressed = threading.Thread(target=lambda: answers.append(client.post("/process/folder", headers=PAGE)))
+    started = time.monotonic()
+    try:
+        pressed.start()
+        pressed.join(15)
+        took = time.monotonic() - started
+    finally:
+        held.close()
+    pressed.join(30)
+    assert took < 10 and answers[0].status_code == 409, took
+    assert "Another pick-up of invoices is under way" in answers[0].json()["error"]
+    assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"  # once it is done
+
+
 def test_safe_upload_names(tmp_path):
     assert safe_file_name("../../etc/passwd") == "passwd"
     assert safe_file_name("C:\\Users\\me\\inv.pdf") == "inv.pdf"

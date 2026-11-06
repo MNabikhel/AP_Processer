@@ -19,10 +19,11 @@ def _drill(kind, **kw):
                               slow_factor=kw.get("factor", 4.0))  # fmt: skip
 
 
-def _report(pages, slots, parallel, chats=(), capture=1, reviewed=()):
+def _report(pages, slots, parallel, chats=(), capture=1, reviewed=(), limit=None):
     """The report of a drop of 4 invoices, at time x0.5, in the review queue 2 s after it, whose page reads ended 10,
     20, 30 and 40 s after it; ``pages``: the stand-in's (wait, seconds) of each read; ``chats``: the seconds of each
-    arrival's chat answer, ``capture`` processes waiting for them; ``reviewed``: when each invoice's review ended."""
+    arrival's chat answer, ``capture`` processes waiting for them; ``reviewed``: when each invoice's review ended;
+    ``limit``: the server's AP_LLM_ARRIVAL_SECONDS (default: none set)."""
     wall0 = 1_800_000_000.0
 
     def stamp(t):
@@ -48,7 +49,8 @@ def _report(pages, slots, parallel, chats=(), capture=1, reviewed=()):
         db=SimpleNamespace(invoices=lambda: invoices, page_reads=lambda: reads, reviews=lambda: reviews,
                            self_test=lambda: None),
         fake=SimpleNamespace(history=lambda: history, stats=dict, page_answers=dict),
-        server=SimpleNamespace(log_counts=lambda: {"database is locked": 0, "Traceback": 0}, settings={}),
+        server=SimpleNamespace(log_counts=lambda: {"database is locked": 0, "Traceback": 0},
+                               settings={} if limit is None else {"AP_LLM_ARRIVAL_SECONDS": limit}),
     )  # fmt: skip
     return day.Run.report(run, [])
 
@@ -72,6 +74,13 @@ def test_the_arrival_at_full_latency_waits_for_its_chat_answers_side_by_side_at_
     assert _full_latency([], 1, 1, chats=[6.0] * 4, capture=1)["arrival_seconds"] == 2.0 + 4 * 6.0
     assert _full_latency([], 1, 1, chats=[6.0] * 4, capture=2)["arrival_seconds"] == 2.0 + 4 * 6.0 / 2
     assert _full_latency([], 1, 1, chats=[15.0] * 4, capture=2)["arrival_seconds"] == 2.0 + 4 * 5.0 / 2
+
+
+def test_an_arrival_limit_of_0_is_no_limit_at_full_latency():
+    """AP_LLM_ARRIVAL_SECONDS=0 is no limit (``pipeline.arrival_seconds``): each 15 s answer at x0.5 is 30 s at full
+    latency, uncut. It was taken as a limit of 0 s, the estimate cut below the run's own time (B-1772)."""
+    assert _full_latency([], 1, 1, chats=[15.0] * 4, capture=2, limit="0")["arrival_seconds"] == 2.0 + 4 * 15.0 / 2
+    assert _full_latency([], 1, 1, chats=[15.0] * 4, capture=2, limit="25")["arrival_seconds"] == 2.0 + 4 * 10.0 / 2
 
 
 def test_the_report_says_whether_the_reviewer_kept_up_with_the_page_reader():

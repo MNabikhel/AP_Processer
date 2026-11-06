@@ -732,6 +732,9 @@ FOLLOW_SECONDS = 1.0  # while another reader holds the last files, the job looks
 # Paused (the disk nearly full, a backup being restored) or stopped by an error (the GL accounts open in Excel), the job
 # looks again this often while files wait, as the server's capture processes do (B-1764).
 LOOK_AGAIN_SECONDS = 5.0
+PICKUP_PATIENCE = 3.0  # the Process button waits this long at most for another pick-up of the folder (B-1771)
+BUSY_PICKUP = ("Another pick-up of invoices is under way (a scheduled watch, or ap_coder process): press Process "
+               "again in a moment.")  # fmt: skip
 
 
 def capture_elsewhere(app: Any) -> bool:
@@ -940,7 +943,10 @@ def process_folder(request: Request) -> JSONResponse:
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
     # One pick-up at a time (a scheduled watch): each only lists, unpacks the emails and puts files in line (B-1587).
-    lock = wait_for_pickup(data_dir(store), lambda: None)
+    # This request waits a few seconds for another at most, then says so: a big folder takes a minute (B-1771).
+    lock = wait_for_pickup(data_dir(store), lambda: None, most=PICKUP_PATIENCE)
+    if lock is None:
+        return refuse(BUSY_PICKUP, 409)
     try:  # (the folder listed before the emails are unpacked: their attachments are read once, as theirs)
         read, unreadable, saving = pick_up(store, folder, still_being_saved) if folder.exists() else ([], [], [])
         mails = unpack_folder(folder) if folder.exists() else []
