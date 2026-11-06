@@ -369,7 +369,9 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
   `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
-  laptop's start; the queue page shows the earlier checks meanwhile and says so), the daily
+  laptop's start; the queue page shows the earlier checks meanwhile and says so), the long downloads (search to
+  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs: `web/pages/downloads.py`, D-169; the jobs in
+  `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
   `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
@@ -379,6 +381,32 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
+
+  **The import queue and the capture processes** (D-168, schema 26): an upload, the Process button's pick-up, a
+  scheduled `watch`, `ap_coder process` and a Retry put their files in the import queue (`core/store/imports.py`:
+  `import_batches`, `import_files`, `import_turns`), each file hashed once on its way in, and answer at once. Beside
+  the background process, the server starts `server.capture_processes()` **capture processes** (`serve
+  --capture-work`, `server.run_capture`; one per core but two, `AP_CAPTURE_PROCESSES`; started again as the
+  background process is, stopped with it within 15 s, the file under way put back in line). Each takes a file at a
+  time (BEGIN IMMEDIATE, a lease of 120 s on the database's clock renewed every 20 s; a file whose reader stopped
+  twice is failed, with the reason, for Retry), a person's before a scheduled watch's and the people in turn
+  (`import_turns`), and reads it with `intake.imports.Reader`; its OCR's threads are its share of the cores
+  (`AP_OCR_THREADS`). No web worker reads an invoice. The Process page and `GET /process/status` show the queue's
+  latest run (`process.import_status`). On a laptop (and `--workers 1`) the dashboard's own job "process" reads the
+  queue, as it read its imports before, and takes up at its start what a restart left in line; `watch` reads what it
+  put in line unless a capture process runs. An invoice arriving on the server asks the chat model for at most
+  20 s, a chat slot included (`pipeline.ARRIVAL_SECONDS`, `AP_LLM_ARRIVAL_SECONDS`), and after two timeouts in a row
+  not for 2 minutes (`pipeline.ArrivalBreaker`); the page reader's pass asks again. An invoice is stored only while its
+  reader still holds its file (`IMPORT_CLAIM`, B-1762).
+
+  **The page reader's and the AI reviewer's queues** (D-171; `core/store/page_queue.py`, `lessons.py`): taken a
+  person's first ("Add it to OvisOCR2's queue", "Have it checked again"), then an invoice touchless processing waits
+  on (`page_queue.TOUCHLESS_NEXT`, the reviewer's "held for touchless"), then the earliest due, then the oldest. A read
+  or a review under way is renewed every minute by its reader (`page_worker.renewed`) and is in line again after 5
+  minutes without (`READING_STALE_SECONDS`); one whose process is gone is put back at once. On the server each reader
+  thread gives the AI reviewer a turn after each invoice it read (`BackgroundReader._round`); a laptop reviews once
+  nothing is left to read, as before. The model's answers kept in `.cache/page_reader`, `model_reading` and
+  `model_accounts` go after 30 days or past 512 MB each (`paths.prune_kept`).
 
   **What one worker runs at once** (D-153, server mode only): the app's lifespan caps anyio's thread pool at
   `app.worker_threads()` (4; `AP_WORKER_THREADS`, `server.json`'s `worker_threads`); the long routes of
@@ -429,6 +457,14 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write.
 
+  **Worked out once for every process** (D-169): the duplicate audit's pairs, month-end's received, not invoiced
+  lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the ERP yet
+  are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's `report_answers` as JSON, with the
+  stamp they were worked out under, read before the work as `summary_memo`'s; a process with none of them kept takes
+  them from there while the stamp holds (0.01 s for the audit and 0.8 s for month-end's page in a second worker, at
+  100,000 invoices, instead of 6-7 s and 5-6 s in each one). One process works an answer out while the others wait
+  for it; one an older AP Coder wrote, over 16 MB, or worked out in a write under way is not kept for the others.
+
   The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
@@ -464,7 +500,7 @@ can corrupt an open SQLite database).
 | `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
 | `.ap_coder_pickup.lock` | one pick-up of new invoices at a time: a `watch` check, a dashboard import or `ap_coder process` (the operating system's lock) | `mailbox.pickup_lock` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
-| `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
+| `.cache/ocr/` | each scanned page's OCR, per engine, and each file's tables (by what was asked: the file's SHA-256, the page, how it is drawn, the engine and its models, the libraries' versions, D-170): a page is drawn and OCR'd once however often its invoice is read, by any process; at most 512 MB, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |
 | `backup-<date>/` | the data set aside by `install --fresh-start` | `install.fresh_start` |
 | `models/` (optional) | the table finder model, if IT puts it there | IT |

@@ -34,10 +34,12 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 25  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
 # events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
-# index (B-1714)
+# index (B-1714), 26: the import queue (import_batches, import_files, import_turns by _SCHEMA, its indexes; D-168),
+# 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of the company
+# server, and the downloads its background process makes, reports.py, D-169)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -65,6 +67,13 @@ _INDEXES_24 = (
 _INDEXES_25 = (
     "DROP INDEX IF EXISTS lesson_approvals_situation",
     "CREATE INDEX IF NOT EXISTS lesson_approvals_counted ON lesson_approvals (situation, corrected, value)",
+)
+# Schema 26's indexes (D-168): the import queue's files waiting or being read, and those of the same content (a file
+# is never read twice), off the index; a run's files and batches (the Process page's card).
+_INDEXES_26 = (
+    "CREATE INDEX IF NOT EXISTS import_files_status ON import_files (status, sha256)",
+    "CREATE INDEX IF NOT EXISTS import_files_batch ON import_files (batch, status)",
+    "CREATE INDEX IF NOT EXISTS import_batches_run ON import_batches (run)",
 )
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -245,7 +254,7 @@ CREATE TABLE IF NOT EXISTS page_reads (
     invoice_id INTEGER PRIMARY KEY, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
     pages INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
+    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0, renewed REAL);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
 -- the latest finished reads (``page_read_pages_average``, the reading status of every page), not all sorted (B-1734)
 CREATE INDEX IF NOT EXISTS page_reads_done ON page_reads (status, updated_at);
@@ -258,7 +267,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
     rounds INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, result_json TEXT,
     error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    tries INTEGER NOT NULL DEFAULT 0);
+    tries INTEGER NOT NULL DEFAULT 0, renewed REAL);
 CREATE INDEX IF NOT EXISTS verifications_status ON verifications (status, created_at);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY AUTOINCREMENT, situation TEXT NOT NULL UNIQUE, vendor_key TEXT NOT NULL,
@@ -292,15 +301,42 @@ CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts (ip, at);
 CREATE TABLE IF NOT EXISTS ephemeral (kind TEXT NOT NULL, token TEXT NOT NULL, value BLOB NOT NULL,
     created_at REAL NOT NULL, expires_at REAL NOT NULL, PRIMARY KEY (kind, token));
 CREATE TABLE IF NOT EXISTS seen_files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS import_batches (id INTEGER PRIMARY KEY AUTOINCREMENT, run INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL, uploader TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '', account TEXT NOT NULL
+    DEFAULT '', origin TEXT NOT NULL DEFAULT '', person INTEGER NOT NULL DEFAULT 0, include_failed INTEGER NOT NULL
+    DEFAULT 0, force INTEGER NOT NULL DEFAULT 0, only_owner TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '[]',
+    lines TEXT NOT NULL DEFAULT '[]', skipped TEXT NOT NULL DEFAULT '[]', emails INTEGER NOT NULL DEFAULT 0,
+    to_person INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS import_files (id INTEGER PRIMARY KEY AUTOINCREMENT, batch INTEGER NOT NULL, path TEXT NOT
+    NULL, name TEXT NOT NULL, size INTEGER, mtime_ns INTEGER, sha256 TEXT NOT NULL, status TEXT NOT NULL DEFAULT
+    'waiting', owner TEXT NOT NULL DEFAULT '', lease_until REAL, tries INTEGER NOT NULL DEFAULT 0, invoice_id INTEGER,
+    line TEXT, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
+    stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
+CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, kind TEXT NOT NULL,
+    params TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+    file TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 0, runner TEXT NOT NULL DEFAULT '',
+    tries INTEGER NOT NULL DEFAULT 0, db TEXT NOT NULL, version TEXT NOT NULL, created_at REAL NOT NULL,
+    renewed_at REAL NOT NULL DEFAULT 0, finished_at REAL NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS report_jobs_one ON report_jobs (owner, kind, params, db) WHERE state IN
+    ('waiting', 'running');
+CREATE INDEX IF NOT EXISTS report_jobs_state ON report_jobs (state, id);
+CREATE INDEX IF NOT EXISTS report_jobs_owner ON report_jobs (owner, state);
 """
 
-# The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
-# interrupted (the computer slept, the app was closed): it waits in line again. ``reader`` names the process
-# reading it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
+# The page reader's queue (``page_reads.status``, ``page_queue``). A read not renewed for READING_STALE_SECONDS was
+# interrupted (the computer slept, its process paused): it waits in line again. ``reader`` names the process reading
+# it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
 # (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
 STALE_READING_HOURS = 2
-_IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
+# A read (or review) under way is stale once not renewed for READING_STALE_SECONDS on the database's clock (``renewed``:
+# julianday('now'), which a change of the clocks doesn't move, B-1770); a row renewed before it had one, by its local
+# time (``updated_at``). ``{t}``: the table's name and a dot, or nothing; asked with ``page_queue._stale()``.
+_STALE = "COALESCE({t}renewed < julianday('now') - ? / 86400.0, {t}updated_at < ?)"
+_IN_LINE = f"(status = 'waiting' OR (status = 'reading' AND {_STALE.format(t='')}))"  # ? = page_queue._stale()
 
 # The Azure check's queue (``azure_checks.status``, ``ap_coder/ai/azure_check.py``): off unless AP turns it on in
 # Settings → Reading. A check still "checking" after STALE_READING_HOURS was interrupted: it waits in line again.
@@ -310,12 +346,13 @@ _AZURE_IN_LINE = (  # ? = _stale_before()
     "(azure_checks.status = 'waiting' OR (azure_checks.status = 'checking' AND azure_checks.updated_at < ?))"
 )
 
-# The AI reviewer's queue (``verifications.status``, ``ap_coder/ai/verifier.py``). A review still "verifying" after
-# STALE_READING_HOURS was interrupted: it waits in line again.
+# The AI reviewer's queue (``verifications.status``, ``ap_coder/ai/verifier.py``). A review not renewed for
+# READING_STALE_SECONDS (``page_queue``) was interrupted: it waits in line again.
 VERIFY_WAITING, VERIFY_RUNNING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED = (
     "waiting", "verifying", "done", "failed", "skipped")  # fmt: skip
-_VERIFY_IN_LINE = (  # ? = _stale_before()
-    "(verifications.status = 'waiting' OR (verifications.status = 'verifying' AND verifications.updated_at < ?))"
+_VERIFY_IN_LINE = (  # ? = page_queue._stale()
+    "(verifications.status = 'waiting' OR (verifications.status = 'verifying' AND "
+    f"{_STALE.format(t='verifications.')}))"
 )
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -577,16 +614,21 @@ class StoreCore:
         if version < 25:  # a lesson's approvals counted off an index (B-1714)
             for sql in _INDEXES_25:
                 conn.execute(sql)
-        # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
-        # schema 15: looked for whatever the version).
+        if version < 26:  # the import queue (D-168): its tables are made by _SCHEMA, its indexes here
+            for sql in _INDEXES_26:
+                conn.execute(sql)
+        # The page reader's queue remembers who is reading an invoice, how many reads were cut off (added within
+        # schema 15) and when a read was renewed on the database's clock (B-1770): looked for whatever the version.
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
-        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
+        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0"),
+                             ("renewed", "REAL")):  # fmt: skip
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
         # The AI reviewer's queue counts reviews the model server cut off before any answer, and remembers who is
         # reviewing an invoice, like the page reader's (looked for likewise).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
-        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''")):
+        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''"),
+                             ("renewed", "REAL")):  # fmt: skip
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE verifications ADD COLUMN {column} {kind}")
         # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
@@ -803,55 +845,6 @@ class StoreCore:
                     done = conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
                     if not done.rowcount and table == "supplier_profiles":  # one profile, the strictest state kept
                         _store_class()._merge_supplier_profiles(conn, r["k"], key)
-
-    @staticmethod
-    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
-        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
-        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
-        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
-        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
-        if kept is None or gone is None:
-            return
-        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
-        reasons = [r for r in (kept, gone) if r["explanation"]]
-        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
-        conn.execute(
-            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
-            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
-            "WHERE id = ?",
-            (
-                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
-                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
-                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
-                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
-            ),
-        )  # fmt: skip
-        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))
-
-    @staticmethod
-    def _merge_supplier_profiles(conn: sqlite3.Connection, old: str, key: str) -> None:
-        """The supplier profile under ``old`` folded into the one under ``key`` (the same supplier under today's
-        rules), then removed: the stricter state wins (held, then suspended, supervised, touchless), with its dates
-        and audit rate, so a held supplier never goes touchless by a key change; a field blank in one is filled from
-        the other."""
-        from ...capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
-
-        strict = {HELD: 3, SUSPENDED: 2, SUPERVISED: 1, AUTONOMOUS: 0}
-        kept = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
-        gone = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (old,)).fetchone()
-        if kept is None or gone is None:
-            return
-        state = gone if strict.get(gone["state"], 1) > strict.get(kept["state"], 1) else kept
-        conn.execute(
-            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
-            "display_name = ?, vendor_id = ?, template_json = ?, updated_at = ? WHERE key = ?",
-            (
-                state["state"], state["autonomous_since"], state["suspended_at"], state["audit_rate"],
-                kept["display_name"] or gone["display_name"], kept["vendor_id"] or gone["vendor_id"],
-                kept["template_json"] or gone["template_json"], _now(), key,
-            ),
-        )  # fmt: skip
-        conn.execute("DELETE FROM supplier_profiles WHERE key = ?", (old,))
 
     @contextmanager
     def session(self) -> Iterator[None]:

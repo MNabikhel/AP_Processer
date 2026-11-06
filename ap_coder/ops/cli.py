@@ -8,7 +8,6 @@ import argparse
 import contextlib
 import dataclasses
 import datetime as dt
-import hashlib
 import json
 import logging
 import os
@@ -39,6 +38,8 @@ from ..core.reference_data import ReferenceData, load_reference_data, load_table
 from ..core.schema import build_json_schema
 from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
 from ..core.store.folder import read_file
+from ..core.store.imports import IMPORT_LEASE_SECONDS
+from ..intake.imports import Reader, owner_id, pick_up
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder, wait_for_pickup
 from . import server_update, service
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
@@ -177,6 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Server mode: N web worker processes and one for the background work (default 1, or "
                        "AP_SERVER_WORKERS; the service: server.json's workers)")  # fmt: skip
         p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
+        p.add_argument("--capture-work", action="store_true", help=argparse.SUPPRESS)  # (its capture processes)
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
     p.add_argument(
@@ -358,6 +360,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         os.environ[SERVER_ENV] = "1"  # (the pages ask server_mode())
     if args.background_work:  # the company server's background process, started by its serve (D-111)
         return server.run_background(Store(Path(args.db)))
+    if args.capture_work:  # one of its capture processes, which read the import queue (D-168)
+        return server.run_capture(Store(Path(args.db)))
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
@@ -395,12 +399,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
 
 
-def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], bool, int] | None:
+def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Any], bool, int] | None:
     """The invoice files named on the command line (folders expanded, the invoices taken out of saved emails, as
     the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice;
     whether an email could not be read (said on screen: the command then exits 1); and how many emails were sorted
-    (each in the Activity log of ``store``, as ``watch`` logs them). None, said in one line, when one of them is not
-    there (a typo)."""
+    (each in the Activity log of ``store``, as ``watch`` logs them). Each file as ``read_file`` read it (its SHA-256
+    read once, D-168; a file that can't be read now: its path alone, and processing it says so). None, said in one
+    line, when one of them is not there (a typo)."""
     from ..intake.inbox import log_sorted
 
     try:
@@ -408,7 +413,7 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
     except FileNotFoundError as exc:
         print(f"Not found: {exc}. Give an invoice file or a folder of them.", file=sys.stderr)
         return None
-    others = [p.name for raw in paths if Path(raw).is_dir() for p in other_files(Path(raw), EMAIL_EXTENSIONS)]
+    others = [p.name for raw in paths if Path(raw).is_dir() for p in other_files(Path(raw))]
     if others:  # never passed over in silence (B-268)
         print(f"Left out, not a kind AP Coder reads (save as PDF or JPEG): {', '.join(others)}", file=sys.stderr)
     files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
@@ -431,13 +436,14 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
             sorted_emails += 1
             if store is not None:
                 log_sorted(store, mail)
-    unique: dict[str, Path] = {}
+    unique: dict[str, Any] = {}
     for path in files:
         try:
-            key = hashlib.sha256(path.read_bytes()).hexdigest()
+            read = read_file(path)
+            key = read[3]
         except OSError:
-            key = str(path.resolve())  # unreadable now: processing it says so
-        unique.setdefault(key, path)
+            read = key = str(path.resolve())  # unreadable now: processing it says so
+        unique.setdefault(key, (path, read))
     if len(unique) < len(files):
         print(f"{len(files) - len(unique)} file(s) left out: the same invoice as another file given.", file=sys.stderr)
     return list(unique.values()), unread, sorted_emails
@@ -457,22 +463,24 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         vision=args.vision,
     )
     store = None if args.no_db else Store(args.db)
-    # One pick-up at a time into the database (``pickup_lock``, B-1589): what is stored already is checked once this
-    # holds it, so a file a watch or the dashboard stored meanwhile is skipped, never stored twice.
-    waiting = "Waiting: the dashboard or a watch is reading invoices into this database. These follow once it is done."
+    # One pick-up at a time into the database (``pickup_lock``, B-1589): the emails unpacked and the files put in line
+    # while it is held; the import queue never reads a file twice (D-168).
+    waiting = ("Waiting: the dashboard or a watch is picking up invoices into this database. These follow once it is "
+               "done.")  # fmt: skip
     lock = None if store is None else wait_for_pickup(store.path.parent, lambda: print(waiting, file=sys.stderr))
     try:
-        return _process(args, settings, store)
+        return _process(args, settings, store, lock)
     finally:
         if lock is not None:
             lock.close()
 
 
-def _process(args: argparse.Namespace, settings: Settings, store: Store | None) -> int:
+def _process(args: argparse.Namespace, settings: Settings, store: Store | None, lock: Any = None) -> int:
     given = _inputs(args.inputs, store)
     if given is None:
         return 2
-    inputs, unread, sorted_emails = given
+    taken, unread, sorted_emails = given
+    inputs = [path for path, _ in taken]
     if not inputs:
         if sorted_emails:  # only emails, each sorted (said above): nothing wrong, nothing else to read
             print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
@@ -487,20 +495,8 @@ def _process(args: argparse.Namespace, settings: Settings, store: Store | None) 
         print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
-    started, clock, skipped = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0
-    if store is not None and not args.force:
-        done = [p for p in inputs if store.find_by_hash(p) is not None]
-        skipped = len(done)
-        if done:
-            print(
-                f"Skipping {len(done)} file(s) already in the review queue or approved "
-                "(use --force to process them again).",
-                file=sys.stderr,
-            )
-            inputs = [p for p in inputs if p not in done]
-        if not inputs:
-            return 1 if unread else 0
-
+    if store is not None:
+        return _process_queued(args, store, pipeline, taken, unread, lock)
     stems = output_stems(inputs)
 
     def save(i: int, res: PipelineResult) -> None:  # as each invoice finishes, so Ctrl+C loses nothing done
@@ -509,19 +505,58 @@ def _process(args: argparse.Namespace, settings: Settings, store: Store | None) 
             print(json.dumps(res.output, indent=2, ensure_ascii=False))
 
     results = pipeline.process_many(inputs, workers=args.workers, on_result=save)
-    summaries = [res.summary() for res in results]
-    if store is not None:  # the run in the audit trail (the finance hub's workflow_runs, D-103)
-        store.record_import_run(
-            "process", files=len(results), ok=sum(1 for r in results if r.ok),
-            failed=sum(1 for r in results if not r.ok), skipped=skipped, started_at=started,
-            seconds=time.monotonic() - clock, errors=[f"{r.source.name}: {r.error}" for r in results if not r.ok],
-            actor=login_name(),
-        )  # fmt: skip
+    return _summed(args, [res.summary() for res in results], all(r.ok for r in results) and not unread)
 
+
+def _process_queued(args: argparse.Namespace, store: Store, pipeline: InvoicePipeline, taken: list[Any],
+                    unread: bool, lock: Any) -> int:  # fmt: skip
+    """``process`` into the database: its files put in the import queue as its own batch (a file stored already is
+    skipped, unless ``--force``; the audit trail records the batch once read), the pick-up lock let go, then read
+    here, ``--workers`` at once (D-168)."""
+    owner = owner_id("process")
+    store.take_lease(f"reader:{owner}", owner, IMPORT_LEASE_SECONDS)  # its batch is its own while it runs
+    readable = [read for _, read in taken if isinstance(read, tuple)]
+    gone = [path.name for path, read in taken if not isinstance(read, tuple)]
+    queued = store.queue_imports(readable, source="process", uploader=login_name(), actor=login_name(),
+                                 person=True, force=args.force, only=owner)  # fmt: skip
+    if lock is not None:
+        lock.close()
+    if queued["skipped"]:
+        print(f"Skipping {len(queued['skipped'])} file(s) already in the review queue or approved "
+              "(use --force to process them again).", file=sys.stderr)  # fmt: skip
+    if gone:
+        print(f"Not read, could not be opened now: {', '.join(gone)}", file=sys.stderr)
+    if not queued["queued"]:
+        return 1 if unread or gone else 0
+    place = {read[0]: n for n, read in enumerate(readable)}
+    stems = output_stems([Path(read[0]) for read in readable])
+    results: dict[int, PipelineResult] = {}
+
+    def save(row: dict[str, Any], res: PipelineResult) -> None:  # as each invoice finishes, so Ctrl+C loses nothing
+        n = place.get(row["path"], len(stems))
+        results[n] = res
+        write_outputs(res, args.out, stem=stems[n] if n < len(stems) else Path(row["path"]).stem)
+        if args.stdout and res.output:
+            print(json.dumps(res.output, indent=2, ensure_ascii=False))
+
+    reader = Reader(store, pipeline.settings, owner, pipeline=lambda: pipeline, on_result=save)
+    try:
+        reader.read_all(batch=queued["batch"], workers=args.workers)
+    except KeyboardInterrupt:
+        store.release_imports(owner)  # back in line: read by the next pick-up, or this command again
+        raise
+    if reader.paused:
+        print(reader.paused, file=sys.stderr)
+    done = [results[n] for n in sorted(results)]
+    ok = all(r.ok for r in done) and not unread and not gone and not reader.paused
+    return _summed(args, [res.summary() for res in done], ok)
+
+
+def _summed(args: argparse.Namespace, summaries: list[dict], ok: bool) -> int:
     Path(args.out).mkdir(parents=True, exist_ok=True)
     (Path(args.out) / "batch_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
     _print_summary(summaries)
-    return 0 if all(r.ok for r in results) and not unread else 1
+    return 0 if ok else 1
 
 
 SETTLE_SECONDS = 5  # a file changed more recently than this may still be copying in
@@ -531,24 +566,27 @@ def new_files(folder: Path, store: Store, now: float | None = None, fresh: Colle
     """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop).
     Two identical files dropped together are one invoice: only the first is returned. ``fresh`` files were just
     written by AP Coder itself (taken out of emails): they are not "still copying"."""
+    return [Path(read[0]) for read in _new_reads(folder, store, now, fresh)]
+
+
+def _new_reads(folder: Path, store: Store, now: float | None = None, fresh: Collection[Path] = ()) -> list[Any]:
+    """``new_files`` as ``read_file`` read them (each file read once, D-168): only those the pick-up hasn't read since
+    they changed are read at all (``intake.imports.pick_up``)."""
     now = time.time() if now is None else now
     if not folder.is_dir():
         return []
-    found = []
-    seen: set[str] = set()  # the contents already in this check (the store knows them only once processed)
-    read = []  # what was read of each, for the import page (``Store.note_files``)
-    for p in invoice_files(folder):
-        try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
-            if p not in fresh and abs(now - p.stat().st_mtime) < SETTLE_SECONDS:  # (far ahead of the clock: settled)
-                continue
-            read.append(read_file(p))
-            digest = read[-1][3]
-            if digest not in seen and store.find_by_hash(p, include_failed=True, sha=digest) is None:
-                found.append(p)
-            seen.add(digest)
-        except OSError:
-            continue
-    store.note_files(read)
+    just_made = {str(p.parent.resolve() / p.name) for p in fresh}
+
+    def settling(path: Path) -> bool:  # a file being copied, locked by a scanner or removed meanwhile: next check
+        return str(path) not in just_made and abs(now - path.stat().st_mtime) < SETTLE_SECONDS  # (far ahead: settled)
+
+    read, _, _ = pick_up(store, folder, settling)
+    store.note_files(read)  # what the import page lists
+    known, seen, found = store.known_files([r[3] for r in read], include_failed=True), set(), []
+    for r in read:  # the contents already in this check: the store knows them only once processed
+        if r[3] not in known and r[3] not in seen:
+            found.append(r)
+        seen.add(r[3])
     return found
 
 
@@ -579,7 +617,9 @@ def _sorted_line(mail: Any) -> str:
 
 def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
     """One check of the watched folder: (invoices processed, of which failed); an email that could not be read
-    counts as one of each. None while another pick-up reads into the same database (``pickup_lock``, B-1587)."""
+    counts as one of each. Nothing while another pick-up lists the folder (``pickup_lock``, B-1587). The new files go
+    in the import queue; they are read here, with what else waits in line, unless the company server's capture
+    processes run (D-168)."""
     lock = pickup_lock(store.path.parent)
     if lock is None:
         later = "run it again in a moment" if args.once else "the next check picks them up"
@@ -587,12 +627,17 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
               f"this database: this check is skipped ({later})", file=sys.stderr)  # fmt: skip
         return 0, 0
     try:
-        return _check(args, settings, store, folder)
+        done, failed, queued = _check(args, store, folder)
     finally:
         lock.close()
+    if queued is None:
+        return done, failed
+    return _read_queue(args, settings, store, done, failed, queued)
 
 
-def _check(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
+def _check(args: argparse.Namespace, store: Store, folder: Path) -> tuple[int, int, int | None]:
+    """The pick-up of a check: (done, failed so far: the emails that could not be read, files put in line; None when
+    nothing is to be read now)."""
     from ..intake.inbox import log_sorted
 
     done = failed = 0
@@ -607,41 +652,55 @@ def _check(args: argparse.Namespace, settings: Settings, store: Store, folder: P
         log_sorted(store, mail)
         taken_out += mail.saved
     now = time.time()
-    files = new_files(folder, store, now=now, fresh=set(taken_out))
+    found = _new_reads(folder, store, now=now, fresh=set(taken_out))
     copying = still_copying(folder, now, fresh=set(taken_out))
     if copying:  # waits for the next check, said (B-1302)
         later = "run it again in a few seconds" if args.once else "the next check picks them up"
         print(f"{time.strftime('%H:%M:%S')} {ui.plural(copying, 'file')} still being copied, skipped ({later})",
               file=sys.stderr)  # fmt: skip
-    if not files:
-        return done, failed
+    waiting = store.imports_open()["waiting"]
+    if not found and not waiting:
+        return done, failed, None
     if not store.list_accounts("gl_accounts"):  # as the dashboard (B-1212): read once they are imported
-        print(f"{time.strftime('%H:%M:%S')} {len(files)} file(s) not read yet: {NO_GL_ACCOUNTS}", file=sys.stderr)
-        return done + len(files), failed + len(files)
+        print(f"{time.strftime('%H:%M:%S')} {len(found)} file(s) not read yet: {NO_GL_ACCOUNTS}", file=sys.stderr)
+        return done + len(found), failed + len(found), None
+    if found:
+        store.queue_imports(found, source="watch", uploader="", actor=login_name(), include_failed=True)
+    return done, failed, len(found)
+
+
+def _read_queue(args: argparse.Namespace, settings: Settings, store: Store, done: int, failed: int,
+                queued: int) -> tuple[int, int]:  # fmt: skip
+    """What waits in the import queue, read here (a scheduled watch with no company server running), each said."""
+    if store.capture_processes():
+        if queued:
+            print(f"{time.strftime('%H:%M:%S')} {queued} file(s) put in line: AP Coder's server reads them",
+                  file=sys.stderr)  # fmt: skip
+        return done, failed
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
-    pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
-    started, clock, read, errors = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic(), 0, []
-    for path in files:
-        try:
-            result = pipeline.process(path)
-        except OSError as exc:  # unreadable now: try again at the next check
-            print(f"{time.strftime('%H:%M:%S')} {path.name}: skipped for now ({exc})", file=sys.stderr)
-            continue
+    told = {"done": done, "failed": failed}
+
+    def said(row: dict[str, Any], result: Any) -> None:
         stamp = time.strftime("%H:%M:%S")
-        done += 1
-        read += 1
-        if not result.ok:
-            errors.append(f"{path.name}: {result.error}")
+        told["done"] += 1
         if result.ok:
             flag = "needs attention" if result.report and result.report.requires_review else "ready"
-            print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
+            print(f"{stamp} {row['name']}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
         else:
-            failed += 1
-            print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
-    if read:  # the check in the audit trail (the finance hub's workflow_runs, D-103)
-        store.record_import_run("watch", files=read, ok=read - len(errors), failed=len(errors), started_at=started,
-                                seconds=time.monotonic() - clock, errors=errors, actor=login_name())  # fmt: skip
-    return done, failed
+            told["failed"] += 1
+            print(f"{stamp} {row['name']}: FAILED {result.error}", file=sys.stderr)
+
+    owner = owner_id("watch")
+    reader = Reader(store, settings, owner, on_result=said, pipeline=lambda: InvoicePipeline(
+        settings, reference, cache_dir=args.cache_dir or None, store=store))  # fmt: skip
+    try:
+        reader.read_all()
+    except KeyboardInterrupt:
+        store.release_imports(owner)  # back in line for the next check
+        raise
+    if reader.paused:
+        print(f"{time.strftime('%H:%M:%S')} {reader.paused}", file=sys.stderr)
+    return told["done"], told["failed"]
 
 
 WORKER_FILE = ".ap_coder_worker-{pid}.json"  # in the data folder while watch or read-pages runs
@@ -822,7 +881,8 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     given = _inputs(args.inputs)
     if given is None:
         return 2
-    paths, unread, sorted_emails = given
+    taken, unread, sorted_emails = given
+    paths = [path for path, _ in taken]
     if not paths:
         if sorted_emails:
             print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)

@@ -97,21 +97,156 @@ def test_a_file_already_in_ap_coder_is_skipped(app, client, store):
     assert len(store.list_invoices()) == 1
 
 
-def test_upload_refuses_other_files_and_queues_behind_a_running_job(app, client):
+def test_upload_refuses_other_files_and_joins_the_files_already_in_line(app, client, store, tmp_path):
     response = client.post("/process/upload", files=[("files", ("notes.exe", b"MZ", "application/octet-stream"))],
                            headers=PAGE)  # fmt: skip
     snap = finished(app, client)
     assert response.status_code == 200
     assert any("notes.exe was not read" in m["text"] for m in snap["result"]["messages"])
-    job = app.state.jobs.get("process")
-    job.state = "running"  # as if a run were under way: the upload is saved and waits behind it (D-99)
-    try:
-        response = upload(client, f"{STEM}.pdf")
-        assert response.status_code == 200 and response.json()["queued"] == 1
-        assert "queued behind the import in progress" in response.json()["toast"]["text"]
-    finally:
-        job.state = "done"
-        app.state.import_queue.waiting.clear()
+    # A colleague's file in line already (D-168): the upload goes in line beside it, said, and both are read.
+    from ap_coder.core.store.folder import read_file
+
+    other = invoice_dir(store) / f"{OTHER}.pdf"
+    other.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SAMPLES / other.name, other)
+    store.queue_imports([read_file(other)], source="upload", uploader="colleague", person=True)
+    response = upload(client, f"{STEM}.pdf")
+    assert response.status_code == 200 and response.json()["queued"] == 1
+    assert "in line with 1 file that came in before" in response.json()["toast"]["text"]
+    snap = finished(app, client)
+    assert snap["result"]["ok"] == 2 and len(store.list_invoices(REVIEW)) == 2
+
+
+def test_the_same_file_uploaded_twice_at_once_is_stored_once(app, client, store, monkeypatch):
+    """Two people upload the same invoice at the same moment (D-168): both uploads are saved and put in line, the
+    file is read once, and the second upload's copy is skipped as already in AP Coder."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+
+    both, reads = threading.Barrier(2), []
+    real_queue, real_process = Store.queue_imports, InvoicePipeline.process
+
+    def queue_imports(self, *args, **kwargs):  # the two uploads reach the queue together
+        both.wait(30)
+        return real_queue(self, *args, **kwargs)
+
+    def process(self, path, *args, **kwargs):
+        reads.append(path)
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "queue_imports", queue_imports)
+    monkeypatch.setattr(InvoicePipeline, "process", process)
+    answers = []
+    uploads = [threading.Thread(target=lambda: answers.append(upload(client, f"{STEM}.pdf"))) for _ in range(2)]
+    for thread in uploads:
+        thread.start()
+    for thread in uploads:
+        thread.join(60)
+    assert [a.status_code for a in answers] == [200, 200]
+    snap = finished(app, client)
+    assert len(reads) == 1 and len(store.list_invoices()) == 1
+    assert snap["result"]["ok"] == 1 and snap["result"]["label"] == "Processed 1 of 2: 1 already in AP Coder"
+
+
+def test_files_left_in_line_by_a_restart_are_read_when_ap_coder_starts(store):
+    """A laptop closed while files waited in line (D-168): they are read once AP Coder starts again, without a
+    press of the Process button (before, they sat in the folder as new until someone pressed it)."""
+    from ap_coder.core.store.folder import read_file
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (f"{STEM}.pdf", f"{OTHER}.pdf"):
+        shutil.copy(SAMPLES / name, folder / name)
+    store.queue_imports([read_file(folder / f"{STEM}.pdf"), read_file(folder / f"{OTHER}.pdf")], source="upload")
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store)
+    with TestClient(app, base_url="http://localhost") as client:  # (its start: the lifespan)
+        snap = finished(app, client)
+    assert snap["result"]["ok"] == 2 and len(store.list_invoices(REVIEW)) == 2
+
+
+def _card(client, until, seconds=10.0):
+    """The Process page's card once ``until(card)`` (or as it is after ``seconds``)."""
+    ends = time.monotonic() + seconds
+    while True:
+        snap = client.get("/process/status").json()
+        if until(snap) or time.monotonic() > ends:
+            return snap
+        time.sleep(0.05)
+
+
+def test_a_file_that_cannot_be_read_now_says_why_and_is_read_once_it_can(app, client, store, monkeypatch):
+    """The GL accounts open in Excel: the file goes back in line. The laptop's job ended in error, and the card said
+    "1 file in line to be read" for good: the error never shown, nothing read until a restart or another import
+    (B-1764). The card says why now, and the job looks again every few seconds, as the server's capture processes
+    do: once the file is closed, it is read."""
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "LOOK_AGAIN_SECONDS", 0.1)
+    real, locked = store.reference_data, [True]
+
+    def reference_data(*args, **kwargs):
+        if locked[0]:
+            raise PermissionError(13, "Permission denied: 'gl_accounts.xlsx'")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "reference_data", reference_data)
+    upload(client, f"{STEM}.pdf")
+    snap = _card(client, lambda snap: "Permission denied" in snap["note"])
+    assert snap["state"] == "running" and snap["note"].startswith("1 file in line to be read"), snap
+    assert "Permission denied: 'gl_accounts.xlsx'" in snap["note"] and "tries again" in snap["note"]
+    locked[0] = False
+    assert finished(app, client)["result"]["ok"] == 1
+
+
+def test_once_there_is_room_again_the_files_in_line_are_read(app, client, store, monkeypatch):
+    """The data folder's disk nearly full: nothing is read, and the card says why. Once there was room again,
+    nothing read the file until another import or a restart, and "Process N files" was off, a file in line not
+    being new (B-1764): the job looks again every few seconds now (a restore's pause likewise)."""
+    from ap_coder.intake import imports
+    from ap_coder.web.pages import process
+
+    monkeypatch.setattr(process, "LOOK_AGAIN_SECONDS", 0.1)
+    room = [False]
+    for module in (imports, process):
+        monkeypatch.setattr(module, "has_room", lambda folder: room[0])
+    upload(client, f"{STEM}.pdf")
+    assert _card(client, lambda snap: snap["note"] == imports.NO_ROOM)["note"] == imports.NO_ROOM
+    time.sleep(0.3)
+    assert store.imports_open() == {"waiting": 1, "reading": 0} and store.list_invoices() == []
+    room[0] = True
+    assert finished(app, client)["result"]["ok"] == 1
+
+
+def test_stopping_the_dashboard_puts_the_file_under_way_back_in_line(store, monkeypatch):
+    """The dashboard stopped (its window closed, Ctrl+C) while its import reads a file: the file goes back in line,
+    its try not counted, and nothing more is taken, as a capture process's stop does. It stayed "reading" as the
+    dashboard's: after a quick restart the card said "Reading and coding" it for up to 2 minutes while nothing read
+    it, and a second stop failed it as stopped twice (B-1766)."""
+    from types import SimpleNamespace
+
+    from ap_coder.ai import pipeline
+
+    started, go = threading.Event(), threading.Event()
+
+    def slow(self, path, *args, **kwargs):  # (a long scan)
+        started.set()
+        go.wait(30)
+        return SimpleNamespace(ok=True, error="", output={"vendor_name": "V"}, report=None, invoice_id=None)
+
+    def files():
+        with store._conn() as conn:
+            return [tuple(r) for r in conn.execute("SELECT status, owner, tries FROM import_files ORDER BY id")]
+
+    monkeypatch.setattr(pipeline.InvoicePipeline, "process", slow)
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store)
+    with TestClient(app, base_url="http://localhost") as client:
+        upload(client, f"{STEM}.pdf", f"{OTHER}.pdf")
+        assert started.wait(30)
+    assert files() == [("waiting", "", 0), ("waiting", "", 0)]
+    go.set()  # (its read ends after the stop: nothing of it is stored, nothing more taken)
+    assert app.state.jobs.get("process").wait(30)
+    assert files() == [("waiting", "", 0), ("waiting", "", 0)] and store.list_invoices() == []
 
 
 def test_upload_needs_gl_accounts_first(tmp_path):
@@ -155,10 +290,11 @@ def test_the_saved_emails_are_found_by_their_names_first(tmp_path):
     assert emails_in(folder) == old and {p.name for p in old} == expected
 
 
-def test_the_files_not_processed_are_found_in_one_query(store, tmp_path):
-    """Each file's SHA-256 against every invoice's in one query, not one query a file (D-157): the same files new
-    (an invoice of a picture made into a PDF, and a failed one, count as processed) and the same ones unreadable."""
-    from ap_coder.web.pages.process import not_processed
+def test_the_files_already_in_ap_coder_are_found_in_one_query(store, tmp_path):
+    """Each file's SHA-256 against every invoice's in one query, not one query a file (D-157): an invoice of a picture
+    made into a PDF counts, and a failed one does for the folder's pick-ups (``include_failed``), as ``find_by_hash``
+    says; a copy of one under another name is in AP Coder; the import queue leaves them out (D-168)."""
+    from ap_coder.core.store.folder import read_file
 
     folder = tmp_path / "in"
     folder.mkdir()
@@ -171,21 +307,21 @@ def test_the_files_not_processed_are_found_in_one_query(store, tmp_path):
     store.add_invoice(tmp_path / "made.pdf", {"vendor_name": "B", "invoice_number": "2", "grand_total": 2},
                       {"issues": []}, original_sha256=hashlib.sha256(files[2].read_bytes()).hexdigest())  # fmt: skip
     shutil.copy(files[3], folder / "copy of f3.pdf")
-    files += [folder / "copy of f3.pdf", folder / "gone.pdf"]
+    files.append(folder / "copy of f3.pdf")
     store.add_invoice(files[3], {"vendor_name": "C", "invoice_number": "3", "grand_total": 3}, {"issues": []})
-    old_new, old_unreadable = [], []
-    for path in files:
-        try:
-            (old_new if store.find_by_hash(path, include_failed=True) is None else []).append(path)
-        except OSError:
-            old_unreadable.append(path)
-    assert not_processed(store, files) == (old_new, old_unreadable) == (files[4:6], [files[7]])
+    read = [read_file(path) for path in files]
+    for include_failed in (True, False):
+        old = [p for p in files if store.find_by_hash(p, include_failed=include_failed) is not None]
+        known = store.known_files([r[3] for r in read], include_failed)
+        assert [p for p, r in zip(files, read, strict=True) if r[3] in known] == old
+    queued = store.queue_imports(read, source="folder", include_failed=True)
+    assert queued["queued"] == 2 and queued["skipped"] == ["f0.pdf", "f1.pdf", "f2.pdf", "f3.pdf", "copy of f3.pdf"]
 
 
 def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, client, store, tmp_path, monkeypatch):
-    """B-1587: a scheduled ``watch`` and the dashboard's Process button had no lock in common. Both listed a new file
-    as not stored yet, both read it, and it was stored twice (two invoices of the same file). Here they really run
-    at once, a watch in a thread and the button's import: neither reads the file until both have listed it."""
+    """B-1587, with the import queue (D-168): a scheduled ``watch`` and the dashboard's Process button pick up the
+    folder at once. The file goes in line once (the second pick-up finds it in line), is read once, by whichever
+    reader takes it first, and stored once; the other reader waits for it."""
     from ap_coder.ai.pipeline import InvoicePipeline
     from ap_coder.ops import cli
 
@@ -194,26 +330,24 @@ def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, cli
     new = folder / f"{OTHER}.pdf"
     shutil.copy(SAMPLES / f"{OTHER}.pdf", new)
     os.utime(new, (time.time() - 60, time.time() - 60))  # copied in a minute ago: the watch takes it
-    listed_by_watch, listed_by_both = threading.Event(), threading.Event()
-    real_new_files, real_process = cli.new_files, InvoicePipeline.process
+    listed_by_both, read = threading.Event(), []
+    real_process = InvoicePipeline.process
 
-    def new_files(*args, **kwargs):
-        found = real_new_files(*args, **kwargs)
-        listed_by_watch.set()
-        return found
-
-    def process(self, path, *args, **kwargs):  # as a slow reading: the other pick-up lists the file meanwhile
+    def process(self, path, *args, **kwargs):  # as a slow reading: the other pick-up lists the folder meanwhile
+        read.append(path)
         listed_by_both.wait(30)
         return real_process(self, path, *args, **kwargs)
 
-    monkeypatch.setattr(cli, "new_files", new_files)
     monkeypatch.setattr(InvoicePipeline, "process", process)
     argv = ["--env-file", str(tmp_path / "none.env"), "--db", str(store.path), "watch", "--once", "--cache-dir", ""]
     watch = threading.Thread(target=cli.main, args=(argv,))
     watch.start()
     try:
-        assert listed_by_watch.wait(60)
-        assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"  # it lists the file too
+        deadline = time.monotonic() + 60
+        while not read and time.monotonic() < deadline:  # the watch put it in line and reads it
+            time.sleep(0.05)
+        assert read
+        assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"  # it lists the folder too
     finally:
         listed_by_both.set()
         watch.join(180)
@@ -221,9 +355,8 @@ def test_a_scheduled_watch_and_the_process_button_store_a_new_file_once(app, cli
     sha = hashlib.sha256(new.read_bytes()).hexdigest()
     with store._conn() as conn:
         assert conn.execute("SELECT COUNT(*) FROM invoices WHERE file_sha256 = ?", (sha,)).fetchone()[0] == 1
-    # The watch held the pick-up lock: the import waited for it, then found the file stored and skipped it.
-    assert snap["result"]["processed"] == 0
-    assert any(m["text"].startswith("Skipped") and m["details"] == [new.name] for m in snap["result"]["messages"])
+        assert conn.execute("SELECT COUNT(*) FROM import_files WHERE sha256 = ?", (sha,)).fetchone()[0] == 1
+    assert len(read) == 1 and snap["result"]["processed"] == 1  # the run the button joined: the watch's file
 
 
 def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, client, store, monkeypatch):
@@ -255,6 +388,28 @@ def test_a_file_another_pick_up_failed_to_read_meanwhile_is_not_read_again(app, 
     failed = store.find_by_hash(new, include_failed=True)["id"]
     assert client.post(f"/review/{failed}/retry", headers=PAGE).status_code == 200
     assert finished(app, client)["result"]["processed"] == 1 and read == [new.name]
+
+
+def test_the_process_button_waits_a_few_seconds_at_most_for_another_pick_up(app, client, store):
+    """A scheduled watch or ``ap_coder process`` holds the pick-up lock while it lists the folder, unpacks the emails
+    and hashes the files (a minute for a big folder): the Process button's request waited for it as long, a thread
+    of the web worker held, the button busy and nothing said; before D-168 the job said "Waiting for another pick-up".
+    It waits a few seconds at most now, then says why (B-1771)."""
+    from ap_coder.intake.mailbox import pickup_lock
+
+    held, answers = pickup_lock(store.path.parent), []
+    pressed = threading.Thread(target=lambda: answers.append(client.post("/process/folder", headers=PAGE)))
+    started = time.monotonic()
+    try:
+        pressed.start()
+        pressed.join(15)
+        took = time.monotonic() - started
+    finally:
+        held.close()
+    pressed.join(30)
+    assert took < 10 and answers[0].status_code == 409, took
+    assert "Another pick-up of invoices is under way" in answers[0].json()["error"]
+    assert client.post("/process/folder", headers=PAGE).json()["job"] == "process"  # once it is done
 
 
 def test_safe_upload_names(tmp_path):
@@ -423,12 +578,13 @@ def test_a_scan_written_over_another_of_its_name_is_listed_as_new_within_a_minut
     assert "scan.pdf" in client.get("/process").text
 
 
-def test_the_import_page_lists_the_folder_once_by_name_as_the_pick_up_and_its_warning_do(tmp_path):
-    """D-166: the import page lists the invoices folder once, by name (``folder_names``): the invoices, the saved
-    emails and the files of a kind not read are what ``invoice_files``, ``emails_in`` and ``other_files`` give, in
-    their order, each of which made a Path of each of 100,000 files (2 s together)."""
+def test_the_invoice_files_the_saved_emails_and_the_others_are_one_rule(tmp_path):
+    """D-166 listed the folder once by name for the import page (``folder_names``), with the same rules repeated
+    from ``invoice_files``, ``emails_in`` and ``other_files``, kept alike by a test. They are one rule now
+    (``intake.files.folder_names``, D-168): each of the three is a part of it, the import page's too."""
     from ap_coder.ai.pipeline import invoice_files, other_files
-    from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, emails_in
+    from ap_coder.intake.files import folder_names
+    from ap_coder.intake.mailbox import emails_in
     from ap_coder.web.pages import process
 
     names = ["b.pdf", "A.PDF", "a.txt", "b.md", "c.markdown", "alone.txt", "scan.JPG", "photo.heic", "Two.dots.png",
@@ -439,14 +595,15 @@ def test_the_import_page_lists_the_folder_once_by_name_as_the_pick_up_and_its_wa
         (tmp_path / name).write_bytes(b"x")
     for name in ("folder.pdf", "box.eml", "dir.docx"):  # folders named like files: never listed
         (tmp_path / name).mkdir()
-    assert process.folder_names(tmp_path) == (
-        [p.name for p in invoice_files(tmp_path)],
-        [p.name for p in emails_in(tmp_path)],
-        [p.name for p in other_files(tmp_path, EMAIL_EXTENSIONS)],
-    )
-    documents, emails, others = process.folder_names(tmp_path)
-    assert "a.txt" not in documents and "alone.txt" in documents and "letter.docx" in others
-    assert sorted(emails, key=str.lower) == ["mail.eml", "Note.MSG", "zz.Eml"]  # hidden ones never (B-1758)
+    documents, emails, others = folder_names(tmp_path)
+    assert process.folder_names is folder_names
+    assert ([p.name for p in invoice_files(tmp_path)], [p.name for p in emails_in(tmp_path)],
+            [p.name for p in other_files(tmp_path)]) == (documents, emails, others)  # fmt: skip
+    assert set(documents) == {"A.PDF", "Two.dots.png", "alone.txt", "b.pdf", "c.markdown", "photo.heic", "scan.JPG"}
+    assert set(emails) == {"mail.eml", "Note.MSG", "zz.Eml"}  # hidden ones never (B-1758)
+    # (Windows drops the trailing dot of "trailing.")
+    assert {name.rstrip(".") for name in others} == {"letter.docx", "sheet.xlsx", "trailing", "no_suffix"}
+    assert documents == sorted(documents, key=os.path.normcase) and others == sorted(others, key=os.path.normcase)
 
 
 def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoever_changed_them(tmp_path):

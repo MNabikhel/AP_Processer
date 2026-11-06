@@ -240,14 +240,21 @@ def test_in_a_browser_no_answer_is_said_in_the_servers_words_on_the_server(brows
 
 
 def _job_running(app) -> threading.Event:
-    """An import under way in ``app`` until the event returned is set (the Import invoices page follows it)."""
-    release = threading.Event()
+    """An import under way in ``app`` until the event returned is set (the Import invoices page follows it): a file of
+    the import queue being read (D-168)."""
+    from ap_coder.core.store.folder import read_file
 
-    def work(job) -> None:
-        job.step(1, 3, note="Reading invoice 1 of 3")
+    store, release = app.state.store, threading.Event()
+    path = store.path.parent / "in-line.pdf"
+    path.write_bytes(b"%PDF-1.4 in line")
+    store.queue_imports([read_file(path)], source="upload", person=True)
+    row = store.claim_import("a reader", 600)
+
+    def read() -> None:
         release.wait(60)
+        store.finish_import(row["id"], "a reader", "done")
 
-    assert app.state.jobs.get("process").start(work, total=3)
+    threading.Thread(target=read, daemon=True).start()
     return release
 
 

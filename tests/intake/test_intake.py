@@ -12,7 +12,6 @@ import pytest
 from PIL import Image, ImageDraw
 
 from ap_coder.capture import layout
-from ap_coder.capture.layout import _image_pngs, _scan_png
 from ap_coder.core.store import Store
 from ap_coder.intake import pictures as intake
 
@@ -34,6 +33,16 @@ def _jpeg(path, orientation=None, dpi=(300, 300), size=(600, 800)):
 
 def _pixels(png: bytes) -> Image.Image:
     return Image.open(io.BytesIO(png)).convert("RGB")
+
+
+def _read_from_pdf(doc, page) -> Image.Image:
+    """The picture OCR reads for a PDF page."""
+    return layout._scan_picture(doc, page)[0].convert("RGB")
+
+
+def _read_from_picture(path) -> Image.Image:
+    """The picture OCR reads for a picture file's first page."""
+    return layout._image_pages(path, 1)[0].picture()[0].convert("RGB")
 
 
 def test_a_jpeg_goes_into_the_pdf_as_it_is(tmp_path):
@@ -69,8 +78,8 @@ def test_a_photo_taken_sideways_is_turned_upright_by_the_page(tmp_path, orientat
         assert upright.size == expected.size  # as the phone shows it
         assert (page.rect.width > page.rect.height) == (expected.width > expected.height)
         # The PDF page is what OCR reads: the same picture as the photo turned upright (JPEG decoding aside).
-        got = _pixels(_scan_png(doc, page))
-        want = _pixels(_image_pngs(converted.original, 1)[0])
+        got = _read_from_pdf(doc, page)
+        want = _read_from_picture(converted.original)
         assert got.size == want.size
         assert sum(abs(a - b) for a, b in zip(got.convert("L").tobytes(), want.convert("L").tobytes(),
                                                 strict=True)) / (got.width * got.height) < 1.0  # fmt: skip
@@ -291,7 +300,8 @@ def test_a_lossless_picture_is_read_from_its_pixels_exactly_as_extracting_it_wou
         xref = doc[0].get_images(full=True)[0][0]
         extracted = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
         assert intake._stored_pixels(doc, xref) is not None
-        assert _scan_png(doc, doc[0]) == layout._picture_png(extracted)
+        got, want = layout._scan_picture(doc, doc[0])[0], layout._picture_for_ocr(extracted)
+        assert (got.mode, got.size, got.tobytes()) == (want.mode, want.size, want.tobytes())
 
 
 def test_a_jpeg_is_extracted_as_it_is_stored(tmp_path):
@@ -363,8 +373,8 @@ def test_a_desk_photo_becomes_a_pdf_of_the_flattened_page_and_the_photo_is_kept_
         picture = intake.page_picture(doc, page).convert("RGB")
         assert page.rect.height > page.rect.width and min(picture.getpixel((3, 3))) > 200  # the page, no desk
         # OCR reads the page as it reads the photo itself (both flattened).
-        got = _pixels(_scan_png(doc, page))
-        want = _pixels(_image_pngs(converted.original, 1)[0])
+        got = _read_from_pdf(doc, page)
+        want = _read_from_picture(converted.original)
         assert got.size == want.size
 
 
@@ -375,7 +385,7 @@ def test_a_desk_photo_read_where_it_is_is_shown_as_it_is_read(tmp_path):
     from ap_coder.web import document
 
     photo = _desk_photo(tmp_path / "old.jpg")
-    read = _pixels(_image_pngs(photo, 1)[0])
+    read = _read_from_picture(photo)
     ((w_pt, h_pt, png),) = document._image_pages(str(photo))
     shown = _pixels(png)
     assert abs(w_pt / h_pt - read.width / read.height) < 0.01
@@ -423,9 +433,9 @@ def test_a_pdf_claiming_to_be_a_huge_picture_of_ours_is_rendered_not_decoded(tmp
         assert intake.made_from_picture(doc) and intake.page_picture(doc, page) is None
         tracemalloc.start()
         try:
-            png = layout._make_scan_png(doc, page)
+            picture, _ = layout._scan_picture(doc, page)
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
         assert peak < 20_000_000  # (the picture's own pixels alone are 100 MB)
-        assert png == layout._page_png(page)
+        assert picture.tobytes() == layout._page_picture(page)[0].tobytes()

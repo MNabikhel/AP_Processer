@@ -1,4 +1,5 @@
-"""Supplier learning, touchless processing, reader scores, the page reader's and Azure check's queues."""
+"""Supplier learning, touchless processing, reader scores, the Azure check's queue (the page reader's is
+``page_queue``)."""
 
 from __future__ import annotations
 
@@ -6,12 +7,10 @@ import datetime as dt
 import json
 import sqlite3
 import zlib
-from collections.abc import Callable
 from typing import Any
 
 from ._base import (
     _AZURE_IN_LINE,
-    _IN_LINE,
     APPROVED,
     AZURE_CHECKING,
     AZURE_DONE,
@@ -20,14 +19,7 @@ from ._base import (
     AZURE_WAITING,
     DEFAULT_TOUCHLESS_LIMIT,
     KEEP_SNAPSHOTS,
-    PAGE_DONE,
-    PAGE_FAILED,
-    PAGE_READING,
-    PAGE_SKIPPED,
-    PAGE_WAITING,
-    PARKED,
     PENDING,
-    REVIEW,
     TOUCHLESS_LIMIT_SETTING,
     TOUCHLESS_SETTING,
     _in_list,
@@ -752,139 +744,6 @@ class CaptureMixin:
             ).fetchall()
         return {r["evidence"]: (int(r["n"]), int(r["ok"] or 0)) for r in rows}
 
-    def queue_page_read(self, invoice_id: int, reason: str, requested_by: str = "") -> bool:
-        """Put an invoice in line for the page reader. One already waiting keeps its place in line (a person
-        asking for it is noted); one read before goes to the back of the line; a read under way is left to
-        finish (False)."""
-        now = _now()
-        waiting = "page_reads.status IN ('waiting', 'reading')"  # past the WHERE below, a reading row is stale
-        keep = f"{waiting} AND excluded.requested_by = ''"  # a background request never replaces a person's
-        with self._conn() as conn:
-            cur = conn.execute(
-                f"""INSERT INTO page_reads (invoice_id, status, reason, requested_by, created_at, updated_at)
-                    VALUES (?, 'waiting', ?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET status = 'waiting',
-                    reason = CASE WHEN {keep} THEN page_reads.reason ELSE excluded.reason END,
-                    requested_by = CASE WHEN {keep} THEN page_reads.requested_by ELSE excluded.requested_by END,
-                    created_at = CASE WHEN {waiting} THEN page_reads.created_at ELSE excluded.created_at END,
-                    error = '', tries = 0, reader = '', updated_at = excluded.updated_at
-                    WHERE page_reads.status != 'reading' OR page_reads.updated_at < ?""",
-                (invoice_id, reason or "", requested_by or "", now, now, _stale_before()),
-            )
-            return cur.rowcount > 0
-
-    def next_page_read(self, invoice_id: int | None = None, reader: str = "") -> dict[str, Any] | None:
-        """The invoice the page reader should read next (the one waiting longest), marked as being read (by
-        ``reader``: the process reading it); None when nothing waits. With ``invoice_id``: that invoice, if it is in
-        line (the one AP asked for, read first), else None. Two readers (the dashboard's and ``read-pages``) never
-        take the same invoice."""
-        now, stale = _now(), _stale_before()
-        with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
-            if invoice_id is None:
-                row = conn.execute(
-                    f"SELECT invoice_id FROM page_reads WHERE {_IN_LINE} ORDER BY created_at, invoice_id LIMIT 1",
-                    (stale,),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    f"SELECT invoice_id FROM page_reads WHERE invoice_id = ? AND {_IN_LINE}", (invoice_id, stale)
-                ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
-                "UPDATE page_reads SET status = 'reading', error = '', reader = ?, updated_at = ? WHERE invoice_id = ?",
-                (reader or "", now, row[0]),
-            )
-            taken = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (row[0],)).fetchone()
-        return dict(taken)
-
-    def skip_page_read(self, invoice_id: int, reason: str, why: str) -> bool:
-        """Record that the page reader leaves a new invoice out (``skipped``, ``why``), never put in line (D-111); an
-        invoice already in line is left as it is. False then."""
-        now = _now()
-        with self._conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO page_reads (invoice_id, status, reason, error, created_at, updated_at) VALUES "
-                "(?, 'skipped', ?, ?, ?, ?) ON CONFLICT(invoice_id) DO NOTHING",
-                (invoice_id, reason or "", why or "", now, now),
-            )
-            return cur.rowcount > 0
-
-    def finish_page_read(
-        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = "",
-        *, tries: int | None = None, only_if_reading: bool = False,
-    ) -> bool:  # fmt: skip
-        """How a page read ended: ``done``, ``failed`` (``error`` says why), ``skipped`` (nothing to read, or the
-        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). ``tries``:
-        the reads cut off by the model server so far (None: as it was; ``done`` starts again from 0).
-        ``only_if_reading``: only while it is still marked as being read. False when the invoice is no longer in
-        line (deleted meanwhile)."""
-        if status not in (PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED, PAGE_WAITING):
-            raise ValueError(f"unknown page read status {status!r}")
-        if tries is None and status == PAGE_DONE:
-            tries = 0
-        with self._conn() as conn:
-            cur = conn.execute(
-                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ?, "
-                "reader = '', tries = COALESCE(?, tries) WHERE invoice_id = ?"
-                + (" AND status = 'reading'" if only_if_reading else ""),
-                (status, model or "", int(pages or 0), round(float(seconds or 0), 2), (error or "")[:2000], _now(),
-                 tries, invoice_id),
-            )  # fmt: skip
-            return cur.rowcount > 0
-
-    def release_page_reads(self, alive: Callable[[str], bool]) -> int:
-        """Put back in line every invoice marked as being read by a reader that isn't reading any more
-        (``alive(reader)`` is False: its process was closed or killed part way). How many were put back."""
-        why = "interrupted (AP Coder was closed while it was read): it is read again"
-        with self._conn() as conn:
-            rows = conn.execute("SELECT invoice_id, reader FROM page_reads WHERE status = 'reading'").fetchall()
-            gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]
-            for invoice_id, reader in gone:
-                conn.execute(
-                    "UPDATE page_reads SET status = 'waiting', reader = '', error = ?, updated_at = ? "
-                    "WHERE invoice_id = ? AND status = 'reading' AND reader = ?",
-                    (why, _now(), invoice_id, reader),
-                )
-        return len(gone)
-
-    def page_read(self, invoice_id: int) -> dict[str, Any] | None:
-        """{invoice_id, status, model, pages, seconds, reason, error, requested_by, created_at, updated_at}, or
-        None if the invoice was never put in line. A read interrupted long ago shows as waiting."""
-        with self._conn() as conn:
-            row = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (invoice_id,)).fetchone()
-        if row is None:
-            return None
-        read = dict(row)
-        if read["status"] == PAGE_READING and read["updated_at"] < _stale_before():
-            read["status"] = PAGE_WAITING
-        return read
-
-    def page_reads_waiting(self, still_open: bool = False) -> int:
-        """How many invoices wait for the page reader (interrupted reads included). ``still_open``: only those not
-        approved, rejected or exported yet, the ones a person waits for (the reader still reads the others, to score
-        itself against what AP approved)."""
-        sql = f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}"
-        args: list[Any] = [_stale_before()]
-        if still_open:  # each one's invoice looked up, not every invoice in review listed first (B-1736)
-            sql += (" AND EXISTS (SELECT 1 FROM invoices WHERE invoices.id = page_reads.invoice_id AND invoices.status "
-                    "IN (?, ?, ?))")  # fmt: skip
-            args += [REVIEW, PARKED, PENDING]
-        with self._conn() as conn:
-            row = conn.execute(sql, args).fetchone()
-        return int(row[0])
-
-    def page_read_pages_average(self, recent: int = 50) -> float | None:
-        """The pages the page reader read per invoice, on average over its latest ``recent`` finished reads (None
-        before the first): how many pages an invoice in its queue is likely to have."""
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT AVG(pages) FROM (SELECT pages FROM page_reads WHERE status = 'done' AND pages > 0 "
-                "ORDER BY updated_at DESC LIMIT ?)",
-                (int(recent),),
-            ).fetchone()
-        return round(float(row[0]), 2) if row and row[0] is not None else None
-
     def supplier_templates_count(self) -> int:
         """How many suppliers have a learned template (for "How AP Coder reads every invoice"), without reading
         them: off the partial index of those (``supplier_profiles_template``, B-1736)."""
@@ -894,23 +753,6 @@ class CaptureMixin:
                 "AND template_json NOT IN ('', 'null', '{}')"
             ).fetchone()
         return int(row[0]) if row else 0
-
-    def page_reads_ahead(self, invoice_id: int) -> int:
-        """How many invoices the page reader reads before this one: the one being read now, and those in line
-        ahead of it in the order ``next_page_read`` takes them. 0 when it isn't waiting."""
-        stale = _stale_before()
-        with self._conn() as conn:
-            me = conn.execute(
-                f"SELECT created_at FROM page_reads WHERE invoice_id = ? AND {_IN_LINE}", (invoice_id, stale)
-            ).fetchone()
-            if me is None:
-                return 0
-            row = conn.execute(
-                f"""SELECT COUNT(*) FROM page_reads WHERE invoice_id != ? AND ((status = 'reading' AND updated_at >= ?)
-                    OR ({_IN_LINE} AND (created_at < ? OR (created_at = ? AND invoice_id < ?))))""",
-                (invoice_id, stale, stale, me[0], me[0], invoice_id),
-            ).fetchone()
-        return int(row[0])
 
     # --- The Azure check's queue (ap_coder/ai/azure_check.py) -----------------------------------------------------
 

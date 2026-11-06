@@ -357,7 +357,9 @@ def pdf_text(content: bytes, pages: int = 2) -> str:
     try:
         import pymupdf
 
-        with pymupdf.open(stream=content, filetype="pdf") as doc:
+        from ..capture.layout import PDF_LOCK
+
+        with PDF_LOCK, pymupdf.open(stream=content, filetype="pdf") as doc:  # PyMuPDF one thread at a time (D-170)
             return "\n".join(doc[i].get_text() for i in range(min(pages, doc.page_count)))[:MAX_TEXT]
     except Exception:  # noqa: BLE001 - a damaged PDF: the review queue says so when it is read
         return ""

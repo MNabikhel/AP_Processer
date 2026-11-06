@@ -1226,3 +1226,483 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
     `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
     `tests/bench/test_seed_volume.py`)
+- **D-168** · **Imports out of the web workers: a persistent import queue, capture processes of their own on the
+  company server, the arrival's chat call bounded, each file hashed once; schema 26** (phase 3 α; changes D-99's
+  imports queued in memory and D-111's one import job server-wide).
+  - **Why:** on the server an import ran as one job server-wide, in a thread of a web worker: files read one after
+    another, the uploads queued meanwhile in that worker's memory (lost at a restart), the chat model asked on each
+    arrival for up to 600 s, and OCR holding that worker's Python lock for up to 0.9 s, which slowed every page it
+    served. A colleague's 1,000 files went before your 3.
+  - **The queue** (`core/store/imports.py`; `import_batches`, `import_files`, `import_turns`):
+    - **In:** an upload (its SHA-256 from the bytes uploaded), the Process button's pick-up and a scheduled `watch`
+      (only the files whose size and time the pick-up hasn't noted are read, `intake.imports.pick_up`), `ap_coder
+      process` (a batch of its own, `--force` reads stored files again), a Retry. One transaction a batch; a file an
+      invoice was made from (a failed one too for the folder's pick-ups) or a repeat is named among its skipped.
+    - **Taken** one at a time in BEGIN IMMEDIATE (`claim_import`): a person's batch before a watch's, then the
+      uploader served least recently (round-robin, `import_turns`), then the oldest. Never a file whose content
+      another reader is reading; a file stored meanwhile is skipped as it is taken.
+    - **Leases:** 120 s (`IMPORT_LEASE_SECONDS`), renewed every 20 s by the reader's heartbeat (the files under way
+      only, B-1767), as times of the database's clock (`julianday('now')`) compared there. A file whose reader
+      stopped is taken again once its lease ran out; the second time (`IMPORT_TRIES`) it is failed with the reason
+      (`STOPPED_TWICE`) as an invoice in Failed / rejected, which Retry reads again. One whose invoice its reader stored
+      before it stopped is done with that invoice, whatever its try (B-1769). A stop (the server, Ctrl+C, a laptop's
+      dashboard: B-1766) puts the file back, its try not counted.
+    - **A restart:** what waits is taken up again: by the capture processes, a laptop's dashboard at its start
+      (`process.resume`), or the next `watch`.
+    - **A full disk:** nothing is taken while the data folder's disk has less than `backups.BACKUP_RESERVE` (512 MB)
+      free; the files stay in the folder, in line, and the Process page says why. With room again they are read: the
+      readers look again every 5 s (B-1764).
+    - **The Process page** shows the latest run (`process.import_status`, the job's snapshot as before): the batches
+      that came in while the queue had work. Each batch is recorded in the audit trail once its last file is done
+      (`record_import_run`, D-103). Kept 7 days (`IMPORT_KEEP_DAYS`), the latest run whatever its age. A file that
+      could not be read just then (the GL accounts open in Excel) waits in line with the reason, which the card says
+      (`release_imports(error=)`, B-1764). The Process button waits 3 s at most for another pick-up (B-1771).
+  - **Who reads** (`intake.imports.Reader`):
+    - **The company server** (`serve --server`, several web workers): `server.capture_processes()` capture processes
+      (`serve --capture-work`, `server.run_capture`) beside the background process, started and stopped with it
+      (`server.Together`: asked at once, 15 s in all), started again when one stops. As many as the cores less two,
+      and as fit at `CAPTURE_MB` (700 MB; 660-680 measured) in the memory the web workers leave less 2 GB: 4 cores and
+      16 GB 2, 32 cores and 64 GB 20; `AP_CAPTURE_PROCESSES` sets it. Each a fresh Python (`subprocess`, so spawn on
+      every system), its models loaded once for its life, its ONNX Runtime, OpenCV and BLAS threads its share of the
+      cores less two (`AP_OCR_THREADS`, `server.capture_env`: 1 each on 4 cores), its log `logs/capture-<n>.log`. A
+      stop gives the file under way 12 s, then puts it back. No web worker reads an invoice.
+    - **A laptop** and `--workers 1`: the dashboard's own job "process", in its own process, as before; after a pause
+      or an error it looks again every 5 s while files wait, as the capture processes do (D-172, B-1764).
+    - **`watch`** reads what waits, unless a capture process runs (its `capture:` lease), then it only puts files in
+      line; **`process`** reads its own batch (its `reader:` lease; anyone's once it stopped).
+  - **The arrival's chat call** (the choice): **a short timeout with a circuit breaker**, not a queue of its own.
+    - **How:** on the company server an arriving invoice waits at most 20 s for the chat model's accounts, the wait
+      for a chat slot included (`pipeline.ARRIVAL_SECONDS`, `AP_LLM_ARRIVAL_SECONDS`; `inference.ChatTimeout`,
+      `Slots.held(deadline=)`). After two arrivals in a row with no answer in time (`BREAKER_FAILURES`) arrivals
+      don't ask for 2 minutes (`BREAKER_SECONDS`), then one asks: an answer in time closes it. One per process. The
+      invoice goes in with the local coding, those lines left for AP; it is never left out of the page reader's pass
+      (D-111's `skip_clean`), which asks again with the full AP_LLM_TIMEOUT_SECONDS. One no page read asks again for
+      (a text file; one in line while the page reader can't read) is asked again by the background process's page
+      reader (D-172, B-1765).
+    - **Why not a queue:** an answer in time codes exactly as before (the same question, the same kept answers,
+      D-131), while a queued call would bring every invoice in without the model's accounts and need a writer that
+      changes a proposal someone may be reviewing already. The page reader's pass is that second chance already
+      (where it never comes, D-172 gives one, with the page reader's writer).
+    - **A laptop:** no limit (0), as before: its LM Studio is the pilot tester's own, and laptop mode stays as it is.
+  - **Hash once:** the SHA-256 read as the file comes in goes with it (`InvoicePipeline.process(sha256=)`,
+    `add_invoice(sha256=)`); a file whose size or time changed since is hashed again; the page reader's pass's
+    header reading takes the invoice's stored hash. The folder pick-up and `watch` no longer hash every file of the
+    folder at each press or check.
+  - **One rule** for a folder's files (`intake.files.folder_names`): `pipeline.invoice_files`, `pipeline.other_files`,
+    `mailbox.emails_in` and the import page's list are its parts (D-166 repeated them; B-1758's hidden emails kept).
+  - **Measured** (4 cores shared with two other agents' tests; `python -m ap_coder.bench day --n 100 --scanned 0.5`,
+    the fake model 8-20 s a page, 2 slots, time ×0.05; before: fd5d166 with B-1758):
+
+    | | before | after |
+    |---|---:|---:|
+    | all 100 in the review queue after | 8.9 min | 5.9 min |
+    | arrival, invoices an hour | 673 | 1,022 |
+    | page reader drained after | 9.1 min | 6.2 min |
+    | web workers' CPU (the busiest) | 1,067 s, 1.93 cores (1,057 s) | 9 s, 0.02 cores (3.5 s) |
+    | capture processes' CPU | | 600 s, 1.58 cores (2 processes) |
+    | `GET /review` p95 idle / during the drop | 18 / 204 ms | 20 / 130 ms |
+    | failures | 0 | 0 |
+
+    At 1,250 invoices (after; the base wasn't run, about 2 h here at 673 an hour): all in the review queue after
+    78.2 min (959 an hour), the page reader drained after 78.3 min, the AI reviewer all 1,250, 0 failures; the web
+    workers 158 s of CPU in all (0.03 cores), the capture processes 1.57 cores, 495 MB each; `GET /review` p95 15 ms
+    idle, 219 ms during the drop (a queue grown to 1,250 invoices, the 4 cores full with the capture processes, the
+    background process and two other agents' tests). At the model machine's full latency (an estimate): drained
+    after 8.4 h, the model machine's 1,250 a day with 2 slots being the limit now.
+
+    GIL probe (`p3_alpha/gil_probe.py` in the session's scratchpad: a 5 ms timer thread in a web worker while 20
+    scans are imported; how late it woke): p50 0.08 → 0.08 ms, p95 3.0 → 0.24 ms, p99 11.0 → 3.8 ms, the longest
+    818 → 100 ms, wake-ups over 50 ms 67 → 7 (of about 40,000; the 4 cores were shared, so a late wake-up after is
+    the machine's, not the import's); the import 262 → 209 s. `scripts/same_behaviour.py --ref
+    claude/epic-feynman-r6ns86 pipeline read approve` (Python 3.12, both OCR models): the same.
+  - **No new dependency.**
+  - **Not done:**
+    - `server.json` has no `capture_processes` key (`ops/service.py`): `AP_CAPTURE_PROCESSES` in the .env sets it.
+    - The day bench's estimate at full latency still adds the arrival's chat answers one after another, as when one
+      import read serially: with N capture processes and the 20 s limit it overstates the arrival.
+    - A reader that loses its lease while still reading (no heartbeat for 2 minutes: the database held by another
+      writer that long) could have its file read again by another; the claim then finds it stored only if the first
+      saved it already.
+  - (`core/store/{imports,_base,folder,invoices}.py`, `intake/{files,imports,mailbox}.py`, `ai/pipeline.py`,
+    `ai/inference.py`, `ai/local_llm.py`, `web/pages/{process,review}.py`, `web/server.py`, `web/app.py`,
+    `ops/cli.py`, `ops/offline.py`, `bench/day.py`, `web/templates/process.html`, `web/static/js/process.js`;
+    `tests/core/test_imports.py`, `tests/intake/test_imports.py`, `tests/ai/test_pipeline_arrival.py`,
+    `tests/web/test_server_capture.py`, `tests/web/test_web_process.py`, `tests/web/test_server_ux.py`,
+    `tests/web/test_server_capacity.py`, `tests/ops/test_controls_watch.py`, `tests/coding/test_terms_po_vendors.py`,
+    `tests/ai/test_pipeline.py`)
+- **D-169** · **The long downloads made by the server's background process; the big answers worked out once for
+  every process; search to Excel written without openpyxl's cells; schema 27** (scale goal phase 3, item δ).
+  - **Why:** at 25 people the web workers were half busy, yet a page's p95 was 4.45 s
+    (`docs/archive/scale-2026-11/phase2b-load-100-people.md`): Python runs one thread of a process at a time, and a
+    long request (search to Excel 9-12 s, the Activity CSV 7-16 s, the duplicates CSV's first 11-15 s) held its
+    worker's while the light pages beside it waited. And the answers kept in a worker's memory (`summary_memo`) were
+    worked out again in each worker: month-end's first visit 5-8.6 s, the duplicate audit 7-15 s.
+  - **The downloads** (`web/pages/downloads.py`; the jobs in `report_jobs`, `core/store/reports.py`): on the company
+    server search to Excel and to CSV, the Activity CSV, the duplicate audit's CSV and the accruals CSV (`KINDS`).
+    - The page's link (`a[data-download-job]`, `app.js`) asks its own address with the page's header: the web worker
+      reads what the file is of (the filters; the person's default layout; the events they may see) and answers with
+      the job, at once. The link says how far it got ("Making the file: 12,000 of 50,000 invoices written", or how
+      many files wait before it), then the file downloads from its own address with `job=<id>`, so the access log and
+      Activity's "Downloaded" name it as before.
+    - Asked without that header (a bookmark, a script, the load bench), the worker waits for the job holding no thread
+      (an async handler that looks at the job every 0.05 s, then up to every 0.25 s), then sends the file as before.
+    - The background process makes them (`Runner`, started by `app.start_background_work`: in `serve
+      --background-work`, or in the one process of `--workers 1`), 2 at a time, oldest first, each written beside the
+      others under a name of its own and renamed once whole. A server of one process whose background work was not
+      started (a first test, `bench volume`) makes them on a thread of its own, which ends once none waits; after a
+      restart, the page following a job the process before left, or its file asked for, starts it again (B-1777).
+    - Each job is its owner's: another person's is "No such download". A person may download what the route's own
+      role rule lets them (Read-only too: the file is theirs, nothing else changes); `GET /downloads/<id>` (how far
+      it got) is READ and the owner's. The same file asked again while it waits is the same job, from two web
+      workers at once too (one write transaction, and a unique index of the jobs waiting or being made). At most 3
+      waiting or being made a person (a 429 says so). A file is kept an hour, the 5 latest of each person (`sweep`).
+      The sweep also removes a half-written file 60 s after its maker last noted how far it got (each note keeps the
+      file's time new, B-1773), and any file no job names once it is an hour old (its process killed before the job
+      was recorded made; one Windows refused to remove while it was sent: B-1775). A file whose job was not recorded
+      made is removed by its maker at once (B-1774, B-1776).
+    - **A restart:** a background process that stops (an update, the service restarted) puts the job under way back
+      in line, and the next one makes it; one killed is seen stopped after 60 s without a note of its progress and its
+      jobs are taken again, twice in all, then fail with why; its late end is refused (the file is not the job's). A
+      job an older AP Coder left fails ("AP Coder was updated…": what its filters mean may have changed).
+    - **A full disk:** under `backups.BACKUP_RESERVE` free before it starts (D-160's rule), or full while it writes
+      (ENOSPC, SQLite's "disk is full"), the job ends with why; nothing half written is left.
+    - **A restore** empties `.cache/downloads` (D-156's amendment, `made/` with it), and the jobs of the database
+      before are no one's (another `summary_id`): none is made, none is shown, the next sweep forgets them.
+    - The routes left the long routes' lane (`core.HEAVY_ROUTES`): their worker only waits. On a laptop each is made
+      as it is asked for, as before (the Activity CSV sent as it is read, B-1597).
+    - **Not made so:** the Sales tax CSVs (0.4-0.8 s, within a report's 3 s); the Spend workbook stays a `web/jobs.py`
+      job in the worker that started it (D-156; `web/pages/spend.py` is another's).
+  - **Worked out once for every process** (`Store.shared_answer`, the table `report_answers`): an answer with the
+    stamp it was worked out under, read before the work as `summary_memo` reads its own (D-159): the database's
+    `summary_id`, the summary's generation, the counts of changes the triggers keep, and what it is for (`asked`, by a
+    digest of its `repr`). A process with nothing kept takes it while the stamp read now is the same.
+    - **JSON only**, never pickle (what is read back is data, never code); each answer gives its own format (`version`,
+      with AP Coder's version): one an older AP Coder wrote, another format, or one that is not JSON is worked out
+      again. At most 16 MB (`ANSWER_MOST_BYTES`): a bigger one is kept in its process only. The 8 latest of each name.
+    - One process works it out: a lease in `ephemeral` (`answer/<name>/<asked>`, 5 minutes at most); one asking the
+      same meanwhile waits up to 30 s for it, then works it out itself. One thread of a process at a time (a lock).
+    - Each process keeps its own copy (32 at most): asked again, nothing is read from the database but the stamp.
+    - `settle` (D-164) holds across processes by when the work began (`reports.wall`): once what it depends on
+      changed, an answer begun less than `settle` seconds ago on the same database is taken, in whichever process it
+      was made, so it is never older than that (two settles stacked would have made it twice as old).
+    - In a write under way (or a read transaction) it is worked out afresh, neither read nor kept, as `summary_memo`.
+      Its write waits at most a moment for another writer (`briefly`); a busy or full database just doesn't keep it.
+    - **Used for:** the duplicate audit's pairs (its page and CSV; `changes/register` and the generation, as D-162);
+      month-end's received, not invoiced lines and the invoices not in the ERP yet (what they were asked by, as
+      D-166; the page's 30 s settle now across processes); and each received PO's accruals by the digest of what they
+      come from (D-166's `_PARTS`, kept for all as `received_parts`): a process with none kept decodes none of the
+      billing invoices another one decoded, and after a change only those of the POs whose billing changed.
+    - **Month-end:** this, not D-162's summary table of each invoice's PO-billing lines: that is a summary column, so
+      `SUMMARY_RULES` moves and every database's summary is built again at its next start (86 s at 100,000 invoices,
+      D-167), and the 0.5 s kept path (the POs' lines, the billing invoices' rows) stays either way.
+    - **Not shared:** the recurring vendors (0.7 s a process at most every 60 s): the queue's late pill settles it
+      again on top (`web/pages/review.py`), so a shared settled answer could be shown twice as old as D-165 says; the
+      vendor list (`web/pages/invoice.py`, 0.8 s a worker a change); Sales tax (D-166: `coding/taxreturn.py`'s).
+  - **Search to Excel** is written by `exports.sheet_workbook`: the workbook's parts written as text a row at a
+    time, the cells as openpyxl writes them (numbers "%.16g", dates as Excel's serial days, text inline with its
+    spaces kept, `#N/A` and the like as errors, a formula-looking text quoted), the same formats, header, widths,
+    frozen header and filter. What it holds is what the whole sheet held in memory (`exports._sheet`) holds, cell by
+    cell, read back and compared (`tests/erp/test_directory.py`, with numbers past 2^53, spaces only, 40,000
+    characters, dates before 1900-03-01). `streamed_sheet` (D-157) is gone. On a laptop too.
+  - **Schema 27:** `report_answers` and `report_jobs`, made by `_SCHEMA` at every start. Another change takes 26; its
+    migration comes before this one at the integration. Going back: an older version refuses a database of schema 27
+    (`DatabaseTooNew`), and `server-update --back` restores the pre-update backup.
+  - **Measured** (`p3_delta/` in the session's scratchpad: a copy of the 100,000-invoice database at schema 27,
+    against fd5d166 on the seed itself; the machine shared with two other agents' work, its load 3 to 9, so each
+    figure beside the one it is compared with):
+    - **A web worker's part** of each download on the server, asked by the page: 8-80 ms (7-46 ms of CPU). Before, it
+      made the whole file: search to Excel 8.6 s, to CSV 1.1 s, the Activity CSV 8.6 s, the duplicates CSV 6.8 s
+      the first time in each worker (`bench volume`, admin).
+    - **The background process's:** search to Excel 8.6-9.2 → 2.2-2.3 s (8.2-8.5 → 2.2 s of CPU: the writer), to CSV
+      1.1-1.3 s, the Activity CSV 5.4-5.7 s, the duplicates CSV 0.02 s (the pairs shared), the accruals CSV 0.8 s the
+      first time, 0.04 s after.
+    - **The first time in a process** (a fresh Python each, the month-end page's answers and the audit's pairs):
+      before, 5.0-6.2 s and 6.7-7.2 s in every process; now 5.0 s and 6.4 s in the server's first, then 0.8 s (the
+      recurring vendors, not shared) and 0.01 s in each other.
+    - **`bench volume --roles admin --only` the changed routes** (one process; asked without the page's header, so
+      the time to the file, made beside the request on a thread of its own): search to Excel 8.57 → 2.26-2.58 s,
+      to CSV 1.12 → 1.59-1.79 s (the file written, then sent; a look at the job every 0.25 s at most), the
+      Activity CSV 8.56 → 7.54-7.75 s, the accruals CSV 0.05 → 0.16 s, the duplicates CSV's and month-end's first
+      6.8 and 5.4 s → 7.0-7.4 and 5.4-5.7 s (the server's first: the same work), Exports and month-end after it the
+      same.
+  - **Not done:**
+    - The load bench asks for the downloads without the page's header (`bench/load.py` `export_search`): its worker
+      then waits holding no thread while the background process makes the file.
+    - The Activity CSV (5.4 s in the background, each event decoded for its words), the Spend workbook made in the
+      background process, the recurring vendors and the vendor list shared.
+    - The background process warming the shared answers after a change (the first ask after it works them out).
+  - (`core/store/{reports,_base,__init__}.py`, `erp/{accruals,dupaudit,directory,exports}.py`,
+    `web/pages/{downloads,search,activity,exports,month_end,__init__}.py`, `web/{app,core,files,roles}.py`,
+    `web/static/js/app.js`, the four pages' templates, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/core/test_reports.py`, `tests/core/test_kept_answers.py`, `tests/web/test_downloads.py`,
+    `tests/erp/test_directory.py`, `tests/erp/test_accruals.py`)
+- **D-170** · **A scanned page is drawn and OCR'd once, whatever reads it and in whichever process; OCR reads the
+  page's pixels, with no PNG between; PyMuPDF one thread at a time; one HTTP client a model server; the totals
+  solver pruned. What is read is the same, byte for byte** (phase 3, item β; B-1760).
+  - **Why** (measured again on fd5d166, Python 3.12, both OCR engines and the table finder): a scan was read up to
+    five times in its life (arrival, the page reader's blank pages and its pass, the approval's template learning,
+    teach mode's words) and each time every page was drawn and made a PNG again (0.4 to 1 s a page), because the
+    readings kept in `.cache/ocr` were named by the hash of that PNG: the page reader's pass on a 2-page scan took
+    3.2 s with every reading kept, teach mode 1.9 s. The table finder's tables were kept only in the process that
+    found them. PyMuPDF was used from several threads with no lock (N-14). Each page read made a new HTTP client
+    (B-1760). The totals solver tried up to 480,000 combinations (1.3 s).
+  - **The readings kept by what was asked** (`capture/layout.py`): a page for OCR is a `PageToRead`, named by the
+    file's SHA-256 (worked out once per version of the file, before it is opened), the page and how it is drawn
+    (`OCR_DPI`, `OCR_MAX_SIDE`, straightened and enlarged for a second read by the same engine), and drawn only when
+    its reading isn't kept. A reading is kept under the hash of that, the engine with its settings and its model
+    files' SHA-256, the libraries' versions (RapidOCR, ONNX Runtime, PyMuPDF, Pillow, pillow-heif, NumPy, OpenCV) and
+    `PAGE_DRAWING` (`kept_name`). Kept with it: the picture's size, the resolution it states and, when the page's turn
+    needed them, its letters' count (``_letters_upright``), so a reading read back never draws the page. The turn,
+    the tilt and the words are worked out from the reading each time, as before: a change to the reader needs no
+    reading again. `tests/capture/test_reading_cache.py` pins the code that draws a page, runs OCR and says what is
+    kept (`KEPT_CODE`): a change to it fails until `PAGE_DRAWING` is one more.
+    - The table finder's tables are kept there too (by the file, the pages, the model's SHA-256 and its settings).
+    - The folder is `.cache/ocr`, shared by every process of the data folder: a reading is written under a name of
+      its process and thread, then renamed; at most 512 MB (was 4,000 files, about a day and a half of a busy
+      server's scans: two weeks now), the oldest written first, down to three quarters; a half-written one left by a
+      stopped process goes after an hour. The readings named the old way are never read again and go as the folder
+      is pruned: each page kept is read once more.
+    - `AP_OCR_CACHE` (a developer's cache for bench iterations) is named the same way now; D-163's names go, so a
+      cache made before is read once more.
+    - Not kept on disk: the pictures themselves (the readings are what is read back). In memory, the last pages
+      drawn (at most 32 MB, `PICTURES_KEPT_BYTES`) for the second engine, as the last 4 PNGs were.
+  - **Pixels, no PNG** (`_page_picture`, `_scan_picture`, `_image_pages`, `_prepared`, `table_finder.page_pictures`):
+    PyMuPDF's pixmap into a Pillow picture, a picture's frame as it is, the second read's straightened page as it is
+    made. OCR is given the same pixels, in the same mode, as the PNG gave it, and the resolution the PNG stated
+    (PyMuPDF writes the pixmap's own, 96 dpi: read off a one-pixel PNG once, `_png_dpi`; a page small enough states
+    it, as before). Proven per kind of page in the tests: a scanned PDF page (letter, a 4 x 6 in. slip, tabloid), a
+    PDF made from a picture (PNG, JPEG, grey, palette), a photo and a 3-page TIFF, PNG files with transparency,
+    palette and grey, the straightened second read of each, and the table finder's pictures.
+  - **PyMuPDF one thread at a time** (`layout.PDF_LOCK`, `opened_pdf`): every call on a document in `capture/` and
+    `web/document.py` (the page pictures, teach mode's words, the page sizes) holds one lock; OCR runs outside it.
+    PyMuPDF holds Python's own lock in its calls (another thread got 2% of the time during a page's PNG), so nothing
+    waits longer than before. Fifty PDFs (scans and digital, one to three pages) read, rendered for the table finder
+    and the viewer and listed for teach mode, eight threads at once, each the same as alone. N-14 did not reproduce
+    before: the lock makes it so whatever PyMuPDF's next version does.
+  - **One HTTP client a model server** (`local_llm.build_local_client`, B-1760): shared by every request of a
+    process to that server and way of reaching it (refused, on the network and how, the internet), a forked process
+    making its own: 1,000 page reads and codings against a server keeping its connections open, 2,000 more open
+    files before, none now.
+  - **The totals solver** (`reader/totals.py`): with a total tax or a deposit only the combination with no tax is
+    tried (the others were all skipped one by one); otherwise only the taxes that make the totals add up (a range of
+    the combinations sorted by their sum: the sum grows with it) and those whose most possible score, worked out
+    with each tax's rate, beats the best so far. One that doesn't add up never scores 3.0 more, so the subtotals that
+    balance are all still found. The same answers: 5,000 random readings of every kind (added up or not, a deposit,
+    a total tax, GST and HST from one amount, no subtotal) the same readings, scores and methods as the solver kept
+    in the test (`_solve_totals_as_before`), 300 in the test itself. No cap on the combinations: a cap could change
+    an answer. Worst case (every amount field full) 1.33 s → 12 ms.
+  - **The proof that reading is the same:** `scripts/same_behaviour.py --ref claude/epic-feynman-r6ns86 read
+    pipeline` (Python 3.12, both engines, the table finder on): read 60 outputs and pipeline the same bytes. `python -m
+    ap_coder.bench run --quick --scanned 1` and `lines --quick --scanned 1` before and after: the same evidence,
+    failures, reports and cases (field accuracy 100.0%, ECE 0.0226; descriptions right 43.1%), only the timings
+    differ.
+  - **Measured** (`p3_beta/stages.py` in the session's scratchpad: a 2-page bench scan, each step in a new process,
+    the arrival with the models loaded, before and after one after the other 4 to 6 times, medians; other agents'
+    work loaded the 4 cores 2 to 8 times over, so the arrival's times spread from 12 to 43 s):
+
+    | a 2-page scan | both OCR engines | one engine (the second read straightened, enlarged) |
+    |---|---:|---:|
+    | arrival | 28.6 → 28.5 s | 35.6 → 28.9 s |
+    | the page reader's pass (its blank pages, then the whole pipeline again) | 3.16 → 0.69 s | 6.77 → 0.67 s |
+    | of it, the reading (`analyze`) | 2.55 → 0.27 s | 6.04 → 0.22 s |
+    | teach mode's words | 1.80 → 0.41 s | |
+    | the approval's template learning (`build_layout`) | 1.88 → 0.43 s | |
+
+    The arrival with both engines is the OCR: drawing the pages for it took 1.6 s of 11 s on a quiet moment (PyMuPDF's
+    PNG 1.43 s, read back 0.18 s), now 0.26 s, within the load's spread here. With one engine, the straightened page
+    is no longer made a PNG and read back (that column with the cores loaded 5 to 7 times over). Teach mode's 0.41 s
+    is importing RapidOCR in a new process: in a running one, the same invoice's words again take 0.01 s (0.16 s
+    before, its last 4 pages' PNGs in memory). What is read is the same in every row (each step's digest, before and
+    after).
+
+  - **Not done, and why:**
+    - The OCR itself is the arrival's cost and stays: a reading the same needs the same engines on the same pixels.
+    - `ai/page_reader.py` keeps its own `_RENDER_LOCK`, and `ai/imaging.py`, `ai/pipeline.py`, `intake/`,
+      `erp/stamp.py` call PyMuPDF without `PDF_LOCK`: not this item's files (one line each to share it).
+    - The table finder's model is loaded in each process (0.6 s); its tables are no longer looked for again.
+    - Found, then changed (B-1761, B-1778): a page drawn for OCR states the 96 dpi PyMuPDF gives its pixmaps, so a
+      small page with neither text nor a picture (text drawn as outlines, a 4 x 6 in. slip) was said to be scanned
+      at about 96 dpi, coarse, and each field went to a person. A PDF page's resolution is now its scan's: the
+      picture covering at least a quarter of it, from 100 px on its short side (a 4 x 6 in. slip at 72 dpi, a
+      thumbnail made a PDF: coarse, as before); a page without one has none.
+  - (`capture/layout.py`, `capture/table_finder.py`, `capture/reader/totals.py`, `web/document.py`,
+    `ai/local_llm.py`, `docs/HOW_IT_RUNS.md`, `docs/CAPTURE_DESIGN.md`; `tests/capture/test_reading_cache.py`,
+    `tests/capture/test_totals_solver.py`, `tests/capture/test_reading_once.py`, `tests/ai/test_local_llm.py`)
+- **D-171** · **The page reader's and the AI reviewer's queues renewed while read, taken in order, the reviewer not
+  starved on the server; an import stored only by the reader holding it; the model's kept answers pruned; the
+  learning memory updated, not built again, after an approval; a vendor's extended index kept within bytes** (phase
+  3, item γ; B-1762, B-1763).
+  - **The queues** (`core/store/page_queue.py`: the page reader's queue moved out of `capture.py` as it was, then
+    changed; the reviewer's in `lessons.py`):
+    - **A heartbeat:** a read (`page_reads`, "reading") or a review ("verifying") under way is renewed every
+      `READING_RENEW_SECONDS` (60 s) by a thread of its reader (`page_worker.renewed`, `renew_page_read`,
+      `renew_verification`, only while it is still that reader's) and is in line again once not renewed for
+      `READING_STALE_SECONDS` (5 minutes; it was `STALE_READING_HOURS`, 2 hours, the row never renewed), on the
+      database's clock (`renewed`, D-172, B-1770). A reader whose process is gone is still put back at once
+      (`release_interrupted`). One whose read or review another took meanwhile ends nothing of it and folds nothing
+      in (B-1770). The Azure check keeps its 2 hours (not renewed: a check taken again would send its pages to Azure
+      twice).
+    - **The order:** a person's first (the page reader: `requested_by`, the invoice's "Add it to OvisOCR2's queue" or
+      `read-pages --invoice`; the reviewer: "asked by <name>"), then an invoice touchless processing waits on (a
+      touchless supplier's new invoice, reason `TOUCHLESS_NEXT`, from the arrival's `WAITING_FOR_PAGE_READER`; the
+      reviewer's "held for touchless"), then the earliest due date (none last: a credit note), then the oldest. One
+      SQL order (`_ORDER`, `_REVIEW_ORDER`, on the invoice's `due_date`); where an invoice is in line
+      (`page_reads_ahead`) counts by the same order (row values). Before, the oldest first: a person's request
+      went to the back of the line.
+    - **The AI reviewer's turn** (the choice: interleaved, not a thread of its own): on the company server each
+      reader thread gives the reviewer the next turn after each invoice it read, when it has one ready
+      (`BackgroundReader._round`), and goes on reading at once after it, even when the chat model didn't answer (the
+      minute's pause is for a reader with nothing left to read); a reader thread still asks the model server one
+      thing at a time, so `llm_parallel` stays what the model machine is asked at once. A thread of its own would
+      ask N + 1 at once, beside the arrival's chat calls. On a laptop it reviews once nothing is left to read, as
+      before: one LM Studio there may hold one model at a time, and switching OvisOCR2 and the chat model after each
+      invoice would load one each time.
+    - **The wait** (`wait_seconds`): the rounds of the `llm_parallel` readers, the queue's (its count over the
+      readers, rounded up) or an invoice's (those ahead over the readers, then its own); one reader as before
+      (B-1763).
+    - **Measured** (`python -m ap_coder.bench day --n 100 --scanned 0.5`, the fake model 8-20 s a page, 2 slots,
+      time ×0.05; before: aad1b61 with this bench's new figures; the 4 cores shared with other agents' work):
+
+      | | before | after |
+      |---|---:|---:|
+      | reviews done while the page reader had invoices in line | 23 of 100 | 94 of 100 |
+      | an invoice's wait for its review once read, median / max | 21.5 / 44 s | 1.0 / 17 s |
+      | the first review after the drop | 49 s | 24 s |
+      | the longest stretch reads waited and no review ended | 77 s | 30 s |
+      | all in the review queue / the page reader drained after | 5.3 / 5.4 min | 5.2 / 5.4 min |
+      | failures | 0 | 0 |
+
+  - **An import stored once** (B-1762, D-168's "not done"): the import queue's reader sets `IMPORT_CLAIM` (the file
+    and its reader) around the pipeline, and `add_invoice` notes the invoice on that file in its own transaction
+    (`ImportsMixin._claim_noted`), only while the file is still that reader's; else `ClaimLost`, nothing of it is
+    stored (its event neither) and the pipeline says so. A capture process stalled past its 120 s lease (a long OCR
+    holding Python's lock, a paused VM) whose file another took stores nothing, whichever stores first.
+  - **The model's answers kept, pruned** (`paths.prune_kept`): `.cache/page_reader` (a folder a file),
+    `.cache/model_reading` and `.cache/model_accounts` were never pruned (a few hundred thousand files a year at the
+    server's volume, all invoice data). Each answer kept prunes its folder, at a process's first and then at most
+    hourly: an answer written more than `KEPT_DAYS` (30) ago goes, then the oldest past `KEPT_MAX_BYTES` (512 MB, about
+    3 months of a busy server's), a half-written one an hour old, a folder left empty; the page reader's timings stay.
+    By age, not as an invoice is decided: an answer is asked for again within days (the arrival, the page reader's
+    pass, a reading again), a decided invoice's only if it is read again, which then costs one model call; age needs
+    no database.
+  - **The learning memory updated, not built again** (`suggest._updated_memory`, `memory._updated_aggregate`,
+    `Index.updated`, `RowsCache.get(update=)`): after an approval the store's memory is the new lessons in front of
+    the rows kept, the oldest past the cap dropped (D-154's `_with_added`); every process then built the GL
+    suggestions' index and the examples' patterns again from all of them. Now the memory kept is updated: only the
+    lines of the lessons added and dropped are worked out again; the patterns in a build's order, ranks in the same
+    order (a rank is a row's place less the memory's `offset`: those kept stay as they were), the index renumbered,
+    its words in the order a build meets them, so `similar` finds the same lines in the same order and the ties
+    break alike. Exactly what a build gives: `tests/ai/test_coding_no_ai.py` compares everything both hold over 80
+    approvals of random lessons past a cap, and each of four sabotages of the update fails it. More than
+    `UPDATE_MOST` (1,000) lessons at once, or any other change (lessons forgotten, the memory read again, a history
+    import's rows in the middle), builds it as before. A slot's fingerprint is worked out once compared (it was at
+    each build: ~20 ms at 50,000 lessons).
+    - **Measured** (`p3_gamma/memory_after_approval.py`: 50,000 of the 100k seed's lessons, five approvals, the
+      machine quiet): the index after an approval 0.15-0.22 s → 6-8 ms, the patterns 0.17-0.18 s → 3 ms, in every
+      web worker, capture process and the background process; held 4.7 → 10.9 MB and 1.9 → 4.9 MB (each line's
+      decisions, kept for the updates). `bench coding --quick` 2.1 → 1.8 s.
+  - **A web worker's memory** (`p3_gamma/worker_memory.py` on a copy of the 100k seed: each per-process cache worked
+    out in turn, under tracemalloc, what it holds after a gc; then the queue, 20 invoices twice and the reports in
+    one server-mode worker; before aad1b61, after this):
+
+    | what a web worker keeps | held (traced) | bounded by |
+    |---|---:|---|
+    | the learning memory, 50,000 lessons (`_FEEDBACK`) | 64.1 MB | `FEEDBACK_READ` |
+    | the GL suggestions' index of it (`suggest._MEMORY`, 2 slots) | 4.7 → 10.9 MB | 2 slots |
+    | the examples' patterns (`memory._AGGREGATED`, 2 slots) | 1.9 → 4.9 MB | 2 slots |
+    | 32 vendors' lessons worked out (`_VENDOR_LESSONS`) | 0.2 MB | `VENDOR_LESSONS_KEPT` |
+    | 26 vendors' older lessons (`_PAST_MEMORY`) and extended indexes (`suggest._PAST`) | 80.1 MB | 60,000 rows; bytes |
+    | an approval: the memory, its index and patterns again | +6.9 MB, 1.40 s → +3.6 MB, 0.08 s | |
+    | the app's modules (server mode) | 49 MB | |
+    | the review queue: the vendors' invoice dates (24 MB) and the recurring vendors' (19 MB) | 66 MB | one each |
+    | 20 invoices: the worker's vendors' older lessons (45 MB), their extended indexes (27 MB) | 81 MB | as above |
+    | the reports (insights, month-end, vendors, purchase orders) | 20 MB | |
+    | in all at the end, traced / RSS | 380 → 386 MB / 1,491 → 1,593 MB | |
+
+    - **What holds it:** Python's objects are about a quarter of the RSS (the RSS of three runs of this probe ended
+      1,392 to 1,593 MB: the allocator's, not a difference between the code before and after). The kept rows
+      dominate them (the learning memory and the vendors' older lessons: 1.3 KB a lesson, 64 + 77 MB); the rest of
+      the RSS is what the requests' peaks freed and the allocator keeps (D-153: 4 threads a worker, about 110 MB
+      each a request in flight; one invoice's first opening after the memory changed read a vendor's older lessons
+      again: 43,000 rows, a 50 MB JSON text in SQLite and its rows decoded).
+    - **SQLite:** a connection a request (its session), closed after it, with SQLite's default page cache (2 MB,
+      `cache_size` -2000); at most a worker's 4 threads at once: about 8 MB. Not what holds it.
+    - **Bounded now:** a vendor's extended index (`_own_bytes`: the lists and dicts `_extended` copied, of the
+      shared memory's size: 0.35 MB a vendor on the seed, whose 9,850 lines have only 167 words; with a real
+      vocabulary, its words' dicts too, several MB) within `PAST_BYTES_KEPT` (32 MB) besides its 32 vendors and
+      60,000 rows, the latest always; none for a vendor whose older lessons add nothing (the shared index itself,
+      B-1781). On the seed it never bites (26 vendors kept: 9 MB).
+    - **Load** (`bench load --users 25 --duration 300 --ramp 30 --think 10 --workers 4` on the 100k seed, run once,
+      after all of phase 3: α, β, δ and this): pages p50 148 ms, p95 1.37 s; actions p95 254 ms; 0 errors, 0 over
+      30 s; the web workers 125 → 684-782 MB in 5 minutes, 0.09-0.24 cores each; the background process 213 → 454 MB.
+      Phase 2 part 2's same run (`knee_25`, before phase 3): pages p50 300 ms, p95 4.45 s, actions p95 1.37 s, the
+      workers 125 → 787-916 MB at 0.4-0.5 cores. The 100-person run's 1.25-1.4 GB in 10 minutes was 4 workers
+      saturated (D-153's requests in flight), not a cache that grows.
+  - **Follow-ups of phase 3's other parts:**
+    - PyMuPDF holds `layout.PDF_LOCK` outside `capture/` too: the page reader's pages (its `_RENDER_LOCK` gone), the
+      AI reviewer's page images (`imaging`), the pipeline's look at a PDF, a picture made a PDF and a scan turned, an
+      email's PDF text, the approved invoice's stamp (a picture is decoded outside the lock).
+      `tests/capture/test_reading_cache.py` holds every `pymupdf.open` there to it.
+    - `server.json` has `capture_processes` (1-64; 0 or none: `server.capture_processes()`'s own), passed to the
+      dashboard as `AP_CAPTURE_PROCESSES` (the .env's still wins, as for the other keys).
+    - The day bench's arrival at full latency waits for each chat answer side by side across the capture processes,
+      each at most `pipeline.ARRIVAL_SECONDS` (it added them one after another, uncut): 100 invoices on aad1b61, 29.0
+      min the old way, 16.4 min this way (two runs). It also says whether the reviewer kept up (the rows above).
+  - **The proof that nothing else changed:** `scripts/same_behaviour.py --ref claude/epic-feynman-r6ns86 tax approve
+    read pipeline` (Python 3.12, both OCR engines): the same, all four (20,000 tax, 1 approve, 60 read and 1
+    pipeline outputs). `bench coding --quick` and `bench learn --quick`: the same bytes but the timings.
+  - **Not done:**
+    - After each approval the memory's last lesson moves (past the cap): every vendor past it reads its older lessons
+      again (`_past_memory`'s stamp holds the memory's last row), up to 43,000 rows on the seed in each process; they
+      could be updated as the memory is.
+    - The vendors' invoice dates and the recurring vendors' memos (43 MB a worker at 100,000 invoices) grow with the
+      database: shared across processes (`shared_answer`) or in SQL, they would be one copy.
+    - A reader thread with nothing in line looks again after 30 s (`IDLE_SECONDS`): during a drop that trickles in,
+      the page reader may wait that long for a new invoice.
+    - The reviewer's turn is per reader thread: with `llm_parallel` 1 on the server the page reader reads every
+      other turn under a backlog of reviews.
+  - (`core/store/{page_queue,capture,lessons,imports,invoices,_base,__init__}.py`, `core/{memory,paths}.py`,
+    `ai/{page_worker,verifier,pipeline,suggest,line_match,inference,page_reader,imaging}.py`, `intake/{imports,
+    pictures,triage}.py`, `erp/stamp.py`, `ops/service.py`, `bench/day.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/capture/test_page_reads.py`, `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`,
+    `tests/ai/test_uniform_reading.py`, `tests/ai/test_coding_no_ai.py`, `tests/intake/test_imports.py`,
+    `tests/core/test_paths.py`, `tests/capture/test_reading_cache.py`, `tests/web/test_server_capacity.py`,
+    `tests/bench/test_day.py`)
+- **D-172** · **The review of phase 3's imports and queues: a second chance for an arrival no page read asks again
+  for; the page reader's and the reviewer's queues stale on the database's clock and fenced; a laptop's import that
+  looks again after a pause or an error** (B-1764 to B-1772; changes D-168 and D-171 where they say so).
+  - **Why:** a fresh review of phase 3 found the second chance D-168 counted on (the page reader's pass) missing for a
+    text invoice and while OvisOCR2 can't read; a read under way taken by a second reader as the clocks go forward or
+    a VM is paused, then folded in twice; and a laptop's import that stopped for good after an error or a pause.
+  - **The second chance** (the choice: a turn of the background process's page reader, not a queue of its own): an
+    arrival whose chat call was put off is marked (`meta.chat_deferred`). When the page reader has nothing to read it
+    takes the oldest such invoice no page read asks again for (`Store.take_chat_deferred`: none done nor in line;
+    those in line too while the page reader can't read), its mark cleared as it is taken (asked again once, by one
+    reader), and codes it again with no arrival limit (`page_worker.chat_again`), before the reviewer's turn. The
+    result goes into its proposal only while nobody has worked on it (`replace_proposal`, the page reader's own writer:
+    its guards answer D-168's worry of a writer under a reviewer), approved as touchless processing would have. A
+    laptop never puts the call off (no limit), so it never has one.
+    - **Why not a thread of its own:** it would ask the model machine one more thing at once than `llm_parallel`
+      (D-171's reason), for what is rare: a text invoice, or a server whose OvisOCR2 is not there.
+  - **The queues' clock:** staleness was compared on `updated_at`, the local time: as the clocks go forward an hour,
+    every read and review under way looked an hour old until its next renewal (up to a minute). `page_reads` and
+    `verifications` have `renewed` (`julianday('now')`, the database's clock, as the import queue's leases), set as
+    they are taken and renewed, looked for at each start as their `reader` and `tries` are (the schema stays 27). A
+    row from before has none: it is compared on its local time, as before (`_base._STALE`).
+  - **Fenced:** `finish_page_read(reader=)` ends only that reader's read (as `finish_verification` does, B-787). The
+    page reader checks the read is still its own after reading and before folding it in (a renewal: five minutes
+    more), and stops reading once its heartbeat finds it gone; the reviewer folds in only a review it ended.
+  - **A laptop's import** looks again every 5 s while files wait after a pause (no room, a restore) or an error (the
+    GL accounts open in Excel, the database busy), as a capture process does, and the card says why a file waits (its
+    reason on its row, so the server's card says it too). Before D-168 the card said "Processing stopped" and the
+    files were listed again for the Process button; now they are in line, so the job tries again on its own and the
+    card keeps following it. Its stop puts the file under way back, its try not counted, and takes no more.
+  - **Not done:**
+    - The second chance reads the invoice again in full (a scan's OCR from its cache) in the background process: on a
+      server whose OvisOCR2 is never there, each arrival put off is read twice.
+    - It comes only when the page reader has nothing to read: under a backlog of pages a text invoice waits for it.
+  - (`core/store/{imports,page_queue,lessons,_base}.py`, `intake/{imports,mailbox}.py`, `ai/{pipeline,page_worker,
+    verifier}.py`, `web/pages/process.py`, `web/app.py`, `bench/day.py`; `tests/core/test_imports.py`,
+    `tests/intake/test_imports.py`, `tests/web/test_web_process.py`, `tests/capture/test_page_reads.py`,
+    `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`, `tests/ai/test_pipeline_arrival.py`,
+    `tests/bench/test_day.py`)

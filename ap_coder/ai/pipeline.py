@@ -19,16 +19,17 @@ import json
 import logging
 import os
 import re
+import threading
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..capture.bridge import review_issues
-from ..capture.layout import CannotRead
-from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
+from ..capture.layout import PDF_LOCK, CannotRead
+from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
@@ -40,8 +41,10 @@ from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
+from ..core.store.imports import ClaimLost
+from ..intake.files import folder_names
 from . import azure_check, verifier
-from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
+from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 
@@ -49,6 +52,64 @@ if TYPE_CHECKING:
     from ..core.store import Store
 
 log = logging.getLogger(__name__)
+
+# --- The chat model on arrival (D-168) ------------------------------------------------------------------------------
+# An invoice coming in asks the chat model for the lines nothing else could code. On the company server it waits at
+# most ARRIVAL_SECONDS for the answer, a chat slot included (AP_LLM_ARRIVAL_SECONDS; 0: AP_LLM_TIMEOUT_SECONDS, a
+# laptop's default): past it, the invoice goes in with the local coding and the page reader's pass asks again. After
+# BREAKER_FAILURES arrivals in a row that got no answer in time, arrivals don't ask for BREAKER_SECONDS (then one asks:
+# an answer in time asks again from the next one on). A hung or slow model never holds up the imports.
+ARRIVAL_ENV = "AP_LLM_ARRIVAL_SECONDS"
+ARRIVAL_SECONDS = 20.0
+BREAKER_FAILURES = 2
+BREAKER_SECONDS = 120.0
+
+
+def arrival_seconds() -> float:
+    """The most an arriving invoice waits for the chat model (``ARRIVAL_ENV``; else ARRIVAL_SECONDS on the company
+    server, none on a laptop: 0)."""
+    from ..ops.offline import server_mode
+
+    try:
+        return max(0.0, float((os.environ.get(ARRIVAL_ENV) or "").strip()))
+    except ValueError:
+        return ARRIVAL_SECONDS if server_mode() else 0.0
+
+
+class ArrivalBreaker:
+    """Whether arriving invoices ask the chat model now (``asks``), from how its last answers went (``answered``):
+    closed, open for BREAKER_SECONDS after BREAKER_FAILURES timeouts in a row, then half open (one asks). One per
+    process; threads of one process share it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.failures = 0
+        self.opened: float | None = None  # time.monotonic() it opened at (None: closed)
+        self.trying = False  # half open: one arrival asks
+
+    def asks(self) -> bool:
+        with self._lock:
+            if self.opened is None:
+                return True
+            if self.trying or time.monotonic() - self.opened < BREAKER_SECONDS:
+                return False
+            self.trying = True
+            return True
+
+    def answered(self, in_time: bool | None) -> None:
+        """How an arrival's ask went: in time (True), out of time (False), or failed some other way (None: the
+        model not running is said at once, no wait)."""
+        with self._lock:
+            self.trying = False
+            if in_time:
+                self.failures, self.opened = 0, None
+            elif in_time is False:
+                self.failures += 1
+                if self.failures >= BREAKER_FAILURES or self.opened is not None:
+                    self.opened = time.monotonic()
+
+
+ARRIVAL_BREAKER = ArrivalBreaker()
 
 
 @dataclass
@@ -66,6 +127,8 @@ class PipelineResult:
     capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
     autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
     original: dict[str, Any] | None = None  # the picture this PDF was made from (intake/pictures): name, kept, sha256
+    sha256: str | None = None  # the file's SHA-256 as the import queue read it (None: read when it is saved, D-168)
+    chat_deferred: bool = False  # the chat model wasn't asked on arrival, or gave no answer in time (D-168)
 
     @property
     def ok(self) -> bool:
@@ -94,42 +157,16 @@ class PipelineResult:
 
 
 def invoice_files(folder: Path) -> list[Path]:
-    """Supported invoice files in a folder (sorted, non-recursive).
-
-    A .md/.txt file is skipped when a PDF or image with the same name sits next to it
-    (it is a text copy of the same invoice, e.g. the bundled samples), so nothing is coded twice.
-    README files are documentation, never invoices; nor are hidden files (a Mac's "._inv.pdf" beside "inv.pdf" on a
-    shared or USB drive) or an Office lock file ("~$...").
-    """
-    # By name, each one's kind as the listing says it (no look at each file), sorted as their paths sort: the import
-    # page lists a folder of 100,000 invoices (B-1634).
-    with os.scandir(folder) as entries:
-        names = sorted((e.name for e in entries if os.path.splitext(e.name)[1].lower() in SUPPORTED_EXTENSIONS
-                        and not e.name.lower().startswith(("readme", ".", "~$")) and e.is_file()),
-                       key=os.path.normcase)  # fmt: skip
-    parts = [os.path.splitext(name) for name in names]
-    documents = {stem.lower() for stem, suffix in parts if suffix.lower() not in TEXT_EXTENSIONS}
-    return [folder / name for name, (stem, suffix) in zip(names, parts, strict=True)
-            if suffix.lower() not in TEXT_EXTENSIONS or stem.lower() not in documents]  # fmt: skip
+    """Supported invoice files in a folder (sorted, non-recursive), as ``intake.files.folder_names`` lists them: a
+    .md/.txt file beside a PDF or picture of its name is a text copy of it (the bundled samples), so nothing is coded
+    twice; README files, hidden files (a Mac's "._inv.pdf") and Office lock files ("~$...") are never invoices."""
+    return [folder / name for name in folder_names(folder)[0]]
 
 
-NOT_A_FILE_TO_MENTION = {"desktop.ini", "thumbs.db"}  # Windows' own, in any folder
-STILL_ARRIVING = {".part", ".partial", ".crdownload", ".download", ".tmp"}  # a copy or a download not finished
-
-
-def other_files(folder: Path, also: Collection[str] = ()) -> list[Path]:
-    """The files in ``folder`` (not its subfolders) that are not a kind AP Coder reads, nor one of the extensions
-    ``also`` (saved emails): said to the person, never passed over in silence. Hidden files, README files, Office
-    lock files, Windows' own files and downloads still arriving are not mentioned."""
-    known = SUPPORTED_EXTENSIONS | set(also) | STILL_ARRIVING
-    return sorted(
-        c
-        for c in folder.iterdir()
-        if c.suffix.lower() not in known  # (by name first: each file looked at only then, B-1634)
-        and c.name.lower() not in NOT_A_FILE_TO_MENTION
-        and not c.name.lower().startswith(("readme", ".", "~$"))
-        and c.is_file()
-    )
+def other_files(folder: Path) -> list[Path]:
+    """The files in ``folder`` (not its subfolders) that are not a kind AP Coder reads, nor saved emails: said to the
+    person, never passed over in silence (``intake.files.folder_names``)."""
+    return [folder / name for name in folder_names(folder)[2]]
 
 
 def discover_inputs(paths: list[str | Path]) -> list[Path]:
@@ -312,7 +349,7 @@ def _check_pdf(path: Path) -> None:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:  # PyMuPDF one thread at a time (D-170)
             pages = None if doc.needs_pass else doc.page_count  # a password: said as such (``plain_error``)
     except Exception:  # noqa: BLE001 - damaged, or not a PDF: said by the reader that fails on it
         return
@@ -340,7 +377,7 @@ def _needs_password(path: Path) -> bool:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:
             return bool(doc.needs_pass)
     except Exception:  # noqa: BLE001 - only asked to word an error: a file that can't be opened says so otherwise
         return False
@@ -361,12 +398,15 @@ class InvoicePipeline:
         self.extractor = extractor or DocumentExtractor(settings.document_intelligence, cache_dir=cache_dir)
         self.coder = coder or InvoiceCoder(settings, reference)
         self.store = store
+        self.arrival_seconds = arrival_seconds()
 
-    def _local_accounts(self, result: CodingResult, history: str) -> None:
+    def _local_accounts(self, result: CodingResult, history: str, arriving: bool = False) -> bool:
         """The local model's account for each line the approval memory has not taught. Never fatal: a model
-        that is slow or wrong leaves the line as it was for AP to code."""
+        that is slow or wrong leaves the line as it was for AP to code. ``arriving``: a new invoice, which waits at
+        most ``arrival_seconds`` (D-168). True when the model was not asked for that reason, or gave no answer in time:
+        the page reader's pass asks again."""
         from ..core.reference_data import UNASSIGNED
-        from .inference import suggest_accounts
+        from .inference import ChatTimeout, suggest_accounts
 
         coding = result.coding
         # Lines nothing could code, weak matches included (an account's name: never put in a line on its own, B-463).
@@ -376,7 +416,12 @@ class InvoicePipeline:
         todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
         hints = getattr(result, "hints", None) or {}
         if not todo:
-            return
+            return False
+        within = (getattr(self, "arrival_seconds", 0.0) or None) if arriving else None
+        if within is not None and not ARRIVAL_BREAKER.asks():
+            log.info("the chat model gave no answer in time to the last arriving invoices: not asked now (D-168); the "
+                     "page reader's pass asks again")  # fmt: skip
+            return True
         from .lessons import prompt_lines
 
         learned = prompt_lines(
@@ -392,14 +437,25 @@ class InvoicePipeline:
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
-                kept=kept,
+                kept=kept, within=within,
             )  # fmt: skip
+        except ChatTimeout as exc:  # slow or hung: on arrival, the page reader's pass asks again
+            log.info("local model could not suggest accounts in time (%s); left for AP", exc)
+            if within is not None:
+                ARRIVAL_BREAKER.answered(False)
+            return within is not None
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
-            return
+            if within is not None:
+                ARRIVAL_BREAKER.answered(None)
+            return False
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
-            return
+            if within is not None:
+                ARRIVAL_BREAKER.answered(None)
+            return False
+        if within is not None:
+            ARRIVAL_BREAKER.answered(True)
         for n, (gl, cc, reason) in picks.items():
             li = todo.get(n)
             if li is None:
@@ -416,14 +472,16 @@ class InvoicePipeline:
             li.reasoning_justification = why
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
+        return False
 
-    def _model_reading(self, path: Path) -> dict[str, Any] | None:
+    def _model_reading(self, path: Path, sha256: str | None = None) -> dict[str, Any] | None:
         """The chat model's own reading of the header from the page images (``inference.read_header``), when the model
         loaded in LM Studio can see pages (Qwen 3.5 can). Asked once per file and model: kept in the data folder
-        (``.cache/model_reading``). Never fatal: without it the invoice is read as before."""
+        (``.cache/model_reading``), by the file's SHA-256 (``sha256``, else read). Never fatal: without it the invoice
+        is read as before."""
         import hashlib
 
-        from ..core.paths import private_dir
+        from ..core.paths import private_dir, prune_kept
         from .inference import read_header
 
         try:
@@ -434,7 +492,7 @@ class InvoicePipeline:
             log.info("%s: the chat model can't read the page (%s)", path.name, exc)
             return None
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = sha256 or hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             return None
         slug = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-")[:60]
@@ -457,6 +515,8 @@ class InvoicePipeline:
             part.replace(kept)
         except OSError:
             pass
+        else:
+            prune_kept(kept.parent, kept)  # by age and size (D-171)
         return values
 
     def _reads_locally(self, path: Path) -> bool:
@@ -486,11 +546,12 @@ class InvoicePipeline:
 
     def process(
         self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
-        pages_read: int | None = None,
+        pages_read: int | None = None, sha256: str | None = None,
     ) -> PipelineResult:  # fmt: skip
         """``_process``, with each scanned page's OCR kept in the data folder (``.cache/ocr``) for an app pipeline (one
         with a store): an invoice is read on arrival, with its supplier's template, and again once the page reader has
-        read it, and its pages are OCR'd once. Its fifty-odd calls on the database share one connection."""
+        read it, and its pages are OCR'd once. Its fifty-odd calls on the database share one connection. ``sha256``:
+        the file's, as the import queue read it (the file is hashed once, D-168)."""
         from ..capture.layout import ocr_cache
 
         folder = None
@@ -499,11 +560,11 @@ class InvoicePipeline:
 
             folder = private_dir() / ".cache" / "ocr"
         with ocr_cache(folder), self.store.session() if self.store is not None else contextlib.nullcontext():
-            return self._process(path, page_text, save, invoice_id, pages_read)
+            return self._process(path, page_text, save, invoice_id, pages_read, sha256)
 
     def _process(
         self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
-        pages_read: int | None = None,
+        pages_read: int | None = None, sha256: str | None = None,
     ) -> PipelineResult:  # fmt: skip
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
         reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
@@ -516,7 +577,7 @@ class InvoicePipeline:
         or a photo, a text file as it is; the same readers and checks, then coded from AP's history. A document the
         page reader hasn't read yet (``page_text`` None) is never approved without a person: it is queued for the
         page reader, which decides that once it has read it."""
-        result = PipelineResult(source=Path(path))
+        result = PipelineResult(source=Path(path), sha256=sha256)
         text_file = result.source.suffix.lower() in TEXT_EXTENSIONS
         # (capture, supplier key, profile) when read without AI: kept even if a later step of the reading fails
         captured: dict[str, tuple[Any, str, Any]] = {}
@@ -569,7 +630,9 @@ class InvoicePipeline:
         if invoice_id is not None and self.store is not None:
             from ..coding.bulk import _received_on
 
-            received = _received_on(self.store.get_invoice(invoice_id) or {})
+            stored = self.store.get_invoice(invoice_id) or {}
+            received = _received_on(stored)
+            result.sha256 = result.sha256 or stored.get("file_sha256")
         t1 = time.perf_counter()
         provider = getattr(self.coder, "provider", "")
         if provider in ("off", "local"):
@@ -613,7 +676,8 @@ class InvoicePipeline:
             layout = text_layout(result.extraction.content)
         # Once the page reader has read the pages (in the background), the chat model reads the header from the page
         # images too, when it can see pages: one more independent reader of every field.
-        model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
+        model_values = self._model_reading(path, result.sha256) if page_text is not None and provider == "local" \
+            else None  # fmt: skip
         local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
                                                  ai_values=model_values, today=received)  # fmt: skip
         vendor = local[0].fields.get("vendor_name")
@@ -631,7 +695,7 @@ class InvoicePipeline:
             local[0], self.reference, feedback, self.store, text=result.extraction.content, layout=layout
         )  # fmt: skip
         if provider == "local":
-            self._local_accounts(result.coding, history_text)
+            result.chat_deferred = self._local_accounts(result.coding, history_text, arriving=page_text is None)
         return feedback
 
     def _checks_after_coding(self, result: PipelineResult, captured: tuple[Any, str, Any] | None,
@@ -701,6 +765,7 @@ class InvoicePipeline:
                 meta=_meta(result),
                 error=result.error,
                 original_sha256=(result.original or {}).get("sha256"),
+                sha256=result.sha256,
             )
             if result.capture is not None:
                 self.store.save_capture(result.invoice_id, result.capture.to_dict())
@@ -713,8 +778,13 @@ class InvoicePipeline:
                 from .page_worker import queue_new_invoice, skip_new_invoice, skip_reason
 
                 why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
+                why = "" if result.chat_deferred else why  # its pass asks the chat model again (D-168)
                 if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
-                    queue_new_invoice(self.store, result.invoice_id, path)
+                    touchless = result.autonomy.get("reason") == WAITING_FOR_PAGE_READER  # read first (D-171)
+                    queue_new_invoice(self.store, result.invoice_id, path, touchless=touchless)
+        except ClaimLost as exc:  # another reader took the file after this one stalled past its lease: it stores it
+            log.warning("%s", exc)
+            result.error = result.error or str(exc)
         except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
             log.exception("Could not save %s", path)
             result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
@@ -767,6 +837,7 @@ def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
         result.original = {"file": path.name, "kept": str(converted.original), "sha256": converted.sha256,
                            "pages": converted.pages}  # fmt: skip
         log.info("%s: made into %s (the picture is kept in %s)", path.name, converted.pdf.name, converted.original)
+        result.sha256 = None  # the PDF made is another file: hashed as it is saved
         return converted.pdf
     if path.suffix.lower() == ".pdf":
         note = intake.original_of(path)
@@ -792,6 +863,7 @@ def _upright(path: Path, layout: Any, result: PipelineResult) -> Path:
     if turned is not None:
         result.original = {"file": path.name, "kept": str(turned.original), "sha256": turned.sha256,
                            "pages": turned.pages}  # fmt: skip
+        result.sha256 = None  # written again upright: hashed as it is saved
     log.info("%s: pages %s were scanned turned and are now shown upright", path.name, sorted(turns))
     return path
 
@@ -879,4 +951,6 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "layout": result.capture.layout_source,
             **{k: v for k, v in result.autonomy.items() if v not in ("", None)},
         }
+    if result.chat_deferred:  # asked again where no page read will ask (``Store.take_chat_deferred``, B-1765)
+        meta["chat_deferred"] = True
     return meta

@@ -241,12 +241,13 @@ def _cells(content: bytes) -> list:
     return [sheet.title, sheet.freeze_panes, sheet.auto_filter.ref, widths, cells]
 
 
-def test_the_streamed_sheet_is_the_sheet_it_was(tmp_path):
-    """The directory's Excel export, written row by row in a write-only workbook (D-157), has the cells, formats,
-    widths, frozen header and filter the whole sheet held in memory had (``exports._sheet``)."""
+def test_the_directorys_workbook_written_row_by_row_is_the_sheet_it_was(tmp_path):
+    """The directory's Excel export, written a row at a time without openpyxl's cells (D-157, D-169:
+    ``sheet_workbook``), has the cells, types, formats, widths, frozen header and filter the whole sheet held in memory
+    had (``exports._sheet``)."""
     from openpyxl import Workbook
 
-    from ap_coder.erp.exports import _sheet, streamed_sheet
+    from ap_coder.erp.exports import _sheet, sheet_workbook
 
     columns = [("vendor", "Vendor"), ("invoice_date", "Invoice date"), ("total", "Total"),
                ("reviewed_at", "Approved at"), ("status", "Status"), ("batch", "Export batch")]  # fmt: skip
@@ -255,19 +256,26 @@ def test_the_streamed_sheet_is_the_sheet_it_was(tmp_path):
                 ("North", "2026-09-14", 1250.5, "2026-09-15 10:04:05"), ('=HYPERLINK("x")', "", None, None),
                 ("-5 Ltd", "not a date", -12.0, "2026-09-15T10:04:05"), ("+1 @x", None, 0, ""),
                 ("bad\x01text", "2026-02-30", 3, "x"), ("x" * 90, "2026-01-01", 1e9, None)])]  # fmt: skip
+    rows += [
+        {"vendor": v, "total": total, "status": status, "batch": batch, "reviewed_at": at}
+        for v, total, status, batch, at in [
+            (" two spaces ", "", True, False, "2026-09-15 10:04:05.250"),
+            ("   ", "=1+1", "#N/A", "#DIV/0!", 7),
+            ('A & B <Co> "x"', 12345678901234567890, "line\nbreak", 2**53 + 1, "2026-12-31 23:59:59"),
+            ("é ü 東京 \r", 0.1 + 0.2, "tab\there", -0.0, "1900-02-28"),
+            ("y" * 40_000, 1 / 3, None, "", None),
+        ]
+    ]
     rows += [{"vendor": f"Vendor {n}" + "y" * (n // 20), "total": n / 3, "invoice_date": "2026-03-01"}
              for n in range(600)]  # fmt: skip
     for shown in (rows, rows[:3], []):
         whole = Workbook()
         _sheet(whole.active, "Invoices", columns, shown)
-        streamed = Workbook(write_only=True)
-        streamed_sheet(streamed.create_sheet(), "Invoices", columns, iter(shown))
-        made = []
-        for book in (whole, streamed):
-            path = tmp_path / f"{len(made)}.xlsx"
-            book.save(path)
-            made.append(_cells(path.read_bytes()))
-        assert made[0] == made[1]
+        path = tmp_path / "whole.xlsx"
+        whole.save(path)
+        written = io.BytesIO()
+        sheet_workbook(written, "Invoices", columns, iter(shown))
+        assert _cells(path.read_bytes()) == _cells(written.getvalue())
 
 
 def test_export_never_writes_a_formula(store, tmp_path):

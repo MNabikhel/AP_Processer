@@ -22,7 +22,8 @@ import re
 import statistics
 import threading
 import unicodedata
-from collections.abc import Iterator
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -478,16 +479,46 @@ def _decode_lines(decoder: Any, text_index: Any, text_prob: Any, _word_box: bool
     return lines, []
 
 
+# PyMuPDF isn't made for two threads at once (N-14): every call on a document, opening and closing it, is made holding
+# this lock (``capture``, ``web/document.py``). PyMuPDF holds Python's own lock (the GIL) in its calls anyway, so no
+# thread waits longer for it; OCR runs outside it.
+PDF_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def opened_pdf(path: str | Path) -> Iterator[Any]:
+    """The PDF at ``path``, opened and closed holding ``PDF_LOCK``; each call on it takes the lock too."""
+    import pymupdf
+
+    with PDF_LOCK:
+        doc = pymupdf.open(path)
+    try:
+        yield doc
+    finally:
+        with PDF_LOCK:
+            doc.close()
+
+
+# ---------------------------------------------------------------- the readings kept
+
 _ocr_cache_folder: contextvars.ContextVar[Path | None] = contextvars.ContextVar("ocr_cache_folder", default=None)
-OCR_CACHE_MAX_FILES = 4000  # about 60 MB of page readings; the oldest go first
-_pruned: dict[Path, float] = {}
+OCR_CACHE_MAX_BYTES = 512 * 1024 * 1024  # about 20 KB a page and engine: two weeks of a busy server's scans
+PART_AGE_SECONDS = 3600  # a reading half written this long ago is a stopped process's: removed as the folder is pruned
+# How a page is drawn for OCR and how OCR runs on it (the code ``tests/capture/test_reading_cache.py`` pins): one more
+# whenever that changes, so the readings kept before are read again.
+PAGE_DRAWING = 1
+_pruned: dict[Path, float] = {}  # when this process last pruned each folder
+_written: dict[Path, int] = {}  # what it wrote there since
+_KEEPING = threading.Lock()
 
 
 @contextlib.contextmanager
 def ocr_cache(folder: str | Path | None) -> Iterator[None]:
-    """Keep each page's OCR result in ``folder`` while inside: the same page image is OCR'd once by each engine, however
-    often the invoice is read (on arrival, again with its supplier's template, again once the page reader has read
-    it). The pipeline turns it on in the data folder (``.cache/ocr``); None turns it off."""
+    """Keep each page's OCR reading in ``folder`` while inside, by what was asked: the file's content, the page, how it
+    is drawn, the engine (``kept_name``). A page is OCR'd once by each engine, and not even drawn again, however often
+    the invoice is read (on arrival, again with its supplier's template, for the page reader's blank pages and its
+    pass, on approval, for teach mode), by any process sharing the folder; the table finder's tables are kept there
+    too. The pipeline turns it on in the data folder (``.cache/ocr``); None turns it off."""
     token = _ocr_cache_folder.set(Path(folder) if folder else None)
     try:
         yield
@@ -495,98 +526,292 @@ def ocr_cache(folder: str | Path | None) -> Iterator[None]:
         _ocr_cache_folder.reset(token)
 
 
+def _cache_folder() -> Path | None:
+    """Where readings are kept: ``AP_OCR_CACHE`` when it names a folder (the benchmark's iterations: the reader
+    changes, the scans do not; never pruned), else the folder ``ocr_cache`` set, if any."""
+    env = os.environ.get("AP_OCR_CACHE")
+    return Path(env) if env else _ocr_cache_folder.get()
+
+
+def file_sha256(path: str | Path) -> str | None:
+    """The file's SHA-256, worked out once per version of it (its path, time and size); None when it can't be read."""
+    try:
+        resolved = Path(path).resolve()
+        stat = resolved.stat()
+        return _file_sha256(str(resolved), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+
+
+@functools.lru_cache(maxsize=256)
+def _file_sha256(path: str, _mtime: int, _size: int) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @functools.cache
-def _engine_signature(engine: str) -> str:
-    """The engine and its package's version: a reading kept by another version of the OCR is not reused."""
+def _libraries() -> str:
+    """The libraries that draw a page and read it, with their versions: a reading made with others is not reused."""
     from importlib.metadata import PackageNotFoundError, version
 
+    names = ("rapidocr", "onnxruntime", "onnxruntime-gpu", "onnxruntime-directml", "onnxruntime-silicon", "pymupdf",
+             "pillow", "pillow-heif", "numpy", "opencv-python", "opencv-python-headless", "opencv-contrib-python",
+             "opencv-contrib-python-headless")  # fmt: skip
+    found = []
+    for name in names:
+        try:
+            found.append(f"{name} {version(name)}")
+        except PackageNotFoundError:
+            continue
+    return ", ".join(found)
+
+
+@functools.cache
+def _engine_signature(engine: str) -> str:
+    """The engine, its settings and its model files (by their SHA-256, each file checked before it is used:
+    ``_ready``): a reading by another is not reused."""
+    from ..ops import offline
+
     try:
-        return f"{engine}-{version('rapidocr')}"
-    except PackageNotFoundError:
+        five = engine == "ppocrv5"
+        params = offline.ppocrv5_params() if five else offline.ppocrv4_params()
+        files = offline.ppocrv5_files() if five else offline.ppocrv4_files()
+    except ImportError:  # no RapidOCR: nothing is read
         return engine
+    return f"{engine} {sorted((k, str(v)) for k, v in params.items())} {[f.sha256 for f in files]}"
 
 
-def _prune(folder: Path) -> None:
-    """At most ``OCR_CACHE_MAX_FILES`` readings, the oldest removed first; looked at once an hour."""
-    import time
-
-    now = time.monotonic()
-    if now - _pruned.get(folder, -1e9) < 3600:
-        return
-    _pruned[folder] = now
-    try:
-        files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime)
-    except OSError:
-        return
-    for path in files[: max(0, len(files) - OCR_CACHE_MAX_FILES)]:
-        path.unlink(missing_ok=True)
-
-
-def _ocr_cached(png_bytes: bytes, run: Any, engine: str | None = None) -> Any:
-    """The OCR engine's raw result, kept on disk by image hash: in ``AP_OCR_CACHE`` when it names a folder (for
-    benchmark iterations: the reader changes, the scans do not), else in the folder ``ocr_cache`` set, if any."""
-    env = os.environ.get("AP_OCR_CACHE")
-    folder = Path(env) if env else _ocr_cache_folder.get()
-    if folder is None:
-        return run()
+def kept_name(*asked: Any) -> str:
+    """The name a result is kept under in the readings' folder: the hash of what was asked, with the libraries'
+    versions and ``PAGE_DRAWING``, so nothing made another way is ever read back."""
     import hashlib
+
+    whole = "\n".join([*map(str, asked), _libraries(), f"drawing {PAGE_DRAWING}"])
+    return hashlib.sha256(whole.encode("utf-8")).hexdigest()
+
+
+def read_kept(name: str) -> dict[str, Any] | None:
+    """What is kept under ``name`` in the readings' folder; None when no folder is set, or nothing (whole) is there."""
     import json
 
-    engine = engine or _engine_name()
-    if env:  # the benchmark's own cache, as it always was
-        tag = "" if engine == "ppocrv4" else f"-{engine}"
-    else:
-        tag = f"-{_engine_signature(engine)}"
-        _prune(folder)
-    path = folder / f"{hashlib.sha256(png_bytes).hexdigest()}{tag}.json"
+    folder = _cache_folder()
+    if folder is None:
+        return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        kept = json.loads((folder / f"{name}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        pass
-    result = run()
+        return None
+    return kept if isinstance(kept, dict) else None
+
+
+def keep(name: str, data: dict[str, Any]) -> None:
+    """``data`` kept under ``name`` in the readings' folder, if one is set: written under a name of this process and
+    thread, then renamed, so no process sharing the folder reads half of it. A full disk or a folder that can't be
+    written to leaves nothing behind. The data folder's is pruned (``_prune``) at this process's first reading there,
+    an hour after its last pruning, and after each sixteenth of ``OCR_CACHE_MAX_BYTES`` it wrote."""
+    import json
+    import time
+
+    folder = _cache_folder()
+    if folder is None:
+        return
+    target = folder / f"{name}.json"
+    part = folder / f"{name}.{os.getpid()}-{threading.get_ident()}.part"
+    text = json.dumps(data)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_suffix(".part")
-        part.write_text(json.dumps([[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []]),
-                        encoding="utf-8")  # fmt: skip
-        part.replace(path)  # whole or not at all: a reading cut short is never read back
+        folder.mkdir(parents=True, exist_ok=True)
+        part.write_text(text, encoding="utf-8")
+        _replace(part, target)
     except OSError:
-        pass
-    return result
+        return
+    finally:
+        with contextlib.suppress(OSError):
+            part.unlink(missing_ok=True)
+    if os.environ.get("AP_OCR_CACHE"):
+        return
+    now = time.monotonic()
+    with _KEEPING:
+        written = _written.get(folder, 0) + len(text)
+        due = folder not in _pruned or now - _pruned[folder] >= 3600 or written >= OCR_CACHE_MAX_BYTES // 16
+        if due:
+            _pruned[folder], written = now, 0
+        _written[folder] = written
+    if due:
+        _prune(folder, target)
 
 
-def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageLayout:
-    """OCR one page image. Each OCR line becomes words (split on spaces, boxes shared by length)."""
+def _replace(part: Path, target: Path) -> None:
+    """``os.replace``. On Windows a reading another process is reading can't be replaced: left as it is when it is
+    there (it is the same reading), else tried again a few times."""
+    import time
+
+    for attempt in range(5):
+        try:
+            os.replace(part, target)
+            return
+        except PermissionError:
+            if target.exists():
+                return
+            time.sleep(0.02 * (attempt + 1))
+
+
+def _prune(folder: Path, newest: Path | None = None) -> None:
+    """The readings in ``folder`` (those named as before too), once over ``OCR_CACHE_MAX_BYTES``, down to three
+    quarters of it, the oldest written first, never ``newest``; a half-written one a stopped process left, once
+    ``PART_AGE_SECONDS`` old."""
+    import time
+
+    kept, total, now = [], 0, time.time()
+    try:
+        paths = list(folder.iterdir())
+    except OSError:
+        return
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:  # removed meanwhile (another process pruning)
+            continue
+        if path.suffix == ".part":
+            if now - stat.st_mtime > PART_AGE_SECONDS:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+        elif path.suffix == ".json":
+            kept.append((stat.st_mtime_ns, str(path), stat.st_size))
+            total += stat.st_size
+    if total <= OCR_CACHE_MAX_BYTES:
+        return
+    for _, name, size in sorted(kept):
+        if total <= OCR_CACHE_MAX_BYTES * 3 // 4:
+            break
+        if newest is not None and name == str(newest):
+            continue
+        with contextlib.suppress(OSError):
+            Path(name).unlink(missing_ok=True)  # one gone already (another process pruning) is gone too (B-1779)
+            total -= size
+
+
+# ---------------------------------------------------------------- the page OCR reads
+
+PICTURES_KEPT_BYTES = 32 * 1024 * 1024  # the last pages drawn, for the second engine (a page: 11 MB at 200 dpi)
+
+
+class PageToRead:
+    """A page for OCR, drawn only when its reading isn't kept. ``asked`` says what it is by its content (the file's
+    SHA-256, the page, how it is drawn); None: never kept. ``draw`` gives (its picture, as a PNG of it reads back:
+    pixels and mode; the resolution that PNG states, 0 for none). ``shared``: the picture is kept in memory a while,
+    within ``PICTURES_KEPT_BYTES``, for the next reader of the same page (the second engine)."""
+
+    def __init__(self, asked: str | None, draw: Callable[[], tuple[Any, float]], shared: bool = True) -> None:
+        self.asked, self._draw, self.shared = asked, draw, shared
+
+    def picture(self) -> tuple[Any, float]:
+        if not (self.asked and self.shared):
+            return self._draw()
+        with _PICTURES_LOCK:
+            found = _PICTURES.get(self.asked)
+            if found is not None:
+                _PICTURES.move_to_end(self.asked)
+                return found
+        found = self._draw()
+        with _PICTURES_LOCK:
+            _PICTURES[self.asked] = found
+            while len(_PICTURES) > 1 and sum(_size(pic) for pic, _ in _PICTURES.values()) > PICTURES_KEPT_BYTES:
+                _PICTURES.popitem(last=False)
+        return found
+
+
+_PICTURES: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+_PICTURES_LOCK = threading.Lock()  # the dashboard's page reader reads in a thread of its own
+
+
+def _size(picture: Any) -> int:
+    return picture.width * picture.height * len(picture.getbands())
+
+
+def png_page(png: bytes) -> PageToRead:
+    """A picture's bytes (a PNG) as a page for OCR, named by their SHA-256."""
+    import hashlib
+
+    return PageToRead(f"picture {hashlib.sha256(png).hexdigest()}", functools.partial(_decoded, png))
+
+
+def _decoded(png: bytes) -> tuple[Any, float]:
     import io
 
-    import numpy as np
     from PIL import Image
 
-    picture = Image.open(io.BytesIO(png_bytes), formats=picture_formats())
-    stated = _stated_dpi(picture)
-    img = _on_paper(picture)
-    width, height = img.size
-    result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
-    turn = _upright_turn(result or [], width, height, img)
+    picture = Image.open(io.BytesIO(png), formats=picture_formats())
+    picture.load()  # decoded here: the picture may be shared by two threads (``PageToRead.shared``)
+    return picture, _stated_dpi(picture)
+
+
+def ocr_image(image: bytes | PageToRead, number: int, engine: str | None = None) -> PageLayout:
+    """OCR one page: a picture's bytes (a PNG), or a page drawn only when its reading isn't kept (``PageToRead``).
+    Each OCR line becomes words (split on spaces, boxes shared by length)."""
+    page = image if isinstance(image, PageToRead) else png_page(image)
+    reading, letters = _reading(page, engine or _engine_name())
+    result, (width, height) = reading["lines"], reading["size"]
+    turn = _upright_turn(result, width, height, letters)
     if turn:
         result = _turned(result, turn, width, height)
         if turn != 180:
             width, height = height, width
-    skew = _skew(result or [], width, height)
+    skew = _skew(result, width, height)
     tilted = abs(skew * height / max(width, 1.0)) >= TIGHT_FROM
     words: list[Word] = []
-    for quad, text, score in result or []:
+    for quad, text, score in result:
         xs = [p[0] for p in quad]
         ys = [p[1] for p in quad]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
         text = _OCR_PERCENT.sub("%", str(text))
         edges = _edges(quad) if tilted else None
         words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number, edges))
-    page = PageLayout(number, float(width), float(height), words, group_lines(words, number))
-    page.skew = skew
-    page.turn = turn
-    page.dpi = stated or round(max(width, height) / 11, 1)  # else a letter page's long side
-    return page
+    out = PageLayout(number, float(width), float(height), words, group_lines(words, number))
+    out.skew = skew
+    out.turn = turn
+    out.dpi = reading["dpi"] or round(max(width, height) / 11, 1)  # else a letter page's long side
+    return out
+
+
+def _reading(page: PageToRead, engine: str) -> tuple[dict[str, Any], Callable[[], tuple[int, int]]]:
+    """(the engine's reading of ``page``: {"lines": [[corners, text, score], ...], "size": [width, height] of its
+    picture, "dpi": the resolution that states}, a function giving how many of its lines' letters stand upright and
+    upside down, ``_letters_upright``). Both kept by what was asked when a folder is set: the page isn't drawn then."""
+    name = kept_name(page.asked, _engine_signature(engine)) if page.asked and _cache_folder() is not None else None
+    reading = read_kept(name) if name else None
+    drawn: list[Any] = []
+
+    def picture() -> Any:  # on white paper, as OCR read it
+        if not drawn:
+            drawn.append(_on_paper(page.picture()[0]))
+        return drawn[0]
+
+    if not (reading and isinstance(reading.get("lines"), list) and len(reading.get("size") or ()) == 2):
+        import numpy as np
+
+        found, stated = page.picture()  # (drawn once: a page not kept in memory is drawn at each ask)
+        drawn.append(_on_paper(found))
+        img = drawn[0]
+        result = _engine(engine)(np.asarray(img))
+        reading = {"lines": [[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []],
+                   "size": list(img.size), "dpi": stated}  # fmt: skip
+        if name:
+            keep(name, reading)
+
+    def letters() -> tuple[int, int]:
+        if not isinstance(reading.get("letters"), list):
+            reading["letters"] = list(_letters_upright(picture(), reading["lines"]))
+            if name:
+                keep(name, reading)  # with its reading: read again, the page isn't drawn for them
+        upright, upside_down = reading["letters"]
+        return upright, upside_down
+
+    return reading, letters
 
 
 def _stated_dpi(picture: Any) -> float:
@@ -615,8 +840,9 @@ def _native_dpi(page: Any) -> float:
         x0, y0, x1, y1 = info.get("bbox") or (0.0, 0.0, 0.0, 0.0)
         across, down = abs(x1 - x0) / 72, abs(y1 - y0) / 72
         wide, high = float(info.get("width") or 0), float(info.get("height") or 0)
-        if min(wide, high) < 300 or across <= 0 or down <= 0 or across * down * 72 * 72 < 0.25 * area:
-            continue  # a small picture (a stretched background), not the scan
+        if min(wide, high) < 100 or across <= 0 or down <= 0 or across * down * 72 * 72 < 0.25 * area:
+            continue  # a logo, or a picture too few pixels across for a line of text (a stretched background), not
+            # the scan: a 58 mm receipt at 72 dpi is 164 px across, a 4 x 6 in. slip at 72 dpi 288 (B-1778)
         a, b = (list(info.get("transform") or (1, 0)) + [0, 0])[:2]
         if abs(b) > abs(a):  # placed turned a quarter: its width runs down the page
             wide, high = high, wide
@@ -688,12 +914,13 @@ def _top_down(result: Any) -> float:
     return statistics.mean(totals) - statistics.mean(heads)
 
 
-def _upright_turn(result: Any, width: float, height: float, picture: Any = None) -> int:
+def _upright_turn(result: Any, width: float, height: float, letters: Callable[[], tuple[int, int]] | None = None,
+                  ) -> int:  # fmt: skip
     """The clockwise quarter turn that sets a page scanned turned upright: 90 or 270 when most of its long lines run
     down the page (whichever puts the amounts right of their labels), 180 when they run across but the letters
-    stand on their heads (``_letters_upright``) or, when the letters don't tell, the amounts stand left of their
-    labels; else 0. The OCR reads each line's words right (it turns the line to read it): only where the lines are
-    on the page is turned."""
+    stand on their heads (``letters``: the page's ``_letters_upright``) or, when the letters don't tell, the amounts
+    stand left of their labels; else 0. The OCR reads each line's words right (it turns the line to read it): only
+    where the lines are on the page is turned."""
     long = [q for q, t, _s in result if len(str(t).strip()) >= 4]
     if len(long) < 6:
         return 0
@@ -706,7 +933,7 @@ def _upright_turn(result: Any, width: float, height: float, picture: Any = None)
         # The amounts beside their labels; when they say nothing (each label on one line with its amount), the
         # totals below the invoice's title and dates.
         return max(turned, key=lambda t: (_label_side(turned[t]), _top_down(turned[t])))
-    upright, upside_down = _letters_upright(picture, result) if picture is not None else (0, 0)
+    upright, upside_down = letters() if letters is not None else (0, 0)
     if upside_down >= LETTERS_SURE and upside_down >= 3 * upright:
         return 180
     if upright >= LETTERS_SURE and upright >= 3 * upside_down:
@@ -835,11 +1062,23 @@ def _on_paper(img: Any) -> Any:
     return img.convert("RGB")
 
 
-def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
-    """Each page of an image file as PNG: a PNG as it is, every frame of a multi-page TIFF, at the
-    resolution it was scanned at (at most ``OCR_MAX_SIDE``), turned upright as its EXIF says."""
+def _image_pages(path: Path, max_pages: int) -> list[PageToRead]:
+    """Each page of an image file for OCR: a PNG as it is, every frame of a multi-page TIFF, at the resolution it was
+    scanned at (at most ``OCR_MAX_SIDE``), turned upright as its EXIF says. Only counted here: drawn, all of them at
+    once, when a page's reading isn't kept."""
     if path.suffix.lower() == ".png":
-        return [path.read_bytes()]
+        return [png_page(path.read_bytes())]
+    from PIL import ImageSequence
+
+    sha = file_sha256(path)  # (before it is opened: what is read is what the name says)
+    with open_image(path) as img:
+        count = len(list(zip(range(max_pages), ImageSequence.Iterator(img), strict=False)))
+    drawn = functools.cache(lambda: _image_pictures(path, max_pages))
+    return [PageToRead(f"picture {sha} frame {i}, at most {OCR_MAX_SIDE} px" if sha else None,
+                       lambda i=i: drawn()[i]) for i in range(count)]  # fmt: skip
+
+
+def _image_pictures(path: Path, max_pages: int) -> list[tuple[Any, float]]:
     from PIL import ImageOps, ImageSequence
 
     out = []
@@ -848,69 +1087,74 @@ def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
             if i >= max_pages:
                 break
             upright = ImageOps.exif_transpose(frame.copy())
-            out.append(_picture_png(flatten_photo(upright) or upright))
+            out.append((_picture_for_ocr(flatten_photo(upright) or upright), 0.0))  # (its PNG stated no resolution)
     return out
 
 
-def _picture_png(picture: Any) -> bytes:
-    """A page's picture (upright) as OCR reads it: on white paper, its long side at most ``OCR_MAX_SIDE``, PNG."""
-    import io
-
+def _picture_for_ocr(picture: Any) -> Any:
+    """A page's picture (upright) as OCR reads it: on white paper, its long side at most ``OCR_MAX_SIDE``."""
     from PIL import Image
 
     pic = _on_paper(picture)
     scale = OCR_MAX_SIDE / max(pic.width, pic.height, 1)
     if scale < 1:
         pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))), Image.LANCZOS)
-    buf = io.BytesIO()
-    pic.save(buf, "PNG")
-    return buf.getvalue()
+    return pic
 
 
-_SCAN_PNGS: dict[tuple[Any, ...], bytes] = {}  # the last few pages' images: both OCR engines read the same one
-_SCAN_PNGS_KEPT = 4
-_SCAN_PNGS_LOCK = threading.Lock()  # the dashboard's page reader reads in a thread of its own
+def _pdf_page(sha: str | None, doc: Any, page: Any, index: int) -> PageToRead:
+    """A PDF page without text (page ``index``, from 0) for OCR, named by the file's content (``sha``: its SHA-256,
+    worked out before the file was opened)."""
+    asked = f"pdf {sha} page {index}, at {OCR_DPI} dpi, at most {OCR_MAX_SIDE} px" if sha else None
+    return PageToRead(asked, functools.partial(_scan_picture, doc, page))
 
 
-def _scan_png(doc: Any, page: Any) -> bytes:
-    """The image OCR reads for a PDF page without text: for a PDF AP Coder made from a photo or a scan
-    (``intake/pictures.py``), that picture's own pixels, as OCR read the picture before it was converted; any other page
-    rendered at ``OCR_DPI``. Made once for both OCR engines (a page's PNG takes about a second)."""
-    try:
-        st = os.stat(doc.name)
-        key: tuple[Any, ...] | None = (doc.name, st.st_mtime_ns, st.st_size, page.number, page.rotation)
-    except (OSError, TypeError, AttributeError):  # a document only in memory: made each time
-        key = None
-    with _SCAN_PNGS_LOCK:
-        png = _SCAN_PNGS.get(key) if key else None
-    if png is None:
-        png = _make_scan_png(doc, page)
-        if key:
-            with _SCAN_PNGS_LOCK:
-                _SCAN_PNGS[key] = png
-                while len(_SCAN_PNGS) > _SCAN_PNGS_KEPT:
-                    _SCAN_PNGS.pop(next(iter(_SCAN_PNGS)))
-    return png
-
-
-def _make_scan_png(doc: Any, page: Any) -> bytes:
+def _scan_picture(doc: Any, page: Any) -> tuple[Any, float]:
+    """The picture OCR reads for a PDF page without text: for a PDF AP Coder made from a photo or a scan
+    (``intake/pictures.py``), that picture's own pixels, as OCR read the picture before it was converted (its PNG
+    stated no resolution); any other page rendered at ``OCR_DPI``. Its pixels straight from PyMuPDF and Pillow: no PNG
+    made and read back (about half a second a page)."""
     from ..intake.pictures import made_from_picture, page_picture
 
-    if made_from_picture(doc):
-        picture = page_picture(doc, page)
-        if picture is not None:
-            return _picture_png(picture)
-    return _page_png(page)
+    with PDF_LOCK:
+        picture = page_picture(doc, page) if made_from_picture(doc) else None
+    if picture is not None:
+        return _picture_for_ocr(picture), 0.0
+    return _page_picture(page)
 
 
-def _page_png(page: Any, dpi: int = OCR_DPI) -> bytes:
-    zoom = dpi / 72
-    longest = max(page.rect.width, page.rect.height) * zoom
-    if longest > OCR_MAX_SIDE:
-        zoom *= OCR_MAX_SIDE / longest
+def _page_picture(page: Any, dpi: int = OCR_DPI) -> tuple[Any, float]:
+    """The page drawn at ``dpi`` (its long side at most ``OCR_MAX_SIDE``), and the resolution its PNG stated (PyMuPDF
+    wrote the pixmap's own)."""
     import pymupdf
+    from PIL import Image
 
-    return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png")
+    with PDF_LOCK:
+        zoom = dpi / 72
+        longest = max(page.rect.width, page.rect.height) * zoom
+        if longest > OCR_MAX_SIDE:
+            zoom *= OCR_MAX_SIDE / longest
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        picture = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        stated = _png_dpi(pix.xres, pix.yres)
+    if stated:
+        picture.info["dpi"] = stated
+    return picture, _stated_dpi(picture)
+
+
+@functools.lru_cache(maxsize=8)
+def _png_dpi(xres: int, yres: int) -> tuple[float, float] | None:
+    """The resolution the PNG PyMuPDF writes of a pixmap at ``xres`` x ``yres`` dpi states, as Pillow reads it back."""
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    with PDF_LOCK:
+        tiny = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 1, 1), False)
+        tiny.set_dpi(xres, yres)
+        png = tiny.tobytes("png")
+    return Image.open(io.BytesIO(png)).info.get("dpi")
 
 
 # ---------------------------------------------------------------- Document Intelligence
@@ -996,24 +1240,26 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
             if ocr == "auto":
                 raise CannotRead(NO_OCR)
             return DocLayout([], "none")
-        return DocLayout([ocr_image(png, i) for i, png in enumerate(_image_pngs(path, max_pages), 1)], "ocr")
-
-    import pymupdf
+        return DocLayout([ocr_image(page, i) for i, page in enumerate(_image_pages(path, max_pages), 1)], "ocr")
 
     pages: list[PageLayout] = []
     sources: set[str] = set()
     failed = 0  # pages OCR could not read: kept empty, and counted as not read (``DocLayout.pages_unread_locally``)
     di = layout_from_di(di_raw) if di_raw else None
-    with pymupdf.open(path) as doc:
-        left_out = max(0, doc.page_count - max_pages)  # never read: said so (``DocLayout.pages_left_out``)
-        for i, page in enumerate(doc):
-            if i >= max_pages:
-                break
+    sha = file_sha256(path) if use_ocr else None  # (before it is opened: what is read is what the name says)
+    with opened_pdf(path) as doc:  # PyMuPDF's calls holding its lock; OCR outside it
+        with PDF_LOCK:
+            count = doc.page_count
+        left_out = max(0, count - max_pages)  # never read: said so (``DocLayout.pages_left_out``)
+        for i in range(min(count, max_pages)):
             number = i + 1
-            text_page = _text_layer_page(page, number)
-            # Its text, unless it is a scan with text on it and OCR can read the scan (B-1511, B-1512).
-            texted = len(text_page.words) >= MIN_TEXT_WORDS
-            if texted and ocr is not True and (not use_ocr or text_is_the_page(page, text_page)):
+            with PDF_LOCK:
+                page = doc[i]
+                text_page = _text_layer_page(page, number)
+                # Its text, unless it is a scan with text on it and OCR can read the scan (B-1511, B-1512).
+                texted = len(text_page.words) >= MIN_TEXT_WORDS
+                as_text = texted and ocr is not True and (not use_ocr or text_is_the_page(page, text_page))
+            if as_text:
                 pages.append(text_page)
                 sources.add("text")
                 continue
@@ -1023,8 +1269,9 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 sources.add("di")
             elif use_ocr:
                 try:
-                    scanned = ocr_image(_scan_png(doc, page), number)
-                    scanned.dpi = _native_dpi(page) or scanned.dpi  # the page is rendered finer than it was scanned
+                    scanned = ocr_image(_pdf_page(sha, doc, page, i), number)
+                    with PDF_LOCK:  # rendered finer than it was scanned; one of its own shapes, never scanned (B-1761)
+                        scanned.dpi = _native_dpi(page)
                     pages.append(scanned)
                     sources.add("ocr")
                 except Exception as exc:  # a page OCR cannot read is kept empty and counted unread, never fatal
@@ -1034,9 +1281,11 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                         sources.add("text")
                     else:
                         failed += 1
-            elif ocr == "auto" and _looks_scanned(page):
-                raise CannotRead(NO_OCR)
             else:
+                with PDF_LOCK:
+                    scanned_page = ocr == "auto" and _looks_scanned(page)
+                if scanned_page:
+                    raise CannotRead(NO_OCR)
                 pages.append(text_page)
                 sources.add("text")
     source = sources.pop() if len(sources) == 1 else ("mixed" if sources else "none")
@@ -1066,26 +1315,26 @@ def _deskew_angle(gray: Any) -> float:
     return best
 
 
-def _prepared(png_bytes: bytes) -> bytes:
+def _prepared(picture: Any) -> Any:
     """The page straightened and enlarged 1.5x: OCR reads small, tilted print better."""
-    import io
-
     from PIL import Image, ImageFilter
 
-    img = Image.open(io.BytesIO(png_bytes), formats=picture_formats()).convert("L")
+    img = picture.convert("L")
     angle = _deskew_angle(img)
     if abs(angle) >= 0.2:
         img = img.rotate(angle, resample=Image.BICUBIC, fillcolor=255, expand=False)
     img = img.resize((int(img.width * 1.5), int(img.height * 1.5)), Image.LANCZOS).filter(ImageFilter.SHARPEN)
-    out = io.BytesIO()
-    img.convert("RGB").save(out, "PNG")
-    return out.getvalue()
+    return img.convert("RGB")
 
 
-def _second_image(png_bytes: bytes) -> bytes:
-    """The page as the second read sees it: as scanned for another model (its own view of the same
-    pixels), straightened and enlarged when it is the same model again."""
-    return png_bytes if second_engine_name() != _engine_name() else _prepared(png_bytes)
+def _second_page(first: PageToRead) -> PageToRead:
+    """The page as the second read sees it: as scanned for another model (its own view of the same pixels),
+    straightened and enlarged when it is the same model again (made from the first read's picture, never kept in
+    memory; its PNG stated no resolution)."""
+    if second_engine_name() != _engine_name():
+        return first
+    asked = f"{first.asked}, straightened and enlarged" if first.asked else None
+    return PageToRead(asked, lambda: (_prepared(first.picture()[0]), 0.0), shared=False)
 
 
 def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayout | None:
@@ -1095,18 +1344,20 @@ def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayo
     path = Path(path)
     if not ocr_available():
         return None
-    import pymupdf
-
     pages: list[PageLayout] = []
     if path.suffix.lower() in IMAGE_EXTENSIONS:
-        for i, png in enumerate(_image_pngs(path, max_pages), 1):
-            pages.append(ocr_image(_second_image(png), i, second_engine_name()))
+        for i, page in enumerate(_image_pages(path, max_pages), 1):
+            pages.append(ocr_image(_second_page(page), i, second_engine_name()))
     else:
-        with pymupdf.open(path) as doc:
-            for i, page in enumerate(doc):
-                if i >= max_pages:
-                    break
-                if text_is_the_page(page, _text_layer_page(page, i + 1)):
+        sha = file_sha256(path)  # (before it is opened: what is read is what the name says)
+        with opened_pdf(path) as doc:
+            with PDF_LOCK:
+                count = doc.page_count
+            for i in range(min(count, max_pages)):
+                with PDF_LOCK:
+                    page = doc[i]
+                    text = text_is_the_page(page, _text_layer_page(page, i + 1))
+                if text:
                     return None  # a text PDF: the text layer is exact
-                pages.append(ocr_image(_second_image(_scan_png(doc, page)), i + 1, second_engine_name()))
+                pages.append(ocr_image(_second_page(_pdf_page(sha, doc, page, i)), i + 1, second_engine_name()))
     return DocLayout(pages, "ocr")

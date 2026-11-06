@@ -40,9 +40,9 @@ from pathlib import Path
 from ..ai.extraction import DOCUMENT_EXTENSIONS
 from ..core.paths import try_lock
 from . import triage
+from .files import EMAIL_EXTENSIONS, folder_names  # noqa: F401  (EMAIL_EXTENSIONS: imported from here too)
 from .msgfile import MsgError, html_to_text, read_msg
 
-EMAIL_EXTENSIONS = {".eml", ".msg"}
 MIN_IMAGE_BYTES = 15_000
 MAX_LOGO_BYTES = 150_000  # an inline picture larger than this is a photo of an invoice, not a signature logo
 SETTLE_SECONDS = 5  # an email changed more recently may still be being copied
@@ -502,12 +502,10 @@ def triage_log(folder: Path, limit: int = 500, keep: Callable[[dict], bool] | No
 
 
 def emails_in(folder: Path) -> list[Path]:
+    """The saved emails in ``folder``, as ``files.folder_names`` lists them (a hidden file is never one, B-1758)."""
     if not folder.is_dir():
         return []
-    # the name first: whether it is a file is asked of the saved emails only, not of a year of invoices (D-157); a
-    # hidden file (a Mac's "._mail.eml") is never one, as it is never an invoice (B-1758)
-    return sorted(p for p in folder.iterdir()
-                  if p.suffix.lower() in EMAIL_EXTENSIONS and not p.name.startswith(".") and p.is_file())  # fmt: skip
+    return [folder / name for name in folder_names(folder)[1]]
 
 
 def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:
@@ -537,13 +535,18 @@ def pickup_lock(data: Path) -> object | None:
     return try_lock(data / PICKUP_LOCK)
 
 
-def wait_for_pickup(data: Path, waiting: Callable[[], None]) -> object:
+def wait_for_pickup(data: Path, waiting: Callable[[], None], most: float | None = None) -> object | None:
     """``pickup_lock``, once the pick-up holding it has finished: ``waiting()`` says so first when one holds it. For
-    a person's import (the dashboard's, ``ap_coder process``): what was listed before is then checked again."""
+    a person's import (the dashboard's, ``ap_coder process``): what was listed before is then checked again.
+    ``most``: the seconds it waits at most (then None; the Process button's request, B-1771), else as long as it
+    takes."""
     lock = pickup_lock(data)
     if lock is None:
         waiting()
+    ends = None if most is None else time.monotonic() + most
     while lock is None:
-        time.sleep(PICKUP_WAIT)
+        if ends is not None and time.monotonic() >= ends:
+            return None
+        time.sleep(PICKUP_WAIT if ends is None else 0.2)
         lock = pickup_lock(data)
     return lock

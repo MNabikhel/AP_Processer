@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from itertools import product
 
 from ..types import (
@@ -44,8 +45,62 @@ def _summed(readings: list[Reading], same_sign: bool = True) -> list[Reading]:
     return out[:3]
 
 
+MARGIN = 1e-9  # far above the rounding of a sum of a few scores, far below any difference of two of them
+_Combo = tuple[tuple[Reading | None, ...], list[Reading], float, float, tuple[tuple[str, int], ...]]
+
+
+def _rated(tax_options: dict[str, list[Reading | None]], sub: Reading | None, extra: float) -> set[tuple[str, int]]:
+    """The taxes read (field, id) whose amount is one of the field's rates of the subtotal, with or without the charge:
+    0.3 more each."""
+    if not (sub and sub.value):
+        return set()
+    return {(f, id(t)) for f, options in tax_options.items() for t in options if t is not None and any(
+        abs(t.value - r * base) <= max(0.02, 0.01 * abs(t.value))
+        for r in _RATES[f]
+        for base in {sub.value, sub.value + extra}  # taxed with or without the freight
+    )}  # fmt: skip
+
+
+def _promising(combos: list[_Combo], by_value: list[int], by_promise: list[int], sub: Reading | None,
+               total: Reading | None, charge: Reading | None, extra: float, line_sum: float | None,
+               rated: set[tuple[str, int]], best: tuple | None) -> list[_Combo]:  # fmt: skip
+    """The taxes' combinations worth working out with this subtotal, total and charge (no total tax), in the order
+    they are tried: all of them while nothing is scored yet; else those that make the totals add up (a range of
+    ``by_value``: the sum grows with the taxes' value), and those whose most possible score beats the best so far
+    (``by_promise``: their scores and 0.3 a tax, the most). One that doesn't add up scores its readings' scores, at
+    most 1.0 (the line items' sum) and 0.3 a tax at its rate, never 3.0: under the best it is never chosen, and only
+    one that adds up balances a subtotal."""
+    if best is None:
+        return combos
+    chosen: set[int] = set()
+    if sub and total:
+
+        def gap(i: int) -> float:  # as the solver works it out
+            return sub.value + extra + (combos[i][3] + 0.0) - total.value
+
+        low = bisect_left(by_value, True, key=lambda i: gap(i) >= -0.011)
+        high = bisect_left(by_value, True, key=lambda i: gap(i) > 0.011)
+        chosen.update(by_value[low:high])
+    line = 1.0 if sub and line_sum is not None and abs(sub.value - line_sum) <= 0.011 else 0.0
+    scored = (sub.score if sub else 0) + (total.score if total else 0) + (charge.score if charge else 0.0) + line
+    for i in by_promise:
+        _, present, present_score, _, keys = combos[i]
+        if scored + present_score + 0.3 * len(present) + MARGIN < best[0]:
+            break  # nor any after it
+        at_rate = sum(key in rated for key in keys)
+        if scored + present_score + 0.3 * at_rate + MARGIN >= best[0]:
+            chosen.add(i)
+    return [combos[i] for i in sorted(chosen)]
+
+
 def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> dict[str, list[Reading]]:
-    """Re-rank amount candidates so that the subtotal, taxes and total that add up come first."""
+    """Re-rank amount candidates so that the subtotal, taxes and total that add up come first.
+
+    Every combination of a subtotal, a total, a charge, a total tax and the four taxes is scored, the first best kept.
+    Most are never worked out, with the same answer (up to 480,000 combinations took 1.3 s): with a total tax or a
+    deposit only the one with no tax counts; and the taxes' combinations tried are only those that make the totals
+    add up (all of them are needed for ``balanced``) and those whose most possible score (``_promising``) beats the
+    best so far."""
     top = {f: sorted(cands.get(f, []), key=lambda r: -r.score)[:4] for f in AMOUNT_FIELDS}
     subs = top["subtotal"] or [None]
     totals = top["grand_total"] or [None]
@@ -56,33 +111,44 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     best = None
     any_tax = any(top[f] for f in (*_TAX_FIELDS, "tax_total"))
     balanced: set[float] = set()  # the subtotals some combination adds up with
+    # The taxes' combinations, in the order they are tried: (the taxes, those read, their scores' and values' sums, the
+    # (field, id) of those read), never one printed amount ("GST/HST") as two taxes. The last reads none.
+    combos: list[_Combo] = []
+    for taxes in product(*tax_options.values()):
+        present = [t for t in taxes if t is not None]
+        if len({_where(t) for t in present}) == len(present):
+            keys = tuple((f, id(t)) for f, t in zip(_TAX_FIELDS, taxes, strict=True) if t is not None)
+            combos.append((taxes, present, sum(t.score for t in present), sum(t.value for t in present), keys))
+    by_value = sorted(range(len(combos)), key=lambda i: combos[i][3])
+    by_promise = sorted(range(len(combos)), key=lambda i: -(combos[i][2] + 0.3 * len(combos[i][1])))
     for sub, total, charge, total_tax in product(subs, totals, charge_options, total_tax_options):
         if sub is not None and total is not None and sub.boxes and _where(sub) == _where(total):
             continue  # one printed amount read under two labels ("Net Total"): it is not both
         extra = charge.value if charge else 0.0
-        for taxes in product(*tax_options.values()):
-            present = [t for t in taxes if t is not None]
-            if len({_where(t) for t in present}) < len(present):
-                continue  # one printed amount ("GST/HST") is one tax
-            if present and total_tax is not None:
-                continue  # the total tax stands in only when no component tax is read
-            if charge is not None and PREPAID in charge.method:
-                if present or total_tax is not None:
-                    continue  # a deposit taken off a taxed total may be off before or after the tax: not settled here
-                if sub is not None and any(
-                    t is not None
-                    and t.boxes
-                    and sub.boxes
-                    and t.boxes[0].page == sub.boxes[0].page
-                    and abs(sub.value - t.value) <= 0.011
-                    for t in totals
-                ):
-                    continue  # "Total 2,344.90 | Deposit received | Balance due": the invoice's total is printed
-            score = (sub.score if sub else 0) + (total.score if total else 0) + sum(t.score for t in present)
+        if charge is not None and PREPAID in charge.method:
+            if total_tax is not None:
+                continue  # a deposit taken off a taxed total may be off before or after the tax: not settled here
+            if sub is not None and any(
+                t is not None
+                and t.boxes
+                and sub.boxes
+                and t.boxes[0].page == sub.boxes[0].page
+                and abs(sub.value - t.value) <= 0.011
+                for t in totals
+            ):
+                continue  # "Total 2,344.90 | Deposit received | Balance due": the invoice's total is printed
+            tried, rated = combos[-1:], set()  # (nor with a tax read)
+        elif total_tax is not None:
+            tried, rated = combos[-1:], set()  # the total tax stands in only when no component tax is read
+        else:
+            rated = _rated(tax_options, sub, extra)
+            tried = _promising(combos, by_value, by_promise, sub, total, charge, extra, line_sum, rated, best)
+        for taxes, present, present_score, present_value, _ in tried:
+            score = (sub.score if sub else 0) + (total.score if total else 0) + present_score
             score += (charge.score if charge else 0.0) + (total_tax.score if total_tax else 0.0)
             bonus = 0.0
             if sub and total:
-                tax_sum = sum(t.value for t in present) + (total_tax.value if total_tax else 0.0)
+                tax_sum = present_value + (total_tax.value if total_tax else 0.0)
                 if abs(sub.value + extra + tax_sum - total.value) <= 0.011:
                     # Subtotal = total with no tax is weaker evidence: one number printed twice.
                     taxed = len(present) + (total_tax is not None)
@@ -96,11 +162,7 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                 bonus += 1.0
             if sub and sub.value:
                 for f, t in zip(tax_options, taxes, strict=True):
-                    if t is not None and any(
-                        abs(t.value - r * base) <= max(0.02, 0.01 * abs(t.value))
-                        for r in _RATES[f]
-                        for base in {sub.value, sub.value + extra}  # taxed with or without the freight
-                    ):
+                    if t is not None and (f, id(t)) in rated:
                         bonus += 0.3
             if sub and bonus >= 3.0:
                 balanced.add(round(sub.value, 2))

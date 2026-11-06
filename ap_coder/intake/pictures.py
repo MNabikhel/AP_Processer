@@ -40,6 +40,7 @@ from ..capture.layout import (
     IMAGE_EXTENSIONS,
     MAX_PICTURE_PIXELS,
     ONE_FRAME_EXTENSIONS,
+    PDF_LOCK,
     open_image,
     picture_formats,
     within_pixel_limit,
@@ -278,7 +279,8 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
 
     source, target = Path(source), Path(target)
     raw = _within_pixel_limit(source.read_bytes())
-    doc = pymupdf.open()
+    with PDF_LOCK:  # each call on the PDF holds PyMuPDF's one lock; the picture is decoded outside it (D-170)
+        doc = pymupdf.open()
     try:
         with open_image(io.BytesIO(raw), source.name) as img:
             one = source.suffix.lower() in ONE_FRAME_EXTENSIONS  # an animated GIF or WEBP: the page it shows first
@@ -293,19 +295,22 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
                 data, turn, shown = _encoded(frame, source, raw, frames == 1)
                 width, height = shown.size
                 w, h = _page_size(shown, width, height)
-                page = doc.new_page(width=w, height=h)
-                page.insert_image(page.rect, stream=data, keep_proportion=False)  # a fax's 204 x 98 dpi: page-sized
-                if turn:
-                    page.set_rotation(turn)
-        if not doc.page_count:
-            raise ValueError("the picture has no page")
-        doc.set_metadata({"creator": CREATOR, "producer": "AP Coder", "title": source.name,
-                          "keywords": json.dumps(note or {}, ensure_ascii=True)})  # fmt: skip
-        part = target.with_name(target.name + ".part")
-        doc.save(part, garbage=3, deflate=True)
-        pages = doc.page_count
+                with PDF_LOCK:
+                    page = doc.new_page(width=w, height=h)
+                    page.insert_image(page.rect, stream=data, keep_proportion=False)  # a fax's 204 x 98 dpi: sized
+                    if turn:
+                        page.set_rotation(turn)
+        with PDF_LOCK:
+            if not doc.page_count:
+                raise ValueError("the picture has no page")
+            doc.set_metadata({"creator": CREATOR, "producer": "AP Coder", "title": source.name,
+                              "keywords": json.dumps(note or {}, ensure_ascii=True)})  # fmt: skip
+            part = target.with_name(target.name + ".part")
+            doc.save(part, garbage=3, deflate=True)
+            pages = doc.page_count
     finally:
-        doc.close()
+        with PDF_LOCK:
+            doc.close()
     os.replace(part, target)
     return pages
 
@@ -349,7 +354,7 @@ def turn_upright(pdf: str | Path, turns: dict[int, int]) -> Converted | None:
     kept: Path | None = None
     made_copy = made_folder = False
     try:
-        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+        with PDF_LOCK, pymupdf.open(stream=raw, filetype="pdf") as doc:
             ours = (doc.metadata or {}).get("creator") in (CREATOR, TURNED)
             for number, turn in turns.items():
                 if 1 <= number <= doc.page_count and turn % 360:
@@ -390,7 +395,7 @@ def original_of(pdf: str | Path) -> dict[str, Any] | None:
     try:
         import pymupdf
 
-        with pymupdf.open(pdf) as doc:
+        with PDF_LOCK, pymupdf.open(pdf) as doc:
             meta = doc.metadata or {}
             if meta.get("creator") not in (CREATOR, TURNED):
                 return None

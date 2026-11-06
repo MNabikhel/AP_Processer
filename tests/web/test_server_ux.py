@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,7 @@ from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.ops import offline
 from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
-from ap_coder.web.pages import learning, process
+from ap_coder.web.pages import learning
 from tests.conftest import SAMPLES, chromium_path
 from tests.webclient import PAGE, add_clean, enrol, post, sign_in
 
@@ -153,20 +154,22 @@ def upload(client, *names):
     return client.post("/process/upload", files=sent, headers=PAGE)
 
 
-def test_a_second_upload_waits_behind_the_running_import(store, monkeypatch):
+def test_a_second_upload_goes_in_line_beside_the_running_import(store, monkeypatch):
+    """D-99 queued an upload behind the import under way in memory; it is in the import queue now (D-168): saved at
+    once, in line with the files before it, said, and read in turn in the same run."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+
     release = threading.Event()
-    runs: list[list[str]] = []
+    runs: list[str] = []
+    real = InvoicePipeline.process
 
-    def fake_process_files(store_, settings_, paths, **kwargs):
-        def work(job):
-            runs.append([p.name for p in paths])
-            if len(runs) == 1:
-                assert release.wait(30)
-            return {"label": f"Processed {len(paths)}", "messages": []}
+    def process_(self, path, *args, **kwargs):
+        runs.append(Path(path).name)
+        if len(runs) == 1:
+            assert release.wait(30)
+        return real(self, path, *args, **kwargs)
 
-        return work
-
-    monkeypatch.setattr(process, "process_files", fake_process_files)
+    monkeypatch.setattr(InvoicePipeline, "process", process_)
     client = client_as(store, base_url="http://localhost")
     first = upload(client, f"{STEM}.pdf")
     assert first.json() == {"ok": True, "job": "process", "status": "/process/status"}
@@ -174,10 +177,10 @@ def test_a_second_upload_waits_behind_the_running_import(store, monkeypatch):
     assert second.status_code == 200, second.text
     answer = second.json()
     assert answer["ok"] and answer["queued"] == 1 and answer["status"] == "/process/status"
-    assert answer["toast"]["text"] == "Waiting: 1 file queued behind the import in progress."
+    assert answer["toast"]["text"].startswith("1 file in line with 1 file that came in before")
     assert (core.invoice_dir(store) / f"{OTHER}.pdf").exists()  # saved at once
-    assert "Waiting: 1 file queued behind the import in progress" in client.get("/process").text
-    assert client.get("/process/status").json()["waiting"] == 1
+    snap = client.get("/process/status").json()
+    assert snap["state"] == "running" and snap["total"] == 2 and snap["done"] == 0
     release.set()
     job = client.app.state.jobs.get("process")
     for _ in range(100):
@@ -185,9 +188,9 @@ def test_a_second_upload_waits_behind_the_running_import(store, monkeypatch):
         if len(runs) == 2 and not job.running:
             break
         threading.Event().wait(0.05)
-    assert runs == [[f"{STEM}.pdf"], [f"{OTHER}.pdf"]]  # the second ran after the first, by itself
-    assert client.get("/process/status").json()["waiting"] == 0
-    assert "queued behind" not in client.get("/process").text
+    assert runs == [f"{STEM}.pdf", f"{OTHER}.pdf"]  # the second read after the first, in the same run
+    snap = client.get("/process/status").json()
+    assert snap["state"] == "done" and snap["result"]["ok"] == 2
 
 
 # --- Messages and uploads kept in the database --------------------------------------------------------------------

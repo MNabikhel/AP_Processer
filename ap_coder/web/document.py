@@ -82,9 +82,9 @@ def page_sizes(path: str | Path) -> list[tuple[float, float]]:
 @functools.lru_cache(maxsize=64)
 def _sizes_cached(path: str, _mtime: int, _size: int) -> tuple[tuple[float, float], ...]:
     if Path(path).suffix.lower() == PDF:
-        import pymupdf
+        from ap_coder.capture.layout import PDF_LOCK, opened_pdf
 
-        with pymupdf.open(path) as doc:
+        with opened_pdf(path) as doc, PDF_LOCK:  # PyMuPDF one thread at a time (N-14)
             return tuple(
                 (round(page.rect.width, 2), round(page.rect.height, 2))
                 for index, page in enumerate(doc)
@@ -255,7 +255,7 @@ def _prune(folder: Path, newest: Path) -> None:
         if name == str(newest):
             continue
         with contextlib.suppress(OSError):
-            os.unlink(name)
+            Path(name).unlink(missing_ok=True)  # one gone already (another worker pruning) is gone too (B-1779)
             total -= size
 
 
@@ -335,7 +335,9 @@ def _draw_png(path: str, _mtime: int, _size: int, number: int, scale: int = 1) -
     if Path(path).suffix.lower() == PDF:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        from ap_coder.capture.layout import PDF_LOCK, opened_pdf
+
+        with opened_pdf(path) as doc, PDF_LOCK:  # PyMuPDF one thread at a time (N-14)
             if number > doc.page_count:
                 raise IndexError(number)
             page = doc[number - 1]
@@ -418,7 +420,9 @@ def page_words(path: str | Path) -> list[list[dict[str, Any]]]:
     if p.suffix.lower() == PDF:
         import pymupdf
 
-        with pymupdf.open(p) as doc:
+        from ap_coder.capture.layout import PDF_LOCK, opened_pdf
+
+        with opened_pdf(p) as doc, PDF_LOCK:  # PyMuPDF one thread at a time (N-14)
             for index, page in enumerate(doc):
                 if index >= MAX_PAGES:
                     break

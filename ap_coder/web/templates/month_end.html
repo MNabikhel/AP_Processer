@@ -59,7 +59,7 @@
 <section class="card">
   <div class="card-head">
     <h4>Accruals schedule</h4>
-    <a class="btn" href="/month-end/accruals.csv?end={{ end }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+    <a class="btn" href="/month-end/accruals.csv?end={{ end }}" download data-download-job><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
   </div>
   {% for g in groups %}
   {{ ui.subhead(g.title, g.rows | length | plural("line"), first=loop.first) }}

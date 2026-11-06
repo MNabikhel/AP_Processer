@@ -88,6 +88,21 @@ def test_a_new_invoice_waits_for_the_page_reader_then_it_decides(store, touchles
     assert store.get_invoice(result.invoice_id)["status"] == APPROVED
 
 
+def test_a_new_invoice_touchless_processing_waits_on_is_read_before_the_others(store, touchless):
+    """Its supplier touchless and nothing else holding it, only the page reader's reading is awaited: it goes in line
+    to be read before the others but those a person asked for (D-171); another supplier's goes in line as before."""
+    from ap_coder.core.store.page_queue import TOUCHLESS_NEXT
+
+    pipeline = InvoicePipeline(_settings(), store.reference_data(), store=store)
+    held = pipeline.process(PDF)
+    assert store.page_read(held.invoice_id)["reason"] == TOUCHLESS_NEXT
+    page_worker.queue_new_invoice(store, 77, PDF)  # (not touchless)
+    assert store.page_read(77)["reason"] == "new invoice"
+    with store._conn() as conn:  # waiting longer
+        conn.execute("UPDATE page_reads SET created_at = '2026-01-01T00:00:00' WHERE invoice_id = 77")
+    assert store.next_page_read()["invoice_id"] == held.invoice_id
+
+
 def test_an_invoice_a_person_is_correcting_is_never_approved_by_the_page_reader(store, touchless, monkeypatch):
     """A person's unapproved corrections (a draft, D-86) on an invoice waiting for the page reader: its reading
     still replaces the proposal, but AP Coder does not approve it over the person's work (B-953)."""

@@ -7,6 +7,7 @@ import socket
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +16,6 @@ from ap_coder.core.store import PENDING, Store, load_sample_setup
 from ap_coder.ops import cli, doctor, offline, server_update, service
 from ap_coder.web import core
 from ap_coder.web.app import create_app
-from ap_coder.web.pages import process
 from tests.conftest import SAMPLES
 from tests.webclient import PAGE, add_clean, enrol, sign_in, web_settings
 
@@ -188,16 +188,14 @@ def test_uploads_demo_and_setup_imports_record_who_on_the_server(store, monkeypa
     new = [e for e in store.events() if e["id"] not in before]
     assert new and all(e["actor"] == "Ada Admin" for e in new), new
 
-    # An upload: the import runs in its own thread, as the person who uploaded it.
-    def fake_process_files(store_, settings_, paths, **kwargs):
-        def work(job):
-            for p in paths:
-                store_.add_invoice(p, {"vendor_name": "X"}, {"requires_review": True})
-            return {"label": "Processed", "messages": []}
+    # An upload: read from the import queue on another thread (D-168), as the person who uploaded it.
+    from ap_coder.ai.pipeline import InvoicePipeline
 
-        return work
+    def fake_process(self, path, **kwargs):
+        invoice_id = store.add_invoice(path, {"vendor_name": "X"}, {"requires_review": True})
+        return SimpleNamespace(ok=True, output={"vendor_name": "X"}, report=None, error=None, invoice_id=invoice_id)
 
-    monkeypatch.setattr(process, "process_files", fake_process_files)
+    monkeypatch.setattr(InvoicePipeline, "process", fake_process)
     clerk = client_as(store, "clerk", "Cleo Clerk")
     fresh = (SAMPLES / f"{STEM}.pdf").read_bytes() + b"\n% not one of the demo's\n"  # (the demo has each sample)
     sent = [("files", ("fresh.pdf", fresh, "application/pdf"))]

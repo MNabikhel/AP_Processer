@@ -408,3 +408,64 @@ def try_lock(path: Path) -> object | None:
         handle.close()
         return None
     return handle
+
+
+# --- The model's answers kept in the data folder (D-171) -------------------------------------------------------------
+# ``.cache/page_reader`` (the page reader's readings, a folder a file), ``.cache/model_reading`` (the chat model's
+# reading of a header) and ``.cache/model_accounts`` (its GL accounts for a question): each answer kept so the same
+# question is never asked twice (the arrival, then the page reader's pass, a reading again). Kept KEPT_DAYS, and at most
+# KEPT_MAX_BYTES each, the oldest written first. (``.cache/ocr`` is pruned by ``capture.layout``, D-170.)
+KEPT_DAYS = 30  # well past a page reader's backlog: an answer is asked for again within days of the first
+KEPT_MAX_BYTES = 512 * 1024 * 1024  # each folder; about 3 months of a busy server's answers (25,000 invoices a month)
+KEPT_PRUNE_SECONDS = 3600  # a process prunes a folder at its first answer kept there, then at most once an hour
+_PART_SECONDS = 3600  # a half-written answer (".part", ".tmp") older than this was left by a stopped process
+_kept_pruned: dict[str, float] = {}
+
+
+def prune_kept(folder: Path, newest: Path | None = None) -> int:
+    """After an answer is kept in ``folder``: the answers there (``*.json``, in it or a folder of it) written more than
+    KEPT_DAYS ago go, then the oldest first while they hold more than KEPT_MAX_BYTES, never ``newest``; a half-written
+    one a stopped process left, and a folder left empty. At this process's first answer kept there, then at most once
+    every KEPT_PRUNE_SECONDS. How many went; never raises."""
+    now, key = time.monotonic(), str(folder)
+    if now - _kept_pruned.get(key, -KEPT_PRUNE_SECONDS) < KEPT_PRUNE_SECONDS:
+        return 0
+    _kept_pruned[key] = now
+    wall, files, total, gone = time.time(), [], 0, 0
+    try:
+        found = [(Path(root), names) for root, _, names in os.walk(folder)]
+    except OSError:
+        return 0
+    for root, names in found:
+        for name in names:
+            path = root / name
+            try:
+                seen = path.stat()
+            except OSError:  # removed meanwhile (another process pruning)
+                continue
+            if name.endswith((".part", ".tmp")):
+                if wall - seen.st_mtime > _PART_SECONDS:
+                    gone += _unlinked(path)
+            elif name.endswith(".json") and path != newest:
+                files.append((seen.st_mtime, path, seen.st_size))
+                total += seen.st_size
+    files.sort()
+    for when, path, size in files:
+        if wall - when <= KEPT_DAYS * 86400 and total <= KEPT_MAX_BYTES:
+            break
+        if _unlinked(path):
+            gone, total = gone + 1, total - size
+    for root, _ in found[:0:-1]:  # the folders of it, deepest first: those left empty go
+        try:
+            root.rmdir()
+        except OSError:  # not empty, or gone
+            pass
+    return gone
+
+
+def _unlinked(path: Path) -> int:
+    try:
+        path.unlink(missing_ok=True)  # one gone already (another process pruning) is gone too (B-1779)
+        return 1
+    except OSError:
+        return 0

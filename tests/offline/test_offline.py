@@ -224,6 +224,7 @@ ALLOWED_HOSTS = {
     "www.nayuki.io",  # the licence header of the QR code generator kept as published (web/qrcodegen.py, D-146)
     "www.modelscope.cn",  # where scripts/fetch_models.py gets the OCR models at setup; never by the app
     "schemas.microsoft.com",  # the scheduled task's XML namespace (ops/service.py), not a download
+    "schemas.openxmlformats.org", "purl.org",  # an Excel workbook's XML namespaces (erp/exports.py, D-169): names
     # The finance hub's push to OneLake (erp/hub/onelake.py): only with AP_ALLOW_INTERNET=1 and an Admin's opt-in.
     "login.microsoftonline.com", "onelake.dfs.fabric.microsoft.com", "storage.azure.com",
 }  # fmt: skip

@@ -15,6 +15,7 @@ from ...coding.po import po_key
 from ..audit import diff_coding
 from ..memory import vendor_key
 from ._base import (
+    _STALE,
     _VERIFY_IN_LINE,
     AZURE_CHECKING,
     AZURE_DONE,
@@ -32,8 +33,15 @@ from ._base import (
     _due,
     _now,
     _same_row,
-    _stale_before,
 )
+from .page_queue import _stale
+
+# The order the AI reviewer takes its queue in (D-171), as the page reader's (``page_queue``): a person's ask first (the
+# review screen's "asked by <name>"), then one touchless processing waits on (``verifier.QUEUED``'s "held for
+# touchless"), then the earliest due (one without a due date last), then the oldest; ``i`` its invoice.
+_REVIEW_ORDER = ("verifications.reason NOT LIKE 'asked by %'", "verifications.reason != 'held for touchless'",
+                 "i.due_date IS NULL", "COALESCE(i.due_date, '')", "verifications.created_at",
+                 "verifications.invoice_id")  # fmt: skip
 
 # A lesson with how many of the approvals still standing corrected it to its value (``agreeing``): a lesson recorded
 # without an invoice (none kept beside it) counts its corrections.
@@ -277,21 +285,23 @@ class LessonsMixin:
         now = _now()
         with self._conn() as conn:
             cur = conn.execute(
-                """INSERT INTO verifications (invoice_id, reason, status, created_at, updated_at)
+                f"""INSERT INTO verifications (invoice_id, reason, status, created_at, updated_at)
                    VALUES (?, ?, 'waiting', ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET reason = excluded.reason,
                    status = 'waiting', error = '', tries = 0, updated_at = excluded.updated_at,
                    created_at = CASE WHEN verifications.status = 'waiting' THEN verifications.created_at
                                 ELSE excluded.created_at END
-                   WHERE verifications.status != 'verifying' OR verifications.updated_at < ?""",
-                (invoice_id, reason or "", now, now, _stale_before()),
+                   WHERE verifications.status != 'verifying' OR {_STALE.format(t="verifications.")}""",
+                (invoice_id, reason or "", now, now, *_stale()),
             )
             return cur.rowcount > 0
 
     def next_verification(self, *, after_page_reader: bool = True, reader: str = "") -> dict[str, Any] | None:
-        """The invoice the AI reviewer takes next (the one waiting longest), marked as being reviewed (by ``reader``,
-        the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave invoices still
-        waiting for the page reader (it reads them first, then the reviewer reviews them as they then stand)."""
-        now, stale = _now(), _stale_before()
+        """The invoice the AI reviewer takes next (in the queue's order: a person's ask first, then one touchless
+        processing waits on, then the earliest due, then the one waiting longest), marked as being reviewed (by
+        ``reader``, the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave
+        invoices still waiting for the page reader (it reads them first, then the reviewer reviews them as they then
+        stand)."""
+        now, stale = _now(), _stale()
         later = (
             " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = verifications.invoice_id "
             "AND p.status IN ('waiting', 'reading'))"
@@ -301,19 +311,29 @@ class LessonsMixin:
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                f"SELECT invoice_id FROM verifications WHERE {_VERIFY_IN_LINE}{later} "
-                "ORDER BY created_at, invoice_id LIMIT 1",
-                (stale,),
+                f"SELECT verifications.invoice_id FROM verifications LEFT JOIN invoices i ON i.id = "
+                f"verifications.invoice_id WHERE {_VERIFY_IN_LINE}{later} ORDER BY {', '.join(_REVIEW_ORDER)} LIMIT 1",
+                stale,
             ).fetchone()
             if row is None:
                 return None
             conn.execute(
-                "UPDATE verifications SET status = 'verifying', error = '', reader = ?, updated_at = ? "
-                "WHERE invoice_id = ?",
+                "UPDATE verifications SET status = 'verifying', error = '', reader = ?, updated_at = ?, renewed = "
+                "julianday('now') WHERE invoice_id = ?",
                 (reader or "", now, row[0]),
             )
             taken = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
+
+    def renew_verification(self, invoice_id: int, reader: str) -> bool:
+        """The heartbeat of a review under way (``renew_page_read``'s): still ``reader``'s, marked afresh. False once
+        it is no longer that reader's."""
+        with self._conn() as conn:
+            return conn.execute(
+                "UPDATE verifications SET updated_at = ?, renewed = julianday('now') WHERE invoice_id = ? AND status = "
+                "'verifying' AND reader = ?",
+                (_now(), invoice_id, reader or ""),
+            ).rowcount > 0  # fmt: skip
 
     def finish_verification(
         self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, rounds: int = 0,
@@ -342,7 +362,7 @@ class LessonsMixin:
 
     def release_verifications(self, alive: Callable[[str], bool]) -> int:
         """Put back in line every invoice marked as being reviewed by a process that isn't reviewing any more
-        (``alive(reader)`` is False: closed or killed part way), at once rather than after STALE_READING_HOURS. How
+        (``alive(reader)`` is False: closed or killed part way), at once rather than after READING_STALE_SECONDS. How
         many were put back (``release_page_reads``, for the AI reviewer's queue)."""
         why = "interrupted (AP Coder was closed while it was reviewed): it is reviewed again"
         with self._conn() as conn:
@@ -360,12 +380,13 @@ class LessonsMixin:
         """The invoice's review: {invoice_id, reason, status, rounds, seconds, result, error, created_at,
         updated_at}, or None when it was never put in line."""
         with self._conn() as conn:
-            row = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (invoice_id,)).fetchone()
+            row = conn.execute(f"SELECT *, {_STALE.format(t='')} AS stale FROM verifications WHERE invoice_id = ?",
+                               (*_stale(), invoice_id)).fetchone()  # fmt: skip
         if row is None:
             return None
         found = dict(row)
         found["result"] = json.loads(found.pop("result_json") or "null")
-        if found["status"] == VERIFY_RUNNING and found["updated_at"] < _stale_before():
+        if found.pop("stale") and found["status"] == VERIFY_RUNNING:
             found["status"] = VERIFY_WAITING
         return found
 
@@ -543,3 +564,27 @@ class LessonsMixin:
                 "requires_review": bool(validation.get("requires_review", True)),
             })  # fmt: skip
         return True
+
+    @staticmethod
+    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
+        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
+        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
+        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
+        if kept is None or gone is None:
+            return
+        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
+        reasons = [r for r in (kept, gone) if r["explanation"]]
+        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
+        conn.execute(
+            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
+            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
+                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
+                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
+                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))

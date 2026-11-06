@@ -88,6 +88,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /activity", "GET /activity/events.csv", "GET /activity/controls-report",
         "GET /help", "GET /help/quick-start", "GET /help/report",
         "GET /jobs/{name}",  # how far a job got: the job's own role besides (JOB_NEEDS)
+        # How far a download made by the server's background process got (D-169): the asker's own, asked by its route.
+        "GET /downloads/{job_id:int}",
     ),
     **_rules(
         MANAGE,

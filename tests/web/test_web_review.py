@@ -232,6 +232,7 @@ def test_the_rail_calls_the_manual_import_import_invoices(client):
 def test_retry_reads_again_only_an_invoice_that_failed(client, demo, monkeypatch, tmp_path):
     """Retry on an invoice that is approved, in review or rejected (a stale page's button, or ids given out again
     after a restore) read its file again into a second, duplicate review row."""
+    import pathlib
     import shutil
 
     from ap_coder.web.pages import process
@@ -239,11 +240,11 @@ def test_retry_reads_again_only_an_invoice_that_failed(client, demo, monkeypatch
 
     read = []
 
-    def reading(store, settings, paths, **kwargs):
-        read.extend(paths)
-        return lambda job: {}
+    def reading(request, files, **kwargs):  # (put in the import queue, D-168)
+        read.extend(pathlib.Path(f[0]) for f in files)
+        return {"batch": 1, "run": 1, "queued": len(files), "skipped": [], "ahead": 0}
 
-    monkeypatch.setattr(process, "process_files", reading)
+    monkeypatch.setattr(process, "queue_files", reading)
     first, second = demo.list_invoices(REVIEW)[:2]
     demo.reject_invoice(second["id"], "Jane", "duplicate")
     for inv in [first, second, *demo.list_invoices(APPROVED)[:1]]:

@@ -22,10 +22,15 @@ def _ago(hours):
 
 
 def _set(store, invoice_id, **columns):
-    """Move a queued invoice in time (when it was asked for, when its read started)."""
+    """Move a queued invoice in time (when it was asked for, when its read was last renewed: ``updated_at``, as long
+    ago on the database's clock too unless ``renewed`` is given)."""
+    sets = [f"{column} = ?" for column in columns]
+    args = list(columns.values())
+    if "updated_at" in columns and "renewed" not in columns:
+        sets.append("renewed = julianday('now') - ? / 86400.0")
+        args.append((dt.datetime.now() - dt.datetime.fromisoformat(columns["updated_at"])).total_seconds())
     with sqlite3.connect(store.path) as conn:
-        sets = ", ".join(f"{column} = ?" for column in columns)
-        conn.execute(f"UPDATE page_reads SET {sets} WHERE invoice_id = ?", (*columns.values(), invoice_id))
+        conn.execute(f"UPDATE page_reads SET {', '.join(sets)} WHERE invoice_id = ?", (*args, invoice_id))
 
 
 def _report(confidence, review=False):
@@ -100,7 +105,8 @@ def test_asking_again(store, ground_truth):
     again = store.page_read(a)
     assert (again["status"], again["error"], again["requested_by"]) == ("waiting", "", "Bob")
     assert again["created_at"] > asked_at
-    assert store.next_page_read()["invoice_id"] == b  # b was waiting before a was asked for again
+    assert store.next_page_read()["invoice_id"] == a  # a person asked for it: before b, waiting longer (D-171)
+    assert store.next_page_read()["invoice_id"] == b
 
 
 def test_finishing_a_read(store, ground_truth):
@@ -119,25 +125,76 @@ def test_finishing_a_read(store, ground_truth):
     assert store.page_reads_waiting() == 0 and store.next_page_read() is None
 
 
-def test_a_read_interrupted_long_ago_waits_again(store, ground_truth):
+def test_a_read_whose_reader_stopped_renewing_it_waits_again(store, ground_truth):
+    """A read under way is renewed by its reader every minute (D-171): one not renewed for 5 minutes (its process
+    paused, the computer slept) is in line again, in its place; it was 2 hours, the read never renewed."""
     a, b = _invoices(store, ground_truth, 2)
     asked_at = _ago(5)
     store.queue_page_read(a, "scan")
     _set(store, a, created_at=asked_at)
     store.queue_page_read(b, "scan")
     _set(store, b, created_at=_ago(4))
-    assert store.next_page_read()["invoice_id"] == a
-    _set(store, a, updated_at=_ago(1.5))  # within the time a long read may take
+    assert store.next_page_read(reader="r")["invoice_id"] == a
+    _set(store, a, updated_at=_ago(4 / 60))  # renewed 4 minutes ago: within the stale time
     assert store.page_read(a)["status"] == "reading" and store.page_reads_waiting() == 1
     assert not store.queue_page_read(a, "asked", requested_by="Ann")
-    _set(store, a, updated_at=_ago(2.5))  # the computer slept, or the app was closed
+    _set(store, a, updated_at=_ago(1.5))  # a long read, renewed all along...
+    assert store.renew_page_read(a, "r") and store.page_read(a)["status"] == "reading"
+    assert not store.renew_page_read(a, "another reader")  # (only its own reader renews it)
+    _set(store, a, updated_at=_ago(6 / 60))  # ...until 6 minutes without: its reader stopped
     assert store.page_read(a)["status"] == "waiting" and store.page_reads_waiting() == 2
     assert store.next_page_read()["invoice_id"] == a  # it kept its place in line
     assert store.page_read(a)["status"] == "reading"
+    assert not store.renew_page_read(a, "r")  # taken by another since: not the stopped reader's any more
     _set(store, a, updated_at=_ago(3))
     assert store.queue_page_read(a, "asked", requested_by="Ann")  # asking again puts it back, in its place
     assert (store.page_read(a)["status"], store.page_read(a)["created_at"]) == ("waiting", asked_at)
     assert store.next_page_read()["invoice_id"] == a
+
+
+def test_a_read_under_way_stays_its_readers_when_the_clocks_go_forward(store, ground_truth, monkeypatch):
+    """Spring forward (2:00 becomes 3:00): a read's staleness was compared on the local time, so for up to a minute
+    (until its next renewal) every read and review under way looked an hour old, and a second reader took it while
+    the first still read it (B-1770). It is compared on the database's clock now, which a change of the clocks
+    doesn't move; a row renewed before the queue had that clock, on its local time as before."""
+    from ap_coder.core.store import lessons, page_queue
+
+    a, b = _invoices(store, ground_truth, 2)
+    store.queue_page_read(a, "scan")
+    assert store.next_page_read(reader="A")["invoice_id"] == a
+    store.queue_verification(b)
+    assert store.next_verification(after_page_reader=False, reader="A")["invoice_id"] == b
+
+    def ahead(seconds=0.0):  # the local time, an hour on
+        return (dt.datetime.now() + dt.timedelta(hours=1, seconds=seconds)).isoformat(timespec="seconds")
+
+    for module in (page_queue, lessons):
+        monkeypatch.setattr(module, "_now", ahead)
+    monkeypatch.setattr(page_queue, "_reading_stale_before", lambda: ahead(-page_queue.READING_STALE_SECONDS))
+    assert store.next_page_read(reader="B") is None and store.page_read(a)["status"] == "reading"
+    assert store.page_reads_waiting() == 0 and not store.queue_page_read(a, "asked", requested_by="Ann")
+    assert store.next_verification(after_page_reader=False, reader="B") is None
+    assert store.verification(b)["status"] == "verifying"
+    assert store.renew_page_read(a, "A") and store.renew_verification(b, "A")
+    _set(store, a, renewed=None, updated_at=_ago(1.5))  # renewed by an older AP Coder: its local time
+    assert store.page_read(a)["status"] == "waiting" and store.next_page_read(reader="B")["invoice_id"] == a
+
+
+def test_a_reader_whose_read_another_took_ends_nothing_of_the_others(store, ground_truth):
+    """A reader paused past the stale time (a VM saved) had its read taken by another: as it woke, its end of the
+    read (done, or back in line) was written over the other's read under way, which then read on unrenewed, a third
+    could take it too (B-1770). A reader ends only its own read now, as the AI reviewer's does (B-787)."""
+    (a,) = _invoices(store, ground_truth, 1)
+    store.queue_page_read(a, "scan")
+    assert store.next_page_read(reader="A")["invoice_id"] == a
+    _set(store, a, updated_at=_ago(6 / 60))  # A paused: not renewed for 6 minutes
+    assert store.next_page_read(reader="B")["invoice_id"] == a
+    assert not store.renew_page_read(a, "A")
+    for status in ("done", "waiting", "failed"):
+        assert not store.finish_page_read(a, status, MODEL, 1, 1.0, reader="A")
+    assert (store.page_read(a)["status"], store.page_read(a)["reader"]) == ("reading", "B")
+    assert store.renew_page_read(a, "B") and store.finish_page_read(a, "done", MODEL, 1, 1.0, reader="B")
+    assert store.page_read(a)["status"] == "done"
 
 
 def test_two_readers_never_take_the_same_invoice(store, ground_truth):
@@ -155,6 +212,74 @@ def test_two_readers_never_take_the_same_invoice(store, ground_truth):
         batches = [f.result() for f in [pool.submit(drain) for _ in range(4)]]
     taken = [i for batch in batches for i in batch]
     assert sorted(taken) == sorted(ids)  # each one exactly once
+
+
+# --- The order it is read in (D-171): a person's, then a touchless supplier's, then the earliest due ------------
+
+
+def _line(store, ground_truth, *rows):
+    """Invoices in line, each (reason, asked by, due date, hours waiting), the first waiting longest by default."""
+    ids = _invoices(store, ground_truth, len(rows))
+    for invoice_id, (reason, asked_by, due, hours) in zip(ids, rows, strict=True):
+        store.queue_page_read(invoice_id, reason, requested_by=asked_by)
+        _set(store, invoice_id, created_at=_ago(hours))
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (due, invoice_id))
+    return ids
+
+
+def _order(store):
+    order = []
+    while (row := store.next_page_read()) is not None:
+        order.append(row["invoice_id"])
+    return order
+
+
+def test_what_a_person_asked_for_is_read_first(store, ground_truth):
+    """A person's "Add it to OvisOCR2's queue" (or ``read-pages --invoice``) before the invoices waiting longer, and
+    before a touchless supplier's or one due sooner."""
+    from ap_coder.core.store.page_queue import TOUCHLESS_NEXT
+
+    waiting, touchless, asked = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-01-01", 3),
+        (TOUCHLESS_NEXT, "", "2026-01-01", 2),
+        ("not read yet", "Ann", "2027-01-01", 1),
+    )
+    assert [store.page_reads_ahead(i) for i in (asked, touchless, waiting)] == [0, 1, 2]
+    assert _order(store) == [asked, touchless, waiting]
+
+
+def test_then_a_new_invoice_touchless_processing_waits_on(store, ground_truth):
+    """A touchless supplier's new invoice is approved without a person once the page reader has read it: read before
+    the others in line, waiting longer or due sooner (``page_worker.queue_new_invoice``)."""
+    from ap_coder.core.store.page_queue import TOUCHLESS_NEXT
+
+    older, due_sooner, touchless = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-03-01", 3),
+        ("new invoice", "", "2026-01-01", 2),
+        (TOUCHLESS_NEXT, "", "2026-06-01", 1),
+    )
+    assert store.page_reads_ahead(touchless) == 0
+    assert _order(store) == [touchless, due_sooner, older]
+
+
+def test_then_the_one_due_soonest_and_of_those_due_alike_the_one_waiting_longest(store, ground_truth):
+    """Among the rest, the earliest due first (it is paid first), one with no due date (a credit note) last."""
+    later, sooner, no_date, same_newer, same_older = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-12-01", 5),
+        ("new invoice", "", "2026-11-10", 1),
+        ("new invoice", "", None, 9),
+        ("new invoice", "", "2026-11-20", 2),
+        ("new invoice", "", "2026-11-20", 3),
+    )
+    assert [store.page_reads_ahead(i) for i in (sooner, same_older, same_newer, later, no_date)] == [0, 1, 2, 3, 4]
+    assert _order(store) == [sooner, same_older, same_newer, later, no_date]
 
 
 # --- Replacing the proposal --------------------------------------------------------------------------------------

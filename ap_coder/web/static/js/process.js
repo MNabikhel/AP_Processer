@@ -1,6 +1,6 @@
 /* Process invoices: pick or drop files, upload them (with progress), then follow the reading job until it is done.
-   The server reads and codes in the background (job "process"); this polls /process/status and draws each invoice
-   as it is done, then reloads the page (the job card stays, with the summary). */
+   The server reads and codes the import queue in the background (D-168); this polls /process/status (the queue's
+   latest run) and draws each invoice as it is done, then reloads the page (the job card stays, with the summary). */
 
 import { HEADERS, escapeHtml, follow, messageElement, noAnswer, pollJob, toast } from "./app.js";
 
@@ -64,12 +64,6 @@ function drawJob(snap) {
     .join("");
   lines.scrollTop = lines.scrollHeight;
   actions.hidden = running;
-  const waiting = card.querySelector("#job-waiting");
-  if (waiting) {
-    const n = snap.waiting || 0;
-    waiting.hidden = !n;
-    waiting.lastElementChild.textContent = n ? `Waiting: ${n} file${n === 1 ? "" : "s"} queued behind the import in progress.` : "";
-  }
   const box = card.querySelector("#job-messages");
   box.innerHTML = "";
   for (const m of (snap.result && snap.result.messages) || []) box.appendChild(messageElement(m));
@@ -77,10 +71,8 @@ function drawJob(snap) {
 
 async function follow_job(statusUrl) {
   card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  // Uploads queued behind this import (a colleague's) start when it finishes: followed too, then the page is drawn again.
-  for (let snap = await pollJob(statusUrl, drawJob); snap && snap.waiting; snap = await pollJob(statusUrl, drawJob)) {
-    await new Promise((resolve) => setTimeout(resolve, 800));
-  }
+  // The import queue's run: every file in line, a colleague's too (D-168), then the page is drawn again.
+  await pollJob(statusUrl, drawJob);
   location.reload();
 }
 
@@ -139,4 +131,4 @@ if (form) {
 
 // The folder's "Process N files" (app.js sends it and tells us a job started), or a job already running.
 document.addEventListener("apc:job", (e) => follow_job(e.detail.status));
-if (card && (card.dataset.state === "running" || Number(card.dataset.waiting) > 0)) follow_job(card.dataset.statusUrl);
+if (card && card.dataset.state === "running") follow_job(card.dataset.statusUrl);

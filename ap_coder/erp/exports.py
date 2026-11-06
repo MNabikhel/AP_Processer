@@ -268,49 +268,173 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
     neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas
 
 
-def streamed_sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: Iterable[dict[str, Any]]) -> None:
-    """``_sheet`` on a sheet of a write-only workbook (``Workbook(write_only=True)``): the same cells, formats, column
-    widths (from the first 500 rows), frozen header and filter, each row written as it comes instead of the whole
-    sheet held in memory (D-157)."""
-    from openpyxl.cell import WriteOnlyCell
+# --- A big sheet, written without openpyxl's cells (D-157, D-169) ----------------------------------------------------
+# Search to Excel (50,000 rows of 9 columns) spent 7 of its 8.5 s making and writing openpyxl's cells one by one, in
+# its write-only workbook. ``sheet_workbook`` writes the workbook's parts itself, a part at a time: what it holds is
+# what ``_sheet`` makes, cell by cell (each value and type as openpyxl writes it: numbers "%.16g", dates as Excel's
+# serial days, text inline; the same number formats, header style, widths from the first 500 rows, frozen header and
+# filter; ``tests/erp/test_directory.py`` reads both back and compares them).
+_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_PACKAGE = "http://schemas.openxmlformats.org/package/2006"
+_OFFICE = "http://schemas.openxmlformats.org/officeDocument/2006"
+_MONEY_FORMAT = 4  # Excel's own "#,##0.00"
+_SHEET_PARTS = {
+    "[Content_Types].xml": (
+        f'<Types xmlns="{_PACKAGE}/content-types"><Default Extension="rels" ContentType="application/vnd.'
+        'openxmlformats-package.relationships+xml" /><Default Extension="xml" ContentType="application/xml" />'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.'
+        'styles+xml" /><Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-'
+        'officedocument.theme+xml" /><Override PartName="/docProps/core.xml" ContentType="application/vnd.'
+        'openxmlformats-package.core-properties+xml" /><Override PartName="/docProps/app.xml" ContentType="application/'
+        'vnd.openxmlformats-officedocument.extended-properties+xml" /><Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml" /><Override '
+        'PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.'
+        'main+xml" /></Types>'
+    ),
+    "_rels/.rels": (
+        f'<Relationships xmlns="{_PACKAGE}/relationships"><Relationship Type="{_OFFICE}/relationships/officeDocument" '
+        f'Target="xl/workbook.xml" Id="rId1" /><Relationship Type="{_PACKAGE}/relationships/metadata/core-properties" '
+        f'Target="docProps/core.xml" Id="rId2" /><Relationship Type="{_OFFICE}/relationships/extended-properties" '
+        'Target="docProps/app.xml" Id="rId3" /></Relationships>'
+    ),
+    "docProps/app.xml": (
+        f'<Properties xmlns="{_OFFICE}/extended-properties"><Application>Microsoft Excel Compatible / AP Coder'
+        "</Application></Properties>"
+    ),
+    "xl/_rels/workbook.xml.rels": (
+        f'<Relationships xmlns="{_PACKAGE}/relationships"><Relationship Type="{_OFFICE}/relationships/worksheet" '
+        f'Target="/xl/worksheets/sheet1.xml" Id="rId1" /><Relationship Type="{_OFFICE}/relationships/styles" '
+        f'Target="styles.xml" Id="rId2" /><Relationship Type="{_OFFICE}/relationships/theme" '
+        'Target="theme/theme1.xml" Id="rId3" /></Relationships>'
+    ),
+}
+
+
+def sheet_workbook(out: Any, title: str, columns: list[tuple[str, str]], rows: Iterable[dict[str, Any]]) -> None:
+    """The workbook of one sheet ``_sheet`` makes of ``rows`` (the same cells, formats, widths, frozen header and
+    filter), written to ``out`` (a binary file) a row at a time, without an openpyxl cell for each value."""
+    import zipfile
+    from math import isinf, isnan
+    from xml.sax.saxutils import escape
+
+    from openpyxl.cell.cell import ERROR_CODES
+    from openpyxl.utils.datetime import to_excel
+    from openpyxl.writer.theme import theme_xml
 
     from ..core.safe import FORMULA_START
 
-    def written(value: Any, *, money: bool = False, date: str = "") -> Any:
-        dated = date and isinstance(value, (dt.date, dt.datetime))
-        if not money and not dated and not (isinstance(value, str) and value.startswith(FORMULA_START)):
-            return value  # a plain value: no cell of its own to make
-        cell = WriteOnlyCell(ws, value)
-        if money:
-            cell.number_format = "#,##0.00"
-        if date and isinstance(value, (dt.date, dt.datetime)):
-            cell.number_format = date
-        if isinstance(value, str) and value.startswith(FORMULA_START):  # never a formula (``neutralise_sheet``)
-            cell.data_type, cell.quotePrefix = "s", True
-        return cell
+    formats = {fmt: 164 + n for n, fmt in enumerate(dict.fromkeys(DATE_HEADERS.values()))}
+    styles: dict[tuple[int, bool], int] = {}  # (number format, quote prefix) -> the cell style (0, 1: the header's)
 
-    ws.title = title
+    def style(number_format: int, quoted: bool) -> int:
+        return styles.setdefault((number_format, quoted), len(styles) + 2)
+
+    def text(value: str) -> str:
+        value = value[:32767]  # (as openpyxl keeps it)
+        stripped = value.strip()
+        space = ' xml:space="preserve"' if stripped and stripped != value else ""
+        return f"<is><t{space}>{escape(value)}</t></is>"
+
+    def cell(ref: str, value: Any, money: bool, date_format: str) -> str:
+        """``value`` as openpyxl writes it at ``ref`` ("" when no cell is written)."""
+        dated = bool(date_format) and isinstance(value, (dt.date, dt.datetime))
+        quoted = isinstance(value, str) and value.startswith(FORMULA_START)
+        styled = money or dated or quoted
+        if value is None:
+            return f'<c r="{ref}" s="{style(_MONEY_FORMAT, False)}" t="n" />' if styled else ""
+        s = f' s="{style(formats[date_format] if dated else _MONEY_FORMAT if money else 0, quoted)}"' if styled else ""
+        if isinstance(value, bool):
+            return f'<c r="{ref}"{s} t="b"><v>{int(value)}</v></c>'
+        if isinstance(value, (int, float)):
+            number = "" if isnan(value) or isinf(value) else "%.16g" % value  # noqa: UP031 - as openpyxl writes it
+            return f'<c r="{ref}"{s} t="n"><v>{number}</v></c>'
+        if isinstance(value, (dt.date, dt.datetime)):
+            if not dated:  # (a date openpyxl would give its own format: never in these sheets)
+                raise TypeError(f"{ref}: a date outside a date column")
+            return f'<c r="{ref}"{s} t="n"><v>{"%.16g" % to_excel(value)}</v></c>'  # noqa: UP031
+        if not isinstance(value, str):
+            raise TypeError(f"{ref}: {type(value).__name__} can't be written to Excel")
+        if value == "":
+            return f'<c r="{ref}"{s} t="inlineStr" />'
+        if not quoted and value in ERROR_CODES:
+            return f'<c r="{ref}"{s} t="e"><v>{escape(value)}</v></c>'
+        return f'<c r="{ref}"{s} t="inlineStr">{text(value)}</c>'
+
+    letters = [get_column_letter(i) for i in range(1, len(columns) + 1)]
+    kinds = [(label in MONEY_HEADERS, DATE_HEADERS.get(label, "")) for _, label in columns]
+    dated = {key for key, label in columns if label in DATE_HEADERS}
     rows = iter(rows)
     first = list(islice(rows, 500))
-    for i, (key, label) in enumerate(columns, start=1):
-        width = max([len(label)] + [len(str(r.get(key) or "")) for r in first])
-        ws.column_dimensions[get_column_letter(i)].width = min(max(10, width + 2), 60)
-    ws.freeze_panes = "A2"
-    header_fill = PatternFill("solid", fgColor="E9EEF6")
-    header = []
-    for _, label in columns:
-        cell = WriteOnlyCell(ws, label)
-        cell.font, cell.fill, cell.alignment = Font(bold=True), header_fill, Alignment(vertical="center")
-        header.append(cell)
-    ws.append(header)
-    dated = {key for key, label in columns if label in DATE_HEADERS}
-    count = 0
-    for r in chain(first, rows):
-        values = xlsx_row([_excel_date(r.get(key)) if key in dated else r.get(key) for key, _ in columns])
-        ws.append([written(v, money=label in MONEY_HEADERS, date=DATE_HEADERS.get(label, ""))
-                   for (_, label), v in zip(columns, values, strict=True)])  # fmt: skip
-        count += 1
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{count + 1}"
+    widths = [min(max(10, max([len(label)] + [len(str(r.get(key) or "")) for r in first]) + 2), 60)
+              for key, label in columns]  # fmt: skip
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
+        with z.open("xl/worksheets/sheet1.xml", "w", force_zip64=True) as sheet:
+            cols = "".join(f'<col width="{w}" customWidth="1" min="{n}" max="{n}" />'
+                           for n, w in enumerate(widths, start=1))  # fmt: skip
+            header = "".join(f'<c r="{letter}1" s="1" t="inlineStr">{text(label)}</c>'
+                             for letter, (_, label) in zip(letters, columns, strict=True))  # fmt: skip
+            sheet.write(
+                f'<worksheet xmlns="{_MAIN}"><sheetPr><outlinePr summaryBelow="1" summaryRight="1" /><pageSetUpPr />'
+                '</sheetPr><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" '
+                'activePane="bottomLeft" state="frozen" /><selection pane="bottomLeft" activeCell="A1" sqref="A1" />'
+                '</sheetView></sheetViews><sheetFormatPr baseColWidth="8" defaultRowHeight="15" />'
+                f'<cols>{cols}</cols><sheetData><row r="1">{header}</row>'.encode()
+            )
+            count, part = 0, []
+            for r in chain(first, rows):
+                count += 1
+                values = xlsx_row([_excel_date(r.get(key)) if key in dated else r.get(key) for key, _ in columns])
+                part.append(f'<row r="{count + 1}">' + "".join(
+                    cell(f"{letter}{count + 1}", value, money, date_format)
+                    for letter, value, (money, date_format) in zip(letters, values, kinds, strict=True)
+                ) + "</row>")  # fmt: skip
+                if len(part) == 1000:
+                    sheet.write("".join(part).encode())
+                    part = []
+            end = f"{letters[-1]}{count + 1}"
+            sheet.write(("".join(part) + f'</sheetData><autoFilter ref="A1:{end}" /><pageMargins left="0.75" '
+                         'right="0.75" top="1" bottom="1" header="0.5" footer="0.5" /></worksheet>'
+                         ).encode())  # fmt: skip
+        number_formats = "".join(f'<numFmt numFmtId="{n}" formatCode="{escape(fmt)}" />' for fmt, n in formats.items())
+        xfs = "".join(
+            f'<xf numFmtId="{fmt}" fontId="0" fillId="0" borderId="0" pivotButton="0" quotePrefix="{int(quoted)}" '
+            'xfId="0" />'
+            for (fmt, quoted), _ in sorted(styles.items(), key=lambda s: s[1])
+        )
+        z.writestr("xl/styles.xml", (
+            f'<styleSheet xmlns="{_MAIN}"><numFmts count="{len(formats)}">{number_formats}</numFmts><fonts count="2">'
+            '<font><name val="Calibri" /><family val="2" /><color theme="1" /><sz val="11" /><scheme val="minor" />'
+            '</font><font><b val="1" /></font></fonts><fills count="3"><fill><patternFill /></fill><fill><patternFill '
+            'patternType="gray125" /></fill><fill><patternFill patternType="solid"><fgColor rgb="00E9EEF6" />'
+            '</patternFill></fill></fills><borders count="1"><border><left /><right /><top /><bottom /><diagonal />'
+            '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" />'
+            f'</cellStyleXfs><cellXfs count="{len(styles) + 2}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" '
+            'pivotButton="0" quotePrefix="0" xfId="0" /><xf numFmtId="0" fontId="1" fillId="2" borderId="0" '
+            'applyAlignment="1" pivotButton="0" quotePrefix="0" xfId="0"><alignment vertical="center" /></xf>'
+            f'{xfs}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0" hidden="0" />'
+            '</cellStyles><tableStyles count="0" defaultTableStyle="TableStyleMedium9" '
+            'defaultPivotStyle="PivotStyleLight16" /></styleSheet>'
+        ))  # fmt: skip
+        sheet_name = escape(title, {'"': "&quot;"})
+        z.writestr("xl/workbook.xml", (
+            f'<workbook xmlns:r="{_OFFICE}/relationships" xmlns="{_MAIN}"><workbookPr /><workbookProtection />'
+            '<bookViews><workbookView visibility="visible" minimized="0" showHorizontalScroll="1" '
+            'showVerticalScroll="1" showSheetTabs="1" tabRatio="600" firstSheet="0" activeTab="0" '
+            f'autoFilterDateGrouping="1" /></bookViews><sheets><sheet name="{sheet_name}" sheetId="1" state="visible" '
+            'r:id="rId1" /></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" '
+            f"hidden=\"1\">'{escape(title)}'!$A$1:${letters[-1]}${count + 1}</definedName></definedNames>"
+            '<calcPr calcId="124519" fullCalcOnLoad="1" /></workbook>'
+        ))  # fmt: skip
+        made = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        z.writestr("docProps/core.xml", (
+            f'<cp:coreProperties xmlns:cp="{_PACKAGE}/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/'
+            '1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            f'<dc:creator>AP Coder</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">{made}</dcterms:created>'
+            f'<dcterms:modified xsi:type="dcterms:W3CDTF">{made}</dcterms:modified></cp:coreProperties>'
+        ))  # fmt: skip
+        z.writestr("xl/theme/theme1.xml", theme_xml)
+        for name, part_xml in _SHEET_PARTS.items():
+            z.writestr(name, part_xml)
 
 
 def csv_amount(value: Any) -> Any:

@@ -257,19 +257,19 @@ class EnvSettings:
 
 
 def own_work_running(state: Any) -> bool:
-    """Whether something this process runs on a thread of its own would end with it: a job, a backup, imports
-    waiting their turn (a web worker of the server waits for them before it ends: ``server.Recycle``)."""
+    """Whether something this process runs on a thread of its own would end with it: a job, a backup (a web worker
+    of the server waits for them before it ends: ``server.Recycle``). Imports waiting their turn are in the database
+    (D-168): nothing of theirs ends with it."""
     backup = getattr(state.daily_backup, "thread", None)
-    queue = getattr(state, "import_queue", None)
-    return (state.jobs.running_here() or (backup is not None and backup.is_alive())
-            or bool(queue is not None and queue.waiting))  # fmt: skip
+    return state.jobs.running_here() or (backup is not None and backup.is_alive())
 
 
-def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, Any, Any, Any]:
+def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, ...]:
     """The work the dashboard does on its own: the page reader and the AI reviewer (``page_worker``), the optional
-    Azure check, the JD Edwards API's nightly sync and voucher queue, and the review queue checked again after a
-    change of settings. In the dashboard's own process (the laptop), or, with several web workers, in the server's
-    background process only (``server.run_background``, D-111)."""
+    Azure check, the JD Edwards API's nightly sync and voucher queue, the review queue checked again after a change
+    of settings, and on the company server the long downloads (``pages/downloads.py``, D-169). In the dashboard's own
+    process (the laptop), or, with several web workers, in the server's background process only
+    (``server.run_background``, D-111)."""
     from ap_coder.ai import azure_check, page_worker
     from ap_coder.coding.bulk import RECHECK_LEASE, QueueRecheck
     from ap_coder.erp import jde_sync
@@ -284,7 +284,11 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     if not offline.server_mode():
         store.drop_lease(RECHECK_LEASE, None)
     recheck = QueueRecheck(settings_factory, lambda: store).start()
-    return reader, azure, jde, recheck
+    if not offline.server_mode():
+        return reader, azure, jde, recheck
+    from ap_coder.web.pages.downloads import Runner
+
+    return reader, azure, jde, recheck, Runner(lambda: store).start()
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
@@ -315,10 +319,19 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         if background:  # once a day, when the dashboard starts, on its own thread: it never holds up the start
             app.state.daily_backup.start()
         if start_reader and background:
-            (app.state.reader, app.state.azure_checker, app.state.jde_worker,
-             app.state.queue_recheck) = start_background_work(settings_factory, store)  # fmt: skip
+            (app.state.reader, app.state.azure_checker, app.state.jde_worker, app.state.queue_recheck,
+             *made) = start_background_work(settings_factory, store)  # fmt: skip
+            app.state.downloads = made[0] if made else None
+        if background and app.state.processes == 1:  # files left in the import queue by the last run (D-168)
+            from ap_coder.web.pages import process
+
+            process.resume(app)
         yield
-        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck"):
+        if app.state.processes == 1:  # the dashboard's own import: the file under way back in line (B-1766)
+            from ap_coder.web.pages import process
+
+            process.stop_reading(app)
+        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads"):
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
@@ -339,10 +352,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.settings_factory = settings_factory
     app.state.processes = max(1, int(processes))  # web workers serving this database (D-111)
     app.state.jobs = Jobs(store if app.state.processes > 1 else None)
+    app.state.import_stop = threading.Event()  # set as the dashboard stops: its own import takes no more files
     app.state.reader = None
     app.state.azure_checker = None  # the Azure check's thread (ap_coder/ai/azure_check.py), started with the reader
     app.state.jde_worker = None  # the JD Edwards API's nightly sync and queue (ap_coder/erp/jde_sync.py), likewise
     app.state.queue_recheck = None  # the review queue checked again after a change of settings (coding/bulk.py)
+    app.state.downloads = None  # the server's long downloads (ap_coder/web/pages/downloads.py), likewise
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
@@ -437,9 +452,14 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         me = identity.person()
         if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
-        if not registry.known(name):
+        if name == "process":  # the imports' progress is the import queue's, the same in every web worker (D-168)
+            from ap_coder.web.pages.process import import_status
+
+            snapshot = import_status(core.get_store(request), core.get_settings(request))
+        elif not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
-        snapshot = registry.get(name).snapshot()
+        else:
+            snapshot = registry.get(name).snapshot()
         if only:  # a page following the job asks for what it shows (app.js watchJob): its state and these
             snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
