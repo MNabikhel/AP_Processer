@@ -272,16 +272,16 @@ def documents_of(store: Any, invoice_id: int | None) -> list[str]:
 def not_posted(store: Any) -> dict[int, str]:
     """{invoice: what its voucher is} of the exported invoices whose voucher went to JD Edwards through the API (its
     go-ahead given) and is not posted there yet: waiting in the queue, being sent, sent with its answer lost, held back
-    for a new dry run, or refused (unless the batch's files were downloaded since: then loaded from them, as any
-    batch; ``file_downloaded`` takes their go-ahead off, B-1882). Month end takes them as not in the ERP (R4,
-    B-1862)."""
+    for a new dry run, or refused, by JDE or by a dry run since (B-1885), unless the batch's files were downloaded
+    since: then loaded from them, as any batch (``file_downloaded`` takes their go-ahead off, B-1882). Month end
+    takes them as not in the ERP (R4, B-1862)."""
     with _conn(store) as conn:
         found = conn.execute(
             "SELECT p.invoice_id, p.status FROM jde_postings p JOIN invoices i ON i.id = p.invoice_id AND "
-            "i.export_batch = p.batch WHERE p.status IN (?, ?, ?) OR (p.status = ? AND p.approved_at IS NOT NULL) OR "
-            "(p.status = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.action = ? AND "
+            "i.export_batch = p.batch WHERE p.status IN (?, ?, ?) OR (p.status IN (?, ?) AND p.approved_at IS NOT "
+            "NULL) OR (p.status = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.action = ? AND "
             "json_extract(e.detail, '$.batch') = p.batch AND e.created_at >= p.updated_at)) ORDER BY p.invoice_id",
-            (QUEUED, SENDING, UNKNOWN, CHECKED, FAILED, FILE_DOWNLOADED),
+            (QUEUED, SENDING, UNKNOWN, CHECKED, REFUSED, FAILED, FILE_DOWNLOADED),
         ).fetchall()
     return {int(r[0]): r[1] for r in found}
 

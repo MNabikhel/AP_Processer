@@ -2498,7 +2498,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       so the files and the API agree; another invoice or batch under the same number gets others. An upgrade changes
       the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again).
     - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
-      go-ahead, or refused (unless the batch's files were downloaded since) is not in the ERP; the kept answer's
+      go-ahead, or refused, by JDE or by a dry run since its go-ahead (B-1885), unless the batch's files were
+      downloaded since, is not in the ERP; the kept answer's
       question carries that set, as postings change no invoice. A download of the batch's files takes the go-ahead
       off every voucher they hold (not locked: queued, held back, refused), so one loaded from them is never counted
       as not in the ERP afterwards, a dry run again or not (B-1882).

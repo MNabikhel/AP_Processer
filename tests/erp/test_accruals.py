@@ -209,6 +209,31 @@ def test_a_voucher_held_back_then_loaded_from_the_batch_files_is_not_accrued(tmp
         assert _api_accrued(store) == set()
 
 
+def test_a_voucher_refused_after_its_go_ahead_is_accrued_after_another_dry_run_too(tmp_path, _quick_ais):
+    """B-1885: JD Edwards refused a voucher after its go-ahead (not in JD Edwards, accrued); a new dry run, refused
+    again (*refused in the dry run*, its go-ahead kept), made month end count it as in the ERP, though it was in
+    neither JD Edwards nor a file downloaded. Refused after its go-ahead, it is not in the ERP until it is posted or
+    the batch's files are downloaded."""
+    from ap_coder.erp import jde_post
+    from tests.erp.test_jde import QC
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import FakeAis
+
+    closed = ("refuse", "0005", "Error: G/L date is in a closed period (PBCO)")
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais, QC)
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", closed)
+        jde_post.post(store, batch)
+        assert _api_accrued(store) == {1}
+        ais.script("voucher_create", closed)  # JD Edwards' proof refuses it again
+        jde_post.dry_run(store, batch)
+        assert jde_post.postings(store, batch)[0]["status"] == jde_post.REFUSED
+        assert _api_accrued(store) == {1}
+        jde_post.file_downloaded(store, batch, "sam")  # loaded from the batch's files: in the ERP
+        assert _api_accrued(store) == set()
+
+
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
