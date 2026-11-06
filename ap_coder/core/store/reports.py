@@ -99,9 +99,9 @@ class ReportsMixin:
         than that many seconds ago on the same database is taken still, in whichever process it was made, so it is
         never older than that but by the time another takes to work it out: while another thread or process works it
         out, the answer before (this database's latest) is taken meanwhile (B-1834); with no such answer, or without
-        ``settle``, it is waited for (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``, B-1914). ``encode``/``decode``: the value to JSON-ready data and back.
-        In a write under way (or a read transaction) it is worked out afresh, neither read nor kept. The value is
-        shared: read it, don't change it."""
+        ``settle``, it is waited for (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``,
+        B-1914). ``encode``/``decode``: the value to JSON-ready data and back. In a write under way (or a read
+        transaction) it is worked out afresh, neither read nor kept. The value is shared: read it, don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
