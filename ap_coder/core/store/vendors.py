@@ -620,9 +620,10 @@ class VendorsMixin:
         return rows
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:
-        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``): read again once
-        an invoice changed (``summary_memo``). Shared: read it, don't change it."""
-        return self.summary_memo("vendor_invoice_dates", self._vendor_invoice_dates, "dates")
+        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``), read for the work
+        and kept nowhere: what is kept is its answer, once for every process (``recurring.detected``, D-175), not these
+        rows in each worker that worked it out (about 140 MB at 300,000 invoices, B-1803)."""
+        return self._vendor_invoice_dates()
 
     def _vendor_invoice_dates(self) -> list[dict[str, Any]]:
         with self._conn() as conn:

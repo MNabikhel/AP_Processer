@@ -1615,3 +1615,17 @@ def test_insights_figures_are_worked_out_once_for_every_process_and_follow_anoth
     after = shown("worker 2")
     assert after[0]["processed"] == 3 and worked == {"compute": 3, "operations": 3}
     assert shown("worker 1") == after == afresh() and worked == {"compute": 4, "operations": 4}  # (worker 2's)
+
+
+def test_the_recurring_vendors_work_keeps_no_copy_of_every_invoice_in_the_worker(tmp_path, ground_truth):
+    """B-1803: the recurring vendors are one answer for every process (D-175), so the rows they are worked out from
+    (vendor, date and total of every invoice in review or approved: about 140 MB at 300,000) are read for the work
+    and not kept in the worker that did it."""
+    from ap_coder.erp import recurring
+
+    store = Store(tmp_path / "ap.db")
+    for n, days_ago in enumerate((120, 90, 60)):
+        _bill(store, tmp_path, ground_truth, f"R-{n}", days_ago)
+    assert recurring.detected(store)
+    assert store.vendor_invoice_dates() == store._vendor_invoice_dates()
+    assert not [key for key in summary_module._MEMO if key[0] == str(store.path) and key[1] == "vendor_invoice_dates"]
