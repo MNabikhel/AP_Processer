@@ -10,7 +10,10 @@ import pytest
 
 from ap_coder.core.audit import describe
 from ap_coder.core.store import Store
+from ap_coder.core.store.backup_files import Retention
 from ap_coder.core.store.backups import DAILY
+
+TWO_DAILIES = Retention(daily=2, weekly=0, monthly=0)  # the daily rule alone (the weeks and months: D-187)
 
 
 def test_backup_and_restore_round_trip(tmp_path, ground_truth):
@@ -39,11 +42,11 @@ def test_auto_backup_once_a_day_keeps_the_newest(tmp_path):
     newest = folder / "ap_coder-20260930-090000.db"
     newest.write_bytes(b"")
     os.utime(newest, (time.time() - 2 * 86400,) * 2)
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(min_hours=0)
     daily = [p for p in store.list_backups() if DAILY.fullmatch(p.stem)]
     assert len(daily) == 14
     manual = store.backup_now("manual")
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(min_hours=0)
     assert manual.exists()  # labelled backups are never pruned
 
 
@@ -269,7 +272,7 @@ def test_a_daily_backup_made_in_the_same_second_as_another_is_pruned_like_the_ot
         for day in range(1, 16):  # 15 newer daily backups
             (folder / f"ap_coder-202602{day:02d}-090000.db").write_bytes(b"")
             (folder / f"ap_coder-202602{day:02d}-090000.files.json").write_text('{"files": []}')  # complete
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(keep=Retention(daily=14, weekly=0, monthly=0), min_hours=0)
     for folder in (store.backup_dir(), second):
         names = sorted(p.name for p in folder.glob("ap_coder-*.db"))
         assert len(names) == 14 and not [n for n in names if "20260110" in n], (folder, names)
@@ -404,7 +407,7 @@ def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_pat
     store, data = _data_folder(tmp_path, ground_truth)
     store.set_setting("backup_copy_dir", str(share))
     invoices = data / "invoices"
-    first = store.auto_backup(keep=2, min_hours=0)
+    first = store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     only_first = invoices / "a.pdf"
     gone = {folder: _object(folder, only_first) for folder in (store.backup_dir(), share)}
     only_first.unlink()
@@ -415,10 +418,10 @@ def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_pat
     (invoices / "manual.pdf").unlink()
     (invoices / "b.pdf").write_bytes(b"%PDF-1.4 b")
     day[0] = 3
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     (invoices / "c.pdf").write_bytes(b"%PDF-1.4 c")
     day[0] = 4
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         assert not (folder / first.name).exists() and not (folder / f"{first.stem}.files.json").exists()
         assert not gone[folder].exists(), folder  # needed by the pruned backup only
@@ -631,14 +634,14 @@ def test_backups_without_their_files_never_push_out_the_last_complete_ones(tmp_p
     share.mkdir()
     store, _data = _data_folder(tmp_path, ground_truth)
     store.set_setting("backup_copy_dir", str(share))
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     day[0] = 2
-    second = store.auto_backup(keep=2, min_hours=0)
+    second = store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         for n in (3, 4, 5):
             shutil.copy(second, folder / f"ap_coder-2026110{n}-090000.db")  # no list: the database only
     day[0] = 6
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         kept = sorted(p.name for p in folder.glob("ap_coder-*.db"))
         assert kept == ["ap_coder-20261102-090000.db", "ap_coder-20261105-090000.db", "ap_coder-20261106-090000.db"]

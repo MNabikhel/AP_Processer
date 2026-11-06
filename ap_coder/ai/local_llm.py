@@ -798,6 +798,11 @@ class Failover:
         if moved:
             log.warning("%s at %s didn't answer (%s): its calls go to the backup at %s (D-180)",
                         self.title, self.primary, moved[0], self.backup)  # fmt: skip
+            from ..ops import system_log  # (on the server, the system's log too: D-187)
+
+            system_log.report(system_log.MODEL_BACKUP, f"{self.title.capitalize()} at {self.primary} didn't answer "
+                              f"({moved[0]}): its calls go to the backup at {self.backup}", warning=True,
+                              key=self.name)  # fmt: skip
             self._probe_in_background()
 
     # --- A call under way on the primary

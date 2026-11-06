@@ -6,6 +6,8 @@ pages:
 * ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port"} for the launcher (no secrets); to this
   computer, also "user" (the account running it); to another computer, or past the server's own console, only
   {"ok", "app"}.
+* ``GET /readyz``: for IT's monitor (D-187, ``ops/health.py``): 200 when ready, 503 when not, with what was checked;
+  on the server only to its console and the monitors server.json names.
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
@@ -44,7 +46,7 @@ from ap_coder import __version__
 from ap_coder.core import envfile, paths
 from ap_coder.core.config import Settings, process_var
 from ap_coder.core.store import Store, default_db_path
-from ap_coder.ops import offline
+from ap_coder.ops import health, offline
 from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import THIS_COMPUTER, Identity, from_this_computer, is_this_computer
@@ -362,6 +364,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
     app.state.proxy = None  # the reverse proxy's address (--proxy), set by server.serve
+    app.state.certfile = None  # the HTTPS certificate served (/readyz, the Admin's banner), set by server.serve
     app.state.insecure_http = bool(insecure_http)
     # A colleague on the office network says who they are once (web/identity.py); LocalOnly, added last, runs first.
     # Made at each start (a cookie from another start is refused); the same in every web worker of one start.
@@ -430,6 +433,24 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         if is_this_computer(request.client.host if request.client else ""):  # (never said to the network)
             found["user"] = os_user()  # another account's double-click must not open this one (B-168)
         return found
+
+    readiness = health.Kept()  # one answer every few seconds in this process, however many monitors ask
+
+    @app.get("/readyz")
+    def readyz(request: Request) -> JSONResponse:
+        """IT's monitor or a load balancer (D-187): 200 when ready, 503 when not, and what was checked
+        (``ops/health.py``). On the server only to its console and the monitors server.json names; on a laptop as
+        /healthz, another computer told only whether it is ready."""
+        state, no_store = request.app.state, {"Cache-Control": "no-store"}
+        client = request.client.host if request.client else ""
+        if server and not health.monitor_allowed(client, request.headers, proxy=state.proxy):
+            return JSONResponse({"ok": False, "error": health.NOT_A_MONITOR}, status_code=403, headers=no_store)
+        found = readiness.get(lambda: health.readiness(
+            state.store, state.settings_factory(), server=server, processes=state.processes,
+            certfile=state.certfile, insecure_http=state.insecure_http))  # fmt: skip
+        if not server and network and not from_this_computer(request.scope):
+            found = {"ready": found["ready"], "app": "ap-coder"}
+        return JSONResponse(found, status_code=200 if found["ready"] else 503, headers=no_store)
 
     @app.post("/shutdown")
     def shutdown(request: Request) -> JSONResponse:

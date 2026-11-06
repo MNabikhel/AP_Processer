@@ -259,6 +259,16 @@ class ImportsMixin:
                 "lines": said, "skipped": skipped, "errors": errors, "held": held[0] if held else "",
                 "page_reads": int(queued or 0), "finished_at": ended}  # fmt: skip
 
+    def import_queue_depth(self) -> dict[str, Any]:
+        """The queue at a glance, for a monitor (D-187): the files waiting and being read, and when the oldest waiting
+        came in (``_now``'s local time; None when none waits). Through the status index: the waiting files alone."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            counts = dict(conn.execute("SELECT status, COUNT(*) FROM import_files WHERE status IN (?, ?) GROUP BY "
+                                       "status", IMPORT_OPEN).fetchall())  # fmt: skip
+            first = conn.execute("SELECT created_at FROM import_files WHERE id = (SELECT MIN(id) FROM import_files "
+                                 "WHERE status = ?)", (IMPORT_WAITING,)).fetchone()  # fmt: skip
+        return {**{status: int(counts.get(status, 0)) for status in IMPORT_OPEN}, "oldest": first[0] if first else None}
+
     def capture_processes(self) -> int:
         """The company server's capture processes running now (each renews its ``capture:`` lease, D-168)."""
         with self._conn() as conn:  # type: ignore[attr-defined]

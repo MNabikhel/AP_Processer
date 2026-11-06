@@ -214,6 +214,16 @@ class PageQueueMixin:
             row = conn.execute(sql, args).fetchone()
         return int(row[0])
 
+    def page_queue_depth(self) -> dict[str, Any]:
+        """The queue at a glance, for a monitor (D-187): the invoices waiting and being read, and when the oldest
+        waiting was put in line (local time; None when none waits). Through its status index alone."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            counts = dict(conn.execute("SELECT status, COUNT(*) FROM page_reads WHERE status IN (?, ?) GROUP BY status",
+                                       (PAGE_WAITING, PAGE_READING)).fetchall())  # fmt: skip
+            first = conn.execute("SELECT MIN(created_at) FROM page_reads WHERE status = ?", (PAGE_WAITING,)).fetchone()
+        return {"waiting": int(counts.get(PAGE_WAITING, 0)), "reading": int(counts.get(PAGE_READING, 0)),
+                "oldest": first[0] if first else None}  # fmt: skip
+
     def page_read_pages_average(self, recent: int = 50) -> float | None:
         """The pages the page reader read per invoice, on average over its latest ``recent`` finished reads (None
         before the first): how many pages an invoice in its queue is likely to have."""

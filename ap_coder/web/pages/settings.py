@@ -148,7 +148,8 @@ def settings_tab(request: Request, tab: str) -> HTMLResponse:
 
         return render_tab(request, tab, **hub_context(request))
     if tab == "data":
-        return render_tab(request, tab, **data_context(get_store(request), request.query_params.get("restore", "")))
+        return render_tab(request, tab, **data_context(get_store(request), request.query_params.get("restore", ""),
+                                                       server=server_mode(request)))  # fmt: skip
     return render_tab(request, tab, **about_context(get_store(request)))
 
 
@@ -468,9 +469,10 @@ def file_count(folder: Path) -> int:
         return 0
 
 
-def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
+def data_context(store: Store, chosen: str = "", server: bool = False) -> dict[str, Any]:
     """``chosen``: the backup *Restore this state* was pressed for (``?restore=``): picked and shown in the restore
-    form, which still asks for RESTORE typed."""
+    form, which still asks for RESTORE typed. ``server``: the company server, where the second backup folder must
+    be on another disk than the database (D-187; a laptop's OneDrive folder is on its own disk, and synced)."""
     folder = invoice_dir(store)
     backups = store.list_backups()
     seen: dict[str, int | None] = {}
@@ -489,8 +491,19 @@ def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
         "chosen": chosen if any(b.name == chosen for b in backups) else "",
         "copy_dir": store.get_setting("backup_copy_dir"),
         "copy_status": copy_status(store),
+        "copy_same_disk": server and same_disk_warning(store),
         "restore_word": RESTORE_WORD,
     }
+
+
+def same_disk_warning(store: Store) -> str:
+    """``health.SAME_DISK`` when the second backup folder is on the database's disk ("" when it isn't, isn't set,
+    or doesn't answer in a couple of seconds: a share gone is said by its copy's status)."""
+    from ap_coder.ops import health
+
+    folder = store.get_setting("backup_copy_dir").strip()
+    found = health.look_at_folder(folder, store.path.parent) if folder else {}
+    return health.SAME_DISK if found.get("same_disk_as_data") else ""
 
 
 def backup_path(store: Store, name: str) -> Path:

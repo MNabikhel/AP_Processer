@@ -104,14 +104,54 @@ def exclusive(data: Path) -> Iterator[None]:
         _THIS_PROCESS.release()
 
 
-def drop_old(dailies: list[Path], keep: int) -> None:
-    """Retention of the daily backups ``dailies`` (one folder's, any order): the newest ``keep``, and the newest
-    ``keep`` complete ones (with their list of files), so a backup cut short or of an older AP Coder (the database
-    alone) never pushes out a complete one (B-1558). The others go, with their lists."""
+@dataclass(frozen=True)
+class Retention:
+    """Which daily backups a folder keeps (D-187): the newest ``daily``, and of the complete ones the newest of each of
+    the last ``weekly`` weeks and ``monthly`` months that have one (a server off for a month keeps its history)."""
+
+    daily: int = 14
+    weekly: int = 8
+    monthly: int = 12
+
+
+RETENTION = Retention()
+_MADE_ON = re.compile(r"ap_coder-(\d{8})-")
+
+
+def _made_on(backup: Path) -> dt.date | None:
+    """The day ``backup`` was made, from its name (None for a name that isn't one)."""
+    found = _MADE_ON.match(backup.name)
+    try:
+        return dt.datetime.strptime(found.group(1), "%Y%m%d").date() if found else None
+    except ValueError:
+        return None
+
+
+def kept_dailies(dailies: list[Path], keep: Retention = RETENTION) -> set[Path]:
+    """Of the daily backups ``dailies`` (one folder's, any order), those ``keep`` keeps: the newest ``daily``, and the
+    newest ``daily`` complete ones (with their list of files), so a backup cut short or of an older AP Coder (the
+    database alone) never pushes out a complete one (B-1558); and the newest complete one of each of the last
+    ``weekly`` weeks (ISO weeks) and ``monthly`` months that have one. The newest complete one is always kept."""
     newest = sorted(dailies, key=lambda p: p.name, reverse=True)
     complete = [p for p in newest if list_path(p).is_file()]
-    kept = set(newest[:keep]) | set(complete[:keep])
-    for old in newest:
+    kept = set(newest[: keep.daily]) | set(complete[: keep.daily]) | set(complete[:1] or newest[:1])
+    for count, period in ((keep.weekly, lambda d: d.isocalendar()[:2]), (keep.monthly, lambda d: (d.year, d.month))):
+        seen: set[Any] = set()
+        for backup in complete:  # newest first: the first of a period is its newest
+            day = _made_on(backup)
+            if day is None or period(day) in seen:
+                continue
+            if len(seen) == count:
+                break
+            seen.add(period(day))
+            kept.add(backup)
+    return kept
+
+
+def drop_old(dailies: list[Path], keep: Retention = RETENTION) -> None:
+    """Retention of the daily backups ``dailies`` (``kept_dailies``): the others go, with their lists."""
+    kept = kept_dailies(dailies, keep)
+    for old in dailies:
         if old not in kept:
             old.unlink(missing_ok=True)
             list_path(old).unlink(missing_ok=True)

@@ -23,7 +23,7 @@ from tests.webclient import enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
 FILES = (".csv", ".png", ".pdf", ".xlsx", ".zip", ".txt")
-NOT_PAGES = {"/login", "/logout", "/who", "/healthz", "/jobs/{name}", "/review/{invoice_id:int}/words",
+NOT_PAGES = {"/login", "/logout", "/who", "/healthz", "/readyz", "/jobs/{name}", "/review/{invoice_id:int}/words",
              "/review/{invoice_id:int}/reader", "/help/report/setup", "/settings/reading/self-test",
              "/process/status"}  # fmt: skip
 

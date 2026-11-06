@@ -187,6 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also ask the local model in LM Studio for two lines' accounts (the dry run); Azure only with "
         "AP_ALLOW_INTERNET=1 (costs about one invoice)",
     )
+    p.add_argument("--json", action="store_true", help="The checks as JSON (area, status, detail), for IT's tools")
     _add_reference_args(p)
     _add_server_ops(sub)
 
@@ -346,6 +347,11 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         server = is_server_here(private_dir())
         if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
             checks.extend(store_checks(Store(db), server))
+    if args.json:
+        from .doctor import as_json
+
+        print(as_json(checks, source))
+        return exit_code(checks)
     report = format_checks(checks)
     print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)

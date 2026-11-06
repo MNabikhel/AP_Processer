@@ -205,6 +205,20 @@ def no_dashboard_page_reader(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_system_log(monkeypatch):
+    """Never write to this computer's Event Log or syslog (server mode tells it of failures, D-187): what would be
+    told is in ``told`` (kind, text, warning) instead, and each test starts with nothing told yet."""
+    from ap_coder.ops import health, system_log
+
+    told: list[tuple[int, str, bool]] = []
+    monkeypatch.setattr(system_log, "_send", lambda kind, text, warning: told.append((kind, text, warning)))
+    system_log.forget()
+    health.forget()
+    yield told
+    system_log.forget()
+
+
+@pytest.fixture(autouse=True)
 def no_local_model(monkeypatch):
     """Never ask a real LM Studio on this computer: every test sees no local model unless it starts a fake one
     (tests/ai/test_local_llm.py restores the real fetch for that)."""

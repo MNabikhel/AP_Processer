@@ -31,8 +31,9 @@
     <div>
       <h4>Backups</h4>
       <p class="muted">Each backup is AP Coder as it was at that moment: the database and every invoice file, saved email,
-        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts (the newest 14
-        are kept). A file that did not change is stored once for all the backups, so a daily backup copies only what is
+        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts: the newest 14
+        are kept, then one a week for 8 weeks and one a month for a year (the backups you make yourself, and those made
+        before an update or a restore, are always kept). A file that did not change is stored once for all the backups, so a daily backup copies only what is
         new{% if backups %} (in all, the backups take {{ backups_size }}){% endif %}. Make one yourself before big changes,
         e.g. importing a new chart of accounts.</p>
       {% if backup_running %}<p><span class="ms" aria-hidden="true">hourglass_top</span> A backup is being made (started
@@ -54,6 +55,7 @@
   <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer loses nothing: each backup is
     copied there with the files it needs (each day only the new ones), and a new computer restores from that folder alone.
     Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}.</p>
+  {% if copy_same_disk %}<p><span class="ms err-ico" aria-hidden="true">warning</span> {{ copy_same_disk }}</p>{% endif %}
   {% if copy_status %}
   <p class="muted">{% if copy_status.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span> Last copied {{ copy_status.when }}: {{ copy_status.what }}
     {% else %}<span class="ms err-ico" aria-hidden="true">error</span> Copying failed {{ copy_status.when }}: {{ copy_status.what }}. The local backups are fine.{% endif %}</p>
