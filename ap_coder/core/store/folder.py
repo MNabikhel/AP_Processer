@@ -28,7 +28,7 @@ _KNOWN = ("EXISTS (SELECT 1 FROM invoices AS i WHERE i.file_sha256 = f.sha256 UN
 _AT_ONCE_FROM = 1000  # files of a folder's listing from which what the pick-up read there is read at once
 # The latest listing of each folder (D-176): its resolved place, when it began (``time.time``), the folder's time then
 # (nanoseconds) and what it found (JSON: {"files": [[name, size, time], ...] the invoice files new then, "emails":
-# [[name, size], ...], "others": [name, ...]}).
+# [[name, size], ...], "others": [name, ...], "took": seconds}; one that failed: {..., "error": why}).
 LISTINGS = ("CREATE TABLE IF NOT EXISTS folder_listings (place TEXT PRIMARY KEY, began REAL NOT NULL, mtime_ns INTEGER "
             "NOT NULL, found TEXT NOT NULL)")  # fmt: skip
 
@@ -81,7 +81,7 @@ class FolderMixin:
         the pick-up last read it (failed attempts count: ``find_by_hash(include_failed=True)``), nor one in line to
         be read (the import queue, D-168), without reading any: one the pick-up has not read yet, or that changed
         since, is new. ``folder``: the place of the folder they are all in, when they are its listing: what the
-        pick-up read of that folder is then read at once (0.3 s for 300,000 files, against 0.8 s looked up one by
+        pick-up read of that folder is then read at once (0.6 s for 300,000 files, against 0.8 s looked up one by
         one), unless it read far more files there than are listed now (files removed since)."""
         if not listed:
             return set()
@@ -103,11 +103,11 @@ class FolderMixin:
     def keep_listing(self, place: str, began: float, mtime_ns: int, found: dict[str, Any]) -> None:
         """Keep a listing of the folder at ``place`` (resolved) for every process, in place of the one kept: begun at
         ``began`` (``time.time``), the folder's time ``mtime_ns`` read before it, what it ``found`` (``LISTINGS``)."""
+        text = json.dumps(found, separators=(",", ":"))
         with self._conn() as conn:  # type: ignore[attr-defined]
             conn.execute("INSERT INTO folder_listings (place, began, mtime_ns, found) VALUES (?, ?, ?, ?) ON "
                          "CONFLICT(place) DO UPDATE SET began = excluded.began, mtime_ns = excluded.mtime_ns, found = "
-                         "excluded.found", (place, began, mtime_ns, json.dumps(found, separators=(",", ":"))),
-                         )  # fmt: skip
+                         "excluded.found", (place, began, mtime_ns, text))  # fmt: skip
 
     def kept_listing(self, place: str) -> tuple[float, int, dict[str, Any]] | None:
         """(when it began, the folder's time then, what it found) of the listing kept of the folder at ``place``; None
