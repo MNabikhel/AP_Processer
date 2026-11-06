@@ -567,13 +567,13 @@ def test_the_first_chat_model_is_the_one_ap_coder_was_qualified_with(store):
     assert page_worker.chat_tests(store)["first"] == CHAT
 
 
-def _read_touchless(store: Store, settings: Settings, monkeypatch) -> page_worker.ReadOutcome:
+def _read_touchless(store: Store, settings: Settings, monkeypatch, reviewer: bool = False) -> page_worker.ReadOutcome:
     """The page reader's pass over a new invoice touchless processing passes (its gates taken as passed), the AI
-    reviewer off: what the pass decides."""
+    reviewer off (or on: ``reviewer``): what the pass decides."""
     from ap_coder.capture.supplier import AUTONOMOUS
 
     _invoice(store, replace(settings, llm=replace(settings.llm, provider="off")))
-    verifier.save_settings(store, on=False, rounds=1, minutes=1.0)
+    verifier.save_settings(store, on=reviewer, rounds=1, minutes=1.0)
     monkeypatch.setattr(pipeline, "autonomy_decision", lambda *a, **k: {
         "state": AUTONOMOUS, "auto": True, "audit": False, "reason": "every header field verified"})  # fmt: skip
     text = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
@@ -629,6 +629,38 @@ def test_the_azure_check_approves_nothing_whose_header_an_untested_chat_model_re
     assert checked.status == "done" and not checked.differ and not checked.approved
     assert store.get_invoice(iid)["status"] == REVIEW
     assert SWAPPED in store.get_invoice(iid)["meta"]["capture"]["reason"]  # the person sees why
+
+
+@pytest.mark.parametrize(("read_by", "in_use"), [(SWAPPED, CHAT), (CHAT, SWAPPED)])
+def test_the_trust_that_counts_is_the_chat_model_that_read_the_header(store, monkeypatch, read_by, in_use):
+    """B-1878: the page reader's pass asked the trust of the chat model in use when it decided, not of the one that
+    had read the header (LM Studio may swap it between): one not tested yet could read it and the invoice be approved
+    without a person, or a qualified model's reading be held for another's. The trust follows the model that read."""
+    assert page_worker.chat_trust(store, CHAT) == ""  # the one AP Coder was qualified with
+    with FakeModel(models=[{"id": read_by, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        monkeypatch.setattr(page_worker, "chat_model_in_use", lambda settings: in_use)  # swapped as it decided
+        outcome = _read_touchless(store, settings, monkeypatch)
+        assert _models_asked(fake, "header") == [read_by]
+    assert outcome.auto_approved is (read_by == CHAT)
+    assert store.get_invoice(outcome.invoice_id)["meta"]["page_reader"]["chat_model"] == read_by
+    assert (SWAPPED in outcome.message) is (read_by == SWAPPED)
+
+
+def test_the_ai_reviewer_approves_nothing_whose_header_an_untested_chat_model_read(store, monkeypatch):
+    """B-1878: likewise the AI reviewer's agreement, given by the qualified model once LM Studio had it back: the
+    header it took part in was read by one not tested yet."""
+    from ap_coder.capture import workflow
+
+    assert page_worker.chat_trust(store, CHAT) == ""
+    with FakeModel(models=[{"id": SWAPPED, "vision": True}, READER], header=_truth_header()) as fake:
+        settings = _settings(fake.base_url)
+        assert not _read_touchless(store, settings, monkeypatch, reviewer=True).auto_approved  # held for it
+        fake.set(models=[{"id": CHAT, "vision": True}, READER])  # the qualified one back
+        local_llm.forget_status()
+        monkeypatch.setattr(workflow, "still_touchless", lambda *a, **k: True)  # (its other gates passed)
+        reviewed = verifier.verify_one(settings, store)
+    assert reviewed is not None and reviewed.status == verifier.AGREED and not reviewed.approved
 
 
 # --- The doctor (item 4) --------------------------------------------------------------------------------------------

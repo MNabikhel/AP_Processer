@@ -2338,7 +2338,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (`verify_one` takes nothing), its agreement approves nothing (`_fold_in`), nor does a reading (`_read_taken`,
     `chat_again`), nor the Azure check's agreement on an invoice whose header it read (the page reader's pass keeps
     that model in the invoice's `meta.page_reader.chat_model`, `page_worker.header_untrusted`; with the AI reviewer
-    off the pass holds the invoice for Azure and asked nothing: B-1877). The Reading tab's reviewer card says why
+    off the pass holds the invoice for Azure and asked nothing: B-1877). The trust asked is that of the model that
+    read the header, not of the one in use when it decides (LM Studio may swap it between): `_read_taken` and
+    `chat_again` ask `PipelineResult.header_model`'s (`chat_again` reads no header: its accounts go to a person
+    anyway), and the reviewer's agreement needs both its own model and that one trusted (B-1878). The Reading tab's
+    reviewer card says why
     ("The AI reviewer waits: the chat model is now …"); the test is audited (`chat_model_tested`). This holds on a
     laptop too: a swapped model is as risky there. One that
     can't see pages (`page_worker.chat_sees_pages`) decides nothing touchless: it reads no header, reviews nothing

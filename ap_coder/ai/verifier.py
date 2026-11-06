@@ -711,9 +711,10 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
                                       expect=expect)  # fmt: skip
     untouched = inv.get("status") == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
     output = inv.get("ai_output")
-    from .page_worker import chat_trust
+    from .page_worker import chat_trust, header_untrusted
 
-    trusted = not chat_trust(store, str(result.get("model") or ""))  # its model qualified (D-180)
+    # Its model qualified, and the one that read the header in the page reader's pass (D-180).
+    trusted = not chat_trust(store, str(result.get("model") or "")) and not header_untrusted(store, inv.get("meta"))
     if folded and held and untouched and result.get("status") == AGREED and output and trusted:
         # Read again first: another check may still hold it, or a person may have approved it with corrections and
         # reopened it while the reviewer looked.

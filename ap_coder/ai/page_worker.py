@@ -663,8 +663,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
     # A person's unapproved corrections on it (a draft, D-86): the reading replaces the proposal, but nothing is
-    # approved over their work (B-953); nor while the chat model that read it too isn't trusted (D-180).
-    untrusted = chat_untrusted(settings, store) if updated and result.autonomy.get("auto") else ""
+    # approved over their work (B-953); nor while the chat model that read its header too isn't trusted (D-180).
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:
             store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
@@ -725,7 +725,7 @@ def chat_again(settings: Settings, store: Any, *, cache_dir: Path | None = None)
                                      expect=identity)  # fmt: skip
     outcome = ReadOutcome(iid, "done", updated=updated, message="the chat model asked again" if updated else
                           "not applied: the invoice was already edited or decided")  # fmt: skip
-    untrusted = chat_untrusted(settings, store) if updated and result.autonomy.get("auto") else ""
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
     if untrusted:
         outcome.message += f"; not approved without a person: {untrusted}"
     if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
