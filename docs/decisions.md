@@ -2895,7 +2895,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       kept: a settings form, a note typed, a file picked for upload stays on the page while it is open, but following
       "Sign in again" leaves it (sign in in another tab to keep it).
   - **Deadlines:** `fetchWithin` is the pages' one fetch (`tests/meta/test_code_rules.py`: no bare `fetch(` outside
-    it, an XMLHttpRequest only with an abort); the review screen's last check sent as the page closes goes through it.
+    it, nor `window["fetch"]`, `navigator.sendBeacon`, an `EventSource` or a `WebSocket`, and an XMLHttpRequest only
+    with an abort or a timeout of its own near it, B-1942); the review screen's last check sent as the page closes
+    goes through it.
     A look 30 s, an action 5 minutes (the Process POST answers within 3 s, D-172; the bulk approval within
     `BULK_WAIT`), a data-long action (a restore, a big import) 2 hours (`LONG_MS`, it had none). The upload: 30 s
     without its files moving on, or without the answer once they are all sent (B-1926). Long downloads are jobs
