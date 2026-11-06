@@ -2295,15 +2295,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       slot (another of AP Coder's calls held it) was given what was left of its 20 s: no answer then isn't counted,
       and with less than `SEND_SECONDS` (5 s) left it isn't sent at all, put off as an arrival out of time (B-1870).
       A call with no answer in time while another of this process's calls to that server was under way since before
-      it was sent may have waited in the server's own line (one GPU for both models: a page read behind a review of
-      minutes): no hang (`Failover.behind`, B-1871). With none under way the oldest call's timeout still counts, so
-      a hung server is found, but later while reviews hold the chat slots: the arrivals waiting behind them and the
-      page reads behind them no longer count, so the move waits for an arrival that had its slot at once (20 s) or
-      the review's own limit (up to its 5 minutes; the hang drill below: 31 s, the reviews' 30 s there, where the
-      code before moved at 21 s on two arrivals that had waited for their slots). That is the price of never leaving
-      a healthy, busy primary: a non-streamed review gives no sign of life before its answer. The other processes'
-      calls aren't seen (that would take each call's start and end written to the shared file); theirs are the
-      arrivals, at most 20 s, less than a page read's 45 s. A read cut off that way still counts a try of its own.
+      it was sent may have waited in the server's own line (one GPU for both models): no hang (`Failover.behind`,
+      B-1871).
+    - **But the minute holds** (the lead's ruling, SCALE.md's target): a call ahead stands for AP Coder's own line
+      only while it has been under way less than the hang limit (`HANG_SECONDS`, 45 s, or the shorter call limit in
+      play, AP_LLM_TIMEOUT_SECONDS). Silent past it, the server isn't answering it, and a timeout behind it counts.
+      The same for a slot: `Slots` notes since when each one is held (this process's in memory, the other processes'
+      by the time set on the slot's lock file when it is taken), and an arrival whose slot was held by a call silent
+      past the hang limit counts, sent or not (`SlotTimeout.behind`, `SlotWait.behind`). A page read waits the whole
+      hang limit itself, so whatever it waited behind was silent past it: every page read's hang counts. So a hang
+      that starts while two reviews hold the chat slots is found by the page reads (and the arrivals) once the reviews
+      are 45 s silent: 46 s at the app's limits (`test_failover.py`'s review-held hang, the limits scaled 1:20, the
+      reviewer's 5 minutes kept), where before the cap it waited for the reviews' own 5 minutes. The
+      price: a primary only busy with a call silent past 45 s (a review of minutes on a server that answers one
+      thing at a time) is taken for hung, and the calls move (`busy_primary_moves.py` of the review moves again); a
+      call ahead within the limit (an arrival behind a review a few seconds old) still moves nothing. A read cut off
+      at the hang limit still counts a try of its own.
     - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
       looking at the breaker every 0.25 s): `ServerLeft`, and the call is asked once more on the backup when that has
       the same model (`InvoiceCoder._local_create`, the arrival only within its deadline; `page_reader.transcribe`).

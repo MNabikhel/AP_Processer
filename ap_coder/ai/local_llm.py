@@ -459,56 +459,94 @@ def provider_status(settings: Settings) -> ProviderStatus:
 SLOTS_ENV = "AP_LLM_SLOTS_DIR"  # the company server's folder of slot locks, which all its processes share (D-111)
 
 
+@dataclass
+class SlotWait:
+    """How a wait for a slot went (``Slots.held``): ``seconds`` waited, and ``behind``: how long the call whose slot it
+    got had held it (0 when one was free at once). Past the hang limit, the server wasn't answering it (D-180)."""
+
+    seconds: float = 0.0
+    behind: float = 0.0
+
+
+class SlotTimeout(TimeoutError):
+    """No slot free in time; ``behind``: how long the youngest call holding one had held it then."""
+
+    def __init__(self, message: str, behind: float = 0.0) -> None:
+        super().__init__(message)
+        self.behind = behind
+
+
 class Slots:
     """At most ``limit`` requests to the model server at once (``with slots.held(limit):``). ``limit`` is
     the ``llm_parallel`` setting (AP_LLM_PARALLEL, default 1: strictly one at a time, as LM Studio on a laptop is
     shared with CloseDesk). On the company server (AP_LLM_SLOTS_DIR set by its ``serve``) the limit holds across its
-    processes too: each request holds one of ``limit`` lock files there (D-111)."""
+    processes too: each request holds one of ``limit`` lock files there (D-111), its time set when it is taken, so a
+    process waiting for one sees since when the calls holding them are under way (D-180)."""
 
     def __init__(self, name: str) -> None:
         self.name = name
         self._cond = threading.Condition()
         self._busy = 0
+        self._since: dict[object, float] = {}  # this process's slots held: since when (time.time())
+        self._freed = 0.0  # how long the slot given back last had been held
 
     @contextlib.contextmanager
-    def held(self, limit: int = 1, deadline: float | None = None) -> Iterator[None]:
-        """``deadline``: a ``time.monotonic()`` by which a slot must be had, else ``TimeoutError`` (an arriving invoice
-        waits only so long, D-168); None: as long as it takes."""
+    def held(self, limit: int = 1, deadline: float | None = None) -> Iterator[SlotWait]:
+        """``deadline``: a ``time.monotonic()`` by which a slot must be had, else ``SlotTimeout`` (an arriving invoice
+        waits only so long, D-168); None: as long as it takes. Gives how the wait went (``SlotWait``)."""
         limit = max(1, int(limit or 1))
+        wait, asked, token = SlotWait(), time.monotonic(), object()
         with self._cond:
             while self._busy >= limit:
                 left = None if deadline is None else deadline - time.monotonic()
                 if left is not None and left <= 0:
-                    raise TimeoutError(f"no {self.name} slot free in time")
+                    raise SlotTimeout(f"no {self.name} slot free in time", time.time() - max(self._since.values()))
                 self._cond.wait(left)
+                wait.behind = self._freed
             self._busy += 1
+            self._since[token] = time.time()
         lock = None
         try:
-            lock = self._across_processes(limit, deadline)
-            yield
+            lock = self._across_processes(limit, deadline, wait)
+            wait.seconds = time.monotonic() - asked
+            yield wait
         finally:
             if lock is not None:
                 lock.close()
             with self._cond:
                 self._busy -= 1
+                self._freed = time.time() - self._since.pop(token)
                 self._cond.notify_all()
 
-    def _across_processes(self, limit: int, deadline: float | None = None) -> Any:
+    def _across_processes(self, limit: int, deadline: float | None, wait: SlotWait) -> Any:
         folder = (os.environ.get(SLOTS_ENV) or "").strip()
         if not folder:
             return None
         from ..core.paths import try_lock
 
+        waited = False
         while True:
+            youngest = float("inf")  # how long the youngest call holding a slot has held it
             for number in range(limit):
+                path = Path(folder) / f"{self.name}-{number + 1}.lock"
                 try:
-                    lock = try_lock(Path(folder) / f"{self.name}-{number + 1}.lock")
+                    lock = try_lock(path)
                 except OSError:
                     return None  # a folder that can't be written: this process's limit only
+                try:
+                    held_for = time.time() - path.stat().st_mtime  # (its last holder's, when it is free)
+                except OSError:
+                    held_for = 0.0
                 if lock is not None:
+                    if waited:
+                        wait.behind = max(wait.behind, held_for)
+                    with contextlib.suppress(OSError):
+                        os.utime(path)  # held from now
                     return lock
+                youngest = min(youngest, held_for)
             if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f"no {self.name} slot free in time")
+                raise SlotTimeout(f"no {self.name} slot free in time", youngest)
+            waited = True
             time.sleep(0.2)
 
 
@@ -544,7 +582,8 @@ HANG_SECONDS = 45.0  # with a backup: a page read whose next word is this late o
 WATCH_SECONDS = 0.25  # how often a call under way on the primary looks whether the calls left it
 STATE_SECONDS = 0.5  # a process reads the shared state again after this long
 # An arrival's call that waited longer than this for its chat slot (another of AP Coder's calls held it) had only what
-# was left of its time: no answer then is no failure of the server's; one left less than SEND_SECONDS isn't sent.
+# was left of its time: no answer then is no failure of the server's; one left less than SEND_SECONDS isn't sent. Only
+# while the call it waited behind was within the hang limit: past it, the server wasn't answering, and it counts.
 WAITED_SECONDS = 1.0
 SEND_SECONDS = 5.0
 SHARED_ENV = "AP_FAILOVER_SHARED"  # 0: each process on its own (to measure what sharing gives, D-180)
@@ -775,14 +814,17 @@ class Failover:
             with self._lock:
                 self._calls.pop(token, None)
 
-    def behind(self, base_url: str, since: float) -> bool:
-        """Whether another of this process's calls to ``base_url`` has been under way since before ``since`` (a
-        ``time.monotonic()``): a call sent then that got no answer in time may have waited behind it in the model
-        server's own line (one GPU for both models), so it is no hang of the server's. The other processes' calls
-        aren't seen: the capture processes' arrivals take at most their 20 s, less than a hang's HANG_SECONDS."""
-        base = (base_url or "").rstrip("/")
+    def behind(self, base_url: str, since: float, limit: float) -> bool:
+        """Whether another of this process's calls to ``base_url``, under way since before ``since`` (a
+        ``time.monotonic()``), has been under way less than ``limit`` (the hang limit): a call sent then that got no
+        answer in time may have waited behind it in the model server's own line (one GPU for both models), so it is no
+        hang of the server's. Silent past the limit, the call ahead says the server isn't answering: no excuse then
+        (a page read waits the whole limit itself, so it never has one). The other processes' calls aren't seen here;
+        their chat slots are (``Slots``)."""
+        base, now = (base_url or "").rstrip("/"), time.monotonic()
         with self._lock:
-            return any(server == base and began < since for server, began in self._calls.values())
+            return any(server == base and began < since and now - began < limit
+                       for server, began in self._calls.values())  # fmt: skip
 
     def watched(self, base_url: str, call: Any) -> Any:
         """``call()``'s answer. On the primary the call is made in a thread of its own, and ``ServerLeft`` raised as

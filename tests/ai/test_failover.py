@@ -5,6 +5,7 @@ it in the background and takes it back only after it answered well for a while. 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -223,6 +224,62 @@ def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(tw
     assert not backup.history()
 
 
+def test_an_arrival_waiting_for_a_slot_held_past_the_hang_limit_counts_against_the_server(two, reference, monkeypatch):
+    """B-1870, its limit (D-180): the wait for a chat slot is AP Coder's own line only while the call holding the slot
+    has been under way less than the hang limit. Held longer with no answer, the server isn't answering it: an arrival
+    that got no slot in time counts against it, and two move the calls (the call holding the slot asked again on the
+    backup)."""
+    primary, backup = two
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 0.5)
+    settings = _settings(primary.base_url, backup.base_url, parallel=1)
+    coder = InvoiceCoder(settings, reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+    breaker = local_llm.chat_failover(settings.llm)
+    primary.set(hang_rate=1.0)
+    holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+    holder.start()  # hung on the primary, holding the one chat slot
+    assert _until(lambda: primary.stats()["hanging"] == 1)
+    with pytest.raises(ChatTimeout, match="busy"):  # given up with the holder under 0.5 s old: AP Coder's own line
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.2)
+    assert breaker.state()["failures"][PRIMARY] == 0
+    time.sleep(0.3)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # the holder silent past the hang limit: the server's
+        with pytest.raises(ChatTimeout):
+            coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.2)
+    holder.join(10)
+    primary.release_hung()
+    assert breaker.state()["on"] == BACKUP and "slot" in breaker.state()["why"]
+    assert _served(backup, "chat") == 1  # the holder, asked again there
+
+
+def test_a_chat_slot_another_process_holds_says_since_when(two, reference, monkeypatch, tmp_path):
+    """The same across the company server's processes (an arrival in a capture process, the reviews in the background
+    process): a slot's lock file says since when its call is under way."""
+    from ap_coder.core.paths import try_lock
+
+    primary, backup = two
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 1.0)
+    coder = InvoiceCoder(_settings(primary.base_url, backup.base_url, parallel=1), reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    breaker = local_llm.chat_failover(coder.settings.llm)
+    path = tmp_path / "llm" / "chat-1.lock"
+    other = try_lock(path)  # another process's call holds the one slot, from now
+    with pytest.raises(ChatTimeout, match="busy"):
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.3)
+    assert breaker.state()["failures"][PRIMARY] == 0
+    os.utime(path, (time.time() - 5, time.time() - 5))  # held 5 s: past the hang limit
+    with pytest.raises(ChatTimeout, match="busy"):
+        coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.3)
+    other.close()
+    assert breaker.state()["failures"][PRIMARY] == 1 and not primary.history()
+    with local_llm.CHAT_LOCK.held(1):  # a slot taken says so: its lock file's time is when
+        assert time.time() - path.stat().st_mtime < 1
+
+
 def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, quick):
     """Hysteresis: the primary, probed in the background, is taken back after three answers in a row and the hold
     (a second here); one that fails again soon after is kept away twice as long."""
@@ -352,35 +409,93 @@ def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_bac
     assert local_llm.serving_llm(settings.llm).base_url == backup.base_url
 
 
-def test_a_page_read_waiting_behind_another_of_ap_coders_calls_is_no_hang(reference, monkeypatch):
-    """B-1871: a healthy primary, only busy (its one slot taken by a long chat call of AP Coder's: a review with
-    thinking on takes minutes): two page reads that waited in the model server's own line longer than HANG_SECONDS
-    before their first word were counted as hangs, and the calls left it, the review under way there dropped and
-    asked again from the start on the backup. A call is no hang while another of this process's calls to that
-    server has been under way since before it was sent; with none, a hang moves the calls as before."""
-    monkeypatch.setattr(local_llm, "HANG_SECONDS", 0.5)
-    with FakeModel(models=[CHAT, READER], slots=1, chat_latency=(2.0, 2.0), page_latency=(0.05, 0.05)) as primary, \
+def test_a_call_waiting_behind_another_of_ap_coders_is_no_hang_while_that_one_is_within_the_hang_limit(
+    reference, monkeypatch
+):
+    """B-1871: a healthy primary, only busy (its one slot taken by a long chat call of AP Coder's): calls that waited
+    in the model server's own line behind it were counted as hangs, and the calls left it, the call under way there
+    dropped and asked again from the start on the backup. A call is no hang while another of this process's calls to
+    that server, under way since before it was sent, is still within the hang limit. Once that one is silent past it
+    the server isn't answering, and a timeout behind it counts: a page read waits the whole hang limit itself, so
+    whatever it waited behind was silent past it."""
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 1.5)
+    with FakeModel(models=[CHAT, READER], slots=1, chat_latency=(1.0, 1.0), page_latency=(0.05, 0.05)) as primary, \
             FakeModel(models=[CHAT, READER]) as backup:  # fmt: skip
-        settings = _settings(primary.base_url, backup.base_url, timeout_seconds=600)
+        settings = _settings(primary.base_url, backup.base_url, timeout_seconds=600, parallel=2)
         coder = InvoiceCoder(settings, reference, provider="local")
         model = coder._prepare_local()
-        messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "review"}]
+        messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+        coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
         review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
         review.start()
         assert _until(lambda: primary.stats()["active"] == 1)
-        for n in range(local_llm.FAILOVER_FAILURES):
-            with pytest.raises(page_reader.PageReaderError, match="no word from the model"):
-                page_reader.transcribe(settings, f"page {n}".encode(), model=READER)
+        for _ in range(local_llm.FAILOVER_FAILURES):  # arrivals in the server's line behind it, under 1.5 s old
+            with pytest.raises(ChatTimeout, match="no answer in the time an arriving invoice waits"):
+                coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.4)
         review.join(10)
-        breaker = page_reader.reader_failover(settings)
+        breaker = local_llm.chat_failover(settings.llm)
         assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
-        assert _served(primary, "chat") == 1 and not backup.history()
-        primary.set(hang_rate=1.0)  # hung, and nothing else of AP Coder's under way there: the second moves them
-        with pytest.raises(page_reader.PageReaderError):
-            page_reader.transcribe(settings, b"page 2", model=READER)
-        assert page_reader.transcribe(settings, b"page 3", model=READER)
+        assert _served(primary, "chat") == 2 and not backup.history()
+        primary.set(hang_rate=1.0)  # hung: the call ahead of the page reads is silent past the hang limit
+        review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        review.start()
+        assert _until(lambda: primary.stats()["hanging"] == 1)
+        with pytest.raises(page_reader.PageReaderError, match="no word from the model"):
+            page_reader.transcribe(settings, b"page 0", model=READER)
+        assert page_reader.transcribe(settings, b"page 1", model=READER)  # the second moves them: read on the backup
+        review.join(10)  # (dropped there, and answered on the backup)
         primary.release_hung()
-        assert breaker.state()["on"] == BACKUP and backup.page_answers() == {page_key(b"page 3"): 1}
+        assert breaker.state()["on"] == BACKUP and backup.page_answers() == {page_key(b"page 1"): 1}
+        assert _served(backup, "chat") == 1
+
+
+def test_a_hang_while_reviews_hold_the_chat_slots_moves_the_calls_within_a_minute(two, reference, monkeypatch):
+    """D-180, SCALE.md's minute: the app's limits scaled 1:20 (the hang limit 45 s, an arrival's 20 s, a reviewer's
+    call its 5 minutes, the slot wait's 1 s and 5 s). The primary hangs while two reviews hold both chat slots: the
+    page reads and the arrivals waiting behind them count once the reviews are silent past the hang limit, so the
+    calls move within the minute, not after the reviews' own 5 minutes; the reviews are asked again on the backup."""
+    primary, backup = two
+    scale = 1 / 20
+    for name, seconds in (("HANG_SECONDS", 45), ("WAITED_SECONDS", 1), ("SEND_SECONDS", 5)):
+        monkeypatch.setattr(local_llm, name, seconds * scale)
+    settings = _settings(primary.base_url, backup.base_url, parallel=2)
+    coder = InvoiceCoder(settings, reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+    primary.set(hang_rate=1.0)
+    hung = time.monotonic()
+    reviews = [threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"},
+                                                                   timeout=300 * scale)) for _ in range(2)]  # fmt: skip
+    for review in reviews:
+        review.start()
+    assert _until(lambda: primary.stats()["hanging"] == 2)
+    stop = threading.Event()
+
+    def arrivals() -> None:  # one arriving invoice's chat call after another, each waiting for a slot
+        while not stop.is_set():
+            with contextlib.suppress(CodingError):
+                coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 20 * scale)
+
+    def pages(reader: int) -> None:  # the background reader's threads, one a page slot
+        for n in range(100):
+            if stop.is_set():
+                return
+            with contextlib.suppress(page_reader.PageReaderError):
+                page_reader.transcribe(settings, f"page {reader}-{n}".encode(), model=READER)
+
+    workers = [threading.Thread(target=arrivals), *(threading.Thread(target=pages, args=(n,)) for n in range(2))]
+    for worker in workers:
+        worker.start()
+    breaker = local_llm.chat_failover(settings.llm)
+    moved = _until(lambda: breaker.state()["on"] == BACKUP, 300 * scale)
+    took = time.monotonic() - hung
+    stop.set()
+    for thread in (*reviews, *workers):
+        thread.join(10)
+    primary.release_hung()
+    assert moved and took < 60 * scale, took
+    assert _served(backup, "chat") >= 2  # the reviews, asked again there
 
 
 def test_a_page_reader_on_a_server_of_its_own_has_a_breaker_of_its_own(two):

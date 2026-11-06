@@ -773,9 +773,8 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
     tries = 1 if breaker is None else 2  # with a backup: once more there, when the calls moved to it meanwhile
     with READ_LOCK.held(settings.llm.parallel):  # one page at a time by default: LM Studio is shared with CloseDesk
         while True:
-            started = time.monotonic()
             try:
-                with breaker.calling(base) if breaker is not None else contextlib.nullcontext():
+                with breaker.calling(base) if breaker is not None else contextlib.nullcontext():  # (``behind``)
                     text = _read_page(settings, base, model, reader, messages, should_stop)
             except PageReaderError as exc:
                 if breaker is None:
@@ -783,10 +782,7 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
                 if not exc.failed:
                     breaker.answered(base)
                     raise
-                timed_out = exc.__cause__ is not None and local_llm.server_failure(exc.__cause__) == local_llm.NO_ANSWER
-                if timed_out and breaker.behind(base, started):  # in the server's line behind another of ours
-                    raise
-                breaker.failed(base, str(exc))
+                breaker.failed(base, str(exc))  # (it waited the hang limit: whatever it was behind was silent past it)
                 tries -= 1
                 other = reader_base_url(settings)
                 if not tries or other == base or not _has_model(settings, other, model):

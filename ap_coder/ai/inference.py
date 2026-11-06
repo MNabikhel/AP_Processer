@@ -392,6 +392,8 @@ class InvoiceCoder:
         base = llm.base_url
         breaker = local_llm.chat_failover(self.settings.llm)
         again = breaker is not None
+        # The hang limit, or the shorter call limit in play: a call ahead silent past it, the server isn't answering.
+        hang = min(local_llm.HANG_SECONDS, float(self.settings.llm.timeout_seconds or local_llm.HANG_SECONDS))
         mode = local_llm.start_mode(base, model)
         while True:
             kind = local_llm.RESPONSE_MODES[mode]
@@ -399,15 +401,15 @@ class InvoiceCoder:
             if timeout is not None and timeout < float(self.settings.llm.timeout_seconds or 0):
                 kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
-            cut, since = False, 0.0  # with a backup: its time cut by its wait for a chat slot; when it was sent
+            cut, since = False, 0.0  # with a backup: its time cut by AP Coder's own line for a chat slot; when sent
             try:
-                asked = time.monotonic()
-                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline):  # llm_parallel at once
+                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline) as slot:  # llm_parallel at once
                     if deadline is not None:  # what is left once a slot is had
                         left = deadline - time.monotonic()
-                        cut = breaker is not None and time.monotonic() - asked > local_llm.WAITED_SECONDS
-                        if left <= 0 or (cut and left < local_llm.SEND_SECONDS):
-                            raise TimeoutError("too little time left once a chat slot was free")
+                        waited = breaker is not None and slot.seconds > local_llm.WAITED_SECONDS
+                        cut = waited and slot.behind < hang  # (what held it silent past the limit: the server's wait)
+                        if left <= 0 or (waited and left < local_llm.SEND_SECONDS):
+                            raise local_llm.SlotTimeout("too little time left once a chat slot was free", slot.behind)
                         kwargs["timeout"] = min(left, float(kwargs.get("timeout") or left))
                     call = functools.partial(self._local_client(llm).chat.completions.create, messages=sent, **kwargs)
                     since = time.monotonic()
@@ -415,12 +417,15 @@ class InvoiceCoder:
                 if breaker is not None:
                     breaker.answered(base, model)
                 return answer
-            except TimeoutError as exc:  # no slot in time: the call was never sent
+            except TimeoutError as exc:  # no slot in time, or too little time left once one was: never sent
+                behind = float(getattr(exc, "behind", 0.0))
+                if breaker is not None and behind >= hang:  # the calls holding the slots silent past the hang limit
+                    breaker.failed(base, f"{local_llm.NO_ANSWER} to the calls holding the chat slots ({behind:.0f} s)")
                 raise ChatTimeout(f"The chat model was busy: no slot to ask in within the time given ({exc}).") from exc
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if breaker is not None:
                     why = local_llm.server_failure(exc)
-                    if why == local_llm.NO_ANSWER and (cut or breaker.behind(base, since)):
+                    if why == local_llm.NO_ANSWER and (cut or breaker.behind(base, since, hang)):
                         why = ""  # its time spent in AP Coder's own line, or behind another of its calls: no failure
                     if why:
                         breaker.failed(base, why)
