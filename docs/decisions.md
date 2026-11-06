@@ -2757,3 +2757,59 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
     `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
     `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)
+- **D-186** · **The company server's service on a Mac: a LaunchDaemon that runs the service host from a `current`
+  link, started again by launchd only when it did not end on purpose; `ops/service.py` split by platform** (scale
+  goal, phase 6, O1: the pilot runs on a Mac mini, its models on a Mac Studio).
+  - **Why:** AP Coder's service knew only Windows' scheduled task (`service` refused anywhere else), so on the
+    pilot's Mac nothing started AP Coder at boot, brought it back after a crash, or kept it stopped once stopped.
+  - **What:** `service.py` keeps what both platforms share (the settings, the service host, the dashboard's own
+    stop, `status`, the doctor's lines) and hands install/start/stop/remove/status to this computer's backend:
+    `service_windows.py` (the task and run.cmd, moved as they were; their names still found in `service`, its
+    `__getattr__`) or `service_macos.py`. The daemon is `/Library/LaunchDaemons/<label>.plist` (`com.apcoder.server`
+    for the default task name; a name like a label as it is; any other made into one), written with `plistlib`,
+    root's and 0644: `UserName` the service's account (`_apcoder`; root refused unless `--allow-root`), `RunAtLoad`,
+    `KeepAlive {SuccessfulExit: false}`, `AbandonProcessGroup false` (launchd's default, written down: a killed
+    host's dashboard goes with it), `ThrottleInterval` 10, `ExitTimeOut` 60 (more than the host's 45 s for its
+    dashboard), `NumberOfFiles` 8192 (launchd's 256 is too few for the web workers), its output in
+    `<data>/logs/launchd.out.log` and `.err.log`. It runs `<the code folders' parent>/current/.venv/bin/python -m
+    ap_coder service run`, `current` a relative link to the version's folder. launchctl: `bootstrap system`,
+    `bootout system/<label>`, `kickstart -k`, `print` (its top level read), `enable` before a start.
+  - **The host's exit code is the contract with KeepAlive:** 0 only when stopped on purpose: the `stopped` file, or
+    SIGTERM / SIGINT (`StopSignals`, off Windows: the dashboard asked to stop, ended STOP_WAIT, 45 s, later if it
+    won't, then exit 0); `HOST_BUSY` (75) off Windows when another host holds the lock, so launchd tries again
+    (Windows keeps its 0: its task comes back every 5 minutes); a crash or a kill is started again. `service stop`
+    is the flag, `/shutdown`, then `bootout`: it stays stopped after a reboot (the host launchd starts at load ends
+    at once). `service start` bootstraps it, or `kickstart -k` when it is loaded.
+  - **server-update:** `switch_to` asks the backend (`service.switch_folder`): Windows rewrites run.cmd as before;
+    the Mac points `current` at the new folder by one rename (`os.symlink` to a temporary name, then `os.replace`)
+    while the service is stopped. `Server.installed` asks the backend too (the plist there). The plist never changes
+    with a version.
+  - **Root on a Mac:** sudo leaves the environment out, so the plist (root's) gives the other service commands the
+    data folder when `AP_PRIVATE_DIR` is not given, and `install` refuses with neither. A file root's sudo makes in
+    the data folder is root's (a Windows folder gives its rights to what is made in it): `install` and `start` hand
+    root's own folders and single-name files back to the daemon's account (`hand_back`: `os.fwalk`, `O_NOFOLLOW`,
+    `fchown` on the open file; only in a data folder that is the account's). `host_running` no longer makes
+    host.lock (made by root, the host could not take it). Every Mac service command but `install --dry-run` asks for
+    sudo.
+  - **`status --json`**, both platforms: installed, running, pid, started, version, folder, address, answering, the
+    `/healthz` answer, the dashboard's process, stopped on purpose, where the settings and log are, and the
+    backend's own (the task and its state; the label, plist, loaded, launchd's pid and last exit code).
+  - **Proof:** `tests/ops/test_service_macos.py` (the plist read back, launchctl's commands against a stand-in, the
+    refusals, the data folder found in the plist, the link switched under a reader 400 times, SIGTERM and SIGINT
+    sent to a real host and dashboard process (kind, stubborn, crashing), the exit codes, the hand-back never through
+    a link or a hard link, the CI script's flow against a stand-in Mac); `tests/ops/test_service.py` as it was, but
+    the second host's exit code checked on both platforms, and `status --json` on Windows. On GitHub's macOS runner
+    the CI job `macos-service` (`scripts/ci/macos_service.py`) does it for real: install, `kill -9` of the host
+    (launchd brings it back, the old dashboard gone), `service start` while it runs (`kickstart -k`, which signal it
+    sends is not documented: only the restart is checked), `launchctl bootout` of the running daemon (launchd's
+    SIGTERM, as at the Mac's shutdown: the host's log says so, its dashboard is gone, it stays stopped), `service stop`
+    (still stopped 60 s later), start, remove (the plist gone).
+  - **Not chosen:** a LaunchAgent (needs someone logged in); `KeepAlive true` (a deliberate exit 0 would be started
+    again, so every stop would need a bootout, and a reboot would start it); the plist rewritten at each update (a
+    reload each time); the link in the data folder (the service's account can write there, and could point it at
+    other code); `launchctl load/unload` (deprecated); a daemon library (a new dependency); `SMAppService` (an app
+    bundle, signed).
+  - **Left:** launchd's own end of a killed host's processes (SIGTERM to its group) is relied on, and measured by
+    the CI job only; LM Studio's daemon on the Mac Studio is a recipe for IT in SERVER.md, not code; `process_image`
+    is Windows' only, so on a Mac `service stop` leaves a dashboard that won't stop to launchd's bootout; `doctor`'s
+    and `users`' runs as root are not refused (SERVER.md runs them as the account).

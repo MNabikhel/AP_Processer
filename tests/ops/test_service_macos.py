@@ -527,11 +527,17 @@ class FakeMac:
                 self.host = self.dashboard = 0
         elif cmd[:3] == ["sudo", "kill", "-0"]:
             code = 1  # the killed host's dashboard is gone
+        elif cmd[:3] == ["sudo", "launchctl", "bootout"]:  # launchd's SIGTERM: the host ends its dashboard, then itself
+            self.host = self.dashboard = 0
+            self.stopped_at = time.monotonic()
+        elif cmd[0] == "grep":
+            code = 1 if self.misbehave == "no SIGTERM in its log" else 0
         return subprocess.CompletedProcess(cmd, code, out, "")
 
 
 @needs_ci_script
-@pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "comes back"])
+@pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "no SIGTERM in its log",
+                                       "comes back"])  # fmt: skip
 def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not(tmp_path, monkeypatch, misbehave):
     ci = _ci()
     mac = FakeMac(tmp_path / "com.apcoder.ci.plist", misbehave)

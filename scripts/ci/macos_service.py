@@ -1,8 +1,9 @@
 """CI's check of the company server's service on a Mac (D-186), for real: the LaunchDaemon installed with sudo, the
-dashboard answering, its host killed (launchd starts it again), restarted while it runs (launchd's SIGTERM: the host
-ends its dashboard, then itself), stopped (still stopped a minute later), started again, removed (its plist gone).
-Run by .github/workflows/ci.yml (job macos-service) on GitHub's macOS runner, whose sudo asks no password; on a Mac
-of your own, from an AP Coder folder set up with its .venv:
+dashboard answering, its host killed (launchd starts it again), restarted while it runs (``service start``), stopped
+by launchd itself (``launchctl bootout``: SIGTERM, on which the host ends its dashboard, then itself, and stays
+stopped), stopped with ``service stop`` (still stopped a minute later), started again, removed (its plist gone). Run
+by .github/workflows/ci.yml (job macos-service) on GitHub's macOS runner, whose sudo asks no password; on a Mac of
+your own, from an AP Coder folder set up with its .venv:
 
     .venv/bin/python scripts/ci/macos_service.py --data /tmp/apcoder-ci-data --port 8597
 
@@ -112,30 +113,45 @@ class Check:
         self.again(f"the host (process {host}) killed", host, dashboard, within)
 
     def restart(self) -> None:
-        """``service start`` while it runs: launchctl kickstart -k sends the host SIGTERM; it ends its dashboard, then
-        itself, and launchd starts it again."""
+        """``service start`` while it runs: launchctl kickstart -k ends the running host and starts it again."""
         before = self.until("the dashboard answers", self.answering, within=240)
         host, dashboard = int(before["pid"]), int(before.get("dashboard_pid") or 0)
         if self.service("start").returncode:
             raise Failed("service start (while it runs) ended with an error")
         self.again("service start while it runs", host, dashboard, within=120)
+
+    def boot_out(self, stays: float) -> None:
+        """launchd's own stop of the running daemon (``launchctl bootout``, as at the Mac's shutdown): SIGTERM to the
+        host, which ends its dashboard, then itself with exit code 0; launchd does not start it again."""
+        before = self.until("the dashboard answers", self.answering, within=240)
+        dashboard = int(before.get("dashboard_pid") or 0)
+        if run(["sudo", "launchctl", "bootout", f"system/{TASK}"]).returncode:
+            raise Failed("launchctl bootout ended with an error")
+        self.until("stopped by launchd", lambda f: not f.get("running") and not f.get("answering"), within=90)
         log = str(self.data / "logs" / "service.log")
         if run(["grep", "-q", "the host was asked to stop (SIGTERM)", log]).returncode:
-            raise Failed("the host's log does not say it was asked to stop by SIGTERM")
+            raise Failed("the host's log does not say it was asked to stop (SIGTERM)")
+        if dashboard and run(["sudo", "kill", "-0", str(dashboard)]).returncode == 0:
+            raise Failed(f"the dashboard (process {dashboard}) still runs after launchd stopped its host")
+        self.stays_stopped(stays, "launchctl bootout")
+
+    def stays_stopped(self, stays: float, after: str) -> None:
+        """Not running, not answering, and launchd not running it, now and for ``stays`` seconds."""
+        deadline = clock() + stays
+        while True:
+            found = self.status()
+            if found.get("running") or found.get("answering") or found.get("state") == "running":
+                raise Failed(f"the service runs again after {after}")
+            if clock() >= deadline:
+                break
+            pause(min(10.0, max(0.0, deadline - clock())))
+        print(f"still stopped {stays:.0f} s after {after}", flush=True)
 
     def stop(self, stays: float) -> None:
         """``service stop``: stopped at once, and still stopped ``stays`` seconds later (KeepAlive leaves it)."""
         if self.service("stop").returncode:
             raise Failed("service stop ended with an error")
-        deadline = clock() + stays
-        while True:
-            found = self.status()
-            if found.get("running") or found.get("answering") or found.get("state") == "running":
-                raise Failed("the service runs again after service stop")
-            if clock() >= deadline:
-                break
-            pause(min(10.0, max(0.0, deadline - clock())))
-        print(f"still stopped {stays:.0f} s after service stop", flush=True)
+        self.stays_stopped(stays, "service stop")
 
     def start(self) -> None:
         if self.service("start").returncode:
@@ -177,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         plist = str(check.install()["plist"])
         check.kill_the_host(args.back_within)
         check.restart()
+        check.boot_out(stays=15)
+        check.start()
         check.stop(args.stays_stopped)
         check.start()
         check.remove(plist)
@@ -189,8 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if made_link and link.is_symlink():
             run(["sudo", "rm", str(link)])  # (the link install made beside this folder)
-    print("\nThe LaunchDaemon: installed, answering, started again by launchd after a kill, restarted (SIGTERM), "
-          "stopped for good, started, removed.")  # fmt: skip
+    print("\nThe LaunchDaemon: installed, answering, started again by launchd after a kill, restarted, stopped by "
+          "launchd (SIGTERM), stopped for good, started, removed.")  # fmt: skip
     return 0
 
 

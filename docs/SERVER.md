@@ -7,6 +7,9 @@ offline: AP Coder and LM Studio run on the server and connect to nothing on the 
 Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
+On a Mac (the pilot's Mac mini, with the models on a Mac Studio) AP Coder runs as a LaunchDaemon instead of a
+scheduled task: [section 13](#13-on-a-mac) says what is different there; the rest of this guide holds for it too.
+
 In this guide:
 
 - `C:\APCoder\APProcessor` is the AP Coder folder (the code), `D:\APCoderData` the data folder (the database,
@@ -21,7 +24,7 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 [3. HTTPS](#3-the-https-certificate) · [4. The name](#4-the-name-staff-type) · [5. Firewall](#5-the-firewall) ·
 [6. The service](#6-the-service) · [7. First admin](#7-the-first-admin) · [8. LM Studio](#8-lm-studio-on-the-same-server)
 · [9. Backups](#9-backups) · [10. Users and roles](#10-users-and-roles) · [11. Updating](#11-updating-and-going-back)
-· [12. Troubleshooting](#12-troubleshooting)
+· [12. Troubleshooting](#12-troubleshooting) · [13. On a Mac](#13-on-a-mac)
 
 ## 1. What the server needs
 
@@ -213,7 +216,8 @@ LM Studio's port (1234) stays closed: only AP Coder, on the server itself, talks
 ## 6. The service
 
 AP Coder runs as a Windows *scheduled task* that starts when the server starts, under `APCoderService`, whether
-anyone is logged on or not. (Why a task and not a classic service, with nothing to download: docs/decisions.md D-100.)
+anyone is logged on or not. (Why a task and not a classic service, with nothing to download: docs/decisions.md D-100.
+On a Mac it is a LaunchDaemon: section 13.)
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder service install --certfile D:\APCoderData\tls\apcoder.pem --keyfile D:\APCoderData\tls\apcoder.key.pem --allowed-hosts apcoder.company.local
@@ -668,5 +672,222 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 what it checks on a laptop: *dashboard network* (the address and port the server listens on, and the address staff
 open), *server HTTPS certificate* and *private key* (set, there, and readable by the account you run it as; run it
 as `APCoderService` to check the service's own rights), *server names* (the allowed names, a warning when none is set)
-and, on Windows, *server service* (the scheduled task: installed, its state, the account, and whether it was stopped
-on purpose).
+and *server service* (on Windows the scheduled task, on a Mac the LaunchDaemon: installed, its state, the account,
+and whether it was stopped on purpose).
+
+## 13. On a Mac
+
+The pilot runs AP Coder on a Mac mini, and its AI models on a Mac Studio beside it. On a Mac, AP Coder's service is a
+*LaunchDaemon*: launchd, the part of macOS that runs its services, starts it at boot under its own account, whether
+anyone is logged in or not. Everything else in this guide holds, with the Mac's paths: the certificate (step 3), the name staff
+type (step 4), the first admin (step 7), backups (step 9), users (step 10), updates (step 11). Why a LaunchDaemon, and
+how it was chosen: docs/decisions.md, D-186.
+
+In this section `/Library/APCoder/APProcessor` is the AP Coder folder, `/Library/APCoder/current` a link to the
+AP Coder folder that runs (the service runs that link; `server-update` points it at a new version), `/Library/APCoderData`
+the data folder and `_apcoder` the account AP Coder runs as. Commands run in Terminal, as an administrator, with
+`sudo`. sudo leaves the environment out, so the data folder is given on each command line; once the service is
+installed, these two save the typing (put them in your `~/.zshrc` to keep them):
+
+```sh
+# The service and updates, as root:
+apc() { sudo AP_PRIVATE_DIR=/Library/APCoderData AP_SERVER_MODE=1 /Library/APCoder/current/.venv/bin/python -m ap_coder "$@"; }
+# Everything else that opens the data folder (users, backup, doctor), as the service's account:
+apcu() { sudo -u _apcoder AP_PRIVATE_DIR=/Library/APCoderData AP_SERVER_MODE=1 /Library/APCoder/current/.venv/bin/python -m ap_coder "$@"; }
+```
+
+Then `apc service status`, `apcu users add --admin jsmith`, `apcu doctor`. A file made with sudo is root's, and the
+service's account could not change it: `apcu` makes it the account's from the start. What root makes in the data
+folder anyway (`server-update`'s backups and restores) is handed back to the account at each `service install` and
+`service start`: only root's own files and folders, never what a link there points at.
+
+### The Mac itself
+
+- **Never asleep, and back after a power cut**: *System Settings* → *Energy*: *Prevent automatic sleeping when the
+  display is off*, *Wake for network access*, *Start up automatically after a power failure* on (or `sudo pmset -a
+  sleep 0 disksleep 0 womp 1 autorestart 1`). Put the Mac mini, and the Mac Studio, on a UPS.
+- **FileVault** (its disk encrypted): a Mac with FileVault on waits at its unlock screen after every restart, a power
+  cut included, until someone types a password; until then nothing of AP Coder runs (nor LM Studio). IT decides:
+  FileVault on, with someone who unlocks the Mac after an unplanned restart, and `sudo fdesetup authrestart` for the
+  planned ones (it restarts once without the unlock screen: use it for macOS updates too); or FileVault off, on a Mac
+  in a locked room (the invoices are then not encrypted on its disk). `fdesetup status` says which.
+- **macOS updates**: turn off the automatic install of macOS updates (*General* → *Software Update* → *Automatic
+  updates*), so the Mac restarts when you choose, at a quiet time.
+- **A fixed address** on the company network (a DHCP reservation), and the DNS alias staff type (step 4).
+
+### The service's account
+
+A hidden account used for nothing else, with no password and no shell (it can't log in):
+
+```sh
+sudo dscl . -create /Groups/_apcoder PrimaryGroupID 450
+sudo dscl . -create /Users/_apcoder UniqueID 450
+sudo dscl . -create /Users/_apcoder PrimaryGroupID 450
+sudo dscl . -create /Users/_apcoder UserShell /usr/bin/false
+sudo dscl . -create /Users/_apcoder NFSHomeDirectory /var/empty
+sudo dscl . -create /Users/_apcoder RealName "AP Coder service"
+sudo dscl . -create /Users/_apcoder IsHidden 1
+```
+
+450 is a number no other account or group has here: `dscl . -list /Users UniqueID` and `dscl . -list /Groups
+PrimaryGroupID` show those in use (below 500 keeps it off the login window). AP Coder refuses to run as root unless
+`--allow-root` is given, for a first test only: as root, every invoice and email it reads would be handled with all
+of the Mac's rights.
+
+### Install from the offline bundle
+
+The Mac's bundle (`scripts/build_offline_bundle.py --platform macosx_14_0_arm64`), copied in with its SHA-256
+(`shasum -a 256 <zip>` shows a file's):
+
+```sh
+sudo mkdir -p /Library/APCoder /Library/APCoderData
+sudo ditto -x -k ~/Downloads/APProcessor-offline-0.4.0-20261101.zip /Library/APCoder
+sudo chown _apcoder:_apcoder /Library/APCoderData
+sudo chmod 750 /Library/APCoderData
+cd /Library/APCoder/APProcessor
+sudo AP_SERVER_MODE=1 AP_PRIVATE_DIR=/Library/APCoderData ./APProcessor.command --no-start --yes
+```
+
+This makes `/Library/APCoder/APProcessor` and sets it up from its `wheelhouse` (offline, a few minutes, ending with
+the self-check). The code folder stays root's: only administrators can change it, and the service's account reads and
+runs it (whoever can change the code can read every invoice). The data folder is the account's, nobody else's (the
+administrators reach it with sudo). Keep both on the Mac's own disk.
+
+### The service
+
+From the AP Coder folder, the first time:
+
+```sh
+cd /Library/APCoder/APProcessor
+sudo AP_PRIVATE_DIR=/Library/APCoderData .venv/bin/python -m ap_coder service install --certfile /Library/APCoderData/tls/apcoder.pem --keyfile /Library/APCoderData/tls/apcoder.key.pem --allowed-hosts apcoder.company.local
+```
+
+`service install` saves the settings in `/Library/APCoderData/server.json`, makes the data folder's `service` and
+`logs` folders the account's, points `/Library/APCoder/current` at this folder, writes the LaunchDaemon
+`/Library/LaunchDaemons/com.apcoder.server.plist` (root's, as launchd wants it) and loads it: launchd starts AP Coder
+at once, and at every boot, as `_apcoder`. Add `--dry-run` to see the plist and the commands first, changing nothing.
+The options are those of step 6, but: `--account` (default `_apcoder`; `root` only with `--allow-root`), and
+`--task-name`, which names the LaunchDaemon (the default, `AP Coder`, gives `com.apcoder.server`; a name like
+`com.example.apcoder` is used as it is). There is no password to give. The data folder is kept in the LaunchDaemon,
+so the other service commands find it even when sudo left `AP_PRIVATE_DIR` out.
+
+| To | Run |
+|---|---|
+| See whether it runs, its version and folder | `apc service status` (`--json` for a monitoring script: installed, running, the process, version, folder, address and the dashboard's answer) |
+| Stop it (it stays stopped, also after a restart of the Mac) | `apc service stop` |
+| Start it again (when it runs, it is restarted) | `apc service start` |
+| Change a setting (port, certificate, names) | `apc service install` with the new options (the others are kept, except `--account`, `--task-name` and `--folder`: give them again unless they are the defaults) |
+| Remove it (the data, settings, logs and the `current` link are kept) | `apc service remove` |
+
+How it runs: launchd starts `/Library/APCoder/current/.venv/bin/python -m ap_coder service run`, the service host of
+step 6, which starts the dashboard and starts it again if it stops. The LaunchDaemon's `KeepAlive` is
+`SuccessfulExit: false`: launchd starts the host again when it crashed or was ended (at most every 10 seconds), and
+leaves it stopped when it ended on purpose. A host that was killed takes its dashboard with it (launchd ends the
+processes it started) and is back within seconds. `service stop` leaves a `stopped` file in the data folder's
+`service` folder, asks the dashboard to stop, and unloads the LaunchDaemon (`launchctl bootout`): launchd asks the host
+to stop (SIGTERM), which stops its dashboard (the requests under way get 25 seconds; it is ended after 45 at most) and
+ends with exit code 0. At the next boot launchd loads it again, and the host, seeing `stopped`, ends at once: the
+service stays stopped until `service start`, which removes the file and loads it (`launchctl bootstrap`), or restarts
+it when it runs (`launchctl kickstart -k`).
+
+**Logs**: `/Library/APCoderData/logs/service.log`, `access.log` and `background.log`, as in step 6; and
+`logs/launchd.out.log` and `launchd.err.log`, what Python said before the host's own log was open (a Python that
+won't start, a folder it can't write). launchd's own view of it: `sudo launchctl print system/com.apcoder.server`
+(its state, process and last exit code).
+
+**The firewall**: when the Mac's firewall is on (*System Settings* → *Network* → *Firewall*), allow incoming
+connections to Python in its *Options*. Staff reach AP Coder on the port given (8501).
+
+**Updating** (section 11), from the folder that runs:
+
+```sh
+apc server-update ~/Downloads/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits> --dry-run
+apc server-update ~/Downloads/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits>
+```
+
+It does the steps of section 11 with the LaunchDaemon: it stops it, unzips the bundle beside the current folder
+(`/Library/APCoder/APProcessor-0.5.0`), and once the new folder is set up and checked, points `/Library/APCoder/current`
+at it in one step (a new link renamed over the old one, while the service is stopped) and starts the service again. The
+LaunchDaemon itself never changes. `apc server-update --back` points the link back. Leave the `current` link to
+`server-update`; never change it while the service runs.
+
+Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
+the same data. Use `service stop` and `service start`.
+
+### LM Studio on the Mac Studio (a recipe for IT)
+
+AP Coder neither starts nor watches LM Studio: on the Mac Studio (and on the Mac mini, when it is the backup model
+machine) IT runs it as a LaunchDaemon of its own. LM Studio installs per account and keeps its models in that
+account's `~/.lmstudio/models`, so it runs as a standard account made for it, here `lmstudio` (with its own home
+folder). Install LM Studio as that account (copied in: nothing is downloaded), open it once to set the models up
+(step 8, point 2), and turn off its own *run the LLM server on login*.
+
+1. **The start script**, `/Library/APCoder/lm-studio-start.sh` (the model's exact name is the one `lms ls` shows):
+
+   ```sh
+   #!/bin/sh
+   # LM Studio's server at boot, for AP Coder (docs/SERVER.md, section 13).
+   LMS="$HOME/.lmstudio/bin/lms"
+   "$LMS" daemon up
+   "$LMS" server start --port 1234 --bind 10.0.0.20
+   "$LMS" load gemma-4-12b-it-qat --context-length 16384 --gpu max --yes
+   ```
+
+   `--bind`: the Mac Studio's own address on the company network, so the Mac mini reaches it (`127.0.0.1` when AP
+   Coder runs on the same Mac). Anything else on the network can reach that port too: let the Mac's firewall, or the
+   network, allow only the Mac mini.
+
+2. **Its LaunchDaemon**, `/Library/LaunchDaemons/com.apcoder.lmstudio.plist`:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0">
+   <dict>
+     <key>Label</key><string>com.apcoder.lmstudio</string>
+     <key>ProgramArguments</key><array><string>/Library/APCoder/lm-studio-start.sh</string></array>
+     <key>UserName</key><string>lmstudio</string>
+     <key>EnvironmentVariables</key><dict><key>HOME</key><string>/Users/lmstudio</string></dict>
+     <key>RunAtLoad</key><true/>
+     <key>AbandonProcessGroup</key><true/>
+     <key>StandardOutPath</key><string>/Users/lmstudio/Library/Logs/lm-studio-start.log</string>
+     <key>StandardErrorPath</key><string>/Users/lmstudio/Library/Logs/lm-studio-start.log</string>
+   </dict>
+   </plist>
+   ```
+
+   `AbandonProcessGroup` keeps LM Studio's own daemon running once the script has ended (launchd would otherwise end
+   what it started).
+
+3. **Load it**:
+
+   ```sh
+   sudo chown root:wheel /Library/APCoder/lm-studio-start.sh /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   sudo chmod 755 /Library/APCoder/lm-studio-start.sh
+   sudo chmod 644 /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   sudo launchctl bootstrap system /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   ```
+
+4. **Check it after a restart with nobody logged in**: `sudo -u lmstudio /Users/lmstudio/.lmstudio/bin/lms server
+   status` and `... lms ps` (the model loaded); on the Mac mini, AP Coder's *Settings* → *Reading* → *Check again*.
+   AP Coder is told where it is in the data folder's `.env` (`AP_LLM_BASE_URL=http://10.0.0.20:1234/v1`, and
+   `AP_PAGE_READER_BASE_URL`), and the backup machine as in step 8, point 5.
+
+### The Mac mini's burn-in
+
+Before the pilot tester and AP staff rely on it, let the Mac mini run the service for a week. Restart it once on
+purpose (`sudo fdesetup authrestart` with FileVault on, else `sudo shutdown -r now`); cut its power once (it comes
+back by itself with *Start up automatically after a power failure*; with FileVault on it waits at its unlock screen);
+kill its host once (`sudo kill -9` of the process `apc service status` names: launchd brings it back within seconds);
+and, when you have a newer bundle, run one `server-update` and one `server-update --back`. After each, `apc service
+status` and the end of `logs/service.log`. Each morning, check that the night's backup is in `backups` (section 9)
+and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms ps` after its restart).
+
+| On a Mac, what you see | What to do |
+|---|---|
+| "Run it with sudo" | The service commands change the Mac's own launchd: run them with sudo (`apc`). |
+| "This Mac has no account _apcoder" | Make it (above), or name another with `--account`. |
+| "Give the data folder" | `sudo AP_PRIVATE_DIR=/Library/APCoderData ...` on the command line (sudo leaves the environment out). |
+| `service status` says "not loaded" | Stopped on purpose (`apc service start`), or it could not load: `sudo launchctl print system/com.apcoder.server`, and `logs/launchd.err.log`. |
+| Nothing answers after a power cut | FileVault: the Mac waits at its unlock screen; or *Start up automatically after a power failure* is off. |
+| The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
+| launchd says "last exit code = 75" | Another service host runs (someone ran `service run` in Terminal): end it; launchd starts its own within 10 seconds. |

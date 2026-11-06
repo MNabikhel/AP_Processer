@@ -874,8 +874,9 @@ def main(args: argparse.Namespace) -> int:
               "serve --server", file=sys.stderr)  # fmt: skip
         return 2
     way = _backend()
-    if way.command_refusal(args):
-        print(way.command_refusal(args), file=sys.stderr)
+    refused = way.command_refusal(args)
+    if refused:
+        print(refused, file=sys.stderr)
         return 1
     data = way.data_folder(data, args.task_name or TASK_NAME)  # (the Mac: its LaunchDaemon's when sudo left it out)
     try:
