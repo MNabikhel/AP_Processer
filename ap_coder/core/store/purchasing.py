@@ -36,7 +36,7 @@ SELECT json_group_array(CASE WHEN ok THEN json_array(id, json_extract(doc, '$.in
                              ELSE json_array(id, NULL, doc) END) FROM read
 """
 # What month-end reads of each invoice billing a received PO (``billing_lines``), kept for every process in the
-# database by the invoice's vendor (``report_answers``: a row a vendor, BILLING_ANSWER and its key; about 311 bytes an
+# database by the invoice's vendor (``report_answers``: a row a vendor, BILLING_ANSWER and its key; about 300 bytes an
 # invoice) and brought up to date from the vendors' change log (``vendor_changes``, D-174) as ``vendor_invoices`` is:
 # after a change only the invoices changed since are decoded again, not every invoice of the vendor (23,000 at 300,000
 # invoices, D-177). Its stamp: (the database's ``summary_id``, the last change of the log it is as of, the vendor's
@@ -186,10 +186,11 @@ class PurchasingMixin:
     @contextmanager
     def billing_moment(self) -> Iterator[BillingMoment]:
         """Month-end's reads of the received POs and the invoices billing them inside (``billing_rows``,
-        ``billing_lines``), in this thread, all of one moment of the database (one read: the vendors' change log and
-        the invoices it names agree, B-1812), the invoices' summary brought up to date first. What ``billing_lines``
-        read to keep for every process is written once the read is over; never in a write under way, which may yet be
-        undone (``BillingMoment.writing``: not this bringing up to date)."""
+        ``billing_lines``), in this thread, all of one moment of the database (one read: the invoices billing each PO
+        and their codings agree, B-1818, and the vendors' change log and the invoices it names, B-1812), the invoices'
+        summary brought up to date first. What ``billing_lines`` read to keep for every process is written once the
+        read is over; never in a write under way, which may yet be undone (``BillingMoment.writing``: not this
+        bringing up to date)."""
         with self.session():
             with self._conn() as conn:
                 moment = BillingMoment(conn.in_transaction)
@@ -260,7 +261,7 @@ class PurchasingMixin:
                     logged.setdefault(vendor, []).append((seq, invoice_id))
         read: dict[int, Any] = {}
         kept: dict[str, dict[int, Any]] = {}  # each vendor's, as it is to be kept
-        whole: set[str] = set()  # the vendors whose kept row holds every change since it was written
+        current: set[str] = set()  # the vendors whose row kept the log brings up to date
         todo = list(loose)
         for vendor, ids in by_vendor.items():
             facts = kept[vendor] = {}
@@ -270,7 +271,7 @@ class PurchasingMixin:
                 # Every change since logged: the log still holds them all, and the vendor's count of changes (which
                 # an older AP Coder's triggers keep too, writing no log) moved by as many (B-1811).
                 if was == summary_id and since >= (first or 1) - 1 and counts.get(vendor, 0) - count == len(changes):
-                    whole.add(vendor)
+                    current.add(vendor)
                     changed = set(changes)
                     facts.update((n, (date, lines)) for n, date, lines in value if n not in changed)
             for n in ids:
@@ -285,7 +286,7 @@ class PurchasingMixin:
                 kept[vendors[n]][n] = read[n]
                 decoded[vendors[n]] += 1
         for vendor, facts in kept.items() if not moment.writing else ():
-            if vendor not in whole or decoded[vendor] >= max(BILLING_REWRITE, len(facts) * BILLING_REWRITE_SHARE):
+            if vendor not in current or decoded[vendor] >= max(BILLING_REWRITE, len(facts) * BILLING_REWRITE_SHARE):
                 moment.keep.append((vendor, [summary_id, last or 0, counts.get(vendor, 0)],
                                     [[n, *facts[n]] for n in sorted(facts)]))  # fmt: skip
         return read

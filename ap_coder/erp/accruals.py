@@ -182,10 +182,11 @@ def _made_of(stamp: tuple | None, full: dict, on: list[tuple], without: tuple[li
     return _digest((stamp, full, on, without[1], [(v, counts.get(v)) for v in sorted(vendors)]))
 
 
-def _billed(dated: object, read: object, end: str) -> Sequence[tuple]:
-    """An invoice's lines billing a quantity by ``end``, from what ``Store.billing_lines`` read of its coding: none
-    when it is dated after ``end`` (``dated``, its date as the summary has it, else its coding's). A coding not read
-    so (not an object, its lines not lines) is read as before, failing where it did."""
+def _billed(dated: object, read: object, end: str) -> Sequence[Sequence[object]]:
+    """An invoice's lines billing a quantity by ``end`` (description, unit price, quantity), from what
+    ``Store.billing_lines`` read of its coding: none when it is dated after ``end`` (``dated``, its date as the
+    summary has it, else its coding's). A coding not read so (not an object, its lines not lines) is read as before,
+    failing where it did."""
     if isinstance(read, tuple):
         coding_date, lines = read
         return () if str(dated or coding_date or "") > end else lines

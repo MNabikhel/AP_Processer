@@ -331,6 +331,46 @@ def test_received_not_invoiced_are_of_one_moment_though_another_worker_approves_
     assert received() == [("PO-1 line 1", 8.0)]  # (and after the approval)
 
 
+def test_after_one_invoice_of_a_big_vendor_changes_another_process_decodes_that_invoice_alone(tmp_path, monkeypatch):
+    """D-177: any change to one invoice of a vendor had month-end decode again every invoice billing its POs (those
+    on no PO: 23,000 for the biggest vendor at 300,000 invoices), in whichever process worked it out. What month-end
+    reads of each is kept for every process by vendor: another process, with nothing of its own kept, decodes only the
+    invoice changed; the vendor's row is written again once enough were decoded since (``BILLING_REWRITE``)."""
+    from ap_coder.core.store import purchasing
+    from tests.core.test_kept_answers import _plain, _po_line, _Processes
+
+    monkeypatch.setattr(purchasing, "BILLING_REWRITE", 4)
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0}])
+    end = dt.date(2026, 10, 31)
+    line = {"line_number": 1, "description": "Bolts size 1", "quantity": 1, "unit_price": 2.0, "amount": 2.0}
+    doc = {"vendor_name": "Acme Supply", "po_number": "", "invoice_date": "2026-10-03", "currency": "CAD",
+           "line_items": [line], "subtotal": 2.0, "grand_total": 2.1}  # fmt: skip
+    bills = [other.add_invoice(tmp_path / f"{n}.pdf", {**doc, "invoice_number": f"A-{n}"}, {}) for n in range(12)]
+    decoded: list[int] = []
+    real = Store.billing_codings
+    monkeypatch.setattr(Store, "billing_codings", lambda self, ids: decoded.extend(ids) or real(self, ids))
+
+    def received(name: str) -> list[tuple]:
+        process(name)
+        decoded.clear()
+        return [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, end)]
+
+    def billing_two(invoice: int) -> None:
+        _plain(store, "UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].quantity', 2) WHERE id = ?",
+               invoice)  # fmt: skip
+
+    assert received("worker 1") == [("PO-1 line 1", 976.0)] and sorted(decoded) == bills  # (488 left at 2.00)
+    for n, invoice in enumerate(bills[: purchasing.BILLING_REWRITE]):
+        billing_two(invoice)
+        assert received(f"worker {n + 2}") == [("PO-1 line 1", 976.0 - 2 * (n + 1))]
+        assert decoded == bills[: n + 1]  # (those changed since the vendor's row was written: one, then two, ...)
+    billing_two(bills[-1])  # (its row written again with the last of them)
+    assert received("one more worker") == [("PO-1 line 1", 976.0 - 2 * (purchasing.BILLING_REWRITE + 1))]
+    assert decoded == [bills[-1]]
+
+
 def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_po_or_the_setup_does(
     tmp_path, monkeypatch
 ):
