@@ -148,7 +148,7 @@ def export_params(request: Request) -> tuple[dict[str, Any], str]:
     """What an export of the filtered rows is of (the page's query, or the person's default layout) and its file's
     name: on the company server it is made by the background process from these (D-169)."""
     suffix = "xlsx" if request.url.path.endswith(".xlsx") else "csv"
-    return {"query": _query(request).query_string()}, f"invoice_directory.{suffix}"
+    return {"query": _query(request).query_string(page=1)}, f"invoice_directory.{suffix}"
 
 
 def _query_of(params: dict[str, Any]) -> directory.Query:
