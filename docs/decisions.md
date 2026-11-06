@@ -1706,3 +1706,87 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/intake/test_imports.py`, `tests/web/test_web_process.py`, `tests/capture/test_page_reads.py`,
     `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`, `tests/ai/test_pipeline_arrival.py`,
     `tests/bench/test_day.py`)
+- **D-173** · **A vendor's older lessons carried forward when an approval moves the learning memory, and the GL
+  suggestions' memory extended by the lessons that moved; the vendor's lessons counted once a page; the accounts'
+  words once a chart** (phase 3 part 2, item (b) of SCALE.md's phase 3; D-171's first "not done").
+  - **Why:** at 300,000 invoices under 100 people, `learning_rows` / `_past_memory` were 15.8% of the busiest web
+    workers' CPU and the suggestions' extension (`_with_past`, `_extended`) 4.6%. Past the memory's cap
+    (`FEEDBACK_READ`, 50,000), `_past_memory`'s stamp holds the memory's last lesson, so every approval (its lessons in
+    front, the oldest out) changed every vendor's stamp: the next ask of each vendor read all its older lessons again
+    (up to 50,000 rows; the biggest seeded vendor has 59,000 lessons at 100k, 179,000 at 300k), in every process, and
+    `_extended` went over them and the 50,000 shared rows again.
+  - **The store** (`learning._carried`): in the memory's order (decisions, then history, each newest first) the rows
+    past its last are a tail of the vendor's. When the last moved forward and the vendor only gained decisions since
+    (its count up by exactly its lessons above the newest kept, that one still the same lesson, none of them history),
+    the vendor's lessons between the new last and the old one are read (`vendor_key` and an id range, off its index),
+    put in front of those kept, and of its newest `FEEDBACK_READ` as many of the oldest dropped as it gained: what the
+    full read gives. A decision added past the new last (more at once than the memory holds) is read with them. The
+    list kept is returned as it is when nothing moved. **Read whole** on anything else: a lesson of the vendor removed
+    or moved to another, history of it imported, the memory's last moved back (a lesson forgotten), a restore (its
+    newest kept gone, or another lesson by that id). The vendor's own stamp stays as it was (count, newest id, newest
+    lesson); the memory's last is in it, as before.
+  - **The suggestions** (`suggest._Older`, `_grouped`, `_carried`, `_extended`): each vendor's older lessons by line,
+    with each line's pattern as last made, kept in `_OLDER` (`PAST_KEPT` vendors, `PAST_ROWS_KEPT` lessons, the latest
+    used last). It holds none of the shared rows' memory, so it outlives a change of them: B-1719's rule for `_PAST`
+    (the extended memories) is as it was. When the store's list is the one kept with lessons in front and the oldest
+    dropped (`memory.added_in_front`, `UPDATE_MOST` at most), only those lessons' lines are gone over. A line's pattern
+    is kept while its decisions are: its older ones (not among the lines changed) and its shared ones (the same list
+    in `_Memory.lines`: D-171's update keeps the list of a line it doesn't change, and a memory built again has new
+    ones). A line only in the older lessons is ranked again as the shared rows change (its rank is its place after
+    them). The shared rows' decisions of a line come from `base.lines`, not a pass over the 50,000 rows. Exactly what
+    building it of all the rows gives.
+  - **Once a page:** a check read the stamp of the vendor's lessons three or four times (the history check, the
+    accounts and cost centers used for it, its older lessons), each a COUNT of all of them (8 ms at 179,000): read once
+    a page now while the database does not change (`_lessons_stamp`, `_session_memo`: `total_changes` and
+    `data_version`).
+  - **Once a chart:** every line suggested went over the words of every account (1,500 on the seed: 12,000 `_stems`
+    for a check of 8 lines once the memory's answers are new, after each approval). `_account_stems` works them out
+    once per chart (`Store.reference_data` keeps it, shared and never changed, until the accounts change; the latest
+    four charts). The same suggestions: only the stems were ever compared.
+  - **The proof:**
+    - `tests/core/test_memory_store.py`: 300 random steps (approvals, history imported, invoices approved again,
+      lessons forgotten, moved to another vendor, changed by an upgrade, more than the memory holds at once, a
+      database restored), some vendors asked each time: what `learning_rows` gives is what reading all of the vendor's
+      lessons gives, carried forward 791 times and read whole 159; the edges each on their own (the last moving from
+      the history to the decisions, history imported past the memory, a restore whose next lessons take the lost ids,
+      a decision added past the new last); the stamp read once a page. Nine sabotages of `_carried`, each caught.
+    - `tests/ai/test_coding_no_ai.py`: 120 random approvals past a cap (and invoices approved again, lessons
+      forgotten, history imported), some vendors asked each time: the extended memory is what building it of all the
+      rows gives, everything it holds, and the same suggestions; nine sabotages of the carry, each caught. `_held`
+      compares the index's word weights as a dict (read by word; `Index.updated`, D-171, keeps no build's order there,
+      as `_as_built` already allowed).
+    - On the 20k seed (below), 8 approvals: 57 vendor memories, each the full read and a build of all its rows, the
+      same suggestions for its lines; 49 carried forward in the store and in the suggestions.
+    - `scripts/same_behaviour.py --ref 1c73b77 tax approve pipeline` (Python 3.12): the same, all three (20,000 tax,
+      1 approve, 1 pipeline outputs). `bench coding --realistic`: the same lines, byte for byte.
+  - **Measured** (a seed of 20,000 invoices, 74,556 lessons: the memory's last moves with every approval; CPU,
+    `time.process_time()`, medians of 10 rounds, each an approval of another vendor, then the check and the page of
+    the biggest vendor and a small one; the 4 cores shared with other work). "Heavy": the biggest vendor given 40,000
+    older lessons more (42,854 past the memory, as the biggest has at 300,000 invoices), measured last, with all of
+    this; the others before them, without the stamp read once a page (a millisecond at 10,686 lessons):
+
+    | CPU (heavy in brackets) | before | after |
+    |---|---:|---:|
+    | after an approval: a check, the biggest vendor (3,500 older lessons; 42,854) | 249 (1,025) ms | 108 (106) ms |
+    | after an approval: its page | 99 (111) ms | 91 (101) ms |
+    | after an approval: a check, a small vendor (57 older lessons) | 63 (62) ms | 43 (42) ms |
+    | a check of the biggest again, nothing changed | 39 (47) ms | 37 (39) ms |
+
+    The vendor's older lessons read in all, the first 26 requests: 358 → 20 ms; `_extended` 109 → 9 ms. What is left of
+    a check after an approval is the suggestions worked out for the new memory (the memory changed) and D-171's
+    update. `_OLDER` holds 0.9 MB for the heavy vendor (its rows' lists and its lines' shared decisions).
+  - **Not done:**
+    - A line's suggestions are worked out again after every approval (`_Memory.said` is the memory's): about 60 ms for
+      8 lines; carrying them forward needs a rule for which lines an approval's patterns can change (a word, or one
+      like it, in common), not taken here.
+    - A vendor's own approval works out its lessons whole again in each process (`vendor_lessons`: its newest
+      50,000, 360 ms heavy): carrying them forward needs its rows kept (D-154 keeps only what they say).
+    - `metrics()` counts every lesson four times after each approval (the Learning page, Settings): 1.29 million at
+      300k.
+    - The arrival's examples and history check (`select_examples`, `compare_with_history` in `ai/pipeline.py`)
+      aggregate a vendor's whole `learning_rows` past the cap afresh (not the shared list: `memory.aggregate` can't
+      update it), 50,000 rows and more an arrival, in the capture processes.
+    - Outside these files: the invoice page's Previous and Next (`navigation`, `list_invoices` of the review queue,
+      the `listed` summary) are worked out whole after every approval: most of what is left of the page's 91 ms.
+  - (`core/store/learning.py`, `ai/suggest.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_memory_store.py`,
+    `tests/ai/test_coding_no_ai.py`)

@@ -283,7 +283,7 @@ class LearningMixin:
     def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
         """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
         it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Once the memory's last moved on (an
-        approval, past the memory's cap) and the vendor only gained lessons it holds, those kept are carried forward
+        approval, past the memory's cap) and the vendor only gained decisions, those kept are carried forward
         (``_carried``, D-173); read again whole once anything else changed. The GL suggestions' index extended by them
         (``suggest._PAST``) knows the same list at once, and the list carried forward by what moved in front of it.
         Kept for ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` of their lessons, as that index is, the latest used
