@@ -357,46 +357,51 @@ def test_a_restore_gives_the_database_a_new_summary_id_so_nothing_kept_from_befo
 
 
 def _vendor_reads(store: Store, monkeypatch) -> list[str]:
-    """Each vendor whose invoices are read from the database from now on."""
-    read: list[str] = []
+    """Each vendor whose invoices are read from the database from now on: (its key, the invoices of it read again, or
+    None for all of them)."""
+    read: list[tuple[str, list[int] | None]] = []
     real = type(store)._vendor_invoices
-    monkeypatch.setattr(type(store), "_vendor_invoices", lambda self, key: read.append(key) or real(self, key))
+    monkeypatch.setattr(type(store), "_vendor_invoices",
+                        lambda self, key, ids=None: read.append((key, ids)) or real(self, key, ids))  # fmt: skip
     return read
 
 
-def test_each_vendors_invoices_are_kept_until_its_count_moves_whoever_changed_it(tmp_path, ground_truth, monkeypatch):
+def test_each_vendors_invoices_are_kept_and_only_those_changed_read_again_whoever_changed_them(
+    tmp_path, ground_truth, monkeypatch
+):
     """Every check read all of its vendor's invoices twice (220 ms for a vendor of 7,800 on the 100k database): they
-    are kept per vendor while ``summary_id`` and its ``changes/vendor/<key>`` hold, a change by another worker or plain
-    SQL included; another vendor's change, or a check's confidence, reads nothing again."""
+    are kept per vendor on the database (``summary_id``), and a change by another worker or plain SQL reads again only
+    the invoice it changed (the vendors' change log, D-174); another vendor's change, or a check's confidence, reads
+    nothing again; a restore reads them all."""
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
     beta = _invoice(store, tmp_path, ground_truth, "V-2", "Beta Ltd")
     key = store.get_invoice(acme)["vendor_key"]
     read = _vendor_reads(store, monkeypatch)
     first = store.vendor_invoices(key)
-    assert [r["id"] for r in first] == [acme] and read == [key]
+    assert [r["id"] for r in first] == [acme] and read == [(key, None)]
     first[0]["status"] = "changed by its caller"  # each caller's own rows
-    assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+    assert store.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]
     assert "adjusted_confidence" not in first[0] and "requires_review" not in first[0]  # (read by nothing)
     store.refresh_confidence(acme, 0.12, True)
     other.park_invoice(beta, "Ann", "waiting")  # another vendor's
-    assert other.vendor_invoices(key)[0]["status"] == "review" and read == [key]  # (one process: one copy kept)
+    assert other.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]  # (one process: one copy)
     other.park_invoice(acme, "Ann", "waiting for the PO")  # another worker's change
-    assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+    assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [(key, None), (key, [acme])]
     with sqlite3.connect(store.path) as conn:  # plain SQL
         conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 3
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and read[2:] == [(key, [acme])]
     backup = store.backup_now("manual")
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET invoice_date = '2026-03-03' WHERE id = ?", (acme,))
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-03-03" and len(read) == 4
-    store.restore_from(backup)  # the backup's count, under a new summary_id
-    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and len(read) == 5
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-03-03" and read[3:] == [(key, [acme])]
+    store.restore_from(backup)  # the backup's log, under a new summary_id: all read again
+    assert store.vendor_invoices(key)[0]["invoice_date"] == "2026-02-02" and read[4:] == [(key, None)]
 
 
 def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_path, ground_truth, monkeypatch):
-    """Inside a write under way the vendor's count includes that write, and the rows read show it: kept, they would be
-    served once a later change brought the count back to that number, though the write was undone."""
+    """Inside a write under way the vendors' change log holds that write, and the rows read show it: kept, they would
+    be served once a later change took the undone write's place in the log, though the write was undone."""
     store = Store(tmp_path / "ap.db")
     acme = _invoice(store, tmp_path, ground_truth, "V-1", "Acme Supply")
     key = store.get_invoice(acme)["vendor_key"]
@@ -406,7 +411,7 @@ def test_each_vendors_invoices_read_in_a_write_that_is_undone_are_not_kept(tmp_p
         assert store.vendor_invoices(key)[0]["status"] == "rejected"
         assert store.vendor_invoices(key)[0]["status"] == "rejected" and len(read) == 2  # afresh each time
         raise RuntimeError("undone")
-    with sqlite3.connect(store.path) as conn:  # another worker's change: the count is again the undone write's
+    with sqlite3.connect(store.path) as conn:  # another worker's change, in the undone write's place in the log
         conn.execute("UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", (acme,))
     found = store.vendor_invoices(key)[0]
     assert (found["status"], found["invoice_date"]) == ("review", "2026-02-02") and len(read) == 3
@@ -483,11 +488,11 @@ def test_a_vendor_too_big_to_keep_is_read_once_by_a_check(tmp_path, ground_truth
     with store.session():  # one page
         vendor_findings(coding, store)
         expected_tax_numbers(coding, store)
-        assert read == [key]
+        assert read == [(key, None)]
         store.vendor_invoices(key)[0]["status"] = "changed by its caller"
-        assert store.vendor_invoices(key)[0]["status"] == "review" and read == [key]
+        assert store.vendor_invoices(key)[0]["status"] == "review" and read == [(key, None)]
         store.park_invoice(ids[2], "Ann", "waiting for the PO")  # a change: read again
-        assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [key, key]
+        assert store.vendor_invoices(key)[0]["status"] == "parked" and read == [(key, None), (key, None)]
     assert (str(store.path), key) not in vendors_module._VENDOR_ROWS
     assert len(store.vendor_invoices(key)) == 3 and len(read) == 3  # (outside a page's session: each time)
 

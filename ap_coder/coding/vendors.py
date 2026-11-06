@@ -319,7 +319,7 @@ def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id
     if not key:
         return {}
     master = store.get_vendor(key)
-    history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
+    history = [h for h in store.vendor_invoices(key, shared=True) if h["id"] != exclude_invoice_id]
     out = {}
     for _severity, _code, field, column, past, _name, norm, _same in _TAX_NUMBERS:
         if master and norm(master.get(column)):
@@ -395,7 +395,8 @@ def vendor_findings(
         where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else "in JD Edwards"
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}"))
 
-    history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
+    # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174)
+    history = [h for h in store.vendor_invoices(key, shared=True) if h["id"] != exclude_invoice_id]
     findings += _credit_note_findings(coding, store, history)
     # No invoice under this name approved yet (its first, or the others still wait): a person confirms it is a known
     # supplier, even when the GST/HST number printed is a touchless supplier's. The ERP's vendor master vouches for
@@ -412,9 +413,9 @@ def vendor_findings(
 
     # The bank details printed for payment, compared with the ones on this vendor's approved invoices.
     account = coding.remit_bank_account
-    known_accounts = [
-        h["bank_account"] for h in history if h["status"] == "approved" and bank_digits(h["bank_account"])[0]
-    ]
+    # each account once (a vendor's approved invoices carry the same few), not read for each of its invoices (D-174)
+    approved_accounts = dict.fromkeys(h["bank_account"] for h in history if h["status"] == "approved")
+    known_accounts = [k for k in approved_accounts if bank_digits(k)[0]]
     if bank_digits(account)[0] and known_accounts and not any(same_bank_account(account, k) for k in known_accounts):
         usual = sorted({mask_account(k) for k in known_accounts})
         shown = mask_account(account)
