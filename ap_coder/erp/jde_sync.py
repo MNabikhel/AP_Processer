@@ -74,6 +74,9 @@ SCOPE = {"gl_accounts": ("company",), "business_units": ("company",), "purchase_
 LEASE, LEASE_SECONDS = "jde_sync", 900.0  # one sync at a time; renewed at each page, let go at the end
 KEPT = 50  # names kept in each list of a part's report (its counts count them all)
 WRITE_ROWS = 500  # POs closed in one transaction
+# Vouchers written in one transaction (B-1918): a page can be 1,000 rows or more (the orchestration's page_size),
+# and a whole read writing over the register held the write lock 0.4-0.5 s a page on a slow disk.
+VOUCHERS_A_WRITE = 250
 MASS_CLOSE_SHARE = 0.5  # an answer that would close more than this share of the open synced POs, or all, is refused
 SUPPLIER_COLUMNS = {k: k for k in ("vendor_name", "erp_id", "gst", "qst", "pst", "terms", "province")}
 # Each part's report, besides what all have ("read", "mode", "added", "changed").
@@ -586,7 +589,13 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
                 # complete when it ends on an empty page or one shorter than the longest before it (AIS gives that)
                 read["complete"] = not page or len(page) < read.get("longest", 0)
                 read["longest"] = max(read.get("longest", 0), len(page))
-                with store._conn():  # the page, where the read is and the lease: one short transaction
+                if part == "vouchers":  # a long page a few hundred at a time, each with the lease (B-1918)
+                    while len(rows) > VOUCHERS_A_WRITE:
+                        with store._conn():
+                            WRITE[part](store, rows[:VOUCHERS_A_WRITE], run, read)
+                            _hold(store, lease)
+                        rows = rows[VOUCHERS_A_WRITE:]
+                with store._conn():  # the page (its last part), where the read is and the lease: one short transaction
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])
