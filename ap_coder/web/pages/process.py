@@ -892,6 +892,9 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     unreadable: list[Path] = []
     attached = _read_saved(mails, unreadable)
     saved += attached
+    if unreadable:  # an email's attachment saved, then locked meanwhile (an antivirus): the folder's pick-up reads it
+        notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened just now: picked up "
+                                   "next time.", "warn", [p.name for p in unreadable]))  # fmt: skip
     lines = _email_lines(store, mails, attached, include_failed=False)
     queued = queue_files(request, saved, source="upload", notes=notes, lines=lines, emails=len(mails),
                          to_person=_to_person(mails))  # fmt: skip

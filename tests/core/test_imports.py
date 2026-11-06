@@ -206,3 +206,20 @@ def test_finished_files_go_after_a_week_but_the_latest_runs(tmp_path):
     with store._conn() as conn:
         assert conn.execute("SELECT COUNT(*) FROM import_files").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0] == 1
+
+
+def test_an_idle_reader_takes_no_write_lock(tmp_path):
+    """Each capture process looks at the queue every second: with nothing to take, the look waits on no writer and
+    takes no write lock (another connection holding one, it answers at once)."""
+    store = Store(tmp_path / "ap.db")
+    store.queue_imports(_files(tmp_path / "in", 1), source="upload")
+    row = store.claim_import("busy", 60)  # being read, its lease running: nothing for another reader
+    other = sqlite3.connect(store.path, timeout=0)
+    other.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        assert store.claim_import("idle", 60) is None and time.monotonic() - started < 1
+    finally:
+        other.rollback()
+        other.close()
+    assert store.finish_import(row["id"], "busy", "done")

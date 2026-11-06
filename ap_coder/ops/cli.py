@@ -673,8 +673,9 @@ def _read_queue(args: argparse.Namespace, settings: Settings, store: Store, done
                 queued: int) -> tuple[int, int]:  # fmt: skip
     """What waits in the import queue, read here (a scheduled watch with no company server running), each said."""
     if store.capture_processes():
-        print(f"{time.strftime('%H:%M:%S')} {queued} file(s) put in line: AP Coder's server reads them",
-              file=sys.stderr)  # fmt: skip
+        if queued:
+            print(f"{time.strftime('%H:%M:%S')} {queued} file(s) put in line: AP Coder's server reads them",
+                  file=sys.stderr)  # fmt: skip
         return done, failed
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
     told = {"done": done, "failed": failed}
