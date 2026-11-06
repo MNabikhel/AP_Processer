@@ -2757,3 +2757,80 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
     `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
     `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)
+- **D-188** · **server-update prepares while the old version serves and survives a power cut; a restore closes the
+  server to others; the server's data folder on its own disk with its database; the same bundle for the same
+  commit** (scale goal, phase 6, O3; B-1955).
+  - **Why:** the update stopped the service first, then unzipped, set up the new folder from its wheelhouse (minutes on
+    Windows), migrated, ran the self-check and started: 400 people closed out for all of it, and a migration that
+    failed was found with the service down. A power cut part way left the `stopped` file (the service stayed down after
+    the reboot) and maybe a half-migrated database, with nothing saying where it was. A restore let every other worker
+    draw pages from a database being replaced. SQLite's write-ahead log is damaged on SMB/NFS shares. A database file
+    deleted by mistake was replaced by an empty one at the next start, which the daily backups then copied for two
+    weeks. Two builds of one commit gave different ZIPs (file times, the build time in the manifest).
+  - **The update** (`ops/server_update.py`): unzip, set up, a copy of the database (SQLite's backup, consistent while
+    the old version writes) migrated by the new version in `service/update-check` (timed, removed after), and the
+    self-check, all before the stop, after a check of the disk's room for a copy. Then stop, the safety copy, the real
+    migration, switch, start, healthy. The downtime (stop to healthy) and each step are printed and kept in
+    server.json's `history[-1]["times"]` (`prepare_s`, `check_migration_s`, `self_check_s`, `stop_s`,
+    `safety_copy_s`, `migrate_s`, `start_s`, `downtime_s`). A failure before the stop changes nothing ("not updated");
+    after it, as before (the backup put back, the old folder started). The new version's migration skips the Store's
+    own pre-migration copy (`MIGRATE`: `backup_files.before_update` made a no-op in that process): the safety copy was
+    made a moment before with the service stopped, and a second copy of a year's 7-9 GB would add minutes. The safety
+    copy is `safety_copy` (local; it was `backup_now`), and the second backup folder's copy is made after the service
+    answers, by the new version (`Server.second_copy`): a copy to a share is no longer in the downtime. `Server`'s
+    interface is kept (one method added); `switch_to` and the platform code are untouched.
+  - **The marker** (`ops/update_recovery.py`): `service/update.json` {from, to, from_folder, to_folder, database,
+    label, step, started, pid, safety_copy}, written whole at each step (a `.part` file, fsync, `os.replace`, the
+    folder fsynced off Windows), removed once the update is recorded. `service/update.lock` (`paths.try_lock`) is held
+    by server-update throughout, so a marker with a free lock is one left behind; a second server-update is refused.
+    The next `server-update` (or `--back`), and `service run` before it looks at the `stopped` file, act on it, by
+    step: `prepare`, `stop`, `safety-copy` → the old version starts (a cut copy's `.part` removed, the update's own
+    `stopped` file removed; nothing stopped or started after `prepare`); `migrate`, `going-back` → the safety copy put
+    back (`put_back`), the old version starts; `switch`, `start` → finished (the new version starts, recorded with
+    `previous_folder` and `pre_update_backup`, so `--back` works); server-update goes back when the new version does
+    not answer, and the service host goes back at `switch` when it still runs the old folder. A host whose folder is not
+    the one to run rewrites run.cmd and exits: the task's 5-minute trigger starts the right one. server-update acts on
+    a marker only when both folders are beside its own (the data folder is the service account's to write, D-109),
+    with the database it was given, a safety copy only from `backups`; it then stops ("run server-update again").
+    Each step is proven by a test that cuts the update there (a `BaseException`, so no rollback code runs) and then
+    recovers both ways (`tests/ops/test_update_recovery.py`).
+  - **A restore** (`core/store/backups.py`, `web/maintenance.py`): its marker `<database>.restoring` (beside the
+    database, never in it) is {pid, started, backup}; on the server an ASGI middleware outside the session answers
+    503 (a plain page that refreshes itself, JSON for fetches, `Retry-After: 60`) while it is there and its process
+    lives, on every web worker; `/healthz`, `/readyz`, static files and the restore's own request (under way before the
+    marker) still answer. One stat a request; the marker read on a thread. The marker goes on success and failure;
+    one a crash left is removed as `serve` starts, said in the log, unless a console restore still holds the backups'
+    lock (`clear_left_restore`). The laptop is unchanged (its background workers still wait, as before).
+  - **The data folder** (`ops/safety.py`, from `serve` and the doctor): a UNC path (both slashes, `\\?\UNC\`), a
+    mapped drive (`GetDriveTypeW` = DRIVE_REMOTE) or a mount of smbfs/afpfs/nfs/nfs4/cifs/smb3/webdav/davfs/sshfs
+    (`/proc/mounts`; the Mac's `mount` output) refuses the server's start; a laptop gets a warning, as for OneDrive.
+    On the server, a missing database with signs it existed (backups, server-update's record, its `-wal`/`-shm`,
+    `authenticator.key`, `logs/access.log`, invoice files; not server.json alone, which `service install` writes
+    before the first start, nor the service log, written before the dashboard starts) refuses the start; `serve
+    --server --new-database` makes the new one on purpose (at once, so the service starts on it).
+  - **The bundle** (`scripts/build_offline_bundle.py`): every entry dated SOURCE_DATE_EPOCH, else the commit's time,
+    sorted by name, 0644/0755 and Unix-made; the manifest's `built` that time (UTC) and its files sorted by name. The
+    same bytes need the same wheels: pip resolves what PyPI has on the day (a constraints file would pin them), and a
+    stage's wheelhouse reused from an earlier build keeps its old wheels; text files are as the checkout has them
+    (CRLF on Windows). A smaller server-only bundle was not added: the flags give it (`--python <the server's>
+    --no-current`), the self-check needs the samples and the OCR models, and the wheels for one Python and one
+    platform are most of what is left.
+  - **Proven in CI:** one job, `windows-server-update` (windows-latest, 60 minutes): the bundle built once, set up as
+    the server on 20,000 seeded invoices, installed as the service (SYSTEM, plain HTTP), then `server-update --force`
+    with the same bundle, offline; over 300 s down fails (`scripts/ci/server_update_downtime.py`, its verdict tested on
+    Linux against what an update records). Measured here (Linux, 4 cores, the dashboard with 2 workers as a process,
+    `server_update_downtime.py local`, 20,000 invoices, a 669 MB database): prepared in 16.7 s (the copy migrated in
+    2.2 s, the self-check 13.9 s) while serving; down 11.4 s (stop 1.0, safety copy 6.7, migration 0.2, start 3.4).
+  - **Alternatives:** migrating in place with the old version still running (two versions on one database); a safety
+    copy before the stop (writes in between lost on a rollback); a marker in the database (the file being replaced or
+    migrated); the 503 from a flag in the database or each worker's memory (other processes can't see it); refusing
+    a share by `os.statvfs` (it can't tell a share).
+  - **Left:** `service.write_runner` writes run.cmd in place (not a `.part` renamed), so a power cut in that write
+    could leave it empty: O1 owns the platform code. `--back` writes no marker (a power cut during it leaves the
+    `stopped` file, as before).
+  - (`ops/server_update.py`, `ops/update_recovery.py`, `ops/service.py` `run_host` (3 lines), `ops/safety.py`,
+    `ops/cli.py`, `ops/doctor.py`, `core/store/backups.py`, `web/maintenance.py`, `web/app.py`,
+    `scripts/build_offline_bundle.py`, `scripts/ci/server_update_downtime.py`, `.github/workflows/ci.yml`;
+    `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`, `tests/ops/test_safety.py`,
+    `tests/ops/test_server_update_downtime.py`, `tests/web/test_maintenance.py`,
+    `tests/offline/test_bundle_reproducible.py`)

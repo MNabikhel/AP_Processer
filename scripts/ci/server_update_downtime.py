@@ -119,8 +119,11 @@ def timed(what: str, cmd: list, **kwargs) -> float:
 
 
 def answers(port: int) -> bool:
+    """AP Coder answers its /healthz on this computer (never through a proxy: the CI step points them at a closed
+    port)."""
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as r:  # noqa: S310 (this computer)
+        with direct.open(f"http://127.0.0.1:{port}/healthz", timeout=3) as r:
             return json.loads(r.read().decode()).get("app") == "ap-coder"
     except (OSError, ValueError):
         return False
