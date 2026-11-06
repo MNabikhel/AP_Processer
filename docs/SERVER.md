@@ -101,7 +101,10 @@ Why these numbers:
    mkdir D:\APCoderData
    ```
 
-   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive.
+   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive. The data folder too
+   must be on one of the server's own disks: AP Coder's database can be damaged on a network share (a `\\server\share`
+   path or a mapped drive letter), so the server refuses to start there and says why; `doctor` says it too (*data
+   folder place*). For a copy on a share, set the backups' second folder (step 9).
 
 3. **Tell AP Coder where its data is, and that this is the server**, for every account on the server (the service and
    IT's console):
@@ -451,6 +454,13 @@ window, started at boot like AP Coder.
   undone. A file missing or damaged in the backup is taken from the second copy when it has it, else the page says
   which. The user accounts (passwords, roles, who is turned off) and paused logins stay as they are now, not as in the
   backup, and everyone is logged out, the Admin too. `server-update --back` and an update that fails do the same.
+  While the restore runs (a minute or two; longer for a year's database), everyone else's pages and requests, on
+  every web worker, get *AP Coder is being restored from a backup; back in a minute or two* (a 503 answer, which
+  tries again by itself), never a page drawn from a database being replaced; `/healthz` still answers, and the Admin's
+  own page waits for the restore. A marker beside the database (`ap_coder.db.restoring`) says a restore runs; it goes
+  when the restore ends, whether it worked or not. One left by a restore cut short (the server stopped during it) is
+  removed when AP Coder next starts, with a line in `logs\service.log` saying so: then check *Settings* → *Data &
+  backups*, and restore again if needed (the state before the restore was backed up first).
 - **Restoring from the console** (the same rules): `service stop`, then, in the AP Coder folder:
 
   ```bat
@@ -458,9 +468,15 @@ window, started at boot like AP Coder.
   .venv\Scripts\python.exe -m ap_coder backup restore ap_coder-20261201-090000.db
   ```
 
-  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't).
-  `backup now` makes a backup. Copying a `.db` over `D:\APCoderData\ap_coder.db` by hand brings back neither the
-  files nor the accounts as they are now: use the command.
+  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't); a service
+  started meanwhile answers *being restored* until it ends. `backup now` makes a backup. Copying a `.db` over
+  `D:\APCoderData\ap_coder.db` by hand brings back neither the files nor the accounts as they are now: use the command.
+- **A database that is gone**: when `D:\APCoderData\ap_coder.db` is missing but the data folder shows there was one
+  (its backups, an update's record in `server.json`, the sign-in codes' key, the access log, invoice files), the
+  server does not start with a new, empty database in its place: `logs\service.log` says so. Restore the newest
+  backup (`backup list`, then `backup restore <name>`, as above), or put the file back. To begin again with an empty
+  database on purpose, run `.venv\Scripts\python.exe -m ap_coder serve --server --new-database` once (it makes the
+  database; stop it with Ctrl+C), then `service start`.
 - **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone,
   **before making the first Admin (step 7)**:
   `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then

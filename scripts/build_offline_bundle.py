@@ -18,7 +18,9 @@ The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
   rest without it: the launcher runs AP Coder without OCR; one without the Azure packages simply lacks them)
 * ``models/``: the OCR models, PP-OCRv4 and PP-OCRv5 (``scripts/fetch_models.py`` copies them into place), and the
   table finder's model (read where it is)
-* ``bundle_manifest.json``: what is inside: the version, when it was built, and every file with its SHA-256
+* ``bundle_manifest.json``: what is inside: the version, when it was built (``built``: its commit's time, or
+  SOURCE_DATE_EPOCH, as every entry of the ZIP is dated, so one commit gives the same bytes: D-188), and every file
+  with its SHA-256
   (``files``). Unzipped over an older version, the launcher removes the files under ap_coder/, scripts/, tests/,
   samples/, wheelhouse/ and models/ that this list does not name (the older version's), and AP Coder's own
   top-level files it no longer ships (scripts/upgrade.py, prune_stale); a newer bundle unzipped
@@ -42,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import time
 import zipfile
 from pathlib import Path
 
@@ -230,14 +233,45 @@ def stamp_build(stage: Path) -> str:
     return text
 
 
+def commit_time() -> str:
+    """The time (UTC) of the commit this checkout is at, or its build stamp's ("" when neither is known)."""
+    from ap_coder.core import paths
+
+    stamp = paths.build_stamp(ROOT)
+    return stamp["time"] if stamp["source"] in ("git", "stamp") else ""
+
+
+def build_epoch() -> int:
+    """When the bundle says it was made, in seconds: SOURCE_DATE_EPOCH (the reproducible-builds convention) when set,
+    else the commit's time, else now. Every entry of the ZIP is dated so, and the manifest's ``built``: one commit
+    gives the same bytes, whenever it is built (D-188)."""
+    given = (os.environ.get("SOURCE_DATE_EPOCH") or "").strip()
+    if given.isdigit():
+        return int(given)
+    when = commit_time()
+    if when:
+        try:
+            return int(dt.datetime.fromisoformat(when).replace(tzinfo=dt.timezone.utc).timestamp())  # noqa: UP017
+        except ValueError:
+            pass
+    return int(time.time())
+
+
+def built_text(epoch: int) -> str:
+    """``2026-11-06T20:14:00``: ``epoch`` in UTC, as the manifest's ``built`` and the build stamps say a time."""
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")  # noqa: UP017
+
+
 def _zip(stage: Path, dest: Path) -> None:
+    """``stage`` as the ZIP ``dest``, the same bytes for the same files (D-188): the entries in the order of their
+    names, each dated ``build_epoch`` (not its file's time), with fixed permissions (not this computer's)."""
     tmp = dest.with_suffix(".zip.part")
+    moment = time.gmtime(max(build_epoch(), 315532800))  # (a ZIP has no date before 1980)
+    when = (moment.tm_year, moment.tm_mon, moment.tm_mday, moment.tm_hour, moment.tm_min, moment.tm_sec)
+    files = sorted(((Path(TOP) / p.relative_to(stage)).as_posix(), p) for p in stage.rglob("*") if p.is_file())
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(stage.rglob("*")):
-            if not path.is_file():
-                continue
-            arc = Path(TOP) / path.relative_to(stage)
-            info = zipfile.ZipInfo.from_file(path, arc.as_posix())
+        for arc, path in files:
+            info = zipfile.ZipInfo(arc, date_time=when)
             mode = 0o755 if path.suffix in EXECUTABLE else 0o644
             info.external_attr = (0o100000 | mode) << 16  # keeps the launchers executable on macOS
             info.create_system = 3  # Unix, also when built on Windows: else the Mac ignores those permissions
@@ -262,8 +296,8 @@ def file_list(stage: Path) -> dict[str, str]:
     """Every file in the bundle folder ``stage`` (but the manifest itself), by its path, with its SHA-256."""
     from ap_coder.ops.offline import sha256
 
-    return {path.relative_to(stage).as_posix(): sha256(path) for path in sorted(stage.rglob("*"))
-            if path.is_file() and path.name != "bundle_manifest.json"}  # fmt: skip
+    found = sorted((path.relative_to(stage).as_posix(), path) for path in stage.rglob("*"))  # (one order everywhere)
+    return {rel: sha256(path) for rel, path in found if path.is_file() and path.name != "bundle_manifest.json"}
 
 
 def write_manifest(folder: Path) -> Path:
@@ -340,7 +374,7 @@ def build(args: argparse.Namespace) -> int:
         print("[3/4] OCR models: left out (--no-models)")
 
     manifest = {
-        "app": "AP Coder", "version": project()["version"], "built": dt.datetime.now().isoformat(timespec="seconds"),
+        "app": "AP Coder", "version": project()["version"], "built": built_text(build_epoch()),  # (the commit's)
         "built_with": f"Python {sys.version.split()[0]} on {sysconfig.get_platform()}",
         "targets": p["targets"], "requirements": p["requirements"], "source_files": len(p["source_files"]),
         "optional_requirements": p["optional_requirements"], "wheels": wheels, "without_ocr": without_ocr,
