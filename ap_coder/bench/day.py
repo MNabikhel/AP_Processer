@@ -395,7 +395,7 @@ class Run:
         # The arrival's chat answers: each capture process waits for its own, side by side (D-168), and at most the
         # arrival's limit, its wait for a chat slot included (``pipeline.ARRIVAL_SECONDS``): at full latency each one
         # takes its time stretched back, cut at that limit, the capture processes waiting at once.
-        limit = float(self.server.settings.get(ARRIVAL_ENV) or ARRIVAL_SECONDS)
+        limit = max(0.0, float(self.server.settings.get(ARRIVAL_ENV) or ARRIVAL_SECONDS)) or float("inf")  # 0: none
         capture = (cpu.get("processes") or {}).get("capture", {}).get("processes") or capture_processes()
         arrival_model = sum(
             min(h["seconds"] / scale, limit) - h["seconds"]

@@ -1241,17 +1241,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Taken** one at a time in BEGIN IMMEDIATE (`claim_import`): a person's batch before a watch's, then the
       uploader served least recently (round-robin, `import_turns`), then the oldest. Never a file whose content
       another reader is reading; a file stored meanwhile is skipped as it is taken.
-    - **Leases:** 120 s (`IMPORT_LEASE_SECONDS`), renewed every 20 s by the reader's heartbeat, as times of the
-      database's clock (`julianday('now')`) compared there. A file whose reader stopped is taken again once its lease
-      ran out; the second time (`IMPORT_TRIES`) it is failed with the reason (`STOPPED_TWICE`) as an invoice in
-      Failed / rejected, which Retry reads again. A stop (the server, Ctrl+C) puts the file back, its try not counted.
+    - **Leases:** 120 s (`IMPORT_LEASE_SECONDS`), renewed every 20 s by the reader's heartbeat (the files under way
+      only, B-1767), as times of the database's clock (`julianday('now')`) compared there. A file whose reader
+      stopped is taken again once its lease ran out; the second time (`IMPORT_TRIES`) it is failed with the reason
+      (`STOPPED_TWICE`) as an invoice in Failed / rejected, which Retry reads again. One whose invoice its reader stored
+      before it stopped is done with that invoice, whatever its try (B-1769). A stop (the server, Ctrl+C, a laptop's
+      dashboard: B-1766) puts the file back, its try not counted.
     - **A restart:** what waits is taken up again: by the capture processes, a laptop's dashboard at its start
       (`process.resume`), or the next `watch`.
     - **A full disk:** nothing is taken while the data folder's disk has less than `backups.BACKUP_RESERVE` (512 MB)
-      free; the files stay in the folder, in line, and the Process page says why.
+      free; the files stay in the folder, in line, and the Process page says why. With room again they are read: the
+      readers look again every 5 s (B-1764).
     - **The Process page** shows the latest run (`process.import_status`, the job's snapshot as before): the batches
       that came in while the queue had work. Each batch is recorded in the audit trail once its last file is done
-      (`record_import_run`, D-103). Kept 7 days (`IMPORT_KEEP_DAYS`), the latest run whatever its age.
+      (`record_import_run`, D-103). Kept 7 days (`IMPORT_KEEP_DAYS`), the latest run whatever its age. A file that
+      could not be read just then (the GL accounts open in Excel) waits in line with the reason, which the card says
+      (`release_imports(error=)`, B-1764). The Process button waits 3 s at most for another pick-up (B-1771).
   - **Who reads** (`intake.imports.Reader`):
     - **The company server** (`serve --server`, several web workers): `server.capture_processes()` capture processes
       (`serve --capture-work`, `server.run_capture`) beside the background process, started and stopped with it
@@ -1261,7 +1266,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       every system), its models loaded once for its life, its ONNX Runtime, OpenCV and BLAS threads its share of the
       cores less two (`AP_OCR_THREADS`, `server.capture_env`: 1 each on 4 cores), its log `logs/capture-<n>.log`. A
       stop gives the file under way 12 s, then puts it back. No web worker reads an invoice.
-    - **A laptop** and `--workers 1`: the dashboard's own job "process", in its own process, as before.
+    - **A laptop** and `--workers 1`: the dashboard's own job "process", in its own process, as before; after a pause
+      or an error it looks again every 5 s while files wait, as the capture processes do (D-172, B-1764).
     - **`watch`** reads what waits, unless a capture process runs (its `capture:` lease), then it only puts files in
       line; **`process`** reads its own batch (its `reader:` lease; anyone's once it stopped).
   - **The arrival's chat call** (the choice): **a short timeout with a circuit breaker**, not a queue of its own.
@@ -1270,10 +1276,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `Slots.held(deadline=)`). After two arrivals in a row with no answer in time (`BREAKER_FAILURES`) arrivals
       don't ask for 2 minutes (`BREAKER_SECONDS`), then one asks: an answer in time closes it. One per process. The
       invoice goes in with the local coding, those lines left for AP; it is never left out of the page reader's pass
-      (D-111's `skip_clean`), which asks again with the full AP_LLM_TIMEOUT_SECONDS.
+      (D-111's `skip_clean`), which asks again with the full AP_LLM_TIMEOUT_SECONDS. One no page read asks again for
+      (a text file; one in line while the page reader can't read) is asked again by the background process's page
+      reader (D-172, B-1765).
     - **Why not a queue:** an answer in time codes exactly as before (the same question, the same kept answers,
       D-131), while a queued call would bring every invoice in without the model's accounts and need a writer that
-      changes a proposal someone may be reviewing already. The page reader's pass is that second chance already.
+      changes a proposal someone may be reviewing already. The page reader's pass is that second chance already
+      (where it never comes, D-172 gives one, with the page reader's writer).
     - **A laptop:** no limit (0), as before: its LM Studio is the pilot tester's own, and laptop mode stays as it is.
   - **Hash once:** the SHA-256 read as the file comes in goes with it (`InvoicePipeline.process(sha256=)`,
     `add_invoice(sha256=)`); a file whose size or time changed since is hashed again; the page reader's pass's
@@ -1528,9 +1537,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **A heartbeat:** a read (`page_reads`, "reading") or a review ("verifying") under way is renewed every
       `READING_RENEW_SECONDS` (60 s) by a thread of its reader (`page_worker.renewed`, `renew_page_read`,
       `renew_verification`, only while it is still that reader's) and is in line again once not renewed for
-      `READING_STALE_SECONDS` (5 minutes; it was `STALE_READING_HOURS`, 2 hours, the row never renewed). A reader whose
-      process is gone is still put back at once (`release_interrupted`). The Azure check keeps its 2 hours (not
-      renewed: a check taken again would send its pages to Azure twice).
+      `READING_STALE_SECONDS` (5 minutes; it was `STALE_READING_HOURS`, 2 hours, the row never renewed), on the
+      database's clock (`renewed`, D-172, B-1770). A reader whose process is gone is still put back at once
+      (`release_interrupted`). One whose read or review another took meanwhile ends nothing of it and folds nothing
+      in (B-1770). The Azure check keeps its 2 hours (not renewed: a check taken again would send its pages to Azure
+      twice).
     - **The order:** a person's first (the page reader: `requested_by`, the invoice's "Add it to OvisOCR2's queue" or
       `read-pages --invoice`; the reviewer: "asked by <name>"), then an invoice touchless processing waits on (a
       touchless supplier's new invoice, reason `TOUCHLESS_NEXT`, from the arrival's `WAITING_FOR_PAGE_READER`; the
@@ -1656,4 +1667,42 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/capture/test_page_reads.py`, `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`,
     `tests/ai/test_uniform_reading.py`, `tests/ai/test_coding_no_ai.py`, `tests/intake/test_imports.py`,
     `tests/core/test_paths.py`, `tests/capture/test_reading_cache.py`, `tests/web/test_server_capacity.py`,
+    `tests/bench/test_day.py`)
+- **D-172** · **The review of phase 3's imports and queues: a second chance for an arrival no page read asks again
+  for; the page reader's and the reviewer's queues stale on the database's clock and fenced; a laptop's import that
+  looks again after a pause or an error** (B-1764 to B-1772; changes D-168 and D-171 where they say so).
+  - **Why:** a fresh review of phase 3 found the second chance D-168 counted on (the page reader's pass) missing for a
+    text invoice and while OvisOCR2 can't read; a read under way taken by a second reader as the clocks go forward or
+    a VM is paused, then folded in twice; and a laptop's import that stopped for good after an error or a pause.
+  - **The second chance** (the choice: a turn of the background process's page reader, not a queue of its own): an
+    arrival whose chat call was put off is marked (`meta.chat_deferred`). When the page reader has nothing to read it
+    takes the oldest such invoice no page read asks again for (`Store.take_chat_deferred`: none done nor in line;
+    those in line too while the page reader can't read), its mark cleared as it is taken (asked again once, by one
+    reader), and codes it again with no arrival limit (`page_worker.chat_again`), before the reviewer's turn. The
+    result goes into its proposal only while nobody has worked on it (`replace_proposal`, the page reader's own writer:
+    its guards answer D-168's worry of a writer under a reviewer), approved as touchless processing would have. A
+    laptop never puts the call off (no limit), so it never has one.
+    - **Why not a thread of its own:** it would ask the model machine one more thing at once than `llm_parallel`
+      (D-171's reason), for what is rare: a text invoice, or a server whose OvisOCR2 is not there.
+  - **The queues' clock:** staleness was compared on `updated_at`, the local time: as the clocks go forward an hour,
+    every read and review under way looked an hour old until its next renewal (up to a minute). `page_reads` and
+    `verifications` have `renewed` (`julianday('now')`, the database's clock, as the import queue's leases), set as
+    they are taken and renewed, looked for at each start as their `reader` and `tries` are (the schema stays 27). A
+    row from before has none: it is compared on its local time, as before (`_base._STALE`).
+  - **Fenced:** `finish_page_read(reader=)` ends only that reader's read (as `finish_verification` does, B-787). The
+    page reader checks the read is still its own after reading and before folding it in (a renewal: five minutes
+    more), and stops reading once its heartbeat finds it gone; the reviewer folds in only a review it ended.
+  - **A laptop's import** looks again every 5 s while files wait after a pause (no room, a restore) or an error (the
+    GL accounts open in Excel, the database busy), as a capture process does, and the card says why a file waits (its
+    reason on its row, so the server's card says it too). Before D-168 the card said "Processing stopped" and the
+    files were listed again for the Process button; now they are in line, so the job tries again on its own and the
+    card keeps following it. Its stop puts the file under way back, its try not counted, and takes no more.
+  - **Not done:**
+    - The second chance reads the invoice again in full (a scan's OCR from its cache) in the background process: on a
+      server whose OvisOCR2 is never there, each arrival put off is read twice.
+    - It comes only when the page reader has nothing to read: under a backlog of pages a text invoice waits for it.
+  - (`core/store/{imports,page_queue,lessons,_base}.py`, `intake/{imports,mailbox}.py`, `ai/{pipeline,page_worker,
+    verifier}.py`, `web/pages/process.py`, `web/app.py`, `bench/day.py`; `tests/core/test_imports.py`,
+    `tests/intake/test_imports.py`, `tests/web/test_web_process.py`, `tests/capture/test_page_reads.py`,
+    `tests/ai/test_page_worker.py`, `tests/ai/test_verifier.py`, `tests/ai/test_pipeline_arrival.py`,
     `tests/bench/test_day.py`)

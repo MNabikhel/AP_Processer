@@ -549,6 +549,14 @@ def _end(store: Any, row: dict[str, Any], status: str, **how: Any) -> bool:
     return store.finish_verification(int(row["invoice_id"]), status, reader=row.get("reader"), **how)
 
 
+def _taken_over(iid: int) -> Outcome:
+    """Another reader took the review while this one ran it (this one paused past the stale time): its answer is
+    not folded in, that one's is (B-1770)."""
+    message = "not applied: another reader took it over while this one was paused"
+    log.info("%s: invoice %s %s", NAME, iid, message)
+    return Outcome(iid, "skipped", message)
+
+
 def _coder(settings: Any, store: Any) -> Any:
     from .inference import InvoiceCoder
     from .page_worker import reference_data
@@ -592,7 +600,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     if row.get("reason") in QUEUED and earlier.get("model") == model and earlier.get("proposal") == digest(output):
         # This very proposal, reviewed by this model before (read again, nothing changed): its review stands, folded in
         # again, not a call of minutes for the same answer.
-        _end(store, row, "done", rounds=row.get("rounds") or 0, seconds=row.get("seconds") or 0.0)
+        if not _end(store, row, "done", rounds=row.get("rounds") or 0, seconds=row.get("seconds") or 0.0):
+            return _taken_over(iid)
         approved = _fold_in(store, inv, earlier, expect=identity)
         return Outcome(iid, str(earlier.get("status") or ""), "reviewed before: the same proposal, by the same model",
                        approved)  # fmt: skip
@@ -630,7 +639,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
     if store.restoring() or store.row_identity(iid) != identity:
         return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
-    _end(store, row, "done", result=result, rounds=found.rounds, seconds=found.seconds)
+    if not _end(store, row, "done", result=result, rounds=found.rounds, seconds=found.seconds):
+        return _taken_over(iid)
     approved = _fold_in(store, inv, result, expect=identity)
     store.log_event("verified", iid, actor="AP Coder", detail={
         "status": found.status, "rounds": found.rounds, "seconds": found.seconds, "fields": sorted(found.fields),

@@ -15,6 +15,7 @@ from ...coding.po import po_key
 from ..audit import diff_coding
 from ..memory import vendor_key
 from ._base import (
+    _STALE,
     _VERIFY_IN_LINE,
     AZURE_CHECKING,
     AZURE_DONE,
@@ -33,7 +34,7 @@ from ._base import (
     _now,
     _same_row,
 )
-from .page_queue import _reading_stale_before
+from .page_queue import _stale
 
 # The order the AI reviewer takes its queue in (D-171), as the page reader's (``page_queue``): a person's ask first (the
 # review screen's "asked by <name>"), then one touchless processing waits on (``verifier.QUEUED``'s "held for
@@ -284,13 +285,13 @@ class LessonsMixin:
         now = _now()
         with self._conn() as conn:
             cur = conn.execute(
-                """INSERT INTO verifications (invoice_id, reason, status, created_at, updated_at)
+                f"""INSERT INTO verifications (invoice_id, reason, status, created_at, updated_at)
                    VALUES (?, ?, 'waiting', ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET reason = excluded.reason,
                    status = 'waiting', error = '', tries = 0, updated_at = excluded.updated_at,
                    created_at = CASE WHEN verifications.status = 'waiting' THEN verifications.created_at
                                 ELSE excluded.created_at END
-                   WHERE verifications.status != 'verifying' OR verifications.updated_at < ?""",
-                (invoice_id, reason or "", now, now, _reading_stale_before()),
+                   WHERE verifications.status != 'verifying' OR {_STALE.format(t="verifications.")}""",
+                (invoice_id, reason or "", now, now, *_stale()),
             )
             return cur.rowcount > 0
 
@@ -300,7 +301,7 @@ class LessonsMixin:
         ``reader``, the process: ``page_worker.READER_ID``); None when nothing waits. ``after_page_reader``: leave
         invoices still waiting for the page reader (it reads them first, then the reviewer reviews them as they then
         stand)."""
-        now, stale = _now(), _reading_stale_before()
+        now, stale = _now(), _stale()
         later = (
             " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = verifications.invoice_id "
             "AND p.status IN ('waiting', 'reading'))"
@@ -312,13 +313,13 @@ class LessonsMixin:
             row = conn.execute(
                 f"SELECT verifications.invoice_id FROM verifications LEFT JOIN invoices i ON i.id = "
                 f"verifications.invoice_id WHERE {_VERIFY_IN_LINE}{later} ORDER BY {', '.join(_REVIEW_ORDER)} LIMIT 1",
-                (stale,),
+                stale,
             ).fetchone()
             if row is None:
                 return None
             conn.execute(
-                "UPDATE verifications SET status = 'verifying', error = '', reader = ?, updated_at = ? "
-                "WHERE invoice_id = ?",
+                "UPDATE verifications SET status = 'verifying', error = '', reader = ?, updated_at = ?, renewed = "
+                "julianday('now') WHERE invoice_id = ?",
                 (reader or "", now, row[0]),
             )
             taken = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (row[0],)).fetchone()
@@ -329,7 +330,8 @@ class LessonsMixin:
         it is no longer that reader's."""
         with self._conn() as conn:
             return conn.execute(
-                "UPDATE verifications SET updated_at = ? WHERE invoice_id = ? AND status = 'verifying' AND reader = ?",
+                "UPDATE verifications SET updated_at = ?, renewed = julianday('now') WHERE invoice_id = ? AND status = "
+                "'verifying' AND reader = ?",
                 (_now(), invoice_id, reader or ""),
             ).rowcount > 0  # fmt: skip
 
@@ -378,12 +380,13 @@ class LessonsMixin:
         """The invoice's review: {invoice_id, reason, status, rounds, seconds, result, error, created_at,
         updated_at}, or None when it was never put in line."""
         with self._conn() as conn:
-            row = conn.execute("SELECT * FROM verifications WHERE invoice_id = ?", (invoice_id,)).fetchone()
+            row = conn.execute(f"SELECT *, {_STALE.format(t='')} AS stale FROM verifications WHERE invoice_id = ?",
+                               (*_stale(), invoice_id)).fetchone()  # fmt: skip
         if row is None:
             return None
         found = dict(row)
         found["result"] = json.loads(found.pop("result_json") or "null")
-        if found["status"] == VERIFY_RUNNING and found["updated_at"] < _reading_stale_before():
+        if found.pop("stale") and found["status"] == VERIFY_RUNNING:
             found["status"] = VERIFY_WAITING
         return found
 

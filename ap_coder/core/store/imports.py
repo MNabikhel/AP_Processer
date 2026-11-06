@@ -160,7 +160,8 @@ class ImportsMixin:
                     continue
                 conn.execute(
                     "UPDATE import_files SET status = 'reading', owner = ?, lease_until = julianday('now') + ? / "
-                    "86400.0, tries = tries + 1, started_at = ? WHERE id = ?", (owner, float(lease), _now(), row["id"]),
+                    "86400.0, tries = tries + 1, started_at = ?, error = '' WHERE id = ?",
+                    (owner, float(lease), _now(), row["id"]),
                 )  # fmt: skip
                 conn.execute(
                     "INSERT INTO import_turns (uploader, served) VALUES (?, (SELECT COALESCE(MAX(served), 0) + 1 FROM "
@@ -173,12 +174,14 @@ class ImportsMixin:
             self._close_batches(conn, closed)
         return taken
 
-    def renew_imports(self, owner: str, lease: float = IMPORT_LEASE_SECONDS) -> int:
-        """The heartbeat: ``lease`` seconds more for every file ``owner`` is reading. How many it holds."""
+    def renew_imports(self, owner: str, lease: float = IMPORT_LEASE_SECONDS, ids: list[int] | None = None) -> int:
+        """The heartbeat: ``lease`` seconds more for every file ``owner`` is reading (``ids``: those of them only, the
+        files under way). How many it holds."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             return conn.execute(
                 "UPDATE import_files SET lease_until = julianday('now') + ? / 86400.0 WHERE owner = ? AND status = "
-                "'reading'", (float(lease), owner),
+                "'reading' AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))",
+                (float(lease), owner, None if ids is None else 1, json.dumps(list(ids or []))),
             ).rowcount  # fmt: skip
 
     def finish_import(self, file_id: int, owner: str, status: str, *, invoice_id: int | None = None,
@@ -196,13 +199,15 @@ class ImportsMixin:
             self._close_batches(conn, {row[0]})
         return True
 
-    def release_imports(self, owner: str, file_id: int | None = None) -> int:
+    def release_imports(self, owner: str, file_id: int | None = None, error: str = "") -> int:
         """Put the files ``owner`` is reading (``file_id``: that one) back in line, their try not counted: the reader
-        is stopping (a restart of the server, Ctrl+C), not stopped by the file. How many."""
+        is stopping (a restart of the server, Ctrl+C), not stopped by the file. ``error``: why it could not read it
+        now (the GL accounts open in Excel), said on the Process page while it waits (B-1764). How many."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             return conn.execute(
-                "UPDATE import_files SET status = 'waiting', owner = '', lease_until = NULL, tries = MAX(tries - 1, 0) "
-                "WHERE owner = ? AND status = 'reading' AND (? IS NULL OR id = ?)", (owner, file_id, file_id),
+                "UPDATE import_files SET status = 'waiting', owner = '', lease_until = NULL, tries = MAX(tries - 1, 0),"
+                " error = ? WHERE owner = ? AND status = 'reading' AND (? IS NULL OR id = ?)",
+                (error or "", owner, file_id, file_id),
             ).rowcount  # fmt: skip
 
     def imports_open(self, owner: str | None = None) -> dict[str, int]:
@@ -219,8 +224,8 @@ class ImportsMixin:
     def import_run(self, lines: int = 500) -> dict[str, Any] | None:
         """The latest run as the Process page shows it (None before the first): its batches; its files counted by
         status; the names read now; the last ``lines`` lines said of its files, in the order they were done; the
-        names skipped as already in AP Coder; the errors of those failed; and how many of its invoices went in
-        line for the page reader."""
+        names skipped as already in AP Coder; the errors of those failed; why a file waiting could not be read just
+        now (``held``, "" when none was); and how many of its invoices went in line for the page reader."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             run = conn.execute("SELECT MAX(run) FROM import_batches").fetchone()[0]
             if run is None:
@@ -243,14 +248,16 @@ class ImportsMixin:
             errors = [f"{r[0]}: {r[1]}" for r in conn.execute(
                 f"SELECT f.name, f.error FROM import_files f WHERE {within} AND f.status = 'failed' ORDER BY f.id",
                 (ids,))]  # fmt: skip
+            held = conn.execute(f"SELECT f.error FROM import_files f WHERE {within} AND f.status = 'waiting' AND "
+                                f"f.error != '' ORDER BY f.id LIMIT 1", (ids,)).fetchone()  # fmt: skip
             queued = conn.execute(
                 f"SELECT COUNT(*) FROM page_reads p WHERE p.status != 'skipped' AND p.invoice_id IN (SELECT "
                 f"f.invoice_id FROM import_files f WHERE {within} AND f.status = 'done')", (ids,),
             ).fetchone()[0]  # fmt: skip
             ended = conn.execute(f"SELECT MAX(f.finished_at) FROM import_files f WHERE {within}", (ids,)).fetchone()[0]
         return {"run": run, "batches": batches, "counts": {k: int(v) for k, v in counts.items()}, "reading": reading,
-                "lines": said, "skipped": skipped, "errors": errors, "page_reads": int(queued or 0),
-                "finished_at": ended}  # fmt: skip
+                "lines": said, "skipped": skipped, "errors": errors, "held": held[0] if held else "",
+                "page_reads": int(queued or 0), "finished_at": ended}  # fmt: skip
 
     def capture_processes(self) -> int:
         """The company server's capture processes running now (each renews its ``capture:`` lease, D-168)."""
@@ -276,14 +283,38 @@ class ImportsMixin:
         return invoice_id
 
     def _expire_imports(self, conn: Any) -> set[int]:
-        """The files whose reader stopped (lease run out): back in line, or failed (an invoice saying why) once this was
-        their last try. The batches that ended so."""
+        """The files whose reader stopped (lease run out): done (or failed) with the invoice it stored before it
+        stopped (B-1769), back in line, or on their last try skipped as already in AP Coder (another stored their
+        content meanwhile) or failed (an invoice saying why). The batches that ended so."""
         closed: set[int] = set()
-        for row in conn.execute("SELECT id, batch, path, name, sha256, tries FROM import_files WHERE status = "
-                                "'reading' AND lease_until < julianday('now')").fetchall():  # fmt: skip
+        for row in conn.execute(
+            "SELECT f.id, f.batch, f.path, f.name, f.sha256, f.tries, f.invoice_id, b.include_failed, b.force FROM "
+            "import_files f JOIN import_batches b ON b.id = f.batch WHERE f.status = 'reading' AND f.lease_until < "
+            "julianday('now')"
+        ).fetchall():  # fmt: skip
+            stored = conn.execute("SELECT id, status, vendor_name, requires_review, error FROM invoices WHERE id = ?",
+                                  (row["invoice_id"],)).fetchone() if row["invoice_id"] else None  # fmt: skip
+            if stored is not None:  # its reader stored it (noted by the claim, B-1762), then stopped
+                if stored["status"] == "failed":
+                    error = stored["error"] or ""
+                    line = {"text": f"{row['name']}: {error}", "tone": "err", "icon": "error"}
+                    self._close_file(conn, row["id"], IMPORT_FAILED, invoice_id=stored["id"], line=line, error=error)
+                else:
+                    flagged, vendor = bool(stored["requires_review"]), stored["vendor_name"] or row["name"]
+                    line = {"text": f"{vendor}: {'needs attention' if flagged else 'ready'}", "tone": "warn" if flagged
+                            else "ok", "icon": "flag" if flagged else "check_circle"}  # fmt: skip
+                    self._close_file(conn, row["id"], IMPORT_DONE, invoice_id=stored["id"], line=line)
+                closed.add(row["batch"])
+                continue
             if row["tries"] < IMPORT_TRIES:
                 conn.execute("UPDATE import_files SET status = 'waiting', owner = '', lease_until = NULL WHERE id = ?",
                              (row["id"],))  # fmt: skip
+                continue
+            found = None if row["force"] else conn.execute(
+                _STORED, (row["sha256"], row["sha256"], row["include_failed"])).fetchone()  # fmt: skip
+            if found is not None:
+                self._close_file(conn, row["id"], IMPORT_SKIPPED, invoice_id=found[0])
+                closed.add(row["batch"])
                 continue
             error = STOPPED_TWICE.format(name=row["name"])
             invoice_id = self.add_invoice(row["path"], None, None, error=error,  # type: ignore[attr-defined]

@@ -223,3 +223,42 @@ def test_an_idle_reader_takes_no_write_lock(tmp_path):
         other.rollback()
         other.close()
     assert store.finish_import(row["id"], "busy", "done")
+
+
+def _expire(store: Store) -> None:
+    with store._conn() as conn:  # its reader stopped: the lease ran out on the database's clock
+        conn.execute("UPDATE import_files SET lease_until = julianday('now') - 1 / 1440.0 WHERE status = 'reading'")
+
+
+def test_a_file_whose_invoice_was_stored_before_its_reader_stopped_is_done_not_failed(tmp_path):
+    """The reader of a file's last try stores its invoice, then stops before it says the file is done (killed, the
+    computer restarted): once its lease runs out the file is done with that invoice. It was failed as stopped twice,
+    a failed invoice added beside the good one (B-1769). A file whose content another stored meanwhile is skipped."""
+    from ap_coder.core.store.imports import IMPORT_CLAIM
+
+    store = Store(tmp_path / "ap.db")
+    one, two = _files(tmp_path / "in", 2)
+    store.queue_imports([one, two], source="upload", person=True)
+    for _ in range(IMPORT_TRIES - 1):  # its earlier tries stopped before anything was stored
+        assert all(store.claim_import("before", 60) for _ in range(2))
+        _expire(store)
+    taken = {row["name"]: row for row in (store.claim_import("last", 60) for _ in range(2))}
+    assert {row["tries"] for row in taken.values()} == {IMPORT_TRIES}
+    claim = IMPORT_CLAIM.set((taken["f0.pdf"]["id"], "last"))
+    try:
+        good = store.add_invoice(one[0], {"vendor_name": "Acme", "invoice_number": "1", "grand_total": 10},
+                                 {"requires_review": True, "issues": []}, sha256=one[3])  # fmt: skip
+    finally:
+        IMPORT_CLAIM.reset(claim)
+    other = store.add_invoice(two[0], {"vendor_name": "Beta", "invoice_number": "2", "grand_total": 5},
+                              {"issues": []}, sha256=two[3])  # (its content, stored by another meanwhile)  # fmt: skip
+    _expire(store)  # the reader stopped before it said either was done
+    assert store.claim_import("next", 60) is None
+    with store._conn() as conn:
+        invoices = [tuple(r) for r in conn.execute("SELECT id, status FROM invoices ORDER BY id")]
+        files = {r["name"]: (r["status"], r["invoice_id"]) for r in conn.execute("SELECT * FROM import_files")}
+    assert invoices == [(good, "review"), (other, "review")]  # no failed invoice beside them
+    assert files == {"f0.pdf": ("done", good), "f1.pdf": ("skipped", other)}
+    run = store.import_run()
+    assert run["counts"] == {"done": 1, "skipped": 1} and run["errors"] == []
+    assert run["lines"] == [{"text": "Acme: needs attention", "tone": "warn", "icon": "flag"}]
