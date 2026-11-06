@@ -225,15 +225,14 @@ class RegisterMixin:
 
     @staticmethod
     def _recount(conn: sqlite3.Connection, bills: set[tuple[Any, ...]]) -> int:
-        """Each bill's copies counted again from its vouchers' dates; a bill left without a voucher removed. How many
-        were removed."""
+        """Each bill's copies counted again: its vouchers (each its own, by its key: one invoice entered twice in JDE
+        is two, whatever their dates); a bill left without a voucher removed. How many were removed."""
         gone = 0
         for bill in bills:
-            count, dates = conn.execute(
-                "SELECT COUNT(*), COUNT(DISTINCT NULLIF(invoice_date, '')) FROM erp_vouchers WHERE vendor_key = ? AND "
-                "number_key = ? AND total = ?", bill).fetchone()  # fmt: skip
+            count = conn.execute("SELECT COUNT(*) FROM erp_vouchers WHERE vendor_key = ? AND number_key = ? AND "
+                                 "total = ?", bill).fetchone()[0]  # fmt: skip
             if count:
-                copies = max(int(dates), 1)
+                copies = int(count)
                 conn.execute("UPDATE erp_invoices SET copies = ? WHERE vendor_key = ? AND number_key = ? AND total = ? "
                              "AND copies != ?", (copies, *bill, copies))  # fmt: skip
             else:
