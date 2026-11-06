@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+import time
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
@@ -127,3 +128,26 @@ def test_an_uploaded_file_is_noted_from_its_bytes(tmp_path):
     path = tmp_path / "a.pdf"
     path.write_bytes(b"%PDF-1.4 a")
     assert noted(path, b"%PDF-1.4 a") == read_file(path)
+
+
+@pytest.mark.parametrize("first", ["the stalled one", "the other"])
+def test_a_reader_stalled_past_its_lease_stores_nothing_once_another_took_its_file(store, first):
+    """A capture process stalled past its lease (a long OCR holding Python's lock, a paused VM: no heartbeat) has its
+    file taken by another, and both read it. Storing checks, in the same transaction, that the claim is still the
+    reader's: whichever stores first, the file makes one invoice, the other reader's (B-1762)."""
+    _queued(store, PDFS[:1])
+    stalled = store.claim_import("stalled", 0.01)
+    time.sleep(0.05)  # its lease ran out
+    other = store.claim_import("other", 60)
+    assert other["id"] == stalled["id"]
+    readers = {"the stalled one": (Reader(store, _settings(), "stalled"), stalled),
+               "the other": (Reader(store, _settings(), "other"), other)}  # fmt: skip
+    for name in sorted(readers, key=lambda name: name != first):
+        reader, row = readers[name]
+        reader._read(row)  # (read without a heartbeat, as a stalled one is)
+    with store._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE action = 'processed'").fetchone()[0] == 1
+        stored = conn.execute("SELECT id FROM invoices").fetchone()[0]
+        assert conn.execute("SELECT invoice_id, status FROM import_files").fetchone()[:] == (stored, "done")
+    assert store.import_run()["counts"] == {"done": 1}

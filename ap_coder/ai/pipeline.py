@@ -41,6 +41,7 @@ from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
+from ..core.store.imports import ClaimLost
 from ..intake.files import folder_names
 from . import azure_check, verifier
 from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
@@ -778,6 +779,9 @@ class InvoicePipeline:
                 why = "" if result.chat_deferred else why  # its pass asks the chat model again (D-168)
                 if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
                     queue_new_invoice(self.store, result.invoice_id, path)
+        except ClaimLost as exc:  # another reader took the file after this one stalled past its lease: it stores it
+            log.warning("%s", exc)
+            result.error = result.error or str(exc)
         except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
             log.exception("Could not save %s", path)
             result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

@@ -20,6 +20,7 @@ the command that brought it (``intake/imports.py``).
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import time
@@ -56,6 +57,15 @@ _NEXT = (
 )
 _STORED = ("SELECT id FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?) AND (? OR status != 'failed') "
            "ORDER BY id DESC LIMIT 1")  # fmt: skip
+# The queue's file being read here, as (its id, the reader): the invoice made from it is stored only while the claim is
+# still that reader's, checked in the same transaction (``add_invoice``, B-1762). Set by ``intake.imports.Reader``.
+IMPORT_CLAIM: contextvars.ContextVar[tuple[int, str] | None] = contextvars.ContextVar("ap_coder_import_claim",
+                                                                                      default=None)  # fmt: skip
+
+
+class ClaimLost(Exception):
+    """The file's claim is no longer the reader's (it stalled past its lease, and another took the file): nothing of
+    its reading is stored."""
 
 
 class ImportsMixin:
