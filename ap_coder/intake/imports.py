@@ -107,9 +107,9 @@ def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool],
     """(what to put in line, the files that can't be read now, those still being written: ``settling``) of the
     invoices in ``folder``, as ``listing`` found them (default: ``list_folder`` now). Only a file the pick-up hasn't
     read since it changed, nor whose content is in AP Coder or in line, is read (the folder keeps every invoice ever
-    processed: a year of them on the server). The listing is kept for the import page of every process (D-176)."""
+    processed: a year of them on the server). The listing is kept for the import page of every process (D-176), each
+    file read with the size and time it was read at, as it goes in line (one written again meanwhile, B-1814)."""
     listing = listing or list_folder(store, folder)
-    listing.keep(store)
     read, unreadable, saving = [], [], []
     for place, _, _ in listing.new:
         path = Path(place)
@@ -120,6 +120,9 @@ def pick_up(store: Any, folder: Path, settling: Callable[[Path], bool],
             read.append(read_file(path))
         except OSError:  # open in another program, a cloud placeholder not downloaded: the next pick-up
             unreadable.append(path)
+    as_read = {place: (size, at) for place, size, at, _ in read}
+    listing.new = [(place, *as_read.get(place, (size, at))) for place, size, at in listing.new]
+    listing.keep(store)
     return read, unreadable, saving
 
 

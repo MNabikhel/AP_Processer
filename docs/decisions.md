@@ -1940,7 +1940,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     time read before it, and what it found as JSON: the invoice files new then (name, size, time), the saved emails,
     the files of a kind not read, how long it took (`intake.imports.list_folder`, `Listing.keep`).
   - **Who lists:** a pick-up lists the folder anyway (the Process button, a scheduled watch: `pick_up` keeps its
-    listing; the Process button keeps it again without the emails it unpacked, and takes the files of a kind not read
+    listing once it has read the new files, each file read with the size and time it was read at, as it goes in line,
+    B-1814; the Process button keeps it again without the emails it unpacked, and takes the files of a kind not read
     from it, no second listing). A page view on the server that finds the listing due starts a thread of its own
     process that lists it (`process.list_for_all`): one at a time across the processes (a lease `folder-listing:
     <place>` of 60 s, renewed every 15 s as it goes, every 2,000 files: a slow network folder is listed once), and one
@@ -1951,7 +1952,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     invoice deleted whose file is new again). Counted from the listing's end, so a folder that takes minutes to list
     is not listed back to back.
   - **A view** does one look at the folder's time, one read of the listing, and `unseen_files` of its new files only:
-    a file put in line or read since, by any process, is no longer offered at once. It waits (5 s at most,
+    a file put in line or read since, by any process, is no longer offered at once; one the pick-up read with a time
+    later than both the listing's look at it and the listing's start was written again since, and counts as read
+    (`since`, B-1814: a page's thread that looked before a pick-up, kept last; one written over by an older copy, its
+    time earlier, is still offered). It waits (5 s at most,
     `SHARED_WAIT`) only when it started the listing itself and the one kept is older than 45 s, or there is none: a
     stopped process's lease (up to 60 s) or a slow folder never makes every view wait on another's listing. A listing
     shown older than 45 s says when it was made ("As the invoices folder was at 10:41: files saved since show once it

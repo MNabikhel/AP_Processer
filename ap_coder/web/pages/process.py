@@ -701,7 +701,7 @@ def shared_files(store: Store) -> Shown:
     if found.get("error"):
         return None, [], NOT_LISTED.format(why=found["error"])
     listed = [(os.path.join(place, name), size, at) for name, size, at in found["files"]]
-    new = store.unseen_files(listed) if listed else set()
+    new = store.unseen_files(listed, since=int(began * 1e9)) if listed else set()  # (one written again since, B-1814)
     rows = _rows([(name, size) for (name, size, _), f in zip(found["files"], listed, strict=True) if f[0] in new],
                  found["emails"])  # fmt: skip
     shown = 0 <= time.time() - began < SHARED_MOST

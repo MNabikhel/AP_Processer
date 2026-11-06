@@ -150,6 +150,41 @@ def test_the_files_put_in_line_since_the_listing_leave_the_page_at_once(store, l
     assert "No new files" in client.get("/process").text and len(listed) == 2  # (the pick-up lists it, kept)
 
 
+def test_a_file_written_again_between_the_look_and_the_read_is_offered_no_more_once_in_line(store, monkeypatch):
+    """The pick-up looks at each file's size and time, then reads the new ones: a scanner writing a.pdf again between
+    the two had it put in line as read, while the listing kept had it as looked at, so every view offered it until
+    the folder was listed again (45 s on); the same when a view's thread looked before the pick-up read it and its
+    listing was kept last. The pick-up keeps each file it read as read, and a view takes a file the pick-up read
+    since the listing looked at it (its time later than both) as it read it. One written over by an older copy (its
+    time earlier, as a copy keeps it) is still offered."""
+    folder = _folder(store, "a.pdf", "b.pdf")
+    client = _worker(store)
+    assert _offered(client) == ["a.pdf", "b.pdf"]
+    other = Store(store.path)
+    early = imports.list_folder(other, folder)  # a view's thread's look, kept after the pick-up's below
+    real, written = imports.read_file, []
+
+    def written_meanwhile(path):  # the scanner writing a.pdf again (whole) a moment after the pick-up looked at it
+        if path.name == "a.pdf" and not written:
+            written.append(path.read_bytes() + b"\n% the next scan")
+            path.write_bytes(written[0])
+            os.utime(path, ns=(time.time_ns(), time.time_ns()))  # (now: finer than the file system's own clock)
+        return real(path)
+
+    monkeypatch.setattr(imports, "read_file", written_meanwhile)
+    monkeypatch.setattr(process, "still_being_saved", lambda path, now=None: False)
+    assert client.post("/process/folder", headers=PAGE).json()["ok"]
+    seen = (folder / "a.pdf").stat()
+    assert ["a.pdf", seen.st_size, seen.st_mtime_ns] in other.kept_listing(str(folder.resolve()))[2]["files"]
+    assert _offered(client) == []
+    early.keep(other)
+    assert _offered(client) == []
+    (folder / "b.pdf").write_bytes(PDF.read_bytes() + b"\n% an older scan")  # copied over it, its time kept
+    os.utime(folder / "b.pdf", (time.time() - 3600, time.time() - 3600))
+    _aged(store, process.SHARED_MOST)
+    assert _offered(client) == ["b.pdf"]
+
+
 def test_while_another_process_lists_the_folder_a_view_waits_a_little_then_says_so(store, listed, monkeypatch):
     """Two web workers finding the listing due at once: one lists, the other doesn't (a lease); in one worker, three
     views at once start one listing. A view with no listing to show waits a few seconds for the one being made, then

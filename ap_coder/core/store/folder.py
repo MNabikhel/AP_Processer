@@ -76,25 +76,30 @@ class FolderMixin:
                 "import_batches) FROM invoices"
             ).fetchone())  # fmt: skip
 
-    def unseen_files(self, listed: list[tuple[str, int, int]], folder: str = "") -> set[str]:
+    def unseen_files(self, listed: list[tuple[str, int, int]], folder: str = "", since: int | None = None) -> set[str]:
         """The places of ``listed`` (place, size, time in nanoseconds) that are not a file an invoice was made from as
         the pick-up last read it (failed attempts count: ``find_by_hash(include_failed=True)``), nor one in line to
         be read (the import queue, D-168), without reading any: one the pick-up has not read yet, or that changed
         since, is new. ``folder``: the place of the folder they are all in, when they are its listing: what the
         pick-up read of that folder is then read at once (0.6 s for 300,000 files, against 0.8 s looked up one by
-        one), unless it read far more files there than are listed now (files removed since)."""
+        one), unless it read far more files there than are listed now (files removed since). ``since``: when the
+        listing of ``listed`` began (nanoseconds), for a listing kept a while (D-176): a file the pick-up read with a
+        time later than both the one listed and ``since`` was written again after the listing looked at it, and
+        counts as the pick-up read it (B-1814; one written over by an older copy keeps an earlier time: new)."""
         if not listed:
             return set()
         with self._conn() as conn:  # type: ignore[attr-defined]
             known = _known_in(conn, folder, len(listed)) if folder and len(listed) >= _AT_ONCE_FROM else None
             if known is not None:  # (a size of None: its size and time not known, its place trusted)
                 return {place for place, size, at in listed
-                        if (was := known.get(place)) is None or was[0] is not None and was != (size, at)}  # fmt: skip
-            rows = conn.execute(
+                        if (was := known.get(place)) is None or was[0] is not None and was != (size, at)
+                        and not (since is not None and was[1] > max(at, since))}  # fmt: skip
+            rows = conn.execute(  # (``since`` None: NULL, never later)
                 "SELECT json_extract(j.value, '$[0]') FROM json_each(?) AS j WHERE NOT EXISTS (SELECT 1 FROM "
                 "seen_files AS f WHERE f.path = json_extract(j.value, '$[0]') AND (f.size IS NULL OR (f.size = "
-                f"json_extract(j.value, '$[1]') AND f.mtime_ns = json_extract(j.value, '$[2]'))) AND {_KNOWN})",
-                (json.dumps(listed),),
+                "json_extract(j.value, '$[1]') AND f.mtime_ns = json_extract(j.value, '$[2]')) OR (f.mtime_ns > "
+                f"json_extract(j.value, '$[2]') AND f.mtime_ns > ?)) AND {_KNOWN})",
+                (json.dumps(listed), since),
             ).fetchall()
         return {r[0] for r in rows}
 
