@@ -159,6 +159,20 @@ def test_jde_errors_come_back_in_its_own_words(ais):
     assert "Address Number 9999 Invalid (0002)" in str(err.value)
 
 
+def test_only_jd_edwards_own_error_is_a_refusal(ais):
+    """B-1890: AIS's own failure said in JSON (its orchestration timeout: HTTP 500, a message, no form error with
+    JD Edwards' code) is not JD Edwards refusing: the request may have run (``sent``)."""
+    c = jde_ais.AisClient(ais.settings())
+    ais.script("voucher_create", "ais-timeout")
+    with pytest.raises(jde_ais.AisError) as err:
+        c.call("voucher_create", {"key": "APC-1-1", "mode": "FINAL", "pay_items": [{"VLAN8": "9999"}]})
+    assert err.value.kind == jde_ais.ANSWER and err.value.sent and err.value.status == 500
+    assert "timed out" in str(err.value) and "no error of JD Edwards' own" in str(err.value)
+    assert jde_ais.jde_refused({"message": {"F0411Z1": {"errors": [{"CODE": "0002", "TITLE": "Invalid"}]}}})
+    assert not jde_ais.jde_refused({"message": "Read timed out", "exception": "java.net.SocketTimeoutException"})
+    assert not jde_ais.jde_refused({"message": {"Form": {"errors": [], "warnings": [{"CODE": "4363"}]}}})
+
+
 def test_jde_messages_reads_the_shapes_ais_answers_with():
     assert jde_ais.jde_messages({"userDefinedErrorText": "Supplier on hold", "message": "x"}) == ["Supplier on hold",
                                                                                                     "x"]  # fmt: skip

@@ -367,6 +367,10 @@ def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store)
         assert post(client, "/settings/jde", general_form(**bad)).status_code == 400, bad
     follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the new fields: kept
     assert jde.load(store).open_from == "2026-11-01" and jde.load(store).voucher_timeout == 180
+    # B-1880: a lost voucher is never sent again sooner than its own wait and a minute (JDE may still be making it)
+    short = post(client, "/settings/jde", general_form(voucher_timeout="900", resend_minutes="10"))
+    assert short.status_code == 400 and "at least 16 minutes" in short.text
+    assert jde.load(store).resend_minutes == 15
 
 
 def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):

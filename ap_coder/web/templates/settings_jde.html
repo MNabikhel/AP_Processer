@@ -173,7 +173,7 @@
           <small class="muted">Then the rest wait in the queue.</small></label>
         <label class="field">API: a lost answer, sent again after (minutes)
           <input type="number" name="resend_minutes" value="{{ '%g' % js.resend_minutes }}" min="0" max="1440" step="any">
-          <small class="muted">Once JD Edwards says it hasn't it; it may still be making it before.</small></label>
+          <small class="muted">After the answer was lost, once JD Edwards says it hasn't it; at least a voucher's wait and a minute.</small></label>
       </div>
       <div class="stack">
         <label class="check"><input type="checkbox" name="send_due_date" value="1"{% if js.send_due_date %} checked{% endif %}> Send the due date (VLDDJ)</label>

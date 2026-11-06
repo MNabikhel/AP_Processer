@@ -3,6 +3,7 @@ the result kept per invoice, the queue when JDE is down or the answer is lost, a
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
@@ -31,6 +32,13 @@ def connect(store: Store, fake: FakeAis, **changes) -> None:
     if "timeout" in changes:  # a voucher's own wait (R04110ZA runs in it, D-182) too: the stand-in's late answers late
         settings = json.loads(jde.load(store).to_json())
         store.set_setting(jde.SETTING_KEY, json.dumps({**settings, "voucher_timeout": cfg.timeout}))
+
+
+def long_after_the_loss(store: Store) -> None:
+    """Every send whose answer was lost, lost an hour ago: JD Edwards could have finished it (``resend_seconds``)."""
+    ago = (dt.datetime.now() - dt.timedelta(hours=1)).isoformat(timespec="seconds")
+    with store._conn() as conn:
+        conn.execute("UPDATE jde_postings SET lost_at = ? WHERE lost_at IS NOT NULL", (ago,))
 
 
 def batch_of(tmp_path, fake: FakeAis, *stems: str) -> tuple[Store, int]:

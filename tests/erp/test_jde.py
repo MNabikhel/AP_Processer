@@ -16,6 +16,7 @@ from ap_coder.coding.tax import (
     TaxTreatment,
     build_gl_distribution,
     load_tax_mapping,
+    tax_shares,
 )
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
@@ -261,6 +262,40 @@ def test_match_header_gives_no_tax_to_an_exempt_line():
     assert all(atxn == 0 for _, atxn, _ in taxes[:-1])  # the taxable lines: all taxable
     assert sum(t[0] for t in taxes) == round(taxable * 100) and sum(t[2] for t in taxes) == round(hst * 100)
     assert sum(sum(t) for t in taxes) == round(doc["grand_total"] * 100)
+
+
+def test_match_header_pay_items_take_the_tax_shares_the_lines_have():
+    """B-1889: with a pay item per line and the tax not on G/L lines, each pay item's share of the recoverable tax
+    was truncated and the cent left over put on the largest, while the lines' shares (``tax.tax_shares``,
+    ``money.split``) round each half up: two lines of 10.10 with GST 1.01 gave pay items 0.51 / 0.50 against the
+    lines' 0.50 / 0.51. One rule now, ``money.split``'s, for the tax and the taxable amount, in whole yen too."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{AB}.json").read_text())
+    lines = doc["line_items"][:2]
+    for li in lines:
+        li.update(amount=10.10, quantity=1, unit_price=10.10)
+    inv = _invoice(AB, line_items=lines, subtotal=20.20, tax_total=1.01, grand_total=21.21,
+                   tax_lines=[{**doc["tax_lines"][0], "taxable_amount": 20.20, "tax_amount": 1.01}])  # fmt: skip
+    settings = jde.JdeSettings(line_numbering=jde.MATCH_HEADER, amount_mode=jde.AMOUNT_TAX)
+    assert jde.validate([inv], settings, AN8) == {}
+    heads = _files([inv], settings)[jde.HEADER_FILE]
+    coding = InvoiceCoding.model_validate({k: v for k, v in inv["final_output"].items() if k != "gl_distribution"})
+    shares = [round(share * 100) for _, share in tax_shares(coding.line_items, coding.tax_lines[0])]
+    assert [int(h["VLSTAM"]) for h in heads] == shares == [50, 51]
+    assert sum(int(h["VLATXA"]) + int(h["VLSTAM"]) for h in heads) == 2121
+    assert jde._split(300, [1, 1], unit=100) == [100, 200]  # 3 yen: 1.5 each, half up, the rest on the first
+    assert jde._split(-101, [1010, 1010]) == [-50, -51]  # a credit as the invoice it reverses
+    # The samples that changed (GST and QST each split over the lines; D-182 lists them): the lines' shares now
+    for stem, was, now in (("laurentides_QC_TPS_TVQ_SIL-4471", [17971, 5091, 12878], [17969, 5092, 12879]),
+                           ("montroyal_QC_TPS_TVQ_ACMR-2026-1187", [34143, 31447, 52412, 19767, 71133, 38186, 32945,
+                            1018], [34143, 31448, 52413, 19767, 71131, 38186, 32945, 1018])):  # fmt: skip
+        inv = _invoice(stem)
+        coding = InvoiceCoding.model_validate({k: v for k, v in inv["final_output"].items() if k != "gl_distribution"})
+        per_line = [0] * len(coding.line_items)
+        for tax_line in coding.tax_lines:
+            for i, share in tax_shares(coding.line_items, tax_line):
+                per_line[i] += round(share * 100)
+        heads = _files([inv], settings)[jde.HEADER_FILE]
+        assert [int(h["VLSTAM"]) for h in heads] == per_line == now and sum(was) == sum(now), stem
 
 
 def test_match_header_an_exempt_or_zero_rated_line_is_its_own_pay_item_with_the_exempt_code():

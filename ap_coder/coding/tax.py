@@ -994,7 +994,7 @@ def half_down(amount: float, places: int = 2) -> float:
 def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
     """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it (as PST is spread,
     ``build_gl_distribution``), tip lines left out (a voluntary tip is not taxed), in cents. The JD Edwards pay items
-    take the same shares (B-867)."""
+    take the same shares (B-867; a pay item per line, by the same rule, B-1889)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
     targets = (

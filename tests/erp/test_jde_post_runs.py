@@ -4,6 +4,7 @@ the holds and the open period checked just before each voucher is sent; never a 
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import time
@@ -14,7 +15,7 @@ import pytest
 from ap_coder.erp import jde, jde_ais, jde_post
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import AB, BC, ON, QC
-from tests.erp.test_jde_post import batch_of, connect
+from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
 from tests.fake_ais import PASSWORD, FakeAis
 
 
@@ -82,6 +83,216 @@ def test_a_lost_answer_is_never_sent_again_while_jde_may_still_be_making_it(tmp_
     assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1 and len(ais.vouchers()) == 2
 
 
+def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wait(tmp_path, monkeypatch):
+    """B-1880: the wait before believing JD Edwards' "not there" was counted from the send's start, and Settings let
+    it be shorter than a voucher's own wait: with a voucher's wait of 900 seconds and the resend wait of 10 minutes,
+    an answer lost after 15 minutes was "not there" at its first lookup and sent again while JD Edwards could still
+    be making the first. It is counted from when the answer was lost, and is never less than a voucher's wait and a
+    margin (here the voucher's wait 0.5 s, the margin 2 s, the resend wait set to 0.1 s; kept to the second)."""
+    monkeypatch.setattr(jde, "RESEND_MARGIN", 2.0)
+    with FakeAis(slow_seconds=1.8) as ais:  # JD Edwards makes it 1.8 s after the request arrived
+        store, batch = batch_of(tmp_path, ais)
+        connect(store, ais, timeout=0.5)
+        settings(store, resend_minutes=0.1 / 60)
+        assert jde.load(store).resend_seconds == 2.5
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", "late-made")
+        jde_post.post(store, batch)
+        lost = time.monotonic()
+        jde_post.retry_queue(store)  # "Try again now" right after: JD Edwards hasn't it yet, and may still make it
+        row = jde_post.postings(store, batch)[0]
+        assert len(finals(ais)) == 1 and row["status"] == jde_post.UNKNOWN and row["maybe_sent"] == 1
+        time.sleep(max(0.0, 2.6 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
+        jde_post.retry_queue(store)
+        assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
+    assert jde.JdeSettings(voucher_timeout=900, resend_minutes=10).resend_seconds == 900 + jde.RESEND_MARGIN
+
+
+def test_a_live_send_is_nobody_elses_for_as_long_as_it_can_take_its_retries_included(tmp_path, ais):
+    """B-1881: a row *sending* was someone's live send for only 15 minutes (``SENDING_MINUTES``), the longest a
+    voucher's own wait can be, though a send whose request AIS turned away busy (503) is tried again, each try a
+    voucher's wait: a send still trying at 40 minutes was taken by the queue, found "not there" (its last try not in
+    JD Edwards yet) and sent a second time beside it. A live send is left alone for the longest it can take: every
+    try and pause, the sign-in, twice over if the token expired meanwhile (``send_seconds``)."""
+    store, batch = batch_of(tmp_path, ais)
+    settings(store, voucher_timeout=900)
+    jde_post.dry_run(store, batch)
+    began = (dt.datetime.now() - dt.timedelta(minutes=40)).isoformat(timespec="seconds")
+    with store._conn() as conn:  # a go-ahead's send, its request turned away busy twice and tried a third time
+        conn.execute("UPDATE jde_postings SET status = 'sending', maybe_sent = 1, approved_at = ?, sending_at = ?",
+                     (began, began))  # fmt: skip
+    assert jde_post.send_seconds(jde.load(store), jde_ais.load(store)) > 3 * 900
+    assert jde_post.waiting(store) == []
+    jde_post.retry_queue(store)
+    assert finals(ais) == [] and ais.orchestration_calls("voucher_status") == []
+    assert statuses(store, batch)[1] == jde_post.SENDING
+
+
+def test_the_queue_builds_each_batch_once_not_once_per_voucher_waiting(tmp_path, ais, monkeypatch):
+    """B-1884: the queue built a batch's vouchers again for each of its vouchers waiting (``setdefault`` evaluated
+    the build each time): 500 waiting took 84 s before anything was sent, every five minutes. Once per batch now."""
+    store, batch = batch_of(tmp_path, ais, ON, QC, BC)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: all three wait in the queue
+    jde_post.post(store, batch)
+    assert set(statuses(store, batch).values()) == {jde_post.QUEUED}
+    built = []
+    real = jde_post.payloads
+    monkeypatch.setattr(jde_post, "payloads", lambda store, batch: built.append(batch) or real(store, batch))
+    jde_post.retry_queue(store)
+    assert built == [batch] and set(statuses(store, batch).values()) == {jde_post.POSTED}
+
+
+class _Stopped(BaseException):
+    """AP Coder stopping in the middle of a run."""
+
+
+def test_a_run_cut_short_leaves_the_vouchers_it_had_not_sent_in_the_queue(tmp_path, ais, monkeypatch):
+    """B-1886: a go-ahead's run cut short (AP Coder stopped or restarted while it ran) left the vouchers it had not
+    reached *dry run passed* with their go-ahead, in no queue: neither the queue nor "Try again now" sent them. Cut
+    short by an error, they wait in the queue at once; gone with its process, once the run would have been over (its
+    time, its last send and a margin), never while it may still be sending them."""
+    store, batch = batch_of(tmp_path, ais, ON, QC, BC)
+    jde_post.dry_run(store, batch)
+
+    def stop(found):
+        if found["done"] == 1:
+            raise _Stopped
+
+    with pytest.raises(_Stopped):
+        jde_post.post(store, batch, progress=stop)
+    assert statuses(store, batch) == {1: jde_post.POSTED, 2: jde_post.QUEUED, 3: jde_post.QUEUED}
+    assert [p["invoice_id"] for p in jde_post.waiting(store)] == [2, 3]
+    jde_post.retry_queue(store)
+    assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 3
+
+    with FakeAis() as other:
+        store, batch = batch_of(tmp_path / "gone", other, ON, QC)
+        jde_post.dry_run(store, batch)
+        real = jde_post._run
+        monkeypatch.setattr(jde_post, "_run", lambda *a, **k: {})  # the process ended as the run began
+        jde_post.post(store, batch)
+        monkeypatch.setattr(jde_post, "_run", real)
+        assert statuses(store, batch) == {1: jde_post.CHECKED, 2: jde_post.CHECKED}
+        assert jde_post.waiting(store) == []  # its run may still be sending them
+        ago = (dt.datetime.now() - dt.timedelta(minutes=1)).isoformat(timespec="seconds")
+        with store._conn() as conn:  # the run's time, its last send and a margin are over
+            conn.execute("UPDATE jde_postings SET next_try = ?", (ago,))
+        assert [p["invoice_id"] for p in jde_post.waiting(store, due_only=True)] == [1, 2]
+        jde_post.retry_queue(store)
+        assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(other)) == 2
+
+
+@pytest.fixture
+def toronto(monkeypatch):
+    """Toronto's clocks (they go forward at 2:00 on 14 March 2027)."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("needs time.tzset")
+    monkeypatch.setenv("TZ", "America/Toronto")
+    time.tzset()
+    yield
+    monkeypatch.delenv("TZ")
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_the_safety_waits_hold_the_night_the_clocks_go_forward(tmp_path, ais, monkeypatch, toronto):
+    """B-1887: the wait before a lost answer's "not there" is believed and a live send's were read on the local time:
+    the night the clocks go forward (2:00 becomes 3:00), an answer lost at 1:58 was "not there" three real minutes
+    later and sent again, and a send begun at 1:58 was no longer live at 3:01. They are kept and compared in UTC
+    now, and a row an older AP Coder kept in local time is read as such."""
+    store, batch = batch_of(tmp_path, ais)
+    connect(store, ais, timeout=0.15)
+    settings(store, resend_minutes=10)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", "slow")  # its answer lost, never made
+    jde_post.post(store, batch)
+    assert statuses(store, batch)[1] == jde_post.UNKNOWN
+    real_now = dt.datetime(2027, 3, 14, 7, 1, tzinfo=dt.UTC)  # 3:01 in Toronto, 3 real minutes after 1:58
+    monkeypatch.setattr(jde_post, "_clock", lambda: real_now)
+    monkeypatch.setattr(jde_post, "_now", lambda: "2027-03-14T03:01:00")
+    for lost in ("2027-03-14T06:58:00+00:00", "2027-03-14T01:58:00"):  # in UTC, and in local time (an older row)
+        with store._conn() as conn:
+            conn.execute("UPDATE jde_postings SET lost_at = ?, sending_at = ?, next_try = NULL", (lost, lost))
+        jde_post.retry_queue(store)
+        assert statuses(store, batch)[1] == jde_post.UNKNOWN and len(finals(ais)) == 1, lost
+        with store._conn() as conn:  # a send begun at 1:58 and still under way
+            conn.execute("UPDATE jde_postings SET status = 'sending'")
+        assert jde_post.waiting(store) == [], lost
+        with store._conn() as conn:
+            conn.execute("UPDATE jde_postings SET status = 'unknown'")
+
+
+def test_a_queued_voucher_changed_since_its_go_ahead_waits_for_a_new_dry_run_not_refused(tmp_path, ais, monkeypatch):
+    """B-1888: a voucher approved and waiting in the queue (JD Edwards not reached) whose voucher changed meanwhile
+    (the upgrade that gave VLEDBT / VLEDTN their codes, a settings change) was marked *Refused by JD Edwards*, its
+    go-ahead lost, though JD Edwards never had it. It is held back for a new dry run, saying why, its go-ahead kept
+    for month end until then; the dry run and a go-ahead send it."""
+    store, batch = batch_of(tmp_path, ais, QC)
+    new_keys = jde._keys
+
+    def old_keys(prefix, settings, batch, invoice, inv_id, site=""):  # VLEDBT / VLEDTN before D-182
+        keys = new_keys(prefix, settings, batch, invoice, inv_id, site)
+        keys[f"{prefix}EDBT"], keys[f"{prefix}EDTN"] = f"{settings.batch_prefix.strip()}{batch}"[:15], f"APC{inv_id}"
+        return keys
+
+    monkeypatch.setattr(jde, "_keys", old_keys)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: queued
+    jde_post.post(store, batch)
+    assert statuses(store, batch)[1] == jde_post.QUEUED
+    monkeypatch.setattr(jde, "_keys", new_keys)  # the upgrade
+    result = jde_post.retry_queue(store)
+    row = jde_post.postings(store, batch)[0]
+    assert row["status"] == jde_post.CHECKED and result["held"] == 1 and result["failed"] == 0
+    assert "changed in AP Coder since its go-ahead" in row["error"] and "dry run again" in row["error"]
+    assert row["approved_at"] and row["maybe_sent"] == 0 and len(finals(ais)) == 3
+    assert jde_post.waiting(store) == [] and set(jde_post.not_posted(store)) == {1}
+    assert store.events(actions=["jde_voucher_refused"]) == []
+    (shown,) = jde_post.status_rows(store, batch)
+    assert (shown["label"], shown["tone"]) == (jde_post.HELD_BACK, "warn")
+    time.sleep(1.0)  # (the dry run in another second than the go-ahead: the times are kept to the second)
+    assert jde_post.dry_run(store, batch)["rows"][0]["label"] == jde_post.LABELS[jde_post.CHECKED]
+    assert jde_post.post(store, batch)["posted"] == 1 and len(finals(ais)) == 4
+
+
+def test_ais_giving_up_with_its_own_error_is_an_answer_lost_not_a_refusal(tmp_path, ais):
+    """B-1890: AIS answering its own orchestration timeout with HTTP 500 and a message (no error of JD Edwards' own:
+    a form error with its code) was taken as JD Edwards refusing the voucher: looked up at once, "not there" (JDE
+    still making it), unlocked and marked refused, so it went into the batch files and could be made twice. Only
+    JD Edwards' own error is a refusal; any other is an answer lost, looked up once JDE could have finished."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", "ais-timeout")  # JD Edwards makes it 0.5 s later
+    result = jde_post.post(store, batch)
+    row = jde_post.postings(store, batch)[0]
+    assert (row["status"], row["maybe_sent"], result["unknown"], result["failed"]) == (jde_post.UNKNOWN, 1, 1, 0)
+    assert "timed out" in row["error"] and ais.orchestration_calls("voucher_status") == []
+    assert jde_post.left_out_of_files(store, batch) and jde_post.undo_problem(store, batch)
+    time.sleep(0.7)
+    long_after_the_loss(store)
+    jde_post.retry_queue(store)
+    assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
+
+
+def test_a_voucher_changed_meanwhile_counts_as_done_in_the_runs_progress(tmp_path, ais):
+    """B-1891: a voucher the run skipped because it changed meanwhile (sent from elsewhere, its batch undone, its file
+    downloaded) was never counted as done, so the job's progress ended at "1 of 2"."""
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    jde_post.dry_run(store, batch)
+
+    def elsewhere(key, inputs):  # as the first is sent, the second is changed by another process
+        if key == "voucher_create" and inputs.get("mode") == "FINAL":
+            with store._conn() as conn:
+                conn.execute("UPDATE jde_postings SET rev = rev + 1 WHERE invoice_id = 2")
+
+    ais.plan = elsewhere
+    seen = []
+    result = jde_post.post(store, batch, progress=seen.append)
+    assert any("changed meanwhile" in s for s in result["skipped"]) and result["posted"] == 1
+    assert (seen[-1]["done"], seen[-1]["total"]) == (2, 2)
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""
@@ -108,6 +319,7 @@ def test_late_answers_one_after_another_stop_the_run_and_the_rest_wait_saying_wh
     assert len(finals(ais)) == jde_post.LATE_STOP == 3 and "3 vouchers in a row late" in result["error"]
     assert "in a row late" in jde_post.postings(store, batch)[3]["error"]  # said on the batch's panel
     ais.plan = None
+    long_after_the_loss(store)
     jde_post.retry_queue(store)  # JD Edwards answers again: the three looked up (none made), then each sent once
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 7
 
@@ -136,6 +348,7 @@ def test_500_vouchers_post_in_one_run_through_slow_and_late_answers_none_twice(t
     from tests.erp.test_jde import _invoice
 
     monkeypatch.setattr(jde_post, "LOOK_AFTER", 2.0)
+    monkeypatch.setattr(jde, "RESEND_MARGIN", 1.0)  # scaled as the waits are: a voucher's 0.3 s, the resend 3 s
     store = Store(tmp_path / "ap_coder.db")
     jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, voucher_timeout=0.3,
                                     resend_minutes=0.05))  # fmt: skip

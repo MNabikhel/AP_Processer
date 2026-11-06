@@ -101,6 +101,38 @@ def test_with_the_invoice_date_as_g_l_date_an_invoice_exported_after_the_period_
     assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
 
 
+def test_an_invoice_whose_g_l_date_is_moved_past_the_period_end_is_accrued_in_its_month(tmp_path):
+    """B-1883: with September closed in JD Edwards (the open period from 1 October, closed periods moved, D-182), an
+    invoice dated 14 September exported on 2 October goes with the G/L date 1 October, yet month end took it as in
+    September's ledger ("with the invoice date as its G/L date a voucher exported later lands in its own month"): in
+    neither September's ledger nor its accruals. A batch made after the period end is late then, as with the export
+    day as the G/L date; one made by the period end, or with the open period from within it, is not."""
+    from ap_coder.erp import jde, jde_post
+
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-10-01",
+                                    closed_period=jde.CLOSED_MOVE))  # fmt: skip
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    store.import_vendor_master([{"vendor_name": nw["vendor_name"], "erp_id": "4001"}])
+    a = store.add_invoice(tmp_path / "a.pdf", nw, {})
+    store.approve_invoice(a, nw, "Jane")
+    batch = store.create_export_batch([a], jde.FORMAT)
+
+    def made_on(when):
+        with store._conn() as conn:
+            conn.execute("UPDATE export_batches SET created_at = ? WHERE id = ?", (when, batch))
+        return [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
+
+    late = made_on("2026-10-02T09:15:00")
+    assert jde.from_julian(jde_post.payloads(store, batch)[0][a]["pay_items"][0]["VLDGJ"]) == dt.date(2026, 10, 1)
+    assert late and {x.note for x in late} == {accruals.EXPORTED_LATE}
+    assert made_on("2026-09-30T16:40:00") == []  # made in September, while it was open: in September's ledger
+    made_on("2026-10-02T09:15:00")
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-09-01"))
+    assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]  # September open: not moved
+
+
 def test_an_exported_invoice_whose_jde_voucher_is_not_posted_yet_is_not_in_the_erp(tmp_path, monkeypatch):
     """B-1862 (R4): an invoice in an export batch counted as in the ERP at month end even when its voucher, sent
     through the JD Edwards API, was waiting in the queue (JD Edwards down), sent with its answer lost, or refused: its
@@ -136,6 +168,70 @@ def test_an_exported_invoice_whose_jde_voucher_is_not_posted_yet_is_not_in_the_e
                              2: {"exported; its JD Edwards voucher: Refused by JD Edwards"}}  # fmt: skip
         jde_post.file_downloaded(store, batch, "sam")  # the refused ones loaded from the batch's files instead
         assert accrued() == {}
+
+
+def _api_accrued(store) -> set[int]:
+    """The invoices accrued at 31 October as not in the ERP."""
+    return {int(x.reference.split("(#")[1].rstrip(")")) for x in accruals.build(store, dt.date(2026, 10, 31))
+            if x.source == accruals.NOT_IN_ERP}  # fmt: skip
+
+
+@pytest.fixture
+def _quick_ais(monkeypatch):
+    from ap_coder.erp import jde_ais
+    from tests.fake_ais import PASSWORD
+
+    monkeypatch.setattr(jde_ais, "RETRY_PAUSE", 0)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+
+
+def test_a_voucher_held_back_then_loaded_from_the_batch_files_is_not_accrued(tmp_path, _quick_ais):
+    """B-1882: JD Edwards refused one voucher as in a closed period, so the other of the same month was held back for
+    a new dry run, its go-ahead kept; the batch's files were downloaded (it is in them: neither was locked) and
+    loaded, yet month end still counted the held-back one as not in the ERP: in JD Edwards and accrued, twice. A
+    download takes the go-ahead off every voucher the files hold."""
+    from ap_coder.erp import jde_post
+    from tests.erp.test_jde import BC, QC
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import FakeAis
+
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais, QC, BC)  # 1 and 5 October
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", ("refuse", "0005", "Error: G/L date is in a closed period (PBCO)"))
+        jde_post.post(store, batch)
+        assert [p["status"] for p in jde_post.postings(store, batch)] == [jde_post.FAILED, jde_post.CHECKED]
+        assert _api_accrued(store) == {1, 2}  # neither in JD Edwards
+        jde_post.file_downloaded(store, batch, "sam")  # both in the files, loaded into JD Edwards
+        assert _api_accrued(store) == set()
+        assert jde_post.left_out_of_files(store, batch) == {}
+        jde_post.dry_run(store, batch)  # and a dry run afterwards changes nothing of that
+        assert _api_accrued(store) == set()
+
+
+def test_a_voucher_refused_after_its_go_ahead_is_accrued_after_another_dry_run_too(tmp_path, _quick_ais):
+    """B-1885: JD Edwards refused a voucher after its go-ahead (not in JD Edwards, accrued); a new dry run, refused
+    again (*refused in the dry run*, its go-ahead kept), made month end count it as in the ERP, though it was in
+    neither JD Edwards nor a file downloaded. Refused after its go-ahead, it is not in the ERP until it is posted or
+    the batch's files are downloaded."""
+    from ap_coder.erp import jde_post
+    from tests.erp.test_jde import QC
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import FakeAis
+
+    closed = ("refuse", "0005", "Error: G/L date is in a closed period (PBCO)")
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais, QC)
+        jde_post.dry_run(store, batch)
+        ais.script("voucher_create", closed)
+        jde_post.post(store, batch)
+        assert _api_accrued(store) == {1}
+        ais.script("voucher_create", closed)  # JD Edwards' proof refuses it again
+        jde_post.dry_run(store, batch)
+        assert jde_post.postings(store, batch)[0]["status"] == jde_post.REFUSED
+        assert _api_accrued(store) == {1}
+        jde_post.file_downloaded(store, batch, "sam")  # loaded from the batch's files: in the ERP
+        assert _api_accrued(store) == set()
 
 
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):

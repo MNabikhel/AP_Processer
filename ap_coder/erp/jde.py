@@ -67,6 +67,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 from typing import Any
 
+from ..coding import money
 from ..coding.line_tax import exempt_of, legacy_basis
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.terms import terms_key
@@ -110,6 +111,8 @@ GL_DATES = {GL_DATE_INVOICE: "The invoice date", GL_DATE_EXPORT: "The day the ba
 CLOSED_MOVE, CLOSED_HOLD = "move", "hold"
 CLOSED_PERIODS = {CLOSED_MOVE: "Move its G/L date to the first day of the open period",
                   CLOSED_HOLD: "Hold the invoice back"}  # fmt: skip
+# Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
+RESEND_MARGIN = 60.0
 
 # Which taxes E1 itself posts (so they are NOT in the distribution), by tax explanation code.
 RECOVERABLE_BY_CODE: dict[str, frozenset[str]] = {
@@ -237,8 +240,8 @@ class JdeSettings:
     open_to: str = ""
     closed_period: str = CLOSED_MOVE
     # Posting through the API (D-182): how long a voucher's request may take (R04110ZA runs in it), how long one run
-    # may send, and how long after a send whose answer was lost JDE's "not there" is believed (it may still be making
-    # it): sent again only after that.
+    # may send, and how long after a send's answer was lost JDE's "not there" is believed (it may still be making it):
+    # sent again only after that, and never sooner than a voucher's wait and ``RESEND_MARGIN`` (``resend_seconds``).
     voucher_timeout: float = 120.0
     post_minutes: float = 60.0
     resend_minutes: float = 10.0
@@ -318,6 +321,12 @@ class JdeSettings:
             except (TypeError, ValueError):
                 setattr(out, name, getattr(base, name))
         return out
+
+    @property
+    def resend_seconds(self) -> float:
+        """How long after a voucher's answer was lost JDE's "not there" is believed: ``resend_minutes``, never less
+        than a voucher's own wait and ``RESEND_MARGIN`` (the request may have begun in JDE as AP Coder gave up)."""
+        return max(self.resend_minutes * 60, self.voucher_timeout + RESEND_MARGIN)
 
     @property
     def tax_on_gl(self) -> bool:
@@ -439,16 +448,9 @@ def _units(x: Any, decimals: int = 2) -> int:
 
 def _split(total: int, weights: list[int], unit: int = 1) -> list[int]:
     """``total`` cents split in proportion to ``weights``, in steps of ``unit`` cents (100 for a currency without
-    cents). Exact: the remainder goes to the largest."""
-    if not weights:
-        return []
-    base = sum(weights)
-    if base == 0:
-        return [total] + [0] * (len(weights) - 1)
-    shares = [int(Decimal(total * w) / Decimal(base * unit)) * unit for w in weights]
-    biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
-    shares[biggest] += total - sum(shares)
-    return shares
+    cents): ``money.split``'s rule, each share half up and what is left over on the largest, so a pay item takes the
+    share of a tax its line has (``tax.tax_shares``, B-1889). Exact: the shares add up to the total."""
+    return [money.in_cents(share) for share in money.split(total / 100, weights, 0 if unit == 100 else 2)]
 
 
 def from_julian(value: Any) -> dt.date | None:
