@@ -1629,3 +1629,83 @@ def test_the_recurring_vendors_work_keeps_no_copy_of_every_invoice_in_the_worker
     assert recurring.detected(store)
     assert store.vendor_invoice_dates() == store._vendor_invoice_dates()
     assert not [key for key in summary_module._MEMO if key[0] == str(store.path) and key[1] == "vendor_invoice_dates"]
+
+
+def test_a_process_working_an_answer_out_renews_its_hold_so_the_others_wait_for_it_and_not_past_a_stopped_one(
+    tmp_path, monkeypatch
+):
+    """B-1807: a process working a shared answer out held it for the others 300 s, never renewed: one killed while
+    working (out of memory, a forced restart) left every other worker asking for it waiting the whole ANSWER_WAIT
+    (30 s) on a queue visit, again after each change, for five minutes. The hold is short and renewed while the work
+    goes on: one that stopped is passed over within ANSWER_LEASE, and a long piece of work keeps it."""
+    from ap_coder.core.store import reports
+
+    assert reports.ANSWER_LEASE <= 15
+    monkeypatch.setattr(reports, "ANSWER_LEASE", 0.6)
+    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.2, raising=False)
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    working = threading.Event()
+
+    def slow() -> list[str]:
+        working.set()
+        time.sleep(1.5)  # longer than the hold
+        return ["first"]
+
+    first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
+    second = Shared(store, "slow", lambda: ["second"], version="t-1", topic="", changes=("vendors",))
+    monkeypatch.setattr(reports, "OWNER", "worker 1")
+    process("worker 1")
+    found = []
+    one = threading.Thread(target=lambda: found.append(first()))
+    one.start()
+    assert working.wait(5)
+    time.sleep(0.8)  # past the hold's first expiry
+    monkeypatch.setattr(reports, "OWNER", "worker 2")
+    process("worker 2")
+    assert second() == ["first"] and second.worked == 0  # waited for the one working it out, then took its answer
+    one.join(10)
+    assert found == [["first"]] and first.worked == 1
+
+
+def test_an_answer_the_database_was_too_busy_to_keep_is_kept_once_it_is_free_and_the_others_take_it(
+    tmp_path, monkeypatch
+):
+    """B-1808: a process that worked a shared answer out while another writer held the database (a bulk approval, an
+    import, a backup) could neither keep it nor let go of its hold, each waiting 200 ms at most: the others asking
+    then waited the whole ANSWER_WAIT for an answer that never came, then worked it out themselves. What the
+    database was too busy for is done as soon as it is free: the others take that answer."""
+    import sqlite3
+
+    from ap_coder.core.store import reports
+
+    monkeypatch.setattr(reports, "ANSWER_WAIT", 3.0)
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    working = threading.Event()
+
+    def slow() -> list[str]:
+        working.set()
+        time.sleep(0.3)
+        return ["first"]
+
+    first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
+    second = Shared(store, "slow", lambda: ["second"], version="t-1", topic="", changes=("vendors",))
+    monkeypatch.setattr(reports, "OWNER", "worker 1")
+    process("worker 1")
+    found = []
+    one = threading.Thread(target=lambda: found.append(first()))
+    one.start()
+    assert working.wait(5)
+    writer = sqlite3.connect(store.path, timeout=30, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")  # another worker's long write, while worker 1 ends its work
+    one.join(10)
+    assert found == [["first"]]
+    time.sleep(0.5)
+    writer.execute("COMMIT")
+    writer.close()
+    monkeypatch.setattr(reports, "OWNER", "worker 2")
+    process("worker 2")
+    began = time.monotonic()
+    assert second() == ["first"] and second.worked == 0
+    assert time.monotonic() - began < 2

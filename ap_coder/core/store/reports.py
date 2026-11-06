@@ -28,12 +28,14 @@ import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 ANSWER_MOST_BYTES = 16 * 1024 * 1024  # an answer bigger than this as JSON is not kept for the other processes
 ANSWERS_KEPT = 8  # of each name (a report asked for a few period ends), the latest made kept
-ANSWER_LEASE = 300.0  # seconds a process working an answer out holds it for the others (it stopped: let go after)
+ANSWER_LEASE = 10.0  # seconds a process working an answer out holds it for the others, renewed while it works: one
+ANSWER_RENEW = 3.0  # that stopped (killed, B-1807) is passed over within ANSWER_LEASE; renewed every ANSWER_RENEW
 ANSWER_WAIT = 30.0  # seconds another process asking the same waits for that answer before working it out itself
 ANSWER_POLL = 0.25
 OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the answers' leases name it
@@ -97,7 +99,7 @@ class ReportsMixin:
         never older than that. While another thread or process works it out, it is waited for (``ANSWER_WAIT``).
         ``encode``/``decode``: the value to JSON-ready data and back. In a write under way (or a read transaction) it
         is worked out afresh, neither read nor kept. The value is shared: read it, don't change it."""
-        key = asked_key(asked)
+        key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
         seen, writing = self._answer_stamp(topic, changes)
@@ -126,7 +128,7 @@ class ReportsMixin:
             found = self.kept_answer(name, key, version)
             lease, taken, took = f"answer/{name}/{key}", True, holds(found, later=True)
             if not took:
-                taken = self._briefly_or(lambda: self.take_lease(lease, OWNER, ANSWER_LEASE), False)  # type: ignore[attr-defined]
+                taken = self._briefly_or(lambda: self.take_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
                 until = time.monotonic() + ANSWER_WAIT
                 while not taken and time.monotonic() < until:  # another process works it out: taken once written
                     time.sleep(ANSWER_POLL)
@@ -134,6 +136,7 @@ class ReportsMixin:
                     took = holds(found, later=True)
                     if took or not self._lease_held(lease):  # (it stopped, or wrote one for an older stamp)
                         break
+            unkept: Callable[[], Any] | None = None  # what the database was too busy to keep just now (B-1808)
             try:
                 if took:
                     value, kept = decode(found[1]), found  # type: ignore[index]
@@ -141,9 +144,12 @@ class ReportsMixin:
                     stamp, start = seen, began
                     if not taken:  # (after waiting for another process: worked out from what the database holds now)
                         start, (stamp, _) = wall(), self._answer_stamp(topic, changes)
-                    value = compute()
+                    with self._holding(lease, owner) if taken else nullcontext():
+                        value = compute()
                     kept = (stamp, value, start)
-                    self.keep_answer(name, key, version, stamp, encode(value), start)
+                    encoded = encode(value)
+                    if self.keep_answer(name, key, version, stamp, encoded, start) is None:
+                        unkept = lambda: self.keep_answer(name, key, version, stamp, encoded, start, wait=True)  # noqa: E731
                 with _KEPT_LOCK:
                     _KEPT.pop(here, None)  # (the latest used last: the oldest goes first)
                     _KEPT[here] = (kept[0], value, kept[2])
@@ -155,7 +161,7 @@ class ReportsMixin:
                 return value
             finally:
                 if not took and taken:
-                    self._briefly_or(lambda: self.drop_lease(lease, OWNER), None)  # type: ignore[attr-defined]
+                    self._let_go(lease, owner, unkept)
         finally:
             if got:
                 working.release()
@@ -174,11 +180,12 @@ class ReportsMixin:
         except (ValueError, TypeError):
             return None
 
-    def keep_answer(self, name: str, key: str, version: str, stamp: Any, value: Any,
-                    made: float | None = None) -> bool:  # fmt: skip
+    def keep_answer(self, name: str, key: str, version: str, stamp: Any, value: Any, made: float | None = None, *,
+                    wait: bool = False) -> bool | None:  # fmt: skip
         """Keep ``value`` (JSON-ready) under ``name`` and ``key`` for the other processes, worked out under ``stamp``
-        from ``made`` (``time.time``, default now); False when it was not: bigger than ``ANSWER_MOST_BYTES``, not
-        JSON, or the database busy or full (it is then worked out again, nothing else changes). The oldest past
+        from ``made`` (``time.time``, default now); False when it is not kept: bigger than ``ANSWER_MOST_BYTES``, or
+        not JSON (it is then worked out again, nothing else changes); None when the database was busy or full just
+        now (waiting at most a moment for another writer; ``wait``: as long as any write does). The oldest past
         ``ANSWERS_KEPT`` of the name go."""
         try:
             text = json.dumps(value, separators=(",", ":"), allow_nan=False)
@@ -202,7 +209,13 @@ class ReportsMixin:
                              (name, name, ANSWERS_KEPT))  # fmt: skip
             return True
 
-        return self._briefly_or(write, False)
+        if not wait:
+            return self._briefly_or(write, None)
+        try:
+            return write()
+        except sqlite3.Error as exc:
+            _log.info("not kept for the other processes (%s)", exc)
+            return None
 
     def _answer_stamp(self, topic: str, changes: tuple[str, ...]) -> tuple[list[Any], bool]:
         """(the stamp an answer is worked out under, read now; whether this is inside a write or read under way)."""
@@ -218,6 +231,43 @@ class ReportsMixin:
                 self._summary_fresh(conn)  # type: ignore[attr-defined]
             stamp = list(conn.execute(f"SELECT {', '.join(reads)}", args).fetchone())
             return stamp, conn.in_transaction
+
+    @contextmanager
+    def _holding(self, lease: str, owner: str) -> Iterator[None]:
+        """While an answer is worked out: its hold renewed every ANSWER_RENEW on a thread of its own, so the others
+        asking wait for it however long the work takes, and pass over a process that stopped within ANSWER_LEASE
+        (B-1807). A renewal the database is too busy for is tried again at the next."""
+        done = threading.Event()
+
+        def renew() -> None:
+            while not done.wait(ANSWER_RENEW):
+                self._briefly_or(lambda: self.renew_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
+
+        beat = threading.Thread(target=renew, name="ap-coder-answer-hold", daemon=True)
+        beat.start()
+        try:
+            yield
+        finally:
+            done.set()
+            beat.join(1)
+
+    def _let_go(self, lease: str, owner: str, unkept: Callable[[], Any] | None) -> None:
+        """Let go of the hold on an answer worked out (``unkept``: first keep what the database was too busy to keep).
+        What the database is too busy for just now is done on a thread of its own once it is free, so the others
+        asking take the answer then, not ANSWER_WAIT later (B-1808); the answer is kept only while the hold is still
+        this process's (another may have worked out a later one meanwhile)."""
+        if unkept is None and self._briefly_or(lambda: self.drop_lease(lease, owner) or True, False):  # type: ignore[attr-defined]
+            return
+
+        def later() -> None:
+            try:
+                if unkept is not None and self.renew_lease(lease, owner, ANSWER_LEASE):  # type: ignore[attr-defined]
+                    unkept()
+                self.drop_lease(lease, owner)  # type: ignore[attr-defined]
+            except sqlite3.Error as exc:  # the hold runs out by itself within ANSWER_LEASE
+                _log.info("the hold on %s was not let go of (%s)", lease, exc)
+
+        threading.Thread(target=later, name="ap-coder-answer-let-go", daemon=True).start()
 
     def _lease_held(self, name: str) -> bool:
         with self._conn() as conn:  # type: ignore[attr-defined]
