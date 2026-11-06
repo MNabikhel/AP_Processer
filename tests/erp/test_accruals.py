@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import sqlite3
 
 import pytest
 
@@ -280,6 +281,56 @@ def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_change
     assert acme in accruals._PARTS[(str(store.path), end.isoformat())]
 
 
+def test_received_not_invoiced_are_of_one_moment_though_another_worker_approves_while_they_are_read(
+    tmp_path, monkeypatch
+):
+    """B-1818: the invoices billing each received PO were read (the summary) a moment before their codings, so another
+    worker's approval between the two that moved an invoice to another PO with other lines gave accruals of no one
+    moment: its new lines on its old PO, its new PO billed by nothing. The POs, the invoices billing them and their
+    codings are read in one moment."""
+    import threading
+
+    from tests.core.test_kept_answers import _po_line
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    nuts = {**_po_line(1, 5.0), "po_number": "PO-2", "description": "Hex nuts", "unit_price": 1.0, "amount": 10.0}
+    other.import_purchase_orders([_po_line(1, 4.0), nuts])
+    end = dt.date(2026, 10, 31)
+
+    def bill(po: str, what: str, quantity: float, price: float) -> dict:
+        line = {"line_number": 1, "description": what, "quantity": quantity, "unit_price": price,
+                "amount": quantity * price, "predicted_gl_code": "6010"}  # fmt: skip
+        total = quantity * price
+        return {"vendor_name": "Acme Supply", "invoice_number": "A-1", "po_number": po, "invoice_date": "2026-10-03",
+                "currency": "CAD", "line_items": [line], "subtotal": total, "grand_total": total}  # fmt: skip
+
+    invoice = other.add_invoice(tmp_path / "a.pdf", bill("PO-1", "Bolts size 1", 4, 2.0), {})
+
+    def received() -> list[tuple]:
+        return [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, end)]
+
+    before = received()
+    assert before == [("PO-2 line 1", 5.0)]
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM report_answers")  # (nothing kept: every invoice read again)
+    accruals._PARTS.clear()
+    real = Store.billing_codings
+
+    def racing(self, ids):  # another worker's approval, just before the codings are read
+        if self is store and not raced:
+            raced.append(1)
+            worker = threading.Thread(target=other.approve_invoice,
+                                      args=(invoice, bill("PO-2", "Hex nuts", 5, 1.0), "Jordan Lee"))  # fmt: skip
+            worker.start()
+            worker.join()
+        return real(self, ids)
+
+    raced: list[int] = []
+    monkeypatch.setattr(Store, "billing_codings", racing)
+    assert received() == before and raced  # (as it was when the read began)
+    assert received() == [("PO-1 line 1", 8.0)]  # (and after the approval)
+
+
 def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_po_or_the_setup_does(
     tmp_path, monkeypatch
 ):
@@ -327,6 +378,253 @@ def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_p
     _plain(store, "UPDATE invoices SET status = 'rejected' WHERE id = ?", invoice)
     assert shown()[1] == {approved}  # settled
     assert shown(settle=0)[1] == set()  # the CSV: always what reading again gives
+
+
+_VENDORS = ("Acme Supply", "Bolt Works", "Cog Ltd")
+_ITEMS = (("Bolts size 1", 2.0), ("Bolts size 2", 2.5), ("Washers", 0.1), ("Hex nuts", 1.0), ("Delivery", 25.0))
+_ENDS = (dt.date(2026, 9, 30), dt.date(2026, 10, 31))
+_CHANGES = ("add", "approve", "lines", "date", "coding date", "vendor", "no vendor", "po", "delete", "export",
+            "undo export", "park", "reject", "reopen", "pos", "older", "undone", "restore")  # fmt: skip
+
+
+def _orders(rng) -> list[dict]:
+    """Four POs of three vendors (two of Acme's), three lines each, some received."""
+    rows = []
+    for number, vendor in (("PO-1", "Acme Supply"), ("PO-2", "Acme Supply"), ("PO-3", "Bolt Works"),
+                           ("PO-4", "Cog Ltd")):  # fmt: skip
+        for n, (what, price) in enumerate(rng.sample(_ITEMS, 3), 1):
+            rows.append({"po_number": number, "vendor_name": vendor, "line_number": n, "description": what,
+                         "quantity": 20.0, "unit_price": price, "amount": 20 * price,
+                         "received_quantity": rng.choice((None, 4.0, 12.0, 20.0)), "gl_code": "6010",
+                         "cost_center": "", "status": "open", "amount_only": False, "open_amount": None})  # fmt: skip
+    return rows
+
+
+def _month_bill(rng, n: int, vendor: str | None = None) -> dict:
+    """An invoice of one of the vendors, on one of the POs or none, its lines some of the POs' (as they are, alike,
+    at another price, a credit), dated in either month, after both or not at all."""
+    lines = []
+    for k, (what, price) in enumerate(rng.sample(_ITEMS, rng.randint(1, 3)), 1):
+        quantity, price = rng.choice((1.0, 2.0, 3.5, 0.1, -1.0)), price * rng.choice((1.0, 1.01, 1.5))
+        lines.append({"line_number": k, "description": rng.choice((what, what.lower(), f"{what} checked")),
+                      "quantity": quantity, "unit_price": price, "amount": round(quantity * price, 2),
+                      "predicted_gl_code": "6010"})  # fmt: skip
+    return {"vendor_name": vendor or rng.choice(_VENDORS), "invoice_number": f"M-{n}",
+            "po_number": rng.choice(("PO-1", "PO-2", "PO-3", "", "")), "currency": "CAD", "line_items": lines,
+            "invoice_date": rng.choice(("2026-09-12", "2026-10-03", "2026-11-02", "")), "subtotal": 10.0,
+            "grand_total": 10.5}  # fmt: skip
+
+
+def _month_change(rng, writer: Store, tmp_path, n: int, backup, keep: int) -> str:
+    """One change, picked at random among the ways what month-end reads of an invoice changes: through a Store (either
+    worker's) or plain SQL, an older AP Coder's (no log), a write undone, a restore."""
+    import re
+
+    from ap_coder.coding.po import po_key
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.core.store.summary import SUMMARY_TRIGGERS
+    from tests.core.test_vendor_changes import _LOGGING, _short_log
+
+    path = writer.path
+
+    def ids(*statuses: str) -> list[int]:
+        with sqlite3.connect(path) as conn:
+            return [r[0] for r in conn.execute("SELECT id FROM invoices WHERE status IN (SELECT value FROM "
+                                               "json_each(?)) ORDER BY id", (json.dumps(statuses),))]  # fmt: skip
+
+    def plain(sql: str, *args) -> None:
+        with sqlite3.connect(path) as conn:
+            conn.execute(sql, args)
+
+    # A coding's value changed, the approved one if there is one, else AP Coder's.
+    coding = ("UPDATE invoices SET final_output = CASE WHEN json_valid(final_output) THEN json_set(final_output, "
+              "{0}) ELSE final_output END, ai_output = CASE WHEN json_valid(final_output) THEN ai_output ELSE "
+              "json_set(ai_output, {0}) END WHERE id = ?2")  # fmt: skip
+    review, active = ids("review"), ids("review", "parked", "pending_approval", "approved")
+    action = rng.choices(_CHANGES, [0.3 if a in ("restore", "older") else 1 for a in _CHANGES])[0]
+    if action == "add" or not review:
+        writer.add_invoice(tmp_path / f"m-{n}.pdf", _month_bill(rng, n), {})
+        return "add"
+    invoice, any_one = rng.choice(review), rng.choice(active or review)
+    if action == "approve":
+        writer.approve_invoice(invoice, _month_bill(rng, n, writer.get_invoice(invoice)["vendor_name"]), "Jordan Lee")
+    elif action == "lines":
+        plain(coding.format("'$.line_items[0].quantity', ?1"), rng.choice((0.5, 4.0, -2.0)), any_one)
+    elif action == "date":  # its own date, or none: its coding's then
+        plain("UPDATE invoices SET invoice_date = ? WHERE id = ?", rng.choice(("2026-09-30", "2026-11-01", None)),
+              any_one)  # fmt: skip
+    elif action == "coding date":
+        plain(coding.format("'$.invoice_date', ?1"), rng.choice(("2026-09-01", "2026-10-31", "2026-12-01")), any_one)
+    elif action == "vendor":  # another vendor's now
+        name = rng.choice(_VENDORS)
+        plain("UPDATE invoices SET vendor_name = ?, vendor_key = ? WHERE id = ?", name, vendor_key(name), any_one)
+    elif action == "no vendor":  # (whose changes no log follows)
+        plain("UPDATE invoices SET vendor_key = NULL WHERE id = ?", any_one)
+    elif action == "po":  # on another PO, or none (its PO alone: not logged)
+        plain("UPDATE invoices SET po_key = ? WHERE id = ?", po_key(rng.choice(("PO-1", "PO-2", "PO-3", ""))),
+              any_one)  # fmt: skip
+    elif action == "delete":
+        writer.delete_invoice(invoice, actor="Ann")
+    elif action == "export":
+        with sqlite3.connect(path) as conn:
+            ready = [r[0] for r in conn.execute("SELECT id FROM invoices WHERE status = 'approved' AND export_batch "
+                                                "IS NULL")]  # fmt: skip
+        if ready:
+            writer.create_export_batch(rng.sample(ready, min(2, len(ready))), "csv", "Ann")
+    elif action == "undo export":
+        with sqlite3.connect(path) as conn:
+            batches = [r[0] for r in conn.execute("SELECT DISTINCT export_batch FROM invoices WHERE export_batch > 0")]
+        if batches:
+            writer.undo_export_batch(rng.choice(batches), "Ann")
+    elif action == "park":
+        if ids("parked") and rng.random() < 0.5:
+            writer.unpark_invoice(rng.choice(ids("parked")), "Ann")
+        else:
+            writer.park_invoice(invoice, "Ann", "waiting for the PO")
+    elif action == "reject":
+        writer.reject_invoice(invoice, "Ann", "a copy")
+    elif action == "reopen" and ids("rejected"):
+        writer.reopen(rng.choice(ids("rejected")), "Ann", "again")
+    elif action == "pos":  # the POs imported again: other lines, other quantities received
+        writer.import_purchase_orders(_orders(rng))
+    elif action == "older":  # an older AP Coder's triggers, counting only (B-1811), then this one's again
+        with sqlite3.connect(path) as conn:
+            for name in _LOGGING:
+                conn.execute(f"DROP TRIGGER {name}")
+                conn.execute(re.sub(r"; INSERT INTO vendor_changes .*? - \d+", "", SUMMARY_TRIGGERS[name]))
+        plain(coding.format("'$.line_items[0].quantity', ?1"), rng.choice((0.5, 4.0)), any_one)
+        _short_log(path, keep)
+    elif action == "undone":  # month-end asked inside a write under way, then the write undone
+        with pytest.raises(RuntimeError), writer.session(), writer._conn() as conn:
+            conn.execute(coding.format("'$.line_items[0].quantity', ?1"), (7.0, any_one))
+            conn.execute("UPDATE invoices SET status = 'rejected' WHERE id = ?", (invoice,))
+            for end in _ENDS:
+                accruals.build(writer, end)
+            raise RuntimeError("undone")
+    elif action == "restore":
+        writer.restore_from(backup)
+        _short_log(path, keep)  # (the migration made the log's triggers as they are)
+    return action
+
+
+@pytest.mark.parametrize("seed, keep", [(1, 1000), (2, 8), (3, 1000), (4, 8)])
+def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_any_changes_in_two_processes(
+    tmp_path, monkeypatch, seed, keep
+):
+    """D-177: what month-end reads of each invoice billing a received PO is kept for every process by vendor and
+    brought up to date from the vendors' change log. Random changes by two workers and plain SQL (an invoice added,
+    approved with other lines, its lines, date or coding's date changed, moved to another vendor, to none or to another
+    PO, deleted, exported and its batch undone, parked, rejected and reopened; the POs imported again; an older AP
+    Coder's change, logged nowhere; a write undone; a restore), each worker asking at either period end between them,
+    with a log of ``keep`` changes (8: pruned before a worker asks): its accruals CSV, and now and then its page, byte
+    for byte what working them out afresh gives (nothing kept in any process or the database), and most invoices'
+    lines taken as they were kept."""
+    import difflib
+    import itertools
+    import random
+
+    from ap_coder.core.store import purchasing, reports
+    from ap_coder.core.store import summary as summary_module
+    from tests.core.test_kept_answers import _Processes
+    from tests.core.test_vendor_changes import _short_log
+    from tests.webclient import client_for
+
+    clock = itertools.count(1_000_000, 100)  # (never settled: each page as it is now, its counts too)
+    monkeypatch.setattr(reports, "wall", lambda: float(next(clock)))
+    monkeypatch.setattr(summary_module, "monotonic", lambda: float(next(clock)))
+    monkeypatch.setattr(purchasing, "BILLING_REWRITE", 3)  # (a vendor's row written again, or read as it is, often)
+    rng, process = random.Random(seed), _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders(_orders(rng))
+    for n in range(12):
+        other.add_invoice(tmp_path / f"m-{n}.pdf", _month_bill(rng, n), {})
+    backup = store.backup_now("manual")
+    _short_log(store.path, keep)
+    client, fresh, decoded, needed = client_for(store), itertools.count(), [], []
+    real = Store.billing_codings
+    monkeypatch.setattr(Store, "billing_codings", lambda self, ids: decoded.extend(ids) or real(self, ids))
+    lines = Store.billing_lines
+    monkeypatch.setattr(
+        Store, "billing_lines", lambda self, rows, moment: needed.extend(rows) or lines(self, rows, moment)
+    )
+
+    def shown(end: dt.date, page: bool) -> tuple[bytes, str]:
+        csv = accruals.to_csv(accruals.build(store, end), end)
+        return csv, client.get(f"/month-end?end={end}").text if page else ""
+
+    def afresh(end: dt.date, page: bool) -> tuple[bytes, str]:
+        with sqlite3.connect(store.path) as conn:
+            kept = conn.execute("SELECT * FROM report_answers").fetchall()
+            conn.execute("DELETE FROM report_answers")
+        process(f"afresh {next(fresh)}")
+        found = shown(end, page)
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("DELETE FROM report_answers")
+            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?)", kept)
+        return found
+
+    done, asked, read = [], 0, 0
+    for n in range(12, 72):
+        done.append(_month_change(rng, rng.choice((store, other)), tmp_path, n, backup, keep))
+        for worker in rng.sample(("worker 1", "worker 2"), rng.randint(1, 2)):
+            for end in rng.sample(_ENDS, rng.randint(1, 2)):
+                page = rng.random() < 0.15
+                process(worker)
+                needed.clear(), decoded.clear()
+                mine = shown(end, page)
+                asked, read = asked + len(needed), read + len(decoded)
+                theirs = afresh(end, page)
+                changed = list(difflib.unified_diff(mine[1].splitlines(), theirs[1].splitlines(), lineterm="", n=0))
+                assert mine == theirs, (seed, n, done[-3:], worker, end, changed[:12])
+                assert mine[0].count(b"Received, not invoiced") or not page
+    assert {"approve", "lines", "vendor", "po", "delete", "older", "restore"} <= set(done) or seed != 1
+    assert read < asked / 2  # (most invoices' lines as they were kept)
+    """D-177: ``billed_on`` takes a line's PO line from its description alone when no price can change it (none
+    resembles it enough even at the same price, or one more at another price than any other at the same), and works
+    the price out otherwise. Over random POs and lines (descriptions the same, alike or not, prices at either edge of
+    a PO line's band), the same quantities, to the last bit, as matching each line in turn (``billed_by_line``); both
+    ways taken."""
+    import random
+
+    from ap_coder.coding import po
+
+    rng = random.Random(7)
+    words = ["Toner cartridge", "toner cartridge black", "Paper A4 case", "Paper A4", "Delivery", "Delivery charge",
+             "Printer service visit", "Service visit", "Bolts size 1", "Bolts size 2", "", None]  # fmt: skip
+    taken = {"description": 0, "price": 0}
+    real = po._whatever_price
+
+    def watched(description, lines):
+        found = real(description, lines)
+        taken["description" if found is not None else "price"] += 1
+        return found
+
+    for _ in range(300):
+        prices = [rng.choice((0.0, 0.1, 2.0, 25.0, 80.0, 95.0, 150.0)) for _ in range(rng.randint(1, 5))]
+        order = {"lines": [{"line_number": n, "description": rng.choice(words[:-2]), "unit_price": p}
+                           for n, p in enumerate(prices, 1)]}  # fmt: skip
+        lines = []
+        for _ in range(rng.randint(1, 30)):
+            at, room = po._price_band(rng.choice(prices))
+            price = rng.choice((at, at + room, at - room, at + room * 1.0001, at - room * 1.0001, at * 3, -at))
+            lines.append({"description": rng.choice(words), "unit_price": price,
+                          "quantity": rng.choice((1, 2, 0.1, 0.7, 3.3, -1)),
+                          "amount": rng.choice((10.0, -5.0))})  # fmt: skip
+        invoices = [{"coding": {"line_items": lines}}]
+        expected = po.billed_by_line(order, invoices, positive_only=True)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(po, "_whatever_price", watched)
+            assert po.billed_on(order, po.positive_lines(invoices)) == expected
+    assert taken["description"] > 100 and taken["price"] > 100
+    # A tie: line 1 at the same price (0.3 + 0.2) resembles it exactly as much as line 2 at another: the first wins.
+    order = {"lines": [{"line_number": 1, "description": "one", "unit_price": 10.0},
+                       {"line_number": 2, "description": "two", "unit_price": 50.0}]}  # fmt: skip
+    invoices = [{"coding": {"line_items": [{"description": "it", "unit_price": price, "quantity": 1.0, "amount": 1.0}
+                                           for price in (10.0, 50.0)]}}]  # fmt: skip
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(po, "similarity", lambda a, b: {"one": 0.3, "two": 0.5}.get(b, 0.0))
+        assert po.billed_on(order, po.positive_lines(invoices)) == {1: 1.0, 2: 1.0}
+        assert po.billed_by_line(order, invoices, positive_only=True) == {1: 1.0, 2: 1.0}
 
 
 def test_default_period_end():
