@@ -1748,7 +1748,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     made before the log gets the log first (otherwise every invoice write while its files were copied failed, "no
     such table"). The schema stays 27.
   - **The check reads the rows kept** (`vendor_invoices(key, shared=True)`), each read-only (`MappingProxyType`,
-    about 56 bytes a row more): a copy of each, twice a check, was 21 ms for 23,000 rows (D-160). Other callers still
+    40 bytes a row more): a copy of each, twice a check, was 21 ms for 23,000 rows (D-160). Other callers still
     get copies of their own. A vendor grown past half the rows a worker keeps lets go of what was kept (B-1790).
   - **Also in the check's vendor path:**
     - `approved_numbers` (the approved numbers of the vendors on hold, twice a check): stamped by those vendors' own
