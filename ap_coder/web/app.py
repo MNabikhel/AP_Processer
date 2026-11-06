@@ -341,6 +341,13 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
+        if app.state.processes == 1:  # its own bulk approval: put back in line after the invoice under way (D-185)
+            from ap_coder.coding.bulk import RECHECK_STOP_SECONDS
+            from ap_coder.web import jobs
+
+            here, ends = jobs.stop_here(store), time.monotonic() + RECHECK_STOP_SECONDS
+            while here is not None and here.is_alive() and time.monotonic() < ends:
+                await anyio.sleep(0.05)
         if app.state.queue_recheck is not None:  # it ends between two batches, letting go of its lease
             from ap_coder.coding.bulk import RECHECK_STOP_SECONDS
 

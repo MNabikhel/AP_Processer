@@ -714,8 +714,9 @@ class InvoicesMixin:
         approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
         kept = suggestion_kept
         # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
-        # coding memory is not part of what it proposed (B-562).
-        cost_centers = out.cost_centers = bool(self.list_accounts("cost_centers"))
+        # coding memory is not part of what it proposed (B-562). Whether there is one, never the whole list (B-1933).
+        with self._conn() as conn:
+            cost_centers = out.cost_centers = conn.execute("SELECT 1 FROM cost_centers LIMIT 1").fetchone() is not None
         final_lines = final_output.get("line_items", [])
         # Where it is supplied, for the tax code each line is remembered with (D-80).
         province = supply_province(final_output, self.our_province())

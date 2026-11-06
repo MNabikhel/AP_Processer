@@ -2838,33 +2838,56 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/core/test_store_ephemeral.py`)
 - **D-185** · **Bulk approval as a background job; a session that ended keeps the page; every request of the pages'
   scripts has a deadline** (scale goal, phase 5, S2; items 6, 11 and 15 of `docs/archive/scale-2026-11/web_frontend.md`;
-  B-1925 to B-1927).
+  B-1925 to B-1927; after its review, B-1928 to B-1934).
   - **Why:** a person approving 200 clean invoices held a web worker's thread for the whole run (6.6 s at 200 on this
     machine, one request with no progress, cut by a proxy's timeout while it went on behind); a check, an approval or a
     poll answered by the login sent the page to the login (the review screen kept its edits in the tab, B-1594; any
     other page was lost); and one request had no deadline (the upload, B-1926), the data-long actions none either.
   - **The job** (`core/store/bulk_jobs.py`, table `bulk_jobs` by `_SCHEMA`, no schema version of its own, as
-    `past_lines`): the invoices asked, each with its `row_identity` as the page listed it, who asked (their name and
-    login, and the person as `identity.kept_person` keeps them), what was approved and what was left with why.
+    `past_lines`): the invoices asked, each with its `row_identity` and its stamp as the page listed them, who asked
+    (their name and login, and the person as `identity.kept_person` keeps them), what was approved and what was left
+    with why. The stamp (`Store.bulk_stamps`) is the id of the invoice's last event that moved it in or out of the
+    queue or stored its coding (`coding_revision`'s, D-184) or read it again (`proposal_updated`); the queue's form
+    carries each one's as it drew it (a form without them: as they are when it is posted, B-1928).
     - One open (waiting or being approved) a person (a unique index and one write transaction: four web workers asking
       at once get one job); asked again meanwhile, the page of the one under way says so.
     - Done by the company server's background process (`jobs.BulkRunner`, started by `app.start_background_work`, two
       at a time, oldest first), as D-169's downloads; on a laptop, or a server of one process without its background
       work, by a thread of the process asked (`jobs.approve_here`), which ends once none waits.
-    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`) → "changed
-      meanwhile"; not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
-      `bulk_approve`, which the tests and the bench still use); else approved as coded. The approval and the job's
-      record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only while the job is still
-      that runner's, and in it the review screens' drafts are looked at (someone's edits kept → "it has edits open on
-      its review screen"; the queue's request read them once at its start, now each invoice's own moment); the
-      approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted on meanwhile.
-      So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
+    - Each invoice (`bulk.approve_in_job`): no longer the invoice listed (another `row_identity`, or its stamp moved:
+      approved and undone, reopened, parked and brought back, a manager's answer, read again) → "changed meanwhile",
+      looked at again inside the approval's transaction, so coding stored after the job checked it is never written
+      over (B-1928); not clean by today's checks → why, exactly as before (`bulk._still_clean`, split out of
+      `bulk_approve`, which the tests and the bench still use); open on someone else's review screen now (the server's
+      presence, `Store.open_by`, D-184), nothing of theirs checked yet → "Ann Lee has it open on the review screen",
+      theirs to approve (B-1934; one only the person asking has open is approved); else approved as coded. The
+      approval and the job's record of it are one write transaction (`Store.bulk_step`, BEGIN IMMEDIATE), taken only
+      while the job is still that runner's, and in it the review screens' drafts are looked at (someone's edits kept →
+      "it has edits open on its review screen"; the queue's request read them once at its start, now each invoice's
+      own moment); the approval's own compare-and-set (`approve_invoice`, `WHERE status = 'review'`) refuses one acted
+      on meanwhile. Nothing in that lock reads a whole list (whether there are cost centers is one row looked for,
+      B-1933). So an invoice is approved at most once, and counted once, however the job is stopped or taken again.
   - **A restart:** a background process stopping puts the job back in line between two invoices (its try not
-    counted); at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
-    background process a data folder, D-111). One whose process stopped noting its progress for 30 s is taken again by
-    another (`claim_bulk_job`), which goes on from the next invoice. Three stops end it, saying so ("AP Coder stopped
-    3 times…: the ones still in the queue need a person"); one of another format (an update changed it) ends the same
-    way; one of the database before a restore is no one's. What was done is kept and shown either way.
+    counted), and so does a laptop's dashboard closing (`jobs.stop_here`, waited for up to 5 s as the server's,
+    B-1930); at its next start, or a laptop's (`jobs.resume_bulk`), jobs left being approved are put back too (one
+    background process a data folder, D-111). Its progress is noted at each invoice's start and at its approval
+    (`renew_bulk_job`, `bulk_step`); one whose process stopped noting it for 30 s is taken again by another
+    (`claim_bulk_job`), which goes on from the next invoice. So an invoice's learning taking long never lets another
+    take it (B-1931); one invoice whose own check and approval take over 30 s still does (as a process that hung
+    would). Three stops end it, saying so ("AP Coder stopped 3 times…: the ones still in the queue need a person");
+    one of another format (an update changed it) ends the same way; one of the database before a restore is no
+    one's. What was done is kept and shown either way.
+    - None is taken while a backup is restored (`Store.restoring`, as the page reader, the Azure check, the imports
+      and the JD Edwards sync wait). A database error noting a job's end or putting it back (locked past the 30 s
+      wait, a restore's moment without the table, a full disk) is logged, never the end of the thread: the job is
+      ended once it is taken again (30 s on), and the laptop's thread, however it ends, no longer marks the database
+      as approved by it, so the next one asked starts another (B-1929).
+    - What is not done again: an invoice's learning (`learn_from_approval`) follows its approval's commit, as the
+      review screen's Approve does, so a process that dies in between (killed, the power off: an orderly stop waits
+      for it) loses that one invoice's learning, the invoice approved and counted once. The job taken again does not
+      learn it again: learning is several writes, not one transaction, and not safe to make twice (it counts what was
+      kept and corrected, and teaches the template); it reads the invoice's pages (seconds for a scan), so it is never
+      made inside the approval's write lock either.
   - **As the person who asked:** the job runs inside `identity.acting_as(kept)` (`person()`, the events' actor and
     address as their request's), their name and login on each approval and its learning: whether their session goes
     on or not. On the server it stops (with why) once their account may no longer approve (turned off, or a role below
@@ -2904,10 +2927,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (D-169).
   - **Measured** (`scripts/ci/perf_timing.py --invoices 600 --bulk 200`, which now waits for the job's end): before,
     6.6 s in the request, one thread held; now the answer after 3 s holding none, the 200 approved in 6.3 s by the
-    job's thread (6 connections in all). `scripts/same_behaviour.py --ref 6152f8a approve`: same.
+    job's thread (6 connections in all). `scripts/same_behaviour.py --ref 6152f8a approve`: same. After its review
+    (each invoice's stamp read, the job renewed at each invoice): 200 in 6.2 s, `/review` 1.32 s (6.5 s and 1.31 s
+    just before, on the same machine).
   - **Left:** the queue still lists and posts every candidate (a cap and "select all N" are item 12); the page doesn't
     warn before the idle limit; the job's progress is a line, not a bar.
-  - (`core/store/bulk_jobs.py`, `coding/bulk.py`, `web/jobs.py`, `web/pages/review.py` (the bulk route and its page),
-    `web/identity.py`, `web/pages/login.py`, `web/app.py`, `web/roles.py`, `web/static/js/{app,process,settings}.js`,
-    one call of `invoice.js`, `review.html`, `review_bulk.html`; `tests/core/test_bulk_jobs.py`,
-    `tests/web/test_web_review_bulk.py`, `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)
+  - (`core/store/bulk_jobs.py`, `core/store/invoices.py` (B-1933), `coding/bulk.py`, `web/jobs.py`,
+    `web/pages/review.py` (the bulk route and its page), `web/identity.py`, `web/pages/login.py`, `web/app.py`,
+    `web/roles.py`, `web/static/js/{app,process,settings}.js`, one call of `invoice.js`, `review.html`,
+    `review_bulk.html`; `tests/core/test_bulk_jobs.py`, `tests/web/test_web_review_bulk.py`,
+    `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)
