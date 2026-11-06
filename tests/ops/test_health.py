@@ -260,6 +260,17 @@ def test_the_heartbeat_says_how_long_ago_a_process_beat(tmp_path):
     assert health.background(store, processes=1) == {"in_this_process": True, "status": health.OK}
 
 
+def test_the_servers_background_process_beats_as_it_starts(tmp_path, monkeypatch):
+    from ap_coder.web import app, server
+
+    monkeypatch.setattr(server, "until_input_closes", lambda on_close, poll=0.5: time.sleep(0.5) or on_close())
+    monkeypatch.setattr(app, "start_background_work", lambda settings, store: ())  # (its work is tested on its own)
+    monkeypatch.setattr(server, "background_log", lambda folder, name="": None)  # (no handler left on the logger)
+    store = Store(tmp_path / "ap.db")
+    assert server.run_background(store) == 0
+    assert store.heartbeat_age(health.HEARTBEAT) < 30
+
+
 def test_the_queues_depths_and_oldest_waits(tmp_path, monkeypatch):
     store = Store(tmp_path / "ap.db")
     assert health.imports(store) == {"waiting": 0, "reading": 0, "oldest_wait_seconds": None}

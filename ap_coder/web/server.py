@@ -953,7 +953,7 @@ def run_background(store: Store) -> int:
     from ap_coder.erp.hub.run import HubSchedule
 
     backup, hub = DailyBackup(store), HubSchedule(store)
-    _beat(store)  # alive, said every 30 s in the database: /readyz reads it (D-187)
+    health.beat(store)  # alive, said every 30 s in the database: /readyz reads it (D-187)
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
     log.info(
@@ -962,7 +962,7 @@ def run_background(store: Store) -> int:
     )
     try:
         while not halt.wait(30.0):
-            _beat(store)
+            health.beat(store)
             backup.check()
             hub.check()
     except KeyboardInterrupt:
@@ -977,11 +977,6 @@ def run_background(store: Store) -> int:
                 thread.join(max(0.1, deadline - time.monotonic()))
         lock.close()
     return 0
-
-
-def _beat(store: Store) -> None:
-    with contextlib.suppress(Exception):  # (a busy database: the next beat, well within health.STALE_SECONDS)
-        store.beat(health.HEARTBEAT)
 
 
 def run_capture(store: Store) -> int:
