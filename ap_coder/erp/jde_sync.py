@@ -461,6 +461,17 @@ def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
 AFTER_READ = {"purchase_orders": _close_pos, "vouchers": _remove_vouchers}
 
 
+class _LeaseLost(Exception):
+    """Another sync took this one's lease (it waited on JD Edwards longer than LEASE_SECONDS): it stops there."""
+
+
+def _hold(store: Any, lease: str) -> None:
+    """The sync's lease renewed, else _LeaseLost: nothing more written (the caller's transaction undone)."""
+    if lease and not store.renew_lease(LEASE, lease, LEASE_SECONDS):
+        raise _LeaseLost("stopped: another sync took over while this one waited on JD Edwards; it reads everything "
+                         "this one would.")  # fmt: skip
+
+
 def _log_part(store: Any, run: _Run) -> None:
     """The part's import, logged once for all its pages, as its CSV import logs it (nothing read: nothing logged)."""
     r = run.report
@@ -552,15 +563,15 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
             for page, following in client.pages(part, read["inputs"], after=plan["after"]):
                 rows, held = _whole_pos(held + page) if part == "purchase_orders" and following else (held + page, [])
                 run.report["read"] += len(page)
-                with store._conn():  # the page, where the read is and the lease: one short transaction
+                with store._conn():  # the lease, the page and where the read is: one short transaction
+                    _hold(store, lease)
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])
                     progress[part] = plan
                     store.set_setting(PROGRESS_KEY, json.dumps(progress))
-                    if lease:
-                        store.renew_lease(LEASE, lease, LEASE_SECONDS)
             if part in AFTER_READ:
+                _hold(store, lease)
                 AFTER_READ[part](store, run, read)
             plan["step"], plan["after"] = step + 1, ""
             store.set_setting(PROGRESS_KEY, json.dumps(progress))
@@ -578,7 +589,8 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
          actor: str | None = None, allow_mass_close: bool = False, full: bool = False) -> dict[str, Any]:  # fmt: skip
     """Read each part from JD Edwards into the store. {"ok", "at", "parts": {part: report}, "errors": {part: why}}.
     Step 1 must be on (else ``AisOff``, nothing sent). JDE unreachable: the parts left are not tried. Another sync
-    under way (here or on another computer of the company server): nothing is tried, nothing saved.
+    under way (here or on another computer of the company server): nothing is tried, nothing saved; one that took
+    over meanwhile (this one waited on JDE longer than its lease): this one stops there, nothing more saved.
     ``allow_mass_close``: close the POs (remove the vouchers) JDE no longer lists even when that is most or all of
     them. ``full``: every part read whole (what JDE deleted, closed or voided is seen only so)."""
     own = client is None
@@ -592,11 +604,16 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
         report["errors"] = dict.fromkeys(parts, busy)
         report["ok"] = False
         return report
+    lost = False
     try:
         for part in parts:
             try:
                 report["parts"][part] = _sync_part(store, client, part, actor, full=full,
                                                    allow_mass_close=allow_mass_close, lease=lease)  # fmt: skip
+            except _LeaseLost as exc:
+                lost = True
+                report["errors"].update(dict.fromkeys(parts[parts.index(part) :], str(exc)))
+                break
             except jde_ais.AisError as exc:
                 report["errors"][part] = str(exc)
                 if exc.kind in jde_ais.DOWN or exc.kind in (jde_ais.AUTH, jde_ais.CERTIFICATE, jde_ais.ADDRESS):
@@ -611,7 +628,8 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
     saved = {**state(store), "tried": report["at"], "report": report}
     if report["ok"]:
         saved["at"] = report["at"]
-    store.set_setting(STATE_KEY, json.dumps(saved))
+    if not lost:  # (else the sync that took over says how it went)
+        store.set_setting(STATE_KEY, json.dumps(saved))
     store.log_event("jde_synced", actor=actor, detail={
         "ok": report["ok"], **{p: {k: _count(r, k) if isinstance(v, list) else v for k, v in r.items()}
                                for p, r in report["parts"].items()}, "errors": sorted(report["errors"])})  # fmt: skip

@@ -313,3 +313,23 @@ def test_a_po_whose_lines_jde_closes_on_different_days_closes_with_its_last(stor
     last.update(next_status=jde_sync.CLOSED_STATUS, _changed=_day(0))
     assert jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]["mode"] == jde_sync.CHANGES
     assert store.purchase_order("4512")["status"] == "closed"
+
+
+def test_a_sync_whose_lease_another_took_stops_there(store, ais):
+    """B-1898: a sync that waited on JD Edwards longer than its lease (a page slower than 15 minutes: AIS's timeout up
+    to 300 s, three tries) never noticed another had taken over (``renew_lease``'s answer ignored): both wrote, and
+    the older one's stamp on the vouchers both listed let the newer one's sweep remove vouchers JDE still holds. A
+    sync that can't renew its lease stops before writing the page, the other's lease left be (and a voucher keeps the
+    newest stamp it was listed with: ``tests/core/test_store_register.py``)."""
+    connect(store, ais)
+    ais.mapping["ais"]["page_size"] = 2
+    _vouchers(ais, 5)
+
+    def taken() -> None:  # meanwhile this one's lease ran out and another sync took it
+        store.drop_lease(jde_sync.LEASE, None)
+        assert store.take_lease(jde_sync.LEASE, "another", jde_sync.LEASE_SECONDS)
+
+    ais.script("vouchers", None, taken)
+    report = jde_sync.sync(store, parts=("vouchers",), client=jde_ais.AisClient(ais.settings(), ais.mapping))
+    assert "another sync took over" in report["errors"]["vouchers"] and _numbers(store) == {"B-0", "B-1"}
+    assert not store.take_lease(jde_sync.LEASE, "a third", 1)  # the other sync's lease kept

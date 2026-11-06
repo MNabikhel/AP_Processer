@@ -155,8 +155,9 @@ class RegisterMixin:
     def import_jde_vouchers(self, rows: list[dict[str, Any]], seen: int) -> int:
         """JD Edwards' vouchers (``jde_sync.voucher_rows``: its key, the supplier's name and number, the invoice
         number, date and gross) listed by the sync's read ``seen``, into the register: each kept by its key under its
-        bill; one that moved (its supplier renamed in JDE, its gross corrected) leaves its old bill, which goes with
-        its last voucher. One transaction (the caller's: a page of the read). How many bills are new."""
+        bill, with the newest read that listed it; one that moved (its supplier renamed in JDE, its gross corrected)
+        leaves its old bill, which goes with its last voucher. One transaction (the caller's: a page of the read). How
+        many bills are new."""
         vouchers: dict[str, tuple[str, str, float, dict[str, Any]]] = {}
         for r in rows:
             key, name, number = str(r.get("key") or ""), vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"])
@@ -178,7 +179,7 @@ class RegisterMixin:
                 "INSERT INTO erp_vouchers (erp_key, vendor_key, number_key, total, invoice_date, seen) "
                 "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET vendor_key = excluded.vendor_key, "
                 "number_key = excluded.number_key, total = excluded.total, invoice_date = excluded.invoice_date, "
-                "seen = excluded.seen",
+                "seen = MAX(erp_vouchers.seen, excluded.seen)",  # (an older read writing after a newer one)
                 [(key, *v[:3], v[3].get("invoice_date") or "", seen) for key, v in vouchers.items()],
             )
             conn.executemany(
