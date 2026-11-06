@@ -133,7 +133,7 @@ def _clear_reading_memory() -> None:
 
     table_finder._found.clear()
     layout._pruned.clear()
-    layout._SCAN_PNGS.clear()
+    layout._PICTURES.clear()
     store._FEEDBACK.clear()
     store._base._VENDOR_LESSONS.clear()
     store._base._PAST_MEMORY.clear()

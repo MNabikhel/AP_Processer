@@ -34,7 +34,7 @@ def _read_as_scanned(monkeypatch, turn: int) -> layout.PageLayout:
     """The page scanned so that ``turn`` (clockwise) sets it upright, as OCR reports its lines."""
     scanned = layout._turned(_ocr_result(), (360 - turn) % 360, W, H) if turn else _ocr_result()
     size = (W, H) if turn in (0, 180) else (H, W)
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: scanned)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: scanned)
     png = io.BytesIO()
     Image.new("RGB", size, "white").save(png, format="PNG")
     return layout.ocr_image(png.getvalue(), 1)
@@ -53,7 +53,7 @@ def test_a_turned_page_is_read_upright(monkeypatch, turn):
 def test_an_upright_page_with_few_amounts_is_never_turned(monkeypatch):
     lines = [[[[80, 60 + 40 * i], [600, 60 + 40 * i], [600, 90 + 40 * i], [80, 90 + 40 * i]], f"Line of text {i}", 0.9]
              for i in range(12)]  # fmt: skip
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: lines)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: lines)
     png = io.BytesIO()
     Image.new("RGB", (W, H), "white").save(png, format="PNG")
     assert layout.ocr_image(png.getvalue(), 1).turn == 0
@@ -123,7 +123,7 @@ def test_the_pipeline_shows_a_page_scanned_upside_down_upright(tmp_path, monkeyp
     load_sample_setup(store)
     scanned = layout._turned(_ocr_result(), 180, W, H)
     monkeypatch.setattr(layout, "ocr_available", lambda: True)
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: scanned)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: scanned)
     settings = Settings()
     settings = dc.replace(settings, llm=dc.replace(settings.llm, provider="off"))
     pipeline = InvoicePipeline(settings, store.reference_data(), store=store)
@@ -154,7 +154,7 @@ def test_a_sideways_page_whose_labels_share_a_line_with_their_amounts_is_turned_
     # Sweep: both quarter turns scored the same, and 90 was always taken: a page needing 270 was read upside down.
     upright = [[[[x0, y0], [x1, y0], [x1, y1], [x0, y1]], text, 0.98] for text, x0, y0, x1, y1 in INLINE]
     scanned = layout._turned(upright, 360 - turn, W, H)
-    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: scanned)
+    monkeypatch.setattr(layout, "_engine", lambda *a, **k: lambda img: scanned)
     png = io.BytesIO()
     Image.new("RGB", (H, W), "white").save(png, format="PNG")
     page = layout.ocr_image(png.getvalue(), 1)

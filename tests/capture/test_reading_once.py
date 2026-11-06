@@ -81,16 +81,22 @@ def test_the_cache_keeps_the_newest_readings(engine, tmp_path, monkeypatch):
     import os
     import time
 
-    monkeypatch.setattr(layout, "OCR_CACHE_MAX_FILES", 2)
     with layout.ocr_cache(tmp_path):
         for mark in range(4):
             layout.ocr_image(_png(mark), 1, "ppocrv4")
     files = sorted(tmp_path.glob("*.json"))
+    size = max(path.stat().st_size for path in files)
+    monkeypatch.setattr(layout, "OCR_CACHE_MAX_BYTES", 8 * size // 3 + 3)  # pruned to three quarters: two readings
     for age, path in enumerate(files):
         os.utime(path, (time.time() - 1000 * (age + 1),) * 2)  # files[0] is the newest
-    layout._pruned.clear()
+    stopped = tmp_path / "abc.123-456.part"  # half written by a process that stopped two hours ago
+    stopped.write_text("{", encoding="utf-8")
+    os.utime(stopped, (time.time() - 7200,) * 2)
+    writing = tmp_path / "def.123-456.part"  # being written now
+    writing.write_text("{", encoding="utf-8")
     layout._prune(tmp_path)
     assert sorted(tmp_path.glob("*.json")) == files[:2]
+    assert not stopped.exists() and writing.exists()
 
 
 def _scan(path):
@@ -141,8 +147,8 @@ def test_a_files_tables_are_looked_for_once(monkeypatch, tmp_path):
 def test_a_pages_image_is_made_once_for_both_engines(engine, tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "ocr_available", lambda: True)
     made = []
-    real = layout._make_scan_png
-    monkeypatch.setattr(layout, "_make_scan_png", lambda doc, page: made.append(page.number) or real(doc, page))
+    real = layout._scan_picture
+    monkeypatch.setattr(layout, "_scan_picture", lambda doc, page: made.append(page.number) or real(doc, page))
     scan = _scan(tmp_path / "scan.pdf")
     layout.build_layout(scan)
     layout.second_read_layout(scan)

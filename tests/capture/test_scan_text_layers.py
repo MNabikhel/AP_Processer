@@ -51,8 +51,6 @@ def ocr_calls(monkeypatch):
 
     monkeypatch.setattr(layout, "ocr_available", lambda: True)
     monkeypatch.setattr(layout, "ocr_image", fake_ocr)
-    monkeypatch.setattr(layout, "_scan_png", lambda doc, page: b"png")
-    monkeypatch.setattr(layout, "_second_image", lambda png: png)
     return calls
 
 
@@ -94,7 +92,6 @@ def test_without_ocr_a_searchable_pdf_is_read_from_its_text_layer(tmp_path, monk
 
 def test_a_searchable_page_ocr_cannot_read_falls_back_to_its_text_layer(tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "ocr_available", lambda: True)
-    monkeypatch.setattr(layout, "_scan_png", lambda doc, page: b"png")
 
     def broken(*args, **kwargs):
         raise RuntimeError("the OCR engine failed")

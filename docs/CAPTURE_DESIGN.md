@@ -567,7 +567,7 @@ BMP, WEBP and GIF losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG
 the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
 was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
 the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels
-(`layout._scan_png`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
+(`layout._scan_picture`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
 older version and read again by the page reader stays where it is.
 
 **The table finder** (`capture/table_finder.py`) is RapidAI's YOLOv8n "general6" layout model, as CloseDesk uses
