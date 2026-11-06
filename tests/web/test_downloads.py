@@ -215,6 +215,36 @@ def test_a_restart_while_a_file_is_made_puts_it_back_and_the_next_start_makes_it
     second.stop()
 
 
+def test_the_servers_background_process_makes_the_downloads_and_a_laptops_starts_no_runner(store, monkeypatch):
+    """``app.start_background_work`` (``serve --background-work``, or the one process of ``--workers 1``) starts the
+    downloads' Runner on the server, which makes the jobs waiting and stops when asked; on a laptop none."""
+    from types import SimpleNamespace
+
+    from ap_coder.ai import azure_check, page_worker
+    from ap_coder.coding import bulk
+    from ap_coder.erp import jde_sync
+    from ap_coder.web import app as web_app
+
+    stub = SimpleNamespace(stop=lambda: None)
+    stub.start = lambda: stub
+    for module, name in ((page_worker, "start_background"), (azure_check, "start_background"),
+                         (jde_sync, "Background"), (bulk, "QueueRecheck")):  # fmt: skip
+        monkeypatch.setattr(module, name, lambda *args, **kwargs: stub)
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    *_, runner = web_app.start_background_work(web_settings, store)
+    assert isinstance(runner, downloads.Runner) and runner.thread.is_alive()
+    job, _ = store.start_download("user:1", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
+    ends = time.monotonic() + 20
+    while store.download_job(job)["state"] != reports.MADE and time.monotonic() < ends:
+        time.sleep(0.05)
+    assert store.download_job(job)["state"] == reports.MADE
+    runner.stop()
+    runner.thread.join(10)
+    assert not runner.thread.is_alive()
+    monkeypatch.delenv("AP_SERVER_MODE")
+    assert len(web_app.start_background_work(web_settings, store)) == 4  # (the laptop's)
+
+
 def test_on_a_laptop_each_download_is_made_as_it_is_asked_for(store, monkeypatch):
     """Laptop mode is unchanged: no job, the file in the answer (the Activity CSV sent as it is read, B-1597)."""
     monkeypatch.delenv("AP_SERVER_MODE", raising=False)
