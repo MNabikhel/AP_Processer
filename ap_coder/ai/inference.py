@@ -217,7 +217,7 @@ class InvoiceCoder:
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: load a model, then "
                 "Developer tab → Start server."
             )
-        vision = {"on": True, "off": False}.get(llm.vision, status.vision if status.model == model else False)
+        vision = local_llm.sees_pages(llm, status, model)
         self.profile = ModelProfile(name=model.lower(), supports_vision=vision, reasoning=False)
         self._local_model = model
         self._models[llm.base_url] = (model, self.profile)

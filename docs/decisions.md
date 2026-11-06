@@ -2336,7 +2336,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     touchless: `chat_test_if_due`, in the first reader's round as `self_test_if_due`. Meanwhile the AI reviewer waits
     (`verify_one` takes nothing), its agreement approves nothing (`_fold_in`), nor does a reading (`_read_taken`,
     `chat_again`). The Reading tab's reviewer card says why ("The AI reviewer waits: the chat model is now …"); the
-    test is audited (`chat_model_tested`). This holds on a laptop too: a swapped model is as risky there.
+    test is audited (`chat_model_tested`). This holds on a laptop too: a swapped model is as risky there. One that
+    can't see pages (`page_worker.chat_sees_pages`) decides nothing touchless: it reads no header, reviews nothing
+    (the reviewer says it needs one that can) and its accounts always go to a person; it is neither kept back nor
+    tested (it could never pass, and was tested again, audited, every hour: B-1875).
   - **Measured** (`python -m ap_coder.bench day --backup --drill …`: a second stand-in model server as the backup,
     the same models and latencies, the drill on the primary; 40 invoices, half scans, the model 8-20 s a page × 0.05,
     2 slots, 2 web workers, 2 capture processes; the 4 cores shared with three other agents' work; real seconds, the

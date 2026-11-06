@@ -399,6 +399,12 @@ def check_server(llm: LocalLLMSettings, *, timeout: float = DETECT_TIMEOUT, use_
     return status
 
 
+def sees_pages(llm: LocalLLMSettings, status: ModelStatus, model: str) -> bool:
+    """Whether the chat model ``model`` on the server ``status`` describes can see pages: AP_LLM_VISION on or off,
+    else (auto) what the server says of it."""
+    return {"on": True, "off": False}.get(llm.vision, status.vision if status.model == model else False)
+
+
 def forget_status() -> None:
     """Drop cached answers (after Settings saves a new address, or the Test connection button)."""
     with _lock:

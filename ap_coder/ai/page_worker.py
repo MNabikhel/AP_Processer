@@ -1116,10 +1116,22 @@ def chat_model_in_use(settings: Settings) -> str:
     return llm.model or local_llm.check_server(llm).model
 
 
+def chat_sees_pages(settings: Settings, model: str) -> bool:
+    """Whether ``model``, the chat model in use, can see pages. One that can't reads no header, reviews nothing and
+    its accounts always go to a person: it decides nothing touchless, so it is neither kept back nor tested."""
+    from . import local_llm
+
+    llm = local_llm.serving_llm(settings.llm)
+    return local_llm.sees_pages(llm, local_llm.check_server(llm), model)
+
+
 def chat_untrusted(settings: Settings, store: Any) -> str:
-    """``chat_trust`` of the chat model in use: why nothing it took part in is approved without a person now."""
+    """``chat_trust`` of the chat model in use: why nothing it took part in is approved without a person now ("" for
+    one that can't see pages: ``chat_sees_pages``)."""
     try:
-        return chat_trust(store, chat_model_in_use(settings))
+        model = chat_model_in_use(settings)
+        why = chat_trust(store, model)  # (the first one asked is noted, whichever it is)
+        return why if why and chat_sees_pages(settings, model) else ""
     except Exception as exc:  # noqa: BLE001 - not known: nothing approved on it this time
         return f"the chat model's self-test couldn't be looked up ({type(exc).__name__})"
 
@@ -1177,7 +1189,7 @@ def chat_test_if_due(settings: Settings, store: Any) -> dict[str, Any] | None:
     """Test the chat model in use here and now when it is due (``chat_test_due``), and keep the result as its model's.
     None when no test was run."""
     model = chat_model_in_use(settings)
-    if not chat_test_due(store, model):
+    if not chat_test_due(store, model) or not chat_sees_pages(settings, model):
         return None
     log.info("chat model: %s is not the one AP Coder was qualified with; testing it on the test invoice", model)
     record = test_chat_model(settings, store)

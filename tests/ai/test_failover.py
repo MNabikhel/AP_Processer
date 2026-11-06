@@ -550,6 +550,45 @@ def test_the_first_chat_model_is_the_one_ap_coder_was_qualified_with(store):
     assert page_worker.chat_tests(store)["first"] == CHAT
 
 
+def _read_touchless(store: Store, settings: Settings, monkeypatch) -> page_worker.ReadOutcome:
+    """The page reader's pass over a new invoice touchless processing passes (its gates taken as passed), the AI
+    reviewer off: what the pass decides."""
+    from ap_coder.capture.supplier import AUTONOMOUS
+
+    _invoice(store, replace(settings, llm=replace(settings.llm, provider="off")))
+    verifier.save_settings(store, on=False, rounds=1, minutes=1.0)
+    monkeypatch.setattr(pipeline, "autonomy_decision", lambda *a, **k: {
+        "state": AUTONOMOUS, "auto": True, "audit": False, "reason": "every header field verified"})  # fmt: skip
+    text = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
+    status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model=READER, document_reader=True,
+                                      state="loaded", candidates=[READER])  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: status)
+    monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
+    monkeypatch.setattr(page_reader, "read_document", lambda settings, path, **kw: page_reader.PageReading(
+        model=READER, pages=[text], seconds=[1.0], page_count=1))  # fmt: skip
+    outcome = page_worker.read_one(settings, store)
+    assert outcome is not None and outcome.status == "done" and outcome.updated, outcome
+    return outcome
+
+
+def test_a_chat_model_that_cant_see_pages_is_not_tested_nor_kept_from_touchless(store, monkeypatch):
+    """B-1875: the chat model swapped for one that can't see pages (a laptop too) could never pass the self-test,
+    which reads pages; so after every reading nothing was approved without a person for as long as it was loaded,
+    and the test ran again, audited, every hour. Such a model reads no header and its accounts always go to a
+    person: it decides nothing touchless, so it is neither gated nor tested."""
+    text_only = {"id": "qwen/qwen3-8b", "type": "llm", "vision": False}
+    with FakeModel(models=[{"id": CHAT, "vision": True}, READER]) as fake:
+        settings = _settings(fake.base_url)
+        assert page_worker.chat_untrusted(settings, store) == ""  # the first: the one it was qualified with
+        fake.set(models=[text_only, READER])
+        local_llm.forget_status()
+        assert page_worker.chat_untrusted(settings, store) == ""
+        assert page_worker.chat_test_if_due(settings, store) is None
+        assert page_worker.chat_tests(store)["first"] == CHAT
+        assert _read_touchless(store, settings, monkeypatch).auto_approved
+    assert "chat_model_tested" not in [e["action"] for e in store.events()]
+
+
 # --- The doctor (item 4) --------------------------------------------------------------------------------------------
 
 
