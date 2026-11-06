@@ -260,6 +260,21 @@ class ImportsMixin:
 
     # --- Inside a transaction of the queue's
 
+    @staticmethod
+    def _claim_noted(conn: Any, invoice_id: int, name: str) -> int:
+        """In ``add_invoice``'s transaction: an invoice read from the import queue (``IMPORT_CLAIM``) is noted on its
+        file while its reader still holds it, else ``ClaimLost`` and nothing is stored (B-1762). ``invoice_id``."""
+        claim = IMPORT_CLAIM.get()
+        if (
+            claim is not None
+            and not conn.execute(
+                "UPDATE import_files SET invoice_id = ? WHERE id = ? AND owner = ? AND status = 'reading'",
+                (invoice_id, *claim),
+            ).rowcount
+        ):  # its reader stalled past its lease and another took the file: that one stores it
+            raise ClaimLost(f"{name} is read by another reader now: this reading is not stored")
+        return invoice_id
+
     def _expire_imports(self, conn: Any) -> set[int]:
         """The files whose reader stopped (lease run out): back in line, or failed (an invoice saying why) once this was
         their last try. The batches that ended so."""

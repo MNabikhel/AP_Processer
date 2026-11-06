@@ -43,7 +43,6 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
-from .imports import IMPORT_CLAIM, ClaimLost
 from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
@@ -64,8 +63,7 @@ class InvoicesMixin:
     ) -> int:
         """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake/pictures.py``), so the same
         photo sent again is found as this invoice (``find_by_hash``). ``sha256``: the file's own, when the caller read
-        it already (the import queue's, D-168). Read from the import queue (``IMPORT_CLAIM``): stored only while its
-        reader still holds the file, noted on it in the same transaction; else ``ClaimLost`` and nothing is stored."""
+        it already (the import queue's, D-168)."""
         source_path = Path(source_path)
         sha = sha256 or (hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None)
         out = output or {}
@@ -105,17 +103,7 @@ class InvoicesMixin:
                     _due(out, self.default_terms_days(), self.vendor_terms(key)) if out else None,  # its own (B-1311)
                 ),
             )
-            invoice_id = int(cur.lastrowid)
-            claim = IMPORT_CLAIM.get()
-            held = (
-                claim is None
-                or conn.execute(
-                    "UPDATE import_files SET invoice_id = ? WHERE id = ? AND owner = ? AND status = 'reading'",
-                    (invoice_id, *claim),
-                ).rowcount
-            )
-            if not held:  # its reader stalled past its lease and another took the file (B-1762): that one stores it
-                raise ClaimLost(f"{source_path.name} is read by another reader now: this reading is not stored")
+            invoice_id = self._claim_noted(conn, int(cur.lastrowid), source_path.name)  # (the import queue's)
             if original_sha256:
                 # Earlier failed attempts at the same picture (before or after it was made a PDF) are replaced too.
                 conn.execute("DELETE FROM invoices WHERE (original_sha256 = ? OR file_sha256 = ?) AND status = ? "
