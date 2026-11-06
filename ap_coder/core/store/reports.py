@@ -344,6 +344,11 @@ class ReportsMixin:
             conn.execute("DELETE FROM report_answers WHERE json_extract(stamp, '$[0]') IS NOT ?", (db,))
         return [r["file"] for r in gone if r["file"]]
 
+    def download_files(self) -> set[str]:
+        """The files the jobs on record name: any other in the downloads' folder is no job's (``downloads.sweep``)."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            return {row[0] for row in conn.execute("SELECT file FROM report_jobs WHERE file != ''")}
+
     def _database_id(self, conn: sqlite3.Connection) -> str:
         """The database's ``summary_id`` (another after a restore, D-159): which database a job was asked of."""
         row = conn.execute("SELECT value FROM settings WHERE key = 'summary_id'").fetchone()
