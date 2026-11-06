@@ -301,22 +301,30 @@ class VendorsMixin:
                           checked=not before or set(changed) != {"notes"} or bool(said))  # fmt: skip
 
     def import_vendor_master(
-        self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False
-    ) -> dict[str, Any]:
+        self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False, by_erp_id: bool = False,
+        log: bool = True,
+    ) -> dict[str, Any]:  # fmt: skip
         """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
         what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there; what
         it has no column for is kept.
         Rows whose names normalise to the same vendor are merged (on hold if any of them is) and reported
         in ``duplicates``: often the same supplier set up twice in the ERP. With ``only_new``, vendors
-        already in the list are left alone (``inserted`` lists the new ones)."""
+        already in the list are left alone (``inserted`` lists the new ones). ``by_erp_id`` (the JD Edwards sync,
+        which brings the list a page or a night's changes at a time, D-181): the vendors already there count as rows
+        before these, so a row goes to the vendor of its name holding its ERP ID ("Acme", or "Acme #4002" the second
+        of two, B-930) and another ERP ID's row of that name is merged into that vendor or is the second vendor, as
+        in one file. ``log``: the import's event (the sync logs one for all its pages)."""
         added = updated = 0
         now = _now()
         merged: dict[str, dict[str, Any]] = {}
         names: dict[str, list[str]] = {}
+        known = self._master_rows_named(rows) if by_erp_id else {}
         for row in rows:
             key = vendor_key(row["vendor_name"])
             if not key:
                 continue
+            if known and key not in merged:
+                key = self._earlier_row(key, row, known, merged, names)
             first = merged.get(key)
             if first is not None and _distinct(first, row):
                 # Two suppliers whose names read the same, each with its own ERP ID (and GST/HST number): two vendors,
@@ -370,10 +378,42 @@ class VendorsMixin:
                     added += 1
                     inserted.append(key)
                     existing.add(key)
-            self._log(conn, "vendors_imported", actor=actor, detail={
-                "added": added, "updated": updated, "duplicates": len(duplicates),
-            })  # fmt: skip
+            if log:
+                self._log(conn, "vendors_imported", actor=actor, detail={
+                    "added": added, "updated": updated, "duplicates": len(duplicates),
+                })  # fmt: skip
         return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
+
+    def _master_rows_named(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """The vendors already there under these rows' names, or a second one's ("<name> #<ERP ID>"), as rows of the
+        import (``master_rows``' fields), by key."""
+        keys = set()
+        for row in rows:
+            if key := vendor_key(row["vendor_name"]):
+                keys |= {key, f"{key} #{str(row.get('erp_id') or '').strip()}"}
+        with self._conn() as conn:
+            found = fetch_rows(conn, "SELECT vendor_key, display_name, erp_id, expected_gst, terms, default_gl, "
+                               "qst_number, pst_number, province FROM vendors WHERE " + _in_list("vendor_key"),
+                               (json.dumps(sorted(keys)),))  # fmt: skip
+        return {r["vendor_key"]: {"vendor_name": r["display_name"], "erp_id": r["erp_id"], "gst": r["expected_gst"],
+                                  "terms": r["terms"], "default_gl": r["default_gl"], "qst": r["qst_number"],
+                                  "pst": r["pst_number"], "province": r["province"]} for r in found}  # fmt: skip
+
+    @staticmethod
+    def _earlier_row(key: str, row: dict[str, Any], known: dict[str, dict[str, Any]],
+                     merged: dict[str, dict[str, Any]], names: dict[str, list[str]]) -> str:  # fmt: skip
+        """``by_erp_id``: the key of the vendor already there that ``row`` is (its name's, holding its ERP ID, or the
+        second one's of its name), else ``key``; a vendor there of that name with another ERP ID is put in ``merged``
+        as an earlier row (its own values kept when the row is merged into it)."""
+        erp_id = str(row.get("erp_id") or "").strip()
+        for own in (key, f"{key} #{erp_id}"):
+            if erp_id and str((known.get(own) or {}).get("erp_id") or "").strip() == erp_id:
+                return own
+        there = known.get(key)
+        if there and str(there.get("erp_id") or "").strip() and erp_id:
+            merged[key] = dict(there)
+            names[key] = [there["vendor_name"]]
+        return key
 
     def our_province(self) -> str:
         """Where invoices are delivered to us when they print no ship-to (Settings → Review), "" if not set."""

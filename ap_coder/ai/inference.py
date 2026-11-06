@@ -10,6 +10,7 @@ when it is the model server's.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -21,7 +22,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..core.config import Settings
+from ..core.config import LocalLLMSettings, Settings
 from ..core.paths import prune_kept
 from ..core.reference_data import ReferenceData
 from ..core.schema import SCHEMA_NAME, InvoiceCoding, build_json_schema, response_format
@@ -146,6 +147,10 @@ class InvoiceCoder:
             provider = "local" if settings.llm.provider == "local" else "azure"
         self._provider = provider
         self._local_model = ""
+        # The local model's server, its client and its model, kept by server: the chat model's backup has its own
+        # (D-180), and a model LM Studio swapped is asked for no more (B-1843).
+        self._clients: dict[str, Any] = {}
+        self._models: dict[str, tuple[str, ModelProfile]] = {}
         self.profile = ModelProfile.resolve(
             settings.openai.model_name or settings.openai.deployment,
             settings.openai.supports_vision,
@@ -169,21 +174,40 @@ class InvoiceCoder:
     def client(self) -> Any:
         if self._client is None:
             if self.provider == "local":
-                self._client = local_llm.build_local_client(self.settings.llm)
-            elif self.provider == "azure":
+                return self._local_client(self._llm())
+            if self.provider == "azure":
                 self._client = build_openai_client(self.settings)
             else:
                 raise CodingError(local_llm.NO_MODEL_MESSAGE)
         return self._client
 
+    def _llm(self) -> LocalLLMSettings:
+        """The local model's settings, pointed at the server in use: its backup while the breaker moved the calls
+        there (D-180)."""
+        return local_llm.serving_llm(self.settings.llm)
+
+    def _local_client(self, llm: LocalLLMSettings) -> Any:
+        """The client for the local server ``llm`` names (the one handed in, when one was)."""
+        if self._client is not None:
+            return self._client
+        client = self._clients.get(llm.base_url)
+        if client is None:
+            client = self._clients[llm.base_url] = local_llm.build_local_client(llm)
+        return client
+
     def _prepare_local(self) -> str:
-        """The local model to ask, and what it can do (vision), found once per coder."""
-        if self._local_model:
-            return self._local_model
-        llm = self.settings.llm
+        """The local model to ask on the server in use, and what it can do (vision): found once per server, and again
+        when the server lists another one (LM Studio swapped it: the old one would be asked in vain, B-1843)."""
+        llm = self._llm()
         status = local_llm.check_server(llm)
         model = llm.model or status.model
+        kept = self._models.get(llm.base_url)
+        if kept and (not model or model == kept[0]):  # (a server not answering just now: the call will say)
+            self._local_model, self.profile = kept
+            return kept[0]
         if not model:
+            if local_llm.unlisted(local_llm.chat_failover(self.settings.llm), status):  # moved to the backup (D-180)
+                return self._prepare_local()
             if status.reachable:
                 raise CodingError(
                     f"{status.server_title} is running but no model is loaded. Load Gemma 4 12B (or Qwen "
@@ -193,9 +217,10 @@ class InvoiceCoder:
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: load a model, then "
                 "Developer tab → Start server."
             )
-        vision = {"on": True, "off": False}.get(llm.vision, status.vision if status.model == model else False)
+        vision = local_llm.sees_pages(llm, status, model)
         self.profile = ModelProfile(name=model.lower(), supports_vision=vision, reasoning=False)
         self._local_model = model
+        self._models[llm.base_url] = (model, self.profile)
         return model
 
     def wants_images(self) -> bool:
@@ -324,10 +349,11 @@ class InvoiceCoder:
     # --- A local model (LM Studio, Ollama) -------------------------------------------------------------------
 
     def _local_kwargs(self, model: str, mode: str, schema: dict[str, Any] | None = None, *,
-                      thinking: bool = False) -> dict[str, Any]:  # fmt: skip
+                      thinking: bool = False, base: str = "") -> dict[str, Any]:  # fmt: skip
         """No max_completion_tokens: every local server takes max_tokens. Thinking is asked to be off (in the
         fields each kind of server reads; see local_llm.THINKING_OFF), or on for ``thinking`` (the AI reviewer:
-        local_llm.THINKING_ON), with room for it (``THINKING_TOKENS``)."""
+        local_llm.THINKING_ON), with room for it (``THINKING_TOKENS``), as the server at ``base`` (default: the chat
+        model's) takes it."""
         llm = self.settings.llm
         kwargs: dict[str, Any] = {"model": model, "temperature": llm.temperature}
         if llm.max_output_tokens:
@@ -340,7 +366,7 @@ class InvoiceCoder:
             kwargs["response_format"] = response_format(schema or self.schema)
         elif mode == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
-        kwargs.update((local_llm.thinking_on if thinking else local_llm.thinking_off)(llm.base_url, model))
+        kwargs.update((local_llm.thinking_on if thinking else local_llm.thinking_off)(base or llm.base_url, model))
         return kwargs
 
     def _with_json_instructions(
@@ -357,26 +383,61 @@ class InvoiceCoder:
         What worked is remembered for the next call. ``timeout``: the most this call may take, when less than
         AP_LLM_TIMEOUT_SECONDS (the AI reviewer's time for an invoice). ``deadline``: a ``time.monotonic()`` by which
         the call has its answer, the wait for a chat slot included (an arriving invoice's, D-168), else
-        ``ChatTimeout``."""
-        base = self.settings.llm.base_url
+        ``ChatTimeout``.
+
+        With a backup server (D-180) the call goes to the server in use, the breaker is told how it went, and a call
+        whose server the calls left meanwhile (it failed, or another call found it failing) is asked once more on the
+        backup, when it has the same model (and the deadline leaves time)."""
+        llm = self._llm()
+        base = llm.base_url
+        breaker = local_llm.chat_failover(self.settings.llm)
+        again = breaker is not None
+        # The hang limit, or the shorter call limit in play: a call ahead silent past it, the server isn't answering.
+        hang = min(local_llm.HANG_SECONDS, float(self.settings.llm.timeout_seconds or local_llm.HANG_SECONDS))
         mode = local_llm.start_mode(base, model)
         while True:
             kind = local_llm.RESPONSE_MODES[mode]
-            kwargs = self._local_kwargs(model, kind, schema, thinking=thinking)
+            kwargs = self._local_kwargs(model, kind, schema, thinking=thinking, base=base)
             if timeout is not None and timeout < float(self.settings.llm.timeout_seconds or 0):
                 kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
+            cut, since = False, 0.0  # with a backup: its time cut by AP Coder's own line for a chat slot; when sent
             try:
-                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline):  # llm_parallel at once
+                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline) as slot:  # llm_parallel at once
                     if deadline is not None:  # what is left once a slot is had
                         left = deadline - time.monotonic()
-                        if left <= 0:
-                            raise TimeoutError("no time left once a chat slot was free")
+                        waited = breaker is not None and slot.seconds > local_llm.WAITED_SECONDS
+                        cut = waited and slot.behind < hang  # (what held it silent past the limit: the server's wait)
+                        if left <= 0 or (waited and left < local_llm.SEND_SECONDS):
+                            raise local_llm.SlotTimeout("too little time left once a chat slot was free", slot.behind)
                         kwargs["timeout"] = min(left, float(kwargs.get("timeout") or left))
-                    return self.client.chat.completions.create(messages=sent, **kwargs)
-            except TimeoutError as exc:  # no slot in time: the call was never sent
+                    call = functools.partial(self._local_client(llm).chat.completions.create, messages=sent, **kwargs)
+                    since = time.monotonic()
+                    answer = call() if breaker is None else breaker.watched(base, call)
+                if breaker is not None:
+                    breaker.answered(base, model)
+                return answer
+            except TimeoutError as exc:  # no slot in time, or too little time left once one was: never sent
+                behind = float(getattr(exc, "behind", 0.0))
+                if breaker is not None and behind >= hang:  # the calls holding the slots silent past the hang limit
+                    breaker.failed(base, f"{local_llm.NO_ANSWER} to the calls holding the chat slots ({behind:.0f} s)")
                 raise ChatTimeout(f"The chat model was busy: no slot to ask in within the time given ({exc}).") from exc
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
+                if breaker is not None:
+                    why = local_llm.server_failure(exc)
+                    if why == local_llm.NO_ANSWER and (cut or breaker.behind(base, since, hang)):
+                        why = ""  # its time spent in AP Coder's own line, or behind another of its calls: no failure
+                    if why:
+                        breaker.failed(base, why)
+                    if again and (why or isinstance(exc, local_llm.ServerLeft)):
+                        again = False
+                        other = self._llm()
+                        left = None if deadline is None else deadline - time.monotonic()
+                        if other.base_url != base and self._model_on(other) == model and (left is None or left > 1):
+                            log.info("%s: asked again on the backup at %s (%s)", model, other.base_url, why or exc)
+                            llm, base = other, other.base_url
+                            mode = local_llm.start_mode(base, model)
+                            continue
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
                     refuse = local_llm.refuse_thinking_on if thinking else local_llm.refuse_thinking_off
                     if refuse(base, model):
@@ -390,12 +451,17 @@ class InvoiceCoder:
                 if deadline is not None and _timed_out(exc):
                     raise ChatTimeout("The chat model gave no answer in the time an arriving invoice waits for it "
                                       f"({kwargs.get('timeout', 0):.0f} s).") from exc  # fmt: skip
-                raise self._local_error(exc, kwargs.get("timeout")) from exc
+                raise self._local_error(exc, kwargs.get("timeout"), base) from exc
 
-    def _local_error(self, exc: Exception, timeout: float | None = None) -> CodingError:
+    def _model_on(self, llm: LocalLLMSettings) -> str:
+        """The model this coder would ask on the server ``llm`` names."""
+        kept = self._models.get(llm.base_url)
+        return llm.model or (kept[0] if kept else local_llm.check_server(llm).model)
+
+    def _local_error(self, exc: Exception, timeout: float | None = None, base: str = "") -> CodingError:
         import openai
 
-        llm = self.settings.llm
+        llm = replace(self.settings.llm, base_url=base) if base else self.settings.llm
         if isinstance(exc, openai.APITimeoutError) and timeout:  # the AI reviewer's own limit, its minutes (B-1525)
             return ChatTimeout(
                 f"The chat model took longer than the AI reviewer's time left ({timeout:.0f}s): it may be slow on this "
@@ -410,6 +476,13 @@ class InvoiceCoder:
             local_llm.forget_status()
             return CodingError(
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: Developer tab → Start server.",
+                temporary=True,
+            )
+        if isinstance(exc, openai.NotFoundError):  # the model asked for isn't there any more (swapped): B-1844
+            local_llm.forget_status()  # the next call asks the one it has
+            return CodingError(
+                f"The server at {llm.base_url} no longer has the chat model asked for (LM Studio has another one "
+                "now): asked again with the one it has.",
                 temporary=True,
             )
         if local_llm.context_overflow(exc):

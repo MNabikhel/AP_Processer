@@ -54,6 +54,7 @@ from ap_coder.coding.line_tax import (
     tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
+from ap_coder.coding.money import tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
 from ap_coder.coding.review import (
     codes_to_pick,
@@ -73,12 +74,14 @@ from ap_coder.coding.tax import (
     SUPPLY_SITE,
     SUPPLY_VENDOR,
     TAX_TYPES,
+    currency_places,
     follow_supply,
     meals_note,
     place_of_supply,
     province_label,
     stored_supply,
     supply_source,
+    tax_line_ways,
 )
 from ap_coder.coding.taxmath import math_check
 from ap_coder.coding.terms import describe as terms_describe
@@ -1513,8 +1516,8 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
     except ValueError:
         on = dt.date.today()
     rows = []
+    places = currency_places(coding.currency)
     for t in coding.tax_lines:
-        expected = round(t.taxable_amount * t.rate, 2)
         prov = t.province or place_of_supply(coding, reference.tax)
         official = reference.tax.rates.rate_for(t.tax_type, prov if prov in PROVINCE_NAMES else "", on)
         treat = reference.tax.treatment(t.tax_type)
@@ -1523,7 +1526,8 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
             "tax": TAX_LABELS.get(t.tax_type, t.tax_type), "province": t.province,
             "rate_ok": official is not None and abs(official - t.rate) < 1e-6, "rate": f"{t.rate * 100:.3f}%",
             "official": "not levied" if official is None else f"{official * 100:.3f}%",
-            "math_ok": abs(expected - t.tax_amount) <= 0.01 * max(1, len(coding.line_items)) + 0.01,
+            # As TAX_CALC_MISMATCH and the Tax check above it: a unit either way, in the currency's units (B-1908)
+            "math_ok": tax_right(t.tax_amount, tax_line_ways(coding, t, places), places),
             "amount": signed(t.tax_amount), "posts_to": gl or "⚠ not mapped",
         })  # fmt: skip
     return rows

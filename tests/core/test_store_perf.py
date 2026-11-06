@@ -146,7 +146,11 @@ def test_the_lookups_by_batch_invoice_event_kind_account_expiry_and_erp_number_u
     store.set_setting(POSTER_NOT_APPROVER, "1")
     ann, boss = store.add_user("ann", "correct horse battery"), store.add_user("boss", "correct horse battery")
     token = store.start_session(ann)
-    jde = type("Ais", (), {"rows": lambda self, part: [{"name": "Acme Ltd", "an8": "1001", "bank_last4": "1234"}]})
+    from ap_coder.erp import jde_ais
+
+    jde = type("Ais", (), {"cfg": jde_ais.AisSettings(), "ais": {}, "mapping": jde_ais.load_mapping(),
+                           "pages": lambda self, part, inputs, after="", to_the_end=False: iter([([
+                               {"name": "Acme Ltd", "an8": "1001", "bank_last4": "1234"}], "")])})  # fmt: skip
     lookups = [
         (lambda: store.posting_refusal(batch, ann), "events", "export_batch =", "invoices_export_batch"),
         (lambda: store.undo_export_batch(batch, actor="Ann"), "invoices", "export_batch =", "invoices_export_batch"),
@@ -160,7 +164,8 @@ def test_the_lookups_by_batch_invoice_event_kind_account_expiry_and_erp_number_u
         (lambda: store.end_sessions(ann, keep=token), "sessions", "user_id =", "sessions_user"),
         (lambda: store.deactivate_user(ann, actor="boss"), "sessions", "user_id =", "sessions_user"),
         (lambda: store.keep_ephemeral("upload", b"x", 60), "ephemeral", "expires_at <", "ephemeral_expires"),
-        (lambda: jde_sync.sync_suppliers(store, jde(), "Ann"), "vendors", "erp_id =", "vendors_erp_id"),
+        (lambda: jde_sync.sync(store, parts=("suppliers",), client=jde(), actor="Ann"), "vendors", "erp_id =",
+         "vendors_erp_id"),
     ]  # fmt: skip
     for call, table, where, index in lookups:
         for plan in _plans(store, monkeypatch, call, table, where):

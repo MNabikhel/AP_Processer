@@ -84,7 +84,8 @@ def test_a_second_sync_reports_what_changed_and_closes_pos_no_longer_open(store,
     assert store.get_vendor("northern courier")["erp_hold"] == ""
     assert next(r for r in store.list_accounts("gl_accounts") if r["code"] == "6100")["category"] == "Office"  # kept
     ais.data["purchase_orders"] = []
-    report = jde_sync.sync(store, allow_mass_close=True)  # every open PO at once: only when asked (D-105)
+    # every open PO at once: only when asked (D-105), and only a whole read says what JDE no longer lists (D-181)
+    report = jde_sync.sync(store, allow_mass_close=True, full=True)
     assert (
         report["parts"]["purchase_orders"]["closed"] == ["4512"] and store.purchase_order("4512")["status"] == "closed"
     )

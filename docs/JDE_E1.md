@@ -54,8 +54,8 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
       errors in the batch voucher revisions (P0411Z1 / Work Center).
    3. Run **R04110ZA in final mode**; post the voucher batch as usual.
 5. If the load fails: Exports → Past batches → **Undo this batch**, fix the cause, export again. Each invoice
-   keeps its transaction number (VLEDTN = `APC` + AP Coder invoice number) and gets a new batch number, so the
-   Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
+   keeps its transaction number (VLEDTN = `APC` + AP Coder invoice number and its code) and gets a new batch
+   number, so the Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
    with the current JD Edwards settings.
 
 ## How the mapping works
@@ -236,8 +236,8 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | Column | Value | Notes |
 | --- | --- | --- |
 | VLEDUS | User ID (setting, ≤10) | key |
-| VLEDBT | Batch prefix + AP Coder batch number (≤15) | key; one per export batch |
-| VLEDTN | `APC` + AP Coder invoice number (≤22) | key; unique per invoice |
+| VLEDBT | Batch prefix + AP Coder batch number, then `-` and a 4-character code of the batch as room allows (≤15, D-182) | key; one per export batch |
+| VLEDTN | `APC` + AP Coder invoice number, `-` and an 8-character code of the invoice (≤22, D-182) | key; unique per invoice, in any data folder and after a restore |
 | VLEDLN | 1 (or 1, 2, 3 … in *match header* mode) | key |
 | VLEDSP | `0` | not yet processed |
 | VLEDTC | `A` | add |
@@ -449,7 +449,10 @@ inputs and outputs are in `ap_coder/erp/jde_orchestrations.json`.
 
 * **Step 1 (read)**: suppliers, GL accounts, business units, open POs and the AP ledger's vouchers come from JDE
   every night while AP Coder runs, or with *Sync now* (or `python -m ap_coder jde sync`), through the same imports
-  as the CSV files; the report says what was added and changed. While an invoice is reviewed, JDE is asked whether
+  as the CSV files; the report says what was added and changed. Each night reads what changed since the last sync
+  (and every voucher of the last 31 days); once a week, or with *Read everything again* (`jde sync --full`),
+  everything, which alone shows what JDE closed, deleted or voided (D-181). Every page is written as it comes, so a
+  sync that stopped goes on from there, and nobody approving waits on it. While an invoice is reviewed, JDE is asked whether
   it is already a voucher (*Already in the ERP*, with its voucher number and whether it is paid); JDE down, the
   check uses the last sync's vouchers and says so (*JD Edwards not asked*). A supplier's bank account in JDE (its
   last four digits) is compared with the one printed on the invoice (*Not the bank account JD Edwards pays*).

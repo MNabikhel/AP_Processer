@@ -130,7 +130,8 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     # they would be twice. The README lists them (the unknown ones: check in JD Edwards before loading).
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     settings, lookup = jde.load(store), store.vendor_ids()
-    created = (store.export_batch(batch) or {}).get("created_at") or ""
+    known = store.export_batch(batch) or {}
+    created = known.get("created_at") or ""
     kept = [i for i in invoices if i["id"] not in left_out]
     return jde.build_zip(
         kept,
@@ -143,6 +144,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         check_now=True,  # to_check: what the current settings would now refuse (B-21)
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
+        site=jde.batch_site(known, invoices),  # the keys the API sends too (D-182)
     )
 
 
@@ -360,6 +362,8 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
         shown) else []  # fmt: skip
     return {"shown": shown, "on": cfg.step2, "rows": rows,
             "checked": sum(r["status"] == jde_post.CHECKED for r in rows),
+            # their G/L date moved into the open period by the dry run: the go-ahead confirms it (D-182)
+            "moved": sum(r["status"] == jde_post.CHECKED and r["error"].startswith(jde.MOVED) for r in rows),
             "waiting": len(jde_post.waiting(store)), "done": all(r["status"] == jde_post.POSTED for r in rows) and
             bool(rows), "downloads": downloads, "posted": posted,
             "maybe": sum(r["locked"] for r in rows) - posted}  # fmt: skip
@@ -617,13 +621,27 @@ def _api_job(request: Request, note: str, work: Any) -> JSONResponse:
     return JSONResponse({"ok": True, "job": API_JOB, "status": f"/jobs/{API_JOB}"})
 
 
+def _progress(job: Any) -> Any:
+    """Each voucher's outcome as the job's progress (D-182): how many of the run's vouchers are done, and of them how
+    many posted, are being checked (answered late), were refused and wait in the queue."""
+
+    def step(found: dict[str, Any]) -> None:
+        parts = [f"{found[k]} {label}" for k, label in (("posted", "posted"), ("unknown", "being checked"),
+                 ("failed", "refused"), ("queued", "waiting"), ("checked", "held back")) if found.get(k)]  # fmt: skip
+        job.step(found["done"], found["total"], f"{found['note']} {found['done']} of {found['total']}"
+                 + (f": {', '.join(parts)}" if parts else ""))  # fmt: skip
+
+    return step
+
+
 def _api_messages(result: dict[str, Any]) -> list[dict[str, str]]:
     parts = [f"{result[k]} {label}" for k, label in (("posted", "posted"), ("failed", "refused by JD Edwards"),
-             ("queued", "waiting in the queue"), ("unknown", "sent, being checked")) if result.get(k)]  # fmt: skip
+             ("queued", "waiting in the queue"), ("unknown", "sent, being checked"),
+             ("held", "held back for a new dry run")) if result.get(k)]  # fmt: skip
     out = [
         {
             "text": ("JD Edwards: " + ", ".join(parts) + ".") if parts else "Nothing was sent.",
-            "tone": "ok" if not (result.get("failed") or result.get("queued") or result.get("unknown")) else "warn",
+            "tone": "ok" if not any(result.get(k) for k in ("failed", "queued", "unknown", "held")) else "warn",
         }
     ]
     if result.get("error"):
@@ -684,7 +702,8 @@ def jde_api_post(request: Request, batch: int, not_loaded: str = Form(""), why: 
     def work(job: Any) -> dict[str, Any]:
         job.step(0, 1, "Posting the vouchers to JD Edwards…")
         try:
-            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor, not_loaded=why))}
+            return {"messages": _api_messages(jde_post.post(store, batch, actor=actor, not_loaded=why,
+                                                            progress=_progress(job)))}  # fmt: skip
         except (ValueError, jde_ais.AisError) as exc:
             return {"messages": [{"text": str(exc), "tone": "warn"}]}
 
@@ -714,6 +733,6 @@ def jde_api_retry(request: Request) -> JSONResponse:
 
     def work(job: Any) -> dict[str, Any]:
         job.step(0, 1, "Sending the queue to JD Edwards…")
-        return {"messages": _api_messages(jde_post.retry_queue(store, actor=actor))}
+        return {"messages": _api_messages(jde_post.retry_queue(store, actor=actor, progress=_progress(job)))}
 
     return _api_job(request, "Sending the JD Edwards queue", work)

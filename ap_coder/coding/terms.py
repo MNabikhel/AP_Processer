@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 
+from .money import times
+
 DEFAULT_TERMS_DAYS = 30
 WARNING, INFO = "warning", "info"
 DUE_SOON_DAYS = 7
@@ -357,10 +359,10 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
     total = float(coding.get("grand_total") or 0)
     if terms.discount_pct and terms.discount_prox_day and invoice_date and total > 0:
         discount_by = _prox(invoice_date, terms.discount_prox_day)
-        amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
+        amount = times(float(coding.get("subtotal") or total), terms.discount_pct / 100)  # half up (B-1864)
     elif terms.discount_pct and terms.discount_days is not None and invoice_date and total > 0:
         discount_by = _start(invoice_date, terms) + dt.timedelta(days=terms.discount_days)
-        amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
+        amount = times(float(coding.get("subtotal") or total), terms.discount_pct / 100)  # half up (B-1864)
     return Payment(due, source, terms, discount_by, amount)
 
 

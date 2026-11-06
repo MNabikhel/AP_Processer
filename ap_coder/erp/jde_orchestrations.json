@@ -35,7 +35,7 @@
     },
     "gl_accounts": {
       "name": "APC_Accounts_Read",
-      "inputs": {"company": "Company", "after": "AfterAccountId", "max_rows": "MaxRows"},
+      "inputs": {"company": "Company", "changed_since": "ChangedSince", "after": "AfterAccountId", "max_rows": "MaxRows"},
       "rows": "Accounts",
       "fields": {
         "account_id": "AccountId",
@@ -61,7 +61,7 @@
     },
     "purchase_orders": {
       "name": "APC_OpenPOs_Read",
-      "inputs": {"order_type": "OrderType", "after": "AfterKey", "max_rows": "MaxRows"},
+      "inputs": {"order_type": "OrderType", "changed_since": "ChangedSince", "after": "AfterKey", "max_rows": "MaxRows"},
       "rows": "Lines",
       "key": "Key",
       "fields": {
@@ -85,7 +85,7 @@
     },
     "vouchers": {
       "name": "APC_Vouchers_Read",
-      "inputs": {"supplier": "SupplierNumber", "invoice": "InvoiceNumber", "since": "FromInvoiceDate", "after": "AfterKey", "max_rows": "MaxRows"},
+      "inputs": {"supplier": "SupplierNumber", "invoice": "InvoiceNumber", "since": "FromInvoiceDate", "changed_since": "ChangedSince", "after": "AfterKey", "max_rows": "MaxRows"},
       "rows": "Vouchers",
       "key": "Key",
       "fields": {

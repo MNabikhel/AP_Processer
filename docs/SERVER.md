@@ -304,7 +304,11 @@ host starts the dashboard (`python -m ap_coder serve --server ...` with the sett
 again if it stops (after 5 seconds, then longer, up to 5 minutes). The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
 `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
-`AP_LLM_PARALLEL`.
+`AP_LLM_PARALLEL`, `AP_WORKER_THREADS`, `AP_CAPTURE_PROCESSES`. The host reads the data folder's `.env` into its
+environment first, as every AP Coder process does, so one of these written there wins over `server.json` too: keep
+them in `server.json` or the machine's environment (step 2). The backup model servers are the exception:
+`server.json`'s `llm_backup_url` and `page_reader_backup_url` win over the `.env`'s `AP_LLM_BACKUP_URL` and
+`AP_PAGE_READER_BACKUP_URL` (the machine's environment still wins over both; D-180).
 
 **Logs**: `D:\APCoderData\logs\service.log` (what the host and the dashboard say; 5 MB, then up to 5 older files,
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
@@ -374,7 +378,13 @@ window, started at boot like AP Coder.
    (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
    needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
    while every address it has is private, AP Coder connects to the very addresses it checked (never to a second
-   lookup's), and no other name is looked up.
+   lookup's), and no other name is looked up. **A second model machine as the backup** (a Mac mini beside the Mac
+   Studio, the same models in its LM Studio): its address in `AP_LLM_BACKUP_URL` (and `AP_PAGE_READER_BACKUP_URL` for
+   a page reader on a server of its own), in *Settings* → *Reading* → *For IT*, or server.json's `llm_backup_url` and
+   `page_reader_backup_url`. After two calls in a row the main one doesn't answer, the calls go to the backup (the
+   calls under way are asked again there); the main one is asked every few seconds and taken back once it answered
+   three times, after a minute at least (D-180). The Reading tab and `python -m ap_coder doctor` say which one answers,
+   and how fast.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two

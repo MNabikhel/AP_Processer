@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
+from .money import half_up, times
 
 if TYPE_CHECKING:  # imported where a grid is split: the queue's summary reads ``codes_to_pick`` without pandas
     import pandas as pd
@@ -186,9 +187,9 @@ def split_line(
     for i, (gl, cc, pct, typed, label) in enumerate(shares):
         last = i == len(shares) - 1
         if last:
-            part_amount = round(amount - allocated, 2)
+            part_amount = half_up(amount - allocated)
         else:
-            part_amount = typed if typed is not None else round(amount * pct / 100, 2)
+            part_amount = typed if typed is not None else times(amount, pct / 100)  # half up (B-1864)
         allocated += part_amount
         new = dict(row)
         new.update(

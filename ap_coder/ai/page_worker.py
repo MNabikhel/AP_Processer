@@ -8,7 +8,9 @@ AP hasn't touched the invoice yet; once someone has edited or decided it, nothin
 an invoice, that invoice is never approved without a person.
 
 Before OvisOCR2 reads any invoice it passes a self-test on an invoice whose answers are known (``self_test_if_due``),
-run on its own the first time a model is found, and again a day after a failure (or when a person asks).
+run on its own the first time a model is found, and again a day after a failure (or when a person asks). A chat model
+other than the one AP Coder first ran with (swapped in LM Studio, or the backup server's own) reads the same invoice's
+header before it is trusted for touchless approval (``chat_test_if_due``, D-180).
 """
 
 from __future__ import annotations
@@ -47,6 +49,10 @@ TESTING_KEY = "page_reader_testing"  # the test under way, as JSON: model, start
 TEST_STALE_HOURS = 1.0
 FIGURES_KEY = "page_reader_figures"  # running totals of figures compared: {"digital": [same, figures], "scans": ...}
 MAX_TRIES = 3  # reads cut off by the model server before an invoice leaves the queue as failed
+# The chat model's self-tests (D-180), as JSON: {"first": the chat model AP Coder first ran with, "models": {model:
+# test}}. Any other chat model decides nothing touchless (the AI reviewer's agreement, an approval after a reading)
+# until it read the self-test's invoice right.
+CHAT_TEST_KEY = "chat_model_test"
 BLANK_WORDS = 3  # a page OCR finds fewer words on than this is blank: the page reader isn't shown it
 
 
@@ -386,6 +392,7 @@ class ReadOutcome:
     auto_approved: bool = False
     message: str = ""
     summary: dict[str, Any] = field(default_factory=dict)
+    again: bool = False  # back in line to be read at once: its server's calls moved to the backup (D-180)
 
 
 def ready(settings: Settings, store: Any) -> tuple[str, str]:
@@ -540,11 +547,18 @@ def _taken_over(iid: int, model: str) -> ReadOutcome:
 
 
 def _postpone_or_fail(store: Any, row: dict[str, Any], model: str, pages: int, seconds: float,
-                      problem: str) -> ReadOutcome:  # fmt: skip
-    """A reading the model server cut off: back in line, or failed once it has been cut off MAX_TRIES times."""
+                      problem: str, moved: bool = False) -> ReadOutcome:  # fmt: skip
+    """A reading the model server cut off: back in line, or failed once it has been cut off MAX_TRIES times.
+    ``moved``: its server's breaker moved the calls to the backup meanwhile (D-180): back in line to be read there at
+    once, the try not counted (the server failed, not the reading)."""
     from . import page_reader
 
     page_reader.forget_status()  # the next round asks the server again (it may well be stopped)
+    if moved:
+        outcome = _end(store, row, "postponed", model, f"{problem}: read again at once on the backup server", pages,
+                       seconds)  # fmt: skip
+        outcome.again = True
+        return outcome
     tries = int(row.get("tries") or 0) + 1
     if tries >= MAX_TRIES:
         message = (f"the model server cut the reading off {tries} times ({problem}); read it again from the invoice "
@@ -586,12 +600,17 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
         stop = _BetweenPages(should_stop)
         on_page = stop.on_page
     extra = {"blank_pages": blank} if blank else {}
+    breaker, began = page_reader.reader_failover(settings), time.time()
+
+    def moved() -> bool:  # the calls left the server this reading began on (D-180)
+        return breaker is not None and breaker.left_since() > began
+
     try:
         reading = page_reader.read_document(settings, path, model=model, on_page=on_page, should_stop=stop, **extra)
     except page_reader.PageReaderError as exc:  # the server failed, the page was blank, the model looped twice
         message = f"{type(exc).__name__}: {exc}"
         if exc.temporary:
-            return _postpone_or_fail(store, row, model, 0, time.perf_counter() - t0, str(exc))
+            return _postpone_or_fail(store, row, model, 0, time.perf_counter() - t0, str(exc), moved())
         store.finish_page_read(iid, "failed", model, 0, time.perf_counter() - t0, message, reader=row["reader"])
         return ReadOutcome(iid, "failed", model, message=message)
     if not store.renew_page_read(iid, row["reader"]):  # another took it meanwhile: it reads it (B-1770)
@@ -606,7 +625,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     reading.pages = ["" if number in blank or made_up(text) else text
                      for number, text in enumerate(reading.pages, start=1)]  # fmt: skip
     if reading.error and reading.temporary:  # LM Studio stopped, the model unloaded: read again later
-        return _postpone_or_fail(store, row, model, len(reading.pages), seconds, reading.error)
+        return _postpone_or_fail(store, row, model, len(reading.pages), seconds, reading.error, moved())
     if not reading.complete or not any(p.strip() for p in reading.pages):  # only a reading of every page is used
         message = reading.error or (
             "the page reader found nothing to read"
@@ -638,23 +657,28 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     meta = pipeline_meta(result)
     meta["page_reader"] = {"model": model, "pages": len(reading.pages), "seconds": round(seconds, 1),
                            "cached": reading.cached, "at": dt.datetime.now().isoformat(timespec="seconds"),
-                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()}}  # fmt: skip
+                           "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()},
+                           **({"chat_model": result.header_model} if result.header_model else {})}  # fmt: skip
     capture = result.capture.to_dict() if result.capture is not None else None
     updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
     # A person's unapproved corrections on it (a draft, D-86): the reading replaces the proposal, but nothing is
-    # approved over their work (B-953).
-    if updated and result.autonomy.get("auto") and not has_draft(store, iid):
+    # approved over their work (B-953); nor while the chat model that read its header too isn't trusted (D-180).
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
+    if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:
             store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
             outcome.auto_approved = True
         except (KeyError, ValueError) as exc:  # approved or rejected meanwhile
             log.info("invoice %s: not approved automatically (%s)", iid, exc)
-    outcome.message = (
-        "the proposal now includes the page reader's reading"
-        if updated
-        else "not applied: the invoice was already edited or decided, so nothing in it changed"
-    )
+    if updated and untrusted:
+        outcome.message = f"the proposal now includes the page reader's reading; not approved: {untrusted}"
+    else:
+        outcome.message = (
+            "the proposal now includes the page reader's reading"
+            if updated
+            else "not applied: the invoice was already edited or decided, so nothing in it changed"
+        )
     store.finish_page_read(iid, "done", model, len(reading.pages), seconds, "" if updated else outcome.message,
                            reader=row["reader"])  # fmt: skip
     return outcome
@@ -701,7 +725,10 @@ def chat_again(settings: Settings, store: Any, *, cache_dir: Path | None = None)
                                      expect=identity)  # fmt: skip
     outcome = ReadOutcome(iid, "done", updated=updated, message="the chat model asked again" if updated else
                           "not applied: the invoice was already edited or decided")  # fmt: skip
-    if updated and result.autonomy.get("auto") and not has_draft(store, iid):
+    untrusted = chat_trust(store, result.header_model) if updated and result.autonomy.get("auto") else ""
+    if untrusted:
+        outcome.message += f"; not approved without a person: {untrusted}"
+    if updated and result.autonomy.get("auto") and not untrusted and not has_draft(store, iid):
         try:
             store.approve_invoice(iid, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
             outcome.auto_approved = True
@@ -867,7 +894,7 @@ class BackgroundReader(threading.Thread):
             return None
         log.info("AI reviewer: invoice %s %s (%s round(s), %.0f s)", outcome.invoice_id, outcome.status,
                  outcome.rounds, outcome.seconds)  # fmt: skip
-        return OFF_SECONDS if outcome.status == "postponed" else 0.0
+        return OFF_SECONDS if outcome.status == "postponed" and not outcome.again else 0.0
 
     def run(self) -> None:
         if not self.slot:
@@ -879,6 +906,7 @@ class BackgroundReader(threading.Thread):
                 helper = BackgroundReader(self._settings_factory, self._store_factory, self._cache_dir, slot)
                 self.helpers.append(helper)
                 helper.start()
+        settings: Settings | None = None
         while not self._halt.is_set():
             pause = IDLE_SECONDS
             try:
@@ -889,6 +917,8 @@ class BackgroundReader(threading.Thread):
                     pause = IDLE_SECONDS
                 else:
                     tested = self_test_if_due(settings, store) if not self.slot else None
+                    if tested is None and not self.slot:  # the chat model's own, once it is another (D-180)
+                        tested = chat_test_if_due(settings, store)
                     if tested is not None:  # the test took the round; reading starts next round when it passed
                         self.last_test = tested
                         pause = 0.0 if tested.get("ok") else OFF_SECONDS
@@ -897,7 +927,24 @@ class BackgroundReader(threading.Thread):
             except Exception:  # never let the thread die: the next round tries again
                 log.exception("page reader round failed")
                 pause = OFF_SECONDS
-            self._halt.wait(pause)
+            self._pause(pause, settings)
+
+    def _pause(self, seconds: float, settings: Settings | None) -> None:
+        """Wait ``seconds`` before the next round, or until a model server's breaker moved the calls to its backup
+        (D-180): what failed on the primary is read or reviewed again on the backup at once."""
+        from . import local_llm, page_reader
+
+        breakers = []
+        if settings is not None and seconds > 1:
+            breakers = [b for b in (page_reader.reader_failover(settings), local_llm.chat_failover(settings.llm)) if b]
+        if not breakers:
+            self._halt.wait(seconds)
+            return
+        left = [b.left_since() for b in breakers]
+        deadline = time.monotonic() + seconds
+        while not self._halt.wait(min(1.0, max(0.0, deadline - time.monotonic()))):
+            if time.monotonic() >= deadline or [b.left_since() for b in breakers] != left:
+                return
 
     def _round(self, settings: Settings, store: Any) -> float:
         """One invoice read, or reviewed: on the company server the AI reviewer's turn after each one read, while it
@@ -919,7 +966,7 @@ class BackgroundReader(threading.Thread):
         log.info("page reader: invoice %s %s (%s page(s), %.0f s)", outcome.invoice_id, outcome.status,
                  outcome.pages, outcome.seconds)  # fmt: skip
         if outcome.status == "postponed":
-            return OFF_SECONDS
+            return 0.0 if outcome.again else OFF_SECONDS
         self._reviews_next = server_mode()
         return 0.0
 
@@ -1020,6 +1067,146 @@ def self_test_if_due(settings: Settings, store: Any,
         return None
     log.info("page reader: %s has no self-test that passed; testing it before reading invoices", status.model)
     return run_test(settings, store, status.model, on_page)
+
+
+# --- The chat model's self-test (D-180) -----------------------------------------------------------------------------
+# The chat model decides touchless approvals too: the AI reviewer's agreement approves an invoice held for it, and its
+# reading of a header is one of the readers that must agree. It is trusted when it is the chat model AP Coder first
+# ran with, or once it read the page reader's test invoice right: the header of the same scanned pages, compared with
+# the same answers by the same rule (``page_reader._verdict``). A model LM Studio swapped in, or the backup server's
+# own, is tested on its own (``chat_test_if_due``, in the first reader's round); until it passed, the AI reviewer
+# waits and nothing is approved without a person after a reading.
+
+
+def chat_tests(store: Any) -> dict[str, Any]:
+    """{"first": the chat model AP Coder first ran with ("" before any), "models": {model: its last test}}."""
+    saved = store.get_json(CHAT_TEST_KEY, {})
+    saved = saved if isinstance(saved, dict) else {}
+    models = saved.get("models") if isinstance(saved.get("models"), dict) else {}
+    return {"first": str(saved.get("first") or ""),
+            "models": {str(m): t for m, t in models.items() if isinstance(t, dict)}}  # fmt: skip
+
+
+def chat_trust(store: Any, model: str) -> str:
+    """Why the chat model ``model`` isn't trusted for touchless approval, in plain words ("" when it is, and with no
+    model). The first one ever asked here is noted as the one AP Coder was qualified with."""
+    if not model:
+        return ""
+    tests = chat_tests(store)
+    if not tests["first"]:
+        store.set_setting(CHAT_TEST_KEY, json.dumps({**tests, "first": model}))
+        return ""
+    test = tests["models"].get(model)
+    if model == tests["first"] or (test and test.get("ok")):
+        return ""
+    head = f"the chat model is now {model}, not {tests['first']}, which AP Coder was qualified with"
+    if test is None:
+        return f"{head}: it is trusted once it reads the self-test's invoice right (it does so on its own)"
+    when = str(test.get("when") or "")[:16].replace("T", " ")
+    problem = str(test.get("problem") or "").strip().rstrip(".")
+    return f"{head}: it failed its self-test on {when}" + (f" ({problem})" if problem else "")
+
+
+def chat_model_in_use(settings: Settings) -> str:
+    """The chat model AP Coder asks now, on the server in use ("" when none answers)."""
+    from . import local_llm
+
+    if local_llm.resolve_provider(settings) != "local":
+        return ""
+    llm = local_llm.serving_llm(settings.llm)
+    return llm.model or local_llm.check_server(llm).model
+
+
+def chat_sees_pages(settings: Settings, model: str) -> bool:
+    """Whether ``model``, the chat model in use, can see pages. One that can't reads no header, reviews nothing and
+    its accounts always go to a person: it decides nothing touchless, so it is neither kept back nor tested."""
+    from . import local_llm
+
+    llm = local_llm.serving_llm(settings.llm)
+    return local_llm.sees_pages(llm, local_llm.check_server(llm), model)
+
+
+def chat_untrusted(settings: Settings, store: Any) -> str:
+    """``chat_trust`` of the chat model in use: why nothing it took part in is approved without a person now ("" for
+    one that can't see pages: ``chat_sees_pages``)."""
+    try:
+        model = chat_model_in_use(settings)
+        why = chat_trust(store, model)  # (the first one asked is noted, whichever it is)
+        return why if why and chat_sees_pages(settings, model) else ""
+    except Exception as exc:  # noqa: BLE001 - not known: nothing approved on it this time
+        return f"the chat model's self-test couldn't be looked up ({type(exc).__name__})"
+
+
+def header_untrusted(store: Any, meta: dict[str, Any] | None) -> str:
+    """``chat_trust`` of the chat model that read the invoice's header from its pages in the page reader's pass (its
+    ``meta``): why a check agreeing approves nothing without a person yet ("" when none read it, or it is trusted)."""
+    return chat_trust(store, str(((meta or {}).get("page_reader") or {}).get("chat_model") or ""))
+
+
+def chat_test_due(store: Any, model: str, now: dt.datetime | None = None) -> bool:
+    """Whether ``model``'s self-test runs on its own now: it isn't trusted, and was never tested, or failed its last
+    test a day ago or more (an hour, when the test read nothing)."""
+    if not model or not chat_trust(store, model):
+        return False
+    test = chat_tests(store)["models"].get(model)
+    age = None if test is None else _test_age_hours(test, now)
+    if test is None or age is None:
+        return True
+    return age >= (RETEST_UNREAD_HOURS if not test.get("fields_total") else RETEST_HOURS)
+
+
+def test_chat_model(settings: Settings, store: Any) -> dict[str, Any]:
+    """The chat model in use reads the page reader's test invoice (``page_reader.test_pages``: the same scanned pages)
+    as it reads every invoice's header (``inference.read_header``), compared with its answers by the page reader's
+    rule. Never raises for a server problem: the record says it."""
+    import types
+
+    from . import page_reader
+    from .imaging import PageImage
+    from .inference import CodingError, InvoiceCoder, read_header
+
+    record: dict[str, Any] = {"model": "", "ok": False, "seconds": 0.0, "rows": [], "fields_right": 0,
+                              "fields_total": 0, "when": dt.datetime.now().isoformat(timespec="minutes"),
+                              "problem": "", "server": ""}  # fmt: skip
+    started = time.monotonic()
+    try:
+        coder = InvoiceCoder(settings, reference_data(store), provider="local")
+        record["model"] = coder._prepare_local()
+        record["server"] = coder._llm().base_url
+        if not coder.profile.supports_vision:
+            record["problem"] = f"{record['model']} can't see pages, so it can't read the test invoice"
+            return record
+        truth = json.loads(page_reader.TEST_TRUTH.read_text(encoding="utf-8"))
+        pages = page_reader.test_pages(page_reader.OVIS)
+        values = read_header(coder, [PageImage(n, "image/png", png) for n, png in enumerate(pages, start=1)])
+    except (CodingError, OSError, ValueError) as exc:
+        record.update(seconds=round(time.monotonic() - started, 1), problem=f"The test stopped: {exc}")
+        return record
+    rows = page_reader._compare(truth, {k: [types.SimpleNamespace(value=v)] for k, v in values.items()})
+    ok, verdict = page_reader._verdict(rows)
+    record.update(ok=ok, rows=rows, fields_right=sum(1 for r in rows if r["match"]), fields_total=len(rows),
+                  problem=verdict, seconds=round(time.monotonic() - started, 1))  # fmt: skip
+    return record
+
+
+test_chat_model.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
+
+
+def chat_test_if_due(settings: Settings, store: Any) -> dict[str, Any] | None:
+    """Test the chat model in use here and now when it is due (``chat_test_due``), and keep the result as its model's.
+    None when no test was run."""
+    model = chat_model_in_use(settings)
+    if not chat_test_due(store, model) or not chat_sees_pages(settings, model):
+        return None
+    log.info("chat model: %s is not the one AP Coder was qualified with; testing it on the test invoice", model)
+    record = test_chat_model(settings, store)
+    record["model"] = record["model"] or model
+    tests = chat_tests(store)
+    tests["models"][record["model"]] = record
+    store.set_setting(CHAT_TEST_KEY, json.dumps(tests))
+    store.log_event("chat_model_tested", detail={k: record.get(k) for k in
+                    ("model", "ok", "fields_right", "fields_total", "seconds", "server")})  # fmt: skip
+    return record
 
 
 def page_seconds(settings: Settings, model: str = "") -> float | None:

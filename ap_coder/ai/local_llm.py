@@ -17,11 +17,13 @@ from __future__ import annotations
 import contextlib
 import http.client
 import json
+import logging
 import os
 import re
 import socket
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -33,6 +35,8 @@ from ..core.config import COMPANY_DOMAINS_ENV, _address, _on_this_network, judge
 
 if TYPE_CHECKING:
     from ..core.config import LocalLLMSettings, Settings
+
+log = logging.getLogger(__name__)
 
 DETECT_TIMEOUT = 1.5  # seconds: a server on this computer answers in milliseconds, or isn't running
 STATUS_TTL_SECONDS = 30.0  # a server that answered is asked again after this long
@@ -395,6 +399,12 @@ def check_server(llm: LocalLLMSettings, *, timeout: float = DETECT_TIMEOUT, use_
     return status
 
 
+def sees_pages(llm: LocalLLMSettings, status: ModelStatus, model: str) -> bool:
+    """Whether the chat model ``model`` on the server ``status`` describes can see pages: AP_LLM_VISION on or off,
+    else (auto) what the server says of it."""
+    return {"on": True, "off": False}.get(llm.vision, status.vision if status.model == model else False)
+
+
 def forget_status() -> None:
     """Drop cached answers (after Settings saves a new address, or the Test connection button)."""
     with _lock:
@@ -449,56 +459,94 @@ def provider_status(settings: Settings) -> ProviderStatus:
 SLOTS_ENV = "AP_LLM_SLOTS_DIR"  # the company server's folder of slot locks, which all its processes share (D-111)
 
 
+@dataclass
+class SlotWait:
+    """How a wait for a slot went (``Slots.held``): ``seconds`` waited, and ``behind``: how long the call whose slot it
+    got had held it (0 when one was free at once). Past the hang limit, the server wasn't answering it (D-180)."""
+
+    seconds: float = 0.0
+    behind: float = 0.0
+
+
+class SlotTimeout(TimeoutError):
+    """No slot free in time; ``behind``: how long the youngest call holding one had held it then."""
+
+    def __init__(self, message: str, behind: float = 0.0) -> None:
+        super().__init__(message)
+        self.behind = behind
+
+
 class Slots:
     """At most ``limit`` requests to the model server at once (``with slots.held(limit):``). ``limit`` is
     the ``llm_parallel`` setting (AP_LLM_PARALLEL, default 1: strictly one at a time, as LM Studio on a laptop is
     shared with CloseDesk). On the company server (AP_LLM_SLOTS_DIR set by its ``serve``) the limit holds across its
-    processes too: each request holds one of ``limit`` lock files there (D-111)."""
+    processes too: each request holds one of ``limit`` lock files there (D-111), its time set when it is taken, so a
+    process waiting for one sees since when the calls holding them are under way (D-180)."""
 
     def __init__(self, name: str) -> None:
         self.name = name
         self._cond = threading.Condition()
         self._busy = 0
+        self._since: dict[object, float] = {}  # this process's slots held: since when (time.time())
+        self._freed = 0.0  # how long the slot given back last had been held
 
     @contextlib.contextmanager
-    def held(self, limit: int = 1, deadline: float | None = None) -> Iterator[None]:
-        """``deadline``: a ``time.monotonic()`` by which a slot must be had, else ``TimeoutError`` (an arriving invoice
-        waits only so long, D-168); None: as long as it takes."""
+    def held(self, limit: int = 1, deadline: float | None = None) -> Iterator[SlotWait]:
+        """``deadline``: a ``time.monotonic()`` by which a slot must be had, else ``SlotTimeout`` (an arriving invoice
+        waits only so long, D-168); None: as long as it takes. Gives how the wait went (``SlotWait``)."""
         limit = max(1, int(limit or 1))
+        wait, asked, token = SlotWait(), time.monotonic(), object()
         with self._cond:
             while self._busy >= limit:
                 left = None if deadline is None else deadline - time.monotonic()
                 if left is not None and left <= 0:
-                    raise TimeoutError(f"no {self.name} slot free in time")
+                    raise SlotTimeout(f"no {self.name} slot free in time", time.time() - max(self._since.values()))
                 self._cond.wait(left)
+                wait.behind = self._freed
             self._busy += 1
+            self._since[token] = time.time()
         lock = None
         try:
-            lock = self._across_processes(limit, deadline)
-            yield
+            lock = self._across_processes(limit, deadline, wait)
+            wait.seconds = time.monotonic() - asked
+            yield wait
         finally:
             if lock is not None:
                 lock.close()
             with self._cond:
                 self._busy -= 1
+                self._freed = time.time() - self._since.pop(token)
                 self._cond.notify_all()
 
-    def _across_processes(self, limit: int, deadline: float | None = None) -> Any:
+    def _across_processes(self, limit: int, deadline: float | None, wait: SlotWait) -> Any:
         folder = (os.environ.get(SLOTS_ENV) or "").strip()
         if not folder:
             return None
         from ..core.paths import try_lock
 
+        waited = False
         while True:
+            youngest = float("inf")  # how long the youngest call holding a slot has held it
             for number in range(limit):
+                path = Path(folder) / f"{self.name}-{number + 1}.lock"
                 try:
-                    lock = try_lock(Path(folder) / f"{self.name}-{number + 1}.lock")
+                    lock = try_lock(path)
                 except OSError:
                     return None  # a folder that can't be written: this process's limit only
+                try:
+                    held_for = time.time() - path.stat().st_mtime  # (its last holder's, when it is free)
+                except OSError:
+                    held_for = 0.0
                 if lock is not None:
+                    if waited:
+                        wait.behind = max(wait.behind, held_for)
+                    with contextlib.suppress(OSError):
+                        os.utime(path)  # held from now
                     return lock
+                youngest = min(youngest, held_for)
             if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(f"no {self.name} slot free in time")
+                raise SlotTimeout(f"no {self.name} slot free in time", youngest)
+            waited = True
             time.sleep(0.2)
 
 
@@ -507,6 +555,436 @@ class Slots:
 # queue CloseDesk's questions behind AP Coder's. The page reader has its own (page_reader.READ_LOCK): it is another
 # model, which LM Studio runs beside the chat model.
 CHAT_LOCK = Slots("chat")
+
+
+# --- A backup model server (D-180) -----------------------------------------------------------------------------------
+# Each model server, the chat model's (AP_LLM_BASE_URL) and the page reader's (AP_PAGE_READER_BASE_URL, else the chat
+# model's), may have a backup on the company network with the same models (AP_LLM_BACKUP_URL,
+# AP_PAGE_READER_BACKUP_URL): the Mac mini beside the Mac Studio. Its breaker (``Failover``, one for each server: the
+# two models share one when they share a machine and its backup) sends the calls there once FAILOVER_FAILURES calls in
+# a row went unanswered by the primary (refused or dropped, a 5xx, no answer within the call's limit, its model list
+# not given), and every call still waiting on the primary is dropped then and asked again on the backup. While the
+# backup serves, the primary is asked a one-word question every PROBE_SECONDS in the background; it is taken back after
+# PROBES_TO_RETURN answers in a row once the calls have been on the backup ``hold`` seconds (HOLD_SECONDS, twice as
+# long each time it fails again within FLAP_SECONDS of being taken back, at most HOLD_MOST), so it never flaps. On the
+# company server the breaker's state is shared by all its processes (a file in AP_LLM_SLOTS_DIR): what one finds moves
+# them all. Without a backup none of this runs.
+CHAT, PAGES = "chat", "pages"  # the chat model's server, the page reader's
+PRIMARY, BACKUP = "primary", "backup"
+FAILOVER_FAILURES = 2
+HOLD_SECONDS = 60.0
+HOLD_MOST = 1800.0
+FLAP_SECONDS = 600.0
+PROBE_SECONDS = 5.0
+PROBE_TIMEOUT = 10.0
+PROBES_TO_RETURN = 3
+HANG_SECONDS = 45.0  # with a backup: a page read whose next word is this late on the primary is a hang
+WATCH_SECONDS = 0.25  # how often a call under way on the primary looks whether the calls left it
+STATE_SECONDS = 0.5  # a process reads the shared state again after this long
+# An arrival's call that waited longer than this for its chat slot (another of AP Coder's calls held it) had only what
+# was left of its time: no answer then is no failure of the server's; one left less than SEND_SECONDS isn't sent. Only
+# while the call it waited behind was within the hang limit: past it, the server wasn't answering, and it counts.
+WAITED_SECONDS = 1.0
+SEND_SECONDS = 5.0
+SHARED_ENV = "AP_FAILOVER_SHARED"  # 0: each process on its own (to measure what sharing gives, D-180)
+KIND_NAMES = {CHAT: "the chat model's server", PAGES: "the page reader's server"}
+
+
+class ServerLeft(ConnectionError):
+    """A call under way on a model server the calls left for its backup: dropped, to be asked again there."""
+
+
+NO_ANSWER = "no answer in time"  # ``server_failure``'s words for a call its server didn't answer within its limit
+
+
+def server_failure(exc: BaseException) -> str:
+    """Why ``exc`` says the model server didn't answer, in a few words ("" when it answered, if only to refuse): no
+    answer in time, refused or dropped, or a failure of its own (a 5xx). A call AP Coder dropped itself
+    (``ServerLeft``) is no new failure."""
+    import openai
+
+    kinds = {kind.__name__ for kind in type(exc).__mro__}
+    if isinstance(exc, ServerLeft):
+        return ""
+    if isinstance(exc, (openai.APITimeoutError, TimeoutError)) or "TimeoutException" in kinds:
+        return NO_ANSWER
+    if isinstance(exc, (openai.APIConnectionError, ConnectionError)) or "TransportError" in kinds:
+        return "not answering"
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status >= 500:
+        return f"failed ({status})"
+    return ""
+
+
+def probe(base_url: str, api_key: str, model: str = "", timeout: float = PROBE_TIMEOUT) -> tuple[bool, str, float]:
+    """Ask the model server at ``base_url`` a one-word question (``model``; without one, for its model list): (whether
+    it answered, how, in seconds). Any answer counts, a refusal too (a model it doesn't have: it is running); a 5xx,
+    no answer within ``timeout`` or no connection doesn't. Only a server this offline build may ask
+    (``refused_address``), with no proxy and no redirect, as every request to it."""
+    started = time.monotonic()
+    refused = refused_address(base_url)
+    if refused:
+        return False, refused, 0.0
+    base = base_url.rstrip("/")
+    try:
+        if not model:
+            _fetch_json(base + "/models", api_key, timeout)
+            return True, "listed its models", time.monotonic() - started
+        body = {"model": model, "messages": [{"role": "user", "content": "Reply with OK."}], "max_tokens": 1,
+                "temperature": 0}  # fmt: skip
+        request = urllib.request.Request(
+            base + "/chat/completions", data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
+        )  # fmt: skip
+        host = urlparse(base).netloc
+        with opener(_on_this_network(host), host).open(request, timeout=timeout) as response:
+            response.read()
+        return True, f"{model} answered", time.monotonic() - started
+    except urllib.error.HTTPError as exc:
+        return exc.code < 500, f"answered {exc.code}", time.monotonic() - started
+    except (OSError, ValueError) as exc:
+        return False, _short_error(exc), time.monotonic() - started
+
+
+def _fresh() -> dict[str, Any]:
+    return {"on": PRIMARY, "since": 0.0, "failures": {PRIMARY: 0, BACKUP: 0}, "left": 0.0, "hold": HOLD_SECONDS,
+            "returned": 0.0, "good": 0, "probe_at": 0.0, "why": "", "model": "", "probed": "", "moves": 0}  # fmt: skip
+
+
+class Failover:
+    """The breaker of one model server with a backup (``kind``: CHAT or PAGES): where its calls go now
+    (``serving``), told how each went (``answered``, ``failed``), and a call under way on the primary dropped once the
+    calls left it (``watched``). The state is a dict (``state``; times are ``time.time()``): ``on`` (PRIMARY or
+    BACKUP), ``since`` it went there, ``failures`` in a row of each, ``left`` (when the calls last left the primary),
+    ``hold``, ``returned`` (when the primary was last taken back), ``good`` (the primary's probes answered in a row),
+    ``probe_at``, ``why`` (what moved the calls, in words), ``model`` (the primary's model the probe asks),
+    ``probed`` (how its last probe went) and ``moves``."""
+
+    def __init__(self, kind: str, primary: str, backup: str, api_key: str = "") -> None:
+        import hashlib
+
+        self.kind, self.primary, self.backup, self.api_key = kind, primary.rstrip("/"), backup.rstrip("/"), api_key
+        self.kinds = {kind}  # the models it serves: the chat model's server, the page reader's, or both
+        self.name = hashlib.sha256(f"{self.primary}|{self.backup}".encode()).hexdigest()[:12]
+        self._lock = threading.Lock()
+        self._state = _fresh()
+        self._read_at = float("-inf")
+        self._prober: threading.Thread | None = None
+        self._calls: dict[object, tuple[str, float]] = {}  # this process's calls under way: (server, since when)
+        self.forgotten = False  # (``forget_failovers``)
+
+    @property
+    def title(self) -> str:
+        return KIND_NAMES[self.kind] if len(self.kinds) == 1 and self.kind in KIND_NAMES else "the model server"
+
+    # --- Its state, shared by the company server's processes
+
+    def _file(self) -> Path | None:
+        folder = (os.environ.get(SLOTS_ENV) or "").strip()
+        if not folder or (os.environ.get(SHARED_ENV) or "").strip() == "0":
+            return None
+        return Path(folder) / f"failover-{self.name}.json"
+
+    @staticmethod
+    def _read(path: Path) -> dict[str, Any] | None:
+        try:
+            found = json.loads(path.read_text(encoding="utf-8") or "null")
+        except FileNotFoundError:
+            return _fresh()
+        except (OSError, ValueError):
+            return None  # being written by another process: the last one read stands
+        return {**_fresh(), **found} if isinstance(found, dict) else None
+
+    def state(self, fresh: bool = False) -> dict[str, Any]:
+        """The state now (read again from the shared file at most every STATE_SECONDS; ``fresh``: now)."""
+        path = self._file()
+        with self._lock:
+            if path is not None and (fresh or time.monotonic() - self._read_at >= STATE_SECONDS):
+                found = self._read(path)
+                if found is not None:
+                    self._state = found
+                self._read_at = time.monotonic()
+            return json.loads(json.dumps(self._state))
+
+    def _update(self, change: Any) -> dict[str, Any]:
+        """``change(state)`` applied to the state as it is now, then kept (in the shared file, under its lock)."""
+        path = self._file()
+        with self._lock:
+            lock = None
+            if path is not None:
+                from ..core.paths import try_lock
+
+                deadline = time.monotonic() + 2.0
+                while lock is None and time.monotonic() < deadline:
+                    try:
+                        lock = try_lock(path.with_suffix(".lock"))
+                    except OSError:
+                        break
+                    if lock is None:
+                        time.sleep(0.01)
+                found = self._read(path) if lock is not None else None
+                if found is not None:
+                    self._state = found
+            try:
+                change(self._state)
+                if lock is not None and path is not None:
+                    with contextlib.suppress(OSError):
+                        path.write_text(json.dumps(self._state), encoding="utf-8")
+                self._read_at = time.monotonic()
+            finally:
+                if lock is not None:
+                    lock.close()  # type: ignore[attr-defined]
+            return json.loads(json.dumps(self._state))
+
+    # --- Where the calls go
+
+    def role(self, base_url: str) -> str | None:
+        base = (base_url or "").rstrip("/")
+        return PRIMARY if base == self.primary else BACKUP if base == self.backup else None
+
+    def serving(self) -> str:
+        """The base URL the calls go to now: the primary, or the backup while the breaker has moved them there (its
+        probe of the primary then runs in this process too)."""
+        if self.state()["on"] == BACKUP:
+            self._probe_in_background()
+            return self.backup
+        return self.primary
+
+    def left_since(self) -> float:
+        """When the calls last left the primary for its backup (``time.time()``; 0: never)."""
+        return float(self.state()["left"] or 0.0)
+
+    def answered(self, base_url: str, model: str = "") -> None:
+        """A call to ``base_url`` was answered (``model``: the model that answered; the probe asks the primary's first
+        one, any of its models telling whether it answers). The shared state is read afresh: another process's
+        failure a moment ago is reset, so two failures with an answer between move nothing."""
+        role = self.role(base_url)
+        if role is None:
+            return
+        s = self.state(fresh=True)
+        if not s["failures"].get(role) and not (role == PRIMARY and model and not s["model"]):
+            return
+
+        def change(s: dict[str, Any]) -> None:
+            s["failures"][role] = 0
+            if role == PRIMARY and model and not s["model"]:
+                s["model"] = model
+
+        self._update(change)
+
+    def failed(self, base_url: str, why: str) -> None:
+        """A call to ``base_url`` went unanswered (``why``, in a few words): the calls go to the backup once the
+        primary failed FAILOVER_FAILURES times in a row."""
+        role = self.role(base_url)
+        if role is None:
+            return
+        moved: list[str] = []
+
+        def change(s: dict[str, Any]) -> None:
+            if role != s["on"]:  # a late failure of a server the calls left already
+                return
+            s["failures"][role] = int(s["failures"].get(role) or 0) + 1
+            if role != PRIMARY or s["failures"][role] < FAILOVER_FAILURES:
+                return
+            now = time.time()
+            again = s["returned"] and now - s["returned"] < FLAP_SECONDS
+            s.update(on=BACKUP, since=now, left=now, good=0, probe_at=now + PROBE_SECONDS, moves=s["moves"] + 1,
+                     why=f"{s['failures'][role]} calls in a row: {why}",
+                     hold=min(HOLD_MOST, s["hold"] * 2) if again else HOLD_SECONDS)  # fmt: skip
+            s["failures"] = {PRIMARY: 0, BACKUP: 0}
+            moved.append(s["why"])
+
+        self._update(change)
+        if moved:
+            log.warning("%s at %s didn't answer (%s): its calls go to the backup at %s (D-180)",
+                        self.title, self.primary, moved[0], self.backup)  # fmt: skip
+            self._probe_in_background()
+
+    # --- A call under way on the primary
+
+    @contextlib.contextmanager
+    def calling(self, base_url: str) -> Iterator[None]:
+        """A call of this process to ``base_url`` under way (``behind``)."""
+        token = object()
+        with self._lock:
+            self._calls[token] = ((base_url or "").rstrip("/"), time.monotonic())
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._calls.pop(token, None)
+
+    def behind(self, base_url: str, since: float, limit: float) -> bool:
+        """Whether another of this process's calls to ``base_url``, under way since before ``since`` (a
+        ``time.monotonic()``), has been under way less than ``limit`` (the hang limit): a call sent then that got no
+        answer in time may have waited behind it in the model server's own line (one GPU for both models), so it is no
+        hang of the server's. Silent past the limit, the call ahead says the server isn't answering: no excuse then
+        (a page read waits the whole limit itself, so it never has one). The other processes' calls aren't seen here;
+        their chat slots are (``Slots``)."""
+        base, now = (base_url or "").rstrip("/"), time.monotonic()
+        with self._lock:
+            return any(server == base and began < since and now - began < limit
+                       for server, began in self._calls.values())  # fmt: skip
+
+    def watched(self, base_url: str, call: Any) -> Any:
+        """``call()``'s answer. On the primary the call is made in a thread of its own, and ``ServerLeft`` raised as
+        soon as the calls leave the primary (another call's finding, maybe another process's): the call is left to
+        end on its own, and what it answers then is closed unread. Under way meanwhile (``calling``)."""
+        with self.calling(base_url):
+            return self._watched(base_url, call)
+
+    def _watched(self, base_url: str, call: Any) -> Any:
+        if self.role(base_url) != PRIMARY:
+            return call()
+        box: dict[str, Any] = {}
+        done, guard = threading.Event(), threading.Lock()
+
+        def run() -> None:
+            try:
+                value = call()
+            except BaseException as exc:  # noqa: BLE001 - handed to the caller as it is
+                with guard:
+                    box["error"] = exc
+            else:
+                with guard:
+                    dropped = box.get("dropped")
+                    box["value"] = value
+                if dropped:
+                    with contextlib.suppress(Exception):
+                        value.close()
+            finally:
+                done.set()
+
+        threading.Thread(target=run, name=f"ap-coder-{self.kind}-call", daemon=True).start()
+        while not done.wait(WATCH_SECONDS):
+            if self.state()["on"] != PRIMARY:  # (moved before it began, too: it was sent on the way out)
+                with guard:
+                    box["dropped"] = "value" not in box and "error" not in box  # (answered just now: taken)
+                if box["dropped"]:
+                    raise ServerLeft(f"{self.title} at {self.primary} stopped answering: its "
+                                     f"backup at {self.backup} is asked instead")  # fmt: skip
+                break
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
+
+    # --- Taking the primary back
+
+    def _probe_in_background(self) -> None:
+        with self._lock:
+            if self._prober is not None and self._prober.is_alive():
+                return
+            self._prober = threading.Thread(target=self._probe_loop, name=f"ap-coder-{self.kind}-probe", daemon=True)
+            self._prober.start()
+
+    def _probe_loop(self) -> None:
+        while not self.forgotten and self.state()["on"] == BACKUP:
+            if self._probe_due():
+                ok, how, seconds = probe(self.primary, self.api_key, self.state()["model"], PROBE_TIMEOUT)
+                if not self.forgotten:  # (another breaker of its server may be the process's now)
+                    self._probed(ok, f"{how} in {seconds:.1f} s" if ok else how)
+            time.sleep(min(1.0, PROBE_SECONDS))
+
+    def _probe_due(self) -> bool:
+        """Whether this process probes the primary now (one process at a time on the company server)."""
+        if time.time() < self.state()["probe_at"]:
+            return False
+        mine: list[bool] = []
+
+        def change(s: dict[str, Any]) -> None:
+            now = time.time()
+            if s["on"] == BACKUP and now >= s["probe_at"]:
+                s["probe_at"] = now + PROBE_TIMEOUT + PROBE_SECONDS  # (set again once this one is over)
+                mine.append(True)
+
+        self._update(change)
+        return bool(mine)
+
+    def _probed(self, ok: bool, how: str) -> None:
+        back: list[bool] = []
+
+        def change(s: dict[str, Any]) -> None:
+            if s["on"] != BACKUP:
+                return
+            now = time.time()
+            s["good"] = s["good"] + 1 if ok else 0
+            s["probe_at"], s["probed"] = now + PROBE_SECONDS, how
+            failing = s["failures"].get(BACKUP, 0) >= FAILOVER_FAILURES  # the backup fails too: no hold
+            if s["good"] >= PROBES_TO_RETURN and (now - s["since"] >= s["hold"] or failing):
+                s.update(on=PRIMARY, since=now, returned=now, good=0, why="")
+                s["failures"] = {PRIMARY: 0, BACKUP: 0}
+                back.append(True)
+
+        self._update(change)
+        if back:
+            log.warning("%s at %s answers again: its calls go back to it from the backup (D-180)",
+                        self.title, self.primary)  # fmt: skip
+
+
+_FAILOVERS: dict[tuple[Any, ...], Failover] = {}
+_FAILOVERS_LOCK = threading.Lock()
+
+
+def failover(kind: str, primary: str, backup: str, api_key: str = "") -> Failover | None:
+    """The breaker of the model server ``primary`` with its ``backup`` (``kind``: the model it is asked for), one in
+    each process for each server; None without a backup (or with one that is the primary itself): every call to the
+    primary, as before."""
+    primary, backup = (primary or "").rstrip("/"), (backup or "").rstrip("/")
+    if not backup or backup == primary:
+        return None
+    key = (os.getpid(), primary, backup)  # one a server: both models share it on one machine
+    with _FAILOVERS_LOCK:
+        found = _FAILOVERS.get(key)
+        if found is None:
+            found = _FAILOVERS[key] = Failover(kind, primary, backup, api_key)
+        found.kinds.add(kind)
+        return found
+
+
+def forget_failovers() -> None:
+    """Every breaker of this process forgotten, their probes stopped (tests; a shared state stays where it is kept)."""
+    with _FAILOVERS_LOCK:
+        for found in _FAILOVERS.values():
+            found.forgotten = True
+        _FAILOVERS.clear()
+
+
+def chat_failover(llm: LocalLLMSettings) -> Failover | None:
+    return failover(CHAT, llm.base_url, llm.backup_url, llm.api_key)
+
+
+def serving_llm(llm: LocalLLMSettings) -> LocalLLMSettings:
+    """``llm`` pointed at the chat model's server in use now: its backup while the breaker has moved the calls there,
+    else ``llm`` itself (always, without a backup)."""
+    found = chat_failover(llm)
+    if found is None:
+        return llm
+    base = found.serving()
+    if base == llm.base_url.rstrip("/"):
+        return llm
+    from dataclasses import replace
+
+    return replace(llm, base_url=base)
+
+
+_UNLISTED: dict[str, ModelStatus] = {}  # each server's last status that gave no model list, counted by its breaker
+
+
+def unlisted(breaker: Failover | None, status: ModelStatus) -> bool:
+    """A model server with a backup that didn't give its model list (``status``, asked afresh) is a failure its
+    breaker counts: killed, it lists nothing, so nothing is asked of it and no call fails. The primary's moves the
+    calls; the backup's, while the calls are on it, lets the primary back at once when it answers. A status kept
+    DOWN_TTL_SECONDS is one failure, however often it is read (by the page reader or the chat model on one machine).
+    Whether the calls go to another server now (D-180)."""
+    base = status.base_url
+    if breaker is None or status.reachable or breaker.role(base) is None:
+        return False
+    with _lock:
+        counted = _UNLISTED.get(base) is status
+        _UNLISTED[base] = status
+    if not counted:
+        breaker.failed(base, "its model list didn't come")
+    return breaker.serving() != base
 
 
 NO_MODEL_MESSAGE = (

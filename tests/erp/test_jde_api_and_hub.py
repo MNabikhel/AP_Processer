@@ -134,6 +134,9 @@ def test_the_undo_refusal_says_what_each_voucher_is(tmp_path, ais):
     """B-1202: the undo refusal said every voucher was "in JD Edwards … void the voucher", one whose answer was lost
     or that JD Edwards refused too: it says posted (void it there), answer not received (being checked), or may be
     in JD Edwards (check there)."""
+    busy = [503] * 3  # the second turned away by AIS once (busy): the run goes on past the first's late answer (D-182)
+    ais.plan = lambda key, inputs: busy.pop() if busy and inputs.get("mode") == "FINAL" and (
+        inputs["pay_items"][0]["VLVINV"] == "SIL-4471") else None  # fmt: skip
     store, batch = lost_answer(tmp_path, ais, ON, QC)
     said = jde_post.undo_problem(store, batch)
     assert "void" not in said and "answer not received" in said, said

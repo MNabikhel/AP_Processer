@@ -402,3 +402,34 @@ def test_on_windows_the_task_is_installed_and_removed(data):
         subprocess.run([*base, "remove", "--task-name", name], capture_output=True, text=True, timeout=120)
     gone = subprocess.run(["schtasks", "/query", "/tn", name], capture_output=True, text=True, timeout=60)
     assert gone.returncode != 0
+
+
+def test_a_backup_model_server_in_server_json_reaches_the_dashboard(data):
+    """D-180: server.json's ``llm_backup_url`` and ``page_reader_backup_url`` are given to the dashboard (whose
+    environment wins over the .env), as AP_LLM_BACKUP_URL and AP_PAGE_READER_BACKUP_URL."""
+    service.write_config(data, llm_backup_url=" http://macmini.local:1234/v1 ")
+    s = service.settings(data, env={})
+    assert s.llm_backup_url == "http://macmini.local:1234/v1" and s.page_reader_backup_url == ""
+    env = service.serve_env(s, data)
+    assert env["AP_LLM_BACKUP_URL"] == "http://macmini.local:1234/v1" and "AP_PAGE_READER_BACKUP_URL" not in env
+    given = service.settings(data, env={"AP_PAGE_READER_BACKUP_URL": "http://macmini.local:8081/v1"})
+    assert service.serve_env(given, data)["AP_PAGE_READER_BACKUP_URL"] == "http://macmini.local:8081/v1"
+    assert "AP_LLM_BACKUP_URL" not in service.serve_env(service.settings(data, env={}, llm_backup_url=""), data)
+
+
+def test_server_jsons_backup_model_server_wins_over_the_data_folders_env(data):
+    """B-1873: ``service run`` reads the data folder's .env into its environment first (as every AP Coder process
+    does), and the environment wins over server.json: the dashboard was given the .env's backup address, not
+    server.json's, and its form wasn't locked. For the backup model servers server.json wins over the .env; the
+    machine's own environment still wins over both, and without one in server.json the .env's is used."""
+    from ap_coder.core.config import Settings
+
+    (data / ".env").write_text("AP_LLM_BACKUP_URL=http://10.0.0.9:1234/v1\n"
+                               "AP_PAGE_READER_BACKUP_URL=http://10.0.0.9:8081/v1\n", encoding="utf-8")  # fmt: skip
+    service.write_config(data, llm_backup_url="http://10.0.0.7:1234/v1")
+    Settings.from_env(data / ".env")  # what ops/cli.py does first for `service run`
+    env = service.serve_env(service.settings(data), data)
+    assert env["AP_LLM_BACKUP_URL"] == "http://10.0.0.7:1234/v1"
+    assert env["AP_PAGE_READER_BACKUP_URL"] == "http://10.0.0.9:8081/v1"  # none in server.json: the .env's
+    os.environ["AP_LLM_BACKUP_URL"] = "http://10.0.0.8:1234/v1"  # the machine's own (setx /M; conftest clears it)
+    assert service.serve_env(service.settings(data), data)["AP_LLM_BACKUP_URL"] == "http://10.0.0.8:1234/v1"

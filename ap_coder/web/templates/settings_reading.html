@@ -50,6 +50,22 @@
   {% endif %}
 </section>
 
+{% if servers and servers.rows %}{# a backup model server is set (D-180): which one answers, and how #}
+<section class="card" id="servers">
+  <h4>Model servers</h4>
+  <p class="muted">Each model server and its backup. The calls go to the backup on their own while the main one
+    doesn't answer, and back once it answers well again: nothing is lost or read twice meanwhile.</p>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Server</th><th>Address</th><th>Calls go there now</th><th>How it answers</th></tr></thead>
+    <tbody>{% for r in servers.rows %}<tr><td><b>{{ r.server }}</b></td><td class="w"><code>{{ r.address }}</code></td>
+      <td>{% if r.in_use %}{{ ui.pill("In use", "ok", "check_circle") }}{% else %}{{ ui.pill("Standing by", "gray") }}{% endif %}</td>
+      <td class="w">{{ r.listed }}{% if r.asked %}<br><span class="muted">Asked at {{ servers.checked }}: {{ r.asked }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% for note in servers.notes %}<p>{{ note }}</p>{% endfor %}
+  <p class="muted">Check again (above) asks each one a one-word question and shows how long it took.</p>
+</section>
+{% endif %}
+
 {% if reader %}
 <section class="card" id="page-reader">
   <h4>OvisOCR2's self-test</h4>
@@ -91,6 +107,11 @@
   <p class="muted">The chat model in LM Studio checks every invoice against its pages, as an AP clerk would before
     posting it: the header, each line and its GL account, the taxes and the math. What it reads differently is marked
     Check; when it is not sure, a person looks. With it on, no invoice is approved without a person until it agrees.</p>
+  {% if servers and servers.untrusted %}
+  <div class="flash warn" role="status"><span class="ms" aria-hidden="true">pending</span>
+    <div><b>The AI reviewer waits:</b> {{ servers.untrusted }}. Until then no invoice is approved without a person
+      on its word.</div></div>
+  {% endif %}
   <form method="post" action="/settings/reading/reviewer" class="stack" data-busy="Saving…">
     <label class="check"><input type="checkbox" name="on" value="1"{% if ai_reviewer.on %} checked{% endif %}> On (recommended)</label>
     <label class="field">What it reviews
@@ -165,6 +186,24 @@
   {% if reader.scans %}<p>{{ reader.scans }}</p>{% endif %}
   {% if reader.skipped %}<p>{{ reader.skipped }}</p>{% endif %}
   {% if reader.scorecard %}<p>{{ reader.scorecard }}</p>{% endif %}
+  {% endif %}
+
+  {% if servers %}
+  <h4 id="backup">Backup model servers</h4>
+  <p class="muted">Another computer on the company network with the same models in LM Studio (a second Mac beside
+    the first): the calls go there while the main server doesn't answer, and back once it answers well again. Its
+    address as LM Studio shows it; leave it empty for none. Only a computer on this network is ever asked.
+    {% if server_mode %}Imports use a new address once AP Coder restarts on the server.{% endif %}</p>
+  <form method="post" action="/settings/reading/servers" class="stack" data-busy="Saving…">
+    {% for f in servers.fields %}
+    <label class="field">{{ f.label }}
+      <input type="text" name="{{ f.name }}" value="{{ f.value }}" autocomplete="off" spellcheck="false"
+             placeholder="{{ 'empty: the chat model’s backup, when the page reader shares its server' if f.name == 'pages_backup' else 'its address, as LM Studio shows it' }}"
+             {% if f.locked %}disabled title="Set in the server's own settings (server.json): change it there."{% endif %}></label>
+    {% if f.locked %}<p class="muted">Set in the server's own settings (server.json): change it there.</p>{% endif %}
+    {% endfor %}
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
   {% endif %}
 
   <h4 id="models">Models in LM Studio</h4>

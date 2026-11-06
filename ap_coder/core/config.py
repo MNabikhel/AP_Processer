@@ -39,12 +39,20 @@ def process_var(name: str) -> bool:
     return upper in PROCESS_VARS or upper.startswith(PROCESS_PREFIXES)
 
 
+_FROM_ENV_FILE: dict[str, str] = {}  # what load_env_file put in the environment: name -> value
+
+
 def load_env_file(path: Path) -> None:
     """The .env's settings into the environment, those already set winning, and never :func:`process_var` ones."""
     values = dotenv_values(stream=io.StringIO(envfile.read_text(path)), interpolate=False)
     for name, value in values.items():
         if value is not None and not process_var(name) and name not in os.environ:
-            os.environ[name] = value
+            os.environ[name] = _FROM_ENV_FILE[name] = value
+
+
+def from_env_file(name: str, value: str) -> bool:
+    """Whether the environment's ``value`` of ``name`` is the one a .env put there, not the machine's own."""
+    return _FROM_ENV_FILE.get(name) == value
 
 
 _PLACEHOLDER = re.compile(r"<[^<>]+>")  # "https://<your-resource>.openai.azure.com/" in .env.example
@@ -233,6 +241,11 @@ def normalise_base_url(value: str | None) -> str:
     return f"{scheme.lower()}://{host}{path or '/v1'}"
 
 
+def backup_url(value: str | None) -> str:
+    """A backup model server's address as the /v1 base (``normalise_base_url``), or "" when none is given (D-180)."""
+    return normalise_base_url(value) if (value or "").strip().strip("\"'") else ""
+
+
 @dataclass(frozen=True)
 class DocumentIntelligenceSettings:
     endpoint: str | None = None
@@ -286,6 +299,9 @@ class LocalLLMSettings:
     # parallel requests, llama.cpp's --parallel, vLLM). AP_LLM_PARALLEL; the company server's ``service install
     # --llm-parallel``.
     parallel: int = 1
+    # Another model server with the same models (a second machine on the company network), which the calls go to while
+    # this one doesn't answer (D-180): AP_LLM_BACKUP_URL; "" = none, as before.
+    backup_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -295,8 +311,9 @@ class PageReaderSettings:
     on, found in LM Studio on its own and trusted once its self-test passed.
 
     The fields are developer overrides, not settings for AP: ``model`` ("" = OvisOCR2, found among LM Studio's
-    models), ``base_url`` ("" = the chat model's server, AP_LLM_BASE_URL), how long a page may take, and how many
-    pages of an invoice are read.
+    models), ``base_url`` ("" = the chat model's server, AP_LLM_BASE_URL), ``backup_url`` ("" = the chat model's
+    backup when the page reader shares its server, else none: D-180), how long a page may take, and how many pages of
+    an invoice are read.
     """
 
     model: str = ""
@@ -308,6 +325,7 @@ class PageReaderSettings:
     # measured (AP_PAGE_READER_SAMPLE).
     skip_clean: bool = False
     skip_sample: float = 0.1
+    backup_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -385,6 +403,7 @@ class Settings:
             max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
             temperature=_env_float("AP_LLM_TEMPERATURE", 0.0),
             parallel=min(32, max(1, _env_int("AP_LLM_PARALLEL", 1) or 1)),
+            backup_url=backup_url(_env("AP_LLM_BACKUP_URL")),
         )
         return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm, page_reader=_page_reader_from_env())
 
@@ -410,9 +429,10 @@ class Settings:
 
 
 def _page_reader_from_env() -> PageReaderSettings:
-    """The page reader's developer overrides (AP_PAGE_READER_MODEL, _BASE_URL, _TIMEOUT_SECONDS, _MAX_PAGES). A value
-    that isn't a positive number keeps the default, so a typo never stops the app. AP_PAGE_READER and
-    AP_PAGE_READER_SCOPE, which an older AP Coder read, are ignored: the page reader is always on, for every invoice."""
+    """The page reader's developer overrides (AP_PAGE_READER_MODEL, _BASE_URL, _BACKUP_URL, _TIMEOUT_SECONDS,
+    _MAX_PAGES). A value that isn't a positive number keeps the default, so a typo never stops the app. AP_PAGE_READER
+    and AP_PAGE_READER_SCOPE, which an older AP Coder read, are ignored: the page reader is always on, for every
+    invoice."""
     default = PageReaderSettings()
     model = _env("AP_PAGE_READER_MODEL", "") or ""
     base_url = _env("AP_PAGE_READER_BASE_URL")
@@ -425,6 +445,7 @@ def _page_reader_from_env() -> PageReaderSettings:
         skip_sample=min(1.0, max(0.0, sample)) if sample == sample else default.skip_sample,
         model="" if model.lower() in {"auto", "automatic"} else model,
         base_url=normalise_base_url(base_url) if base_url else "",
+        backup_url=backup_url(_env("AP_PAGE_READER_BACKUP_URL")),
         timeout_seconds=timeout if timeout and 0 < timeout < float("inf") else default.timeout_seconds,
         max_pages=max_pages if max_pages and max_pages > 0 else default.max_pages,
     )

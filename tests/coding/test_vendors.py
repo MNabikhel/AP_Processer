@@ -185,6 +185,35 @@ def test_a_hold_on_the_name_survives_a_match_by_tax_number(tmp_path, ground_trut
     assert codes.get("VENDOR_ON_HOLD") == "error"
 
 
+def test_the_duplicate_check_stays_right_and_quick_beside_a_supplier_with_20000_vouchers(tmp_path, ground_truth):
+    """The scale goal's target 4: with one supplier's 20,000 vouchers in the ERP register (the JD Edwards sync's, or
+    an imported one), a bill of it already in JD Edwards, and one of a small supplier beside it, are each flagged
+    DUPLICATE_IN_ERP, a new bill of the big one is not, and each check reads only that supplier's number."""
+    import time
+
+    from ap_coder.coding.vendors import vendor_findings
+
+    big = "Northwind IT Solutions Inc."
+    rows = [{"vendor_name": big, "invoice_number": f"NW-{n:05d}", "total": 100 + n % 50, "invoice_date": "2026-03-01"}
+            for n in range(20000)]  # fmt: skip
+    rows.append({"vendor_name": "Small Supplies Co", "invoice_number": "S-7", "total": 42.0, "invoice_date": ""})
+    store = Store(tmp_path / "ap.db")
+    assert store.import_erp_register(rows) == 20001
+
+    def codes(vendor: str, number: str, total: float) -> set[str]:
+        coding = InvoiceCoding.model_validate({**ground_truth, "vendor_name": vendor, "invoice_number": number,
+                                               "grand_total": total})  # fmt: skip
+        return {code for _, code, _ in vendor_findings(coding, store)}
+
+    codes(big, "warm", 1.0)
+    started = time.perf_counter()
+    assert "DUPLICATE_IN_ERP" in codes(big, "NW 12345", 145.0)  # written another way: the same bill
+    assert "DUPLICATE_IN_ERP" in codes("Small Supplies Co", "S-7", 42.0)
+    assert "DUPLICATE_IN_ERP" not in codes(big, "NW-20001", 100.0)  # its new bill
+    assert "DUPLICATE_IN_ERP" not in codes(big, "NW-12345", -145.0)  # the credit note of that bill
+    assert (time.perf_counter() - started) / 4 < 0.25
+
+
 def test_a_held_vendors_gst_number_or_bank_account_on_an_invoice_coded_to_another_vendor_is_said(
     tmp_path, ground_truth
 ):
@@ -209,6 +238,41 @@ def test_a_held_vendors_gst_number_or_bank_account_on_an_invoice_coded_to_anothe
     elsewhere = {"gst_hst_registration_number": "", "remit_bank_account": ""}  # nothing of the held vendor's
     other = InvoiceCoding.model_validate({**moved.model_dump(), **elsewhere})
     assert moved_off_hold(store, {**read, **elsewhere}, other) == []
+
+
+def test_with_thousands_of_vendors_on_hold_only_the_ones_an_invoice_could_be_are_compared(tmp_path, monkeypatch):
+    """B-1863: the held vendors' check (``held_vendor``) compared the GST/HST number and the bank account of an
+    invoice with each of every held vendor's approved invoices, at each check and twice a review screen: 46 ms with
+    3,000 vendors on hold. Their numbers and accounts are kept by what makes them the same (the Business Number, the
+    digits, the last 4 JD Edwards pays on) until a vendor or their invoices change: only those are compared."""
+    from ap_coder.coding import vendors
+
+    store = Store(tmp_path / "ap.db")
+    store.import_vendor_master([{"vendor_name": f"Held Supplier {i} Ltd", "erp_id": str(50000 + i),
+                                 "gst": f"{100000000 + i}RT0001"} for i in range(300)])  # fmt: skip
+    with store._conn() as conn:
+        conn.execute("UPDATE vendors SET erp_hold = 'H', erp_bank = '00012-003 …' || substr('000' || rowid, -4)")
+    for i in range(0, 300, 3):
+        doc = {
+            "vendor_name": f"Held Supplier {i} Ltd",
+            "invoice_number": f"I-{i}",
+            "grand_total": 10,
+            "gst_hst_registration_number": f"{100000000 + i}",
+            "remit_bank_account": f"004-12345-77{i:05d}",
+        }
+        store.approve_invoice(store.add_invoice(tmp_path / f"{i}.pdf", doc, {}), doc, "x")
+    compared = []
+    real_tax, real_bank = vendors.same_tax_number, vendors.same_bank_account
+    monkeypatch.setattr(vendors, "same_tax_number", lambda a, b: compared.append(b) or real_tax(a, b))
+    monkeypatch.setattr(vendors, "same_bank_account", lambda a, b: compared.append(b) or real_bank(a, b))
+    assert vendors.held_vendor(store, "Someone Else Inc", "999999999 RT0001", "Transit 99999 Account 1") is None
+    vendor, tie = vendors.held_vendor(store, "Someone Else Inc", "100000150 RT0001")  # its Business Number
+    assert (vendor["vendor_key"], tie) == ("held supplier 150", "gst")
+    vendor, tie = vendors.held_vendor(store, "Someone Else Inc", "", "Transit 12345 Inst 004 Account 7700297")
+    assert (vendor["vendor_key"], tie) == ("held supplier 297", "bank")
+    vendor, tie = vendors.held_vendor(store, "Someone Else Inc", "", "Transit 00012 Inst 003 Account 9990012")
+    assert tie == "bank"  # the account JD Edwards pays it on (…0012)
+    assert len(compared) < 10, len(compared)  # (before: each of 400 numbers and 100 accounts, at each check)
 
 
 @pytest.mark.parametrize(

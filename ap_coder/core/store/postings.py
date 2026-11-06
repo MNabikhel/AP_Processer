@@ -40,10 +40,11 @@ TABLE = (
     "CREATE INDEX IF NOT EXISTS jde_postings_invoice ON jde_postings (invoice_id)",
 )
 # Added since the table was first made (D-105): what JDE may hold, when the row was claimed for sending, the row's
-# version for compare-and-set, a lookup owed after a restore, and who the voucher is for (to check JDE's EXISTS).
+# version for compare-and-set, a lookup owed after a restore, who the voucher is for (to check JDE's EXISTS), and when
+# its send's answer was lost (D-182: JDE's "not there" is believed only a while after that).
 COLUMNS = {
     "maybe_sent": "INTEGER NOT NULL DEFAULT 0", "sending_at": "TEXT", "rev": "INTEGER NOT NULL DEFAULT 0",
-    "verify": "INTEGER NOT NULL DEFAULT 0", "expect": "TEXT NOT NULL DEFAULT ''",
+    "verify": "INTEGER NOT NULL DEFAULT 0", "expect": "TEXT NOT NULL DEFAULT ''", "lost_at": "TEXT",
 }  # fmt: skip
 
 

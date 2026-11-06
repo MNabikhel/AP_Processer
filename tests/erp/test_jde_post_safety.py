@@ -16,7 +16,7 @@ import pytest
 from ap_coder.erp import jde, jde_ais, jde_post
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import ON, QC
-from tests.erp.test_jde_post import batch_of, connect
+from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
 from tests.fake_ais import PASSWORD, FakeAis
 
 
@@ -244,9 +244,12 @@ def test_502_or_504_on_a_voucher_is_never_sent_again_blind(tmp_path, ais, busy):
     assert statuses(store, batch)[1] == jde_post.UNKNOWN and jde_post.undo_problem(store, batch)
     ais.script("voucher_create")  # (nothing scripted any more)
     ais.scripts.clear()
+    jde_post.retry_queue(store)  # at once: JDE has none under the key, but may still be making it (B-1880)
+    assert statuses(store, batch)[1] == jde_post.UNKNOWN and len(finals(ais)) == 1
+    long_after_the_loss(store)
     jde_post.retry_queue(store)  # looked up first: JDE has none under the key, so it is sent, once
     assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 2
-    assert len(ais.orchestration_calls("voucher_status")) == 1
+    assert len(ais.orchestration_calls("voucher_status")) == 2
 
 
 # --- A6: compare-and-set --------------------------------------------------------------------------------------------
@@ -274,7 +277,9 @@ def test_a_voucher_left_sending_by_a_stop_is_looked_up_never_resent(tmp_path, ai
     store, batch = batch_of(tmp_path, ais)
     jde_post.dry_run(store, batch)
     jde_post.post(store, batch)
-    stale = (dt.datetime.now() - dt.timedelta(minutes=jde_post.SENDING_MINUTES + 1)).isoformat(timespec="seconds")
+    # longer ago than a send can take, its retries included (B-1881), and than SENDING_MINUTES
+    live = max(jde_post.SENDING_MINUTES * 60, jde_post._live_seconds(store))
+    stale = (dt.datetime.now() - dt.timedelta(seconds=live + 60)).isoformat(timespec="seconds")
     with store._conn() as conn:  # AP Coder stopped after sending, before the answer was kept
         conn.execute("UPDATE jde_postings SET status = 'sending', document = '', sending_at = ?", (stale,))
     assert len(jde_post.waiting(store)) == 1
@@ -350,6 +355,9 @@ def test_a_dry_run_never_writes_over_a_voucher_that_went_out_meanwhile(tmp_path,
 
 
 def test_the_batch_files_leave_out_every_voucher_jde_may_hold(tmp_path, ais):
+    # the second turned away by AIS (busy, never reached JDE): the run goes on past the first's late answer (D-182)
+    ais.plan = lambda key, inputs: 503 if inputs.get("mode") == "FINAL" and inputs["pay_items"][0]["VLVINV"] == (
+        "SIL-4471") else None  # fmt: skip
     store, batch = lost_answer(tmp_path, ais, ON, QC)
     data, _name, _kind = exports.jde_file(store, batch)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:

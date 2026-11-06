@@ -18,13 +18,21 @@ outputs) and is specified for the JDE team in ``docs/JDE_ORCHESTRATIONS.md``.
   asked again once; ``close`` logs it out. ``basic``: HTTP Basic on each orchestration call, with the environment, role
   and device in their ``jde-AIS-Auth-*`` headers (AIS 9.2.1 and later accept it on the v3 orchestrator, CONFIRM).
 * **Errors in plain English** (``AisError``, ``kind``): the address refused, not reachable, a timeout, the user or
-  password refused, no permission, no such orchestration, JDE's own error messages (its error shape, ``jde_messages``),
+  password refused, no permission, no such orchestration, JDE's own error messages (its error shape, ``jde_messages``;
+  a refusal only with a form error's code, ``jde_refused``: AIS's own failure in JSON may have run, B-1890),
   an answer that isn't JSON. ``sent`` says whether the request may have reached JDE: a voucher whose request timed out
   after it was sent is *unknown*, looked up before it is ever sent again (``jde_post``).
 * **Limited retries** of what is safe to repeat: the connection refused or reset before the request was sent, AIS busy
   (502/503/504), and a timeout of a read (``idempotent``); a voucher's request is never repeated by the client after
   it may have reached JDE: 502 and 504 (a gateway that passed the request on and lost the answer) raise ``sent``. 503
   is taken as refused before processing (AIS or its load balancer turning the request away): retried, not sent.
+* **One connection kept open** (HTTP keep-alive, D-181): a client asks every page and call on the connection it has
+  open, its TLS handshake made once, rather than a new connection for each (a nightly sync is hundreds of pages); one
+  for each thread asking at once (the live check's client is shared). One AIS closed meanwhile is seen before it is
+  used; one found closed as a read is sent is asked again once on a new connection; after a timeout or any failure
+  the connection is closed, never used again (a late answer can't be read as the next one's).
+* **Pages** (``pages``): every page of a read orchestration, as it comes, however many (the sync writes each as it
+  arrives, D-181); ``rows`` collects them, at most ``max_pages`` (the live check's bound).
 * **The address checked is the address used**: the name is resolved once, each address must be on the company
   network, and the connection goes to that address (with the name for the certificate and the Host header), so a
   DNS answer that changes between the check and the connection (DNS rebinding) can't lead it elsewhere. 6to4
@@ -45,11 +53,12 @@ import json
 import logging
 import os
 import re
+import select
 import socket
 import ssl
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,6 +78,10 @@ DEFAULT_TIMEOUT = 30.0  # seconds, each request
 DEFAULT_RETRIES = 2  # a request that is safe to repeat, at most this many times again
 RETRY_PAUSE = 1.0  # seconds before the first retry, doubled each time (tests set it to 0)
 BUSY = (502, 503, 504)
+KEPT_OPEN = 4  # connections a client keeps open unused, at most (one per thread that asked at once)
+# A connection kept open is used again only this soon: one unused longer may have been dropped silently on the way (a
+# firewall's idle timeout, a VPN reconnecting: no FIN, no RST), and a request sent into it would wait its whole timeout.
+IDLE_SECONDS = 30.0
 
 # What went wrong (``AisError.kind``).
 OFF, ADDRESS, UNREACHABLE, TIMEOUT, CERTIFICATE, AUTH, DENIED, NOT_FOUND, JDE, ANSWER = (
@@ -82,13 +95,19 @@ class AisError(Exception):
     JDE's own messages and whether the request may have reached JDE (``sent``)."""
 
     def __init__(self, kind: str, message: str, *, status: int | None = None, messages: list[str] | None = None,
-                 sent: bool = False) -> None:  # fmt: skip
+                 sent: bool = False, stale: bool = False) -> None:  # fmt: skip
         super().__init__(message)
         self.kind, self.status, self.messages, self.sent = kind, status, list(messages or []), sent
+        self.stale = stale  # a kept-open connection that broke off before any answer (AIS had closed it)
 
 
 class TooManyPages(AisError):
     """A read whose answer has more pages than the caller reads: this question is too wide, JDE is not down."""
+
+
+class PageRepeated(AisError):
+    """A read orchestration that gave the same page again (its After… input ignored): it can't be read past its first
+    page, so a question of more than a page is too wide for it; JDE is not down."""
 
 
 class AisOff(AisError):
@@ -476,6 +495,19 @@ def jde_messages(body: Any) -> list[str]:
     return found
 
 
+def jde_refused(body: Any, depth: int = 0) -> bool:
+    """Whether an AIS error answer is JD Edwards' own refusal: a form request's error with its code (``errors``:
+    CODE, TITLE / DESC), not AIS's own failure said in JSON (its orchestration timeout, an exception), B-1890."""
+    if isinstance(body, list):
+        return depth < 6 and any(jde_refused(v, depth + 1) for v in body)
+    if not isinstance(body, dict) or depth > 6:
+        return False
+    errors = body.get("errors") or body.get("Errors")
+    if isinstance(errors, list) and any(isinstance(e, dict) and str(e.get("CODE") or "").strip() for e in errors):
+        return True
+    return any(jde_refused(v, depth + 1) for v in body.values() if isinstance(v, (dict, list)))
+
+
 class AisClient:
     """One sign-in to AIS (token mode: one token, logged out by ``close``; use it as a context manager)."""
 
@@ -503,6 +535,9 @@ class AisClient:
         self._signing = threading.Lock()  # one sign-in at a time when several threads share the client
         self.retries = DEFAULT_RETRIES
         self._context: ssl.SSLContext | None = None
+        # kept open, not in use (each used by one thread at a time), with when each was kept (``time.monotonic``)
+        self._open: list[tuple[float, http.client.HTTPConnection]] = []
+        self._open_lock = threading.Lock()
 
     # -- the secrets to keep out of any text
     def _secrets(self) -> tuple[str, ...]:
@@ -540,49 +575,82 @@ class AisClient:
         conn._create_connection = pinned  # type: ignore[attr-defined]
         return conn
 
+    def _take(self, timeout: float) -> tuple[http.client.HTTPConnection, bool]:
+        """A connection to ask on, and whether it was kept open from an earlier request: one kept open less than
+        IDLE_SECONDS ago that AIS has not closed meanwhile, else a new one (connected here, its failures said as they
+        are)."""
+        with self._open_lock:
+            while self._open:
+                kept_at, conn = self._open.pop()
+                fresh = time.monotonic() - kept_at < IDLE_SECONDS
+                if fresh and conn.sock is not None and not _closed_meanwhile(conn.sock):
+                    conn.sock.settimeout(timeout)
+                    return conn, True
+                conn.close()
+        conn = self._connection(timeout)
+        host = self.cfg.host
+        try:
+            conn.connect()
+        except ssl.SSLCertVerificationError as exc:
+            raise AisError(CERTIFICATE, f"{host}'s certificate isn't trusted ({exc.verify_message}): name your "
+                           "company's CA certificate file in the settings, or ask IT.") from None  # fmt: skip
+        except ssl.SSLError as exc:
+            raise AisError(CERTIFICATE, f"The secure connection to {host} failed ({exc.reason or exc}).") from None
+        except TimeoutError:  # no connection opened, nothing sent (Windows waits ~2 s on a closed port)
+            raise AisError(
+                UNREACHABLE,
+                f"{host} can't be reached (no answer within {timeout:g} seconds): is the "
+                "AIS Server running, and is this computer on the company network or VPN?",
+            ) from None
+        except OSError as exc:
+            raise AisError(UNREACHABLE, f"{host} can't be reached ({type(exc).__name__}): is the AIS Server "
+                           "running, and is this computer on the company network or VPN?") from None  # fmt: skip
+        return conn, False
+
+    def _keep(self, conn: http.client.HTTPConnection) -> None:
+        """A connection whose answer was read in full, kept open for the next request (at most KEPT_OPEN)."""
+        with self._open_lock:
+            if conn.sock is not None and len(self._open) < KEPT_OPEN:
+                self._open.append((time.monotonic(), conn))
+                return
+        conn.close()
+
+    def _close_connections(self) -> None:
+        with self._open_lock:
+            kept, self._open = self._open, []
+        for _, conn in kept:
+            conn.close()
+
     def _once(self, method: str, path: str, body: Any, headers: dict[str, str],
               timeout: float) -> tuple[int, Any]:  # fmt: skip
         """One request: (HTTP status, the JSON answer or its text). Raises AisError for the connection's failures."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        conn = self._connection(timeout)
+        conn, kept = self._take(timeout)
         host = self.cfg.host
         try:
-            try:
-                conn.connect()
-            except ssl.SSLCertVerificationError as exc:
-                raise AisError(CERTIFICATE, f"{host}'s certificate isn't trusted ({exc.verify_message}): name your "
-                               "company's CA certificate file in the settings, or ask IT.") from None  # fmt: skip
-            except ssl.SSLError as exc:
-                raise AisError(CERTIFICATE, f"The secure connection to {host} failed ({exc.reason or exc}).") from None
-            except TimeoutError:  # no connection opened, nothing sent (Windows waits ~2 s on a closed port)
-                raise AisError(
-                    UNREACHABLE,
-                    f"{host} can't be reached (no answer within {timeout:g} seconds): is the "
-                    "AIS Server running, and is this computer on the company network or VPN?",
-                ) from None
-            except OSError as exc:
-                raise AisError(UNREACHABLE, f"{host} can't be reached ({type(exc).__name__}): is the AIS Server "
-                               "running, and is this computer on the company network or VPN?") from None  # fmt: skip
-            try:
-                conn.request(
-                    method,
-                    self.prefix + path,
-                    body=data,
-                    headers={
-                        "Accept": "application/json",
-                        **({"Content-Type": "application/json"} if data else {}),
-                        **headers,
-                    },
-                )
-                answer = conn.getresponse()
-                raw = answer.read()
-            except TimeoutError:
-                raise AisError(TIMEOUT, f"{host} did not answer within {timeout:g} seconds.", sent=True) from None
-            except (ConnectionError, http.client.HTTPException, OSError) as exc:
-                raise AisError(UNREACHABLE, f"The connection to {host} broke off ({type(exc).__name__}).",
-                               sent=True) from None  # fmt: skip
-        finally:
+            conn.request(
+                method,
+                self.prefix + path,
+                body=data,
+                headers={
+                    "Accept": "application/json",
+                    **({"Content-Type": "application/json"} if data else {}),
+                    **headers,
+                },
+            )
+            answer = conn.getresponse()
+            raw = answer.read()
+        except TimeoutError:
             conn.close()
+            raise AisError(TIMEOUT, f"{host} did not answer within {timeout:g} seconds.", sent=True) from None
+        except (ConnectionError, http.client.HTTPException, OSError) as exc:
+            conn.close()
+            raise AisError(UNREACHABLE, f"The connection to {host} broke off ({type(exc).__name__}).", sent=True,
+                           stale=kept and isinstance(exc, ConnectionError)) from None  # fmt: skip
+        if answer.will_close:
+            conn.close()
+        else:
+            self._keep(conn)
         text = raw.decode("utf-8", errors="replace")
         try:
             parsed: Any = json.loads(text) if text.strip() else {}
@@ -596,11 +664,14 @@ class AisClient:
     def _request(self, method: str, path: str, body: Any, headers: dict[str, str], *, idempotent: bool,
                  timeout: float | None = None) -> tuple[int, Any]:  # fmt: skip
         timeout = timeout or self.cfg.timeout
-        attempt = 0
+        attempt, stale = 0, False
         while True:
             try:
                 status, parsed = self._once(method, path, body, headers, timeout)
             except AisError as exc:
+                if exc.stale and idempotent and not stale:  # AIS had closed the connection kept open: a new one
+                    stale = True
+                    continue
                 again = exc.kind in DOWN and (idempotent or not exc.sent)
                 if not again or attempt >= self.retries:
                     exc.args = (scrub(exc.args[0], *self._secrets()),)
@@ -637,8 +708,9 @@ class AisClient:
         return self.token
 
     def close(self) -> None:
-        """Log the token out (token mode); never raises."""
+        """Log the token out (token mode) and close the connections kept open; never raises."""
         if not self.token:
+            self._close_connections()
             return
         token, self.token = self.token, ""
         try:
@@ -646,6 +718,7 @@ class AisClient:
                           {}, idempotent=True, timeout=min(self.cfg.timeout, 10))  # fmt: skip
         except AisError:
             pass
+        self._close_connections()
 
     def __enter__(self) -> AisClient:
         return self
@@ -688,6 +761,10 @@ class AisClient:
         if not isinstance(parsed, dict):
             return AisError(ANSWER, f"AIS answered {what} with something that isn't JSON (HTTP {status}).",
                             status=status, sent=True)  # fmt: skip
+        if not jde_refused(parsed):  # AIS's own failure in JSON (its orchestration timeout): not JDE's refusal, B-1890
+            return AisError(ANSWER, f"AIS answered {what} with HTTP {status} and no error of JD Edwards' own ("
+                            f"{said or 'no message'}): it may have run all the same.", status=status, messages=found,
+                            sent=True)  # fmt: skip
         return AisError(JDE, f"JD Edwards refused {what}: " + (said or f"HTTP {status}, no message."), status=status,
                         messages=found, sent=True)  # fmt: skip
 
@@ -726,25 +803,42 @@ class AisClient:
         sent = {names.get(k, k): v for k, v in inputs.items()}
         return self.orchestration(str(spec["name"]), sent, **kwargs)
 
-    def rows(self, key: str, inputs: Mapping[str, Any] | None = None, *, max_pages: int = 200) -> list[dict[str, Any]]:
-        """Every row a read orchestration gives, page after page (``after`` = the last row's key, ``max_rows`` = the
-        page size), with AP Coder's field names."""
+    def pages(self, key: str, inputs: Mapping[str, Any] | None = None, *, after: str = "", max_pages: int | None = None,
+              to_the_end: bool = False) -> Iterator[tuple[list[dict[str, Any]], str]]:  # fmt: skip
+        """Each page a read orchestration gives, as it comes, with AP Coder's field names, and the key to ask the next
+        page after ("" after the last): ``after`` = the last row's key ("" for the first page, or where a read that
+        stopped left off), ``max_rows`` = the page size. Every page, however many (D-181), unless ``max_pages``:
+        TooManyPages past that many. An answer whose last key is the one asked after (an orchestration that does not
+        page) raises PageRepeated rather than asking for ever. ``to_the_end``: a page shorter than the page size is
+        the last only when it is empty or shorter than one before it (AIS may give fewer rows a page than asked, its
+        own maximum), else the next is asked too: a read that removes what it no longer lists."""
         spec = spec_of(self.mapping, key)
         size = int(self.ais.get("page_size") or 500)
-        out: list[dict[str, Any]] = []
-        after = ""
-        for _ in range(max_pages):
+        read = longest = 0
+        while True:
             answer = self.call(key, {**dict(inputs or {}), "after": after, "max_rows": size})
             page = [fields_of(spec, r) for r in answer.get(spec.get("rows") or "rows") or [] if isinstance(r, dict)]
+            read += 1
+            more = len(page) >= size or (to_the_end and bool(page) and len(page) >= longest)
+            longest = max(longest, len(page))
+            following = row_key(spec, page[-1]) if more else ""
+            if following and following == after:
+                raise PageRepeated(ANSWER, f"{spec['name']} gave the same page again after {after}: its paging (the "
+                                   "After… input) does not work, so it can't be read to the end.")  # fmt: skip
+            yield page, following
+            if not following:
+                return
+            if max_pages is not None and read >= max_pages:
+                raise TooManyPages(ANSWER, f"{spec['name']} gave more than {max_pages} pages: narrow it, or raise the "
+                                   "page size.")  # fmt: skip
+            after = following
+
+    def rows(self, key: str, inputs: Mapping[str, Any] | None = None, *, max_pages: int = 200) -> list[dict[str, Any]]:
+        """Every row a read orchestration gives, page after page (``pages``), at most ``max_pages`` pages."""
+        out: list[dict[str, Any]] = []
+        for page, _ in self.pages(key, inputs, max_pages=max_pages):
             out += page
-            if len(page) < size:
-                return out
-            last = page[-1]
-            after = str(last.get("key") or last.get(next(iter(spec.get("fields") or {"key": ""}))) or "")
-            if not after:
-                return out
-        raise TooManyPages(ANSWER, f"{spec['name']} gave more than {max_pages} pages: narrow it, or raise the page "
-                           "size.")  # fmt: skip
+        return out
 
     def test(self) -> dict[str, Any]:
         """Test connection: AIS's version (``defaultconfig``, when it answers), a sign-in and logout. Never raises."""
@@ -777,6 +871,21 @@ def spec_of(mapping: Mapping[str, Any], key: str) -> dict[str, Any]:
 def fields_of(spec: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
     """A row of an orchestration's answer with AP Coder's field names (``fields``: ours → theirs)."""
     return {ours: row.get(theirs) for ours, theirs in (spec.get("fields") or {}).items()}
+
+
+def row_key(spec: Mapping[str, Any], row: Mapping[str, Any]) -> str:
+    """The key a read orchestration pages by, of one of its rows (AP Coder's names): its ``key``, else its first
+    field (the supplier's number, the account's id, the business unit)."""
+    return str(row.get("key") or row.get(next(iter(spec.get("fields") or {"key": ""}))) or "")
+
+
+def _closed_meanwhile(sock: socket.socket) -> bool:
+    """Whether a connection kept open was closed by AIS meanwhile: readable while no answer is awaited (its end, or
+    bytes nobody asked for), or unusable."""
+    try:
+        return bool(select.select([sock], [], [], 0)[0])
+    except (OSError, ValueError):
+        return True
 
 
 def client(store: Any, *, need: str = "", allow_off: bool = False) -> AisClient:

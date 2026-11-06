@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .money import PRINTED_BASE, half_up, in_cents, nil, solver_cents, times, within
 from .tax import CANADIAN_TAX_TYPES, LAWFUL_OTHER_RATES, REGIME, TAX_TYPES
 
 EXEMPT, ZERO_RATED, OUT_OF_SCOPE = "exempt", "zero_rated", "out_of_scope"
@@ -471,14 +472,6 @@ LIKELY_UNTAXED = re.compile(
 )
 
 
-def tolerance_cents(n_lines: int, rate: float) -> int:
-    """How far the lines may be from a tax's base and still be its base: a cent a line (the vendor rounds line by
-    line), at least two, and the base's own uncertainty (a tax rounded to the cent is a base known to half a cent
-    divided by the rate: 10 cents at 5%)."""
-    rounding = 0.5 / rate if rate > 0 else 0.0
-    return int(round(max(2.0, 1.0 * n_lines) + rounding))
-
-
 @dataclass
 class Solution:
     """One way the lines add up to a tax's base: the positions of the lines in it."""
@@ -562,7 +555,7 @@ def solve(amounts: Sequence[float], target: float, rate: float, descriptions: Se
     * A line below zero (a trade discount, a credit) is never left out on its own: it lowers the taxable price of
       what it discounts (ETA s.165; only an early-payment discount is not, s.161), so it carries the tax with the
       others (B-707).
-    * Else the sets of lines that do (an exact subset sum in cents, within ``tolerance_cents``, counted exactly by
+    * Else the sets of lines that do (an exact subset sum in cents, within ``money.solver_cents``, counted exactly by
       meeting in the middle, without listing them all): one set, its lines left out to check unless they read as
       untaxed (``LIKELY_UNTAXED``); a few (``MAX_WAYS`` among at most ``MAX_DOUBTFUL_LINES`` lines), the likeliest,
       the lines in some and not others to check; more: "unsure", every line, nothing picked (B-706); none: every line.
@@ -571,9 +564,9 @@ def solve(amounts: Sequence[float], target: float, rate: float, descriptions: Se
     descriptions = list(descriptions or [""] * n)
     everything = frozenset(range(n))
     sign = -1 if sum(amounts) < 0 else 1
-    cents = [sign * round(a * 100) for a in amounts]
-    goal = sign * round(target * 100)
-    tol = tolerance_cents(n, rate)
+    cents = [sign * in_cents(a) for a in amounts]
+    goal = sign * in_cents(target)
+    tol = solver_cents(n, rate)
     if abs(sum(cents) - goal) <= tol:
         return Solved("all", everything, count=1)
     if abs(goal) <= tol:  # nothing left to carry it (the lines printed with it carry it all): none of these
@@ -625,14 +618,14 @@ def _tax_base(tl: Any, rate: float) -> float:
     tax = float(_get(tl, "tax_amount") or 0)
     if rate <= 0:
         return taxable
-    if taxable and abs(round(taxable * rate, 2) - tax) <= 0.05:  # printed, or the subtotal when it makes the tax
+    if taxable and within(times(taxable, rate), tax, PRINTED_BASE):  # printed, or the subtotal when it makes the tax
         return taxable
-    return round(tax / rate, 2)
+    return half_up(tax / rate)
 
 
 def charged_types(tax_lines: Iterable[Any]) -> list[str]:
     """The taxes an invoice charges (a printed "GST 0.00" is no charge)."""
-    return ordered(_get(t, "tax_type") for t in tax_lines or [] if abs(float(_get(t, "tax_amount") or 0)) > 0.004)
+    return ordered(_get(t, "tax_type") for t in tax_lines or [] if not nil(float(_get(t, "tax_amount") or 0)))
 
 
 def prefill(
@@ -774,9 +767,7 @@ def _prefill(
     unallocated: set[str] = set()
     ambiguous: set[int] = set()
     for tax_type in charged:
-        taxes = [
-            t for t in tax_lines if _get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
-        ]
+        taxes = [t for t in tax_lines if _get(t, "tax_type") == tax_type and not nil(float(_get(t, "tax_amount") or 0))]
         tax = sum(float(_get(t, "tax_amount") or 0) for t in taxes)
         province = str(_get(taxes[0], "province") or "")
         rate = None
@@ -790,9 +781,9 @@ def _prefill(
         if not rate and tax:
             base = sum(float(_get(t, "taxable_amount") or 0) for t in taxes)
         carried = sum(amounts[k] for k in range(n) if codes[k] is not None and tax_type in codes[k][0])
-        target = round(base - carried, 2)
+        target = half_up(base - carried)
         if not free:
-            if abs(target) * 100 > tolerance_cents(n, rate or 0.05):
+            if abs(target) * 100 > solver_cents(n, rate or 0.05):
                 unallocated.add(tax_type)
             continue
         solved = solve([amounts[k] for k in free], target, rate or 0.05, [descriptions[k] for k in free])
@@ -806,7 +797,7 @@ def _prefill(
         # A taxable amount printed that says otherwise (the subtotal, while the tax is on less): the lines left out
         # are what the vendor's figures disagree on, to check (B-707).
         printed_taxable = sum(float(_get(t, "taxable_amount") or 0) for t in taxes)
-        if printed_taxable and abs(printed_taxable - base) > tolerance_cents(len(free), rate or 0.05) / 100:
+        if printed_taxable and abs(printed_taxable - base) > solver_cents(len(free), rate or 0.05) / 100:
             check |= {free[j] for j in range(len(free)) if j not in solved.lines}
         solved_any = solved_any or solved.kind in ("unique", "several")
     for k in free:
@@ -857,9 +848,9 @@ def can_explain(amounts: Sequence[float], tax: float, rate: float) -> bool | Non
     None when there are too many lines to tell."""
     if rate <= 0 or not amounts:
         return None
-    if sum(1 for a in amounts if abs(a) > 0.004) > MAX_SOLVER_LINES:
+    if sum(1 for a in amounts if not nil(a)) > MAX_SOLVER_LINES:
         return None
-    return solve(list(amounts), round(tax / rate, 2), rate).kind != "none"
+    return solve(list(amounts), half_up(tax / rate), rate).kind != "none"
 
 
 def model_gave_no_taxes(lines: Sequence[Any]) -> bool:
@@ -994,7 +985,7 @@ def uncollected(province: str, supplier_province: str | None, pst_number: str | 
     for tax_type, number in (("PST", pst_number), ("QST", qst_number)):
         if tax_type not in regime and (regime or tax_type == "QST"):
             continue
-        charged = any(_get(t, "tax_type") == tax_type and abs(float(_get(t, "tax_amount") or 0)) > 0.004
+        charged = any(_get(t, "tax_type") == tax_type and not nil(float(_get(t, "tax_amount") or 0))
                       for t in tax_lines or ())  # fmt: skip
         if away or (number is not None and not str(number).strip() and not charged):
             out.append(tax_type)

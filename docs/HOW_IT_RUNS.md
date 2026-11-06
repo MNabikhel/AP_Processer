@@ -566,7 +566,7 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |
 | 7 | `ap_coder/web/server.py:_announce_when_up` | its own `/healthz` | direct, never through a proxy |
-| 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |
+| 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`, `probe`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`), and their backups `AP_LLM_BACKUP_URL` / `AP_PAGE_READER_BACKUP_URL` (D-180) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |
 | 9 | `ap_coder/ai/extraction.py:DocumentExtractor` | Azure Document Intelligence as the reader | only with `AP_ALLOW_INTERNET=1` and an endpoint |
 | 10 | `ap_coder/ai/inference.py:build_openai_client` | Azure OpenAI for coding | `local_llm.resolve_provider`: only with `AP_ALLOW_INTERNET=1` and an endpoint |
 | 11 | `ap_coder/ops/doctor.py` (`--online`) | Azure | only with `AP_ALLOW_INTERNET=1` |

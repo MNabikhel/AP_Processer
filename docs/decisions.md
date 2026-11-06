@@ -2258,3 +2258,502 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
     `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
     `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)
+- **D-180** · **A backup for each model server: one breaker a server, shared by the company server's processes; a
+  call under way on a failed primary asked again on the backup at once; a chat model other than the first trusted
+  for touchless approval only once it read the self-test's invoice right** (phase 4, M1; SCALE.md's target 3: "the
+  model machine killed, hung, slow or swapped: nothing lost or doubled, and failover to the backup in under a
+  minute"; B-1843, B-1844).
+  - **Why:** the planned layout puts the models on a Mac Studio with a Mac mini as its backup. AP Coder had one
+    address a model server (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`) and nothing moved to another on its own: a
+    dead Mac Studio stopped the page reader and the AI reviewer until a person changed the .env, and a hung one held
+    each page read up to its 20-minute word limit and each review its minutes. A chat model swapped in LM Studio was
+    asked for by its old name by every capture process until it restarted (B-1843), a review asked of it ended unsure
+    (B-1844), and the new one was then used, its reviews approving held invoices, with no test of its own.
+  - **The settings:** `AP_LLM_BACKUP_URL` (the chat model's backup, and the page reader's when it shares that server)
+    and `AP_PAGE_READER_BACKUP_URL` (a page reader on a server of its own, `AP_PAGE_READER_BASE_URL`): the .env,
+    *Settings → Reading → For IT → Backup model servers* (Admin; refused for an address off the company network by
+    the offline rule's own checks, `refused_address`, as the main address, and for the main server itself), or
+    server.json's `llm_backup_url` / `page_reader_backup_url` (given to the dashboard as its environment, which wins
+    over the .env: the form then shows it and leaves it). The service host reads the .env into its own environment
+    first, so it lets server.json's win over a value the .env put there (`service.OVER_ENV_FILE`, B-1873); the
+    machine's environment still wins over both. The service's other settings keep their order, a .env's winning over
+    server.json, which `service install` writes in full (its `llm_parallel` 1 would hide the .env's): SERVER.md says
+    so. Empty: none, and nothing below runs: no breaker, no thread, nothing kept, every call to the one server as
+    before (laptop mode; `same_behaviour.py` the same).
+  - **The breaker** (`local_llm.Failover`), one a server: the chat model and the page reader share one when they share
+    a machine and its backup (the planned layout); a page reader on a server of its own has its own. One a model
+    (the first try) left the page reader on a killed Mac Studio: it saw the model list fail, read nothing, and so
+    never counted a failure while the chat calls had long moved.
+    - **Moves the calls** after `FAILOVER_FAILURES` (2) calls in a row the primary didn't answer: refused or dropped,
+      a 5xx, no answer within the call's limit (the arrival's 20 s, the reviewer's time left, AP_LLM_TIMEOUT_SECONDS;
+      a page read's next word within `HANG_SECONDS`, 45 s, on a primary with a backup, instead of its 20 minutes), or
+      its model list not given when asked afresh (a status kept 10 s is one failure, `local_llm.unlisted`: asked by
+      `page_reader.reader_status`, and by `InvoiceCoder._prepare_local` when it finds no model, so a chat model on a
+      server of its own moves too, B-1869). A 4xx is an answer (a model it doesn't have, a field refused): a swap
+      moves nothing. A slow answer within its limit is no failure: the backup is the smaller machine.
+    - **Only the server's own time counts:** an arrival that waited longer than `WAITED_SECONDS` (1 s) for its chat
+      slot (another of AP Coder's calls held it) was given what was left of its 20 s: no answer then isn't counted,
+      and with less than `SEND_SECONDS` (5 s) left it isn't sent at all, put off as an arrival out of time (B-1870).
+      A call with no answer in time while another of this process's calls to that server was under way since before
+      it was sent may have waited in the server's own line (one GPU for both models): no hang (`Failover.behind`,
+      B-1871).
+    - **But the minute holds** (the lead's ruling, SCALE.md's target): a call ahead stands for AP Coder's own line
+      only while it has been under way less than the hang limit (`HANG_SECONDS`, 45 s, or the shorter call limit in
+      play, AP_LLM_TIMEOUT_SECONDS). Silent past it, the server isn't answering it, and a timeout behind it counts.
+      The same for a slot: `Slots` notes since when each one is held (this process's in memory, the other processes'
+      by the time set on the slot's lock file when it is taken), and an arrival whose slot was held by a call silent
+      past the hang limit counts, sent or not (`SlotTimeout.behind`, `SlotWait.behind`). A page read waits the whole
+      hang limit itself, so whatever it waited behind was silent past it: every page read's hang counts. So a hang
+      that starts while two reviews hold the chat slots is found by the page reads (and the arrivals) once the reviews
+      are 45 s silent: 46 s at the app's limits (`test_failover.py`'s review-held hang, the limits scaled 1:20, the
+      reviewer's 5 minutes kept), where before the cap it waited for the reviews' own 5 minutes. The
+      price: a primary only busy with a call silent past 45 s (a review of minutes on a server that answers one
+      thing at a time) is taken for hung, and the calls move (`busy_primary_moves.py` of the review moves again); a
+      call ahead within the limit (an arrival behind a review a few seconds old) still moves nothing. A read cut off
+      at the hang limit still counts a try of its own.
+    - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
+      looking at the breaker every 0.25 s): `ServerLeft`, and the call is asked once more on the backup when that has
+      the same model (`InvoiceCoder._local_create`, the arrival only within its deadline; `page_reader.transcribe`).
+      An answer that came just as the calls moved is taken (the second kill drill read a page twice before). A read
+      or review that fails all the same because the calls moved goes back in line at once, its try not counted
+      (`page_worker._postpone_or_fail(moved)`, `verifier._postpone_or_fail(moved)`), and a reader thread pausing
+      after a failed read wakes when they move.
+    - **Takes the primary back** after `PROBES_TO_RETURN` (3) answers in a row to a one-word question asked every
+      `PROBE_SECONDS` (5 s; `local_llm.probe`: one of its models, no slot taken, `PROBE_TIMEOUT` 10 s, one process at a
+      time), once the calls have been on the backup `hold` seconds: `HOLD_SECONDS` (60 s), twice as long each time it
+      fails again within `FLAP_SECONDS` (10 minutes) of being taken back, at most 30 minutes; at once when the backup
+      fails too: two of its calls, or its model list not given while the calls are on it (both down, nothing else is
+      asked of it: B-1872). Calls under way on the backup end there.
+    - **Shared** by the company server's processes, as the minute needs (measured below): a small JSON file in
+      `AP_LLM_SLOTS_DIR` (the slot locks' folder `serve --server` gives them all), written under its lock
+      (`paths.try_lock`), read at most every 0.5 s (an answer reads it afresh, so another process's failure a moment
+      before is reset: B-1876); times on the server's clock (one machine). Not the database: the
+      model calls have no store at hand (`local_llm` opens none), and it is no row's state. `AP_FAILOVER_SHARED=0`
+      gives each process its own (to measure). On a laptop, each process its own.
+    - **D-168's arrival breaker** counts for the server in use (`ArrivalBreaker.asks(server)`): its two timeouts in a
+      row move the calls first, and it counts afresh on the backup, so arrivals stop asking only when neither answers.
+  - **Which one answers, and how** (item 4): `page_reader.server_checks` lists each model's server and its backup: the
+    model it would use there, then (Check again, the doctor) a one-word question, timed. *Settings → Reading*: a card
+    "Model servers" (in use or standing by, how each answered at the last Check again, where the breaker sends the
+    calls and why); `python -m ap_coder doctor`: a line for each server and one for the breaker. Run from a console
+    on the company server it takes the server's own (`doctor.as_the_server`): server.json's backups and the state its
+    processes share, in the data folder's `llm` folder, where `serve --server` keeps it (B-1874). Without a backup:
+    neither, as before.
+  - **A swapped model** (item 5): the page reader's self-test was already its model's (`confirmed(store, model)`):
+    another OvisOCR2 build reads nothing until it passed, on whichever server it is; the backup's with the same key is
+    trusted on the primary's test (the same model file, LM Studio's key says). The chat model:
+    `page_worker.CHAT_TEST_KEY` notes the first chat model AP Coder runs with (the one it was qualified with); any
+    other (swapped in LM Studio, or the backup's own) reads the page reader's test invoice's header from the same
+    scanned pages (`inference.read_header`, compared by `page_reader._verdict`) before it decides anything
+    touchless: `chat_test_if_due`, in the first reader's round as `self_test_if_due`. Meanwhile the AI reviewer waits
+    (`verify_one` takes nothing), its agreement approves nothing (`_fold_in`), nor does a reading (`_read_taken`,
+    `chat_again`), nor the Azure check's agreement on an invoice whose header it read (the page reader's pass keeps
+    that model in the invoice's `meta.page_reader.chat_model`, `page_worker.header_untrusted`; with the AI reviewer
+    off the pass holds the invoice for Azure and asked nothing: B-1877). The trust asked is that of the model that
+    read the header, not of the one in use when it decides (LM Studio may swap it between): `_read_taken` and
+    `chat_again` ask `PipelineResult.header_model`'s (`chat_again` reads no header: its accounts go to a person
+    anyway), and the reviewer's agreement needs both its own model and that one trusted (B-1878). The Reading tab's
+    reviewer card says why
+    ("The AI reviewer waits: the chat model is now …"); the test is audited (`chat_model_tested`). This holds on a
+    laptop too: a swapped model is as risky there. One that
+    can't see pages (`page_worker.chat_sees_pages`) decides nothing touchless: it reads no header, reviews nothing
+    (the reviewer says it needs one that can) and its accounts always go to a person; it is neither kept back nor
+    tested (it could never pass, and was tested again, audited, every hour: B-1875).
+  - **Measured** (`python -m ap_coder.bench day --backup --drill …`: a second stand-in model server as the backup,
+    the same models and latencies, the drill on the primary; 40 invoices, half scans, the model 8-20 s a page × 0.05,
+    2 slots, 2 web workers, 2 capture processes; the 4 cores shared with three other agents' work; real seconds, the
+    app's limits unscaled but AP_LLM_TIMEOUT_SECONDS 30 s and the page reader's 60 s):
+
+    | drill on the primary | to the backup (pages / GL / reviews) | back | lost | read twice | stored twice |
+    |---|---|---:|---:|---:|---:|
+    | kill, 60 s | 0.9 s (3.3 / 2.2 / 0.9 s) | 14 s | 0 | 0 | 0 |
+    | hang, 60 s | 22.7 s (23.5 / 22.7 / 26.6 s) | 28 s | 0 | 0 | 0 |
+    | slow, answers ×100 (40-100 s), 90 s | 29.2 s (29.2 / 34.0 / 31.0 s) | 49 s | 0 | 1 | 0 |
+    | swap (another chat model) | none: a 404 is an answer | — | 0 | 0 | 0 |
+    | hang, each process its own breaker | 49.1 s (49.1 / 50.3 / 49.6 s) | 51 s | 0 | 0 | 0 |
+
+    To the backup: its first answer after the drill began (the hang's 2 s after the first request found hung, the
+    unshared hang's 16 s); back: the primary's first answer to a call asked after the drill ended; lost: reads failed
+    or never read; read twice: pages the two model servers answered twice; stored twice: readings or reviews folded
+    in twice. 0 failures, 0 imports failed and every review done in every run.
+
+    - **Sharing** halves a hang's failover (49 → 23 s) and its return (51 → 28 s): alone, each process finds it
+      by its own calls (the capture processes two arrivals each, 40 s; the background process its page reads' 45 s,
+      or its reviews' minutes had it no page read under way); shared, the first two timeouts anywhere move them all.
+      The arrivals during the drop: 3.7 min alone, 2.6 min shared.
+    - **The slow primary:** a call dropped when the calls moved is left to end on its own: on a hung primary it never
+      does, on a slow one it may still be answered within its limit, to nobody (the one page answered twice, its
+      reading stored once). Its return waits for those calls to leave the primary's slots: the probes, asked behind
+      them, go unanswered until then (49 s; three runs: 0, 1 and 1 page answered twice, 0 stored twice). The
+      stand-in model server now drops an answer whose client gave up (LM Studio stops), so it no longer counts
+      those as answered.
+    - **The swap:** nothing moves (a model not found is an answer); after it, 6 → 3 requests asked for the old chat
+      model and 2 → 0 of 40 reviews unsure with B-1844 (the status asked again at once); the new model answered
+      after 2.5 s and was trusted after 7.6 s (its self-test: 9 of 9 fields, 3.1 s), the AI reviewer waiting meanwhile;
+      all 40 agreed.
+    - The first runs found three of this change's gaps, fixed before the rows above: the page reader on its own
+      breaker never moved off a killed primary (one breaker a server, the model list counted); an answer that came
+      as the calls moved was asked again (taken now); two of 40 reviews unsure after the swap (B-1844).
+    - **Nothing else changed:** `scripts/same_behaviour.py --ref 5aa6014 read pipeline` (Python 3.12, both OCR
+      models): the same (60 read outputs, 1 pipeline output).
+    - **Measured again after the review's fixes** (B-1869 to B-1878; the same runs, one machine shared with other
+      agents' work): kill 1.1 s to the backup (3.8 / 4.7 / 1.1 s), back 14 s; hang 30.6 and 30.8 s (31.6 / 31.6 /
+      30.6 s), back 37 and 36 s, the code before on the same machine that day 21 s and 25 s; slow ×100 for 90 s
+      30.9 s (33.6 / 32.1 / 32.6 s), back 20 s; swap: nothing moved, 1 request for the old model after it, the new
+      one answered after 2 s and trusted after 4 s. Every run: 0 lost, 0 read twice, 0 stored twice, 0 failures,
+      40 of 40 reviews done. `same_behaviour.py --ref cfb45d6 read pipeline`: the same (60 read outputs, 1 pipeline
+      output).
+    - **With the minute's cap**, the AI reviewer running (`--reviewer all`): hang 31.6 s to the backup (32.7 / 31.6 /
+      32.0 s), back 37 s, with the bench's scaled limits (its reviews give up at 30 s, the cap there too: no gain to
+      show); at the app's own limits (`--no-scale-timeouts`, a review's call up to its 5 minutes) 20.9 s (21.9 /
+      21.8 / 20.9 s), back 27 s: one review hung there, and two arrivals that had their slots at once moved it. Two
+      reviews holding both slots is the test's case: 46 s at the app's limits, 300 s before the cap. 0 lost, 0 read
+      twice, 0 stored twice, 0 failures in both.
+  - **Not done:**
+    - A call dropped on the primary is not cancelled there: a slow primary finishes it for nobody (above).
+    - The capture processes take a backup address saved on the Reading page at their next start (their pipeline is
+      made once, `intake.imports.Reader`), as they take a new main address; the page reader and the reviewer at once.
+    - The backup's own models (another chat model, another OvisOCR2 key) are tested when the calls first go there,
+      not before: the AI reviewer, or the page reader, waits for that test then.
+    - The chat model's self-test reads the header: a reviewer that agrees with a wrong total (the digest's item 12)
+      is not tested.
+    - A hung chat model on a server of its own is found by the arrivals' 20 s, or else by a call's own limit (the
+      reviewer's minutes) while nothing arrives.
+    - At full latency the drills are estimates of the bench's own: the limits (20 s, 45 s, the probes) are real time
+      and the model's answers ×0.05, so a hang is found sooner relative to the work than on the Mac Studio.
+  - (`ai/{local_llm,inference,page_reader,page_worker,verifier,pipeline,azure_check}.py`, `core/{config,audit}.py`,
+    `ops/{doctor,service,cli}.py`, `web/pages/{settings_reading,activity}.py`, `web/roles.py`,
+    `web/templates/settings_reading.html`, `bench/{day,fake_model}.py`, `docs/{REFERENCE,SERVER,HOW_IT_RUNS}.md`;
+    `tests/ai/test_failover.py`, `tests/ai/test_page_reader.py`, `tests/web/test_reading_pages.py`,
+    `tests/ops/test_service.py`, `tests/bench/test_day.py`)
+- **D-181** · **The JD Edwards sync at the company's size: what changed each night and everything once a week, each
+  page written as it comes in a transaction of its own and resumed where it stopped, JD Edwards' vouchers kept by
+  their key in the register, one connection kept open** (scale goal phase 4, target 4's sync half; B-1850 to B-1856).
+  - **Why:** the digest ([coding_erp.md](archive/scale-2026-11/coding_erp.md) §2b, §5 R7 and R9), checked in the code:
+    every part read whole every night (no ChangedSince sent; the vouchers of 730 days), at most 200 pages a part
+    (100,000 rows: 600,000 vouchers failed every night), nothing kept of where a read stopped, a new TCP and TLS
+    connection for each request, each part written in one transaction after its last page, the PO sync three or four
+    queries a PO, voided vouchers never removed, a renamed supplier's vouchers kept under its old name for good, a
+    split PO line's number cut. Not reproduced: "no index on `vendors.erp_id`, 52 s for 30,000 suppliers": the index
+    has been there since B-1581 (schema 20); 30,000 suppliers took 1.9 s, the write lock 0.44 to 0.53 s at a time.
+  - **What:**
+    - **What changed, each night.** Each part keeps in the sync's state (`parts`) when its last good read began, when
+      it was last read whole, and what it reads (its scope: the company, the PO order type, the vouchers' days). The
+      next asks `ChangedSince` = that day less one (the two servers' clocks, a time zone); the vouchers: what changed
+      in the `voucher_days` window, then every voucher of the last 31 days (`RECENT_DAYS`). A part is read whole once
+      a week (`FULL_DAYS`), the first time, when its scope changes and when asked (`jde sync --full`, Settings' *Read
+      everything again*); the business units always (a short list). The mapping file's GL, PO and voucher reads take
+      `ChangedSince` (the suppliers' had it); an orchestration that ignores it still works, everything every night.
+    - **What only a whole read can say.** A PO no longer listed is closed only after a whole read (a changed one
+      merges its lines by number, the changed lines alone or the whole PO: both work; a PO's lines here are its open
+      ones, as a whole read lists them: a closed line, 999, leaves while another is open, and the last one closed
+      closes the PO). A voucher leaves the register when a complete read of its dates no longer lists it: those of
+      the last 31 days each night, the rest at the week's whole read, which also removes those without a date (none,
+      or one that can't be read) it no longer lists; a read's first day is left alone, whether JDE's FromInvoiceDate
+      includes it or not. Either refused when most or all at once (a wrong answer: a filter, row security), as
+      D-105's mass close, with `--allow-mass-close`. Nothing is removed before a read's last page: marked, not
+      staged and swapped (each voucher read is real and in the register as it comes; a half-read register is never
+      short of one).
+    - **A read is complete** when its last page is empty or shorter than the longest before it (what AIS gives:
+      its own maximum rows may be below the page size). So the reads that remove or close (the vouchers' sweeping
+      reads, the POs' whole read) ask again after a page as long as the longest so far (`pages(to_the_end=True)`:
+      one request more for a read of one page), and one that ends otherwise (its last row without its key: nothing
+      to ask the next page after) removes and closes nothing, said in the report. Kept with the read's progress.
+    - **Every page, as it comes.** `AisClient.pages` yields each page with the key to ask the next after; no ceiling
+      (a page ending on the key asked after raises, never a loop); `rows` keeps its `max_pages` for the live check.
+      Each page's rows, where the read is (`jde_ais_sync_progress`: the reads planned, the step, the last key written,
+      the report so far, each read's stamp) and the lease are one transaction; a stopped read goes on after that key
+      (a whole read left is taken whatever is due: it reads the changes too; begun less than 3 days ago). A PO's lines
+      are held to the next page so each PO is written whole. One database connection for a part (closing the last
+      one writes the log into the database: 40 ms a page). One sync at a time (lease `jde_sync`, renewed each page,
+      15 minutes): another is refused at once, nothing saved; one that can't renew it (it waited on JDE longer and
+      another took over) stops there, the page undone (renewed last in its transaction: the write lock is taken at
+      the page's first write, as before; renewed first, the lock waits went from 0.05 to 1.7 s), the sync's state
+      left to the other. A voucher keeps the newest read that listed it (`MAX(seen)`), so an older read writing late
+      never lets a newer one's sweep remove it.
+    - **The register** (`core/store/register.py`, moved out of `invoices.py`, 994 lines): JD Edwards' vouchers by
+      their key (`erp_vouchers`, made at every start, no schema version: an older AP Coder leaves it be) under their
+      bill (`erp_invoices`, what every check reads); a bill's copies are its vouchers (each by its key: one invoice
+      entered twice in JDE is two, whatever their dates; a file import still counts a bill's dates); a voucher whose
+      supplier was renamed or gross corrected moves to its new bill, the old going with its last voucher; each bill
+      keeps its supplier's number (`an8`), and `in_erp` finds a bill by the vendor's ERP ID too, so a renamed
+      supplier's vouchers are found before the week's read moves them. Its dates are read in the mapping's
+      `date_format`, as the dates sent. Cleared or replaced (Exports), the register keeps when
+      (`erp_register_cleared`), and the vouchers' next read after that is whole, one under way then not resumed.
+    - **Suppliers a page at a time:** `import_vendor_master(by_erp_id=True)` takes the vendors already there as
+      earlier rows of the same file: a row goes to the vendor of its name holding its AN8 ("Acme #4002", B-930), and
+      another AN8's row of a vendor's name is merged into it or is the second vendor, as in one file.
+    - **POs:** two queries a page for the POs before and after (`purchase_orders_by_key`), not three or four a PO;
+      R9: a whole LNID as it is (1.000 → 1), a split line's in JDE's own thousandths (1.500 → 1500), so no two lines
+      of a PO share a number and none after it is renumbered (`coding/po.py` matches whole numbers: kept so).
+    - **GL accounts:** an object.subsidiary's description is its first account's in a whole read; in a changes read
+      the changed account's (another business unit's may differ: the week's whole read puts the first back). The
+      account mapping rows are saved with their page; one `settings_changed` logged for the part.
+    - **Events:** one import event a part (`vendors_imported`, `accounts_imported`, `pos_imported`,
+      `erp_register_imported`), as its CSV import logs, not one a page; none on a night that read nothing.
+    - **One connection kept open** (`jde_ais`): a client keeps up to 4 open (one for each thread asking at once:
+      the live check's client is shared), TLS as before; one AIS closed meanwhile is seen before it is used (readable
+      while no answer is awaited), and one unused for 30 seconds (`IDLE_SECONDS`) is not used again (a firewall's idle
+      timeout or a VPN reconnecting drops it silently, no FIN: a request sent into it would wait its whole timeout);
+      a read that finds it closed as it is sent is asked again once on a new one, a voucher's never (it is
+      "unknown", looked up by its key, as before); after a timeout or any failure the connection is closed. One
+      signed-in client per worker for the live check (B-1603), one per sync. An orchestration that gives the same
+      page again (`PageRepeated`) fails the sync's read, and is the live check's question too wide, as too many
+      pages: asked by the invoice number, logged, the check left on.
+  - **Measured** on the stand-in (`tests/erp/test_jde_sync_volume.py`, 4 cores shared with three other agents; the
+    wait is a tiny write's from another connection every 20 ms, for the lock alone):
+
+    | | took | longest wait for the write lock | read |
+    |---|---:|---:|---|
+    | first sync: 30,000 suppliers, 600,000 vouchers (1,260 pages) | 48.7 s | 0.11 s | everything |
+    | next night: 50 suppliers changed, 1,000 vouchers new, 50 voided | 5.2 s | 0.04 s | 50 + 28,568 vouchers |
+    | the week's whole read, AIS down at the vouchers' page 600 | 26.9 s | 0.05 s | 600 pages |
+    | the next sync, going on from there | 24.7 s | 0.05 s | 602 pages (the 20 older removed) |
+
+    The next night read 50 suppliers and 28,568 vouchers (the 1,000 new and the last 31 days'), and removed the 30
+    voided this month; the 20 older went at the whole read. The register equalled the stand-in's after each.
+    Before: 600,000 vouchers failed at page 200 every night. 30,000 suppliers: 1.9 s, a write held 0.44 to 0.53 s;
+    now 2.4 s, 0.04 s. 30,000 open PO lines (10,000 POs): 22.3 s the first sync, 37.6 s the next; now 1.2 s, 1.5 s.
+    After its review (B-1893 to B-1904), the same four: 50.3 s, 4.7 s, 27.5 s and 25.0 s, the longest wait for the
+    write lock 0.06, 0.03, 0.04 and 0.13 s, the same reads, 30 then 20 removed, the register right after each.
+  - **To confirm with the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 3, 4, 21 and 22): the update dates
+    `ChangedSince` covers on each read (a supplier's bank account, a receipt, a voucher paid or voided), the PO read
+    listing the lines closed since, each read's order by its key kept stable, every row given its key, whether
+    `FromInvoiceDate` includes its day, the output dates in `date_format`, AIS's maximum rows not below the page size
+    (else each read that removes nothing stops at its first page), and AIS (and a load balancer) keeping a
+    connection open, and how long unused. Left: a voucher entered with an invoice date older than the window is
+    never read (as before); the vendor's key is its name, so a renamed supplier is a second vendor in AP Coder (as
+    before: only its register is found by number); a bill a file import put in the register, or a sync before this
+    version (no voucher key kept for it), is never removed by the sync unless JDE lists it again: to start clean,
+    clear the register (Exports), and the next sync reads the vouchers whole; a connection dropped silently within
+    30 seconds of its last use still costs the request its timeout.
+  - **Amended** after its review (B-1893 to B-1904): the register cleared or replaced read whole again; dates read
+    in `date_format`; undated vouchers swept by the whole read; a read's first day left alone; a PO's lines its open
+    ones; a read complete only on an empty or shorter page; the lease checked each page, `MAX(seen)`; a bill's
+    copies its vouchers; a connection unused 30 seconds not used again; `PageRepeated` for the live check.
+  - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
+    purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
+    `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,
+    `tests/erp/test_jde_sync_volume.py`, `tests/erp/test_jde_ais.py`, `tests/erp/test_jde_sync{,_safety}.py`,
+    `tests/erp/test_jde_api_web.py`, `tests/core/test_store_perf.py`)
+- **D-182** · **Posting through the JD Edwards API at 500 vouchers: each voucher its own outcome and the run goes on
+  past a late answer; a lost answer sent again only once JD Edwards could have finished it; holds and the open period
+  read just before each voucher; Z-table keys unique per data folder and after a restore; accruals follow the postings**
+  (scale goal phase 4, target 4; B-1857 to B-1863, and the review's B-1880 to B-1891; changes D-105 where it says
+  otherwise).
+  - **Why:** one orchestration call per voucher, R04110ZA in each, against a 30-second timeout: the first late answer
+    closed the client and queued the rest, so a batch went out one voucher per five minutes (500 ≈ 40 hours). Holds
+    were not looked at after approval (R3), there was no fiscal period (R5), VLEDBT / VLEDTN collided across data
+    folders and after a restore (R6), and month end counted an API voucher not posted as in the ERP (R4).
+  - **What:**
+    - **A run** (`jde_post._run`, `_Run`): the lookups first (each row JDE has or may have, by its key), then the
+      sends one after another, then the run's late ones once their answer is `LOOK_AFTER` (30 s) old. A late answer
+      (the request reached JDE: a timeout, the connection cut, 502 / 504, an answer not read) is *unknown* and the
+      run goes on; JDE not reached (refused connection, 503 after the retries, the sign-in or the permission refused)
+      or `LATE_STOP` (3) late answers in a row stop it, the rest queued saying why; so does the run's time
+      (`post_minutes`, 60). A voucher's request waits `voucher_timeout` (120 s), the connection's 30 s stays for the
+      reads and lookups. The exports page's job shows done of total (one left as it changed meanwhile is done too,
+      B-1891), posted, being checked, refused, waiting, held.
+      A run cut short: each voucher of a go-ahead has when its run is over at the latest as its next try
+      (`_run_over`: the run's time, the last send it began, a margin), and one not sent by then (AP Coder stopped)
+      is the queue's (`waiting`); stopped by an error, the run queues the rest at once. A dry run since the go-ahead
+      takes that off: a new go-ahead sends it (B-1886).
+    - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only `resend_minutes` (10)
+      after the answer was lost (`lost_at`; a send whose end is not known, from its start and the longest it could
+      take), never sooner than a voucher's wait and `RESEND_MARGIN` (a minute): Settings refuses less, and a run takes
+      the larger (`JdeSettings.resend_seconds`, B-1880). Before, the row stays unknown and locked (B-1858). A row
+      *sending* is someone's live send, never looked up nor sent by another, for the longest a send can take
+      (`send_seconds`: each try a voucher's wait, AIS's 503 retries and their pauses, the sign-in, twice over for a
+      token expired meanwhile; 15 minutes at least, B-1881). Both waits are kept and compared in UTC (`sending_at`,
+      `lost_at` with their offset; an older row's local time read as local), which the clocks going forward don't
+      move (B-1887). A refusal that JDE answered (its error shape) is looked up and believed at once, as before; only
+      a form error with JD Edwards' code is that shape (`jde_ais.jde_refused`): AIS's own failure in JSON (its
+      orchestration timeout: HTTP 500, a message) is an answer lost, unknown (B-1890; the one change to `jde_ais.py`,
+      J1's file, is that classification).
+    - **Holds** (`coding.vendors.voucher_hold`): AP Coder's own and JD Edwards' as the last supplier sync left it,
+      indexed until the vendor list changes; held, the voucher is queued saying why, the dry run refuses it.
+    - **The open period** (`open_from`, `open_to`, `closed_period` in Settings → JD Edwards E1; none read from JDE:
+      no orchestration offers it yet): a G/L date before it is moved to its first day (`JDE_GL_DATE_MOVED`, a
+      warning on the review screen; the dry run's row says it; the go-ahead's question names it and its event keeps
+      `gl_moved`) or held (`JDE_PERIOD_CLOSED`); after it, held. The same G/L date goes in the files. Just before
+      each voucher the period is read again (a period closed mid-batch: the rest back to *checked*, dry run again);
+      JDE refusing a G/L date as closed (`PERIOD_REFUSED`: PBCO, "closed period"…) holds back the run's others of
+      that month and before. Month end: with the open period starting after the period end and closed periods
+      moved, a batch made after the period end is late (`accruals.late_after`, as with the export day as the G/L
+      date: its invoices of the period go with a G/L date after it, so they are accrued, B-1883).
+    - **Z-table keys** (`jde.batch_number`, `invoice_site`, `batch_site`): VLEDTN = `APC` + invoice id + `-` + 8
+      characters of a digest of the invoice's file and when it was added (the identity a restore uses, D-105);
+      VLEDBT = prefix + batch + `-` + up to 4 characters of a digest of the batch (when made, its number, its
+      invoices) as room allows in 15. Deterministic: the same each time a voucher is sent or its batch downloaded,
+      so the files and the API agree; another invoice or batch under the same number gets others. An upgrade changes
+      the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again),
+      and a voucher approved and waiting in the queue that JD Edwards hasn't (or any changed since its go-ahead) is
+      held back for a new dry run, its go-ahead kept for month end, *Not sent: dry run again* on the batch's panel,
+      not *Refused by JD Edwards* (B-1888).
+    - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
+      go-ahead, or refused, by JDE or by a dry run since its go-ahead (B-1885), unless the batch's files were
+      downloaded since, is not in the ERP; the kept answer's question carries that set, as postings change no
+      invoice. A download of the batch's files takes the go-ahead off every voucher they hold (not locked: queued,
+      held back, refused), so one loaded from them is never counted as not in the ERP afterwards, a dry run again or
+      not (B-1882).
+    - **Lookups, not scans** (B-1863): `jde.account_for` by (GL code, cost center), `held_vendor` by what makes a
+      number or account the same.
+    - **One rule for a tax's shares** (B-1889): a pay item per line (`MATCH_HEADER`), the tax not on G/L lines, takes
+      its share of each recoverable tax and of the taxable amount by `money.split`'s rule (each half up, what is
+      left over on the largest), the shares the lines have (`tax.tax_shares`), where `jde._split` truncated each and
+      put the rest on the largest. Changed outputs, the totals and the G/L lines the same: two lines of 10.10 with
+      GST 1.01, VLSTAM 51 / 50 → 50 / 51; of the 19 sample vouchers in that layout (tax and gross amounts), the
+      two of Quebec (GST and QST each split): SIL-4471 VLSTAM 17971 / 5091 / 12878 → 17969 / 5092 / 12879,
+      ACMR-2026-1187 lines 2, 3 and 5 31447 / 52412 / 71133 → 31448 / 52413 / 71131 (VLAG moves by the same cents
+      with gross amounts); in whole yen, 3 over two equal lines 2 / 1 → 1 / 2. Neither `scripts/same_behaviour.py`'s
+      tax nor its approve probe makes pay items.
+  - **Not done, for the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 15 to 20): the batch-level orchestration (one
+    R04110ZA per batch) and a status lookup of many keys at once; R04110ZA's error IDs for a closed period; whether
+    VLPST `A` overrides a supplier's hold; how long a voucher request can still run after AIS gave up (the 10
+    minutes); a JDE batch still pending (F0011 ICIST / F0411 RPPOST) is not known to AP Coder, so a voucher posted
+    into a pending batch counts as in the ERP.
+  - **Measured:** 500 vouchers through the stand-in (each answered after 20 ms, one in ten late past a 0.3 s wait,
+    half of them made, one in twenty refused): one go-ahead run of 40 s ends 475 posted and 25 refused, none unknown
+    or queued, none made twice (525 sends, 75 lookups); the code before stops at the 8th (late), the other 492 queued.
+    With the resend wait counted from the loss (B-1880) the run of 38 s ends 474 posted, 25 refused and 1 being
+    checked (lost within the 3 s of its end), which the queue 3.5 s after posts: the same 475, 525 sends, 75 lookups.
+    The queue building a batch once (B-1884): 500 waiting 84 s → 0.2 s before the first send.
+    `account_for` × 5,000 with a 20,000-row mapping: 12.8 s → 0.04 s; `held_vendor` with 3,000 on hold: 46 → 14 ms.
+  - (`erp/{jde_post,jde,accruals}.py`, `coding/vendors.py`, `web/pages/{exports,settings_jde}.py`,
+    `web/templates/{exports,settings_jde}.html`, `ops/help.py`, `docs/{JDE_ORCHESTRATIONS,JDE_E1,BUGS}.md`;
+    `tests/erp/test_jde_post_runs.py`, `tests/fake_ais.py` and the tests named in B-1857 to B-1863; the review's
+    fixes also `erp/jde_ais.py` (`jde_refused` only), `core/store/postings.py` (`lost_at`), `coding/tax.py` (a
+    docstring) and the tests named in B-1880 to B-1891)
+- **D-183** · **One money arithmetic, half up on the decimals printed, and one table of what counts as equal** (scale
+  goal, phase 4, T1; R10 and G9 of `docs/archive/scale-2026-11/coding_erp.md`; B-1864 to B-1868).
+  - **Why:** Python's `round` on a float is half-even on its binary value: 2.50 × 5% gave 0.12 and 0.30 × 5% gave
+    0.01, where the vendor and JD Edwards (`erp.jde.jde_amount`, Decimal half up) give 0.13 and 0.02. Of the bases
+    0.01 to 2,000.00, 1.1% at 5%, 1.5% at 6% and 3.5% at 15% came out a cent short. The checks' cent of tolerance
+    hid it; it landed in money: the self-assessment estimate AP books from, the Tax check's amount to self-assess,
+    the early-payment discount, a line split by percent, the PST spread onto the lines. And what counts as equal was
+    written in each check apart: the review screen's Tax check and the findings said different things of one sum
+    (N-07, N-40, the notes' verified 0.02 total).
+  - **What** (`coding/money.py`): `half_up`, `times` (an amount × a rate or a share), `add_up`, `split` (each share
+    half up, what is left over on the largest weight: `tax._allocate`'s rule, now on decimals) and `in_cents`, on
+    `Decimal(str(float))` with ROUND_HALF_UP (half away from zero: a credit note rounds as the invoice it reverses),
+    to the cent or to whole units (`places` 0, the yen). The quick way gives the same answer: a float more than
+    0.4999 of a unit from a tie, under 1e11 units (a billion dollars, its error after a product or an `fsum` under
+    1e-5 of a unit), is rounded as a float; a tie or what could be one in decimals
+    (`test_the_quick_way_is_the_decimals_answer_always`: ties, third decimals, credits, yen, 1e12, the sign of a
+    nothing).
+    - Used by `tax.check_taxes`, `build_gl_distribution`, `tax_shares`, `meals_parts`; `taxmath.math_check`;
+      `validation` (the totals, the posting, `off_text`, `prices_include_tax`); `line_tax` (the solver's cents, its
+      tolerance `money.solver_cents` (was `line_tax.tolerance_cents`), `_tax_base`, `can_explain`, prefill's target);
+      `taxreturn.self_assessment` (the base, and the estimate in the currency's units, B-1868); `terms.payment` (the
+      discount); `review.split_line` (a part by percent, the last part's remainder); `erp/accruals` (received, not
+      invoiced: 3 × 2.675 was 8.02, now 8.03, B-1912).
+    - Float `round` kept where no money is worked out or converting would cost more than it changes: rates
+      (`round(rate, 6)`, the % shown), confidences, quantities and unit prices at 6 places, the PO match (`po.py`,
+      compared within its own tolerance), the reports' running totals (`taxreturn.Report.totals`, `by_type`,
+      `meals_totals`: sums of amounts at the cent, the same either way), and the facts kept in the invoices' summary
+      (`tax_facts`, `meals_by_tax_line`, `self_assessed_base`: sums of amounts printed to the cent, different only
+      for an amount with a third decimal at a tie, while a change there moves `SUMMARY_RULES` and builds every
+      database's summary again at its next start, 86 s at 100,000 invoices: left for the next change that moves it).
+  - **What counts as equal** (`money`, old → new):
+    - the float error of a difference (`within`): a billionth beyond the tolerance → a billionth and 2e-15 of the
+      larger amount (B-1906, the review): two amounts printed to the cent a cent apart differ in floats by a cent and
+      up to 2e-9 from 2^23 dollars (8,388,608) on, so CENT refused the cent it is for (131 of 300 generated invoices
+      of 8 to 60 million newly TOTAL_MISMATCH, hard). Not each difference rounded to the cent, which would also move
+      the half cents, each by the float it lands on: a total read 113.005 is within EXACT of a posting of 113.01 and
+      of 113.00, and would be a cent from the one (POSTING_UNBALANCED) and none from the other; LINE_MATH's 0.5%
+      would move by up to half a cent. The float error is a part of the amounts' size: at most 2.5 units in the last
+      place of the larger (an amount, a sum of two, the subtraction);
+    - nothing: `> 0.004`, `>= 0.005`, `< 0.005`, `<= 0.004` → `NIL` 0.005 (`nil`; the same at the cent);
+    - the GL posting against the total: `> 0.005` → `EXACT` 0.005 (the same);
+    - subtotal + tax = total: TOTAL_MISMATCH 0.02, the Tax check 0.015 → `CENT` 0.01 (B-1865); the tax lines = the
+      tax total: TAX_LINES_TOTAL_MISMATCH 0.02 → `CENT` (B-1865); the lines = the total when prices include the
+      tax: 0.011 (validation), 0.015 (the Tax check's hint) → `CENT` (the same at the cent). One sum of amounts
+      printed rounded: a vendor who adds before rounding is at most a cent off (two or three taxes included);
+    - and a total paid in cash, rounded to the nickel (B-1907, the review): TOTAL_MISMATCH and the Tax check's
+      total row take a total that is a multiple of 5 cents, at most `CASH_ROUNDING` 0.02 from subtotal + tax (the
+      nickel nearest it), when a line is that rounding (`cash_rounded`). Why this and not 0.02 again ("nothing
+      worse", and what the review screen means), counted with the review's `runner.py`/`compare.py`, cb08074
+      against this: of 300 generated cash receipts, their rounding entered as a line so that the posting balances,
+      117 were blocked at a cent, none now (none on cb08074). Of 300 invoices with one amount read a cent or two
+      off, 57 are blocked that cb08074 passed, and stay so: the subtotal (30) or the tax total (27) read 2 cents off,
+      the lines and the posting right. That is a header amount misread, not a good invoice's coding: TOTAL_MISMATCH
+      names the sum, one field puts it right, and the Tax check now shows the same ✕ (cb08074 showed the subtotal's
+      beside no finding, the tax total's not at all). 0.02 again would pass those 57 and bring back B-1865's ✕
+      beside no finding. The rounding line is asked for: without it a subtotal read 2 cents off whose total is a
+      multiple of 5 cents (one in five) would pass, and a cash receipt without its rounding line can't post anyway
+      (POSTING_UNBALANCED, hard on cb08074 too). Any currency with cents, as cb08074 passed any 2 cents;
+    - the Tax check's total row adds the tax total, the sum TOTAL_MISMATCH adds (it added the tax lines: a tax total
+      read 2 cents off was a hard TOTAL_MISMATCH beside an all-✓ Tax check, 27 of the 300), and is ✕ too when the
+      tax lines are not the tax total (TAX_LINES_TOTAL_MISMATCH's `CENT`), its hint saying which sum is off and its
+      difference the total less subtotal + the tax lines, as before (a tax line read 2 cents off keeps its ✕ there:
+      6 of the 300 have none on their tax row, the tax read within a cent of its lines' taxes added up) (B-1911);
+    - the lines against the subtotal: SUBTOTAL_MISMATCH max(0.02, 0.01·n), the Tax check 0.015 →
+      `per_line(n)` = 0.01·max(1, n) + 0.01, the rule of a tax's base (B-1866; a cent more from two lines). Not the
+      Tax check's cent: SUBTOTAL_MISMATCH and TOTAL_MISMATCH are hard (Approve anyway never covers them, D-75), a
+      vendor's rounding line by line is no misread, and POSTING_UNBALANCED asks for every cent already. The Tax
+      check's lines row asks for every cent too (`EXACT`) when the posting can't balance (the lines and the tax lines,
+      each rounded as posted, are not the total: POSTING_UNBALANCED), so that it points at a line read off: with a
+      cent a line, a line read 2 cents off was all ✓ beside the block (29 of the 300; a cent off, 32, all ✓ on
+      cb08074 too, now ✕ as well) (B-1910). SUBTOTAL_MISMATCH keeps `per_line`;
+    - the lines against a tax's base, QST on GST's base, the line that is the difference: 0.01·n + 0.01 (tax,
+      taxmath) → `per_line` (the same; the Tax check's two-rate base with no lines 0.01 → 0.02);
+    - a tax against its base × rate, once or line by line: `check_taxes` one unit, `tax_band` (a unit × (n/2 + 1))
+      a warning not an error; the Tax check 1.5 units, or the band → `TAX_UNITS` one unit for both, the band only
+      the finding's severity (B-1867); one tax at two rates: a unit × (k + 0.5) → a unit per tax line (the same);
+      the review screen's tick on a tax line (`web/invoice_view.tax_check`, its taxable × rate rounded to the cent
+      within 0.01·max(1, n) + 0.01) → the finding's rule, `tax_right` on `tax.tax_line_ways` (once on the taxable,
+      line by line when it is its tax's only line), in the currency's units (B-1908, B-1909, the review): the Tax
+      check said "GST WRONG 0.02" beside "GST ✓" on 229 of 400 generated invoices (60 on cb08074), none now, and a
+      right tax in whole yen is ✓;
+    - Azure's amount: 0.02 → `READ_AGAIN` (the same); LINE_MATH: max(0.02, 0.5%) → max(`READ_AGAIN`,
+      `LINE_MATH_SHARE`) (the same); `line_tax._tax_base`: 0.05 → `PRINTED_BASE` (with the float error of the
+      difference); the solver: max(2, n) + 0.5/rate cents half-even → `solver_cents` half up (the same at every rate
+      in use, none ends in .5);
+    - left apart, outside this item: JD Edwards' PO-matched SUBTOTAL_MISMATCH (a cent a line, `erp/jde.py`),
+      capture's `amounts_equal` (0.005).
+  - **The intended output changes** (`scripts/same_behaviour.py --ref 5aa6014 tax approve pipeline`; every line of
+    the tax probe compared, and split by running this code with the old float arithmetic patched in):
+    - tax: 505 of 20,000 outputs. The tolerances alone, 44: a tax row of the Tax check ✓ within the band, now ✕
+      with its difference and why (B-1867); 43 beside a TAX_CALC_MISMATCH or TAX_BASE_MISMATCH of that tax, 1 (yen,
+      QST marked and not charged) beside LINE_TAX_NOT_CHARGED. Half up alone, 463, each with at least a tie rounded
+      the other way (none without): a tax row's expected a cent more or less, its detail, and its difference and
+      why when it doesn't add up, 337 invoices, and 0.5 yen now 1, 92; the amount to self-assess, 12; the line the
+      Tax check names as the difference, 3 lost and 3 gained (the base gap is the tax's gap over the rate: half a
+      cent of it is 6 cents at 8%, beyond the 2-line tolerance either way); a row turned right (#8134, yen line by
+      line) and one wrong (#19340); `check_taxes`: 24 messages with the expected tax half up (in 1 the line it named
+      gone, as above), TAX_CALC_MISMATCH added 3 (one error, two warnings: the probe's tax was Python's round ± a
+      cent, now 2 cents from half up) and removed 2 (yen), one error now a warning (#3905: 3 cents off → 2). 2
+      invoices change both ways;
+    - approve: the same; pipeline: 1 invoice of 20 files: SK PST 665.13 spread over 10 lines, 236.25 × 6% =
+      14.175 now 14.18 (14.17), the largest line its own 233.02 (233.03), in its output, AI output and final output.
+    - The review's fixes (B-1906 to B-1913; `--ref cfb45d6 tax approve pipeline`, every line of the tax probe
+      compared): tax, 1,355 of 20,000 outputs, all in the Tax check's total row (with and without the rates set
+      up): where the probe's tax total is not its tax lines (5 cents, a dollar or ten apart), the row adds the tax
+      total (B-1911), so its tax, computed and detail, and a hint naming the tax lines; in 74 the difference shown
+      too (✕ before and after). No row turned right or wrong, no finding, mark or text changed: the probe reaches no
+      amount from 2^23 dollars on, no subtotal a cent or two off its lines, no cash rounding. Approve and pipeline:
+      the same. The review's 16 scenarios × 300 (`runner.py`/`compare.py`, cb08074 against this), newly blocked:
+      none in 15 (cash receipts 117 at cfb45d6, 8-to-60-million invoices 131 TOTAL_MISMATCH at cfb45d6, now none);
+      one amount read off, 57, the header misreads chosen above (at cfb45d6 the same 57). The review screen's two
+      tax verdicts at odds (`screen_agree.py`, 400 invoices): 60 on cb08074, 229 at cfb45d6, none.
+  - **Benches** (venv312, old and new): `bench coding --realistic` the same (`lines.jsonl` byte for byte: accuracy
+    93.8%, precision 98.2%, tax codes 97.4%, coverage 94.7%); `bench run --quick` the same (`evidence.jsonl` and
+    `failures.jsonl` byte for byte: field accuracy 100.0%, verified precision 100.0% at 55.0% coverage, ECE 0.0189).
+    The review's fixes, cfb45d6 against them: the same two benches the same, byte for byte, the same figures.
+  - **CPU** (process time over the tax probe's 4,000 invoices, best of 5 × 3, old and new in turn): `check_taxes`
+    52.0 → 57.4 µs (+10%), `math_check` 55.4 → 61.6 µs (+11%), `build_gl_distribution` 12.4 → 13.5 µs (+9%); all
+    in decimals it was +22%, +40%, +54%. About 6 µs a review screen's checks. The review's fixes (the tax probe's
+    first 2,000 invoices, best of 7 × 6 runs, cfb45d6 and this in turn, on a machine shared with other test runs,
+    ±4 µs): `check_taxes` 56.7 → 56.2 µs, `math_check` 61.0 → 63.4 µs; a tax that doesn't add up on 4,000 lines
+    (the review's `cpu.py`): `check_taxes` 6.9 s → 11 ms (B-1913).
+  - **Laptop and server:** the same: functions of the coding and the rates only, no setting or mode.
+  - **Left:** JD Edwards' pay items split cents their own way (`erp/jde.py` `_split`: each share cut toward zero, the
+    rest on the largest; the GL distribution rounds each half up), J2's file: `money.split` would place them alike.
+    The line named as a tax's difference could allow the tax's half unit over the rate, as the solver does.
+    After the review, as on cb08074: a total, or a tax line, read a cent off is POSTING_UNBALANCED beside an all-✓
+    Tax check (65 of its 300 misreads; within a cent is right for TOTAL_MISMATCH and TAX_CALC_MISMATCH, and the
+    posting asks for every cent): the total row could ask for every cent when the posting can't balance, as the
+    lines row now does. `tests/reports_reference.py` (the old reports' code) still accrues with `round`.
+  - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
+    `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
+    `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)

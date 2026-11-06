@@ -18,6 +18,7 @@ from typing import Any
 from ..ai.extraction import ExtractionResult
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
+from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
 from .tax import build_gl_distribution, check_taxes
 from .vendors import norm_tax_number  # letters and digits, lower case
 
@@ -82,18 +83,6 @@ class ValidationReport:
         return asdict(self)
 
 
-_CENT_TOLERANCE = 0.02
-
-
-def _close(a: float, b: float, tolerance: float = _CENT_TOLERANCE) -> bool:
-    return abs(a - b) <= tolerance + 1e-9
-
-
-def _rounding_tolerance(line_count: int) -> float:
-    """Totals may differ from the line sum by up to a cent of rounding per line."""
-    return max(_CENT_TOLERANCE, 0.01 * line_count)
-
-
 def duplicate_message(duplicate_of: list[int]) -> str:
     """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number."""
     ids = ", ".join(f"#{i}" for i in duplicate_of)
@@ -149,7 +138,7 @@ def validate_coding(
         # Unit prices are often printed rounded, so allow 0.5% on the extension. A credit note puts its minus on the
         # quantity, the price or the amount alone (2 × 50.00 = -100.00): its lines are compared in size (B-1484).
         amount, size = (abs(li.amount), abs(expected)) if credit else (li.amount, expected)
-        if not _close(amount, size, max(_CENT_TOLERANCE, abs(expected) * 0.005)):
+        if not within(amount, size, max(READ_AGAIN, abs(expected) * LINE_MATH_SHARE)):
             add(
                 WARNING,
                 "LINE_MATH",
@@ -186,9 +175,9 @@ def validate_coding(
                 li.line_number,
             )
 
-    # --- Totals reconciliation ---------------------------------------------
-    line_sum = round(sum(li.amount for li in coding.line_items), 2)
-    computed_total = round(coding.subtotal + coding.tax_total, 2)
+    # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
+    line_sum = add_up(li.amount for li in coding.line_items)
+    computed_total = half_up(coding.subtotal + coding.tax_total)
     checks: dict[str, Any] = {
         "line_count": len(coding.line_items),
         "line_sum": line_sum,
@@ -196,11 +185,13 @@ def validate_coding(
         "subtotal_plus_tax": computed_total,
         "grand_total": coding.grand_total,
     }
-    line_tolerance = _rounding_tolerance(len(coding.line_items))
-    if coding.line_items and not _close(line_sum, coding.subtotal, line_tolerance):
+    if coding.line_items and not within(line_sum, coding.subtotal, per_line(len(coding.line_items))):
         add(ERROR, "SUBTOTAL_MISMATCH", f"the lines add up to {line_sum:.2f} but the subtotal is {coding.subtotal:.2f}"
             + (TAX_INCLUDED_HINT if prices_include_tax(coding) else ""))  # fmt: skip
-    if not _close(computed_total, coding.grand_total):
+    # A cent, or a total rounded to the nickel for cash with its rounding a line (B-1907).
+    if not within(computed_total, coding.grand_total, CENT) and not cash_rounded(
+        computed_total, coding.grand_total, (li.amount for li in coding.line_items)
+    ):
         add(
             ERROR,
             "TOTAL_MISMATCH",
@@ -209,10 +200,10 @@ def validate_coding(
     # The GL posting (line amounts + tax lines) must equal the amount payable to the cent. The checks
     # above each allow a little rounding; this catches small differences that add up (e.g. a misread line).
     # Added up from the posting itself, which rounds each line to the cent: two lines of 10.005 post as
-    # 10.00 + 10.00, so summing first (20.01) would pass an invoice whose export is a cent off.
-    posting_total = round(sum(e["amount"] for e in build_gl_distribution(coding, reference.tax)), 2)
+    # 10.01 + 10.01, so summing first (20.01) would pass an invoice whose export is a cent off.
+    posting_total = add_up(e["amount"] for e in build_gl_distribution(coding, reference.tax))
     checks["posting_total"] = posting_total
-    if coding.line_items and abs(posting_total - coding.grand_total) > 0.005:
+    if coding.line_items and not within(posting_total, coding.grand_total, EXACT):
         add(
             ERROR,
             "POSTING_UNBALANCED",
@@ -339,7 +330,7 @@ def coding_confidence(coding: InvoiceCoding, reference: ReferenceData) -> float:
 def off_text(posted: float, total: float) -> str:
     """How the invoice total differs from what its lines post, in words: "the total is 10.00 more than the lines"
     (never "off by -10.00", whose sign reads either way, B-805)."""
-    gap = round(total - posted, 2)
+    gap = half_up(total - posted)
     return f"the total is {abs(gap):,.2f} {'more' if gap > 0 else 'less'} than the lines"
 
 
@@ -356,10 +347,10 @@ TAX_INCLUDED_HINT = (
 
 def prices_include_tax(coding: Any) -> bool:
     """Whether the lines add up to the invoice's total (tax included) rather than its subtotal, with tax charged."""
-    lines = round(sum(li.amount for li in coding.line_items), 2)
-    tax = round(sum(t.tax_amount for t in coding.tax_lines), 2) or coding.tax_total
-    return (bool(coding.line_items) and abs(tax) > 0.004 and abs(lines - coding.grand_total) <= 0.011
-            and abs(lines - coding.subtotal) > 0.011)  # fmt: skip
+    lines = add_up(li.amount for li in coding.line_items)
+    tax = add_up(t.tax_amount for t in coding.tax_lines) or coding.tax_total
+    return (bool(coding.line_items) and not nil(tax) and within(lines, coding.grand_total, CENT)
+            and not within(lines, coding.subtotal, CENT))  # fmt: skip
 
 
 def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, checks: dict[str, Any]) -> None:
@@ -399,7 +390,7 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
         if isinstance(amount, (int, float)):
             ours = getattr(coding, attr)
             checks[f"di_{attr}"] = amount
-            if not _close(ours, float(amount)):
+            if not within(ours, float(amount), READ_AGAIN):
                 add(
                     WARNING,
                     "DI_AMOUNT_DIFFERS",

@@ -185,6 +185,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](PILOT.md)
 | --- | --- | --- |
 | `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1`. On this computer or the office network only: a server on the internet is never asked (developers: `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
+| `AP_LLM_BACKUP_URL` | empty | a second model server with the same models (D-180): the calls go there while the first doesn't answer, and back once it answers well again. The page reader's too, unless `AP_PAGE_READER_BASE_URL` gives it a server of its own (then `AP_PAGE_READER_BACKUP_URL`). On the office network only, as `AP_LLM_BASE_URL`; *Settings → Reading → For IT*, or server.json's `llm_backup_url` / `page_reader_backup_url` |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
@@ -317,7 +318,7 @@ This is a memory of your team's decisions. No model is retrained.
 | `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task (not a Windows service). |
 | `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
 | `users add\|list\|reset\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles. |
-| `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data, show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
+| `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data (what changed since the last sync; `--full` everything, as once a week), show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
 | `hub export\|status [--full] [--dry-run]` | The finance hub feed: send what changed, or show how the last run went. See [docs/FINANCE_HUB.md](FINANCE_HUB.md). |
 | `pilot-score --vouchers FILE [--distribution FILE]` | The pilot's score: what AP Coder approved against what AP posted in JD Edwards (the parallel week against production, the live weeks against what AP posted after review). |
 | `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |

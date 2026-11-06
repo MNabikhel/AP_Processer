@@ -3,6 +3,9 @@ the result kept per invoice, the queue when JDE is down or the answer is lost, a
 
 from __future__ import annotations
 
+import datetime as dt
+import json
+
 import pytest
 
 from ap_coder.core.store import Store
@@ -24,13 +27,25 @@ def ais():
 
 
 def connect(store: Store, fake: FakeAis, **changes) -> None:
-    store.set_setting(jde_ais.SETTING_KEY, fake.settings(**changes).to_json())
+    cfg = fake.settings(**changes)
+    store.set_setting(jde_ais.SETTING_KEY, cfg.to_json())
+    if "timeout" in changes:  # a voucher's own wait (R04110ZA runs in it, D-182) too: the stand-in's late answers late
+        settings = json.loads(jde.load(store).to_json())
+        store.set_setting(jde.SETTING_KEY, json.dumps({**settings, "voucher_timeout": cfg.timeout}))
+
+
+def long_after_the_loss(store: Store) -> None:
+    """Every send whose answer was lost, lost an hour ago: JD Edwards could have finished it (``resend_seconds``)."""
+    ago = (dt.datetime.now() - dt.timedelta(hours=1)).isoformat(timespec="seconds")
+    with store._conn() as conn:
+        conn.execute("UPDATE jde_postings SET lost_at = ? WHERE lost_at IS NOT NULL", (ago,))
 
 
 def batch_of(tmp_path, fake: FakeAis, *stems: str) -> tuple[Store, int]:
     """A JD Edwards batch of these approved samples, their supplier and accounts known to the stand-in's JDE."""
     store = Store(tmp_path / "ap_coder.db")
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False))
+    # JDE's "not there" believed at once after a lost answer (resend_minutes, D-182) unless a test says otherwise
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, resend_minutes=0))
     ids = []
     for n, stem in enumerate(stems or (ON,), 1):
         final = _invoice(stem, n)["final_output"]
@@ -66,7 +81,9 @@ def test_dry_run_then_post_keeps_the_voucher_number(tmp_path, ais):
     assert proof[0]["ProcessingMode"] == "PROOF" and proof[0]["IdempotencyKey"] == jde_post.idem_key(
         1, 1, jde_post.installation_id(store)
     )
-    assert proof[0]["PayItems"][0]["VLEDBT"] == f"APC{batch}" and proof[0]["PayItems"][0]["VLEDTN"] == "APC1"
+    head = proof[0]["PayItems"][0]  # the Z-tables' keys: of the batch and the invoice, each with its code (D-182)
+    assert head["VLEDBT"].startswith(f"APC{batch}-")
+    assert head["VLEDTN"] == f"APC1-{jde.invoice_site(store.get_invoice(1))}"
     assert proof[0]["GLLines"] and ais.vouchers()[-1]["invoice_number"] == "INV-7001"  # nothing posted by the proof
     result = jde_post.post(store, batch, actor="sam")
     assert result["posted"] == 1 and result["error"] == ""

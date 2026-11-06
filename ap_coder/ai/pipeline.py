@@ -58,7 +58,9 @@ log = logging.getLogger(__name__)
 # most ARRIVAL_SECONDS for the answer, a chat slot included (AP_LLM_ARRIVAL_SECONDS; 0: AP_LLM_TIMEOUT_SECONDS, a
 # laptop's default): past it, the invoice goes in with the local coding and the page reader's pass asks again. After
 # BREAKER_FAILURES arrivals in a row that got no answer in time, arrivals don't ask for BREAKER_SECONDS (then one asks:
-# an answer in time asks again from the next one on). A hung or slow model never holds up the imports.
+# an answer in time asks again from the next one on). A hung or slow model never holds up the imports. With a backup
+# server (D-180) the chat model's breaker (``local_llm.Failover``) moves the calls there first, and this one counts
+# afresh for the server in use: arrivals stop asking only when neither answers in time.
 ARRIVAL_ENV = "AP_LLM_ARRIVAL_SECONDS"
 ARRIVAL_SECONDS = 20.0
 BREAKER_FAILURES = 2
@@ -79,16 +81,23 @@ def arrival_seconds() -> float:
 class ArrivalBreaker:
     """Whether arriving invoices ask the chat model now (``asks``), from how its last answers went (``answered``):
     closed, open for BREAKER_SECONDS after BREAKER_FAILURES timeouts in a row, then half open (one asks). One per
-    process; threads of one process share it."""
+    process; threads of one process share it. ``server``: the chat model's server in use (its backup's answers are
+    counted afresh: D-180)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.failures = 0
         self.opened: float | None = None  # time.monotonic() it opened at (None: closed)
         self.trying = False  # half open: one arrival asks
+        self.server = ""  # the server its counts are about
 
-    def asks(self) -> bool:
+    def _on(self, server: str) -> None:
+        if server != self.server:  # the calls moved to another server: what the last one did says nothing of it
+            self.failures, self.opened, self.trying, self.server = 0, None, False, server
+
+    def asks(self, server: str = "") -> bool:
         with self._lock:
+            self._on(server)
             if self.opened is None:
                 return True
             if self.trying or time.monotonic() - self.opened < BREAKER_SECONDS:
@@ -96,10 +105,12 @@ class ArrivalBreaker:
             self.trying = True
             return True
 
-    def answered(self, in_time: bool | None) -> None:
+    def answered(self, in_time: bool | None, server: str = "") -> None:
         """How an arrival's ask went: in time (True), out of time (False), or failed some other way (None: the
         model not running is said at once, no wait)."""
         with self._lock:
+            if server != self.server:  # asked of a server the calls left since: says nothing of the one in use
+                return
             self.trying = False
             if in_time:
                 self.failures, self.opened = 0, None
@@ -129,6 +140,7 @@ class PipelineResult:
     original: dict[str, Any] | None = None  # the picture this PDF was made from (intake/pictures): name, kept, sha256
     sha256: str | None = None  # the file's SHA-256 as the import queue read it (None: read when it is saved, D-168)
     chat_deferred: bool = False  # the chat model wasn't asked on arrival, or gave no answer in time (D-168)
+    header_model: str = ""  # the chat model that read the header from the pages (the page reader's pass; D-180)
 
     @property
     def ok(self) -> bool:
@@ -418,7 +430,13 @@ class InvoicePipeline:
         if not todo:
             return False
         within = (getattr(self, "arrival_seconds", 0.0) or None) if arriving else None
-        if within is not None and not ARRIVAL_BREAKER.asks():
+        llm = getattr(getattr(getattr(self, "coder", None), "settings", None), "llm", None)
+        server = ""  # the chat model's server in use, with a backup (D-180)
+        if within is not None and getattr(llm, "backup_url", ""):
+            from .local_llm import serving_llm
+
+            server = serving_llm(llm).base_url
+        if within is not None and not ARRIVAL_BREAKER.asks(server):
             log.info("the chat model gave no answer in time to the last arriving invoices: not asked now (D-168); the "
                      "page reader's pass asks again")  # fmt: skip
             return True
@@ -442,20 +460,20 @@ class InvoicePipeline:
         except ChatTimeout as exc:  # slow or hung: on arrival, the page reader's pass asks again
             log.info("local model could not suggest accounts in time (%s); left for AP", exc)
             if within is not None:
-                ARRIVAL_BREAKER.answered(False)
+                ARRIVAL_BREAKER.answered(False, server)
             return within is not None
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
             if within is not None:
-                ARRIVAL_BREAKER.answered(None)
+                ARRIVAL_BREAKER.answered(None, server)
             return False
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
             if within is not None:
-                ARRIVAL_BREAKER.answered(None)
+                ARRIVAL_BREAKER.answered(None, server)
             return False
         if within is not None:
-            ARRIVAL_BREAKER.answered(True)
+            ARRIVAL_BREAKER.answered(True, server)
         for n, (gl, cc, reason) in picks.items():
             li = todo.get(n)
             if li is None:
@@ -678,6 +696,8 @@ class InvoicePipeline:
         # images too, when it can see pages: one more independent reader of every field.
         model_values = self._model_reading(path, result.sha256) if page_text is not None and provider == "local" \
             else None  # fmt: skip
+        if model_values:  # its trust decides whether anything is approved without a person (D-180)
+            result.header_model = getattr(self.coder, "_local_model", "")
         local = captured["local"] = read_invoice(path, self.store, layout=layout, page_text=page_text,
                                                  ai_values=model_values, today=received)  # fmt: skip
         vendor = local[0].fields.get("vendor_name")

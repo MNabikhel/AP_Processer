@@ -1,8 +1,9 @@
 """``python -m ap_coder jde test|sync|status``: the JD Edwards API connection from the console (D-104).
 
 * ``test``: AIS's version, a sign-in and a logout (only once an Admin switched a step on in Settings).
-* ``sync``: step 1 now: suppliers, GL accounts, business units, open POs and vouchers, with the report (``--only``
-  some of them). For a scheduled task, as the dashboard's nightly sync does while it runs.
+* ``sync``: step 1 now: suppliers, GL accounts, business units, open POs and vouchers, what changed since the last
+  sync, with the report (``--only`` some of them; ``--full`` every one of them, as once a week, D-181). For a
+  scheduled task, as the dashboard's nightly sync does while it runs.
 * ``status``: the connection, the last test and sync, and the vouchers waiting for JD Edwards; ``--retry`` sends them.
 """
 
@@ -23,7 +24,12 @@ def add_parser(sub: Any) -> None:
     p.add_argument(
         "--allow-mass-close",
         action="store_true",
-        help="sync: close the POs JD Edwards no longer lists even when that is most or all of them",
+        help="sync: close the POs (remove the vouchers) JD Edwards no longer lists even when that is most or all",
+    )
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="sync: read everything again, not only what changed (what JDE deleted, closed or voided is seen only so)",
     )
 
 
@@ -42,6 +48,7 @@ def main(args: argparse.Namespace) -> int:
                 parts=tuple(args.only or jde_sync.PARTS),
                 actor=actor,
                 allow_mass_close=bool(getattr(args, "allow_mass_close", False)),
+                full=bool(getattr(args, "full", False)),
             )
         except jde_ais.AisError as exc:
             print(exc)

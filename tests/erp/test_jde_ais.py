@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import pytest
 
 from ap_coder.core.store import Store
 from ap_coder.erp import jde_ais
-from tests.fake_ais import CA_FILE, PASSWORD, USER, FakeAis
+from tests.fake_ais import CA_FILE, PASSWORD, SORTED_KEPT, USER, FakeAis
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +46,72 @@ def test_rows_are_read_page_by_page(ais):
     assert [r["business_unit"] for r in c.rows("business_units")] == ["CC100", "CC200"]
     pages = ais.orchestration_calls("business_units")
     assert [p["AfterBusinessUnit"] for p in pages] == ["", "CC100", "CC200"] and pages[0]["MaxRows"] == 1
+
+
+@pytest.mark.parametrize("https", [False, True])
+def test_every_page_and_call_goes_on_the_one_connection_kept_open(https):
+    """D-181: each request opened its own connection (TCP and TLS handshakes for each of a night's hundreds of
+    pages). One connection kept open serves them all."""
+    with FakeAis(https=https) as ais:
+        ais.mapping["ais"]["page_size"] = 1
+        with jde_ais.AisClient(ais.settings(), ais.mapping) as c:
+            for _ in range(3):
+                assert len(c.rows("business_units")) == 2
+            c.call("suppliers", {})
+        assert len(ais.calls) == 12 and ais.connections == 1
+
+
+def test_a_connection_ais_closed_meanwhile_is_not_used(ais):
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0  # (as the live check's)
+    c.call("suppliers", {})
+    ais.drop_idle()  # AIS closes a connection left unused for a while
+    assert c.call("suppliers", {})["Suppliers"] and ais.connections == 2
+
+
+def test_a_connection_found_closed_as_it_is_used_is_asked_again_for_a_read_never_for_a_voucher(ais, monkeypatch):
+    monkeypatch.setattr(jde_ais, "_closed_meanwhile", lambda sock: False)  # closed just after it was looked at
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0
+    c.call("suppliers", {})
+    ais.drop_idle()
+    assert c.call("suppliers", {})["Suppliers"]  # a read: asked again at once on a new connection
+    ais.drop_idle()
+    with pytest.raises(jde_ais.AisError) as err:
+        c.call("voucher_create", {"key": "k"}, idempotent=False)
+    assert err.value.sent and err.value.kind == jde_ais.UNREACHABLE  # looked up by its key, never sent blind again
+    assert ais.orchestration_calls("voucher_create") == []
+
+
+def test_a_connection_left_unused_a_while_is_not_used_again(ais, monkeypatch):
+    """B-1897: a connection kept open that was dropped silently on the way while unused (a firewall's idle timeout, a
+    VPN reconnecting: no FIN, no RST) still looked open, so the next request went into it and waited its whole
+    timeout, never asked again: the live check's 5 seconds, then JDE_NOT_REACHED and the check off for everyone for a
+    minute; a voucher's request left not knowing whether it was made. One unused longer than IDLE_SECONDS is not used
+    again."""
+    monkeypatch.setattr(jde_ais, "IDLE_SECONDS", 0.2)
+    c = jde_ais.AisClient(ais.settings())
+    c.retries = 0  # (as the live check's)
+    c.call("suppliers", {})
+    ais.silence_open()  # nothing gets through it any more, and it is not closed
+    time.sleep(0.3)
+    began = time.monotonic()
+    c.call("voucher_status", {"key": "K-1"}, idempotent=False)  # (as a voucher's request: never sent twice)
+    assert time.monotonic() - began < 1 and ais.connections == 2
+
+
+def test_the_stand_in_serves_a_row_replaced_in_a_long_list(ais):
+    """B-1901 (the test stand-in): tests/fake_ais.py kept a list of more than SORTED_KEPT rows sorted while the list
+    and its length were the same, so a row replaced in it (a voucher voided and another entered) was served as it
+    was."""
+    base = ais.data["vouchers"][0]
+    ais.data["vouchers"] = [{**base, "key": f"00001-PV-{i:06d}-001", "invoice_number": f"N-{i}"}
+                            for i in range(SORTED_KEPT + 1)]  # fmt: skip
+    c = jde_ais.AisClient(ais.settings(), ais.mapping)
+    assert len(c.rows("vouchers", {})) == SORTED_KEPT + 1
+    ais.data["vouchers"][5] = {**base, "key": "00001-PV-999998-001", "invoice_number": "NEW-1"}
+    numbers = {r["invoice_number"] for r in c.rows("vouchers", {})}
+    assert "N-5" not in numbers and "NEW-1" in numbers
 
 
 def test_an_expired_token_is_asked_again_once(ais):
@@ -90,6 +157,20 @@ def test_jde_errors_come_back_in_its_own_words(ais):
         c.call("voucher_create", {"key": "APC-1-1", "mode": "FINAL", "pay_items": [{"VLAN8": "9999"}]})
     assert err.value.kind == jde_ais.JDE and err.value.status == 500
     assert "Address Number 9999 Invalid (0002)" in str(err.value)
+
+
+def test_only_jd_edwards_own_error_is_a_refusal(ais):
+    """B-1890: AIS's own failure said in JSON (its orchestration timeout: HTTP 500, a message, no form error with
+    JD Edwards' code) is not JD Edwards refusing: the request may have run (``sent``)."""
+    c = jde_ais.AisClient(ais.settings())
+    ais.script("voucher_create", "ais-timeout")
+    with pytest.raises(jde_ais.AisError) as err:
+        c.call("voucher_create", {"key": "APC-1-1", "mode": "FINAL", "pay_items": [{"VLAN8": "9999"}]})
+    assert err.value.kind == jde_ais.ANSWER and err.value.sent and err.value.status == 500
+    assert "timed out" in str(err.value) and "no error of JD Edwards' own" in str(err.value)
+    assert jde_ais.jde_refused({"message": {"F0411Z1": {"errors": [{"CODE": "0002", "TITLE": "Invalid"}]}}})
+    assert not jde_ais.jde_refused({"message": "Read timed out", "exception": "java.net.SocketTimeoutException"})
+    assert not jde_ais.jde_refused({"message": {"Form": {"errors": [], "warnings": [{"CODE": "4363"}]}}})
 
 
 def test_jde_messages_reads_the_shapes_ais_answers_with():

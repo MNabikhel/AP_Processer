@@ -1751,15 +1751,15 @@ def test_a_process_working_an_answer_out_renews_its_hold_so_the_others_wait_for_
     from ap_coder.core.store import reports
 
     assert reports.ANSWER_LEASE <= 15
-    monkeypatch.setattr(reports, "ANSWER_LEASE", 0.6)
-    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.2, raising=False)
+    monkeypatch.setattr(reports, "ANSWER_LEASE", 1.2)  # (room for a slow runner's renewals: ~150 ms a write)
+    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.3, raising=False)
     process = _Processes(monkeypatch)
     store = Store(tmp_path / "ap.db")
     working = threading.Event()
 
     def slow() -> list[str]:
         working.set()
-        time.sleep(1.5)  # longer than the hold
+        time.sleep(3.0)  # longer than the hold
         return ["first"]
 
     first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
@@ -1770,7 +1770,7 @@ def test_a_process_working_an_answer_out_renews_its_hold_so_the_others_wait_for_
     one = threading.Thread(target=lambda: found.append(first()))
     one.start()
     assert working.wait(5)
-    time.sleep(0.8)  # past the hold's first expiry
+    time.sleep(1.6)  # past the hold's first expiry
     monkeypatch.setattr(reports, "OWNER", "worker 2")
     process("worker 2")
     assert second() == ["first"] and second.worked == 0  # waited for the one working it out, then took its answer
@@ -1885,3 +1885,39 @@ def test_a_settled_answer_asked_while_the_database_is_busy_and_no_one_works_it_o
     finally:
         writer.execute("ROLLBACK")
         writer.close()
+
+
+def test_a_process_waits_for_an_answer_another_is_still_working_out_rather_than_work_it_out_twice(
+    tmp_path, monkeypatch
+):
+    """B-1914: a process asking for an answer another was working out waited ANSWER_WAIT (30 s), then worked it out
+    itself: month-end's first, 9 s of CPU on its own, took more than that under 100 people, so each worker asking
+    worked it out again, each slowing the others (55 s pages in a load run). While the other's hold is renewed (it is
+    alive and working, B-1807) it is waited for, up to ANSWER_WAIT_MOST; one that stopped is still passed over."""
+    from ap_coder.core.store import reports
+
+    monkeypatch.setattr(reports, "ANSWER_WAIT", 0.3)
+    monkeypatch.setattr(reports, "ANSWER_LEASE", 1.5)  # (room for a slow runner's renewals: ~150 ms a write)
+    monkeypatch.setattr(reports, "ANSWER_RENEW", 0.3)
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    working = threading.Event()
+
+    def slow() -> list[str]:
+        working.set()
+        time.sleep(2.0)  # longer than the wait, and than one hold unrenewed
+        return ["first"]
+
+    first = Shared(store, "slow", slow, version="t-1", topic="", changes=("vendors",))
+    second = Shared(store, "slow", lambda: ["second"], version="t-1", topic="", changes=("vendors",))
+    monkeypatch.setattr(reports, "OWNER", "worker 1")
+    process("worker 1")
+    found = []
+    one = threading.Thread(target=lambda: found.append(first()))
+    one.start()
+    assert working.wait(5)
+    monkeypatch.setattr(reports, "OWNER", "worker 2")
+    process("worker 2")
+    assert second() == ["first"] and second.worked == 0
+    one.join(10)
+    assert found == [["first"]]

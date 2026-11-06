@@ -291,6 +291,28 @@ def test_correctly_rounded_tax_passes(reference, amounts, hst):
     assert _codes(_on_lines(amounts, hst), reference) == set()
 
 
+def test_a_tax_that_does_not_add_up_compares_no_two_lines_however_many(reference, monkeypatch):
+    """B-1913: the lines a tax may be missing from were found with ``li not in marked``, each line compared with
+    each marked line field by field: 0.4 s at 1,000 lines and 6.6 s at 4,000, at every check of the invoice."""
+    from ap_coder.core.schema import LineItem
+
+    lines = [{"line_number": n, "description": f"Part {n}", "quantity": 1, "unit_price": 10.0, "amount": 10.0,
+              "predicted_gl_code": "6010", "taxes_applied": ["HST"] if n % 2 else []}
+             for n in range(1, 601)]  # fmt: skip
+    coding = InvoiceCoding.model_validate({
+        "vendor_name": "Vendor", "invoice_number": "1", "invoice_date": "2026-10-05", "currency": "CAD",
+        "supplier_province": "ON", "ship_to_province": "ON", "subtotal": 6000.0, "tax_total": 400.0,
+        "grand_total": 6400.0, "line_items": lines, "gst_hst_registration_number": "123456782RT0001",
+        "confidence_score": 1.0,
+        "tax_lines": [{"tax_type": "HST", "province": "ON", "rate": 0.13, "taxable_amount": 3000.0,
+                       "tax_amount": 400.0}]})  # fmt: skip
+    compared = []
+    real = LineItem.__eq__
+    monkeypatch.setattr(LineItem, "__eq__", lambda a, b: compared.append(b) or real(a, b))
+    assert "TAX_CALC_MISMATCH" in {f.code for f in check_taxes(coding, reference.tax, None)}  # 390.00 expected
+    assert len(compared) < 10, len(compared)
+
+
 def test_older_invoices_check_against_the_rates_of_their_day(reference):
     sk = _gt("prairie_SK_GST_PST_PNS-104882")
     pst = next(t for t in sk["tax_lines"] if t["tax_type"] == "PST")

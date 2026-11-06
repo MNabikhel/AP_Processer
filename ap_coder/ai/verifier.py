@@ -515,19 +515,27 @@ class Outcome:
     approved: bool = False
     rounds: int = 0
     seconds: float = 0.0
+    again: bool = False  # back in line to be reviewed at once: the chat model's calls moved to the backup (D-180)
 
 
 def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[[], float] = time.monotonic,
                after_page_reader: bool = True, reader: str = "") -> Outcome | None:  # fmt: skip
     """Review the next invoice in line. None when the reviewer is off or nothing waits. The chat model not
     answering leaves the invoice in line (postponed). ``reader``: who marks it (``page_worker.READER_ID``, or one
-    of this process's reader threads with ``llm_parallel``)."""
+    of this process's reader threads with ``llm_parallel``). None too while the chat model in use isn't trusted for
+    touchless approval (another than AP Coder was qualified with, before it passed its self-test: D-180): the
+    invoices wait, and Settings → Reading says why."""
     if store.restoring():
         return None
     cfg = load_settings(store)
     if not cfg.on:
         return None
-    from .page_worker import READER_ID, reading_as, renewed
+    from .page_worker import READER_ID, chat_untrusted, reading_as, renewed
+
+    untrusted = chat_untrusted(settings, store) if coder is None else ""
+    if untrusted:
+        log.debug("%s waits: %s", NAME, untrusted)
+        return None
 
     with reading_as(reader or READER_ID) as mark:
         row = store.next_verification(after_page_reader=after_page_reader, reader=mark)
@@ -624,6 +632,9 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         shown["lessons"] = learned
     budget, started = cfg.minutes * 60, clock()
     ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started))
+    from . import local_llm
+
+    breaker, began = local_llm.chat_failover(settings.llm), time.time()
     try:
         found = review(ask, shown, rounds=cfg.rounds, seconds=budget, clock=clock)
     except CodingError as exc:
@@ -631,7 +642,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
             raise
         if store.restoring() or store.row_identity(iid) != identity:
             return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
-        return _postpone_or_fail(store, row, str(exc)[:300])
+        moved = breaker is not None and breaker.left_since() > began  # (its server's calls left it meanwhile)
+        return _postpone_or_fail(store, row, str(exc)[:300], moved)
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
               # each disputed line as it was reviewed: once the clerk changes it, it is no longer reported (B-1527)
@@ -648,10 +660,16 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     return Outcome(iid, found.status, found.summary or found.why, approved, found.rounds, found.seconds)
 
 
-def _postpone_or_fail(store: Any, row: dict[str, Any], problem: str) -> Outcome:
+def _postpone_or_fail(store: Any, row: dict[str, Any], problem: str, moved: bool = False) -> Outcome:
     """The model server stopped, or gave no answer in time, before the reviewer answered at all: that is the server's
-    trouble, not the reviewer's verdict. Back in line (still held), or failed once it happened MAX_TRIES times."""
+    trouble, not the reviewer's verdict. Back in line (still held), or failed once it happened MAX_TRIES times.
+    ``moved``: the chat model's calls moved to the backup server meanwhile (D-180): back in line to be reviewed there
+    at once, the try not counted."""
     iid = int(row["invoice_id"])
+    if moved:
+        message = f"{problem}: reviewed again at once on the backup server"
+        _end(store, row, "waiting", error=message)
+        return Outcome(iid, "postponed", message, again=True)
     tries = int(row.get("tries") or 0) + 1
     if tries >= MAX_TRIES:
         message = (f"the chat model didn't answer {tries} times ({problem}); have it check again from the review "
@@ -693,7 +711,11 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
                                       expect=expect)  # fmt: skip
     untouched = inv.get("status") == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
     output = inv.get("ai_output")
-    if folded and held and untouched and result.get("status") == AGREED and output:
+    from .page_worker import chat_trust, header_untrusted
+
+    # Its model qualified, and the one that read the header in the page reader's pass (D-180).
+    trusted = not chat_trust(store, str(result.get("model") or "")) and not header_untrusted(store, inv.get("meta"))
+    if folded and held and untouched and result.get("status") == AGREED and output and trusted:
         # Read again first: another check may still hold it, or a person may have approved it with corrections and
         # reopened it while the reviewer looked.
         if still_touchless(store, capture, output, invoice_id=iid):
