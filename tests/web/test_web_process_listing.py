@@ -5,6 +5,7 @@ a slow network folder, files removed, a folder that can't be listed; the laptop'
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.core import ui
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake import imports
@@ -203,7 +205,7 @@ def test_while_another_process_lists_the_folder_a_view_waits_a_little_then_says_
     began, started = _aged(store, process.SHARED_MOST), time.monotonic()
     text = client.get("/process").text
     assert time.monotonic() - started < 5 and not listed
-    assert process.LISTED_AT.format(when=time.strftime("%H:%M", time.localtime(began))) in text
+    assert process.LISTED_AT.format(when=ui.day_and_time(dt.datetime.fromtimestamp(began))) in text
     other.drop_lease(_lease(store), "another:1")
     monkeypatch.setattr(process, "SHARED_WAIT", 0.3)
     real, going = process.list_folder, threading.Event()
@@ -222,6 +224,23 @@ def test_while_another_process_lists_the_folder_a_view_waits_a_little_then_says_
     going.set()
     _listed_again(store, began)
     assert len(listed) == 1
+
+
+def test_a_listing_made_another_day_says_its_day(store, listed, monkeypatch):
+    """A view showing a listing older than 45 s (another process lists the folder slowly, or stopped holding its lease)
+    said "As the invoices folder was at 13:19" of one made three days ago: read as today, a time still to come at
+    10:19. It says the day as the review screen does ("Nov 3 at 1:19 p.m."; "today at" one made today)."""
+    monkeypatch.setattr(process, "SHARED_WAIT", 0.2)
+    folder = _folder(store, "a.pdf")
+    other = Store(store.path)
+    imports.list_folder(other, folder).keep(other)
+    assert other.take_lease(_lease(store), "another:1", 60)
+    client = _worker(store)
+    at = dt.datetime.fromtimestamp(_aged(store, 3 * 86400 - 3 * 3600))  # a long weekend ago, 3 hours on in the day
+    clock = f"{at.hour % 12 or 12}:{at.minute:02d} {'a.m.' if at.hour < 12 else 'p.m.'}"
+    year = f", {at.year}" if at.year != dt.date.today().year else ""
+    text = client.get("/process").text
+    assert f"As the invoices folder was {at:%b} {at.day}{year} at {clock}: files saved since" in text and not listed
 
 
 def test_a_slow_network_folder_is_listed_once_and_no_view_waits_for_it_long(store, listed, monkeypatch):
@@ -247,7 +266,7 @@ def test_a_slow_network_folder_is_listed_once_and_no_view_waits_for_it_long(stor
     started = time.monotonic()
     text = client.get("/process").text
     assert time.monotonic() - started < 3
-    assert process.LISTED_AT.format(when=time.strftime("%H:%M", time.localtime(began))) in text
+    assert process.LISTED_AT.format(when=ui.day_and_time(dt.datetime.fromtimestamp(began))) in text
     assert [name.strip() for name in OFFERED.findall(text)] == ["a.pdf"]
     time.sleep(1.0)  # past the lease's first 0.4 s: renewed, so no other process lists the folder
     assert not Store(store.path).take_lease(_lease(store), "another:1", 60)
@@ -258,7 +277,7 @@ def test_a_slow_network_folder_is_listed_once_and_no_view_waits_for_it_long(stor
     assert len(listed) == 2
     with store._conn() as conn:  # a listing that took 110 s, ended 10 s ago: not listed again yet, its time said
         conn.execute("UPDATE folder_listings SET began = began - 120, found = json_set(found, '$.took', 110)")
-    assert "As the invoices folder was at" in client.get("/process").text and len(listed) == 2
+    assert "As the invoices folder was " in client.get("/process").text and len(listed) == 2
 
 
 def test_files_removed_from_the_folder_leave_the_page(store, listed):

@@ -1958,8 +1958,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     time earlier, is still offered). It waits (5 s at most,
     `SHARED_WAIT`) only when it started the listing itself and the one kept is older than 45 s, or there is none: a
     stopped process's lease (up to 60 s) or a slow folder never makes every view wait on another's listing. A listing
-    shown older than 45 s says when it was made ("As the invoices folder was at 10:41: files saved since show once it
-    is listed again"); none yet: "The invoices folder is being listed", never "No new files". A listing that failed
+    shown older than 45 s says when it was made, as the screens say a time (`ui.day_and_time`, B-1815): "As the
+    invoices folder was today at 10:41 a.m.: files saved since show once it is listed again", "… was Nov 3 at 1:19
+    p.m. …" one made another day; none yet: "The invoices folder is being listed", never "No new files". A listing that failed
     is kept as such, with why, so each process's page says it (B-1804); the Process button says it too (B-1806). The
     card states the delay: "New files are listed here within a minute".
   - **The laptop** (one process) as before: each view lists when the folder, a pick-up's notes or the invoices

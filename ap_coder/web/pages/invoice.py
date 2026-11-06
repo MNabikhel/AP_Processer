@@ -600,19 +600,12 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
 
 
 def _when(iso: str) -> str:
-    """When a draft was last edited, as the screen says it: "today at 4:23 p.m.", "Oct 21 at 12:37 a.m." before
-    (B-826, B-997: "0:37" read as a duration)."""
+    """When a draft was last edited, as the screens say it (``ui.day_and_time``: "today at 4:23 p.m.")."""
     try:
         at = dt.datetime.fromisoformat(iso)
     except ValueError:
         return ""
-    clock = f"{at.hour % 12 or 12}:{at.minute:02d} {'a.m.' if at.hour < 12 else 'p.m.'}"
-    day = (
-        "today"
-        if at.date() == dt.date.today()
-        else f"{at:%b} {at.day}" + (f", {at.year}" if at.year != dt.date.today().year else "")
-    )
-    return f"{day} at {clock}"
+    return ui.day_and_time(at)
 
 
 def vendor_options(store: Store) -> dict[str, Any]:

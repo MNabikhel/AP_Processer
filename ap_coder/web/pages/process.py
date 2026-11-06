@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import datetime as dt
 import json
 import logging
 import os
@@ -624,7 +625,7 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
 
 NOT_LISTED = "The invoices folder could not be listed just now ({why}): its new files show here once it can be."
 BEING_LISTED = "The invoices folder is being listed: its new files show here in a moment."
-LISTED_AT = "As the invoices folder was at {when}: files saved since show once it is listed again."
+LISTED_AT = "As the invoices folder was {when}: files saved since show once it is listed again."  # ui.day_and_time
 # The folder's new files and saved emails (None: not listed), the names of its files not read, what to say of it.
 Shown = tuple[list[dict[str, Any]] | None, list[str], str]
 
@@ -704,8 +705,9 @@ def shared_files(store: Store) -> Shown:
     new = store.unseen_files(listed, since=int(began * 1e9)) if listed else set()  # (one written again since, B-1814)
     rows = _rows([(name, size) for (name, size, _), f in zip(found["files"], listed, strict=True) if f[0] in new],
                  found["emails"])  # fmt: skip
-    shown = 0 <= time.time() - began < SHARED_MOST
-    return rows, found["others"], "" if shown else LISTED_AT.format(when=time.strftime("%H:%M", time.localtime(began)))
+    if 0 <= time.time() - began < SHARED_MOST:
+        return rows, found["others"], ""
+    return rows, found["others"], LISTED_AT.format(when=ui.day_and_time(dt.datetime.fromtimestamp(began)))  # B-1815
 
 
 def list_for_all(store: Store, place: Path) -> bool:
