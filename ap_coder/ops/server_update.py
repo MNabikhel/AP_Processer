@@ -238,7 +238,7 @@ def server_settings(data: Path, task_name: str | None = None) -> service.ServerS
 
 
 class Server:
-    """The Windows service and the steps run in the new folder, for real."""
+    """This computer's service (Windows' task, the Mac's LaunchDaemon) and the steps run in the new folder, for real."""
 
     def __init__(self, data: Path | None = None, settings: service.ServerSettings | None = None,
                  say: Say = print) -> None:  # fmt: skip
@@ -247,10 +247,7 @@ class Server:
         self.say = say
 
     def installed(self) -> bool:
-        if not service.WINDOWS:
-            return False
-        done = service.run_command(["schtasks", "/query", "/tn", self.settings.task_name], capture_output=True)
-        return done.returncode == 0
+        return service.installed(self.settings)
 
     def answers(self) -> bool:
         """A dashboard answers on this computer (its /healthz), whatever runs it."""
@@ -396,8 +393,9 @@ def _record(data: Path, entry: dict, **values: Any) -> None:
 
 
 def switch_to(data: Path, folder: Path) -> None:
-    """The service runs ``folder`` from its next start: run.cmd and server.json say so, and the record of installs."""
-    service.write_runner(data, folder)
+    """The service runs ``folder`` from its next start: run.cmd (the Mac's ``current`` link) and server.json say so,
+    and the record of installs."""
+    service.switch_folder(data, folder)
     service.write_config(data, folder=str(folder))
     paths.record_install(paths.install_identity(folder))
 

@@ -240,6 +240,7 @@ def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_proces
 
 def test_off_windows_the_service_commands_say_so(data, monkeypatch, capsys):
     monkeypatch.setattr(service, "WINDOWS", False)
+    monkeypatch.setattr(service, "MACOS", False)  # (a Mac has its own: tests/ops/test_service_macos.py)
     assert main("status") == 2
     assert "Windows" in capsys.readouterr().err
 
@@ -280,15 +281,19 @@ def test_the_host_does_nothing_while_the_service_is_stopped(data):
     assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
 
 
-def test_a_second_host_steps_aside_for_the_one_running(data):
+def test_a_second_host_steps_aside_for_the_one_running(data, monkeypatch):
     """The running host holds the operating system's lock on service/host.lock (B-1585): it, not host.json, says a
-    host runs."""
+    host runs. On Windows the second one ends with 0, as before (the task comes back every 5 minutes); on a Mac with
+    HOST_BUSY, not 0, so launchd's KeepAlive starts it again once the other has ended (D-186)."""
     held = paths.try_lock(service.host_lock(data))
     assert held is not None
     try:
-        assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == 0
+        for windows, code in ((True, 0), (False, service.HOST_BUSY)):
+            monkeypatch.setattr(service, "WINDOWS", windows)
+            assert service.run_host(data, popen=lambda *a, **k: pytest.fail("started"), sleep=lambda s: None) == code
     finally:
         held.close()
+    assert service.HOST_BUSY != 0
 
 
 def test_a_stale_host_record_never_keeps_the_service_down(data):

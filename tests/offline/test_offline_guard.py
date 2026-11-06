@@ -222,7 +222,8 @@ def test_python_written_html_names_no_other_host():
                     continue  # the models' origin, for the bundle builder (fetch_models: AP_ALLOW_INTERNET=1)
                 if rel == "ap_coder/ai/inference.py" and "cognitiveservices.azure.com/.default" in url:
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
-                if rel == "ap_coder/ops/service.py" and url == "http://schemas.microsoft.com/windows/2004/02/mit/task":
+                task = "http://schemas.microsoft.com/windows/2004/02/mit/task"
+                if rel == "ap_coder/ops/service_windows.py" and url == task:
                     continue  # the scheduled task's XML namespace: a name, never fetched
                 if rel == "ap_coder/erp/exports.py" and url.startswith(_XLSX_NAMESPACES):
                     continue  # the parts of a workbook written as text (D-169): namespaces, names never fetched
