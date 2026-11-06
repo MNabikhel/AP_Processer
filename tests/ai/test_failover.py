@@ -16,7 +16,7 @@ from dataclasses import replace
 import pytest
 
 from ap_coder.ai import local_llm, page_reader, page_worker, pipeline, verifier
-from ap_coder.ai.inference import CodingError, InvoiceCoder, suggest_accounts
+from ap_coder.ai.inference import ChatTimeout, CodingError, InvoiceCoder, suggest_accounts
 from ap_coder.ai.local_llm import BACKUP, PRIMARY
 from ap_coder.ai.pipeline import ArrivalBreaker, InvoicePipeline
 from ap_coder.bench.fake_model import READER, FakeModel, page_key
@@ -187,6 +187,42 @@ def test_a_call_waiting_on_a_hung_primary_is_asked_again_on_the_backup_at_once(t
     assert _served(backup, "suggest") == 1 and _served(primary, "suggest") == 0
 
 
+def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(two, reference, monkeypatch):
+    """B-1870: an arrival that spent most of its 20 s waiting for AP Coder's own chat slot (another call held it) was
+    sent with what was left, and the healthy primary's usual answer time past it was counted as its failure: two
+    such moved every call to the backup. Only the server's own time counts: an arrival that waited for its slot
+    isn't counted when it gets no answer, and one left too little time isn't sent at all."""
+    primary, backup = two
+    primary.set(chat_latency=(0.6, 0.6))
+    monkeypatch.setattr(local_llm, "WAITED_SECONDS", 0.1)  # (1 s and 5 s in the app, the arrival's 20 s scaled)
+    monkeypatch.setattr(local_llm, "SEND_SECONDS", 0.25)
+    coder = InvoiceCoder(_settings(primary.base_url, backup.base_url, parallel=1), reference, provider="local")
+    model = coder._prepare_local()
+    messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
+    coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
+
+    def arrival(within: float) -> str:  # behind a call that holds the one chat slot for 0.6 s
+        holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        holder.start()
+        time.sleep(0.05)
+        try:
+            coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + within)
+            return "answered"
+        except ChatTimeout as exc:
+            return str(exc)
+        finally:
+            holder.join()
+
+    sent = len(primary.history())
+    assert "no answer in the time an arriving invoice waits" in arrival(0.9)  # sent with 0.35 s: no answer then
+    assert len(primary.history()) == sent + 2
+    assert "busy" in arrival(0.7)  # 0.15 s left once it had its slot: never sent
+    assert len(primary.history()) == sent + 3
+    breaker = local_llm.chat_failover(coder.settings.llm)
+    assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
+    assert not backup.history()
+
+
 def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, quick):
     """Hysteresis: the primary, probed in the background, is taken back after three answers in a row and the hold
     (a second here); one that fails again soon after is kept away twice as long."""
@@ -273,6 +309,37 @@ def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_bac
     # One machine with both models, one backup: one breaker. The chat model's calls moved with the pages'.
     assert local_llm.chat_failover(settings.llm) is page_reader.reader_failover(settings)
     assert local_llm.serving_llm(settings.llm).base_url == backup.base_url
+
+
+def test_a_page_read_waiting_behind_another_of_ap_coders_calls_is_no_hang(reference, monkeypatch):
+    """B-1871: a healthy primary, only busy (its one slot taken by a long chat call of AP Coder's: a review with
+    thinking on takes minutes): two page reads that waited in the model server's own line longer than HANG_SECONDS
+    before their first word were counted as hangs, and the calls left it, the review under way there dropped and
+    asked again from the start on the backup. A call is no hang while another of this process's calls to that
+    server has been under way since before it was sent; with none, a hang moves the calls as before."""
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 0.5)
+    with FakeModel(models=[CHAT, READER], slots=1, chat_latency=(2.0, 2.0), page_latency=(0.05, 0.05)) as primary, \
+            FakeModel(models=[CHAT, READER]) as backup:  # fmt: skip
+        settings = _settings(primary.base_url, backup.base_url, timeout_seconds=600)
+        coder = InvoiceCoder(settings, reference, provider="local")
+        model = coder._prepare_local()
+        messages = [{"role": "system", "content": "x"}, {"role": "user", "content": "review"}]
+        review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
+        review.start()
+        assert _until(lambda: primary.stats()["active"] == 1)
+        for n in range(local_llm.FAILOVER_FAILURES):
+            with pytest.raises(page_reader.PageReaderError, match="no word from the model"):
+                page_reader.transcribe(settings, f"page {n}".encode(), model=READER)
+        review.join(10)
+        breaker = page_reader.reader_failover(settings)
+        assert breaker.state()["on"] == PRIMARY and breaker.state()["failures"][PRIMARY] == 0
+        assert _served(primary, "chat") == 1 and not backup.history()
+        primary.set(hang_rate=1.0)  # hung, and nothing else of AP Coder's under way there: the second moves them
+        with pytest.raises(page_reader.PageReaderError):
+            page_reader.transcribe(settings, b"page 2", model=READER)
+        assert page_reader.transcribe(settings, b"page 3", model=READER)
+        primary.release_hung()
+        assert breaker.state()["on"] == BACKUP and backup.page_answers() == {page_key(b"page 3"): 1}
 
 
 def test_a_page_reader_on_a_server_of_its_own_has_a_breaker_of_its_own(two):

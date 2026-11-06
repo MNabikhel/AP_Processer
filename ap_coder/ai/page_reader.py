@@ -23,6 +23,7 @@ Invoices are confidential: a page's text is never logged, only timings and the m
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import functools
 import hashlib
@@ -772,13 +773,18 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
     tries = 1 if breaker is None else 2  # with a backup: once more there, when the calls moved to it meanwhile
     with READ_LOCK.held(settings.llm.parallel):  # one page at a time by default: LM Studio is shared with CloseDesk
         while True:
+            started = time.monotonic()
             try:
-                text = _read_page(settings, base, model, reader, messages, should_stop)
+                with breaker.calling(base) if breaker is not None else contextlib.nullcontext():
+                    text = _read_page(settings, base, model, reader, messages, should_stop)
             except PageReaderError as exc:
                 if breaker is None:
                     raise
                 if not exc.failed:
                     breaker.answered(base)
+                    raise
+                timed_out = exc.__cause__ is not None and local_llm.server_failure(exc.__cause__) == local_llm.NO_ANSWER
+                if timed_out and breaker.behind(base, started):  # in the server's line behind another of ours
                     raise
                 breaker.failed(base, str(exc))
                 tries -= 1

@@ -2287,6 +2287,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `page_reader.reader_status`, and by `InvoiceCoder._prepare_local` when it finds no model, so a chat model on a
       server of its own moves too, B-1869). A 4xx is an answer (a model it doesn't have, a field refused): a swap
       moves nothing. A slow answer within its limit is no failure: the backup is the smaller machine.
+    - **Only the server's own time counts:** an arrival that waited longer than `WAITED_SECONDS` (1 s) for its chat
+      slot (another of AP Coder's calls held it) was given what was left of its 20 s: no answer then isn't counted,
+      and with less than `SEND_SECONDS` (5 s) left it isn't sent at all, put off as an arrival out of time (B-1870).
+      A call with no answer in time while another of this process's calls to that server was under way since before
+      it was sent may have waited in the server's own line (one GPU for both models: a page read behind a review of
+      minutes): no hang (`Failover.behind`, B-1871). With none under way the oldest call's timeout still counts, so
+      a hung server is found, later when a long review is under way on it and nothing arrives. The other processes'
+      calls aren't seen (that would take each call's start and end written to the shared file); theirs are the
+      arrivals, at most 20 s, less than a page read's 45 s. A read cut off that way still counts a try of its own.
     - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
       looking at the breaker every 0.25 s): `ServerLeft`, and the call is asked once more on the backup when that has
       the same model (`InvoiceCoder._local_create`, the arrival only within its deadline; `page_reader.transcribe`).

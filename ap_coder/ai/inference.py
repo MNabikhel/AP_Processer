@@ -399,14 +399,18 @@ class InvoiceCoder:
             if timeout is not None and timeout < float(self.settings.llm.timeout_seconds or 0):
                 kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
+            cut, since = False, 0.0  # with a backup: its time cut by its wait for a chat slot; when it was sent
             try:
+                asked = time.monotonic()
                 with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline):  # llm_parallel at once
                     if deadline is not None:  # what is left once a slot is had
                         left = deadline - time.monotonic()
-                        if left <= 0:
-                            raise TimeoutError("no time left once a chat slot was free")
+                        cut = breaker is not None and time.monotonic() - asked > local_llm.WAITED_SECONDS
+                        if left <= 0 or (cut and left < local_llm.SEND_SECONDS):
+                            raise TimeoutError("too little time left once a chat slot was free")
                         kwargs["timeout"] = min(left, float(kwargs.get("timeout") or left))
                     call = functools.partial(self._local_client(llm).chat.completions.create, messages=sent, **kwargs)
+                    since = time.monotonic()
                     answer = call() if breaker is None else breaker.watched(base, call)
                 if breaker is not None:
                     breaker.answered(base, model)
@@ -416,6 +420,8 @@ class InvoiceCoder:
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if breaker is not None:
                     why = local_llm.server_failure(exc)
+                    if why == local_llm.NO_ANSWER and (cut or breaker.behind(base, since)):
+                        why = ""  # its time spent in AP Coder's own line, or behind another of its calls: no failure
                     if why:
                         breaker.failed(base, why)
                     if again and (why or isinstance(exc, local_llm.ServerLeft)):

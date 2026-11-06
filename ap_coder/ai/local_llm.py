@@ -537,12 +537,19 @@ PROBES_TO_RETURN = 3
 HANG_SECONDS = 45.0  # with a backup: a page read whose next word is this late on the primary is a hang
 WATCH_SECONDS = 0.25  # how often a call under way on the primary looks whether the calls left it
 STATE_SECONDS = 0.5  # a process reads the shared state again after this long
+# An arrival's call that waited longer than this for its chat slot (another of AP Coder's calls held it) had only what
+# was left of its time: no answer then is no failure of the server's; one left less than SEND_SECONDS isn't sent.
+WAITED_SECONDS = 1.0
+SEND_SECONDS = 5.0
 SHARED_ENV = "AP_FAILOVER_SHARED"  # 0: each process on its own (to measure what sharing gives, D-180)
 KIND_NAMES = {CHAT: "the chat model's server", PAGES: "the page reader's server"}
 
 
 class ServerLeft(ConnectionError):
     """A call under way on a model server the calls left for its backup: dropped, to be asked again there."""
+
+
+NO_ANSWER = "no answer in time"  # ``server_failure``'s words for a call its server didn't answer within its limit
 
 
 def server_failure(exc: BaseException) -> str:
@@ -555,7 +562,7 @@ def server_failure(exc: BaseException) -> str:
     if isinstance(exc, ServerLeft):
         return ""
     if isinstance(exc, (openai.APITimeoutError, TimeoutError)) or "TimeoutException" in kinds:
-        return "no answer in time"
+        return NO_ANSWER
     if isinstance(exc, (openai.APIConnectionError, ConnectionError)) or "TransportError" in kinds:
         return "not answering"
     status = getattr(exc, "status_code", None)
@@ -618,6 +625,8 @@ class Failover:
         self._state = _fresh()
         self._read_at = float("-inf")
         self._prober: threading.Thread | None = None
+        self._calls: dict[object, tuple[str, float]] = {}  # this process's calls under way: (server, since when)
+        self.forgotten = False  # (``forget_failovers``)
 
     @property
     def title(self) -> str:
@@ -747,10 +756,35 @@ class Failover:
 
     # --- A call under way on the primary
 
+    @contextlib.contextmanager
+    def calling(self, base_url: str) -> Iterator[None]:
+        """A call of this process to ``base_url`` under way (``behind``)."""
+        token = object()
+        with self._lock:
+            self._calls[token] = ((base_url or "").rstrip("/"), time.monotonic())
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._calls.pop(token, None)
+
+    def behind(self, base_url: str, since: float) -> bool:
+        """Whether another of this process's calls to ``base_url`` has been under way since before ``since`` (a
+        ``time.monotonic()``): a call sent then that got no answer in time may have waited behind it in the model
+        server's own line (one GPU for both models), so it is no hang of the server's. The other processes' calls
+        aren't seen: the capture processes' arrivals take at most their 20 s, less than a hang's HANG_SECONDS."""
+        base = (base_url or "").rstrip("/")
+        with self._lock:
+            return any(server == base and began < since for server, began in self._calls.values())
+
     def watched(self, base_url: str, call: Any) -> Any:
         """``call()``'s answer. On the primary the call is made in a thread of its own, and ``ServerLeft`` raised as
         soon as the calls leave the primary (another call's finding, maybe another process's): the call is left to
-        end on its own, and what it answers then is closed unread."""
+        end on its own, and what it answers then is closed unread. Under way meanwhile (``calling``)."""
+        with self.calling(base_url):
+            return self._watched(base_url, call)
+
+    def _watched(self, base_url: str, call: Any) -> Any:
         if self.role(base_url) != PRIMARY:
             return call()
         box: dict[str, Any] = {}
@@ -795,10 +829,11 @@ class Failover:
             self._prober.start()
 
     def _probe_loop(self) -> None:
-        while self.state()["on"] == BACKUP:
+        while not self.forgotten and self.state()["on"] == BACKUP:
             if self._probe_due():
                 ok, how, seconds = probe(self.primary, self.api_key, self.state()["model"], PROBE_TIMEOUT)
-                self._probed(ok, f"{how} in {seconds:.1f} s" if ok else how)
+                if not self.forgotten:  # (another breaker of its server may be the process's now)
+                    self._probed(ok, f"{how} in {seconds:.1f} s" if ok else how)
             time.sleep(min(1.0, PROBE_SECONDS))
 
     def _probe_due(self) -> bool:
@@ -858,8 +893,10 @@ def failover(kind: str, primary: str, backup: str, api_key: str = "") -> Failove
 
 
 def forget_failovers() -> None:
-    """Every breaker of this process forgotten (tests; a shared state stays where it is kept)."""
+    """Every breaker of this process forgotten, their probes stopped (tests; a shared state stays where it is kept)."""
     with _FAILOVERS_LOCK:
+        for found in _FAILOVERS.values():
+            found.forgotten = True
         _FAILOVERS.clear()
 
 
