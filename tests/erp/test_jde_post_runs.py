@@ -183,6 +183,46 @@ def test_a_run_cut_short_leaves_the_vouchers_it_had_not_sent_in_the_queue(tmp_pa
         assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(other)) == 2
 
 
+@pytest.fixture
+def toronto(monkeypatch):
+    """Toronto's clocks (they go forward at 2:00 on 14 March 2027)."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("needs time.tzset")
+    monkeypatch.setenv("TZ", "America/Toronto")
+    time.tzset()
+    yield
+    monkeypatch.delenv("TZ")
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_the_safety_waits_hold_the_night_the_clocks_go_forward(tmp_path, ais, monkeypatch, toronto):
+    """B-1887: the wait before a lost answer's "not there" is believed and a live send's were read on the local time:
+    the night the clocks go forward (2:00 becomes 3:00), an answer lost at 1:58 was "not there" three real minutes
+    later and sent again, and a send begun at 1:58 was no longer live at 3:01. They are kept and compared in UTC
+    now, and a row an older AP Coder kept in local time is read as such."""
+    store, batch = batch_of(tmp_path, ais)
+    connect(store, ais, timeout=0.15)
+    settings(store, resend_minutes=10)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", "slow")  # its answer lost, never made
+    jde_post.post(store, batch)
+    assert statuses(store, batch)[1] == jde_post.UNKNOWN
+    real_now = dt.datetime(2027, 3, 14, 7, 1, tzinfo=dt.timezone.utc)  # 3:01 in Toronto, 3 real minutes after 1:58
+    monkeypatch.setattr(jde_post, "_clock", lambda: real_now)
+    monkeypatch.setattr(jde_post, "_now", lambda: "2027-03-14T03:01:00")
+    for lost in ("2027-03-14T06:58:00+00:00", "2027-03-14T01:58:00"):  # in UTC, and in local time (an older row)
+        with store._conn() as conn:
+            conn.execute("UPDATE jde_postings SET lost_at = ?, sending_at = ?, next_try = NULL", (lost, lost))
+        jde_post.retry_queue(store)
+        assert statuses(store, batch)[1] == jde_post.UNKNOWN and len(finals(ais)) == 1, lost
+        with store._conn() as conn:  # a send begun at 1:58 and still under way
+            conn.execute("UPDATE jde_postings SET status = 'sending'")
+        assert jde_post.waiting(store) == [], lost
+        with store._conn() as conn:
+            conn.execute("UPDATE jde_postings SET status = 'unknown'")
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""

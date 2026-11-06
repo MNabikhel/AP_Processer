@@ -96,6 +96,21 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+# The safety waits (a live send's, a lost answer's) are kept and compared in UTC, which a change of the clocks doesn't
+# move (B-1887): ``sending_at`` and ``lost_at`` with their offset; one an older AP Coder kept is local time.
+def _clock() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _stamp() -> str:
+    return _clock().isoformat(timespec="seconds")
+
+
+def _at(text: str) -> dt.datetime:
+    """A time kept on a row, in UTC (a time without its offset is local: kept by an older AP Coder)."""
+    return dt.datetime.fromisoformat(text).astimezone(dt.timezone.utc)
+
+
 def idem_key(invoice_id: int, batch: int, installation: str = "") -> str:
     head = f"APC-{installation}" if installation else "APC"
     return f"{head}-{int(invoice_id)}-{int(batch)}"
@@ -254,7 +269,7 @@ def _claim(store: Any, row: dict[str, Any], attempts: int) -> dict[str, Any] | N
             "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM events e "
             "WHERE e.action = ? AND json_extract(e.detail, '$.batch') = jde_postings.batch AND "
             "e.created_at > COALESCE(jde_postings.approved_at, ''))",
-            (SENDING, _now(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE), FILE_DOWNLOADED),
+            (SENDING, _stamp(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE), FILE_DOWNLOADED),
         ).rowcount
     if changed != 1:
         return None
@@ -448,8 +463,7 @@ def _fresh_sending(row: dict[str, Any], live: float) -> bool:
     it."""
     if row["status"] != SENDING or not row.get("sending_at"):
         return False
-    since = dt.datetime.now() - dt.timedelta(seconds=live)
-    return str(row["sending_at"]) > since.isoformat(timespec="seconds")
+    return _at(str(row["sending_at"])) > _clock() - dt.timedelta(seconds=live)
 
 
 def waiting(store: Any, due_only: bool = False) -> list[dict[str, Any]]:
@@ -658,17 +672,18 @@ def _in_flight(row: dict[str, Any], wait_for: float, longest: float) -> str:
     """When a "not there" from JDE is believed for this row ("" now): a send whose answer never came may still be
     running in JDE (R04110ZA), its key not kept yet, until ``wait_for`` seconds after its answer was lost
     (``lost_at``); when that is not known (left *sending* by a stop, or lost before AP Coder kept it), after the
-    longest the send could take (``longest`` seconds from ``sending_at``) and ``wait_for`` (D-182)."""
+    longest the send could take (``longest`` seconds from ``sending_at``) and ``wait_for`` (D-182). Compared in
+    UTC (B-1887); said in local time, as the row's next try."""
     if row["status"] not in (UNKNOWN, SENDING) or wait_for <= 0:
         return ""
     if row["status"] == UNKNOWN and row.get("lost_at"):
-        ended = dt.datetime.fromisoformat(str(row["lost_at"]))
+        ended = _at(str(row["lost_at"]))
     elif row.get("sending_at"):
-        ended = dt.datetime.fromisoformat(str(row["sending_at"])) + dt.timedelta(seconds=longest)
+        ended = _at(str(row["sending_at"])) + dt.timedelta(seconds=longest)
     else:
         return ""
-    after = (ended + dt.timedelta(seconds=wait_for)).isoformat(timespec="seconds")
-    return after if after > _now() else ""
+    after = ended + dt.timedelta(seconds=wait_for)
+    return after.astimezone().replace(tzinfo=None).isoformat(timespec="seconds") if after > _clock() else ""
 
 
 def _lookup(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str | None, wait_for: float = 0.0,
@@ -735,7 +750,7 @@ def _failed_send(store: Any, client: jde_ais.AisClient, row: dict[str, Any], bef
             status, cleared = _lookup(store, client, row, actor)
         except jde_ais.AisError as lost:
             _put(store, key, inv, batch, status=UNKNOWN, error=f"{exc} (and JD Edwards could not be asked whether it "
-                 f"made it: {lost})", next_try=_later(row["attempts"]), lost_at=_now())  # fmt: skip
+                 f"made it: {lost})", next_try=_later(row["attempts"]), lost_at=_stamp())  # fmt: skip
             return UNKNOWN
         if status is not None:
             return status
@@ -749,7 +764,7 @@ def _failed_send(store: Any, client: jde_ais.AisClient, row: dict[str, Any], bef
              next_try=_later(row["attempts"]))  # fmt: skip
         return QUEUED
     # Sent and no answer (a timeout, the connection cut, 502 / 504, an answer that can't be read): JDE may have it.
-    _put(store, key, inv, batch, status=UNKNOWN, error=str(exc), next_try=_later(row["attempts"]), lost_at=_now())
+    _put(store, key, inv, batch, status=UNKNOWN, error=str(exc), next_try=_later(row["attempts"]), lost_at=_stamp())
     return UNKNOWN
 
 
@@ -769,7 +784,7 @@ def _answered(store: Any, client: jde_ais.AisClient, row: dict[str, Any], answer
     said = f"JD Edwards answered {result.upper() or 'nothing'}" + (" without a voucher number" if result in (
         "created", "exists") else "")  # fmt: skip
     _put(store, key, inv, batch, status=UNKNOWN, error=f"{said}: being checked", next_try=_later(row["attempts"]),
-         lost_at=_now())  # fmt: skip
+         lost_at=_stamp())  # fmt: skip
     if result in ("created", "exists"):
         current = _row(store, key)
         if current is not None:
