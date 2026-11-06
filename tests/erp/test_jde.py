@@ -108,7 +108,11 @@ def test_a_full_invoice_per_province(stem, area, code, gross, distribution):
     assert (head["VLTXA1"], head["VLEXR1"], head["VLAG"]) == (area, code, str(gross))
     assert head["VLATXA"] == head["VLSTAM"] == ""  # gross mode: never both
     assert (head["VLEDUS"], head["VLEDBT"], head["VLEDTN"], head["VLEDLN"]) == (
-        "APCODER", "APC7", f"APC1-{jde.invoice_site(inv)}", "1")  # (no batch code given: as before; D-182)
+        "APCODER",
+        "APC7",
+        f"APC1-{jde.invoice_site(inv)}",
+        "1",
+    )  # (no batch code given: as before; D-182)
     assert (head["VLEDSP"], head["VLEDTC"], head["VLEDTR"], head["VLDCT"], head["VLCO"]) == (
         "0",
         "A",
@@ -630,7 +634,10 @@ def test_exports_page_jde_flow(db, cost_centers_demo_template):
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
         assert (head["VLEDBT"].split("-")[0], head["VLAN8"], head["VLEDTN"].split("-")[0]) == (
-            f"APC{batch['id']}", "10023", f"APC{northwind}")  # and a code of each (D-182)
+            f"APC{batch['id']}",
+            "10023",
+            f"APC{northwind}",
+        )  # and a code of each (D-182)
         assert len(_csv(zf.read(jde.DIST_FILE))) == 6  # five lines and the HST on its own (D-93)
     # Exported once: the same invoice cannot be exported again until the batch is undone.
     assert (

@@ -362,6 +362,8 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
         shown) else []  # fmt: skip
     return {"shown": shown, "on": cfg.step2, "rows": rows,
             "checked": sum(r["status"] == jde_post.CHECKED for r in rows),
+            # their G/L date moved into the open period by the dry run: the go-ahead confirms it (D-182)
+            "moved": sum(r["status"] == jde_post.CHECKED and r["error"].startswith(jde.MOVED) for r in rows),
             "waiting": len(jde_post.waiting(store)), "done": all(r["status"] == jde_post.POSTED for r in rows) and
             bool(rows), "downloads": downloads, "posted": posted,
             "maybe": sum(r["locked"] for r in rows) - posted}  # fmt: skip
@@ -625,7 +627,7 @@ def _progress(job: Any) -> Any:
 
     def step(found: dict[str, Any]) -> None:
         parts = [f"{found[k]} {label}" for k, label in (("posted", "posted"), ("unknown", "being checked"),
-                 ("failed", "refused"), ("queued", "waiting")) if found.get(k)]  # fmt: skip
+                 ("failed", "refused"), ("queued", "waiting"), ("checked", "held back")) if found.get(k)]  # fmt: skip
         job.step(found["done"], found["total"], f"{found['note']} {found['done']} of {found['total']}"
                  + (f": {', '.join(parts)}" if parts else ""))  # fmt: skip
 
@@ -634,11 +636,12 @@ def _progress(job: Any) -> Any:
 
 def _api_messages(result: dict[str, Any]) -> list[dict[str, str]]:
     parts = [f"{result[k]} {label}" for k, label in (("posted", "posted"), ("failed", "refused by JD Edwards"),
-             ("queued", "waiting in the queue"), ("unknown", "sent, being checked")) if result.get(k)]  # fmt: skip
+             ("queued", "waiting in the queue"), ("unknown", "sent, being checked"),
+             ("held", "held back for a new dry run")) if result.get(k)]  # fmt: skip
     out = [
         {
             "text": ("JD Edwards: " + ", ".join(parts) + ".") if parts else "Nothing was sent.",
-            "tone": "ok" if not (result.get("failed") or result.get("queued") or result.get("unknown")) else "warn",
+            "tone": "ok" if not any(result.get(k) for k in ("failed", "queued", "unknown", "held")) else "warn",
         }
     ]
     if result.get("error"):

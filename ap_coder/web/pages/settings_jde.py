@@ -11,6 +11,7 @@ per row); a row without a GL code (or vendor) is dropped, which is how a row is 
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 from typing import Any
 
@@ -98,6 +99,7 @@ def jde_context(store: Store) -> dict[str, Any]:
         "more_fields": MORE_FIELDS,
         "choices": CHOICES,
         "gl_dates": jde.GL_DATES,
+        "closed_periods": jde.CLOSED_PERIODS,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -181,6 +183,28 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
     if text("gl_date") not in jde.GL_DATES:
         return refuse("Choose the G/L date.")
     new.gl_date = text("gl_date")
+    # The open period and the API's waits (D-182): a form without them keeps them.
+    for name, label in (("open_from", "the open period's first day"), ("open_to", "the open period's last day")):
+        if name in form:
+            try:
+                setattr(new, name, dt.date.fromisoformat(text(name)).isoformat() if text(name) else "")
+            except ValueError:
+                return refuse(f"Give {label} as a date (YYYY-MM-DD), or leave it blank.")
+    if "closed_period" in form:
+        if text("closed_period") not in jde.CLOSED_PERIODS:
+            return refuse("Choose what is done with a G/L date in a closed period.")
+        new.closed_period = text("closed_period")
+    waits = (("voucher_timeout", "a voucher's wait", 1, 900), ("post_minutes", "a posting run's time", 1, 1440),
+             ("resend_minutes", "the wait before sending a lost one again", 0, 1440))  # fmt: skip
+    for name, label, low, high in waits:
+        if name in form:
+            try:
+                value = float(text(name))
+            except ValueError:
+                value = -1.0
+            if not low <= value <= high:
+                return refuse(f"Give {label} as a number from {low} to {high}.")
+            setattr(new, name, value)
     for name in TOGGLES:
         setattr(new, name, str(form.get(name) or "") in ("1", "on", "true"))
     new.default_bu = text("default_bu")

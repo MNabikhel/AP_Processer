@@ -106,6 +106,10 @@ LINE_NUMBERING = {
 }
 GL_DATE_INVOICE, GL_DATE_EXPORT = "invoice", "export"
 GL_DATES = {GL_DATE_INVOICE: "The invoice date", GL_DATE_EXPORT: "The day the batch is exported"}
+# A G/L date before the open period (D-182): moved to its first day (said, and confirmed by the go-ahead), or held.
+CLOSED_MOVE, CLOSED_HOLD = "move", "hold"
+CLOSED_PERIODS = {CLOSED_MOVE: "Move its G/L date to the first day of the open period",
+                  CLOSED_HOLD: "Hold the invoice back"}  # fmt: skip
 
 # Which taxes E1 itself posts (so they are NOT in the distribution), by tax explanation code.
 RECOVERABLE_BY_CODE: dict[str, frozenset[str]] = {
@@ -227,6 +231,11 @@ class JdeSettings:
     terms_codes: dict[str, str] = field(default_factory=dict)
     send_due_date: bool = True
     gl_date: str = GL_DATE_INVOICE
+    # JD Edwards' open period (D-182, R5): G/L dates from ``open_from`` to ``open_to`` (blank: no end) take postings;
+    # one before it is in a closed period (``closed_period``: moved or held), one after it is held. Blank: not checked.
+    open_from: str = ""
+    open_to: str = ""
+    closed_period: str = CLOSED_MOVE
     # Posting through the API (D-182): how long a voucher's request may take (R04110ZA runs in it), how long one run
     # may send, and how long after a send whose answer was lost JDE's "not there" is believed (it may still be making
     # it): sent again only after that.
@@ -299,6 +308,9 @@ class JdeSettings:
             out.line_numbering = SEQUENTIAL
         if out.gl_date not in GL_DATES:
             out.gl_date = GL_DATE_INVOICE
+        out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
+        if out.closed_period not in CLOSED_PERIODS:
+            out.closed_period = CLOSED_MOVE
         for name, low, high in (("voucher_timeout", 0.1, 900.0), ("post_minutes", 0.01, 1440.0),
                                 ("resend_minutes", 0.0, 1440.0)):  # fmt: skip
             try:
@@ -352,7 +364,44 @@ def settings_problems(settings: JdeSettings) -> list[str]:
         out.append("Document type (VLDCT) must be 2 characters, e.g. PV, or blank.")
     if not re.fullmatch(r"[A-Z]{3}", settings.domestic_currency.strip().upper()):
         out.append("Domestic currency must be a 3-letter code, e.g. CAD.")
+    if settings.open_from and settings.open_to and settings.open_to < settings.open_from:
+        out.append("The open period must end on or after its first day.")
     return out
+
+
+def gl_date_of(
+    final: Mapping[str, Any], settings: JdeSettings, on: dt.date | None = None
+) -> tuple[dt.date, dt.date | None]:
+    """(the voucher's G/L date (VLDGJ / VNDGJ), the date it was moved from: None when not moved). The invoice date, or
+    the batch's day (``on``, else today) with Settings' G/L date; one before the open period, closed, is moved to its
+    first day when closed periods are moved (D-182, R5)."""
+    day = on or dt.date.today()
+    base = day if settings.gl_date == GL_DATE_EXPORT else (_date(final.get("invoice_date")) or day)
+    first = _date(settings.open_from)
+    if first and base < first and settings.closed_period == CLOSED_MOVE:
+        return first, base
+    return base, None
+
+
+def period_problem(day: dt.date, settings: JdeSettings) -> str:
+    """Why a voucher with G/L date ``day`` can't be posted ("" when it can): in a closed period (before the open one:
+    a date not moved), or after the open period (never moved, D-182)."""
+    first, last = _date(settings.open_from), _date(settings.open_to)
+    if first and day < first:
+        return (f"G/L date {day} is in a closed period (JD Edwards' open period starts {first}, Settings → JD Edwards "
+                "E1): held until the period is open, or set closed periods to be moved")  # fmt: skip
+    if last and day > last:
+        return (f"G/L date {day} is after the open period (it ends {last}, Settings → JD Edwards E1): held until that "
+                "period is open")  # fmt: skip
+    return ""
+
+
+MOVED = "G/L date moved to"
+
+
+def moved_note(day: dt.date, moved: dt.date) -> str:
+    """What the review screen and the dry run say of a G/L date moved into the open period."""
+    return f"{MOVED} {day}, the first day of JD Edwards' open period: {moved} is in a closed period"
 
 
 # --- Formats ---------------------------------------------------------------------------------------------
@@ -400,6 +449,15 @@ def _split(total: int, weights: list[int], unit: int = 1) -> list[int]:
     biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
     shares[biggest] += total - sum(shares)
     return shares
+
+
+def from_julian(value: Any) -> dt.date | None:
+    """The date of an E1 "Julian" CYYDDD (``julian``'s), None when it isn't one."""
+    try:
+        n = int(value)
+        return dt.date(1900 + n // 1000, 1, 1) + dt.timedelta(days=n % 1000 - 1)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _date(value: Any) -> dt.date | None:
@@ -491,6 +549,8 @@ class _Voucher:
     po_matched: bool = False
     # The GST/HST/QST on meals not claimable (D-90): in the expense lines, so E1 must not post it as recoverable.
     meals: int = 0
+    gl_moved: dt.date | None = None  # a G/L date in a closed period, moved to ``gl_day`` (D-182)
+    gl_day: dt.date | None = None
 
 
 def _place_of_supply(final: dict[str, Any]) -> str:
@@ -745,6 +805,12 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         add("no invoice date", "INVOICE_DATE_INVALID")
     elif invoice_date.year not in E1_YEARS:
         add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
+    else:  # the open period (D-182): today's for a G/L date of the export day (the batch's is checked as it goes)
+        day, v.gl_moved = gl_date_of(final, settings)
+        if why := period_problem(day, settings):
+            add(why, "JDE_PERIOD_CLOSED")
+        elif v.gl_moved:
+            v.gl_day = day
 
     v.currency = _norm(final.get("currency")) or settings.domestic_currency.upper()
     allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency)}
@@ -986,7 +1052,7 @@ def voucher_rows(
     final = v.final
     keys = _keys("VL", settings, batch, invoice, v.inv_id, site)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
-    gl_date = (on or dt.date.today()) if settings.gl_date == GL_DATE_EXPORT else invoice_date
+    gl_date = gl_date_of(final, settings, on)[0]  # in the open period (D-182)
     due = sent_due(final, invoice)  # a credit note: its invoice date; a guessed one is not sent (B-924)
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
@@ -1316,7 +1382,8 @@ SETTINGS_URL = "/settings/jde"
 SAID_ELSEWHERE = frozenset({"MISSING_INVOICE_NUMBER", "INVOICE_DATE_INVALID", "GL_UNASSIGNED", "SUBTOTAL_MISMATCH",
                             "POSTING_UNBALANCED", "NO_LINE_ITEMS", "TAX_GL_UNMAPPED"})  # fmt: skip
 # Said on the review screen as the voucher check words them, after "JD Edwards: ", for the whole invoice.
-SAID_AS_IS = frozenset({"JDE_TAX_AREA", "JDE_MEALS_PO", "JDE_GL_PO", "JDE_GROSS_TAX", "JDE_UNBALANCED"})
+SAID_AS_IS = frozenset({"JDE_TAX_AREA", "JDE_MEALS_PO", "JDE_GL_PO", "JDE_GROSS_TAX", "JDE_UNBALANCED",
+                        "JDE_PERIOD_CLOSED"})  # fmt: skip
 
 
 def in_use(store: Any) -> bool:
@@ -1376,6 +1443,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, code, f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if v.gl_moved and v.gl_day:  # posted in the open period: the person sees it before approving (D-182)
+        out.append((WARNING, "JDE_GL_DATE_MOVED", f"JD Edwards: {moved_note(v.gl_day, v.gl_moved)}", None))
     no_code = terms_unmapped(output, settings)
     if no_code:  # a note: a blank VLPTC has E1 take the supplier's own terms, no reason to hold anything (B-896)
         out.append((INFO, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "

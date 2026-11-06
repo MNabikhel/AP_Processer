@@ -123,6 +123,21 @@ CHECKS: dict[str, CheckHelp] = {
         "Send this invoice without the PO match (remove the PO number if it is only a reference), or ask the pilot "
         "tester to post the half by hand in JD Edwards.",
     ),
+    "JDE_GL_DATE_MOVED": CheckHelp(
+        ERP, "G/L date moved into the open period",
+        "The invoice is dated in a period JD Edwards has closed (Settings → JD Edwards E1 → open period), so its "
+        "voucher is posted on the first day of the open period instead: the expense lands in that period, not in the "
+        "month of the invoice. The invoice date itself is sent as it is.",
+        "Approve as usual if that is right for your month end; the dry run shows it again before the go-ahead. If the "
+        "period should still be open, ask the pilot tester to correct the open period.",
+    ),
+    "JDE_PERIOD_CLOSED": CheckHelp(
+        ERP, "G/L date in a period not open",
+        "The voucher's G/L date is before JD Edwards' open period (closed periods are held, not moved) or after it: "
+        "JD Edwards would refuse it, or post it in the wrong year, so it is not sent.",
+        "Check the invoice date on the page. If it is right, ask the pilot tester to move closed periods' G/L dates "
+        "into the open period, or to correct the open period in Settings → JD Edwards E1.",
+    ),
     "JDE_DATE_RANGE": CheckHelp(
         ERP, "Date JD Edwards can't hold",
         "JD Edwards dates run from 1900 to 2899: this date is outside them (usually a typo in the year).",

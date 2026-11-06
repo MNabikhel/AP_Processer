@@ -158,6 +158,97 @@ def test_a_vendor_on_hold_in_ap_coder_is_not_sent_and_its_dry_run_says_so(tmp_pa
     assert "bank details being checked" in row["error"] and ais.orchestration_calls("voucher_create") == []
 
 
+# --- Fiscal periods --------------------------------------------------------------------------------------------------
+
+
+def _sent_gl_dates(fake: FakeAis) -> dict[str, int]:
+    return {c["PayItems"][0]["VLVINV"]: c["PayItems"][0]["VLDGJ"] for c in finals(fake)}
+
+
+def test_an_invoice_dated_in_a_closed_period_is_posted_in_the_open_one_said_and_confirmed(tmp_path, ais):
+    """B-1861 (R5): AP Coder knew nothing of JD Edwards' periods: a September invoice approved after September was
+    closed went with its invoice date as the G/L date, and R04110ZA refused it (or it landed in a year still open).
+    With the open period set (Settings → JD Edwards E1), its G/L date is moved to the first day of it: said on the
+    review screen and in the dry run, and the go-ahead that posts it is kept with the vouchers moved."""
+    store, batch = batch_of(tmp_path, ais, ON, QC)  # dated 14 September and 1 October
+    settings(store, open_from="2026-10-01")
+    rows = {r["invoice_id"]: r for r in jde_post.dry_run(store, batch)["rows"]}
+    assert rows[1]["status"] == jde_post.CHECKED and rows[1]["error"].startswith("G/L date moved to 2026-10-01")
+    assert "2026-09-14" in rows[1]["error"] and rows[2]["error"] == ""
+    jde_post.post(store, batch, actor="sam")
+    assert _sent_gl_dates(ais) == {"NW-2026-0912": jde.julian("2026-10-01"), "SIL-4471": jde.julian("2026-10-01")}
+    assert finals(ais)[0]["PayItems"][0]["VLDIVJ"] == jde.julian("2026-09-14")  # the invoice date stays
+    assert {line["VNDGJ"] for line in finals(ais)[0]["GLLines"]} == {jde.julian("2026-10-01")}
+    (approved,) = store.events(actions=["jde_api_approved"])
+    assert approved["detail"]["gl_moved"] == [1]
+
+
+def test_with_closed_periods_held_an_invoice_in_one_is_never_posted(tmp_path, ais):
+    store, batch = batch_of(tmp_path, ais, ON, QC)
+    settings(store, open_from="2026-10-01", closed_period=jde.CLOSED_HOLD)
+    rows = {r["invoice_id"]: r for r in jde_post.dry_run(store, batch)["rows"]}
+    assert rows[1]["status"] == jde_post.REFUSED and "closed period" in rows[1]["error"]
+    assert rows[2]["status"] == jde_post.CHECKED
+    jde_post.post(store, batch)
+    assert list(_sent_gl_dates(ais)) == ["SIL-4471"]
+
+
+def test_a_period_closed_while_a_batch_is_posted_holds_the_rest_back_saying_why(tmp_path, ais):
+    store, batch = batch_of(tmp_path, ais, QC, BC)  # 1 and 5 October
+    settings(store, open_from="2026-10-01")
+    jde_post.dry_run(store, batch)
+
+    def close_october(key, inputs):  # the first voucher goes; meanwhile October is closed in JD Edwards and here
+        if inputs.get("mode") == "FINAL":
+            settings(store, open_from="2026-11-01")
+        return None
+
+    ais.plan = close_october
+    result = jde_post.post(store, batch)
+    rows = {p["invoice_id"]: p for p in jde_post.postings(store, batch)}
+    assert rows[1]["status"] == jde_post.POSTED and len(finals(ais)) == 1 and result["posted"] == 1
+    assert rows[2]["status"] == jde_post.CHECKED and jde_post.waiting(store) == []  # waits for a new dry run
+    assert "closed" in rows[2]["error"] and "dry run again" in rows[2]["error"]
+    assert any("closed" in s for s in result["skipped"])
+    ais.plan = None
+    jde_post.dry_run(store, batch)  # its G/L date then moves to 1 November
+    jde_post.post(store, batch)
+    assert _sent_gl_dates(ais)["PO-77120"] == jde.julian("2026-11-01")
+
+
+def test_jd_edwards_refusing_a_g_l_date_in_a_closed_period_holds_back_the_others_of_that_month(tmp_path, ais):
+    store, batch = batch_of(tmp_path, ais, QC, BC, ON)  # 1 and 5 October, 14 September
+    jde_post.dry_run(store, batch)
+    ais.plan = lambda key, inputs: ("refuse", "PBCO", "Error: G/L Date Before Cut Off (PBCO)") if inputs.get(
+        "mode") == "FINAL" and inputs["pay_items"][0]["VLVINV"] == "SIL-4471" else None  # fmt: skip
+    result = jde_post.post(store, batch)
+    rows = {p["invoice_id"]: p for p in jde_post.postings(store, batch)}
+    assert rows[1]["status"] == jde_post.FAILED and "PBCO" in rows[1]["error"]
+    assert rows[2]["status"] == jde_post.CHECKED and "AP Coder #1" in rows[2]["error"]  # October: not sent
+    assert rows[3]["status"] == jde_post.CHECKED  # September: before it, closed too
+    assert len(finals(ais)) == 1 and result["failed"] == 1
+
+
+def test_the_open_period_on_the_files_and_the_review_screen():
+    from tests.erp.test_jde import AN8, _invoice
+
+    sept, nov = _invoice(ON, 1), _invoice(QC, 2, invoice_date="2026-11-02")
+    moved = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, open_from="2026-10-01", open_to="2026-10-31")
+    files = jde.export_batch([sept], moved, AN8, batch=7)
+    head = files[jde.HEADER_FILE].decode().splitlines()
+    assert str(jde.julian("2026-10-01")) in head[1] and str(jde.julian("2026-09-14")) in head[1]
+    found = {code: (severity, text) for severity, code, text, _ in jde.voucher_findings(sept["final_output"], moved,
+                                                                                         "4001")}  # fmt: skip
+    assert found["JDE_GL_DATE_MOVED"][0] == jde.WARNING and "2026-10-01" in found["JDE_GL_DATE_MOVED"][1]
+    assert "after the open period" in " ".join(jde.validate([nov], moved, AN8)[2])  # never moved forward or back
+    held = jde.JdeSettings.from_json(json.dumps({**json.loads(moved.to_json()), "closed_period": jde.CLOSED_HOLD}))
+    assert "closed period" in " ".join(jde.validate([sept], held, AN8)[1])
+    found = {code: severity for severity, code, _, _ in jde.voucher_findings(sept["final_output"], held, "4001")}
+    assert found["JDE_PERIOD_CLOSED"] == jde.ERROR and "JDE_GL_DATE_MOVED" not in found
+    assert jde.JdeSettings.from_json('{"open_from": "soon", "closed_period": "x"}').open_from == ""
+    assert jde.settings_problems(jde.JdeSettings(open_from="2026-11-01", open_to="2026-10-31"))
+
+
 # --- The Z-tables' keys ----------------------------------------------------------------------------------------------
 
 

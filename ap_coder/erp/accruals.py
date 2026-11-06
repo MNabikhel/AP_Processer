@@ -279,16 +279,28 @@ def late_after(store: Store, period_end: str) -> str:
     return period_end if jde.load(store).gl_date == jde.GL_DATE_EXPORT else "9999-12-31"
 
 
+def _unposted_note(status: str) -> str:
+    from . import jde_post
+
+    return "exported; its JD Edwards voucher: " + (
+        "approved, not sent yet" if status == jde_post.CHECKED else jde_post.LABELS[status])
+
+
 def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None = None) -> list[Accrual]:
+    from . import jde_post
+
     end = period_end.isoformat()
     cutoff = late_after(store, end)
     oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
+    unposted = jde_post.not_posted(store)  # exported, its voucher sent through the JD Edwards API, not posted (R4)
     # Only invoices not in the ERP at the period end are read (the summary says which, D-110): in review, parked,
-    # waiting for a second approval, approved and not exported, or exported after the period end (D-133).
+    # waiting for a second approval, approved and not exported, exported after the period end (D-133), or exported
+    # with its JD Edwards voucher not posted yet (B-1862).
     found = store.summary_rows(
-        f"status IN (?, ?, ?) OR (status = ? AND (export_batch IS NULL OR export_batch IN ({_LATE_BATCHES})))",
-        (REVIEW, PARKED, PENDING, APPROVED, cutoff), "id, export_batch")  # fmt: skip
-    late = {r["id"] for r in found if r["export_batch"] is not None}
+        f"status IN (?, ?, ?) OR (status = ? AND (export_batch IS NULL OR export_batch IN ({_LATE_BATCHES}) OR "
+        "id IN (SELECT value FROM json_each(?))))",
+        (REVIEW, PARKED, PENDING, APPROVED, cutoff, json.dumps(list(unposted))), "id, export_batch")  # fmt: skip
+    late = {r["id"] for r in found if r["export_batch"] is not None and r["id"] not in unposted}
     rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"),
                                  ids=[r["id"] for r in found])  # fmt: skip
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
@@ -333,7 +345,8 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
                     cc,
                     round(amount, 2),
                     doc.get("currency") or "",
-                    (EXPORTED_LATE if r["id"] in late else state[r["status"]]) + (f"; {OLD_NOTE}" if old else ""),
+                    (EXPORTED_LATE if r["id"] in late else _unposted_note(unposted[r["id"]]) if r["id"] in unposted
+                     else state[r["status"]]) + (f"; {OLD_NOTE}" if old else ""),  # fmt: skip
                     old,
                 )  # fmt: skip
             )
@@ -394,10 +407,14 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
     # The invoices not in the ERP yet: 0.9 s at 100,000 invoices, at every visit before.
     cutoff = late_after(store, period_end.isoformat())
     late = [r["id"] for r in store.summary_fetch(_LATE_BATCHES, (cutoff,))]
+    from . import jde_post
+
+    # (and the exported invoices whose JD Edwards voucher is not posted yet: their postings change no invoice, B-1862)
+    unposted = sorted(jde_post.not_posted(store).items())
     found, no_date = store.shared_answer("not_in_erp", not_in_erp, version=ACCRUALS_FORMAT,
                                          encode=lambda v: [_data(v[0]), _data(v[1])],
                                          decode=lambda v: (_of(v[0]), _of(v[1])),
-                                         asked=(period_end, cutoff, late, store.tax_treatments()),
+                                         asked=(period_end, cutoff, late, store.tax_treatments(), unposted),
                                          settle=settle)  # fmt: skip
     if undated is not None:
         undated.extend(no_date)

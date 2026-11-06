@@ -256,7 +256,7 @@
       {% endif %}
       {% if jde_api.checked and can("/exports/batches/1/jde-api/post") %}
       <form method="post" action="/exports/batches/{{ chosen.id }}/jde-api/post" data-busy="Posting…"{% if last %} class="stack"{% endif %}
-            data-confirm="Post {{ jde_api.checked | plural('voucher') }} of batch {{ chosen.id }} to JD Edwards?">
+            data-confirm="Post {{ jde_api.checked | plural('voucher') }} of batch {{ chosen.id }} to JD Edwards?{% if jde_api.moved %} {{ jde_api.moved | plural('voucher') }} {{ 'has its' if jde_api.moved == 1 else 'have their' }} G/L date moved into the open period (see Message): posting confirms it.{% endif %}">
         {% if last %}
         <label class="check"><input type="checkbox" name="not_loaded" value="1" required> I've checked in JD Edwards: the downloaded file was not loaded</label>
         <label class="field">What you checked <span class="muted small">(kept in the audit trail with your name)</span><textarea name="why" rows="2" required></textarea></label>

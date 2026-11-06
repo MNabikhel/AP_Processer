@@ -101,6 +101,43 @@ def test_with_the_invoice_date_as_g_l_date_an_invoice_exported_after_the_period_
     assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
 
 
+def test_an_exported_invoice_whose_jde_voucher_is_not_posted_yet_is_not_in_the_erp(tmp_path, monkeypatch):
+    """B-1862 (R4): an invoice in an export batch counted as in the ERP at month end even when its voucher, sent
+    through the JD Edwards API, was waiting in the queue (JD Edwards down), sent with its answer lost, or refused: its
+    cost was in neither JD Edwards nor the accruals. Until JD Edwards has it, it is accrued, saying why; a batch loaded
+    from its files is in the ERP as before."""
+    from ap_coder.erp import jde_ais, jde_post
+    from tests.erp.test_jde import QC
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import PASSWORD, FakeAis
+
+    monkeypatch.setattr(jde_ais, "RETRY_PAUSE", 0)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+
+    def accrued() -> dict[int, set[str]]:
+        found: dict[int, set[str]] = {}
+        for x in accruals.build(store, dt.date(2026, 10, 31)):
+            if x.source == accruals.NOT_IN_ERP:
+                found.setdefault(int(x.reference.split("(#")[1].rstrip(")")), set()).add(x.note)
+        return found
+
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais, "northwind_ON_HST_NW-2026-0912", QC)  # 14 September, 1 October
+        assert accrued() == {}  # exported: in the ERP, as a batch loaded from its files
+        jde_post.dry_run(store, batch)
+        assert accrued() == {}  # a dry run sends nothing
+        ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: both wait in the queue
+        jde_post.post(store, batch)
+        assert accrued() == {1: {"exported; its JD Edwards voucher: Waiting: JD Edwards not reached"},
+                             2: {"exported; its JD Edwards voucher: Waiting: JD Edwards not reached"}}  # fmt: skip
+        ais.data["suppliers"] = [s for s in ais.data["suppliers"] if s["an8"] != "4001"]  # refused from here on
+        jde_post.retry_queue(store)
+        assert accrued() == {1: {"exported; its JD Edwards voucher: Refused by JD Edwards"},
+                             2: {"exported; its JD Edwards voucher: Refused by JD Edwards"}}  # fmt: skip
+        jde_post.file_downloaded(store, batch, "sam")  # the refused ones loaded from the batch's files instead
+        assert accrued() == {}
+
+
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)

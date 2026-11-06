@@ -41,6 +41,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -66,6 +67,9 @@ RETRY_MINUTES = (5, 15, 60)  # the queue's waits after each try that did not rea
 SENDING_MINUTES = 15  # a row *sending* longer than this was left by a stop: looked up by its key, never resent blind
 LATE_STOP = 3  # answers lost one after another: JDE is overloaded, the rest of the run waits in the queue (D-182)
 LOOK_AFTER = 30.0  # seconds after a lost answer before the run looks the voucher up (a younger one: the queue does)
+# JDE's words for a G/L date in a closed period (PBCO: "post before cut-off"): CONFIRM R04110ZA's error IDs (D-182)
+PERIOD_REFUSED = re.compile(r"\bPBCO\b|closed (fiscal )?(period|year)|period (is )?closed|before (the )?cut[- ]?off|"
+                            r"prior (fiscal )?(period|year)", re.IGNORECASE)  # fmt: skip
 YES, NO = ("1", "Y", "YES", "TRUE"), ("0", "N", "NO", "FALSE")
 FILE_DOWNLOADED = "jde_file_downloaded"  # the event of a download of a batch's JD Edwards ZIP (D-134)
 
@@ -149,13 +153,17 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if blocking:
             problems.setdefault(inv["id"], []).extend(blocking)
+        day, moved = jde.gl_date_of(inv.get("final_output") or {}, settings, on)  # the batch's day, when that is it
+        if inv["id"] not in problems and (closed := jde.period_problem(day, settings)):
+            problems[inv["id"]] = [closed]
         if inv["id"] in problems:
             continue
         headers, dists, matches = jde.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
                                                    prepared=v, site=site)  # fmt: skip
         out[inv["id"]] = {"key": idem_key(inv["id"], batch, installation), "pay_items": headers, "gl_lines": dists,
                           "matches": matches, "_expect": _expect(inv, headers, settings),
-                          "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or ""}  # fmt: skip
+                          "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or "",
+                          "_moved": jde.moved_note(day, moved) if moved else ""}  # fmt: skip
     made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates, "site": site,
             "vouchers": {inv["id"]: pv for inv, pv in zip(invoices, prepared, strict=True)}}  # fmt: skip
     return out, problems, invoices, made
@@ -249,6 +257,22 @@ def documents_of(store: Any, invoice_id: int | None) -> list[str]:
     with _conn(store) as conn:
         return [r[0] for r in conn.execute("SELECT document FROM jde_postings WHERE invoice_id = ? AND status = ? "
                                            "AND document != ''", (invoice_id, POSTED))]  # fmt: skip
+
+
+def not_posted(store: Any) -> dict[int, str]:
+    """{invoice: what its voucher is} of the exported invoices whose voucher went to JD Edwards through the API (its
+    go-ahead given) and is not posted there yet: waiting in the queue, being sent, sent with its answer lost, held back
+    for a new dry run, or refused (unless the batch's files were downloaded since: then loaded from them, as any
+    batch). Month end takes them as not in the ERP (R4, B-1862)."""
+    with _conn(store) as conn:
+        found = conn.execute(
+            "SELECT p.invoice_id, p.status FROM jde_postings p JOIN invoices i ON i.id = p.invoice_id AND "
+            "i.export_batch = p.batch WHERE p.status IN (?, ?, ?) OR (p.status = ? AND p.approved_at IS NOT NULL) OR "
+            "(p.status = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.action = ? AND "
+            "json_extract(e.detail, '$.batch') = p.batch AND e.created_at >= p.updated_at)) ORDER BY p.invoice_id",
+            (QUEUED, SENDING, UNKNOWN, CHECKED, FAILED, FILE_DOWNLOADED),
+        ).fetchall()
+    return {int(r[0]): r[1] for r in found}
 
 
 def locked(store: Any, batch: int) -> list[dict[str, Any]]:
@@ -510,9 +534,10 @@ def dry_run(store: Any, batch: int, actor: str | None = None,
                         error = "; ".join(exc.messages) or str(exc)
                     else:
                         jde_note = str(exc)
+            # passed with its G/L date moved into the open period: said, and the go-ahead confirms it (D-182)
             _put(store, key, inv_id, batch, only_from=DRY_RUN_OVER, status=REFUSED if error else CHECKED,
-                 error=error, payload_hash=_hash(payload), expect=json.dumps(payload["_expect"]), checked_at=_now(),
-                 checked_by=actor, maybe_sent=held)  # fmt: skip
+                 error=error or payload["_moved"], payload_hash=_hash(payload), expect=json.dumps(payload["_expect"]),
+                 checked_at=_now(), checked_by=actor, maybe_sent=held)  # fmt: skip
     finally:
         if own and client is not None:
             client.close()
@@ -738,7 +763,10 @@ def post(store: Any, batch: int, actor: str | None = None, client: jde_ais.AisCl
         if _put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"], approved_at=_now(),
                 approved_by=actor):  # fmt: skip
             approved.append((_row(store, row["idem_key"]) or row, payload))
-    store.log_event("jde_api_approved", actor=actor, detail={"batch": batch, "vouchers": len(approved), **word})
+    # the vouchers whose G/L date the dry run moved into the open period, confirmed by this go-ahead (D-182)
+    moved = [row["invoice_id"] for row, payload in approved if payload["_moved"]]
+    store.log_event("jde_api_approved", actor=actor, detail={"batch": batch, "vouchers": len(approved), **word,
+                                                             **({"gl_moved": moved} if moved else {})})  # fmt: skip
     return _run(store, approved, actor, client, look_first=False, skipped=skipped, progress=progress)
 
 
@@ -755,7 +783,9 @@ class _Run:
     queue)."""
 
     def __init__(self, store: Any, total: int, progress: Callable[[dict[str, Any]], None] | None) -> None:
-        settings = jde.load(store)
+        self.text = store.get_setting(jde.SETTING_KEY)
+        self.settings = settings = jde.JdeSettings.from_json(self.text)
+        self.refused: tuple[dt.date, int, dt.date, str] | None = None  # (through, invoice, its G/L date, JDE's words)
         self.resend = settings.resend_minutes * 60
         self.minutes, self.began = settings.post_minutes, time.monotonic()
         self.total, self.progress = total, progress
@@ -773,10 +803,42 @@ class _Run:
         return bool(self.why)
 
     def counts(self) -> dict[str, int]:
-        found = {POSTED: 0, FAILED: 0, QUEUED: 0, UNKNOWN: 0}
+        found = {POSTED: 0, FAILED: 0, QUEUED: 0, UNKNOWN: 0, CHECKED: 0}  # checked: held back, for a new dry run
         for status in self.outcome.values():
             found[status if status in found else UNKNOWN if status == SENDING else QUEUED] += 1
         return found
+
+    def closed(self, store: Any, payload: dict[str, Any]) -> str:
+        """Why the voucher's G/L date can't be posted now ("" when it can): its period closed since its dry run (the
+        open period moved on in Settings: read again when it changes), or JD Edwards refused one of this run's vouchers
+        as in a closed period, dated in the same month or later (D-182)."""
+        text = store.get_setting(jde.SETTING_KEY)
+        if text != self.text:
+            self.text, self.settings = text, jde.JdeSettings.from_json(text)
+        day = jde.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+        if day is None:
+            return ""
+        if self.refused and day <= self.refused[0]:
+            _, invoice, refused, words = self.refused
+            return (f"JD Edwards refused AP Coder #{invoice}'s G/L date {refused} as in a closed period ({words}): "
+                    f"this one, dated {day}, waits. Set JD Edwards' open period in Settings → JD Edwards E1, then dry "
+                    "run again")  # fmt: skip
+        if jde.period_problem(day, self.settings):
+            return (
+                f"the period of its G/L date {day} was closed since its dry run (Settings → JD Edwards E1's open "
+                f"period: from {self.settings.open_from or '…'} to {self.settings.open_to or '…'}): dry run again"
+            )
+        return ""
+
+    def refusal(self, row: dict[str, Any] | None, payload: dict[str, Any]) -> None:
+        """JD Edwards refused this voucher: as in a closed period, the rest of its month and before it wait."""
+        words = str((row or {}).get("error") or "")
+        day = jde.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+        if day is None or not PERIOD_REFUSED.search(words):
+            return
+        through = (day.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)  # its month's end
+        if self.refused is None or through > self.refused[0]:
+            self.refused = (through, row["invoice_id"], day, words[:200])  # type: ignore[index]
 
     def done(self, row: dict[str, Any], status: str) -> None:
         if status != "skipped":
@@ -823,8 +885,17 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
         run.done(row, "skipped")
 
     def send(row: dict[str, Any], payload: dict[str, Any] | None) -> None:
-        """One voucher JDE has none of, its vendor's hold read just before (R3: put on hold since its approval, it
-        waits in the queue, saying why, B-1859)."""
+        """One voucher JDE has none of, its G/L date's period and its vendor's hold read just before: its period
+        closed since (B-1861), it waits for a new dry run; put on hold since its approval (R3, B-1859), it waits in
+        the queue; each saying why."""
+        if payload is not None and (closed := run.closed(store, payload)):
+            if _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], status=CHECKED,
+                    next_try=None, error=f"Not sent: {closed}"):  # fmt: skip
+                skipped.append(f"AP Coder #{row['invoice_id']}: not sent: {closed}")
+                run.done(row, CHECKED)
+            else:
+                changed(row)
+            return
         if payload is not None and (held := _held(store, payload)):
             if _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], status=QUEUED,
                     next_try=_later(int(row.get("attempts") or 0) + 1, sent=False),
@@ -836,6 +907,8 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
             return
         status, exc = _deliver(store, client, row, payload, actor)
         run.after(row, exc, sent=True)
+        if status == FAILED and payload is not None:
+            run.refusal(_row(store, row["idem_key"]), payload)
         if status == "skipped":
             changed(row)
         else:
@@ -883,7 +956,8 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
             client.close()
     counts = run.counts()
     return {"posted": counts[POSTED], "failed": counts[FAILED], "queued": counts[QUEUED],
-            "unknown": counts[UNKNOWN], "error": run.why or error, "skipped": skipped}  # fmt: skip
+            "unknown": counts[UNKNOWN], "held": counts[CHECKED], "error": run.why or error,
+            "skipped": skipped}  # fmt: skip
 
 
 def retry_queue(store: Any, actor: str | None = None, client: jde_ais.AisClient | None = None,
@@ -906,7 +980,7 @@ def retry_queue(store: Any, actor: str | None = None, client: jde_ais.AisClient 
         # never sent changed.
         ready.append((row, payload if payload is not None and _hash(payload) == row["payload_hash"] else None))
     if not ready:
-        return {"posted": 0, "failed": 0, "queued": 0, "unknown": 0, "error": "", "skipped": skipped}
+        return {"posted": 0, "failed": 0, "queued": 0, "unknown": 0, "held": 0, "error": "", "skipped": skipped}
     return _run(store, ready, actor, client, look_first=True, skipped=skipped, progress=progress)
 
 

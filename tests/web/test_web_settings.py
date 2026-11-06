@@ -351,6 +351,24 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
+def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store):
+    """D-182: JD Edwards' open period (a G/L date before it moved or held) and the API's waits (a voucher's request,
+    a posting run, a lost answer sent again) are set on the page; a form without them keeps them."""
+    form = general_form(open_from="2026-11-01", open_to="", closed_period=jde.CLOSED_HOLD, voucher_timeout="180",
+                        post_minutes="90", resend_minutes="15")  # fmt: skip
+    assert "JD Edwards settings saved." in follow(client, post(client, "/settings/jde", form))
+    js = jde.load(store)
+    assert (js.open_from, js.open_to, js.closed_period) == ("2026-11-01", "", jde.CLOSED_HOLD)
+    assert (js.voucher_timeout, js.post_minutes, js.resend_minutes) == (180, 90, 15)
+    page = client.get("/settings/jde").text
+    assert 'name="open_from" value="2026-11-01"' in page and 'name="voucher_timeout" value="180"' in page
+    for bad in ({"open_from": "1 Nov"}, {"closed_period": "later"}, {"voucher_timeout": "0"},
+                {"open_from": "2026-11-01", "open_to": "2026-10-31"}):  # fmt: skip
+        assert post(client, "/settings/jde", general_form(**bad)).status_code == 400, bad
+    follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the new fields: kept
+    assert jde.load(store).open_from == "2026-11-01" and jde.load(store).voucher_timeout == 180
+
+
 def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):
     """B-684: the VLGLBA mapping was one line of CODE=value pairs, where an account could be missed or typed in the
     wrong case; each active bank account now has its own box."""
