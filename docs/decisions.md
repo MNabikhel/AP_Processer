@@ -3011,6 +3011,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     newest complete one is never dropped; a labelled one is never among the dailies; the second folder the same
     (`copy_backup`). On the company server only (`retention`): a laptop keeps its 14, as before (laptop mode
     unchanged; a laptop's disk is small). About 32 copies of the database on the server's disk: SERVER.md says so.
+    The server is told as the doctor tells it (`service.is_server_here`: server mode, or server.json in the data
+    folder), so a `backup now` or a restore run from IT's console without AP_SERVER_MODE keeps the server's history
+    too (it pruned the second folder to 14, B-1960).
   - **The second folder on the database's disk:** its `st_dev` against the data folder's (the volume serial number
     on Windows, a share's own), a warning in doctor, `/readyz` and Settings → Data & backups; no second folder at
     all, a warning too. On the server only: a laptop's OneDrive folder is on its own disk and synced away.

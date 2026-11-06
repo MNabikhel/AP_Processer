@@ -1010,3 +1010,28 @@ def test_the_second_backup_folder_keeps_the_same_backups(tmp_path, monkeypatch):
     backup_files.snapshot(made, store.path.parent)
     assert store.copy_backup(made) is not None
     assert _kept_days(share) == EXPECTED_DAYS
+
+
+def test_a_backup_made_from_the_servers_console_keeps_the_second_folders_history(tmp_path):
+    """``backup now`` (and a restore's copy before it) run from IT's console on the server, where AP_SERVER_MODE is
+    not set: the second folder was pruned to the laptop's 14 dailies, its year of history gone (B-1960). The server is
+    told as the doctor tells it: its server.json in the data folder."""
+    import datetime as dt
+
+    from ap_coder.core import paths
+    from ap_coder.core.store import backup_files
+    from ap_coder.ops import offline, service
+
+    assert not offline.server_mode()  # (the console's environment)
+    data = paths.private_dir()
+    share = tmp_path / "share"
+    _dailies(share, dt.date(2025, 9, 1), dt.date(2026, 11, 5))
+    dailies = [p for p in share.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)]
+    server_keeps = {p.name for p in backup_files.kept_dailies(dailies, backup_files.RETENTION)}
+    service.write_config(data, allowed_folders=[str(share)])
+    store = Store(data / "ap_coder.db")
+    store.set_setting("backup_copy_dir", str(share))
+    store.backup_now("manual", actor="console")
+    assert store.get_setting("backup_copy_status").startswith("ok")
+    assert {p.name for p in share.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)} == server_keeps
+    assert len(server_keeps) > 2 * backup_files.LAPTOP_RETENTION.daily

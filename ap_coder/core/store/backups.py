@@ -316,7 +316,7 @@ class BackupsMixin:
                 with contextlib.suppress(OSError):
                     part.unlink()
                 raise
-            backup_files.drop_old([p for p in target.glob("ap_coder-*.db") if _daily(p)], keep)
+            backup_files.drop_old([p for p in target.glob("ap_coder-*.db") if _daily(p)], keep, self.path.parent)
             backup_files.prune(target)
         except OSError as exc:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
@@ -364,7 +364,7 @@ class BackupsMixin:
         if not self.path.exists():
             return None
         made = self.backup_now(keep=keep)
-        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep)
+        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep, self.path.parent)
         backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
         return made
 

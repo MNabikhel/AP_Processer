@@ -119,11 +119,17 @@ LAPTOP_RETENTION = Retention(weekly=0, monthly=0)  # a laptop keeps its newest 1
 _MADE_ON = re.compile(r"ap_coder-(\d{8})-")
 
 
-def retention() -> Retention:
-    """The daily backups kept here: on the company server 14 days, 8 weeks and 12 months; on a laptop 14 days."""
+def retention(data: Path | None = None) -> Retention:
+    """The daily backups kept here: on the company server 14 days, 8 weeks and 12 months; on a laptop 14 days. The
+    server is told as the doctor tells it (``service.is_server_here``): server mode, or server.json in the data folder
+    ``data`` (a ``backup now`` or a restore run from IT's console, without AP_SERVER_MODE: B-1960)."""
     from ...ops.offline import server_mode
 
-    return RETENTION if server_mode() else LAPTOP_RETENTION
+    if server_mode():
+        return RETENTION
+    from ...ops.service import is_server_here
+
+    return RETENTION if data is not None and is_server_here(data) else LAPTOP_RETENTION
 
 
 def _made_on(backup: Path) -> dt.date | None:
@@ -156,10 +162,10 @@ def kept_dailies(dailies: list[Path], keep: Retention = RETENTION) -> set[Path]:
     return kept
 
 
-def drop_old(dailies: list[Path], keep: Retention | None = None) -> None:
-    """Retention of the daily backups ``dailies`` (``kept_dailies``; ``keep`` by default this mode's, ``retention``):
-    the others go, with their lists."""
-    kept = kept_dailies(dailies, keep or retention())
+def drop_old(dailies: list[Path], keep: Retention | None = None, data: Path | None = None) -> None:
+    """Retention of the daily backups ``dailies`` (``kept_dailies``; ``keep`` by default this mode's, ``retention``
+    of the data folder ``data``): the others go, with their lists."""
+    kept = kept_dailies(dailies, keep or retention(data))
     for old in dailies:
         if old not in kept:
             old.unlink(missing_ok=True)
