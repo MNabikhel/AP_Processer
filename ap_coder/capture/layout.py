@@ -794,8 +794,9 @@ def _reading(page: PageToRead, engine: str) -> tuple[dict[str, Any], Callable[[]
     if not (reading and isinstance(reading.get("lines"), list) and len(reading.get("size") or ()) == 2):
         import numpy as np
 
-        stated = page.picture()[1]
-        img = picture()
+        found, stated = page.picture()  # (drawn once: a page not kept in memory is drawn at each ask)
+        drawn.append(_on_paper(found))
+        img = drawn[0]
         result = _engine(engine)(np.asarray(img))
         reading = {"lines": [[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []],
                    "size": list(img.size), "dpi": stated}  # fmt: skip

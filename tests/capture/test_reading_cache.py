@@ -283,6 +283,20 @@ def test_outside_a_readings_folder_nothing_is_kept(engine, tmp_path):
     assert len(engine) == 2
 
 
+def test_with_one_engine_each_page_is_straightened_once_for_its_second_read(engine, tmp_path, monkeypatch):
+    monkeypatch.setattr(layout, "second_engine_name", layout._engine_name)  # (a computer with one OCR engine)
+    made: list[int] = []
+    real = layout._prepared
+    monkeypatch.setattr(layout, "_prepared", lambda picture: made.append(1) or real(picture))
+    path = _scan(tmp_path / "scan.pdf", size=(288, 360), pages=2)
+    with layout.ocr_cache(tmp_path / "ocr"):
+        layout.build_layout(path)
+        layout.second_read_layout(path)
+        _forget_this_process()
+        layout.second_read_layout(path)
+    assert len(made) == 2 and len(engine) == 4  # a second read again: neither straightened nor OCR'd
+
+
 def test_two_writers_at_once_leave_one_whole_reading(tmp_path, monkeypatch):
     data = {"lines": [[[[0.5, 1.5]] * 4, "x" * 200, 0.9]] * 400, "size": [1, 1], "dpi": 0}
     monkeypatch.setenv("AP_OCR_CACHE", str(tmp_path))  # (a folder every thread sees)
@@ -318,7 +332,7 @@ _KEPT_CODE = (
     intake._stored_pixels, intake._shown_size, intake._too_large, table_finder.page_pictures, table_finder._find,
     table_finder._iou, table_finder._find_tables, table_finder._kept_tables, table_finder.find_tables,
 )  # fmt: skip
-KEPT_CODE = (1, "2ee294b15384c7b802554735e99766b333ca75946448d832df0950eb8ab0b77d")
+KEPT_CODE = (1, "b8223bdf2c2dc4dd2742279308fb256a3d147146088d014bdb8d147f676b82fb")
 
 
 def test_how_a_page_is_drawn_and_read_is_in_what_its_reading_is_kept_under():
