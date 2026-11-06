@@ -125,8 +125,7 @@ class Check:
         host, which ends its dashboard, then itself with exit code 0; launchd does not start it again."""
         before = self.until("the dashboard answers", self.answering, within=240)
         dashboard = int(before.get("dashboard_pid") or 0)
-        if run(["sudo", "launchctl", "bootout", f"system/{TASK}"]).returncode:
-            raise Failed("launchctl bootout ended with an error")
+        run(["sudo", "launchctl", "bootout", f"system/{TASK}"])  # (it may answer 36, "in progress", and go on)
         self.until("stopped by launchd", lambda f: not f.get("running") and not f.get("answering"), within=90)
         log = str(self.data / "logs" / "service.log")
         if run(["grep", "-q", "the host was asked to stop (SIGTERM)", log]).returncode:

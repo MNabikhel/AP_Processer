@@ -120,21 +120,17 @@ def read_plist(task_name: str) -> dict:
 
 
 def write_plist(task_name: str, content: dict) -> Path:
-    """Written whole beside it, then renamed; root's and 0644, as launchd loads only such a file."""
-    path = plist_path(task_name)
-    part = path.with_name(f".{path.stem}.{os.getpid()}.part")  # (launchd reads only *.plist)
-    part.write_bytes(plistlib.dumps(content))
-    os.chmod(part, 0o644)
-    if is_root():
-        own(part, 0, 0)  # root:wheel
-    os.replace(part, path)
-    return path
+    """Written whole or not at all (``service.write_whole``: a power cut never leaves launchd half a plist); root's
+    and 0644, as launchd loads only such a file."""
+    root = (lambda part: own(part, 0, 0)) if is_root() else None  # root:wheel
+    return service.write_whole(plist_path(task_name), plistlib.dumps(content), mode=0o644, prepare=root)
 
 
 def point_current(folder: Path) -> Path:
     """Make ``current`` name ``folder`` in one step: a new link under a temporary name, renamed over the old one
-    (``os.replace``, one rename): whatever starts the service meanwhile finds the old folder or the new one, never
-    none. The link names the folder by its name: they are side by side."""
+    (``os.replace``, one rename), the folder then flushed to the disk (``service.sync_folder``): whatever starts the
+    service meanwhile, or after a power cut, finds the old folder or the new one, never none. The link names the
+    folder by its name: they are side by side."""
     folder = Path(folder)
     link = current_link(folder)
     part = link.with_name(f".{CURRENT}.{os.getpid()}.part")
@@ -145,6 +141,7 @@ def point_current(folder: Path) -> Path:
     except OSError:
         part.unlink(missing_ok=True)
         raise
+    service.sync_folder(link.parent)
     return link
 
 
@@ -323,10 +320,10 @@ def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
     (launchd's SIGTERM: the host ends its dashboard, then itself, with exit code 0)."""
     service.write_stop_flag(data, AGAIN)
     stopped = service.dashboard_stopped(data, s)
-    launchctl("bootout", target(s.task_name))  # (an error when it was not loaded: nothing to stop)
+    launchctl("bootout", target(s.task_name))  # (an error when it was not loaded, or 36 while it still ends)
     deadline = time.monotonic() + EXIT_TIMEOUT
-    while service.host_running(data) and time.monotonic() < deadline:
-        time.sleep(0.5)
+    while (service.host_running(data) or loaded(s.task_name) is not None) and time.monotonic() < deadline:
+        time.sleep(0.5)  # until launchd has let it go too: a start then loads it afresh
     if service.host_running(data) or not (stopped or service.dashboard_health(data, s, timeout=2.0) is None):
         say(f"The service did not stop: see {service.log_path(data)}, then run this again (or restart the Mac).")
         return 1
