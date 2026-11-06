@@ -163,3 +163,21 @@ Every number here was measured, with the machine, the command and the date. Esti
     (c) a big vendor's invoices refreshed from what changed, not read whole; (d) the first three minutes' tail, each
     worker's first look at what it keeps; (e) the load bench's search to Excel through its job, as a browser does; (f)
     the slowest 1% at 25 and 50 people, by route. Failover to the backup model machine is phase 4's.
+- **Phase 3 part 2, what grows with the database** (6 Nov 2026):
+  - **What changes** (from the 300k profile, items (a) to (e) above):
+    - a vendor's older lessons, and the GL suggestions' index on them, are carried forward when an approval moves the
+      learning memory, not read again in every process (D-173);
+    - a vendor's invoices kept in each process are brought up to date from a log of what changed, kept by triggers,
+      not read whole after any change to one of them; the vendors on hold and their approved numbers kept on their own
+      changes (D-174);
+    - Spend's figures, the recurring vendors, Insights and the queue's late regular bills are worked out once for
+      every process, as month-end and the duplicate audit were (D-175); no worker is warmed as it starts (a fresh one
+      takes these answers in 1-3 ms);
+    - the Import invoices page on the server reads one listing of the invoices folder kept for every process, made
+      by the pick-up or by one process at a time, so a view stats no file; the load bench follows the search export's
+      job as a browser does (D-176). The file-name rules were already one since D-168.
+  - **Reviewed** by three fresh reviewers (the caches carried forward; the shared answers; the folder listing): 11
+    findings reproduced and fixed test-first (B-1807 to B-1817), among them a worker killed while working out a shared
+    answer leaving every other one waiting 30 s on its queue page for five minutes, a vendor given lessons too many at
+    every approval after one raced with the memory's read, and the load bench passing a run whose exports failed.
+    Also B-1803: the recurring vendors' rows no longer kept in each worker (140 MB at 300,000 invoices).
