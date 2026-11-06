@@ -215,6 +215,10 @@ class Reader:
     def _next(self, batch: int | None) -> dict[str, Any] | None:
         """The next file this reader takes (None: none, or ``paused`` says why it takes none now)."""
         self.paused = "" if has_room(self.store.path.parent) else NO_ROOM
+        if self.paused:  # (on the server, the system's log too: D-187)
+            from ..ops import system_log
+
+            system_log.report(system_log.DISK_FULL, f"AP Coder: {NO_ROOM}")
         if not self.paused and self.store.restoring():
             self.paused = RESTORING
         row = None if self.paused else self.store.claim_import(self.owner, self.lease, batch)

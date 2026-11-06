@@ -2895,3 +2895,70 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `web/identity.py`, `web/pages/login.py`, `web/app.py`, `web/roles.py`, `web/static/js/{app,process,settings}.js`,
     one call of `invoice.js`, `review.html`, `review_bulk.html`; `tests/core/test_bulk_jobs.py`,
     `tests/web/test_web_review_bulk.py`, `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)
+- **D-187** · **The company server's health for IT: `GET /readyz` for a monitor, `doctor --json`, failures in the
+  system's log, the certificate's end read from its PEM, daily backups kept 14 days, 8 weeks and 12 months, and a
+  business time zone** (scale phase 6, O2: 400 people, 25,000 invoices a month on one server).
+  - **Why:** IT had `/healthz`, which says the dashboard answers and nothing more: a background process stuck, a
+    disk filling, a certificate expiring, a model server on its backup were seen when staff called. Fourteen daily
+    backups are a fortnight: a mistake found at the month end could not be undone. A virtual machine left on UTC
+    started the 1-5 a.m. backup at 8 p.m. in Toronto, with people still at work.
+  - **`/readyz`** (`ops/health.py` `readiness`, the route in `web/app.py`): 200 when ready, 503 when not, a JSON body
+    of checks, each with its status, and the problems in words (docs/SERVER.md section 12 gives the shape). **503
+    only when AP Coder can't do its work**: the database unreadable, the data folder's disk under `BACKUP_RESERVE`
+    (nothing read, no backup), the certificate expired, the background process's heartbeat 2 minutes old, no
+    capture process. A backup failed or old, no second folder, a model server on its backup, the clock's zone: a
+    warning (200, `"status": "warn"`): a load balancer in front of the only server must not take it out for those;
+    they reach IT through the system's log and the body. **Cheap:** counts through the queues' status indexes (the
+    oldest waiting by its id or its index), a heartbeat row, the backups folder's listing, `disk_usage`, the
+    certificate file; each process keeps its answer 5 s (`Kept`: callers wait for one, then share it); the second
+    backup folder (a share gone can take a minute) is looked at on a thread of its own, waited 2 s, kept 60 s.
+    **Nothing secret or named:** no path, token, model server's address, person or vendor; a backup's failure gives
+    its time, not its reason (which may name an invoice's file).
+  - **Who it answers** (its rule in `web/roles.py` is `OPEN`: the route checks, as `/shutdown` does): on the server
+    its console (a loopback address with no `--proxy`, as `pages/login.py` `from_console`), and the monitors
+    server.json names: `monitor_token` (24 characters or more, sent as `X-AP-Coder-Monitor` or `Authorization:
+    Bearer`, compared in constant time) or `monitor_addresses` (addresses or networks, for a probe that can't send a
+    header). Others get a 403 that says how. Not chosen: the allowed hosts (`AP_ALLOWED_HOSTS` are the names staff
+    type, a Host header any client sets), a token in the query string (proxies log it), an Admin's session (a
+    monitor has no account nor an authenticator app), open to all (the rule asked for the console and the server's
+    settings). On a laptop as `/healthz`: this computer everything, another computer only `{"ready", "app"}`
+    (`identity.OPEN_PATHS`: no name asked first).
+  - **The heartbeat:** `Store.beat("background")`, an `ephemeral` row the background process renews every 30 s
+    (`server.run_background`), read with `heartbeat_age`. Not a lease: `take_lease` refuses a new owner until the
+    old one runs out, so a restarted process would look dead for that long. With one process (a laptop,
+    `--workers 1`) the work runs in the dashboard's own: nothing to check.
+  - **The certificate's end:** a DER walk of the PEM to the validity's notAfter (UTCTime and GeneralizedTime, the
+    version optional; the earliest of the file's certificates, the CA's included). Not chosen: `cryptography` (not a
+    dependency), `ssl._ssl._test_decode_cert` (private), a loopback handshake (`getpeercert()` gives a dict only when
+    it verified the certificate, which needs the company's CA; its binary form is the DER again). A warning from 30
+    days before (doctor, `/readyz`, an Admin's banner on every page, `core.admin_notice`), an error once expired
+    (the banner red, 503). The server's own process looks every 6 hours for the system's log (`watch_certificate`).
+  - **The system's log** (`ops/system_log.py`, server mode only): Windows' Application log through `eventcreate`
+    (part of Windows; source "AP Coder", which an administrator makes once: SERVER.md section 6; event numbers 101
+    backup, 102 full disk, 103 a process stopped, 104 certificate, 105 a model server's backup), syslog on macOS and
+    Linux (`SysLogHandler` on `/var/run/syslog`, `/dev/log`; nothing without one). The same kind and message (or
+    key) at most once an hour per process; it never raises. Told by: a backup failed or refused (`_backup_now`), a
+    copy to the second folder failed, the import queue paused on a full disk, the server's supervisor seeing a
+    background or capture process stop, a breaker moving its calls (`Failover.failed`), and `/readyz` finding a
+    failure. Not chosen: pywin32 (a dependency), PowerShell's `Write-EventLog` (gone from PowerShell 7).
+  - **Retention** (`backup_files.Retention`, `kept_dailies`): the newest 14 dailies, the newest 14 complete ones
+    (B-1558), and of the complete ones the newest of each of the last 8 ISO weeks and 12 months that have one (as
+    restic's `--keep-weekly`: a server off for months keeps its history, where calendar windows would drop it); the
+    newest complete one is never dropped; a labelled one is never among the dailies; the second folder the same
+    (`copy_backup`). On the company server only (`retention`): a laptop keeps its 14, as before (laptop mode
+    unchanged; a laptop's disk is small). About 32 copies of the database on the server's disk: SERVER.md says so.
+  - **The second folder on the database's disk:** its `st_dev` against the data folder's (the volume serial number
+    on Windows, a share's own), a warning in doctor, `/readyz` and Settings → Data & backups; no second folder at
+    all, a warning too. On the server only: a laptop's OneDrive folder is on its own disk and synced away.
+  - **The business time zone:** server.json's `time_zone`, an IANA name, read with `zoneinfo`. Its database on
+    Windows is the `tzdata` package, which pandas requires there (`tzdata; sys_platform == "win32"`, and
+    python-dateutil): in the venv and in the offline bundle's wheelhouse (pip resolves it for each platform), so no
+    new dependency and no fallback; a name it can't find is said. The machine's clock is compared by its UTC offset
+    now and in mid-January and mid-July (Toronto and New York agree; Regina and Winnipeg don't). Only the daily
+    backup's hours follow it (`backups._business_hour`); "today" elsewhere is the machine's clock (the places are
+    listed in the phase's report): the server's time zone is set in Windows.
+  - (`ops/health.py`, `ops/system_log.py`, `ops/doctor.py` `as_json` `store_checks`, `ops/cli.py`, `web/app.py`,
+    `web/roles.py`, `web/identity.py`, `web/server.py`, `web/core.py`, `web/pages/settings.py`,
+    `core/store/{backups,backup_files,ephemeral,imports,page_queue}.py`, `ai/local_llm.py`, `intake/imports.py`;
+    `tests/ops/test_health.py`, `tests/ops/test_system_log.py`, `tests/web/test_readyz.py`,
+    `tests/core/test_backups.py`)

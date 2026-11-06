@@ -10,7 +10,10 @@ import pytest
 
 from ap_coder.core.audit import describe
 from ap_coder.core.store import Store
+from ap_coder.core.store.backup_files import Retention
 from ap_coder.core.store.backups import DAILY
+
+TWO_DAILIES = Retention(daily=2, weekly=0, monthly=0)  # the daily rule alone (the weeks and months: D-187)
 
 
 def test_backup_and_restore_round_trip(tmp_path, ground_truth):
@@ -39,11 +42,11 @@ def test_auto_backup_once_a_day_keeps_the_newest(tmp_path):
     newest = folder / "ap_coder-20260930-090000.db"
     newest.write_bytes(b"")
     os.utime(newest, (time.time() - 2 * 86400,) * 2)
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(min_hours=0)
     daily = [p for p in store.list_backups() if DAILY.fullmatch(p.stem)]
     assert len(daily) == 14
     manual = store.backup_now("manual")
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(min_hours=0)
     assert manual.exists()  # labelled backups are never pruned
 
 
@@ -269,7 +272,7 @@ def test_a_daily_backup_made_in_the_same_second_as_another_is_pruned_like_the_ot
         for day in range(1, 16):  # 15 newer daily backups
             (folder / f"ap_coder-202602{day:02d}-090000.db").write_bytes(b"")
             (folder / f"ap_coder-202602{day:02d}-090000.files.json").write_text('{"files": []}')  # complete
-    store.auto_backup(keep=14, min_hours=0)
+    store.auto_backup(keep=Retention(daily=14, weekly=0, monthly=0), min_hours=0)
     for folder in (store.backup_dir(), second):
         names = sorted(p.name for p in folder.glob("ap_coder-*.db"))
         assert len(names) == 14 and not [n for n in names if "20260110" in n], (folder, names)
@@ -404,7 +407,7 @@ def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_pat
     store, data = _data_folder(tmp_path, ground_truth)
     store.set_setting("backup_copy_dir", str(share))
     invoices = data / "invoices"
-    first = store.auto_backup(keep=2, min_hours=0)
+    first = store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     only_first = invoices / "a.pdf"
     gone = {folder: _object(folder, only_first) for folder in (store.backup_dir(), share)}
     only_first.unlink()
@@ -415,10 +418,10 @@ def test_pruning_keeps_every_file_a_kept_backup_needs_and_drops_the_rest(tmp_pat
     (invoices / "manual.pdf").unlink()
     (invoices / "b.pdf").write_bytes(b"%PDF-1.4 b")
     day[0] = 3
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     (invoices / "c.pdf").write_bytes(b"%PDF-1.4 c")
     day[0] = 4
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         assert not (folder / first.name).exists() and not (folder / f"{first.stem}.files.json").exists()
         assert not gone[folder].exists(), folder  # needed by the pruned backup only
@@ -631,14 +634,14 @@ def test_backups_without_their_files_never_push_out_the_last_complete_ones(tmp_p
     share.mkdir()
     store, _data = _data_folder(tmp_path, ground_truth)
     store.set_setting("backup_copy_dir", str(share))
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     day[0] = 2
-    second = store.auto_backup(keep=2, min_hours=0)
+    second = store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         for n in (3, 4, 5):
             shutil.copy(second, folder / f"ap_coder-2026110{n}-090000.db")  # no list: the database only
     day[0] = 6
-    store.auto_backup(keep=2, min_hours=0)
+    store.auto_backup(keep=TWO_DAILIES, min_hours=0)
     for folder in (store.backup_dir(), share):
         kept = sorted(p.name for p in folder.glob("ap_coder-*.db"))
         assert kept == ["ap_coder-20261102-090000.db", "ap_coder-20261105-090000.db", "ap_coder-20261106-090000.db"]
@@ -915,3 +918,95 @@ def test_the_daily_backup_waits_for_its_hours_but_never_skips_a_day(tmp_path):
         os.utime(backup, (stamp, stamp))
     assert store.auto_backup(window=(1, 5), now=afternoon) is not None  # the hours were missed: not a day skipped
     assert late.exists()
+
+
+# --- Retention beyond 14 days (D-187) ---------------------------------------------------------------------------
+
+
+def _dailies(folder, first, last, complete=True):
+    """A daily backup at 02:00 every day from ``first`` to ``last`` (with its list of files when ``complete``)."""
+    import datetime as dt
+
+    folder.mkdir(parents=True, exist_ok=True)
+    day = first
+    while day <= last:
+        stem = f"ap_coder-{day:%Y%m%d}-020000"
+        (folder / f"{stem}.db").write_bytes(b"db")
+        if complete:
+            (folder / f"{stem}.files.json").write_text('{"files": []}', encoding="utf-8")
+        day += dt.timedelta(days=1)
+
+
+def _kept_days(folder):
+    return sorted(p.name[9:17] for p in folder.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem))
+
+
+EXPECTED_DAYS = sorted(
+    {f"202610{d}" for d in range(24, 32)} | {f"202611{d:02d}" for d in range(1, 7)}  # the newest 14 days
+    | {"20261101", "20261025", "20261018", "20261011", "20261004", "20260927", "20260920"}  # 8 weeks (+ Nov 6's)
+    | {"20261031", "20260930", "20260831", "20260731", "20260630", "20260531", "20260430", "20260331", "20260228",
+       "20260131", "20251231"}  # 12 months (+ November's: the 6th)
+)  # fmt: skip
+
+
+def test_the_server_keeps_14_days_then_one_a_week_for_8_weeks_and_one_a_month_for_a_year(tmp_path, monkeypatch):
+    """A year's daily backups on the server: 14 of them were a fortnight's history only, so a mistake found at the
+    month end (or the year end) could not be undone. Now the newest 14, the newest of each of the last 8 weeks and of
+    each of the last 12 months; a labelled one whatever its age; the newest complete one always. A laptop keeps its
+    newest 14, as before."""
+    import datetime as dt
+
+    from ap_coder.core.store import backup_files
+    from ap_coder.ops import offline
+
+    folder = tmp_path / "backups"
+    _dailies(folder, dt.date(2025, 9, 1), dt.date(2026, 11, 6))
+    dailies = [p for p in folder.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)]
+    laptop = sorted(p.name[9:17] for p in backup_files.kept_dailies(dailies, backup_files.retention()))
+    assert laptop == [f"202610{d}" for d in range(24, 32)] + [f"202611{d:02d}" for d in range(1, 7)]
+    monkeypatch.setenv(offline.SERVER_ENV, "1")
+    (folder / "ap_coder-20250902-020000-manual.db").write_bytes(b"db")
+    backup_files.drop_old(dailies)
+    assert _kept_days(folder) == EXPECTED_DAYS
+    assert (folder / "ap_coder-20250902-020000-manual.db").exists()
+    assert not (folder / "ap_coder-20261023-020000.db").exists()
+    assert not (folder / "ap_coder-20261023-020000.files.json").exists()  # a pruned one's list goes with it
+
+
+def test_the_weeks_and_months_kept_are_those_that_have_a_backup(tmp_path):
+    """A server off for months keeps the history it has: the last 8 weeks and 12 months that have a backup, not the
+    last 8 and 12 by the calendar. The weeks and months keep complete backups only (a database alone restores no
+    file, B-1558); the newest complete one is never dropped, even with nothing else to keep."""
+    import datetime as dt
+
+    from ap_coder.core.store import backup_files
+
+    folder = tmp_path / "backups"
+    _dailies(folder, dt.date(2024, 1, 1), dt.date(2024, 3, 31))
+    _dailies(folder, dt.date(2026, 11, 1), dt.date(2026, 11, 6), complete=False)  # after the gap: no lists
+    dailies = [p for p in folder.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)]
+    kept = backup_files.kept_dailies(dailies, Retention(daily=3, weekly=2, monthly=2))
+    assert {p.name[9:17] for p in kept} == {"20261106", "20261105", "20261104", "20240331", "20240330", "20240329",
+                                            "20240324", "20240229"}  # fmt: skip
+    only = backup_files.kept_dailies(dailies, Retention(daily=0, weekly=0, monthly=0))
+    assert {p.name[9:17] for p in only} == {"20240331"}
+
+
+def test_the_second_backup_folder_keeps_the_same_backups(tmp_path, monkeypatch):
+    import datetime as dt
+
+    from ap_coder.core import paths
+    from ap_coder.core.store import backup_files
+    from ap_coder.ops import offline, service
+
+    share = tmp_path / "share"
+    _dailies(share, dt.date(2025, 9, 1), dt.date(2026, 11, 5))
+    monkeypatch.setenv(offline.SERVER_ENV, "1")
+    paths.private_dir().mkdir(parents=True, exist_ok=True)
+    service.write_config(paths.private_dir(), allowed_folders=[str(share)])
+    store = Store(tmp_path / "data" / "ap.db")
+    store.set_setting("backup_copy_dir", str(share))
+    made = store.backup_to(store.backup_dir() / "ap_coder-20261106-020000.db")
+    backup_files.snapshot(made, store.path.parent)
+    assert store.copy_backup(made) is not None
+    assert _kept_days(share) == EXPECTED_DAYS

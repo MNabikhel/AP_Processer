@@ -756,6 +756,15 @@ def account(request: Request) -> dict[str, Any] | None:
             "role_label": ROLE_LABELS.get(found.role, found.role)}  # fmt: skip
 
 
+def admin_notice(request: Request) -> dict[str, str] | None:
+    """The server's banner for an Admin: its HTTPS certificate within 30 days of its end, or past it (D-187)."""
+    if not server_mode(request) or not is_admin(request):
+        return None
+    from ap_coder.ops.health import certificate_notice
+
+    return certificate_notice(getattr(request.app.state, "certfile", None))
+
+
 def render(request: Request, template: str, page: str, status_code: int = 200, *, reading_status: Any = _UNASKED,
            **context: Any) -> HTMLResponse:  # fmt: skip
     """Draw ``template`` (which extends base.html) as page ``page`` (a key of ``pages.PAGES``): the rail, the
@@ -790,6 +799,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "settings": settings,
         "server_mode": server_mode(request),  # the company's server (D-97): no folder windows, no "this computer"
         "is_admin": is_admin(request),  # may see the server's own details, such as its folders (web/access.py)
+        "admin_notice": admin_notice(request),  # the server's HTTPS certificate near its end, or past it (D-187)
         "account": account(request),
         "can": functools.partial(can, request),
     }

@@ -87,6 +87,12 @@
         {% if can("/settings/reading", "GET") %}<a href="/settings/reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
       </div>
       {% endif %}
+      {% if admin_notice %}
+      <div class="banner {{ admin_notice.tone }}" role="alert">
+        <span class="ms" aria-hidden="true">{{ 'error' if admin_notice.tone == 'err' else 'warning' }}</span>
+        <span>{{ admin_notice.text }}</span>
+      </div>
+      {% endif %}
       <div id="flashes" class="flashes">
         {% for f in flashes %}
         <div class="flash {{ f.tone }}" role="status">
