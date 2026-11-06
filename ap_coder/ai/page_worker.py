@@ -905,6 +905,7 @@ class BackgroundReader(threading.Thread):
                 helper = BackgroundReader(self._settings_factory, self._store_factory, self._cache_dir, slot)
                 self.helpers.append(helper)
                 helper.start()
+        settings: Settings | None = None
         while not self._halt.is_set():
             pause = IDLE_SECONDS
             try:
@@ -925,7 +926,24 @@ class BackgroundReader(threading.Thread):
             except Exception:  # never let the thread die: the next round tries again
                 log.exception("page reader round failed")
                 pause = OFF_SECONDS
-            self._halt.wait(pause)
+            self._pause(pause, settings)
+
+    def _pause(self, seconds: float, settings: Settings | None) -> None:
+        """Wait ``seconds`` before the next round, or until a model server's breaker moved the calls to its backup
+        (D-180): what failed on the primary is read or reviewed again on the backup at once."""
+        from . import local_llm, page_reader
+
+        breakers = []
+        if settings is not None and seconds > 1:
+            breakers = [b for b in (page_reader.reader_failover(settings), local_llm.chat_failover(settings.llm)) if b]
+        if not breakers:
+            self._halt.wait(seconds)
+            return
+        left = [b.left_since() for b in breakers]
+        deadline = time.monotonic() + seconds
+        while not self._halt.wait(min(1.0, max(0.0, deadline - time.monotonic()))):
+            if time.monotonic() >= deadline or [b.left_since() for b in breakers] != left:
+                return
 
     def _round(self, settings: Settings, store: Any) -> float:
         """One invoice read, or reviewed: on the company server the AI reviewer's turn after each one read, while it

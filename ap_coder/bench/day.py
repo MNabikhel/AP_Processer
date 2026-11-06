@@ -16,7 +16,11 @@ to drain, the AI reviewer's throughput, every failure, each process's CPU (Linux
 during the drop. ``--drill`` makes the model machine misbehave once ``--drill-at`` pages were read: ``kill`` (down
 for ``--drill-for`` seconds), ``hang`` (nothing answered, then LM Studio restarted), ``slow`` (``--slow-factor``
 times slower), ``swap`` (another chat model) or ``swap-reader`` (another OvisOCR2 build): the reads lost or done
-twice, and how long recovery took. Failover to a backup model server is reported as not supported (there is none).
+twice, and how long recovery took. With ``--backup`` a second stand-in model server is the backup (AP_LLM_BACKUP_URL,
+D-180) and the drill acts on the primary: how long the calls took to move to the backup (from the drill's start and
+from the first request that went unanswered) and to come back after it, and what each server answered meanwhile.
+``--no-shared-failover`` gives each of the server's processes a breaker of its own (AP_FAILOVER_SHARED=0), to measure
+what sharing it gives.
 
 The report (``OUT/report.json``, ``OUT/report.md``) gives each figure as measured (real seconds, the model's answers
 ``--time-scale`` long) and at full latency, an estimate: the model's share of each stage stretched back by
@@ -56,10 +60,11 @@ REVIEWER_SCOPES = ("all", "touchless", "off")
 ADMIN = "bench.admin"
 PAGE = {"X-AP-Coder": "1"}  # what AP Coder's own page sends with every action
 WORKING_DAY_HOURS = 10.0  # the model machine's day, for its capacity a day
-FAILOVER = ("not supported: AP Coder has one address for each model server (AP_LLM_BASE_URL, AP_PAGE_READER_BASE_URL)"
-            " and nothing switches to a backup on its own; a person changes the address")  # fmt: skip
-QUALIFIED = ("not supported: a new chat model is used as soon as LM Studio lists it, with no test of its own before "
-             "its reviews count")  # fmt: skip
+FAILOVER = ("not run: no backup model server (--backup gives one: AP_LLM_BACKUP_URL, D-180); without one the calls "
+            "wait for the one server")  # fmt: skip
+QUALIFIED = ("a chat model other than the first decides nothing touchless (the AI reviewer waits) until it read the "
+             "page reader's test invoice right (D-180)")  # fmt: skip
+SERVED = ("page", "suggest", "header", "review")  # the model's answers that are the app's work (not a probe)
 
 
 def add_arguments(p: argparse.ArgumentParser) -> None:
@@ -93,6 +98,16 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--drill-at", type=int, default=3, help="pages read before the drill starts (default 3)")
     p.add_argument("--drill-for", type=float, default=30.0, help="seconds the kill, hang or slow lasts (default 30)")
     p.add_argument("--slow-factor", type=float, default=5.0, help="how much slower --drill slow is (default 5)")
+    p.add_argument(
+        "--backup",
+        action="store_true",
+        help="a second stand-in model server as the backup (AP_LLM_BACKUP_URL); the drill acts on the primary",
+    )
+    p.add_argument(
+        "--no-shared-failover",
+        action="store_true",
+        help="each server process its own breaker (AP_FAILOVER_SHARED=0), to measure what sharing gives",
+    )
     p.add_argument("--probe-every", type=float, default=3.0, help="seconds between GET /review probes (default 3)")
     p.add_argument("--sample-every", type=float, default=2.0, help="seconds between samples (default 2)")
     p.add_argument("--timeout", type=float, default=120.0, help="minutes before the run stops anyway (default 120)")
@@ -111,8 +126,12 @@ def run_command(a: argparse.Namespace) -> int:
           f"{_ms(r['probe_p95_idle'])} idle; failures {r['failures']}")  # fmt: skip
     if report.get("drill"):
         d = report["drill"]
-        print(f"drill {d['kind']}: reads lost {d['reads_lost']}, done twice {d['pages_read_twice']}, recovered in "
-              f"{_hms(d['recovery_seconds'])}; failover: {d['failover']}")  # fmt: skip
+        f = d.get("failover")
+        moved = (f"to the backup {_hms(f['seconds'])} after the drill began ({_hms(f['after_first_failure'])} after "
+                 f"the first unanswered request), back {_hms(f['back_seconds'])} after it ended"
+                 if isinstance(f, dict) else f)  # fmt: skip
+        print(f"drill {d['kind']}: reads lost {d['reads_lost']}, done twice {d['pages_read_twice']}, stored twice "
+              f"{d.get('stored_twice', 0)}, recovered in {_hms(d['recovery_seconds'])}; failover: {moved}")  # fmt: skip
     print(f"report: {Path(a.out) / 'report.md'}")
     return 0 if not report["timed_out"] and not report.get("problem") else 1
 
@@ -134,14 +153,19 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     fake = FakeModel(latency=latency, chat_latency=chat_latency, slots=a.slots, fail_rate=a.fail_rate,
                      models=[CHAT_MODEL, READER], seed=a.seed, time_scale=a.time_scale).start()  # fmt: skip
     test_pages = _teach_self_test(fake)
-    server = Server(data, out / "server.log", a.workers, _server_env(fake, parallel, a))
+    backup = None
+    if getattr(a, "backup", False):  # the Mac mini beside the Mac Studio: the same models, as fast (D-180)
+        backup = FakeModel(latency=latency, chat_latency=chat_latency, slots=a.slots, fail_rate=a.fail_rate,
+                           models=[CHAT_MODEL, READER], seed=a.seed + 1, time_scale=a.time_scale).start()  # fmt: skip
+        _teach_self_test(backup)
+    server = Server(data, out / "server.log", a.workers, _server_env(fake, parallel, a, backup))
     report: dict[str, Any] = {}
     run: Run | None = None
     try:
         server.start()
         client = Client(server.base)
         client.login(ADMIN, password, secret)
-        run = Run(a, cases, data, fake, server, client, test_pages)
+        run = Run(a, cases, data, fake, server, client, test_pages, backup)
         run.wait_for_self_test(a.self_test_minutes * 60)  # on a server it ran when the model was first seen
         for _ in range(4 * a.workers):  # each worker's first page is slow: not the idle figure
             client.probe()
@@ -155,6 +179,8 @@ def run_day(a: argparse.Namespace) -> dict[str, Any]:
     finally:
         server.stop()
         fake.stop()
+        if backup is not None:
+            backup.stop()
         if run is not None:
             run.db.close()  # Windows deletes no file still open: the data folder stayed behind (B-1681)
         if (data / "logs").is_dir():  # the server's own logs outlive the data folder: they say what went wrong
@@ -204,15 +230,23 @@ def _teach_self_test(fake: FakeModel) -> set[str]:
     with pymupdf.open(page_reader.TEST_SAMPLE) as doc:
         texts = [page.get_text() for page in doc]
     fake.learn_pages(pngs, texts[: len(pngs)])
+    # The chat model reads the same pages' header right too: a chat model swapped in passes its self-test (D-180).
+    truth = json.loads(page_reader.TEST_TRUTH.read_text(encoding="utf-8"))
+    fake.set(headers={page_key(pngs[0]): {k: v for k, v in truth.items() if not isinstance(v, (list, dict))}})
     return {page_key(png) for png in pngs}
 
 
-def _server_env(fake: FakeModel, parallel: int, a: argparse.Namespace) -> dict[str, str]:
+def _server_env(fake: FakeModel, parallel: int, a: argparse.Namespace,
+                backup: FakeModel | None = None) -> dict[str, str]:  # fmt: skip
     env = {k: v for k, v in os.environ.items() if not k.startswith("AP_")}  # nothing of this computer's AP Coder
     env.update({"BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1", "AP_LLM_BASE_URL": fake.base_url,
                 "AP_LLM_PARALLEL": str(parallel), "PYTHONUNBUFFERED": "1",
                 "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
                 "AP_STACK_DUMP_SECONDS": "60"})  # fmt: skip  # where the background process waits, if it seems stuck
+    if backup is not None:
+        env["AP_LLM_BACKUP_URL"] = backup.base_url  # the page reader's too: it shares the chat model's server
+    if getattr(a, "no_shared_failover", False):
+        env["AP_FAILOVER_SHARED"] = "0"
     if not a.no_scale_timeouts and a.time_scale < 1:
         env["AP_LLM_TIMEOUT_SECONDS"] = str(round(max(30.0, 600 * a.time_scale)))
         env["AP_PAGE_READER_TIMEOUT_SECONDS"] = str(round(max(30.0, 1200 * a.time_scale)))
@@ -223,9 +257,11 @@ class Run:
     """One drop, watched until every queue is empty (or ``--timeout``)."""
 
     def __init__(self, a: argparse.Namespace, cases: list[Any], data: Path, fake: FakeModel, server: Server,
-                 client: Client, test_pages: set[str]) -> None:  # fmt: skip
+                 client: Client, test_pages: set[str], backup: FakeModel | None = None) -> None:  # fmt: skip
         self.a, self.cases, self.data, self.fake, self.server, self.client = a, cases, data, fake, server, client
         self.test_pages = test_pages
+        self.backup = backup  # the backup model server (--backup), else None
+        self.backup_t0 = 0.0
         self.db = Reader(data / "ap_coder.db")
         self.samples: list[dict[str, Any]] = []
         self.tries: dict[int, int] = {}  # the most times each invoice's read was cut off (a read done starts at 0)
@@ -261,6 +297,8 @@ class Run:
         self.cpu_before = self.cpu.totals()
         self.t0, self.wall0 = time.monotonic(), time.time()
         self.fake_t0 = self.fake.stats()["uptime"]
+        if self.backup is not None:
+            self.backup_t0 = self.backup.stats()["uptime"]
         threading.Thread(target=self._probe, name="bench-probe", daemon=True).start()
         if self.a.deliver == "folder":
             for case in self.cases:  # an Admin copies the batch in, then presses Process on the Process page
@@ -329,8 +367,23 @@ class Run:
         self.samples.append(sample)
         return sample
 
+    def _answers(self) -> dict[str, int]:
+        """How many times each page image was answered, by either model server."""
+        answers = dict(self.fake.page_answers())
+        for key, n in (self.backup.page_answers() if self.backup is not None else {}).items():
+            answers[key] = answers.get(key, 0) + n
+        return answers
+
     def _pages_read(self) -> int:
-        return sum(n for key, n in self.fake.page_answers().items() if key not in self.test_pages)
+        return sum(n for key, n in self._answers().items() if key not in self.test_pages)
+
+    def _history(self) -> list[dict[str, Any]]:
+        """Both model servers' requests on the primary's clock, each with its ``server``."""
+        history = [dict(h, server="primary") for h in self.fake.history()]
+        if self.backup is not None:
+            shift = self.fake_t0 - self.backup_t0
+            history += [dict(h, t=round(h["t"] + shift, 3), server="backup") for h in self.backup.history()]
+        return sorted(history, key=lambda h: h["t"])
 
     # --- The report
 
@@ -342,7 +395,7 @@ class Run:
         self.cpu.sample()
         invoices, reads, reviews = self.db.invoices(), self.db.page_reads(), self.db.reviews()
         test = self.db.self_test()
-        history = self.fake.history()
+        history = self._history() if hasattr(self, "_history") else self.fake.history()
         stats = self.fake.stats()
         scale = self.a.time_scale
 
@@ -456,13 +509,16 @@ class Run:
             "self_test": {k: (test or {}).get(k) for k in ("model", "ok", "fields_right", "fields_total", "seconds",
                                                            "problem")},
             "deliveries": self.deliveries, "model_server": stats,
+            "backup_server": self.backup.stats() if getattr(self, "backup", None) is not None else None,
             "samples": [{k: v for k, v in s.items()} for s in self.samples],
             "probes": self.probes, "server_settings": self.server.settings,
         }  # fmt: skip
         if self.a.drill != "none":
             report["drill"] = self.drill.report(
-                history, fake_t, reads, self.fake.page_answers(), self.test_pages, self.tries
-            )
+                history, fake_t, reads, self._answers(), self.test_pages, self.tries,
+                stored_twice=self.db.stored_twice(), chat_tested=self.db.chat_tested(self.wall0),
+                backup=getattr(self, "backup", None) is not None,
+            )  # fmt: skip
         return report
 
 
@@ -554,17 +610,22 @@ class Drill:
             self.fake.set(**self._saved)
 
     def report(self, history: list[dict[str, Any]], fake_t0: float, reads: list[dict[str, Any]],
-               answers: dict[str, int], test_pages: set[str], tries: dict[int, int]) -> dict[str, Any]:  # fmt: skip
-        """What the drill did: requests failed or dropped in it, reads lost (queued, never read) or pages read twice,
-        how long the app took to see it and to recover."""
+               answers: dict[str, int], test_pages: set[str], tries: dict[int, int], *, stored_twice: int = 0,
+               chat_tested: list[dict[str, Any]] | None = None, backup: bool = False) -> dict[str, Any]:  # fmt: skip
+        """What the drill did: requests failed or dropped in it, reads lost (queued, never read), pages read twice
+        (by either server) and readings or reviews stored twice, how long the app took to see it and to recover;
+        with a backup, how long the calls took to move there and back (``failover``)."""
         if self.started is None:
             return {"kind": self.kind, "started": None, "note": f"never started: fewer than {self.at} pages read",
-                    "reads_lost": 0, "pages_read_twice": 0, "recovery_seconds": None, "failover": FAILOVER}  # fmt: skip
+                    "reads_lost": 0, "pages_read_twice": 0, "recovery_seconds": None, "failover": FAILOVER,
+                    "stored_twice": stored_twice}  # fmt: skip
         start, end = self.started, self.ended if self.ended is not None else self.started
 
         def t_of(h: dict[str, Any]) -> float:
             return h["t"] - fake_t0
 
+        on_backup = [h for h in history if h.get("server") == "backup"]
+        history = [h for h in history if h.get("server") != "backup"]  # the primary's, as before
         bad = [h for h in history if t_of(h) + h["seconds"] >= start and h["outcome"] != "served"]
         first_bad = min((t_of(h) + h["seconds"] for h in bad), default=None)
         served_after = sorted(t_of(h) + h["seconds"] for h in history if h["outcome"] == "served"
@@ -579,7 +640,7 @@ class Drill:
             "recovery_seconds": _round(served_after[0] - end) if served_after else None,
             "reads_postponed": len(tries), "postponed_most": max(tries.values(), default=0),
             "reads_lost": len(lost), "lost": [f"{r['invoice_id']}: {r['status']} {r['error']}" for r in lost][:10],
-            "pages_read_twice": len(twice), "failover": FAILOVER,
+            "pages_read_twice": len(twice), "stored_twice": stored_twice, "failover": FAILOVER,
             "hung": len(hung), "hung_given_up_by_the_app": sum(bool(h.get("gave_up")) for h in hung),
             "hung_longest_seconds": max((h["seconds"] for h in hung), default=None),
             "answer_seconds_before": _summary(h["seconds"] for h in history if h["outcome"] == "served"
@@ -587,17 +648,54 @@ class Drill:
             "answer_seconds_during": _summary(h["seconds"] for h in history if h["outcome"] == "served"
                                               and start <= t_of(h) < end and h["kind"] != "models")["median"],
         }  # fmt: skip
+        if backup:
+            out["failover"] = self._failover(history, on_backup, t_of, start, end, first_bad)
         if self.kind == "swap":
-            old = [h for h in history if t_of(h) >= start and h["model"] == CHAT_MODEL]
+            old = [h for h in history if t_of(h) >= start and h["model"] == CHAT_MODEL and h["kind"] in SERVED]
             new = sorted(
                 t_of(h) + h["seconds"] for h in history if h["model"] == SWAP_CHAT and h["outcome"] == "served"
             )
+            passed = [c["t"] for c in chat_tested or [] if c.get("model") == SWAP_CHAT and c.get("ok")]
             out.update({"asked_the_old_model_after": len(old), "qualified": QUALIFIED,
-                        "new_model_answered_after": _round(new[0] - start) if new else None})  # fmt: skip
+                        "new_model_answered_after": _round(new[0] - start) if new else None,
+                        "chat_model_tests": chat_tested or [],
+                        "new_model_trusted_after": _round(min(passed) - start) if passed else None})  # fmt: skip
         if self.kind == "swap-reader":
             out["new_reader_read_after"] = out.pop("recovery_seconds")
             out["recovery_seconds"] = out["new_reader_read_after"]
         return out
+
+    @staticmethod
+    def _failover(primary: list[dict[str, Any]], backup: list[dict[str, Any]], t_of: Any, start: float, end: float,
+                  first_bad: float | None) -> dict[str, Any]:  # fmt: skip
+        """When the backup gave its first answer of each kind after the drill began (the calls moved), from the
+        drill's start and from the first request the primary didn't answer; when the primary answered again after the
+        drill ended (taken back); what each answered from the drill's start until then."""
+
+        def first(found: list[dict[str, Any]], kind: str, after: float) -> float | None:
+            ends = [t_of(h) + h["seconds"] for h in found
+                    if h["kind"] == kind and h["outcome"] == "served" and t_of(h) + h["seconds"] >= after]  # fmt: skip
+            return min(ends) if ends else None
+
+        moved = {k: first(backup, k, start) for k in SERVED}
+        moved = {k: _round(t - start) for k, t in moved.items() if t is not None}
+        back = {k: first(primary, k, max(end, start + min(moved.values(), default=0.0))) for k in SERVED}
+        back = {k: _round(t - end) for k, t in back.items() if t is not None}
+        until = end + max(back.values(), default=0.0)
+        counted = {name: dict(_count(h["kind"] for h in found if h["kind"] in SERVED and h["outcome"] == "served"
+                                     and start <= t_of(h) <= until))
+                   for name, found in (("primary", primary), ("backup", backup))}  # fmt: skip
+        seconds = min(moved.values()) if moved else None
+        return {
+            "seconds": seconds, "by_kind": moved,
+            # (0 when the backup answered before the first unanswered request ended: one dropped at once moved it)
+            "after_first_failure": _round(max(0.0, start + seconds - first_bad)) if seconds is not None
+            and first_bad is not None else None,
+            "back_seconds": min(back.values()) if back else None, "back_by_kind": back,
+            "answered_from_drill_to_back": counted,
+            "backup_answers_in_all": dict(_count(h["kind"] for h in backup if h["kind"] in SERVED
+                                                 and h["outcome"] == "served")),
+        }  # fmt: skip
 
 
 # --- The server, a client of it, and its database -----------------------------------------------------------------
@@ -828,6 +926,22 @@ class Reader:
             )
         ]
 
+    def stored_twice(self) -> int:
+        """Invoices whose page reader's reading or AI review was folded in more than once (their events)."""
+        rows = self._rows("SELECT COUNT(*) FROM (SELECT invoice_id FROM events WHERE action IN ('proposal_updated', "
+                          "'verified') GROUP BY invoice_id, action HAVING COUNT(*) > 1)")  # fmt: skip
+        return int(rows[0][0]) if rows else 0
+
+    def chat_tested(self, wall0: float) -> list[dict[str, Any]]:
+        """The chat model's self-tests (D-180): model, ok, and when (seconds after ``wall0``, the drop)."""
+        out = []
+        for row in self._rows("SELECT detail, created_at FROM events WHERE action = 'chat_model_tested'"):
+            with contextlib.suppress(ValueError, TypeError):
+                detail = json.loads(row[0] or "{}")
+                at = dt.datetime.fromisoformat(str(row[1])).timestamp() - wall0
+                out.append({"model": detail.get("model"), "ok": bool(detail.get("ok")), "t": round(at, 1)})
+        return out
+
     def self_test(self) -> dict[str, Any] | None:
         """The page reader's latest self-test (any model)."""
         rows = self._rows("SELECT value FROM settings WHERE key = 'page_reader_test'")
@@ -992,7 +1106,21 @@ def markdown(report: dict[str, Any]) -> str:
                     f"- requests to the old chat model after the swap: {d['asked_the_old_model_after']}; the "
                     f"new one answered after {_hms(d['new_model_answered_after'])}; qualified: {d['qualified']}"
                 ]
-            lines += [f"- failover to a backup model server: {d['failover']}", ""]
+            f = d["failover"]
+            if isinstance(f, dict):
+                lines += [
+                    f"- failover: the backup's first answer {_hms(f['seconds'])} after the drill began "
+                    f"({_hms(f['after_first_failure'])} after the first request the primary didn't answer; by kind "
+                    f"{f['by_kind'] or '-'}); back on the primary {_hms(f['back_seconds'])} after the drill ended "
+                    f"({f['back_by_kind'] or '-'}); answered meanwhile {f['answered_from_drill_to_back']}",
+                    f"- readings or reviews stored twice: {d.get('stored_twice', 0)}",
+                ]  # fmt: skip
+            else:
+                lines.append(f"- failover to a backup model server: {f}")
+            if d["kind"] == "swap" and "new_model_trusted_after" in d:
+                lines.append(f"- the new chat model trusted (its self-test passed) after "
+                             f"{_hms(d['new_model_trusted_after'])}")  # fmt: skip
+            lines.append("")
     f = report["failures"]
     if any(f[k] for k in ("imports", "reads", "reviews", "probe_errors")) or any(f["server_log"].values()):
         lines += ["## Failures", "", f"- server log: {f['server_log']}"]
@@ -1003,6 +1131,7 @@ def markdown(report: dict[str, Any]) -> str:
         "(GL suggestions), each at most the arrival's limit and the capture processes waiting side by side; the "
         "page reader its pages, header and review answers divided by AP_LLM_PARALLEL; the work "
         "on this computer (OCR, the pipeline) is as measured. The app's own timers are real time: a minute's pause "
-        "after a failed read, 30 s when nothing waits, the model status kept 10-30 s. Failover: " + FAILOVER + ".",
+        "after a failed read, 30 s when nothing waits, the model status kept 10-30 s, the breaker's hang limit, hold "
+        "and probes (D-180)." + ("" if report.get("backup_server") else " Failover: " + FAILOVER + "."),
     ]
     return "\n".join(lines) + "\n"

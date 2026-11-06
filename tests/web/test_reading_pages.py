@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from ap_coder.ai import page_reader, page_worker, reading
+from ap_coder.ai import local_llm, page_reader, page_worker, reading
 from ap_coder.ai.reading import ReaderLine, ReadingStatus
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.pages import settings_reading
@@ -19,6 +19,7 @@ from tests.web.test_web_invoice import form_of
 from tests.webclient import follow, post, web_settings
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
+REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test: the backup servers' tests ask stand-ins
 MODEL = "ath-maas_ovisocr2"
 TAB_NAMES = ["Review", "Reading", "Automation", "Data & backups", "About"]  # JD Edwards E1 hidden (D-52)
 
@@ -478,3 +479,73 @@ def test_check_again_and_load_ask_lm_studio_to_load_a_model_that_failed_before(c
     monkeypatch.setattr(page_reader, "load_model", lambda settings, model: dict(page_reader._load_failures).get(model,
                         ("", ""))[1])  # fmt: skip
     assert post(client, "/settings/reading/load-model", {"model": MODEL}).status_code == 200
+
+
+# --- The backup model servers (D-180) --------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_servers(monkeypatch):
+    """The model server and its backup (stand-ins on 127.0.0.1), the same models on both, asked for real."""
+    from ap_coder.ai import local_llm
+    from ap_coder.bench.fake_model import READER, FakeModel
+
+    monkeypatch.setattr(local_llm, "_fetch_json", REAL_FETCH)
+    local_llm.forget_status()
+    local_llm.forget_failovers()
+    models = ["gemma-4-12b-it", READER]
+    with FakeModel(models=models) as primary, FakeModel(models=models) as backup:
+        yield primary, backup
+    local_llm.forget_status()
+    local_llm.forget_failovers()
+
+
+def test_with_a_backup_the_reading_tab_says_which_model_server_answers_and_how(store, status, two_servers):
+    from dataclasses import replace
+
+    from ap_coder.ai import local_llm
+    from tests.webclient import client_for
+
+    primary, backup = two_servers
+    s = web_settings()
+    settings = replace(s, llm=replace(s.llm, provider="local", base_url=primary.base_url, backup_url=backup.base_url))
+    client = client_for(store, settings)
+    page = _text(client.get("/settings/reading").text)
+    assert "Model servers" in page and primary.base_url in page and backup.base_url in page
+    assert "The calls go to " + primary.base_url in page and "Standing by" in page
+    breaker = local_llm.chat_failover(settings.llm)
+    for _ in range(local_llm.FAILOVER_FAILURES):
+        breaker.failed(primary.base_url, "not answering")
+    follow(client, post(client, "/settings/reading/check"))  # each one asked a one-word question
+    page = _text(client.get("/settings/reading").text)
+    assert "The calls go to the backup " + backup.base_url in page and "not answering" in page
+    assert page.count("answered in") >= 2  # both answer: the primary came back meanwhile, its probe says so
+
+
+def test_without_a_backup_the_reading_tab_shows_only_the_form_for_one(client, status):
+    page = _text(client.get("/settings/reading").text)
+    assert "Model servers" not in page and "Backup model servers" in page
+
+
+def test_a_backup_address_is_saved_only_on_the_company_network_and_never_the_main_server(
+    client, store, status, tmp_path, monkeypatch
+):
+    from ap_coder.core.envfile import read_env
+
+    env = tmp_path / "private" / ".env"
+    refused = post(client, "/settings/reading/servers", {"chat_backup": "8.8.8.8:1234"})
+    assert refused.status_code == 400 and "offline build" in refused.json()["error"]
+    itself = post(client, "/settings/reading/servers", {"chat_backup": "127.0.0.1:1234"})  # the main one
+    assert itself.status_code == 400 and "main server itself" in itself.json()["error"]
+    assert "AP_LLM_BACKUP_URL" not in read_env(env)
+    saved = post(client, "/settings/reading/servers", {"chat_backup": "192.168.1.40:1234/v1/chat/completions"})
+    assert saved.status_code == 200 and read_env(env)["AP_LLM_BACKUP_URL"] == "http://192.168.1.40:1234/v1"
+    assert any(e["action"] == "settings_changed" for e in store.events())
+    # One the server's own settings give (server.json, which win over the .env) is shown, and left as it is.
+    monkeypatch.setenv("AP_PAGE_READER_BACKUP_URL", "http://192.168.1.41:8081/v1")
+    page = client.get("/settings/reading").text
+    assert "server.json" in page and "192.168.1.41:8081" in page
+    post(client, "/settings/reading/servers", {"chat_backup": "192.168.1.40:1234", "pages_backup": "192.168.1.99"})
+    assert "AP_PAGE_READER_BACKUP_URL" not in read_env(env)
+    cleared = post(client, "/settings/reading/servers", {"chat_backup": ""})
+    assert cleared.status_code == 200 and read_env(env).get("AP_LLM_BACKUP_URL", "") == ""

@@ -516,14 +516,15 @@ CHAT_LOCK = Slots("chat")
 # --- A backup model server (D-180) -----------------------------------------------------------------------------------
 # Each model server, the chat model's (AP_LLM_BASE_URL) and the page reader's (AP_PAGE_READER_BASE_URL, else the chat
 # model's), may have a backup on the company network with the same models (AP_LLM_BACKUP_URL,
-# AP_PAGE_READER_BACKUP_URL): the Mac mini beside the Mac Studio. Its breaker (``Failover``, one for each) sends the
-# calls there once FAILOVER_FAILURES calls in a row went unanswered by the primary (refused or dropped, a 5xx, or no
-# answer within the call's limit), and every call still waiting on the primary is dropped then and asked again on the
-# backup. While the backup serves, the primary is asked a one-word question every PROBE_SECONDS in the background; it
-# is taken back after PROBES_TO_RETURN answers in a row once the calls have been on the backup ``hold`` seconds
-# (HOLD_SECONDS, twice as long each time it fails again within FLAP_SECONDS of being taken back, at most HOLD_MOST),
-# so it never flaps. On the company server the breaker's state is shared by all its processes (a file in
-# AP_LLM_SLOTS_DIR): what one finds moves them all. Without a backup none of this runs.
+# AP_PAGE_READER_BACKUP_URL): the Mac mini beside the Mac Studio. Its breaker (``Failover``, one for each server: the
+# two models share one when they share a machine and its backup) sends the calls there once FAILOVER_FAILURES calls in
+# a row went unanswered by the primary (refused or dropped, a 5xx, no answer within the call's limit, its model list
+# not given), and every call still waiting on the primary is dropped then and asked again on the backup. While the
+# backup serves, the primary is asked a one-word question every PROBE_SECONDS in the background; it is taken back after
+# PROBES_TO_RETURN answers in a row once the calls have been on the backup ``hold`` seconds (HOLD_SECONDS, twice as
+# long each time it fails again within FLAP_SECONDS of being taken back, at most HOLD_MOST), so it never flaps. On the
+# company server the breaker's state is shared by all its processes (a file in AP_LLM_SLOTS_DIR): what one finds moves
+# them all. Without a backup none of this runs.
 CHAT, PAGES = "chat", "pages"  # the chat model's server, the page reader's
 PRIMARY, BACKUP = "primary", "backup"
 FAILOVER_FAILURES = 2
@@ -611,11 +612,16 @@ class Failover:
         import hashlib
 
         self.kind, self.primary, self.backup, self.api_key = kind, primary.rstrip("/"), backup.rstrip("/"), api_key
-        self.name = hashlib.sha256(f"{kind}|{self.primary}|{self.backup}".encode()).hexdigest()[:12]
+        self.kinds = {kind}  # the models it serves: the chat model's server, the page reader's, or both
+        self.name = hashlib.sha256(f"{self.primary}|{self.backup}".encode()).hexdigest()[:12]
         self._lock = threading.Lock()
         self._state = _fresh()
         self._read_at = float("-inf")
         self._prober: threading.Thread | None = None
+
+    @property
+    def title(self) -> str:
+        return KIND_NAMES[self.kind] if len(self.kinds) == 1 and self.kind in KIND_NAMES else "the model server"
 
     # --- Its state, shared by the company server's processes
 
@@ -623,7 +629,7 @@ class Failover:
         folder = (os.environ.get(SLOTS_ENV) or "").strip()
         if not folder or (os.environ.get(SHARED_ENV) or "").strip() == "0":
             return None
-        return Path(folder) / f"failover-{self.kind}-{self.name}.json"
+        return Path(folder) / f"failover-{self.name}.json"
 
     @staticmethod
     def _read(path: Path) -> dict[str, Any] | None:
@@ -735,7 +741,7 @@ class Failover:
         self._update(change)
         if moved:
             log.warning("%s at %s didn't answer (%s): its calls go to the backup at %s (D-180)",
-                        KIND_NAMES.get(self.kind, self.kind), self.primary, moved[0], self.backup)  # fmt: skip
+                        self.title, self.primary, moved[0], self.backup)  # fmt: skip
             self._probe_in_background()
 
     # --- A call under way on the primary
@@ -746,7 +752,6 @@ class Failover:
         end on its own, and what it answers then is closed unread."""
         if self.role(base_url) != PRIMARY:
             return call()
-        started = time.time()
         box: dict[str, Any] = {}
         done, guard = threading.Event(), threading.Lock()
 
@@ -768,14 +773,14 @@ class Failover:
 
         threading.Thread(target=run, name=f"ap-coder-{self.kind}-call", daemon=True).start()
         while not done.wait(WATCH_SECONDS):
-            if self.left_since() > started:
+            if self.state()["on"] != PRIMARY:  # (moved before it began, too: it was sent on the way out)
                 with guard:
                     box["dropped"] = True
                     value = box.get("value")
                 if value is not None:  # (answered just now: closed, the backup is asked instead)
                     with contextlib.suppress(Exception):
                         value.close()
-                raise ServerLeft(f"{KIND_NAMES.get(self.kind, self.kind)} at {self.primary} stopped answering: its "
+                raise ServerLeft(f"{self.title} at {self.primary} stopped answering: its "
                                  f"backup at {self.backup} is asked instead")  # fmt: skip
         if "error" in box:
             raise box["error"]
@@ -821,7 +826,8 @@ class Failover:
             now = time.time()
             s["good"] = s["good"] + 1 if ok else 0
             s["probe_at"], s["probed"] = now + PROBE_SECONDS, how
-            if s["good"] >= PROBES_TO_RETURN and now - s["since"] >= s["hold"]:
+            failing = s["failures"].get(BACKUP, 0) >= FAILOVER_FAILURES  # the backup fails too: no hold
+            if s["good"] >= PROBES_TO_RETURN and (now - s["since"] >= s["hold"] or failing):
                 s.update(on=PRIMARY, since=now, returned=now, good=0, why="")
                 s["failures"] = {PRIMARY: 0, BACKUP: 0}
                 back.append(True)
@@ -829,7 +835,7 @@ class Failover:
         self._update(change)
         if back:
             log.warning("%s at %s answers again: its calls go back to it from the backup (D-180)",
-                        KIND_NAMES.get(self.kind, self.kind), self.primary)  # fmt: skip
+                        self.title, self.primary)  # fmt: skip
 
 
 _FAILOVERS: dict[tuple[Any, ...], Failover] = {}
@@ -837,16 +843,18 @@ _FAILOVERS_LOCK = threading.Lock()
 
 
 def failover(kind: str, primary: str, backup: str, api_key: str = "") -> Failover | None:
-    """The breaker of ``kind``'s server ``primary`` with its ``backup``, one in each process; None without a backup
-    (or with one that is the primary itself): every call to the primary, as before."""
+    """The breaker of the model server ``primary`` with its ``backup`` (``kind``: the model it is asked for), one in
+    each process for each server; None without a backup (or with one that is the primary itself): every call to the
+    primary, as before."""
     primary, backup = (primary or "").rstrip("/"), (backup or "").rstrip("/")
     if not backup or backup == primary:
         return None
-    key = (os.getpid(), kind, primary, backup)
+    key = (os.getpid(), primary, backup)  # one a server: both models share it on one machine
     with _FAILOVERS_LOCK:
         found = _FAILOVERS.get(key)
         if found is None:
             found = _FAILOVERS[key] = Failover(kind, primary, backup, api_key)
+        found.kinds.add(kind)
         return found
 
 

@@ -120,7 +120,7 @@ def test_each_drill_makes_the_model_machine_misbehave_then_puts_it_back():
         reader.check(4.0, 9)
         assert fake.settings()["models"] == [day.CHAT_MODEL, day.SWAP_READER] and reader.reader == day.SWAP_READER
     never = day.Drill(_drill("kill", at=99), None).report([], 0.0, [], {}, set(), {})
-    assert never["started"] is None and never["failover"].startswith("not supported")
+    assert never["started"] is None and never["failover"].startswith("not run: no backup")
 
 
 @pytest.mark.slow

@@ -262,13 +262,24 @@ NOT_DOWNLOADED = (
 TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are saved."
 
 
+_LIST_FAILED: dict[str, Any] = {}  # the primary's last status that gave no model list, counted by its breaker
+
+
 def reader_status(settings: Settings, *, use_cache: bool = True) -> ReaderStatus:
     """The model that reads pages and its state. Automatic (always, but for a developer's AP_PAGE_READER_MODEL): a
     document reader LM Studio has downloaded (OvisOCR2: any model whose key has "ovisocr" in it), unless it couldn't
     load it lately; else none. A general model that can see is never used instead: the page reader is then simply
-    not available, and invoices wait for it. Asks the server (cached briefly)."""
+    not available, and invoices wait for it. Asks the server (cached briefly). With a backup (D-180), a primary that
+    didn't give its model list (asked afresh) is a failure its breaker counts: once the calls move, the backup's."""
     base = reader_base_url(settings)
     status = local_llm.check_server(_reader_llm(settings), use_cache=use_cache)
+    breaker = reader_failover(settings)
+    if not status.reachable and breaker is not None and breaker.role(base) == local_llm.PRIMARY:
+        if _LIST_FAILED.get(base) is not status:  # (a status kept 10 s is one failure, however often it is read)
+            _LIST_FAILED[base] = status
+            breaker.failed(base, "its model list didn't come")
+        if reader_base_url(settings) != base:
+            return reader_status(settings, use_cache=use_cache)
     out = ReaderStatus(status.reachable, False, "", False, "down", base_url=base)
     listing = _listing_for(settings, status)
     out.lm_studio = listing is not None

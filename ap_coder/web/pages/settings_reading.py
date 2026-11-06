@@ -369,7 +369,8 @@ def servers_context(settings: Settings, store: Store) -> dict[str, Any]:
                          "address": check.base_url, "in_use": check.in_use, "listed": check.detail,
                          "reachable": check.answered, "asked": last.get("detail") or "",
                          "answered": last.get("answered")})  # fmt: skip
-    notes = [page_reader.failover_text(b) for b in breakers.values() if b is not None]
+    shared = breakers["chat"] is breakers["pages"]  # (one machine with both models and one backup: one breaker)
+    notes = [page_reader.failover_text(b) for b in ([breakers["chat"]] if shared else breakers.values()) if b]
     return {"fields": fields, "rows": rows, "notes": notes, "checked": str((store.get_json(SERVERS_KEY, {}) or {})
             .get("when") or "") if rows else "", "untrusted": page_worker.chat_untrusted(settings, store)}  # fmt: skip
 

@@ -425,7 +425,9 @@ def _server_checks(settings: Settings, provider: str) -> list[tuple[str, str, st
             where = check.base_url if _on_this_network(urlparse(check.base_url).netloc) else "its address"
             used = "; the calls go to it now" if check.in_use else ""
             rows.append((area, PASS if check.answered else WARN, f"{where}: {check.detail}{used}"))
-        for name, breaker in (("chat model failover", chat), ("page reader failover", pages)):
+        named = (("model server failover", chat),) if chat is pages else (("chat model failover", chat),
+                                                                           ("page reader failover", pages))  # fmt: skip
+        for name, breaker in named:  # (one machine with both models and one backup: one breaker)
             if breaker is not None:
                 moved = breaker.state()["on"] == local_llm.BACKUP
                 rows.append((name, WARN if moved else PASS, failover_text(breaker)))

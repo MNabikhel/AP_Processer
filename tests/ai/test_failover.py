@@ -228,7 +228,7 @@ def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypat
                    cwd=PROJECT_DIR, env=dict(os.environ))  # fmt: skip
     assert _until(lambda: here.serving() == backup.base_url, 2 * local_llm.STATE_SECONDS + 1)
     assert here.left_since() >= started
-    kept = json.loads(next((tmp_path / "llm").glob("failover-chat-*.json")).read_text(encoding="utf-8"))
+    kept = json.loads(next((tmp_path / "llm").glob("failover-*.json")).read_text(encoding="utf-8"))
     assert kept["on"] == BACKUP and kept["moves"] == 1
 
 
@@ -270,7 +270,39 @@ def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_bac
     assert text and took < 10, took
     assert page_reader.reader_base_url(settings) == backup.base_url
     assert backup.page_answers() == {page_key(b"page two"): 1} and not primary.page_answers()
-    assert local_llm.chat_failover(settings.llm).serving() == primary.base_url  # the chat model's breaker: its own
+    # One machine with both models, one backup: one breaker. The chat model's calls moved with the pages'.
+    assert local_llm.chat_failover(settings.llm) is page_reader.reader_failover(settings)
+    assert local_llm.serving_llm(settings.llm).base_url == backup.base_url
+
+
+def test_a_page_reader_on_a_server_of_its_own_has_a_breaker_of_its_own(two):
+    primary, backup = two
+    s = _settings(primary.base_url, backup.base_url)
+    with FakeModel(models=[READER]) as reader, FakeModel(models=[READER]) as spare:
+        settings = replace(s, page_reader=replace(s.page_reader, base_url=reader.base_url, backup_url=spare.base_url))
+        pages, chat = page_reader.reader_failover(settings), local_llm.chat_failover(settings.llm)
+        assert pages is not chat and (pages.primary, pages.backup) == (reader.base_url, spare.base_url)
+        for _ in range(local_llm.FAILOVER_FAILURES):
+            pages.failed(reader.base_url, "not answering")
+        assert page_reader.reader_base_url(settings) == spare.base_url
+        assert local_llm.serving_llm(settings.llm).base_url == primary.base_url
+
+
+def test_a_primary_that_gives_no_model_list_moves_the_page_reader_to_its_backup(two):
+    """Killed, the page reader's server doesn't list its models, so nothing is read there and no read fails: each
+    list asked afresh that doesn't come is a failure too (a list kept 10 s is one), and the reader reads on the
+    backup."""
+    primary, backup = two
+    settings = _settings(primary.base_url, backup.base_url)
+    assert page_reader.reader_status(settings).model == READER
+    primary.set(down=True)
+    local_llm.forget_status()
+    page_reader.reader_status(settings)
+    page_reader.reader_status(settings)  # the same status, kept: no second failure
+    assert page_reader.reader_base_url(settings) == primary.base_url
+    local_llm.forget_status()
+    status = page_reader.reader_status(settings)  # asked afresh: the second
+    assert status.base_url == backup.base_url and status.model == READER and status.usable
 
 
 @pytest.fixture
@@ -364,8 +396,9 @@ def test_arrivals_ask_the_backup_once_the_primary_hangs_not_nobody(two, tmp_path
 
 def _truth_header() -> dict:
     truth = json.loads(page_reader.TEST_TRUTH.read_text(encoding="utf-8"))
-    return {k: truth.get(k) for k in ("vendor_name", "invoice_number", "invoice_date", "due_date", "po_number",
-                                      "gst_hst_registration_number", "subtotal", "tax_total", "grand_total")}  # fmt: skip
+    fields = ("vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "gst_hst_registration_number",
+              "subtotal", "tax_total", "grand_total")  # fmt: skip
+    return {k: truth.get(k) for k in fields}
 
 
 def test_a_swapped_chat_model_decides_nothing_touchless_until_it_passes_its_self_test(store):
@@ -403,3 +436,26 @@ def test_the_first_chat_model_is_the_one_ap_coder_was_qualified_with(store):
     assert page_worker.chat_trust(store, CHAT) == ""  # the first one asked here
     assert page_worker.chat_trust(store, SWAPPED) and page_worker.chat_trust(store, CHAT) == ""
     assert page_worker.chat_tests(store)["first"] == CHAT
+
+
+# --- The doctor (item 4) --------------------------------------------------------------------------------------------
+
+
+def test_the_doctor_says_which_model_server_answers_and_how(two):
+    """Each server, primary and backup, asked a one-word question and timed; which one the calls go to; where the
+    breaker sends them. Without a backup, no such rows (as before)."""
+    from ap_coder.ops import doctor
+
+    primary, backup = two
+    settings = _settings(primary.base_url, backup.base_url)
+    rows = doctor._server_checks(settings, "local")
+    areas = [area for area, _status, _detail in rows]
+    servers = [f"{kind} server ({role})" for kind in ("chat model", "page reader") for role in ("primary", "backup")]
+    assert areas == [*servers, "model server failover"], areas  # (one machine, one backup: one breaker)
+    assert all(status == doctor.PASS for _area, status, _detail in rows)
+    assert f"{primary.base_url}: {CHAT} answered in" in rows[0][2] and "the calls go to it now" in rows[0][2]
+    assert f"{backup.base_url}: {READER} answered in" in rows[3][2] and "the calls go to it now" not in rows[3][2]
+    backup.set(down=True)
+    rows = doctor._server_checks(settings, "local")
+    assert rows[1][1] == doctor.WARN and "answered in" not in rows[1][2]  # (how it failed, in its words)
+    assert doctor._server_checks(_settings(primary.base_url), "local") == []
