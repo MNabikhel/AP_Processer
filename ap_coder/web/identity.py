@@ -67,9 +67,11 @@ NEW_PASSWORD_PATH = "/login/new-password"
 SET_UP_PATH = "/login/authenticator"
 CODE_PATH = "/login/code"
 LOGIN_FORMS = (LOGIN_PATH, NEW_PASSWORD_PATH, SET_UP_PATH, CODE_PATH)  # the forms sent before a session
-# What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test): no one
-# using it, so these don't keep a session from ending after its idle minutes (D-109, B-1580).
-POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test|review/bulk/status)")
+# What a page asks by itself while it waits (a job's progress, OvisOCR2 reading the invoice, the self-test, a download
+# being made, a bulk approval): no one using it, so these don't keep a session from ending after its idle minutes
+# (D-109, B-1580, B-1927).
+POLLS = re.compile(r"/(process/status|jobs/[^/]+|review/\d+/reader|settings/reading/self-test|downloads/\d+|"
+                   r"review/bulk/status)")  # fmt: skip
 SESSION_ENDED = "You are not logged in (or your session ended): log in again."
 CHANGE_FIRST = "Choose a new password first (Your password), then carry on."
 THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}

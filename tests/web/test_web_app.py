@@ -753,7 +753,8 @@ def test_the_actions_the_server_runs_whole_are_waited_for_however_long_they_take
     bulk = re.findall(r'<form[^>]*action="/review/bulk-approve"[^>]*>', queue)
     assert bulk and all(" data-long" not in f for f in bulk), bulk  # (a job: its deadline is an action's)
     app_js = (core.STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
-    assert 'post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS })' in app_js
+    assert 'post(action, body, { ms: form.hasAttribute("data-long") ? LONG_MS : ACTION_MS })' in app_js
+    assert "export const LONG_MS = 2 * 3600000;" in app_js  # (a deadline still: D-185)
 
 
 def test_templates_escape_and_ui_helpers_are_safe():

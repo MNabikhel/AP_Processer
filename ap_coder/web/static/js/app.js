@@ -13,7 +13,7 @@
      a[data-busy="Gathering…"]        a link to a slow page says so until the page comes
      form[data-job]                   after it starts a job, show its progress (#job card), reload when done
      form[data-long]                  an action the server runs whole in the request (a restore, an import):
-                                      waited for however long it takes (any other gives up after ACTION_MS)
+                                      waited for up to LONG_MS (any other gives up after ACTION_MS)
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      [data-dismiss]                   removes its message
@@ -93,16 +93,16 @@ export function noAnswer() {
 
 // Every request has a deadline (D-161): past it, it is given up as one that got no answer (noAnswer's words).
 export const LOOK_MS = 30000; // a look: a poll, the vendor list
-export const ACTION_MS = 5 * 60000; // an action (post), the setup report, the words on the page; data-long: none
+export const ACTION_MS = 5 * 60000; // an action (post), the setup report, the words on the page
+export const LONG_MS = 2 * 3600000; // data-long: a restore of gigabytes, a big import (D-185: no request waits for ever)
 
-/** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body; 0: never.
-    The only fetch of the pages' scripts: an answer that is the login's is said on the page (``sessionEnded``). */
+/** fetch(url, options), given up (an AbortError) once ``ms`` have passed without the answer and its body. The only
+    fetch of the pages' scripts: an answer that is the login's is said on the page (``sessionEnded``). */
 export function fetchWithin(url, options = {}, ms = LOOK_MS) {
   const said = (response) => {
     if (loggedOut(response)) sessionEnded(response.redirected && new URL(response.url).pathname === "/who" ? "/who" : "/login");
     return response;
   };
-  if (!ms) return fetch(url, options).then(said);
   const deadline = new AbortController();
   setTimeout(() => deadline.abort(), ms); // (once the body is read, aborting changes nothing)
   return fetch(url, { ...options, signal: deadline.signal }).then(said);
@@ -160,9 +160,8 @@ export function sessionEnded(where = "/login") {
   box.appendChild(el);
 }
 
-/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure, or past ``ms``: 0
-    waits however long it takes). An answer that is a file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is
-    saved under its name. */
+/** POST to the dashboard with the page header; returns the JSON answer (an {error} on failure, or past ``ms``). An
+    answer that is a file (a batch's JD Edwards ZIP, downloaded by POST: D-135) is saved under its name. */
 export async function post(url, body, { ms = ACTION_MS } = {}) {
   let response;
   let file = null;
@@ -315,7 +314,7 @@ async function submitForm(form, submitter) {
   setBusy(form, true, submitter);
   // A button with its own formaction sends the form there (the review screen's "Send to manager", D-138).
   const action = submitter && submitter.hasAttribute && submitter.hasAttribute("formaction") ? submitter.formAction : form.action;
-  const answer = await post(action, body, { ms: form.hasAttribute("data-long") ? 0 : ACTION_MS });
+  const answer = await post(action, body, { ms: form.hasAttribute("data-long") ? LONG_MS : ACTION_MS });
   if (answer.ask_why) {
     // The server asks a question before going on (invoice.js answers it, then sends the form again).
     delete form.dataset.sending;
