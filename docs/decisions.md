@@ -2484,7 +2484,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       (`send_seconds`: each try a voucher's wait, AIS's 503 retries and their pauses, the sign-in, twice over for a
       token expired meanwhile; 15 minutes at least, B-1881). Both waits are kept and compared in UTC (`sending_at`,
       `lost_at` with their offset; an older row's local time read as local), which the clocks going forward don't
-      move (B-1887). A refusal that JDE answered (its error shape) is looked up and believed at once, as before.
+      move (B-1887). A refusal that JDE answered (its error shape) is looked up and believed at once, as before; only
+      a form error with JD Edwards' code is that shape (`jde_ais.jde_refused`): AIS's own failure in JSON (its
+      orchestration timeout: HTTP 500, a message) is an answer lost, unknown (B-1890; the one change to `jde_ais.py`,
+      J1's file, is that classification).
     - **Holds** (`coding.vendors.voucher_hold`): AP Coder's own and JD Edwards' as the last supplier sync left it,
       indexed until the vendor list changes; held, the voucher is queued saying why, the dry run refuses it.
     - **The open period** (`open_from`, `open_to`, `closed_period` in Settings → JD Edwards E1; none read from JDE:

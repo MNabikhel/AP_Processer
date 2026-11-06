@@ -16,8 +16,10 @@ answers as AIS does, as far as AP Coder uses it:
 * ``script(name, *steps)``: what the next calls of an orchestration (or "token") do instead: an HTTP status, "slow"
   (answer after ``slow_seconds``, longer than the client waits), "slow-after" (do the work, then answer late: the
   request reached JDE), "late-made" (JDE still making it after the client gave up: the work done after
-  ``slow_seconds``), "drop" (close the connection without an answer), ("refuse", code, text) (JDE's error shape), or a
-  function (called as the request arrives, then answered as usual: a look at the database between two pages).
+  ``slow_seconds``), "ais-timeout" (AIS answers its own orchestration timeout, HTTP 500 with its message and no error
+  of JDE's, while JDE makes it ``slow_seconds`` later), "drop" (close the connection without an answer),
+  ("refuse", code, text) (JDE's error shape), or a function (called as the request arrives, then answered as usual:
+  a look at the database between two pages).
 * ``plan(key, inputs)``: the step of a call nothing is scripted for (None: as usual), e.g. every tenth voucher late;
   ``latency``: seconds each voucher call takes before it is answered (R04110ZA's run).
 * HTTP/1.1, a connection kept open between requests as AIS does (``connections`` counts those opened); ``stop`` closes
@@ -433,6 +435,11 @@ class FakeAis:
                 step = self.plan(key, self._inputs(key, body))
             if key in ("voucher_create", "voucher_status") and self.latency:
                 time.sleep(self.latency if key == "voucher_create" else self.latency / 10)
+            if step == "ais-timeout":  # AIS gives up on its own orchestration timeout; JDE makes it all the same
+                self._send(h, 500, {"message": f"The orchestration {name} timed out", "status": "ERROR",
+                                    "exception": "java.util.concurrent.TimeoutException"})  # fmt: skip
+                threading.Timer(self.slow_seconds, self._run, (key, body)).start()
+                return None
             if self._play(h, step):
                 return None
             if step == "late-made":  # the client gave up meanwhile: JDE makes it all the same

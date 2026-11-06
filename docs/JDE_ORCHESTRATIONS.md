@@ -194,9 +194,11 @@ errors, CODE / TITLE / DESC), and with EXISTS who that voucher is for: `Supplier
 (VLVINV), `GrossAmount` (VLAG, in units) and the `PayloadFingerprint` kept with the key. AP Coder takes EXISTS as
 posted only when that record is this voucher (the same fingerprint, else the same supplier, invoice number and gross);
 otherwise it stops and asks a person. `ERROR` means nothing was made: AP Coder marks the voucher refused at once. A
-failed orchestration (HTTP 500, `jde__status` ERROR, the form request's errors) is looked up by its key first
-(`APC_Voucher_Status`) before it is marked refused. Anything else (`CREATED` without a document number, an answer AP
-Coder does not know, HTTP 502 / 504, a timeout) is "sent, being checked": looked up by its key, never sent blind.
+failed orchestration (HTTP 500, `jde__status` ERROR, the form request's errors with their CODE) is looked up by its key
+first (`APC_Voucher_Status`) before it is marked refused. Anything else (`CREATED` without a document number, an answer
+AP Coder does not know, HTTP 502 / 504, a timeout, an HTTP 500 without a form error's code such as AIS's own
+orchestration timeout) is "sent, being checked": looked up by its key, never sent blind. CONFIRM what AIS answers when
+it gives up on an orchestration itself.
 HTTP 503 is taken as AIS turning the request away before running it (CONFIRM for your load balancer) and retried.
 
 Two ways to build it; the JDE team picks one:

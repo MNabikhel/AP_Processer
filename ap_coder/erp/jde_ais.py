@@ -18,7 +18,8 @@ outputs) and is specified for the JDE team in ``docs/JDE_ORCHESTRATIONS.md``.
   asked again once; ``close`` logs it out. ``basic``: HTTP Basic on each orchestration call, with the environment, role
   and device in their ``jde-AIS-Auth-*`` headers (AIS 9.2.1 and later accept it on the v3 orchestrator, CONFIRM).
 * **Errors in plain English** (``AisError``, ``kind``): the address refused, not reachable, a timeout, the user or
-  password refused, no permission, no such orchestration, JDE's own error messages (its error shape, ``jde_messages``),
+  password refused, no permission, no such orchestration, JDE's own error messages (its error shape, ``jde_messages``;
+  a refusal only with a form error's code, ``jde_refused``: AIS's own failure in JSON may have run, B-1890),
   an answer that isn't JSON. ``sent`` says whether the request may have reached JDE: a voucher whose request timed out
   after it was sent is *unknown*, looked up before it is ever sent again (``jde_post``).
 * **Limited retries** of what is safe to repeat: the connection refused or reset before the request was sent, AIS busy
@@ -486,6 +487,19 @@ def jde_messages(body: Any) -> list[str]:
     return found
 
 
+def jde_refused(body: Any, depth: int = 0) -> bool:
+    """Whether an AIS error answer is JD Edwards' own refusal: a form request's error with its code (``errors``:
+    CODE, TITLE / DESC), not AIS's own failure said in JSON (its orchestration timeout, an exception), B-1890."""
+    if isinstance(body, list):
+        return depth < 6 and any(jde_refused(v, depth + 1) for v in body)
+    if not isinstance(body, dict) or depth > 6:
+        return False
+    errors = body.get("errors") or body.get("Errors")
+    if isinstance(errors, list) and any(isinstance(e, dict) and str(e.get("CODE") or "").strip() for e in errors):
+        return True
+    return any(jde_refused(v, depth + 1) for v in body.values() if isinstance(v, (dict, list)))
+
+
 class AisClient:
     """One sign-in to AIS (token mode: one token, logged out by ``close``; use it as a context manager)."""
 
@@ -736,6 +750,10 @@ class AisClient:
         if not isinstance(parsed, dict):
             return AisError(ANSWER, f"AIS answered {what} with something that isn't JSON (HTTP {status}).",
                             status=status, sent=True)  # fmt: skip
+        if not jde_refused(parsed):  # AIS's own failure in JSON (its orchestration timeout): not JDE's refusal, B-1890
+            return AisError(ANSWER, f"AIS answered {what} with HTTP {status} and no error of JD Edwards' own ("
+                            f"{said or 'no message'}): it may have run all the same.", status=status, messages=found,
+                            sent=True)  # fmt: skip
         return AisError(JDE, f"JD Edwards refused {what}: " + (said or f"HTTP {status}, no message."), status=status,
                         messages=found, sent=True)  # fmt: skip
 

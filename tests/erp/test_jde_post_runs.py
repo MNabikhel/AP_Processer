@@ -256,6 +256,25 @@ def test_a_queued_voucher_changed_since_its_go_ahead_waits_for_a_new_dry_run_not
     assert jde_post.post(store, batch)["posted"] == 1 and len(finals(ais)) == 4
 
 
+def test_ais_giving_up_with_its_own_error_is_an_answer_lost_not_a_refusal(tmp_path, ais):
+    """B-1890: AIS answering its own orchestration timeout with HTTP 500 and a message (no error of JD Edwards' own:
+    a form error with its code) was taken as JD Edwards refusing the voucher: looked up at once, "not there" (JDE
+    still making it), unlocked and marked refused, so it went into the batch files and could be made twice. Only
+    JD Edwards' own error is a refusal; any other is an answer lost, looked up once JDE could have finished."""
+    store, batch = batch_of(tmp_path, ais)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", "ais-timeout")  # JD Edwards makes it 0.5 s later
+    result = jde_post.post(store, batch)
+    row = jde_post.postings(store, batch)[0]
+    assert (row["status"], row["maybe_sent"], result["unknown"], result["failed"]) == (jde_post.UNKNOWN, 1, 1, 0)
+    assert "timed out" in row["error"] and ais.orchestration_calls("voucher_status") == []
+    assert jde_post.left_out_of_files(store, batch) and jde_post.undo_problem(store, batch)
+    time.sleep(0.7)
+    long_after_the_loss(store)
+    jde_post.retry_queue(store)
+    assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""
