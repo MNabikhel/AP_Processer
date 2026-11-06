@@ -2297,7 +2297,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       A call with no answer in time while another of this process's calls to that server was under way since before
       it was sent may have waited in the server's own line (one GPU for both models: a page read behind a review of
       minutes): no hang (`Failover.behind`, B-1871). With none under way the oldest call's timeout still counts, so
-      a hung server is found, later when a long review is under way on it and nothing arrives. The other processes'
+      a hung server is found, but later while reviews hold the chat slots: the arrivals waiting behind them and the
+      page reads behind them no longer count, so the move waits for an arrival that had its slot at once (20 s) or
+      the review's own limit (up to its 5 minutes; the hang drill below: 31 s, the reviews' 30 s there, where the
+      code before moved at 21 s on two arrivals that had waited for their slots). That is the price of never leaving
+      a healthy, busy primary: a non-streamed review gives no sign of life before its answer. The other processes'
       calls aren't seen (that would take each call's start and end written to the shared file); theirs are the
       arrivals, at most 20 s, less than a page read's 45 s. A read cut off that way still counts a try of its own.
     - **Drops the calls under way on the primary** (`Failover.watched`: the call in a thread of its own, its caller
@@ -2385,6 +2389,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       as the calls moved was asked again (taken now); two of 40 reviews unsure after the swap (B-1844).
     - **Nothing else changed:** `scripts/same_behaviour.py --ref 5aa6014 read pipeline` (Python 3.12, both OCR
       models): the same (60 read outputs, 1 pipeline output).
+    - **Measured again after the review's fixes** (B-1869 to B-1878; the same runs, one machine shared with other
+      agents' work): kill 1.1 s to the backup (3.8 / 4.7 / 1.1 s), back 14 s; hang 30.6 and 30.8 s (31.6 / 31.6 /
+      30.6 s), back 37 and 36 s, the code before on the same machine that day 21 s and 25 s; slow ×100 for 90 s
+      30.9 s (33.6 / 32.1 / 32.6 s), back 20 s; swap: nothing moved, 1 request for the old model after it, the new
+      one answered after 2 s and trusted after 4 s. Every run: 0 lost, 0 read twice, 0 stored twice, 0 failures,
+      40 of 40 reviews done. `same_behaviour.py --ref cfb45d6 read pipeline`: the same (60 read outputs, 1 pipeline
+      output).
   - **Not done:**
     - A call dropped on the primary is not cancelled there: a slow primary finishes it for nobody (above).
     - The capture processes take a backup address saved on the Reading page at their next start (their pipeline is
@@ -2397,8 +2408,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       reviewer's minutes) while nothing arrives.
     - At full latency the drills are estimates of the bench's own: the limits (20 s, 45 s, the probes) are real time
       and the model's answers ×0.05, so a hang is found sooner relative to the work than on the Mac Studio.
-  - (`ai/{local_llm,inference,page_reader,page_worker,verifier,pipeline}.py`, `core/{config,audit}.py`,
-    `ops/{doctor,service}.py`, `web/pages/{settings_reading,activity}.py`, `web/roles.py`,
+  - (`ai/{local_llm,inference,page_reader,page_worker,verifier,pipeline,azure_check}.py`, `core/{config,audit}.py`,
+    `ops/{doctor,service,cli}.py`, `web/pages/{settings_reading,activity}.py`, `web/roles.py`,
     `web/templates/settings_reading.html`, `bench/{day,fake_model}.py`, `docs/{REFERENCE,SERVER,HOW_IT_RUNS}.md`;
     `tests/ai/test_failover.py`, `tests/ai/test_page_reader.py`, `tests/web/test_reading_pages.py`,
     `tests/ops/test_service.py`, `tests/bench/test_day.py`)
