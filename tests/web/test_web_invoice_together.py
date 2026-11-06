@@ -254,6 +254,23 @@ def test_a_screen_approved_meanwhile_says_once_who_approved_it_and_when(laptop, 
     assert check.status_code == 409 and check.json()["stale"] == polled["stale"]
 
 
+def test_a_line_action_on_a_screen_whose_invoice_left_the_queue_says_once_what_was_done(laptop, store):
+    """B-1940: a line action (a split, Apply to all lines…) from a screen whose invoice was approved meanwhile got the
+    old toast "This invoice is no longer in the review queue: reload the page." and the screen stayed editable: the
+    queue was looked at before the screen's revision. It is refused as its check is, saying what was done."""
+    inv_id = clean_invoice(laptop, store)
+    screen = _open(laptop, inv_id)
+    assert laptop.post(f"/review/{inv_id}/approve", data=form_of(store, inv_id), headers=PAGE).json()["ok"]
+    data = form_of(store, inv_id)
+    gl = data["line_gl"][0]
+    split = {"split_line": data["line_number"][0], "part_gl": [gl, gl], "part_pct": ["50", "50"]}
+    refused = laptop.post(f"/review/{inv_id}/split", data={**data, **split, **screen}, headers=PAGE)
+    assert refused.status_code == 409
+    assert re.fullmatch(r"Approved by Jordan Lee today at \d{1,2}:\d\d [ap]\.m\.", refused.json()["stale"]["text"])
+    plain = laptop.post(f"/review/{inv_id}/split", data={**data, **split}, headers=PAGE)  # not the screen's: as before
+    assert plain.status_code == 409 and "no longer in the review queue" in plain.json()["error"]
+
+
 def test_a_screen_of_an_invoice_deleted_meanwhile_says_so_and_offers_the_queue(laptop, store):
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     screen = _open(laptop, inv_id)

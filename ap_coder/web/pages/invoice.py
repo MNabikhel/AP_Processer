@@ -1491,9 +1491,9 @@ def _posted_in_review(request: Request, invoice_id: int,
                       form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft]:  # fmt: skip
     """A grid action's invoice (still in the review queue), the GL accounts and the draft the form posted."""
     store = get_store(request)
+    if stale := _out_of_date(request, store, invoice_id, store.get_invoice(invoice_id), form):  # first, as a check
+        raise _OutOfDate(stale)  # (left the queue meanwhile: what was done, once, B-1940)
     inv = _in_review(store, invoice_id)
-    if stale := _out_of_date(request, store, invoice_id, inv, form):
-        raise _OutOfDate(stale)
     reference = _reference(store)
     return store, inv, reference, _from_form(request, inv, form)
 

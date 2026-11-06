@@ -2813,6 +2813,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       of "changed meanwhile" was followed, the page drawn again from the other tab's draft, the edit typed just before
       Approve lost); once it left the queue (approved, parked, deleted…), "changed meanwhile" (`changed_meanwhile`).
     - A form posted without the revisions (not the screen's) is checked as before: "no longer in the review queue".
+      The screen's revisions are looked at first, a line action's as a check's (B-1940).
   - **Laptop**: one person: nobody else is shown and nothing of it is written; the revisions and the out-of-date
     screen hold between its tabs (the screen's poll asks every 30 to 60 s there too).
   - **Measured** (`bench load --users 100 --duration 300 --workers 4`, a 20,000-invoice seed of 3,000 queued and
