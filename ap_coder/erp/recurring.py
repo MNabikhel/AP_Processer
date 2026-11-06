@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import datetime as dt
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 MIN_INVOICES = 3
 MIN_DAYS, MAX_DAYS = 5, 120
 STEADY_SHARE = 0.75  # at least 3 in 4 gaps close to the usual one
 DUE_SOON_DAYS = 5
-# Under a stream of changes (100 people approving) ``detected`` is worked out again at most this often in each process
-# (0.8 s at 100,000 invoices, for the review queue's pill at each visit): a vendor is late by days (D-166).
+# Under a stream of changes (100 people approving) ``detected`` is worked out again at most this often, once for every
+# process (0.8 s at 100,000 invoices, for the review queue's pill at each visit): a vendor is late by days (D-166).
 SETTLE_SECONDS = 60.0
 
 ON_TRACK, DUE_SOON, LATE = "on_track", "due_soon", "late"
@@ -104,9 +104,26 @@ def detect(rows: list[dict[str, Any]], today: dt.date | None = None) -> list[Rec
 
 def detected(store: Any, today: dt.date | None = None, settle: float = SETTLE_SECONDS) -> list[Recurring]:
     """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice's vendor,
-    date or total changed (``Store.summary_memo``, D-110), and under a stream of changes at most every ``settle``
-    seconds (D-166): the queue, Vendors and the Month-end page show it on every visit, nothing decides with it
-    (Month-end's CSV asks it with none). Shared: don't change it."""
+    date or total changed (the summary's "dates", D-110), and under a stream of changes at most every ``settle``
+    seconds (D-166), once for every process (``Store.shared_answer``, B-1798): the queue, Vendors and the Month-end
+    page show it on every visit, nothing decides with it (Month-end's CSV asks it with none). Shared: don't change
+    it."""
     today = today or dt.date.today()
-    return store.summary_memo(f"recurring/{today.isoformat()}", lambda: detect(store.vendor_invoice_dates(), today),
-                              "dates", settle=settle)  # fmt: skip
+    return store.shared_answer("recurring", lambda: detect(store.vendor_invoice_dates(), today), version=FORMAT,
+                               encode=_data, decode=_of, topic="dates", asked=today, settle=settle)  # fmt: skip
+
+
+# The recurring vendors as they are kept for every process: each its fields in ``Recurring``'s order, the dates as
+# ISO text. Another format when what is kept changes, so what an older AP Coder kept is worked out again.
+FORMAT = "recurring-1"
+_FIELDS = tuple(f.name for f in fields(Recurring))
+_DATES = ("last_date", "next_date")
+
+
+def _data(found: list[Recurring]) -> list[list[Any]]:
+    return [[getattr(r, n).isoformat() if n in _DATES else getattr(r, n) for n in _FIELDS] for r in found]
+
+
+def _of(data: list[list[Any]]) -> list[Recurring]:
+    return [Recurring(*(dt.date.fromisoformat(v) if n in _DATES else v for n, v in zip(_FIELDS, row, strict=True)))
+            for row in data]  # fmt: skip

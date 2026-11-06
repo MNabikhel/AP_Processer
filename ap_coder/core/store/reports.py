@@ -1,7 +1,8 @@
 """What the company server's processes share of the big reports and downloads (D-169).
 
 * **An answer worked out once for every process** (``report_answers``): a report's big answer (the duplicate payment
-  audit's pairs, month-end's received purchase orders) kept as JSON with the stamp it was worked out under, the stamp
+  audit's pairs, month-end's received purchase orders, Spend's figures, the recurring vendors, Insights' figures:
+  D-169, D-175) kept as JSON with the stamp it was worked out under, the stamp
   read from the database before the work, as ``summary_memo`` reads its own (D-159): the database's ``summary_id``
   (another after a restore), the summary's generation, the counts of changes the triggers keep, and what the answer is
   for (``asked``). A process that has nothing kept in its memory takes it from here instead of working it out again
@@ -58,6 +59,17 @@ def asked_key(asked: Any) -> str:
     return hashlib.blake2b(repr(asked).encode("utf-8"), digest_size=16).hexdigest()
 
 
+def _later(kept: list[Any], seen: list[Any]) -> bool:
+    """Whether stamp ``kept`` is ``seen`` or a later one of the same database: each count the same or more (they only
+    go up; a restore gives another ``summary_id``)."""
+    if len(kept) != len(seen) or kept[:1] != seen[:1]:
+        return False
+    try:
+        return all(int(k or 0) >= int(s or 0) for k, s in zip(kept[1:], seen[1:], strict=True))
+    except (TypeError, ValueError):
+        return False
+
+
 # What this process keeps of the shared answers, before reading them from the database again: (database, name, what
 # for) -> (the stamp, the value, when its work began: ``time.time``), the latest used last, KEPT_HERE at most.
 _KEPT: dict[tuple[str, str, str], tuple[list[Any], Any, float]] = {}
@@ -78,24 +90,27 @@ class ReportsMixin:
         holds while the stamp read now, before any work (the database's ``summary_id``; with ``topic``, the summary's
         generation of it, ``""``: none; the counts of ``changes``, ``changes/<kind>``), is the one it was worked out
         under, for the same ``asked`` (compared by ``asked_key``), and was written by this ``version`` (the caller's
-        format: another, or another AP Coder's, is worked out again). ``settle`` (an answer a page only shows, D-164):
-        once what it depends on changed, one whose work began less than that many seconds ago on the same database is
-        taken still, in whichever process it was made, so it is never older than that. While another thread or
-        process works it out, it is waited for (``ANSWER_WAIT``). ``encode``/``decode``: the value to JSON-ready data
-        and back. In a write under way (or a read transaction) it is worked out afresh, neither read nor kept. The
-        value is shared: read it, don't change it."""
+        format: another, or another AP Coder's, is worked out again). One kept by another process under a later stamp
+        holds too: its work began after this ask did (it was being worked out while this one waited, B-1802).
+        ``settle`` (an answer a page only shows, D-164): once what it depends on changed, one whose work began less
+        than that many seconds ago on the same database is taken still, in whichever process it was made, so it is
+        never older than that. While another thread or process works it out, it is waited for (``ANSWER_WAIT``).
+        ``encode``/``decode``: the value to JSON-ready data and back. In a write under way (or a read transaction) it
+        is worked out afresh, neither read nor kept. The value is shared: read it, don't change it."""
         key = asked_key(asked)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
-        stamp, writing = self._answer_stamp(topic, changes)
+        seen, writing = self._answer_stamp(topic, changes)
         if writing:
             return compute()
 
-        def holds(found: tuple[Any, Any, float] | None) -> bool:
+        def holds(found: tuple[Any, Any, float] | None, later: bool = False) -> bool:
             if found is None:
                 return False
             kept, _, made = found
-            return kept == stamp or bool(settle and kept[:1] == stamp[:1] and 0 <= began - made < settle)
+            if kept == seen or (later and _later(kept, seen)):
+                return True
+            return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)
 
         with _KEPT_LOCK:
             hit = _KEPT.get(here)
@@ -106,26 +121,29 @@ class ReportsMixin:
         try:
             with _KEPT_LOCK:
                 hit = _KEPT.get(here)
-            if holds(hit):
+            if holds(hit, later=True):  # (another thread here worked it out meanwhile)
                 return hit[1]  # type: ignore[index]
             found = self.kept_answer(name, key, version)
-            lease, taken = f"answer/{name}/{key}", True
-            if not holds(found):
+            lease, taken, took = f"answer/{name}/{key}", True, holds(found, later=True)
+            if not took:
                 taken = self._briefly_or(lambda: self.take_lease(lease, OWNER, ANSWER_LEASE), False)  # type: ignore[attr-defined]
                 until = time.monotonic() + ANSWER_WAIT
                 while not taken and time.monotonic() < until:  # another process works it out: taken once written
                     time.sleep(ANSWER_POLL)
-                    stamp, _ = self._answer_stamp(topic, changes)
                     found = self.kept_answer(name, key, version)
-                    if holds(found) or not self._lease_held(lease):  # (it stopped, or wrote one for another stamp)
+                    took = holds(found, later=True)
+                    if took or not self._lease_held(lease):  # (it stopped, or wrote one for an older stamp)
                         break
             try:
-                if holds(found):
+                if took:
                     value, kept = decode(found[1]), found  # type: ignore[index]
                 else:
+                    stamp, start = seen, began
+                    if not taken:  # (after waiting for another process: worked out from what the database holds now)
+                        start, (stamp, _) = wall(), self._answer_stamp(topic, changes)
                     value = compute()
-                    kept = (stamp, value, began)
-                    self.keep_answer(name, key, version, stamp, encode(value), began)
+                    kept = (stamp, value, start)
+                    self.keep_answer(name, key, version, stamp, encode(value), start)
                 with _KEPT_LOCK:
                     _KEPT.pop(here, None)  # (the latest used last: the oldest goes first)
                     _KEPT[here] = (kept[0], value, kept[2])
@@ -136,7 +154,7 @@ class ReportsMixin:
                             del _WORKING[idle]
                 return value
             finally:
-                if not holds(found) and taken:
+                if not took and taken:
                     self._briefly_or(lambda: self.drop_lease(lease, OWNER), None)  # type: ignore[attr-defined]
         finally:
             if got:

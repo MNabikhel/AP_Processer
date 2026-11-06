@@ -346,28 +346,50 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
 
 
 # The Insights page's figures (``compute`` and ``operations``: 2 s at 100,000 invoices, at each visit before): under a
-# stream of changes (100 people approving) worked out again at most this often in each process: shown only (D-166).
+# stream of changes (100 people approving) worked out again at most this often, once for every process: shown only
+# (D-166, B-1799).
 SETTLE_SECONDS = 60.0
+# Their format as they are kept for every process (``Store.shared_answer``): another when it changes, so what an older
+# AP Coder kept is worked out again.
+SHOWN_FORMAT = "insights-1"
 
 
 def shown(store: Store) -> dict[str, Any]:
     """``compute`` as the Insights page shows it: kept until the invoices' summary, the assumptions or whether the
     internet is allowed change, and once the invoices changed worked out again at most every ``SETTLE_SECONDS``
-    (D-166). Shared: read it, don't change it. The business case's download is worked out afresh."""
+    (D-166), once for every process (B-1799). Shared: read it, don't change it. The business case's download is
+    worked out afresh."""
     from ..ops.offline import internet_allowed
 
     a = Assumptions.load(store)
-    return store.summary_memo("insights", lambda: compute(store, a), asked=(replace(a), internet_allowed()),
-                              settle=SETTLE_SECONDS)  # fmt: skip
+    return store.shared_answer("insights", lambda: compute(store, a), version=SHOWN_FORMAT, encode=_shown_data,
+                               decode=_shown_of, asked=(replace(a), internet_allowed()),
+                               settle=SETTLE_SECONDS)  # fmt: skip
+
+
+def _shown_data(s: dict[str, Any]) -> dict[str, Any]:
+    return {**s, "assumptions": asdict(s["assumptions"])}
+
+
+def _shown_of(data: dict[str, Any]) -> dict[str, Any]:
+    """``compute`` as kept for every process (JSON) made what it was: its assumptions, each top issue a tuple."""
+    return {**data, "assumptions": Assumptions(**data["assumptions"]),
+            "top_issues": [tuple(issue) for issue in data["top_issues"]]}  # fmt: skip
 
 
 def shown_operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     """``operations`` as the Insights page shows it: kept until the invoices' summary, the vendor list (its payment
     terms) or the default terms change, and once the invoices or the vendors changed worked out again at most every
-    ``SETTLE_SECONDS`` (D-166). Shared: read it, don't change it."""
+    ``SETTLE_SECONDS`` (D-166), once for every process (B-1799). Shared: read it, don't change it."""
     today = today or dt.date.today()
-    return store.summary_memo("insights_operations", lambda: operations(store, today), changes="vendors",
-                              asked=(today, store.default_terms_days()), settle=SETTLE_SECONDS)  # fmt: skip
+    return store.shared_answer("insights_operations", lambda: operations(store, today), version=SHOWN_FORMAT,
+                               decode=_operations_of, changes=("vendors",), asked=(today, store.default_terms_days()),
+                               settle=SETTLE_SECONDS)  # fmt: skip
+
+
+def _operations_of(data: dict[str, Any]) -> dict[str, Any]:
+    """``operations`` as kept for every process (JSON) made what it was: the discounts (count, amounts) tuples."""
+    return {**data, **{key: tuple(data[key]) for key in ("discounts_in_time", "discounts_missed")}}
 
 
 AGE_BUCKETS = (("0–2 days", 0, 2), ("3–7 days", 3, 7), ("8–14 days", 8, 14), ("15+ days", 15, 10**6))

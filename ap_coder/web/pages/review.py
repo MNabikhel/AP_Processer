@@ -284,11 +284,10 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
     to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
-    # every vendor's invoice dates (0.95 s at 100,000 invoices): only shown, so worked out again at most every
-    # LATE_SETTLE seconds under a stream of uploads and rejections (B-1732)
-    late = store.summary_memo(f"late_recurring/{today}", lambda: [r.vendor_name for r in recurring.detected(store)
-                                                                   if r.status == recurring.LATE],
-                              "dates", settle=LATE_SETTLE)  # fmt: skip
+    # the recurring vendors, from every vendor's invoice dates (0.95 s at 100,000 invoices): only shown, so worked out
+    # again at most every LATE_SETTLE seconds under a stream of uploads and rejections, once for every process, and
+    # read as they are, never settled again on top (B-1732, B-1798)
+    late = [r.vendor_name for r in recurring.detected(store, settle=LATE_SETTLE) if r.status == recurring.LATE]
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
         (f"{due_soon} due within {DUE_SOON_DAYS} days", "warn") if due_soon else None,

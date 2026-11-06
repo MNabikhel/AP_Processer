@@ -778,10 +778,12 @@ def test_the_queues_late_regular_invoices_follow_a_new_invoice_once_they_settled
     """B-1732: the queue's "regular invoices late" pill worked out every vendor's invoice dates again (98,720 rows,
     0.95 s at 100,000 invoices) after each upload or rejection, on each web worker. The page only shows it: it
     settles (D-164) for ``LATE_SETTLE`` seconds after a change, then follows it; never past a restore."""
+    from ap_coder.core.store import reports
     from ap_coder.web.pages import review
 
     clock = [1000.0]
     monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])  # (worked out once for every process, B-1798)
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
     today = dt.date.today()
@@ -1107,10 +1109,12 @@ def test_spends_figures_and_currencies_follow_the_approved_invoices_and_what_is_
     """The Spend page's figures and currencies, kept on the summary's generation, per period, currency, GL categories
     and rates (copies: the caller's own changed after is another question); once the invoices changed, worked out
     again at most every ``spend.SETTLE_SECONDS`` (D-166)."""
+    from ap_coder.core.store import reports
     from ap_coder.erp import spend
 
     clock = [1000.0]
     monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])  # (worked out once for every process, B-1797)
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     start, end = dt.date(2000, 1, 1), dt.date(2099, 12, 31)
     cad, usd = (_invoice(other, tmp_path, ground_truth, name) for name in ("S-1", "S-2"))
@@ -1204,8 +1208,9 @@ def test_the_lessons_tabs_rows_follow_the_lessons_and_each_approvals_word_on_the
 
 
 class _Processes:
-    """The server's processes, in this one: each with its own memory of the shared answers and month-end's POs (what
-    another web worker, or the background process, holds), the database the same."""
+    """The server's processes, in this one: each with its own memory of the shared answers, of what it keeps for itself
+    (``summary_memo``) and of month-end's POs (what another web worker, or the background process, holds), the
+    database the same."""
 
     def __init__(self, monkeypatch) -> None:
         self.monkeypatch, self.memory = monkeypatch, {}
@@ -1214,10 +1219,12 @@ class _Processes:
         from ap_coder.core.store import reports
         from ap_coder.erp import accruals
 
-        kept, parts = self.memory.setdefault(name, ({}, {}))
+        kept, parts, own = self.memory.setdefault(name, ({}, {}, {}))
         self.monkeypatch.setattr(reports, "_KEPT", kept)
         self.monkeypatch.setattr(reports, "_WORKING", {})
         self.monkeypatch.setattr(accruals, "_PARTS", parts)
+        self.monkeypatch.setattr(summary_module, "_MEMO", own)
+        self.monkeypatch.setattr(summary_module, "_COMPUTING", {})
 
 
 class Shared(Kept):
@@ -1440,3 +1447,171 @@ def test_month_ends_received_pos_worked_out_in_one_process_are_taken_by_the_othe
     assert changed == [("PO-1 line 1", 4.0), ("PO-1 line 2", 2.0), ("PO-2 line 2", 8.0)] == afresh()
     decoded.clear()
     assert received("worker 2") == changed and decoded == []  # (worker 3's for that PO, its own for the other)
+
+
+def test_a_process_waiting_takes_the_answer_another_began_after_it_asked_though_a_change_came_meanwhile(
+    tmp_path, monkeypatch
+):
+    """B-1802: a process waiting for the answer another was working out took it only for the stamp read at each look:
+    a change while the other worked (a stream of approvals) had it work the same answer out again itself once the
+    other let go. An answer whose stamp is no older than the one read as it asked holds: it was worked out from what
+    the database held then, or later."""
+    from ap_coder.core.store import reports
+
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    kept = Shared(store, "slow", lambda: ["mine"], version="t-1", topic="", changes=("vendors",))
+    lease = f"answer/slow/{reports.asked_key(None)}"
+    assert store.take_lease(lease, "another process", 60)
+    process("worker 1")
+    found = []
+    asking = threading.Thread(target=lambda: found.append(kept()))
+    asking.start()
+    time.sleep(0.5)
+    stamp = store._answer_stamp("", ("vendors",))[0]  # (what the other read before its work: the same)
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+    store.keep_answer("slow", reports.asked_key(None), "t-1", stamp, ["theirs"])
+    store.drop_lease(lease, "another process")
+    asking.join(10)
+    assert found == [["theirs"]] and kept.worked == 0
+    assert kept() == ["mine"] and kept.worked == 1  # (asked after the change: worked out again)
+
+
+def _approved(store: Store, tmp_path, ground_truth, name: str, **doc) -> int:
+    invoice = _invoice(store, tmp_path, ground_truth, name)
+    store.approve_invoice(invoice, {**ground_truth, "invoice_number": name, **doc}, "Jordan Lee")
+    return invoice
+
+
+def test_spends_figures_and_currencies_are_worked_out_once_for_every_process_and_follow_another_ones_change(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1797: the Spend page's figures and currencies (1.9 s and 0.4 s at 100,000 invoices) were kept by each web
+    worker for itself: under a stream of approvals each of them worked them out again every ``SETTLE_SECONDS`` (17%
+    of the workers' CPU under 100 people at 300,000 invoices). They are worked out once for every process (D-169),
+    taken as they were worked out (tuples and all), and settle as before, by when their work began in any process."""
+    from ap_coder.core.store import reports
+    from ap_coder.erp import spend
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    worked: list[str] = []
+    for name in ("_figures", "_spend_currencies"):
+        real = getattr(spend, name)
+        monkeypatch.setattr(spend, name, lambda *a, real=real, name=name: worked.append(name) or real(*a))
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    start, end, category, rates = dt.date(2000, 1, 1), dt.date(2099, 12, 31), {"6100": "Office"}, {"CAD": 1.0}
+    _approved(other, tmp_path, ground_truth, "S-1")
+
+    def shown(name: str) -> tuple:
+        process(name)
+        return (spend.spend_currencies(store, start, end), spend.figures(store, start, end, "CAD", category),
+                spend.figures(store, start, end, "CAD", category, rates))  # fmt: skip
+
+    def afresh() -> tuple:
+        return (spend._spend_currencies(store, start, end), spend.read_figures(store, start, end, "CAD", category),
+                spend.read_figures(store, start, end, "CAD", category, rates))  # fmt: skip
+
+    before = shown("worker 1")
+    assert before[1]["invoices"] == 1 and len(worked) == 3
+    assert shown("worker 2") == before == afresh() and len(worked) == 6  # (worker 1's; then each read afresh)
+    _approved(other, tmp_path, ground_truth, "S-2")
+    clock[0] += spend.SETTLE_SECONDS - 1
+    assert shown("worker 3") == before and len(worked) == 6  # settled: worker 1's, begun 29 s ago
+    clock[0] += 1
+    worked.clear()
+    after = shown("worker 2")
+    assert after[1]["invoices"] == 2 and len(worked) == 3
+    assert shown("worker 1") == after == afresh() and len(worked) == 6  # (worker 2's)
+
+
+def _bill(store: Store, tmp_path, ground_truth, name: str, days_ago: int) -> int:
+    (tmp_path / f"{name}.pdf").write_bytes(name.encode())
+    doc = {**ground_truth, "vendor_name": "Acme Supply", "invoice_number": name, "grand_total": 100.0,
+           "invoice_date": (dt.date.today() - dt.timedelta(days=days_ago)).isoformat()}  # fmt: skip
+    return store.add_invoice(tmp_path / f"{name}.pdf", doc, {"requires_review": True})
+
+
+def test_the_recurring_vendors_are_worked_out_once_for_every_process_and_the_late_pill_is_never_older_than_they_settle(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1798: the recurring vendors (0.8 s at 100,000 invoices: the queue's late pill, Vendors, Month-end) were
+    worked out by each web worker for itself, every ``SETTLE_SECONDS`` under a stream of changes; and the queue's pill
+    kept its own answer, settled on top of theirs, so it could show what was true up to twice ``LATE_SETTLE`` ago.
+    They are worked out once for every process, the pill reads them as they are, at most ``LATE_SETTLE`` old."""
+    from ap_coder.core.store import reports
+    from ap_coder.erp import recurring
+    from ap_coder.web.pages import review
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    worked = []
+    real = recurring.detect
+    monkeypatch.setattr(recurring, "detect", lambda *a: worked.append(1) or real(*a))
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    for n, days_ago in enumerate((120, 90, 60)):  # monthly: the next one was due a month ago
+        _bill(other, tmp_path, ground_truth, f"R-{n}", days_ago)
+    pill = "1 regular invoice late (Vendors page): Acme Supply"
+
+    def late(name: str) -> list[str]:
+        process(name)
+        return [text for text, _ in review.today_pills(store, store.list_invoices()) if "late" in text]
+
+    def vendors(name: str) -> list[tuple]:
+        process(name)
+        found = recurring.detected(store)
+        assert found == real(store.vendor_invoice_dates(), dt.date.today())  # (as worked out afresh)
+        return [(r.vendor_name, r.status) for r in found]
+
+    assert vendors("worker 1") == [("Acme Supply", recurring.LATE)] and len(worked) == 1
+    assert late("worker 2") == [pill] and len(worked) == 1  # (worker 1's)
+    _bill(other, tmp_path, ground_truth, "R-3", 30)  # this month's: the next one due today
+    clock[0] += review.LATE_SETTLE - 1
+    assert late("worker 3") == [pill] and len(worked) == 1  # settled: worker 1's, begun 59 s ago
+    clock[0] += 2
+    assert late("worker 3") == [] and len(worked) == 2  # never older than that (not its own of 2 s ago)
+    assert vendors("worker 1") == [("Acme Supply", recurring.DUE_SOON)] and len(worked) == 2  # (worker 3's)
+
+
+def test_insights_figures_are_worked_out_once_for_every_process_and_follow_another_ones_change(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-1799: the Insights page's figures (``shown``, ``shown_operations``: 2 s at 100,000 invoices) were kept by each
+    web worker for itself. They are worked out once for every process, taken as they were worked out (the
+    assumptions, the tuples), and settle as before (``insights.SETTLE_SECONDS``)."""
+    from ap_coder.core.store import reports
+    from ap_coder.erp import insights
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    worked = {"compute": 0, "operations": 0}
+    for name, real in (("compute", insights.compute), ("operations", insights.operations)):
+        monkeypatch.setattr(insights, name, lambda *a, real=real, name=name: worked.update({name: worked[name] + 1})
+                            or real(*a))  # fmt: skip
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    _approved(other, tmp_path, ground_truth, "I-1", payment_terms="2/10 Net 30")
+    _invoice(other, tmp_path, ground_truth, "I-2")
+
+    def shown(name: str) -> tuple:
+        process(name)
+        return insights.shown(store), insights.shown_operations(store)
+
+    def afresh() -> tuple:
+        return insights.compute(store), insights.operations(store)
+
+    before = shown("worker 1")
+    assert before[0]["processed"] == 2 and worked == {"compute": 1, "operations": 1}
+    assert shown("worker 2") == before == afresh() and worked == {"compute": 2, "operations": 2}  # (worker 1's)
+    _invoice(other, tmp_path, ground_truth, "I-3")
+    clock[0] += insights.SETTLE_SECONDS - 1
+    assert shown("worker 3") == before and worked == {"compute": 2, "operations": 2}  # settled
+    clock[0] += 1
+    after = shown("worker 2")
+    assert after[0]["processed"] == 3 and worked == {"compute": 3, "operations": 3}
+    assert shown("worker 1") == after == afresh() and worked == {"compute": 4, "operations": 4}  # (worker 2's)

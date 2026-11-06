@@ -457,15 +457,20 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
   vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
-  write.
+  write (Spend and month-end's page, which only show them, at most every 30 s: D-166). Month-end, the audit, Spend,
+  the recurring vendors and Insights are worked out once for every process (below).
 
-  **Worked out once for every process** (D-169): the duplicate audit's pairs, month-end's received, not invoiced
-  lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the ERP yet
-  are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's `report_answers` as JSON, with the
-  stamp they were worked out under, read before the work as `summary_memo`'s; a process with none of them kept takes
-  them from there while the stamp holds (0.01 s for the audit and 0.8 s for month-end's page in a second worker, at
-  100,000 invoices, instead of 6-7 s and 5-6 s in each one). One process works an answer out while the others wait
-  for it; one an older AP Coder wrote, over 16 MB, or worked out in a write under way is not kept for the others.
+  **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, month-end's received, not
+  invoiced lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the
+  ERP yet, Spend's figures and currencies, the recurring vendors (the queue's late pill, Vendors, Month-end) and the
+  Insights page's figures are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's
+  `report_answers` as JSON, with the stamp they were worked out under, read before the work as `summary_memo`'s; a
+  process with none of them kept takes them from there while the stamp holds (0.01 s for the audit and 0.8 s for
+  month-end's page in a second worker, at 100,000 invoices, instead of 6-7 s and 5-6 s in each one; Spend's 3 ms
+  instead of 0.47 s at 20,000). Those a page only shows settle as before (D-164), by when their work began in
+  whichever process did it. One process works an answer out while the others wait for it, and take it even when
+  something changed meanwhile (it was worked out after they asked, B-1802); one an older AP Coder wrote, over 16 MB,
+  or worked out in a write under way is not kept for the others.
 
   The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches

@@ -1859,3 +1859,71 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       after any change of the vendor list (a few a day; a JD Edwards sync rewrites every vendor: D-160's open item).
   - (`core/store/vendors.py`, `core/store/_base.py`, `core/store/summary.py`, `coding/vendors.py`,
     `docs/HOW_IT_RUNS.md`; `tests/core/test_vendor_changes.py`, `tests/core/test_kept_answers.py`)
+- **D-175** · **What the pages only show, worked out once for every process: Spend, the recurring vendors, Insights;
+  month-end's and the duplicate audit's first time; no warming as a worker starts** (scale goal phase 3 part 2, P3;
+  B-1797 to B-1802).
+  - **Why:** in the profile of the busiest web workers with 100 people on 300,000 invoices (phase 3), Spend took
+    17.3% of their CPU: its figures, kept by each worker for itself, were worked out again by each one every 30 s under
+    the stream of approvals (19 visits in 10 minutes, nearly each one working them out again). Then the recurring
+    vendors 5.6% (4.4% of it the queue's late pill), the quick search 2.4%, Insights 2.2%. And at 100,000 invoices the
+    first request in a process was slow: month-end 5.6 s, the duplicates CSV 7.1 s, though both were shared (D-169),
+    Spend 2.9 s, Insights 1.5 s.
+  - **Shared, or kept up to date as things change: measured** (a 20,000-invoice seed of this code):
+    - **Spend:** 0.47 s worked out for its default view (SQLite's four sums 0.16 s; each line in another currency
+      converted to CAD in Python as before, 0.3 s). Kept up to date would need which invoices changed since (the
+      summary keeps no list of them: `summary_dirty` is emptied as it is worked out) and sums of each month added up
+      after, in another order than SQLite's: not the same figures to the last bit. Shared.
+    - **The recurring vendors:** 0.1 s worked out (the invoice dates 0.07 s, `detect` 0.03 s). Kept up to date by each
+      vendor's count of changes (`changes/vendor/<key>`: 2,649 read in 4 ms) would work out only the vendors that
+      changed; but shared, the whole is worked out once a minute for every process (about 2 s at 300,000 invoices: 3%
+      of one core, against about 1% kept up to date), for no second way of working them out. Shared.
+    - **Insights:** seven sums of the summary, and every active invoice's dates: shared.
+  - **What:**
+    - `spend.figures` and `spend_currencies` (`FIGURES_FORMAT`), `recurring.detected` (`FORMAT`) and
+      `insights.shown`, `shown_operations` (`SHOWN_FORMAT`) go through `Store.shared_answer`, each with its JSON form
+      and back as it was (Spend's `total_by` rows tuples, the recurring vendors' dates, Insights' assumptions and
+      tuples). The settles are as before (Spend 30 s, the recurring vendors and Insights 60 s), counted from when the
+      work began in whichever process did it (D-169): never older than that. The recurring vendors are one name
+      asked by the day (or Month-end's period end): at most 8 of them kept in the database, not a row a day for good.
+    - **The queue's late pill** reads the recurring vendors with `LATE_SETTLE`, with no answer of its own settled on
+      top of theirs (it could say what was true up to two minutes before: B-1798).
+    - **A process waiting** for the answer another is working out takes one kept under the stamp it read as it asked,
+      or a later one (B-1802): on one database the counts only go up (a restore gives another `summary_id`). Only an
+      answer read from the database, or another thread's of this process; never this process's own older one.
+    - Month-end looks its GL accounts up by code (B-1800); the quick search's ERP hits work each vendor's name out
+      once (B-1801).
+  - **Month-end's and the duplicate audit's first time** (5.6 and 7.1 s at 100,000 invoices): the volume run asks in
+    one process on a seed no answer was kept in yet, so its first ask is the first anywhere, the same work as before;
+    D-169 measured 0.8 s and 0.01 s in each other process. Those 0.8 s were month-end's recurring vendors, kept by
+    each process for itself (now shared: 1-3 ms), and each visit's GL look-ups (0.25 s of 0.4 at 20,000 invoices,
+    B-1800). And under a stream of changes a worker waiting for another's answer worked it out again itself (B-1802).
+    What is left is the answer worked out after a change (month-end 1.1 s at 20,000: its invoices not in the ERP
+    decode every one of them).
+  - **No warming as a worker starts:** a worker that starts takes each of these from the database in 1-3 ms (Spend's
+    page 48 ms in all, its answers 3 ms, against 0.47 s worked out); after a change the first ask works it out once
+    for all, the others waiting for it. Working them out as a worker starts would do that same work again at every
+    restart, while nobody asks, and under a stream of changes they are stale within their settle anyway. The rest of
+    a fresh worker's first request (0.15-0.2 s at 20,000 invoices: Jinja compiling the page's template, the first
+    session) is every page's, not these answers'. It doesn't pay, so a worker's start (the service's health check, the
+    laptop) is as it was.
+  - **Measured** (the 20,000-invoice seed; CPU by `time.process_time`; the machine shared with three other agents):
+    - **A page in a second process after a change in a first**, the first ask then the second (the first ask of a
+      process includes 0.15-0.2 s of its own start): Spend 0.59 / 0.01 s before and 0.57 / 0.01 s now where it is
+      worked out, 0.60 → 0.23 s in each other process; Insights 0.45 → 0.39, and 0.44 → 0.19 in each other;
+      Month-end 1.59 / 0.45 → 1.16 / 0.18 s, and 0.73 / 0.38 → 0.37 / 0.14 s in each other; the queue 0.81 → 0.71 s
+      and 0.84 → 0.63 s; the duplicates CSV 1.10 → 1.05 s, 0.14 → 0.13 s in each other (shared before).
+    - **Four web workers and a change a second** (150 s; each worker the queue every 2 s and a report every 8 s:
+      Spend, Insights, Month-end, Vendors): the workers' CPU 48.3 → 37.8 s (49.4 → 38.3 in a first run), Spend 5.4 →
+      2.7 s, Insights 2.1 → 1.0 s, Month-end 12.5 → 7.4 s, the queue 24.8 → 23.0 s, Vendors the same (3.5 / 3.7 s:
+      its vendors' summaries are each worker's).
+    - **The same pages:** 18 addresses (Spend's views, Insights, Month-end and its CSV, the queue's tabs, the search,
+      Vendors, the audit and its CSV), each asked twice, byte for byte as before, both as worked out and as another
+      process takes them; `scripts/same_behaviour.py --ref 1c73b77 tax approve`: same.
+  - **Not done:**
+    - Month-end's answer after a change (its invoices not in the ERP decoded whole: per-invoice parts as D-169's POs
+      would need each invoice's own count of changes, and its checks' `validation` is not in `changes/vendor/<key>`).
+    - The quick search's word looked for in every ERP register row (`instr` over the register: an index of its own
+      would be a schema change).
+  - (`core/store/reports.py`, `erp/{spend,recurring,insights,search}.py`, `web/pages/{review,month_end}.py`,
+    `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/erp/{test_insights,test_suggest_recurring,
+    test_search}.py`, `tests/web/test_web_finance.py`)
