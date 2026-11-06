@@ -14,7 +14,8 @@ leaving the machine:
 
 One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schema, migrations, connections, shared
 helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
-approving, the ERP's register, the second approval), ``purchasing`` (POs, export batches, coding rules), ``capture``
+approving, the second approval), ``register`` (the ERP's invoice register, JD Edwards' vouchers in it, D-181),
+``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
 D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the
 invoice files and others a backup holds, D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
@@ -115,6 +116,7 @@ from .lessons import LessonsMixin
 from .managers import ManagersMixin
 from .page_queue import PageQueueMixin
 from .purchasing import PurchasingMixin
+from .register import RegisterMixin
 from .reports import ReportsMixin
 from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
@@ -127,6 +129,7 @@ class Store(
     StoreCore,
     AccountsMixin,
     InvoicesMixin,
+    RegisterMixin,
     PurchasingMixin,
     CaptureMixin,
     PageQueueMixin,

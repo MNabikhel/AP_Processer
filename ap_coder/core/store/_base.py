@@ -694,6 +694,9 @@ class StoreCore:
         if columns and "copies" not in columns:
             conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
         add_register_keys(conn, columns)  # the ERP register's search keys (schema 22, D-157; whatever the version)
+        from .register import add_jde_register
+
+        add_jde_register(conn, columns)  # its supplier numbers and JD Edwards' vouchers (D-181, likewise)
         # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
         # amount), for what is left to expense on the review screen (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
