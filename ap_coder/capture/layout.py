@@ -697,7 +697,7 @@ def _prune(folder: Path, newest: Path | None = None) -> None:
 
 # ---------------------------------------------------------------- the page OCR reads
 
-PICTURES_KEPT_BYTES = 48 * 1024 * 1024  # the last pages drawn, for the second engine (a page: 11 MB at 200 dpi)
+PICTURES_KEPT_BYTES = 32 * 1024 * 1024  # the last pages drawn, for the second engine (a page: 11 MB at 200 dpi)
 
 
 class PageToRead:
@@ -1068,9 +1068,9 @@ def _image_pages(path: Path, max_pages: int) -> list[PageToRead]:
         return [png_page(path.read_bytes())]
     from PIL import ImageSequence
 
+    sha = file_sha256(path)  # (before it is opened: what is read is what the name says)
     with open_image(path) as img:
         count = len(list(zip(range(max_pages), ImageSequence.Iterator(img), strict=False)))
-    sha = file_sha256(path)
     drawn = functools.cache(lambda: _image_pictures(path, max_pages))
     return [PageToRead(f"picture {sha} frame {i}, at most {OCR_MAX_SIDE} px" if sha else None,
                        lambda i=i: drawn()[i]) for i in range(count)]  # fmt: skip
@@ -1100,9 +1100,9 @@ def _picture_for_ocr(picture: Any) -> Any:
     return pic
 
 
-def _pdf_page(path: Path, doc: Any, page: Any, index: int) -> PageToRead:
-    """A PDF page without text (page ``index``, from 0) for OCR, named by the file's content."""
-    sha = file_sha256(path)
+def _pdf_page(sha: str | None, doc: Any, page: Any, index: int) -> PageToRead:
+    """A PDF page without text (page ``index``, from 0) for OCR, named by the file's content (``sha``: its SHA-256,
+    worked out before the file was opened)."""
     asked = f"pdf {sha} page {index}, at {OCR_DPI} dpi, at most {OCR_MAX_SIDE} px" if sha else None
     return PageToRead(asked, functools.partial(_scan_picture, doc, page))
 
@@ -1244,6 +1244,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
     sources: set[str] = set()
     failed = 0  # pages OCR could not read: kept empty, and counted as not read (``DocLayout.pages_unread_locally``)
     di = layout_from_di(di_raw) if di_raw else None
+    sha = file_sha256(path) if use_ocr else None  # (before it is opened: what is read is what the name says)
     with opened_pdf(path) as doc:  # PyMuPDF's calls holding its lock; OCR outside it
         with PDF_LOCK:
             count = doc.page_count
@@ -1266,7 +1267,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 sources.add("di")
             elif use_ocr:
                 try:
-                    scanned = ocr_image(_pdf_page(path, doc, page, i), number)
+                    scanned = ocr_image(_pdf_page(sha, doc, page, i), number)
                     with PDF_LOCK:  # the page is rendered finer than it was scanned
                         scanned.dpi = _native_dpi(page) or scanned.dpi
                     pages.append(scanned)
@@ -1346,6 +1347,7 @@ def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayo
         for i, page in enumerate(_image_pages(path, max_pages), 1):
             pages.append(ocr_image(_second_page(page), i, second_engine_name()))
     else:
+        sha = file_sha256(path)  # (before it is opened: what is read is what the name says)
         with opened_pdf(path) as doc:
             with PDF_LOCK:
                 count = doc.page_count
@@ -1355,5 +1357,5 @@ def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayo
                     text = text_is_the_page(page, _text_layer_page(page, i + 1))
                 if text:
                     return None  # a text PDF: the text layer is exact
-                pages.append(ocr_image(_second_page(_pdf_page(path, doc, page, i)), i + 1, second_engine_name()))
+                pages.append(ocr_image(_second_page(_pdf_page(sha, doc, page, i)), i + 1, second_engine_name()))
     return DocLayout(pages, "ocr")

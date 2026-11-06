@@ -271,7 +271,7 @@ def test_whatever_changes_a_reading_changes_what_it_is_kept_under(engine, tmp_pa
         _scan(path, text="INVOICE 1002")  # the file itself
         layout.build_layout(path)
         assert len(engine) == 5
-    asked = {layout._pdf_page(path, None, None, i).asked for i in (0, 1)}
+    asked = {layout._pdf_page(layout.file_sha256(path), None, None, i).asked for i in (0, 1)}
     assert len(asked) == 2  # the page
 
 
@@ -318,7 +318,7 @@ _KEPT_CODE = (
     intake._stored_pixels, intake._shown_size, intake._too_large, table_finder.page_pictures, table_finder._find,
     table_finder._iou, table_finder._find_tables, table_finder._kept_tables, table_finder.find_tables,
 )  # fmt: skip
-KEPT_CODE = (1, "c1771cc1e98323c95535af0eae13bb91b1ab0b45d60a7c95250e08c0646d8501")
+KEPT_CODE = (1, "2ee294b15384c7b802554735e99766b333ca75946448d832df0950eb8ab0b77d")
 
 
 def test_how_a_page_is_drawn_and_read_is_in_what_its_reading_is_kept_under():
