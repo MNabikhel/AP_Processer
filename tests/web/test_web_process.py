@@ -117,6 +117,53 @@ def test_upload_refuses_other_files_and_joins_the_files_already_in_line(app, cli
     assert snap["result"]["ok"] == 2 and len(store.list_invoices(REVIEW)) == 2
 
 
+def test_the_same_file_uploaded_twice_at_once_is_stored_once(app, client, store, monkeypatch):
+    """Two people upload the same invoice at the same moment (D-168): both uploads are saved and put in line, the
+    file is read once, and the second upload's copy is skipped as already in AP Coder."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+
+    both, reads = threading.Barrier(2), []
+    real_queue, real_process = Store.queue_imports, InvoicePipeline.process
+
+    def queue_imports(self, *args, **kwargs):  # the two uploads reach the queue together
+        both.wait(30)
+        return real_queue(self, *args, **kwargs)
+
+    def process(self, path, *args, **kwargs):
+        reads.append(path)
+        return real_process(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "queue_imports", queue_imports)
+    monkeypatch.setattr(InvoicePipeline, "process", process)
+    answers = []
+    uploads = [threading.Thread(target=lambda: answers.append(upload(client, f"{STEM}.pdf"))) for _ in range(2)]
+    for thread in uploads:
+        thread.start()
+    for thread in uploads:
+        thread.join(60)
+    assert [a.status_code for a in answers] == [200, 200]
+    snap = finished(app, client)
+    assert len(reads) == 1 and len(store.list_invoices()) == 1
+    assert snap["result"]["ok"] == 1 and snap["result"]["label"] == "Processed 1 of 2: 1 already in AP Coder"
+
+
+def test_files_left_in_line_by_a_restart_are_read_when_ap_coder_starts(store):
+    """A laptop closed while files waited in line (D-168): they are read once AP Coder starts again, without a
+    press of the Process button (before, they sat in the folder as new until someone pressed it)."""
+    from ap_coder.core.store.folder import read_file
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (f"{STEM}.pdf", f"{OTHER}.pdf"):
+        shutil.copy(SAMPLES / name, folder / name)
+    store.queue_imports([read_file(folder / f"{STEM}.pdf"), read_file(folder / f"{OTHER}.pdf")], source="upload")
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store)
+    with TestClient(app, base_url="http://localhost") as client:  # (its start: the lifespan)
+        snap = finished(app, client)
+    assert snap["result"]["ok"] == 2 and len(store.list_invoices(REVIEW)) == 2
+
+
 def test_upload_needs_gl_accounts_first(tmp_path):
     bare = Store(tmp_path / "private" / "ap_coder.db")
     s = Settings()
