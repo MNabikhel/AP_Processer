@@ -4,6 +4,7 @@ there), and never a new, empty database where there was one."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -55,6 +56,26 @@ def test_a_share_mounted_on_a_mac_is_told_by_mount(folder, kind, monkeypatch):
     monkeypatch.setattr(safety.os.path, "realpath", lambda p: p)
     found = safety.network_share(folder, windows=False, mounts=safety.mac_mounts(MAC))
     assert (kind in found) if kind else found == ""
+
+
+WSL = """/dev/sdc / ext4 rw,relatime 0 0
+C:\\134 /mnt/c 9p rw,noatime,dirsync,aname=drvfs;path=C:\\;uid=1000;gid=1000;mmap,access=client,trans=fd 0 0
+"""
+
+
+def test_a_folder_a_virtual_machines_host_shares_is_a_warning_never_a_refusal(monkeypatch):
+    """9p: WSL2's /mnt/c (the Windows disk of the same computer) or a virtual machine's folder from its host. The
+    server refused to start there, as on a network share (B-1963). It is one computer, all of AP Coder's processes in
+    the one machine: a warning on the server and on a laptop, never a refusal. Real shares are still refused."""
+    monkeypatch.setattr(safety.os.path, "realpath", lambda p: p)
+    mounts = safety.linux_mounts(WSL)
+    assert safety.network_share("/mnt/c/APCoderData", windows=False, mounts=mounts) == ""
+    for server in (True, False):
+        status, words = safety.share_problem(Path("/mnt/c/APCoderData"), server, windows=False, mounts=mounts)
+        assert status == "WARN" and "9p" in words and "/mnt/c" in words
+    assert safety.share_problem(Path("/home/ann/APCoderData"), True, windows=False, mounts=mounts) == ("", "")
+    nfs = safety.share_problem(Path("/srv/nfs/APCoder"), True, windows=False, mounts=safety.linux_mounts(LINUX))
+    assert nfs[0] == "FAIL"
 
 
 def test_this_computers_own_folder_is_not_a_share(tmp_path):

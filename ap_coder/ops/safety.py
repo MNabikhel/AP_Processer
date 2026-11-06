@@ -5,7 +5,9 @@
   be damaged. ``network_share`` tells: a UNC path (``\\\\server\\share``, ``//server/share``), a mapped network drive
   (Windows: ``GetDriveTypeW`` says DRIVE_REMOTE), or a folder of a network file system mounted on a Mac or Linux
   (``os.statvfs`` can't tell: the mount's type, from ``mount`` on a Mac and ``/proc/mounts`` on Linux). The server
-  refuses to start there; a laptop is warned, as for a folder OneDrive syncs (the doctor's *data folder* line).
+  refuses to start there; a laptop is warned, as for a folder OneDrive syncs (the doctor's *data folder* line). A
+  folder this machine's host shares with it over 9p (WSL2's /mnt/c, a virtual machine's folder) is one computer, all
+  of AP Coder's processes in the one machine: both are warned, never refused (``host_share``, D-188).
 * **No silent new database.** On the server, a database file that is missing while the data folder shows it had one
   (its backups, server-update's record in server.json, its write-ahead log, the sign-in codes' key, the access log,
   invoice files) is never replaced by a new, empty one: the server refuses to start and says to restore a backup,
@@ -28,7 +30,10 @@ DRIVE_REMOTE = 4  # GetDriveTypeW
 # The network file systems a share is mounted as (macOS: smbfs, afpfs, nfs, webdav; Linux: cifs, smb3, nfs, nfs4,
 # davfs (fuse.davfs2), sshfs).
 NETWORK_TYPES = {"smbfs", "afpfs", "nfs", "nfs4", "cifs", "smb3", "smb2", "webdav", "davfs", "fuse.davfs2",
-                 "fuse.sshfs", "sshfs", "ncpfs", "9p"}  # fmt: skip
+                 "fuse.sshfs", "sshfs", "ncpfs"}  # fmt: skip
+# A folder this machine's host shares with it: WSL2's /mnt/c (the Windows disk of the same computer), a virtual
+# machine's folder from its host. One computer, all of AP Coder's processes in the one machine: warned, never refused.
+HOST_SHARED = {"9p"}
 WHY = ("AP Coder's database (SQLite, with its write-ahead log) can be damaged there: the locks it relies on don't "
        "hold across computers")  # fmt: skip
 
@@ -119,10 +124,30 @@ def network_share(folder: str | Path, *, windows: bool = WINDOWS, drive_type: Ca
     return ""
 
 
+def host_share(folder: str | Path, *, windows: bool = WINDOWS, mounts: list[tuple[str, str]] | None = None) -> str:
+    """How ``folder`` is a folder this machine's host shares with it (:data:`HOST_SHARED`), in words ("" when it
+    isn't)."""
+    if windows:
+        return ""
+    try:
+        real = os.path.realpath(str(folder).strip().strip('"'))
+    except OSError:
+        return ""
+    point, kind = mount_of(real, _mounts() if mounts is None else mounts)
+    return f"a folder this machine's host shares with it ({kind}, mounted at {point})" if kind in HOST_SHARED else ""
+
+
 def share_problem(data: Path, server: bool, **looks: object) -> tuple[str, str]:
     """(status, words) for the data folder on a network share: ("FAIL", ...) on the server, ("WARN", ...) on a
     laptop, ("", "") when it is on this computer's own disk."""
     how = network_share(data, **looks)  # type: ignore[arg-type]
+    windows, mounts = looks.get("windows", WINDOWS), looks.get("mounts")
+    shared = "" if how else host_share(data, windows=bool(windows), mounts=mounts)  # type: ignore[arg-type]
+    if shared:  # (B-1963)
+        return "WARN", (f"The data folder {data} is on {shared}: WSL's /mnt/c, or a virtual machine's folder from its "
+                        "host. AP Coder's database is safe there only while nothing outside this machine opens it (no "
+                        "other computer, nor a program on the host itself), and it is slower than this machine's own "
+                        "disk: keep the data folder there if you can.")  # fmt: skip
     if not how:
         return "", ""
     if server:

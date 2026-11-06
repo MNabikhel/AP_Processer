@@ -3114,6 +3114,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **The data folder** (`ops/safety.py`, from `serve` and the doctor): a UNC path (both slashes, `\\?\UNC\`), a
     mapped drive (`GetDriveTypeW` = DRIVE_REMOTE) or a mount of smbfs/afpfs/nfs/nfs4/cifs/smb3/webdav/davfs/sshfs
     (`/proc/mounts`; the Mac's `mount` output) refuses the server's start; a laptop gets a warning, as for OneDrive.
+    9p is warned, never refused, on the server too (B-1963): it is WSL2's /mnt/c (the Windows disk of the same
+    computer) and a virtual machine's folder from its host, sometimes its root. SQLite's warning is about locks and
+    shared memory across computers; here every AP Coder process is in the one machine, whose kernel keeps them, so only
+    a program outside it (on the host, or WSL's Windows side) opening the same database would break them, and the
+    folder is slower. Refusing it stopped a pilot on WSL or such a machine from starting at all.
     On the server, a missing database with signs it existed (backups, server-update's record, its `-wal`/`-shm`,
     `authenticator.key`, `logs/access.log`, invoice files; not server.json alone, which `service install` writes
     before the first start, nor the service log, written before the dashboard starts) refuses the start; `serve
