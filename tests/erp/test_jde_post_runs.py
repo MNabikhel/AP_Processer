@@ -326,11 +326,11 @@ def test_late_answers_one_after_another_stop_the_run_and_the_rest_wait_saying_wh
 
 def test_a_run_keeps_to_its_time_and_the_queue_sends_the_rest(tmp_path, ais):
     store, batch = batch_of(tmp_path, ais, ON, QC, BC)
-    settings(store, post_minutes=0.01)  # 0.6 seconds
+    settings(store, post_minutes=0.03)  # 1.8 s: a 1.2 s send fits, and what a slow runner adds to it (< 0.6 s)
     jde_post.dry_run(store, batch)
-    ais.latency = 0.4  # R04110ZA's run
+    ais.latency = 1.2  # R04110ZA's run
     result = jde_post.post(store, batch)
-    assert (result["posted"], result["queued"]) == (2, 1) and "time (0.01 minutes" in result["error"]
+    assert (result["posted"], result["queued"]) == (2, 1) and "time (0.03 minutes" in result["error"]
     assert statuses(store, batch)[3] == jde_post.QUEUED and "ran out" in jde_post.postings(store, batch)[2]["error"]
     ais.latency = 0
     jde_post.retry_queue(store)
