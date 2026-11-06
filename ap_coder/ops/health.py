@@ -564,13 +564,36 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     return getattr(ip, "ipv4_mapped", None) or ip
 
 
+_monitors: dict[str, tuple[tuple[int, int, int], tuple[str, list[Any]]]] = {}  # server.json's path: its look, read
+
+
 def monitor_config(data: Path | None = None) -> tuple[str, list[Any]]:
     """server.json's monitor token ("" when none, or shorter than MIN_TOKEN) and monitor addresses (each an address
-    or a network, "10.1.2.0/24"; one that is neither is left out)."""
+    or a network, "10.1.2.0/24"; one that is neither is left out). Read again only once the file changes (its inode,
+    time and size): on Windows a file open in another process can't be replaced, and a monitor asks every few
+    seconds while server-update writes its record there (B-1962)."""
+    from . import service
+
+    path = service.config_path(data or paths.private_dir())
+    try:
+        found = path.stat()
+        look = (found.st_ino, found.st_mtime_ns, found.st_size)
+    except OSError:
+        look = None
+    kept = _monitors.get(str(path))
+    if kept is not None and look is not None and kept[0] == look:
+        return kept[1]
+    answer = _monitor_config(path.parent)
+    if look is not None:
+        _monitors[str(path)] = (look, answer)
+    return answer
+
+
+def _monitor_config(data: Path) -> tuple[str, list[Any]]:
     from .service import SettingsError, read_config
 
     try:
-        found = read_config(data or paths.private_dir())
+        found = read_config(data)
     except SettingsError:
         return "", []
     token = found.get(MONITOR_TOKEN)

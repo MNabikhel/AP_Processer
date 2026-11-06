@@ -191,6 +191,37 @@ def test_run_cmd_and_server_json_are_never_left_cut_short(data, tmp_path, monkey
         assert service.read_config(data)["folder"] == str(new)
 
 
+def test_server_json_is_replaced_even_while_another_process_has_it_open(data, monkeypatch):
+    """Windows refuses to rename over a file another process has open without delete sharing (as Python opens files;
+    an antivirus; a monitor's /readyz reading server.json): server-update's record failed on that PermissionError
+    (B-1962). The rename is tried again for a moment on Windows; held longer, it is said, and nothing is left
+    beside it. Elsewhere such a rename never fails: no wait."""
+    service.write_config(data, folder="before")
+    real, tries, waited = os.replace, [], []
+
+    def busy(src, dst):
+        tries.append(dst)
+        if len(tries) < 3:
+            raise PermissionError(13, "The process cannot access the file: another process uses it", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(service, "WINDOWS", True)
+    monkeypatch.setattr(service.time, "sleep", waited.append)
+    monkeypatch.setattr(os, "replace", busy)
+    service.write_config(data, folder="after")
+    assert service.read_config(data)["folder"] == "after" and len(tries) == 3 and len(waited) == 2
+    monkeypatch.setattr(os, "replace", lambda src, dst: (_ for _ in ()).throw(PermissionError(13, "in use", dst)))
+    with pytest.raises(PermissionError):
+        service.write_config(data, folder="never")
+    assert service.read_config(data)["folder"] == "after" and sum(waited) <= 5
+    assert [p.name for p in data.iterdir() if p.name.endswith(".part")] == []
+    monkeypatch.setattr(service, "WINDOWS", False)
+    waited.clear()
+    with pytest.raises(PermissionError):
+        service.write_config(data, folder="never")
+    assert waited == []
+
+
 def test_the_dashboard_is_started_with_the_server_settings(data):
     s = service.settings(data, port=8443, certfile="c.pem", keyfile="k.pem", proxy="10.0.0.5",
                          allowed_hosts=("apcoder.company.local",))  # fmt: skip

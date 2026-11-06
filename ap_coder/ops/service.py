@@ -67,6 +67,9 @@ STOP_WAIT = 45.0  # seconds the dashboard has to stop once the host is asked to 
 # The host's exit code off Windows for "start me again" (EX_TEMPFAIL; ``again``): launchd's KeepAlive starts it again
 # 10 s later, where a 0 would leave it stopped. Another host runs, or the folder to run changed (an update's recovery).
 HOST_AGAIN = 75
+# Windows refuses a rename over a file another process has open (without delete sharing, as Python opens one; a
+# monitor's /readyz reading server.json, an antivirus): ``write_whole`` tries again after each of these (1.6 s in all).
+REPLACE_WAITS = (0.05, 0.1, 0.2, 0.4, 0.8)
 # The Windows task's names, found here as before they moved to service_windows.py (``__getattr__``).
 WINDOWS_NAMES = ("BUILT_IN", "runner_path", "task_file", "runner_text", "write_runner", "account_sid", "task_xml",
                  "create_command", "tie_to_host")  # fmt: skip
@@ -142,7 +145,8 @@ def write_whole(path: Path, content: bytes, mode: int | None = None,
     """``path`` written whole or not at all, a power cut included: a temporary file beside it, flushed to the disk
     (fsync), then renamed over it (``os.replace``), the folder flushed too (``sync_folder``). What the service starts
     from (server.json, Windows' run.cmd, the Mac's LaunchDaemon) is never left empty or cut short. ``mode`` and
-    ``prepare`` (its owner) are set on the temporary file, before it takes the name."""
+    ``prepare`` (its owner) are set on the temporary file, before it takes the name. On Windows the rename is tried
+    again for a moment while another process has ``path`` open (``REPLACE_WAITS``, B-1962)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.{os.getpid()}.part")  # (a dot first, and not .plist: launchd reads none)
     try:
@@ -154,7 +158,14 @@ def write_whole(path: Path, content: bytes, mode: int | None = None,
             os.chmod(part, mode)
         if prepare is not None:
             prepare(part)
-        os.replace(part, path)
+        for wait in REPLACE_WAITS if WINDOWS else ():  # (Windows: another process has it open, a reader, antivirus)
+            try:
+                os.replace(part, path)
+                break
+            except PermissionError:
+                time.sleep(wait)
+        else:
+            os.replace(part, path)
     except BaseException:
         part.unlink(missing_ok=True)
         raise

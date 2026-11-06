@@ -139,6 +139,26 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
     assert "server-update --back" in out and "Downtime:" in out and "kept serving" in out
 
 
+def test_an_update_whose_record_cant_be_written_says_so_and_it_is_recorded_next_time(server, monkeypatch, capsys):
+    """server.json held open by another process (Windows) as the update, done and answering, wrote its record: a
+    traceback, the marker left, and no word of what had happened (B-1962). It says the new version runs and the record
+    is to come; the marker is kept, and the next server-update records it (so --back works)."""
+    from ap_coder.ops import update_recovery
+
+    real = server_update._record
+    held = PermissionError(13, "The process cannot access the file: another process uses it", "server.json")
+    monkeypatch.setattr(server_update, "_record", lambda *a, **k: (_ for _ in ()).throw(held))
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 1
+    out = capsys.readouterr().out
+    assert "AP Coder 0.4.0 runs" in out and "server-update again" in out and "record" in out
+    assert update_recovery.read(server["data"])["step"] == "start"
+    monkeypatch.setattr(server_update, "_record", real)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    saved = service.read_config(server["data"])
+    assert saved["previous_folder"] == str(server["current"]) and Path(saved["pre_update_backup"]).is_file()
+    assert not update_recovery.marker_path(server["data"]).exists()
+
+
 @pytest.mark.parametrize("task", ["installed before", "installed now", "none (a Mac)"])
 def test_the_folder_two_versions_back_is_offered_for_deletion_once_the_task_no_longer_starts_in_it(server, capsys,
                                                                                                     task):  # fmt: skip

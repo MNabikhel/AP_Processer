@@ -436,6 +436,23 @@ def test_who_may_ask_the_server(tmp_path):
     assert not allowed("10.0.0.5", {health.TOKEN_HEADER: "short"}, proxy=None) and allowed("10.3.0.1", {}, proxy=None)
 
 
+def test_the_monitors_settings_are_read_again_only_once_server_json_changes(monkeypatch):
+    """A monitor's /readyz opened server.json at each request: on Windows, a file open in another process can't be
+    replaced, so server-update's record could fail while a monitor asked (B-1962). It is read again only once the
+    file changes."""
+    from ap_coder.ops import service
+
+    first, second = "k" * health.MIN_TOKEN, "m" * health.MIN_TOKEN
+    _server_json(monitor_token=first)
+    reads = []
+    real = service.read_config
+    monkeypatch.setattr(service, "read_config", lambda data: reads.append(data) or real(data))
+    assert [health.monitor_config()[0] for _ in range(3)] == [first] * 3 and len(reads) == 1
+    _server_json(monitor_token=second, monitor_addresses=["10.1.2.0/24"])
+    reads.clear()  # (the write's own)
+    assert [health.monitor_config()[0] for _ in range(2)] == [second] * 2 and len(reads) == 1
+
+
 # --- The doctor on the server, and as JSON ----------------------------------------------------------------------
 
 

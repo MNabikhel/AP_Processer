@@ -719,8 +719,14 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
     times["downtime_s"] = _seconds(down)
     entry = {"from": old_version, "to": new_version, "result": "updated", "backup": str(backup or ""),
              "bundle_hash": plan["bundle_hash"], "times": times}  # fmt: skip
-    _record(data, entry, previous_folder=str(current), previous_version=old_version,
-            pre_update_backup=str(backup or ""))  # fmt: skip
+    try:
+        _record(data, entry, previous_folder=str(current), previous_version=old_version,
+                pre_update_backup=str(backup or ""))  # fmt: skip
+    except OSError as exc:  # the marker is kept (step start): the next server-update or service start records it
+        say(f"\nAP Coder {new_version} runs from {new}, but the update's record in {service.config_path(data)} could "
+            f"not be written ({exc}). server-update --back needs it: run server-update again (it records it, and "
+            "restarts the service once), or the service's next start records it.")  # fmt: skip
+        return 1
     recovery.clear(data)
     parts = [("stopping", "stop_s"), ("safety copy", "safety_copy_s"), ("database update", "migrate_s"),
              ("starting", "start_s")]  # fmt: skip

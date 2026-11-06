@@ -3098,6 +3098,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `O_EXCL`, never through a link). server-update going back after its own recovery (the new version did not
     answer) writes a `going-back` marker first. Proven on Linux with the host really run as another account (uid
     65534, the code folders' parent root's), each step; the macOS CI job cuts one short at the safety copy for real.
+  - **server.json on Windows** (B-1962): Windows refuses a rename over a file another process has open without
+    delete sharing (as Python opens files; an antivirus): `write_whole` tries it again for 1.6 s in all
+    (`service.REPLACE_WAITS`); a monitor's `/readyz` reads server.json's monitor settings again only once the file
+    changes (its inode, time and size: `health.monitor_config`); and an update done and answering whose record still
+    can't be written says so, returns 1 and keeps its marker (step `start`), which the next server-update or service
+    start records (`previous_folder`, so `--back` works), never a traceback with nothing said.
   - **A restore** (`core/store/backups.py`, `web/maintenance.py`): its marker `<database>.restoring` (beside the
     database, never in it) is {pid, started, backup}; on the server an ASGI middleware outside the session answers
     503 (a plain page that refreshes itself, JSON for fetches, `Retry-After: 60`) while it is there and its process
