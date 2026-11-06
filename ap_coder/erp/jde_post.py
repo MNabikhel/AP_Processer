@@ -23,7 +23,13 @@ The flow, per export batch made in the JD Edwards format (Exports):
      (the connection refused, AIS busy with 503, the sign-in or permission refused before the orchestration ran).
    * *unknown* / *sending* never go back to *queued* or *failed* unless a lookup by the key says JDE holds nothing
      (``maybe_sent`` is then cleared): JDE down, no client, a lookup that fails leave the row as it is (its next try
-     only). A *sending* row is someone's live post; after ``SENDING_MINUTES`` it is looked up, never sent blind.
+     only). A *sending* row is someone's live post; after ``SENDING_MINUTES`` it is looked up, never sent blind. A
+     "not there" for a send whose answer was lost is believed only once the send is ``resend_minutes`` old
+     (``_in_flight``, D-182): JDE may still be making it.
+   * **A run** (``_run``, D-182): the lookups first, then the sends, one after another, going on past a late answer
+     (*unknown*), then the run's late ones looked up; it stops (the rest queued, saying why) when JDE can't be
+     reached, after ``LATE_STOP`` late answers in a row, or after its time. Just before each voucher its supplier's
+     hold (queued while held) and its G/L date's period (back to *checked*, for a new dry run, once closed) are read.
 4. **The queue** (``retry_queue``: the button on Exports, ``python -m ap_coder jde status --retry``, and every five
    minutes in the background): each row is looked up by its key first; found, it is *posted* (or *failed*, another
    voucher); not found, the same voucher (the same fingerprint, else *failed*: dry run again) is sent with the same
