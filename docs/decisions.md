@@ -1944,8 +1944,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     B-1814; the Process button keeps it again without the emails it unpacked, and takes the files of a kind not read
     from it, no second listing). A page view on the server that finds the listing due starts a thread of its own
     process that lists it (`process.list_for_all`): one at a time across the processes (a lease `folder-listing:
-    <place>` of 60 s, renewed every 15 s as it goes, every 2,000 files: a slow network folder is listed once), and one
-    thread a process; a thread that can't be started lets go of both, for the next view due (B-1816). A pick-up and a page's thread may list at once (the pick-up holds the pick-up lock, not the
+    <place>` of 60 s, renewed every 15 s by a thread of its own whatever the listing is doing, a renewal the database
+    refuses tried again at the next, B-1817: a slow network folder is listed once), and one thread a process; a thread that can't be started lets go of both, for the next view due (B-1816). A pick-up and a page's thread may list at once (the pick-up holds the pick-up lock, not the
     lease): whichever is kept last stands, both the folder as it was, the next one due catching up.
   - **Due:** once the folder's time changed (a file added, removed or renamed) and the listing ended 20 s ago
     (`SHARED_REFRESH`), or 45 s ago whatever changed (`SHARED_MOST`: a scan written over another of its name, an

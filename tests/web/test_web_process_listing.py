@@ -9,6 +9,7 @@ import datetime as dt
 import os
 import re
 import shutil
+import sqlite3
 import threading
 import time
 from email.message import EmailMessage
@@ -254,11 +255,9 @@ def test_a_slow_network_folder_is_listed_once_and_no_view_waits_for_it_long(stor
     assert _offered(client) == ["a.pdf"]
     real, going = process.list_folder, threading.Event()
 
-    def slow(store_, folder_, beat=None):  # its files looked at slowly, the lease renewed as it goes
-        while not going.is_set():
-            beat()
-            time.sleep(0.05)
-        return real(store_, folder_, beat)
+    def slow(store_, folder_):  # its files looked at slowly (the lease renewed meanwhile by a thread of its own)
+        going.wait(10)
+        return real(store_, folder_)
 
     monkeypatch.setattr(process, "list_folder", slow)
     shutil.copy(OTHER_PDF, folder / "b.pdf")
@@ -345,3 +344,42 @@ def test_a_listing_thread_that_cannot_start_leaves_the_folder_to_be_listed_again
     monkeypatch.setattr(threading.Thread, "start", real)
     monkeypatch.setattr(process, "SHARED_WAIT", 5.0)
     assert _offered(client) == ["a.pdf"] and len(listed) == 1
+
+
+def test_the_lease_is_renewed_on_time_whatever_the_listing_is_doing(store, listed, monkeypatch):
+    """The listing's lease was renewed only between the files looked at (every 2,000, at most every 15 s): never while
+    the folder was read by name (a network share's 300,000 names), its saved emails looked at or what is new worked
+    out, nor in time when 2,000 slow looks took longer than the lease; and a renewal the database refused (locked
+    past its wait) stopped the whole listing. A thread of its own renews it on time, a refused renewal tried again at
+    the next."""
+    monkeypatch.setattr(process, "LISTING_LEASE", 0.4)
+    monkeypatch.setattr(process, "SHARED_WAIT", 0.1)
+    _folder(store, "a.pdf")
+    client = _worker(store)
+    real_names, going, more = imports.folder_names, threading.Event(), threading.Event()
+
+    def slow_names(folder):  # the folder read by name, slowly
+        going.set()
+        more.wait(10)
+        return real_names(folder)
+
+    real_renew, renewals = Store.renew_lease, []
+
+    def renew(self, name, owner, seconds):  # the first refused: the database locked past its wait
+        if name.startswith("folder-listing:"):
+            renewals.append(name)
+            if len(renewals) == 1:
+                raise sqlite3.OperationalError("database is locked")
+        return real_renew(self, name, owner, seconds)
+
+    monkeypatch.setattr(imports, "folder_names", slow_names)
+    monkeypatch.setattr(Store, "renew_lease", renew)
+    client.get("/process")  # none kept: this view starts the listing
+    assert going.wait(5)
+    ends = time.monotonic() + 5
+    while len(renewals) < 6 and time.monotonic() < ends:  # past the lease's first 0.4 s
+        time.sleep(0.02)
+    assert len(renewals) >= 6 and not Store(store.path).take_lease(_lease(store), "another:1", 60)
+    more.set()
+    _listed_again(store, None)
+    assert _offered(client) == ["a.pdf"]

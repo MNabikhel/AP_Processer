@@ -38,7 +38,6 @@ NO_ROOM = ("The disk of the data folder is nearly full: AP Coder reads no more i
            "files wait in line in the invoices folder.")  # fmt: skip
 RESTORING = "A backup is being restored: the invoices in line are read once it is done."
 Read = tuple[str, int | None, int | None, str]  # (place, size, time in nanoseconds, SHA-256), as ``read_file``
-BEAT_FILES = 2000  # files a listing looks at between two calls of its ``beat``
 
 
 def owner_id(kind: str) -> str:
@@ -76,18 +75,15 @@ class Listing:
         store.keep_listing(self.place, self.began, self.mtime_ns, found)
 
 
-def list_folder(store: Any, folder: Path, beat: Callable[[], None] | None = None) -> Listing:
+def list_folder(store: Any, folder: Path) -> Listing:
     """``folder`` as it is now (``Listing``): its files by name (``folder_names``), each invoice file's and saved
     email's size and time looked at, none read; new, the invoice files the pick-up hasn't read since they changed,
-    nor whose content is in AP Coder or in line (``Store.unseen_files``). ``beat()`` is called every ``BEAT_FILES``
-    files looked at (a slow network folder: the lease of whoever lists it renewed). Raises OSError."""
+    nor whose content is in AP Coder or in line (``Store.unseen_files``). Raises OSError."""
     folder = folder.resolve()
     began, mtime_ns = time.time(), os.stat(folder).st_mtime_ns  # (the time first: a change meanwhile shows later)
     names, emails, others = folder_names(folder)
     listed, mails = [], []
-    for n, name in enumerate(names):
-        if beat is not None and n % BEAT_FILES == 0:
-            beat()
+    for name in names:
         place = os.path.join(folder, name)
         try:
             seen = os.stat(place)

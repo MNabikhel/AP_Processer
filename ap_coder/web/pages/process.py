@@ -741,17 +741,14 @@ def list_for_all(store: Store, place: Path) -> bool:
 
 
 def _list_for_all(store: Store, place: Path, lease: str) -> None:
-    renewed = [time.monotonic()]
-
-    def beat() -> None:
-        if time.monotonic() - renewed[0] >= LISTING_LEASE / 4:
-            store.renew_lease(lease, _OWNER, LISTING_LEASE)
-            renewed[0] = time.monotonic()
-
+    done = threading.Event()
+    beat = threading.Thread(target=_renewing, args=(store, lease, done), name="ap-coder-folder-listing-lease",
+                            daemon=True)  # fmt: skip
     try:
+        beat.start()
         with store.session():
             try:
-                list_folder(store, place, beat).keep(store)
+                list_folder(store, place).keep(store)
             except OSError as exc:  # kept as such: each process's page says why
                 why = exc.strerror or type(exc).__name__
                 store.keep_listing(str(place), time.time(), 0, {"files": [], "emails": [], "others": [], "error": why})
@@ -759,10 +756,23 @@ def _list_for_all(store: Store, place: Path, lease: str) -> None:
         logging.getLogger(__name__).warning("the invoices folder %s could not be listed for the import page", place,
                                             exc_info=True)  # fmt: skip
     finally:
+        done.set()
         with contextlib.suppress(Exception):
             store.drop_lease(lease, _OWNER)
         with _LISTING_LOCK:
             _LISTING.discard(str(place))
+
+
+def _renewing(store: Store, lease: str, done: threading.Event) -> None:
+    """The listing's lease renewed every LISTING_LEASE/4 until ``done``, whatever the listing is doing (the folder
+    read by name, each file looked at, what is new worked out: B-1817). A renewal the database refuses (busy past its
+    wait) is tried again at the next: the listing goes on."""
+    while not done.wait(LISTING_LEASE / 4):
+        try:
+            store.renew_lease(lease, _OWNER, LISTING_LEASE)
+        except Exception:  # noqa: BLE001 - a busy database: tried again at the next, well within the lease
+            logging.getLogger(__name__).warning("the lease on listing the invoices folder was not renewed just now",
+                                                exc_info=True)  # fmt: skip
 
 
 def _next_listing(store: Store, place: str, kept: Any) -> Any:
