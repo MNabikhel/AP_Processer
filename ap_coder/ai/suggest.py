@@ -32,12 +32,14 @@ of the history, built once (``_memory``): a long history (years of ERP history) 
 from __future__ import annotations
 
 import re
+import sys
 import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.memory import (
+    PAST_BYTES_KEPT,
     PAST_KEPT,
     PAST_ROWS_KEPT,
     Latest,
@@ -143,9 +145,9 @@ _SAID_LOCK = threading.Lock()
 
 _MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
 # A vendor's ``learning_rows`` past the whole memory's cap (``WithPast``), by whose they are: (the shared rows and the
-# accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended), the latest
-# used last (``_with_past``).
-_PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory]] = {}
+# accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended, the bytes it
+# holds of its own: ``_own_bytes``), the latest used last (``_with_past``).
+_PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory, int]] = {}
 _PAST_LOCK = threading.Lock()
 
 
@@ -163,9 +165,10 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
     """The memory of a vendor's ``learning_rows`` past the whole memory's cap: the shared rows' one, built once per
     change of the lessons (``_MEMORY``: the same list while the store's stamp holds, D-154), extended by the vendor's
     older lessons (``_extended``): what building it of all the rows gives, in milliseconds. Kept for ``PAST_KEPT``
-    vendors and ``PAST_ROWS_KEPT`` of their lessons, the latest used always (D-159), while the same lists come (the
-    store's, kept while its stamps hold). Once the shared rows are others (the lessons changed), the vendors' memories
-    extended from the older ones are let go: each holds all of its shared rows' memory (B-1719)."""
+    vendors, ``PAST_ROWS_KEPT`` of their lessons and ``PAST_BYTES_KEPT`` of their own (D-171), the latest used always
+    (D-159), while the same lists come (the store's, kept while its stamps hold). Once the shared rows are others (the
+    lessons changed), the vendors' memories extended from the older ones are let go: each holds all of its shared
+    rows' memory (B-1719)."""
     shared, past = feedback.shared, feedback.past
     with _PAST_LOCK:
         hit = _PAST.pop(feedback.key, None)
@@ -179,11 +182,20 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
         for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
             del _PAST[key]
         _PAST.pop(feedback.key, None)
-        _PAST[feedback.key] = (shared, valid, past, memory)
+        _PAST[feedback.key] = (shared, valid, past, memory, _own_bytes(memory))
         while len(_PAST) > 1 and (len(_PAST) > PAST_KEPT
-                                  or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT):  # fmt: skip
+                                  or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT
+                                  or sum(kept[4] for kept in _PAST.values()) > PAST_BYTES_KEPT):  # fmt: skip
             del _PAST[next(iter(_PAST))]
     return memory
+
+
+def _own_bytes(memory: _Memory) -> int:
+    """About what a memory extended for one vendor holds of its own: the lists and dicts ``_extended`` copied from the
+    shared memory (their own size, not the patterns and words they share with it)."""
+    index = memory.index
+    return sum(sys.getsizeof(x) for x in (memory.patterns, memory.usual, memory.newest, index.entries, index.accounts,
+                                          index.by_word, index.weight, index._by_letter))  # fmt: skip
 
 
 def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, Any]],
