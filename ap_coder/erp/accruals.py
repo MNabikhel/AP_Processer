@@ -272,11 +272,15 @@ def _exported_bills(store: Store, rows: list[dict], end: str) -> set[tuple[str, 
 
 def late_after(store: Store, period_end: str) -> str:
     """The day after which an export batch leaves its invoices out of the ERP at ``period_end`` (D-133): the period
-    end when JD Edwards dates a voucher by the day it is exported; with the invoice date as its G/L date (the
-    default), a voucher exported later still lands in its own month, so no batch is late."""
+    end when JD Edwards dates a voucher by the day it is exported, or when its open period starts after the period end
+    and a G/L date in a closed period is moved into it (D-182: an invoice of the period in a batch made since goes
+    with a G/L date after it, B-1883); with the invoice date as its G/L date (the default), a voucher exported later
+    still lands in its own month, so no batch is late."""
     from . import jde
 
-    return period_end if jde.load(store).gl_date == jde.GL_DATE_EXPORT else "9999-12-31"
+    settings = jde.load(store)
+    moved = settings.closed_period == jde.CLOSED_MOVE and settings.open_from > period_end
+    return period_end if settings.gl_date == jde.GL_DATE_EXPORT or moved else "9999-12-31"
 
 
 def _unposted_note(status: str) -> str:

@@ -101,6 +101,38 @@ def test_with_the_invoice_date_as_g_l_date_an_invoice_exported_after_the_period_
     assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
 
 
+def test_an_invoice_whose_g_l_date_is_moved_past_the_period_end_is_accrued_in_its_month(tmp_path):
+    """B-1883: with September closed in JD Edwards (the open period from 1 October, closed periods moved, D-182), an
+    invoice dated 14 September exported on 2 October goes with the G/L date 1 October, yet month end took it as in
+    September's ledger ("with the invoice date as its G/L date a voucher exported later lands in its own month"): in
+    neither September's ledger nor its accruals. A batch made after the period end is late then, as with the export
+    day as the G/L date; one made by the period end, or with the open period from within it, is not."""
+    from ap_coder.erp import jde, jde_post
+
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-10-01",
+                                    closed_period=jde.CLOSED_MOVE))  # fmt: skip
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    store.import_vendor_master([{"vendor_name": nw["vendor_name"], "erp_id": "4001"}])
+    a = store.add_invoice(tmp_path / "a.pdf", nw, {})
+    store.approve_invoice(a, nw, "Jane")
+    batch = store.create_export_batch([a], jde.FORMAT)
+
+    def made_on(when):
+        with store._conn() as conn:
+            conn.execute("UPDATE export_batches SET created_at = ? WHERE id = ?", (when, batch))
+        return [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
+
+    late = made_on("2026-10-02T09:15:00")
+    assert jde.from_julian(jde_post.payloads(store, batch)[0][a]["pay_items"][0]["VLDGJ"]) == dt.date(2026, 10, 1)
+    assert late and {x.note for x in late} == {accruals.EXPORTED_LATE}
+    assert made_on("2026-09-30T16:40:00") == []  # made in September, while it was open: in September's ledger
+    made_on("2026-10-02T09:15:00")
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-09-01"))
+    assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]  # September open: not moved
+
+
 def test_an_exported_invoice_whose_jde_voucher_is_not_posted_yet_is_not_in_the_erp(tmp_path, monkeypatch):
     """B-1862 (R4): an invoice in an export batch counted as in the ERP at month end even when its voucher, sent
     through the JD Edwards API, was waiting in the queue (JD Edwards down), sent with its answer lost, or refused: its

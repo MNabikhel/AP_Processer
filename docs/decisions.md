@@ -2488,7 +2488,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `gl_moved`) or held (`JDE_PERIOD_CLOSED`); after it, held. The same G/L date goes in the files. Just before
       each voucher the period is read again (a period closed mid-batch: the rest back to *checked*, dry run again);
       JDE refusing a G/L date as closed (`PERIOD_REFUSED`: PBCO, "closed period"…) holds back the run's others of
-      that month and before.
+      that month and before. Month end: with the open period starting after the period end and closed periods
+      moved, a batch made after the period end is late (`accruals.late_after`, as with the export day as the G/L
+      date: its invoices of the period go with a G/L date after it, so they are accrued, B-1883).
     - **Z-table keys** (`jde.batch_number`, `invoice_site`, `batch_site`): VLEDTN = `APC` + invoice id + `-` + 8
       characters of a digest of the invoice's file and when it was added (the identity a restore uses, D-105);
       VLEDBT = prefix + batch + `-` + up to 4 characters of a digest of the batch (when made, its number, its
