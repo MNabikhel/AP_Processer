@@ -387,9 +387,7 @@ def test_waiting_for_ovisocr2_says_how_many_are_ahead_and_how_long(client, store
     assert "can't be approved without a person until OvisOCR2 has read it" in shown
     assert f"/review/{invoice_id}/read-pages" not in page  # nothing to ask for
 
-    store.queue_page_read(900, "new invoice")
-    with store._conn() as conn:
-        conn.execute("UPDATE page_reads SET created_at = '2000-01-01T00:00:00' WHERE invoice_id = 900")
+    store.queue_page_read(900, "asked", requested_by="clerk@example.com")  # a person's request goes first (D-171)
     assert "Waiting for OvisOCR2: 1 invoice ahead, about 8 minutes." in _reader_line(client, invoice_id)
 
 
