@@ -125,6 +125,83 @@ def test_a_run_keeps_to_its_time_and_the_queue_sends_the_rest(tmp_path, ais):
     assert set(statuses(store, batch).values()) == {jde_post.POSTED} and len(finals(ais)) == 3
 
 
+@pytest.mark.slow
+def test_500_vouchers_post_in_one_run_through_slow_and_late_answers_none_twice(tmp_path, ais, monkeypatch):
+    """The scale goal's target 4 (D-182): 500 vouchers through the stand-in, each answered after R04110ZA's run, one in
+    ten late past the voucher's wait (half of those made all the same, half never made) and one in twenty refused.
+    One go-ahead sends them all; the late ones are looked up by their key (the made ones posted, the others sent once
+    more once JD Edwards could have finished them), the last few by the queue right after. Every voucher ends posted
+    or refused, none is made twice, and the times are printed (``-s``)."""
+    from ap_coder.core.store import Store
+    from tests.erp.test_jde import _invoice
+
+    monkeypatch.setattr(jde_post, "LOOK_AFTER", 2.0)
+    store = Store(tmp_path / "ap_coder.db")
+    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, voucher_timeout=0.3,
+                                    resend_minutes=0.05))  # fmt: skip
+    final = _invoice(ON, 1)["final_output"]
+    store.import_vendor_master([{"vendor_name": final["vendor_name"], "erp_id": "4001"}])
+    began = time.perf_counter()
+    ids = []
+    for n in range(500):
+        doc = {**final, "invoice_number": f"P-{n:04d}"}
+        ids.append(store.add_invoice(tmp_path / f"{n}.pdf", doc, {}))
+        store.approve_invoice(ids[-1], doc, "Jane")
+    batch = store.create_export_batch(ids, jde.FORMAT)
+    for line in next(iter(jde_post.payloads(store, batch)[0].values()))["gl_lines"]:
+        bu, obj = line["VNANI"].split(".")[:2]
+        ais.data["gl_accounts"].append(
+            {
+                "account_id": line["VNANI"],
+                "business_unit": bu,
+                "object": obj,
+                "subsidiary": "",
+                "description": "",
+                "posting_edit": "",
+                "level": "7",
+            }
+        )
+    connect(store, ais)
+    made_at = time.perf_counter()
+    assert [r["status"] for r in jde_post.dry_run(store, batch)["rows"]] == [jde_post.CHECKED] * 500
+    checked_at = time.perf_counter()
+
+    sent: set[int] = set()
+
+    def plan(key, inputs):
+        if key != "voucher_create" or inputs.get("mode") != "FINAL":
+            return None
+        n = int(inputs["pay_items"][0]["VLVINV"][2:])
+        if n % 20 == 3:
+            return ("refuse", "0008", "Error: Business Unit CC100 Invalid")
+        first, _ = n not in sent, sent.add(n)
+        return {7: "slow-after", 13: "slow"}.get(n % 20) if first else None  # late once: made, or never made
+
+    ais.plan, ais.latency, ais.slow_seconds = plan, 0.02, 0.6
+    seen = []
+    result = jde_post.post(store, batch, actor="sam", progress=seen.append)
+    posted_at = time.perf_counter()
+    after_run = {s: sum(1 for p in jde_post.postings(store, batch) if p["status"] == s)
+                 for s in (jde_post.POSTED, jde_post.FAILED, jde_post.UNKNOWN, jde_post.QUEUED)}  # fmt: skip
+    assert after_run[jde_post.QUEUED] == 0 and result["error"] == "" and seen[-1]["done"] == 500
+    time.sleep(3.5)  # the last late ones: JD Edwards could have finished them
+    jde_post.retry_queue(store)
+    done_at = time.perf_counter()
+    rows = jde_post.postings(store, batch)
+    assert sorted({p["status"] for p in rows}) == [jde_post.FAILED, jde_post.POSTED]
+    refused = [p for p in rows if p["status"] == jde_post.FAILED]
+    assert len(refused) == 25 and all("Business Unit CC100 Invalid" in p["error"] for p in refused)
+    made = [v["invoice_number"] for v in ais.vouchers() if v["invoice_number"].startswith("P-")]
+    assert len(made) == len(set(made)) == 475 == len({p["document"] for p in rows if p["document"]})  # none twice
+    assert len(finals(ais)) == 500 + 25  # the 25 never made sent once more, after their lookup said so
+    print(
+        f"\n500 vouchers: approved and batched {made_at - began:.1f} s, dry run {checked_at - made_at:.1f} s, "
+        f"go-ahead run {posted_at - checked_at:.1f} s ({after_run}), queue after it {done_at - posted_at:.1f} s "
+        f"(3.5 s of it waiting): {sum(p['status'] == jde_post.POSTED for p in rows)} posted, {len(refused)} refused, "
+        f"{len(finals(ais))} sends, {len(ais.orchestration_calls('voucher_status'))} lookups"
+    )
+
+
 # --- Holds ------------------------------------------------------------------------------------------------------------
 
 
