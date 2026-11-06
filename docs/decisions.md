@@ -2528,7 +2528,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `validation` (the totals, the posting, `off_text`, `prices_include_tax`); `line_tax` (the solver's cents, its
       tolerance `money.solver_cents` (was `line_tax.tolerance_cents`), `_tax_base`, `can_explain`, prefill's target);
       `taxreturn.self_assessment` (the base, and the estimate in the currency's units, B-1868); `terms.payment` (the
-      discount); `review.split_line` (a part by percent, the last part's remainder).
+      discount); `review.split_line` (a part by percent, the last part's remainder); `erp/accruals` (received, not
+      invoiced: 3 × 2.675 was 8.02, now 8.03, B-1912).
     - Float `round` kept where no money is worked out or converting would cost more than it changes: rates
       (`round(rate, 6)`, the % shown), confidences, quantities and unit prices at 6 places, the PO match (`po.py`,
       compared within its own tolerance), the reports' running totals (`taxreturn.Report.totals`, `by_type`,
@@ -2537,28 +2538,62 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       for an amount with a third decimal at a tie, while a change there moves `SUMMARY_RULES` and builds every
       database's summary again at its next start, 86 s at 100,000 invoices: left for the next change that moves it).
   - **What counts as equal** (`money`, old → new):
+    - the float error of a difference (`within`): a billionth beyond the tolerance → a billionth and 2e-15 of the
+      larger amount (B-1906, the review): two amounts printed to the cent a cent apart differ in floats by a cent and
+      up to 2e-9 from 2^23 dollars (8,388,608) on, so CENT refused the cent it is for (131 of 300 generated invoices
+      of 8 to 60 million newly TOTAL_MISMATCH, hard). Not each difference rounded to the cent, which would also move
+      the half cents, each by the float it lands on: a total read 113.005 is within EXACT of a posting of 113.01 and
+      of 113.00, and would be a cent from the one (POSTING_UNBALANCED) and none from the other; LINE_MATH's 0.5%
+      would move by up to half a cent. The float error is a part of the amounts' size: at most 2.5 units in the last
+      place of the larger (an amount, a sum of two, the subtraction);
     - nothing: `> 0.004`, `>= 0.005`, `< 0.005`, `<= 0.004` → `NIL` 0.005 (`nil`; the same at the cent);
     - the GL posting against the total: `> 0.005` → `EXACT` 0.005 (the same);
     - subtotal + tax = total: TOTAL_MISMATCH 0.02, the Tax check 0.015 → `CENT` 0.01 (B-1865); the tax lines = the
       tax total: TAX_LINES_TOTAL_MISMATCH 0.02 → `CENT` (B-1865); the lines = the total when prices include the
       tax: 0.011 (validation), 0.015 (the Tax check's hint) → `CENT` (the same at the cent). One sum of amounts
       printed rounded: a vendor who adds before rounding is at most a cent off (two or three taxes included);
+    - and a total paid in cash, rounded to the nickel (B-1907, the review): TOTAL_MISMATCH and the Tax check's
+      total row take a total that is a multiple of 5 cents, at most `CASH_ROUNDING` 0.02 from subtotal + tax (the
+      nickel nearest it), when a line is that rounding (`cash_rounded`). Why this and not 0.02 again ("nothing
+      worse", and what the review screen means), counted with the review's `runner.py`/`compare.py`, cb08074
+      against this: of 300 generated cash receipts, their rounding entered as a line so that the posting balances,
+      117 were blocked at a cent, none now (none on cb08074). Of 300 invoices with one amount read a cent or two
+      off, 57 are blocked that cb08074 passed, and stay so: the subtotal (30) or the tax total (27) read 2 cents off,
+      the lines and the posting right. That is a header amount misread, not a good invoice's coding: TOTAL_MISMATCH
+      names the sum, one field puts it right, and the Tax check now shows the same ✕ (cb08074 showed the subtotal's
+      beside no finding, the tax total's not at all). 0.02 again would pass those 57 and bring back B-1865's ✕
+      beside no finding. The rounding line is asked for: without it a subtotal read 2 cents off whose total is a
+      multiple of 5 cents (one in five) would pass, and a cash receipt without its rounding line can't post anyway
+      (POSTING_UNBALANCED, hard on cb08074 too). Any currency with cents, as cb08074 passed any 2 cents;
+    - the Tax check's total row adds the tax total, the sum TOTAL_MISMATCH adds (it added the tax lines: a tax total
+      read 2 cents off was a hard TOTAL_MISMATCH beside an all-✓ Tax check, 27 of the 300), and is ✕ too when the
+      tax lines are not the tax total (TAX_LINES_TOTAL_MISMATCH's `CENT`), its hint saying which sum is off and its
+      difference the total less subtotal + the tax lines, as before (a tax line read 2 cents off keeps its ✕ there:
+      6 of the 300 have none on their tax row, the tax read within a cent of its lines' taxes added up) (B-1911);
     - the lines against the subtotal: SUBTOTAL_MISMATCH max(0.02, 0.01·n), the Tax check 0.015 →
       `per_line(n)` = 0.01·max(1, n) + 0.01, the rule of a tax's base (B-1866; a cent more from two lines). Not the
       Tax check's cent: SUBTOTAL_MISMATCH and TOTAL_MISMATCH are hard (Approve anyway never covers them, D-75), a
-      vendor's rounding line by line is no misread, and POSTING_UNBALANCED asks for every cent already;
+      vendor's rounding line by line is no misread, and POSTING_UNBALANCED asks for every cent already. The Tax
+      check's lines row asks for every cent too (`EXACT`) when the posting can't balance (the lines and the tax lines,
+      each rounded as posted, are not the total: POSTING_UNBALANCED), so that it points at a line read off: with a
+      cent a line, a line read 2 cents off was all ✓ beside the block (29 of the 300; a cent off, 32, all ✓ on
+      cb08074 too, now ✕ as well) (B-1910). SUBTOTAL_MISMATCH keeps `per_line`;
     - the lines against a tax's base, QST on GST's base, the line that is the difference: 0.01·n + 0.01 (tax,
       taxmath) → `per_line` (the same; the Tax check's two-rate base with no lines 0.01 → 0.02);
     - a tax against its base × rate, once or line by line: `check_taxes` one unit, `tax_band` (a unit × (n/2 + 1))
       a warning not an error; the Tax check 1.5 units, or the band → `TAX_UNITS` one unit for both, the band only
       the finding's severity (B-1867); one tax at two rates: a unit × (k + 0.5) → a unit per tax line (the same);
+      the review screen's tick on a tax line (`web/invoice_view.tax_check`, its taxable × rate rounded to the cent
+      within 0.01·max(1, n) + 0.01) → the finding's rule, `tax_right` on `tax.tax_line_ways` (once on the taxable,
+      line by line when it is its tax's only line), in the currency's units (B-1908, B-1909, the review): the Tax
+      check said "GST WRONG 0.02" beside "GST ✓" on 229 of 400 generated invoices (60 on cb08074), none now, and a
+      right tax in whole yen is ✓;
     - Azure's amount: 0.02 → `READ_AGAIN` (the same); LINE_MATH: max(0.02, 0.5%) → max(`READ_AGAIN`,
       `LINE_MATH_SHARE`) (the same); `line_tax._tax_base`: 0.05 → `PRINTED_BASE` (with the float error of the
       difference); the solver: max(2, n) + 0.5/rate cents half-even → `solver_cents` half up (the same at every rate
       in use, none ends in .5);
-    - left apart, outside this item: the review screen's ✓ on a tax line (`web/invoice_view.tax_check`,
-      0.01·max(1, n) + 0.01 on its amount, wider than TAX_CALC_MISMATCH), JD Edwards' PO-matched SUBTOTAL_MISMATCH (a
-      cent a line, `erp/jde.py`), capture's `amounts_equal` (0.005).
+    - left apart, outside this item: JD Edwards' PO-matched SUBTOTAL_MISMATCH (a cent a line, `erp/jde.py`),
+      capture's `amounts_equal` (0.005).
   - **The intended output changes** (`scripts/same_behaviour.py --ref 5aa6014 tax approve pipeline`; every line of
     the tax probe compared, and split by running this code with the old float arithmetic patched in):
     - tax: 505 of 20,000 outputs. The tolerances alone, 44: a tax row of the Tax check ✓ within the band, now ✕
@@ -2574,15 +2609,34 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       invoices change both ways;
     - approve: the same; pipeline: 1 invoice of 20 files: SK PST 665.13 spread over 10 lines, 236.25 × 6% =
       14.175 now 14.18 (14.17), the largest line its own 233.02 (233.03), in its output, AI output and final output.
+    - The review's fixes (B-1906 to B-1913; `--ref cfb45d6 tax approve pipeline`, every line of the tax probe
+      compared): tax, 1,355 of 20,000 outputs, all in the Tax check's total row (with and without the rates set
+      up): where the probe's tax total is not its tax lines (5 cents, a dollar or ten apart), the row adds the tax
+      total (B-1911), so its tax, computed and detail, and a hint naming the tax lines; in 74 the difference shown
+      too (✕ before and after). No row turned right or wrong, no finding, mark or text changed: the probe reaches no
+      amount from 2^23 dollars on, no subtotal a cent or two off its lines, no cash rounding. Approve and pipeline:
+      the same. The review's 16 scenarios × 300 (`runner.py`/`compare.py`, cb08074 against this), newly blocked:
+      none in 15 (cash receipts 117 at cfb45d6, 8-to-60-million invoices 131 TOTAL_MISMATCH at cfb45d6, now none);
+      one amount read off, 57, the header misreads chosen above (at cfb45d6 the same 57). The review screen's two
+      tax verdicts at odds (`screen_agree.py`, 400 invoices): 60 on cb08074, 229 at cfb45d6, none.
   - **Benches** (venv312, old and new): `bench coding --realistic` the same (`lines.jsonl` byte for byte: accuracy
     93.8%, precision 98.2%, tax codes 97.4%, coverage 94.7%); `bench run --quick` the same (`evidence.jsonl` and
     `failures.jsonl` byte for byte: field accuracy 100.0%, verified precision 100.0% at 55.0% coverage, ECE 0.0189).
+    The review's fixes, cfb45d6 against them: the same two benches the same, byte for byte, the same figures.
   - **CPU** (process time over the tax probe's 4,000 invoices, best of 5 × 3, old and new in turn): `check_taxes`
     52.0 → 57.4 µs (+10%), `math_check` 55.4 → 61.6 µs (+11%), `build_gl_distribution` 12.4 → 13.5 µs (+9%); all
-    in decimals it was +22%, +40%, +54%. About 6 µs a review screen's checks.
+    in decimals it was +22%, +40%, +54%. About 6 µs a review screen's checks. The review's fixes (the tax probe's
+    first 2,000 invoices, best of 7 × 6 runs, cfb45d6 and this in turn, on a machine shared with other test runs,
+    ±4 µs): `check_taxes` 56.7 → 56.2 µs, `math_check` 61.0 → 63.4 µs; a tax that doesn't add up on 4,000 lines
+    (the review's `cpu.py`): `check_taxes` 6.9 s → 11 ms (B-1913).
   - **Laptop and server:** the same: functions of the coding and the rates only, no setting or mode.
   - **Left:** JD Edwards' pay items split cents their own way (`erp/jde.py` `_split`: each share cut toward zero, the
     rest on the largest; the GL distribution rounds each half up), J2's file: `money.split` would place them alike.
     The line named as a tax's difference could allow the tax's half unit over the rate, as the solver does.
-  - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`;
-    `tests/coding/test_money.py`, `tests/coding/test_line_tax.py`)
+    After the review, as on cb08074: a total, or a tax line, read a cent off is POSTING_UNBALANCED beside an all-✓
+    Tax check (65 of its 300 misreads; within a cent is right for TOTAL_MISMATCH and TAX_CALC_MISMATCH, and the
+    posting asks for every cent): the total row could ask for every cent when the posting can't balance, as the
+    lines row now does. `tests/reports_reference.py` (the old reports' code) still accrues with `round`.
+  - (`coding/money.py`, `coding/{tax,taxmath,validation,line_tax,taxreturn,terms,review}.py`,
+    `web/invoice_view.py` (`tax_check`), `erp/accruals.py`; `tests/coding/test_money.py`,
+    `tests/coding/test_line_tax.py`, `tests/coding/test_tax.py`, `tests/erp/test_accruals.py`)
