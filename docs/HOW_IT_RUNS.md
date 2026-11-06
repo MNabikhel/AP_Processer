@@ -472,6 +472,13 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   something changed meanwhile (it was worked out after they asked, B-1802); one an older AP Coder wrote, over 16 MB,
   or worked out in a write under way is not kept for the others.
 
+  **The invoices folder listed once for every process** (D-176): Import invoices on the server shows the folder's
+  latest listing, kept in `folder_listings` (`core/store/folder.py`): a pick-up's (the Process button, a scheduled
+  watch), or one a thread of whichever worker found it due made (`process.list_for_all`, the lease
+  `folder-listing:<place>`: once the folder changed and the listing is 20 s old, or 45 s old whatever changed). Each
+  view leaves out at once the files put in line or read since; a file saved in the folder shows within a minute. On a
+  laptop each view lists the folder as before.
+
   The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are

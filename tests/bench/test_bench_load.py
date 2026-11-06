@@ -3,6 +3,7 @@ checks of the database after the run; the report and its gate."""
 
 import asyncio
 import json
+import time
 
 import httpx
 
@@ -235,3 +236,60 @@ def test_the_requests_a_second_of_each_minute_are_over_the_seconds_it_covers():
            "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
     text = load.markdown(load.build_report(_run(samples, duration=90.0), cfg, {"started": "2026-11-05T09:00:00"}))
     assert "| 0 min | 0.5 | 0 | 1.00 s |" in text and "| 1 min | 0.5 | 0 | 1.00 s |" in text
+
+
+def test_a_search_export_is_asked_for_followed_and_downloaded_as_the_page_does(monkeypatch):
+    """On the server search to Excel and CSV are jobs of the background process (D-169): the page's link asks with its
+    header, follows the job (``app.js`` ``pollJob``: at once, then 0.5 s, half as long again while nothing changes,
+    5 s at most) and downloads the file once made. The bench asked for the plain address instead, whose web worker
+    waits for the file holding no thread: not what a browser does. A person with too many files being made already
+    is refused, and that is counted."""
+    seen, refusing = [], []
+    snaps = iter([("running", 0), ("running", 0), ("running", 0), ("running", 5), ("done", 9)])
+
+    def server(request):
+        path, query = request.url.path, request.url.query.decode()
+        seen.append((path, query, request.headers.get("x-ap-coder"), request.headers.get("accept")))
+        if path == "/search":
+            return httpx.Response(200, html="<html><body>Search</body></html>")
+        if path == "/downloads/7":
+            state, done = next(snaps)
+            return httpx.Response(200, json={"state": state, "done": done, "total": 9, "note": "", "error": ""})
+        if query == "job=7":
+            return httpx.Response(200, content=b"PK the workbook")
+        if refusing:
+            return httpx.Response(429, json={"ok": False, "error": "You have 3 files being made already."})
+        return httpx.Response(200, json={"ok": True, "job": 7, "status": "/downloads/7", "file": f"{path}?job=7"})
+
+    waits, real_sleep = [], asyncio.sleep
+
+    async def kept(seconds):  # (no waiting in a test: each wait's length kept)
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(load.asyncio, "sleep", kept)
+
+    async def export():
+        run = _run()
+        run.deadline = time.monotonic() + 60
+        me = load.Person(run, load.Account("pat", "pw", "secret", "clerk"), 0, time.monotonic())
+        await me.client.aclose()
+        me.client = httpx.AsyncClient(base_url=run.base, transport=httpx.MockTransport(server))
+        me.think = lambda share=1.0: 0.0
+        try:
+            await me.export_search()
+            refusing.append(True)
+            await me.export_search()
+        finally:
+            await me.close()
+        return run
+
+    run = asyncio.run(export())
+    kind = seen[1][0].rsplit(".", 1)[1]
+    assert seen[1][2:] == ("1", "application/json")  # the page's header: asked for its job
+    assert [s[0] for s in seen[:8]] == ["/search", f"/search/export.{kind}", *["/downloads/7"] * 5,
+                                        f"/search/export.{kind}"] and seen[7][1] == "job=7"  # fmt: skip
+    assert waits == [0.5, 0.75, 1.125, 0.5]  # the first look at once; after an answer that changed, 0.5 s again
+    assert [s[0] for s in run.samples[1:8]] == [f"GET /search/export.{kind}", *["GET /downloads/{id}"] * 5,
+                                                f"GET /search/export.{kind}?job={{id}}"]  # fmt: skip
+    assert run.counts["search exports downloaded"] == 1 and run.counts["search exports refused (too many at once)"] == 1

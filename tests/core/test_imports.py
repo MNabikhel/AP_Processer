@@ -192,6 +192,39 @@ def test_the_import_page_counts_files_in_line_as_seen(tmp_path):
     assert store.unseen_files(listed) == set() and store.files_stamp() != stamp
 
 
+def test_a_whole_folders_listing_is_found_new_at_once_as_file_by_file(tmp_path, monkeypatch):
+    """``unseen_files`` of a folder's whole listing (``folder=``) reads what the pick-up read there at once (300,000
+    files: 0.6 s, against 0.8 s looked up one by one, D-176), with the same files new: one never read, one changed
+    since it was read, one whose content no invoice has; not one an invoice was made from (a failed one too), one in
+    line, nor one trusted (its size and time not known), whatever its size now. A folder whose files the pick-up
+    read are far more than those listed now (files removed since) is looked up file by file again."""
+    from ap_coder.core.store import folder as folder_part
+
+    store = Store(tmp_path / "ap.db")
+    files = _files(tmp_path / "in", 8)
+    store.note_files(files[:2] + files[3:6] + files[7:] + _files(tmp_path / "in2", 2))  # (in2: a name alike)
+    for f in (files[0], files[1], files[4]):
+        store.add_invoice(f[0], {"vendor_name": "A", "invoice_number": f[0], "grand_total": 1}, {"issues": []})
+    store.add_invoice(files[7][0], None, None, error="could not be read")
+    store.queue_imports([files[5]], source="watch")
+    with store._conn() as conn:  # an older database's file of an invoice, as an upgrade notes it
+        conn.execute("UPDATE seen_files SET size = NULL, mtime_ns = NULL WHERE path = ?", (files[4][0],))
+    Path(files[1][0]).write_bytes(b"%PDF-1.4 written over")
+    Path(files[4][0]).write_bytes(b"%PDF-1.4 written over too")
+    listed = [(place, os.stat(place).st_size, os.stat(place).st_mtime_ns) for place, *_ in files]
+    expected = {files[1][0], files[2][0], files[3][0], files[6][0]}
+    assert store.unseen_files(listed) == expected  # one by one
+    monkeypatch.setattr(folder_part, "_AT_ONCE_FROM", 1)
+    folder = str((tmp_path / "in").resolve())
+    with store._conn() as conn:
+        assert folder_part._known_in(conn, folder, len(listed)) is not None  # (read at once)
+    assert store.unseen_files(listed, folder) == expected
+    store.note_files(_files(tmp_path / "in", 20, "removed since"))
+    with store._conn() as conn:
+        assert folder_part._known_in(conn, folder, len(listed)) is None  # (one by one)
+    assert store.unseen_files(listed, folder) == expected
+
+
 def test_finished_files_go_after_a_week_but_the_latest_runs(tmp_path):
     """The queue keeps what it read for IMPORT_KEEP_DAYS (a year of imports is 300,000 rows): the latest run stays,
     whatever its age, for the Process page."""

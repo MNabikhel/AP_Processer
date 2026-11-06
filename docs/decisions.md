@@ -1927,3 +1927,74 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/reports.py`, `erp/{spend,recurring,insights,search}.py`, `web/pages/{review,month_end}.py`,
     `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/erp/{test_insights,test_suggest_recurring,
     test_search}.py`, `tests/web/test_web_finance.py`)
+- **D-176** · **Import invoices on the company server: the invoices folder listed once for every process and kept in
+  the database; a view shows it, the files put in line or read since left out at once; a file saved in the folder
+  shows within a minute** (phase 3 part 2; changes D-166's list kept in each process, on the server only).
+  - **Why:** at 300,000 invoices the busiest web workers spent 16.9% of their CPU on Import invoices (py-spy:
+    `folder_files` 16.4%, `unseen_files` 5.6%, `folder_names` 3.7%). The invoices folder keeps every file ever
+    received, and D-166's list, kept in each process, was worked out again in each worker after any invoice, pick-up
+    note or import batch anywhere (`files_stamp`), a change of the folder, or a minute on: under load, at nearly every
+    view, 2.75 s of CPU each (the names 0.8 s, each file's size and time 1.0 s, the one query 0.8 s).
+  - **The listing** (`core/store/folder.py` `folder_listings`, made by its own start-up, `fill_seen_files`, whatever
+    the version: no schema change): one row a folder, its resolved place, when the listing began and the folder's
+    time read before it, and what it found as JSON: the invoice files new then (name, size, time), the saved emails,
+    the files of a kind not read, how long it took (`intake.imports.list_folder`, `Listing.keep`).
+  - **Who lists:** a pick-up lists the folder anyway (the Process button, a scheduled watch: `pick_up` keeps its
+    listing; the Process button keeps it again without the emails it unpacked, and takes the files of a kind not read
+    from it, no second listing). A page view on the server that finds the listing due starts a thread of its own
+    process that lists it (`process.list_for_all`): one at a time across the processes (a lease `folder-listing:
+    <place>` of 60 s, renewed every 15 s as it goes, every 2,000 files: a slow network folder is listed once), and one
+    thread a process. A pick-up and a page's thread may list at once (the pick-up holds the pick-up lock, not the
+    lease): whichever is kept last stands, both the folder as it was, the next one due catching up.
+  - **Due:** once the folder's time changed (a file added, removed or renamed) and the listing ended 20 s ago
+    (`SHARED_REFRESH`), or 45 s ago whatever changed (`SHARED_MOST`: a scan written over another of its name, an
+    invoice deleted whose file is new again). Counted from the listing's end, so a folder that takes minutes to list
+    is not listed back to back.
+  - **A view** does one look at the folder's time, one read of the listing, and `unseen_files` of its new files only:
+    a file put in line or read since, by any process, is no longer offered at once. It waits (5 s at most,
+    `SHARED_WAIT`) only when it started the listing itself and the one kept is older than 45 s, or there is none: a
+    stopped process's lease (up to 60 s) or a slow folder never makes every view wait on another's listing. A listing
+    shown older than 45 s says when it was made ("As the invoices folder was at 10:41: files saved since show once it
+    is listed again"); none yet: "The invoices folder is being listed", never "No new files". A listing that failed
+    is kept as such, with why, so each process's page says it (B-1804); the Process button says it too (B-1806). The
+    card states the delay: "New files are listed here within a minute".
+  - **The laptop** (one process) as before: each view lists when the folder, a pick-up's notes or the invoices
+    changed, or a minute on, through the same `list_folder`; it keeps nothing for other processes.
+  - **Cheaper, everywhere:** `folder_names` 0.79 → 0.30 s at 300,000 files (a name's suffix and stem without
+    `os.path.splitext`; the text-copy rule only when there are text files; a plain sort where `normcase` changes
+    nothing): the same three lists as before for about 1,600 names of every case, dots and script, checked against
+    the old code. `unseen_files(listed, folder=)` of a whole folder's listing (1,000 files or more) reads what the
+    pick-up read in that folder in one range of `seen_files` (0.81 → 0.58 s), unless it read there more than twice
+    the files listed (files removed since): then one by one, as before.
+  - **One rule:** `pipeline.invoice_files` and `other_files` already are parts of `intake.files.folder_names` (D-168);
+    nothing is repeated in `ai/pipeline` any more.
+  - **The load bench's search to Excel and CSV** (B-1805) go as the page's link sends them on the server (D-169): the
+    job asked for with the page's header, followed as `app.js` follows it (at once, then 0.5 s, half as long again
+    while nothing changes, 5 s at most), then the file downloaded; the report's format is the same, with the file's
+    own route (`GET /search/export.xlsx?job={id}`) beside the asking one and `GET /downloads/{id}`.
+  - **Measured** (process CPU, 4 cores shared with three other agents; a seed of 20,000 invoices with 280,000 empty
+    files added to its invoices folder, each noted as read, 300,000 in all):
+
+    | | before (1c73b77) | after |
+    |---|---:|---:|
+    | a server view after an invoice or a pick-up elsewhere | 2,748 ms | 3.0 ms |
+    | a server view, nothing changed | 2.3 ms | 1.3 ms |
+    | the folder listed (names, sizes and times, what is new) | 2,750 ms, each worker | 1,940 ms, one of them |
+    | `folder_names` | 790 ms | 296 ms |
+    | `unseen_files` of the 300,000 | 831 ms | 584 ms |
+    | a laptop view after a change | 2,747 ms | 1,984 ms |
+
+  - **Not done:**
+    - The listing runs on a thread of a web worker (one at a time for the whole server: about 2 s of CPU at 300,000
+      files, at most every 20 s while the folder changes and someone looks). The background process could make it
+      instead, with a hook in `app.start_background_work` (not this work's file).
+    - Each file's size and time is still looked at (1.0 s of the listing's 1.9 s): it is what shows a file written
+      over in place. On Windows the listing itself has them (`DirEntry.stat`, no look at each file over a network
+      share), not used: what the pick-up notes comes from `os.stat`, and the two must agree.
+    - `seen_files` keeps the rows of files removed from the folder for ever; past twice the files listed, the
+      folder's listing is looked up one by one again.
+    - A view looks at none of the files listed: one removed shows until the next listing (within the minute).
+  - (`core/store/folder.py`, `intake/{files,imports}.py`, `web/pages/process.py`, `web/templates/process.html`,
+    `bench/load.py`; `tests/web/test_web_process_listing.py`, `tests/web/test_web_process.py`,
+    `tests/intake/test_files.py`, `tests/intake/test_imports.py`, `tests/core/test_imports.py`,
+    `tests/bench/test_bench_load.py`)
