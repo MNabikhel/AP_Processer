@@ -2501,7 +2501,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       VLEDBT = prefix + batch + `-` + up to 4 characters of a digest of the batch (when made, its number, its
       invoices) as room allows in 15. Deterministic: the same each time a voucher is sent or its batch downloaded,
       so the files and the API agree; another invoice or batch under the same number gets others. An upgrade changes
-      the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again).
+      the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again),
+      and a voucher approved and waiting in the queue that JD Edwards hasn't (or any changed since its go-ahead) is
+      held back for a new dry run, its go-ahead kept for month end, *Not sent: dry run again* on the batch's panel,
+      not *Refused by JD Edwards* (B-1888).
     - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
       go-ahead, or refused, by JDE or by a dry run since its go-ahead (B-1885), unless the batch's files were
       downloaded since, is not in the ERP; the kept answer's

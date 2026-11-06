@@ -66,6 +66,7 @@ LABELS = {CHECKED: "Dry run passed", REFUSED: "Refused in the dry run", QUEUED: 
           SENDING: "Being sent", POSTED: "Posted", FAILED: "Refused by JD Edwards",
           UNKNOWN: "Sent, answer not received: being checked"}  # fmt: skip
 TONES = {CHECKED: "ok", REFUSED: "err", QUEUED: "warn", SENDING: "warn", POSTED: "ok", FAILED: "err", UNKNOWN: "warn"}
+HELD_BACK = "Not sent: dry run again"  # *checked* after its go-ahead, held back by its run (``status_rows``)
 IN_FLIGHT = (QUEUED, SENDING, UNKNOWN)  # approved and not finished: the queue
 LOCKED = ledger.LOCKED  # by status; any row with ``maybe_sent`` too (``ledger.LOCKED_SQL``)
 LOCKED_SQL = ledger.LOCKED_SQL
@@ -726,11 +727,14 @@ def _deliver(store: Any, client: jde_ais.AisClient, row: dict[str, Any], payload
              actor: str | None) -> tuple[str, jde_ais.AisError | None]:  # fmt: skip
     """Send one approved voucher JDE has none of (never sent, or asked for by its key first); its new status."""
     attempts = int(row.get("attempts") or 0) + 1
-    if payload is None:  # changed since it was approved, and JDE has none under its key
-        _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], status=FAILED, next_try=None,
-             error="changed in AP Coder since it was approved and not in JD Edwards: dry run and approve "
-             "again")  # fmt: skip
-        return FAILED, None
+    if payload is None:  # changed since it was approved, and JDE has none under its key: held back, its go-ahead kept
+        # for month end (B-1888: an upgrade's new VLEDBT / VLEDTN, a settings change; not "refused by JD Edwards")
+        if not _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], status=CHECKED,
+                    next_try=None, error="Not sent: it changed in AP Coder since its go-ahead (an update of AP Coder "
+                    "or of its JD Edwards settings), and JD Edwards hasn't it: dry run again, then give the "
+                    "go-ahead"):  # fmt: skip
+            return "skipped", None
+        return CHECKED, None
     claimed = _claim(store, row, attempts)
     if claimed is None:
         return "skipped", None
@@ -1074,13 +1078,17 @@ def retry_queue(store: Any, actor: str | None = None, client: jde_ais.AisClient 
 
 
 def status_rows(store: Any, batch: int) -> list[dict[str, Any]]:
-    """The batch's vouchers as the Exports page lists them."""
+    """The batch's vouchers as the Exports page lists them (one its go-ahead's run held back, for a new dry run: said
+    so, B-1888)."""
     invoices = {i["id"]: i for i in store.get_invoices(store.batch_invoice_ids(batch))}
     out = []
     for p in postings(store, batch):
         final = (invoices.get(p["invoice_id"]) or {}).get("final_output") or {}
+        approved = p["approved_at"] or ""  # held back: approved since its dry run, and its go-ahead's run over
+        held = p["status"] == CHECKED and bool(approved) and approved >= (p["checked_at"] or "") and not p["next_try"]
         out.append({
-            **p, "label": LABELS.get(p["status"], p["status"]), "tone": TONES.get(p["status"], "gray"),
+            **p, "label": HELD_BACK if held else LABELS.get(p["status"], p["status"]),
+            "tone": "warn" if held else TONES.get(p["status"], "gray"),
             "vendor": final.get("vendor_name") or "", "number": final.get("invoice_number") or "",
             "total": final.get("grand_total"), "currency": final.get("currency") or "",
             "voucher": " ".join(x for x in (p["document"], p["doc_type"], p["doc_company"]) if x),

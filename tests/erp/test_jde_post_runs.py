@@ -223,6 +223,39 @@ def test_the_safety_waits_hold_the_night_the_clocks_go_forward(tmp_path, ais, mo
             conn.execute("UPDATE jde_postings SET status = 'unknown'")
 
 
+def test_a_queued_voucher_changed_since_its_go_ahead_waits_for_a_new_dry_run_not_refused(tmp_path, ais, monkeypatch):
+    """B-1888: a voucher approved and waiting in the queue (JD Edwards not reached) whose voucher changed meanwhile
+    (the upgrade that gave VLEDBT / VLEDTN their codes, a settings change) was marked *Refused by JD Edwards*, its
+    go-ahead lost, though JD Edwards never had it. It is held back for a new dry run, saying why, its go-ahead kept
+    for month end until then; the dry run and a go-ahead send it."""
+    store, batch = batch_of(tmp_path, ais, QC)
+    new_keys = jde._keys
+
+    def old_keys(prefix, settings, batch, invoice, inv_id, site=""):  # VLEDBT / VLEDTN before D-182
+        keys = new_keys(prefix, settings, batch, invoice, inv_id, site)
+        keys[f"{prefix}EDBT"], keys[f"{prefix}EDTN"] = f"{settings.batch_prefix.strip()}{batch}"[:15], f"APC{inv_id}"
+        return keys
+
+    monkeypatch.setattr(jde, "_keys", old_keys)
+    jde_post.dry_run(store, batch)
+    ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: queued
+    jde_post.post(store, batch)
+    assert statuses(store, batch)[1] == jde_post.QUEUED
+    monkeypatch.setattr(jde, "_keys", new_keys)  # the upgrade
+    result = jde_post.retry_queue(store)
+    row = jde_post.postings(store, batch)[0]
+    assert row["status"] == jde_post.CHECKED and result["held"] == 1 and result["failed"] == 0
+    assert "changed in AP Coder since its go-ahead" in row["error"] and "dry run again" in row["error"]
+    assert row["approved_at"] and row["maybe_sent"] == 0 and len(finals(ais)) == 3
+    assert jde_post.waiting(store) == [] and set(jde_post.not_posted(store)) == {1}
+    assert store.events(actions=["jde_voucher_refused"]) == []
+    (shown,) = jde_post.status_rows(store, batch)
+    assert (shown["label"], shown["tone"]) == (jde_post.HELD_BACK, "warn")
+    time.sleep(1.0)  # (the dry run in another second than the go-ahead: the times are kept to the second)
+    assert jde_post.dry_run(store, batch)["rows"][0]["label"] == jde_post.LABELS[jde_post.CHECKED]
+    assert jde_post.post(store, batch)["posted"] == 1 and len(finals(ais)) == 4
+
+
 def test_late_answers_are_looked_up_in_the_same_run_once_jde_could_have_finished(tmp_path, ais, monkeypatch):
     """The late ones are asked for by their key after the others were sent (D-182): found, posted in the same run;
     each voucher's outcome is the run's progress as it goes."""
