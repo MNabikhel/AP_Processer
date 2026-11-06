@@ -1945,8 +1945,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     from it, no second listing). A page view on the server that finds the listing due starts a thread of its own
     process that lists it (`process.list_for_all`): one at a time across the processes (a lease `folder-listing:
     <place>` of 60 s, renewed every 15 s by a thread of its own whatever the listing is doing, a renewal the database
-    refuses tried again at the next, B-1817: a slow network folder is listed once), and one thread a process; a thread that can't be started lets go of both, for the next view due (B-1816). A pick-up and a page's thread may list at once (the pick-up holds the pick-up lock, not the
-    lease): whichever is kept last stands, both the folder as it was, the next one due catching up.
+    refuses tried again at the next, B-1817: a slow network folder is listed once), and one thread a process; a
+    thread that can't be started lets go of both, for the next view due (B-1816). A pick-up and a page's thread may
+    list at once (the pick-up holds the pick-up lock, not the lease): whichever is kept last stands, both the folder
+    as it was, the next one due catching up.
   - **Due:** once the folder's time changed (a file added, removed or renamed) and the listing ended 20 s ago
     (`SHARED_REFRESH`), or 45 s ago whatever changed (`SHARED_MOST`: a scan written over another of its name, an
     invoice deleted whose file is new again). Counted from the listing's end, so a folder that takes minutes to list
@@ -1955,14 +1957,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     a file put in line or read since, by any process, is no longer offered at once; one the pick-up read with a time
     later than both the listing's look at it and the listing's start was written again since, and counts as read
     (`since`, B-1814: a page's thread that looked before a pick-up, kept last; one written over by an older copy, its
-    time earlier, is still offered). It waits (5 s at most,
-    `SHARED_WAIT`) only when it started the listing itself and the one kept is older than 45 s, or there is none: a
-    stopped process's lease (up to 60 s) or a slow folder never makes every view wait on another's listing. A listing
-    shown older than 45 s says when it was made, as the screens say a time (`ui.day_and_time`, B-1815): "As the
-    invoices folder was today at 10:41 a.m.: files saved since show once it is listed again", "… was Nov 3 at 1:19
-    p.m. …" one made another day; none yet: "The invoices folder is being listed", never "No new files". A listing that failed
-    is kept as such, with why, so each process's page says it (B-1804); the Process button says it too (B-1806). The
-    card states the delay: "New files are listed here within a minute".
+    time earlier, is still offered). It waits (5 s at most, `SHARED_WAIT`) only when it started the listing itself
+    and the one kept is older than 45 s, or there is none: a stopped process's lease (up to 60 s) or a slow folder
+    never makes every view wait on another's listing. A listing shown older than 45 s says when it was made, as the
+    screens say a time (`ui.day_and_time`, B-1815): "As the invoices folder was today at 10:41 a.m.: files saved
+    since show once it is listed again", "… was Nov 3 at 1:19 p.m. …" one made another day; none yet: "The invoices
+    folder is being listed", never "No new files". A listing that failed is kept as such, with why, so each
+    process's page says it (B-1804); the Process button says it too (B-1806). The card states the delay: "New files
+    are listed here within a minute".
   - **The laptop** (one process) as before: each view lists when the folder, a pick-up's notes or the invoices
     changed, or a minute on, through the same `list_folder`; it keeps nothing for other processes.
   - **Cheaper, everywhere:** `folder_names` 0.79 → 0.30 s at 300,000 files (a name's suffix and stem without
