@@ -100,7 +100,7 @@ def test_install_dry_run_shows_every_command_and_changes_nothing(data, capsys):
 
 def test_the_task_starts_at_boot_runs_for_ever_and_comes_back(data):
     s = service.settings(data, port=8443, certfile="c.pem", keyfile="k.pem")
-    task = ET.fromstring(service.task_xml(s, Path("D:/APCoderData/service/run.cmd"), Path("C:/APCoder/app")))
+    task = ET.fromstring(service.task_xml(s, Path("D:/APCoderData/service/run.cmd")))
     assert task.find("t:Triggers/t:BootTrigger/t:Enabled", NS).text == "true"
     repeat = task.find("t:Triggers/t:TimeTrigger/t:Repetition/t:Interval", NS).text
     assert repeat == "PT5M"  # started again within 5 minutes if the service host itself ended
@@ -120,11 +120,22 @@ def test_the_task_starts_at_boot_runs_for_ever_and_comes_back(data):
     assert action.find("t:Command", NS).text.endswith("run.cmd")
 
 
+def test_the_task_starts_in_run_cmds_folder_never_in_a_version_folder(data):
+    """The task started in the AP Coder folder it was installed from, which no update changes: once server-update's
+    "two versions back" was deleted, Task Scheduler could not start it (error 267: the folder is gone) (B-1961). It
+    starts in run.cmd's own folder (the data folder's), and run.cmd goes to the version's folder (cd /d)."""
+    s = service.settings(data, insecure_http=True)
+    runner = service.runner_path(data)
+    task = ET.fromstring(service.task_xml(s, runner))
+    assert task.find("t:Actions/t:Exec/t:WorkingDirectory", NS).text == str(runner.parent)
+    assert f'cd /d "{service.PROJECT_DIR}"' in service.runner_text(service.PROJECT_DIR, data)
+
+
 @pytest.mark.parametrize(("account", "sid"), [("SYSTEM", "S-1-5-18"), ("NT AUTHORITY\\LOCAL SERVICE", "S-1-5-19"),
                                               ("network service", "S-1-5-20")])  # fmt: skip
 def test_a_built_in_account_needs_no_password(data, account, sid):
     s = service.settings(data, account=account, insecure_http=True)
-    task = ET.fromstring(service.task_xml(s, Path("run.cmd"), Path("app")))
+    task = ET.fromstring(service.task_xml(s, Path("run.cmd")))
     assert task.find("t:Principals/t:Principal/t:UserId", NS).text == sid
     assert task.find("t:Principals/t:Principal/t:LogonType", NS) is None
     assert "/ru" not in service.create_command(s, Path("task.xml"))

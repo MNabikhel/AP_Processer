@@ -711,8 +711,15 @@ version's own, not planted ones). `server-update --back` is the way back, since 
 before the update. To restore one of the newer backups, update again and restore it from the newer version.
 
 Two folders are kept: the current one and the previous one. After the next update, the message names the folder two
-versions back, which you can delete. What was done, when, is in `D:\APCoderData\server.json` (`history`), and the
-installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.
+versions back, which you can delete. A service installed by an earlier AP Coder than this guide's has its scheduled
+task start in the folder it was installed from: once that folder is deleted, Task Scheduler can't start the task (its
+*History*: error 267, `0x8007010B`, "the directory name is invalid"). Run `service install` once more from the
+current folder (with the `--account`, `--task-name` and `--folder` it was given; Windows asks for the account's
+password), before you delete it: the task then starts in `D:\APCoderData\service`, which no update changes. The
+update's message says so when the task it finds is such a one.
+
+What was done, when, is in `D:\APCoderData\server.json` (`history`), and the installs in the administrator's
+`%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.
 
 ## 12. Health and monitoring
 
@@ -782,6 +789,7 @@ warn, and the system's log says so (step 6); once expired, the banner says so in
 | The browser warns about the certificate | The certificate doesn't name `apcoder.company.local`, has expired, or lacks the CA's intermediate certificates (step 3: add `ca-chain.pem` after it). |
 | "not one of the server's names" (a 400 error) | The name typed is not one of the allowed names: `service install --allowed-hosts apcoder.company.local,apcoder` (each name staff use; it restarts AP Coder), or add it to `AP_ALLOWED_HOSTS` and restart. |
 | AP Coder doesn't start: "Port 8501 is in use by another program" | On the server AP Coder keeps the port staff were given, and never moves to another. Find the other program (`netstat -ano \| findstr :8501`) and stop it, or install with another `--port` and tell staff the new address. |
+| The task doesn't start; Task Scheduler's *History* says error 267 (`0x8007010B`, "the directory name is invalid") | It was installed by an older AP Coder to start in a folder since deleted (section 11): `service install` again from the folder `service status` names. |
 | The task doesn't start; Task Scheduler's *History* says "logon failure" | The account's password changed: `service install` again (it asks for it). Or the account lacks *Log on as a batch job*: `secpol.msc` → *Local Policies* → *User Rights Assignment* → add `APCoderService`. |
 | `service status` says "Service host: not running", and stopped on purpose | Someone ran `service stop`: `service start`. |
 | The log repeats "The dashboard stopped (exit code 1)" | The lines before it say why: often the port in use (another program on 8501: `netstat -ano \| findstr :8501`), or a certificate file it can't read (the account's rights on `D:\APCoderData\tls`). |

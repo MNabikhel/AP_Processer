@@ -736,7 +736,15 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
         say("Start it: python -m ap_coder service install (or start), from the new folder.")
     say(f"The previous version stays in {current}: python -m ap_coder server-update --back goes back to it.")
     if previous and not paths.same_folder(previous, current) and Path(previous).exists():
-        say(f"{previous} (two versions back) is no longer needed: delete it to free its space.")
+        from .service_windows import task_folder
+
+        if paths.same_folder(task_folder(data), previous):  # (a task an older AP Coder registered, B-1961)
+            say(f"{previous} (two versions back) is no longer needed, but the service's scheduled task starts in it "
+                f"(an older AP Coder installed it so): Task Scheduler could not start it once it is gone. First run "
+                f"service install again from {new}, with the --account, --task-name and --folder it was given "
+                "(Windows asks for the account's password), then delete it.")  # fmt: skip
+        else:
+            say(f"{previous} (two versions back) is no longer needed: delete it to free its space.")
     return 0
 
 

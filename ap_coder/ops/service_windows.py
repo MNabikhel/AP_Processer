@@ -25,9 +25,10 @@ import dataclasses
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 from . import service
 
@@ -84,12 +85,15 @@ def account_sid(account: str) -> str:
     return BUILT_IN.get(account.strip().lower(), "")
 
 
-def task_xml(s: ServerSettings, runner: Path, folder: Path, now: dt.datetime | None = None) -> str:
+def task_xml(s: ServerSettings, runner: Path, now: dt.datetime | None = None) -> str:
     """The scheduled task: at boot (a minute after), and every 5 minutes (nothing happens while the host runs: one
-    instance only), for ever (no 3-day limit), at normal priority, on battery too, started again after a failure."""
+    instance only), for ever (no 3-day limit), at normal priority, on battery too, started again after a failure. It
+    starts in run.cmd's folder, which no update changes (run.cmd goes to the version's folder itself): a version
+    folder deleted once no longer needed would leave Task Scheduler unable to start it (error 267, B-1961)."""
     start = (now or dt.datetime.now()).strftime("%Y-%m-%dT%H:%M:%S")
     sid = account_sid(s.account)
     user = f"<UserId>{sid}</UserId>" if sid else f"<UserId>{escape(s.account)}</UserId><LogonType>Password</LogonType>"
+    start_in = escape(str(runner.parent))
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -123,10 +127,21 @@ def task_xml(s: ServerSettings, runner: Path, folder: Path, now: dt.datetime | N
     <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
   </Settings>
   <Actions Context="Author">
-    <Exec><Command>{escape(str(runner))}</Command><WorkingDirectory>{escape(str(folder))}</WorkingDirectory></Exec>
+    <Exec><Command>{escape(str(runner))}</Command><WorkingDirectory>{start_in}</WorkingDirectory></Exec>
   </Actions>
 </Task>
 """
+
+
+def task_folder(data: Path) -> str:
+    """The folder the task ``service install`` registered starts in, as the copy it saved says ("" when none is
+    saved: a Mac, or not installed). One an older AP Coder registered starts in the folder it was installed from."""
+    try:
+        text = task_file(data).read_text(encoding="utf-16")
+    except (OSError, UnicodeError):
+        return ""
+    found = re.search(r"<WorkingDirectory>(.*?)</WorkingDirectory>", text)
+    return unescape(found.group(1)) if found else ""
 
 
 def create_command(s: ServerSettings, xml: Path) -> list[str]:
@@ -238,7 +253,7 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
         say(f"2. Write {runner_path(data)}:")
         say(runner_text(folder, data).replace("\r\n", "\n"))
         say(f"3. Write the task {task_file(data)}:")
-        say(task_xml(s, runner_path(data), folder))
+        say(task_xml(s, runner_path(data)))
         say(f"4. Register it: {service.shown(create_command(s, task_file(data)))}")
         if not account_sid(s.account):
             say(f"   (schtasks asks for {s.account}'s password)")
@@ -251,7 +266,7 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
     service.save_settings(data, s)
     write_runner(data, folder)
     xml = task_file(data)
-    xml.write_text(task_xml(s, runner_path(data), folder), encoding="utf-16")
+    xml.write_text(task_xml(s, runner_path(data)), encoding="utf-16")
     if not account_sid(s.account):
         say(f"Windows asks for the password of {s.account} (it keeps it for the task).")
     done = service.run_command(create_command(s, xml))

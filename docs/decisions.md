@@ -2925,7 +2925,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **server-update:** `switch_to` asks the backend (`service.switch_folder`): Windows rewrites run.cmd as before;
     the Mac points `current` at the new folder by one rename (`os.symlink` to a temporary name, then `os.replace`)
     while the service is stopped. `Server.installed` asks the backend too (the plist there). The plist never changes
-    with a version.
+    with a version. Neither does Windows' task: it starts in run.cmd's folder (the data folder's `service`); it started
+    in the folder it was installed from, so once server-update's "two versions back" was deleted Task Scheduler could
+    not start it (error 267). A task an older version registered is still so until `service install` again:
+    server-update says so instead of "delete it" (it reads the task's XML `service install` saved), and SERVER.md
+    section 11 (B-1961).
   - **Through a power cut:** what the service starts from is written whole or not at all (`service.write_whole`: a
     temporary file, fsync, `os.replace`, the folder fsynced): server.json, run.cmd (written in place before, a cut
     could leave it empty and no host would start to recover an update) and the plist; the `current` link's folder is

@@ -139,6 +139,31 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
     assert "server-update --back" in out and "Downtime:" in out and "kept serving" in out
 
 
+@pytest.mark.parametrize("task", ["installed before", "installed now", "none (a Mac)"])
+def test_the_folder_two_versions_back_is_offered_for_deletion_once_the_task_no_longer_starts_in_it(server, capsys,
+                                                                                                    task):  # fmt: skip
+    """A task an older ``service install`` registered starts in the folder it was installed from: deleted as the
+    second update said, Task Scheduler could no longer start it (error 267) (B-1961). Then the message says to
+    install the service again first; a task installed now starts in run.cmd's folder: delete it."""
+    from xml.sax.saxutils import escape
+
+    first = server["current"]
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    xml = service.task_xml(service.settings(server["data"]), service.runner_path(server["data"]))
+    if task == "installed before":
+        xml = xml.replace(escape(str(service.runner_path(server["data"]).parent)), escape(str(first)))
+    if task != "none (a Mac)":
+        service.task_file(server["data"]).write_text(xml, encoding="utf-16")
+    capsys.readouterr()
+    assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"], server=FakeServer()) == 0
+    out = capsys.readouterr().out
+    assert f"{first} (two versions back) is no longer needed" in out
+    if task == "installed before":
+        assert "starts in it" in out and "service install again" in out and "delete it to free" not in out
+    else:
+        assert "delete it to free its space" in out and "starts in it" not in out
+
+
 def test_a_failed_self_check_stops_nothing_and_leaves_the_database_as_it_was(server, capsys):
     """D-188: the self-check runs before the stop, the migration on a copy: a failure leaves the old version
     serving on its own database, untouched."""
