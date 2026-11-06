@@ -384,6 +384,30 @@ def test_once_the_lessons_change_the_vendors_memories_extended_from_the_older_on
     assert [key[1] for key in suggest._PAST] == [vendor_key(vendors[1])]
 
 
+def test_a_vendor_whose_older_lessons_add_nothing_is_charged_no_bytes_of_its_own(monkeypatch):
+    """B-1781: a vendor whose older lessons are all on accounts no longer in the chart has the shared memory itself as
+    its own (``_extended`` adds nothing), and was charged that memory's whole size within ``PAST_BYTES_KEPT``: a few
+    such vendors pushed out those with memories of their own. It holds nothing of its own."""
+    from ap_coder.core.memory import WithPast
+
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    monkeypatch.setattr(suggest, "_PAST", {})
+    valid = frozenset({"6000", "6100"})
+
+    def row(n: int, vendor: str, gl: str) -> dict:
+        return {"id": n, "vendor_key": vendor_key(vendor), "vendor_name": vendor, "description": f"Part {n} w{n % 7}",
+                "final_gl": gl, "final_cc": "", "suggested_gl": gl, "outcome": "accepted",
+                "created_at": "2026-01-05"}  # fmt: skip
+
+    shared = [row(n, f"Vendor {n % 5}", "6000" if n % 2 else "6100") for n in range(200, 0, -1)]
+    base = suggest._memory(shared, valid)
+    assert suggest._own_bytes(base) > 0
+    for n in range(3):  # their older lessons all on an account closed since
+        rows = WithPast(shared, [row(1000 + i, f"Closed {n}", "4999") for i in range(5)], ("db", f"closed {n}", 1))
+        assert suggest._memory(rows, valid) is base
+    assert [kept[4] for kept in suggest._PAST.values()] == [0, 0, 0]
+
+
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():
     rows = _history(("Acme", "5000", "Nitrile gloves"), ("Acme", "5000", "nitrile gloves"))
     assert aggregate(rows) is aggregate(rows) and aggregate(rows)[0].decisions == 2

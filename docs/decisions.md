@@ -1614,7 +1614,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - **Bounded now:** a vendor's extended index (`_own_bytes`: the lists and dicts `_extended` copied, of the
       shared memory's size: 0.35 MB a vendor on the seed, whose 9,850 lines have only 167 words; with a real
       vocabulary, its words' dicts too, several MB) within `PAST_BYTES_KEPT` (32 MB) besides its 32 vendors and
-      60,000 rows, the latest always. On the seed it never bites (26 vendors kept: 9 MB).
+      60,000 rows, the latest always; none for a vendor whose older lessons add nothing (the shared index itself,
+      B-1781). On the seed it never bites (26 vendors kept: 9 MB).
     - **Load** (`bench load --users 25 --duration 300 --ramp 30 --think 10 --workers 4` on the 100k seed, run once,
       after all of phase 3: α, β, δ and this): pages p50 148 ms, p95 1.37 s; actions p95 254 ms; 0 errors, 0 over
       30 s; the web workers 125 → 684-782 MB in 5 minutes, 0.09-0.24 cores each; the background process 213 → 454 MB.

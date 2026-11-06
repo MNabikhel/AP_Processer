@@ -182,7 +182,8 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
         for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
             del _PAST[key]
         _PAST.pop(feedback.key, None)
-        _PAST[feedback.key] = (shared, valid, past, memory, _own_bytes(memory))
+        own = 0 if memory is base else _own_bytes(memory)  # (nothing added: the shared memory itself, B-1781)
+        _PAST[feedback.key] = (shared, valid, past, memory, own)
         while len(_PAST) > 1 and (len(_PAST) > PAST_KEPT
                                   or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT
                                   or sum(kept[4] for kept in _PAST.values()) > PAST_BYTES_KEPT):  # fmt: skip
