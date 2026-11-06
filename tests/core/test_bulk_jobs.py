@@ -139,3 +139,17 @@ def test_the_jobs_ended_are_kept_a_while_the_latest_few_of_each_person(store, tm
         kept = [r[0] for r in conn.execute("SELECT owner FROM bulk_jobs ORDER BY id")]
     assert kept == ["user:2", "user:3"]  # (user:2's is still open: kept however old)
     assert store.bulk_job(other)["state"] == bulk_jobs.WAITING
+
+
+def test_a_job_of_another_database_never_has_the_runners_take_the_write_lock(store, tmp_path):
+    """The look for a job waiting had no ``db = ?``: one of another database left in the table (a backup restored that
+    was taken while a job waited) had each runner take the write lock at every look, about four times a second."""
+    job, _ = store.start_bulk_job("user:1", PERSON, _invoices(store, tmp_path, 1), "bulk-1")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE bulk_jobs SET db = 'the database before a restore' WHERE id = ?", (job,))
+    statements: list[str] = []
+    with store.session(), store._conn() as conn:
+        conn.set_trace_callback(statements.append)
+        assert store.claim_bulk_job("runner-a", 30, "bulk-1") is None
+        conn.set_trace_callback(None)
+    assert statements and not [s for s in statements if s.startswith("BEGIN")]

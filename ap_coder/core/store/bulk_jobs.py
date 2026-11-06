@@ -102,12 +102,13 @@ class BulkJobsMixin:
         (``version``: an update meanwhile), or tried ``TRIES`` times, ends with why, what was done kept."""
         now = time.time()
         with self._conn() as conn:  # type: ignore[attr-defined]
-            if conn.execute("SELECT 1 FROM bulk_jobs WHERE state = ? OR (state = ? AND renewed_at < ?) LIMIT 1",
-                            (WAITING, RUNNING, now - stale)).fetchone() is None:  # fmt: skip
-                return None  # (looked at twice a second while none waits: never the write lock for nothing)
+            db = self._database_id(conn)  # type: ignore[attr-defined]
+            # (looked at twice a second while none waits: never the write lock for nothing, nor for another database's)
+            if conn.execute("SELECT 1 FROM bulk_jobs WHERE db = ? AND (state = ? OR (state = ? AND renewed_at < ?)) "
+                            "LIMIT 1", (db, WAITING, RUNNING, now - stale)).fetchone() is None:  # fmt: skip
+                return None
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")
-            db = self._database_id(conn)  # type: ignore[attr-defined]
             while True:
                 row = conn.execute(
                     "SELECT * FROM bulk_jobs WHERE db = ? AND (state = ? OR (state = ? AND renewed_at < ?)) ORDER BY "
