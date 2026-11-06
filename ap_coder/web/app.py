@@ -378,6 +378,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
     app.add_middleware(StaticFromMemory)  # after the Host check, before the session (D-161)
+    if server:  # a restore under way: everyone else is told so, before anything reads the database (D-188)
+        from ap_coder.web.maintenance import Maintenance
+
+        app.add_middleware(Maintenance, db=store.path)
     app.add_middleware(
         LocalOnly, address=address, extra=allowed_hosts(), server=server
     )  # + the server's names (AP_ALLOWED_HOSTS)
