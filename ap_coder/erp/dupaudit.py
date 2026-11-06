@@ -25,7 +25,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from itertools import combinations
 from typing import Any
 
@@ -202,8 +202,24 @@ def _close_pairs(group: list[Bill], dated: dict[str, dt.date | None], most: int)
 
 def find(store: Store) -> list[Pair]:
     """Every pair the audit finds, strongest reason first: kept until an invoice or the ERP register changes (D-162),
-    its page and its CSV sharing them. Read it, don't change it."""
-    return store.summary_memo("duplicate_pairs", lambda: _find(store), changes="register")
+    its page and its CSV sharing them, and worked out once for every process of the company server (D-169: 11 s at
+    100,000 invoices in each web worker before). Read it, don't change it."""
+    return store.shared_answer("duplicate_pairs", lambda: _find(store), version=PAIRS_FORMAT, encode=_pairs_data,
+                               decode=_pairs_of, changes=("register",))  # fmt: skip
+
+
+# The pairs as they are kept for every process (``Store.shared_answer``): each pair its reason and its two bills' fields
+# in ``Bill``'s order. Another format when what is kept changes, so one kept by an older AP Coder is worked out again.
+PAIRS_FORMAT = "pairs-1"
+_BILL_FIELDS = tuple(f.name for f in fields(Bill))
+
+
+def _pairs_data(pairs: list[Pair]) -> list[list[Any]]:
+    return [[p.reason, *([getattr(b, name) for name in _BILL_FIELDS] for b in (p.first, p.second))] for p in pairs]
+
+
+def _pairs_of(data: list[list[Any]]) -> list[Pair]:
+    return [Pair(reason, Bill(*first), Bill(*second)) for reason, first, second in data]
 
 
 def _find(store: Store) -> list[Pair]:
