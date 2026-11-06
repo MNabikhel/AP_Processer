@@ -143,11 +143,31 @@ SAID_KEPT = 1024  # lines whose suggestions each memory keeps
 _SAID_LOCK = threading.Lock()
 
 
+@dataclass
+class _Older:
+    """A vendor's lessons past the whole memory's cap (``WithPast.past``) by line, as the memory extended by them reads
+    them (``_extended``), with the patterns of their lines as last made: carried forward when the memory moves on
+    (``_carried``, D-173) instead of gone over again."""
+
+    past: list[dict[str, Any]]  # the lessons, newest first
+    valid: frozenset[str]  # the accounts whose decisions count
+    head: int  # the number of past[0]: a lesson's place in ``past`` is its number less this (those put in front: lower)
+    lines: dict[tuple[str, str], list[dict[str, Any]]]  # each line's decisions on those accounts, newest first
+    first: dict[tuple[str, str], int]  # the number of each line's newest decision
+    # each line's pattern, with the shared memory's decisions of the line it was made of (``_Memory.lines``' own list,
+    # None for none): kept while they are the same list
+    made: dict[tuple[str, str], tuple[Any, _Pattern]] = field(default_factory=dict)
+
+
 _MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
 # A vendor's ``learning_rows`` past the whole memory's cap (``WithPast``), by whose they are: (the shared rows and the
 # accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended, the bytes it
 # holds of its own: ``_own_bytes``), the latest used last (``_with_past``).
 _PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory, int]] = {}
+# The same vendors' older lessons by line (``_Older``), kept past a change of the shared rows (it holds none of their
+# memory): what the next one's extended memory is carried forward from, ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT``
+# lessons at most, the latest used last.
+_OLDER: dict[Any, _Older] = {}
 _PAST_LOCK = threading.Lock()
 
 
@@ -175,9 +195,14 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
         if hit is not None and hit[0] is shared and hit[2] is past and hit[1] == valid:
             _PAST[feedback.key] = hit
             return hit[3]
+        kept = _OLDER.get(feedback.key)
     base = _MEMORY.get(shared, valid, lambda: _build_memory(shared, valid),
                        lambda rows, kept: _updated_memory(rows, kept, shared, valid))  # fmt: skip
-    memory = _extended(base, shared, past, valid)
+    # After an approval the store carries the vendor's older lessons forward (D-173): so are their lines here.
+    older = _carried(kept, past) if kept is not None and kept.valid == valid else None
+    if older is None:
+        older = _grouped(past, valid)
+    memory = _extended(base, shared, older)
     with _PAST_LOCK:
         for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
             del _PAST[key]
@@ -188,6 +213,11 @@ def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
                                   or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT
                                   or sum(kept[4] for kept in _PAST.values()) > PAST_BYTES_KEPT):  # fmt: skip
             del _PAST[next(iter(_PAST))]
+        _OLDER.pop(feedback.key, None)
+        _OLDER[feedback.key] = older
+        while len(_OLDER) > 1 and (len(_OLDER) > PAST_KEPT
+                                   or sum(len(kept.past) for kept in _OLDER.values()) > PAST_ROWS_KEPT):  # fmt: skip
+            del _OLDER[next(iter(_OLDER))]
     return memory
 
 
@@ -199,52 +229,106 @@ def _own_bytes(memory: _Memory) -> int:
                                           index.by_word, index.weight, index._by_letter))  # fmt: skip
 
 
-def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, Any]],
-              valid: frozenset[str]) -> _Memory:  # fmt: skip
-    """``_build_memory(shared + past, valid)`` from ``base``, the memory of ``shared``, going over ``past`` and the
-    shared rows' lines of its vendors only. ``past`` ranks after every shared row: each line it adds decisions to keeps
-    its latest decision (its account, rank and cost center) and has its run of decisions worked out again; a line only
-    in ``past`` is a new pattern, after all of base's, in the order it is first met."""
-    added: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # each line's decisions, newest first
-    for rank, r in enumerate(past, start=len(shared) - base.offset):
+def _grouped(past: list[dict[str, Any]], valid: frozenset[str]) -> _Older:
+    """A vendor's older lessons by line: their decisions on ``valid`` accounts, newest first."""
+    lines: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    first: dict[tuple[str, str], int] = {}
+    for n, r in enumerate(past):
         if r.get("final_gl") in valid:
-            added.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
-    if not added:
-        return base
-    vendors = {line[0] for line in added}
-    earlier: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # their decisions in the shared rows
-    for rank, r in enumerate(shared, start=-base.offset):
-        if r["vendor_key"] in vendors and r.get("final_gl") in valid:
             line = (r["vendor_key"], _normalise(r["description"]))
-            if line in added:
-                earlier.setdefault(line, []).append((rank, r))
+            lines.setdefault(line, []).append(r)
+            first.setdefault(line, n)
+    return _Older(past, valid, 0, lines, first)
+
+
+def _carried(kept: _Older, past: list[dict[str, Any]]) -> _Older | None:
+    """``_grouped(past, kept.valid)`` from ``kept``, when ``past`` is lessons put in front of those kept, their oldest
+    dropped (``memory.added_in_front``: what the store's ``_past_memory`` carries forward, D-173), going over those
+    lessons only; the lines they are of lose their patterns (made again by ``_extended``). None when ``past`` is
+    anything else (the store read them again), or more than ``memory.UPDATE_MOST`` lessons came and went."""
+    moved = added_in_front(kept.past, past)
+    if moved is None:
+        return None
+    head, valid = kept.head - moved, kept.valid
+    first = dict(kept.first)
+    front: dict[tuple[str, str], list[dict[str, Any]]] = {}  # the lines of the lessons put in front, their decisions
+    for n, r in enumerate(past[:moved], start=head):
+        if r.get("final_gl") in valid:
+            line = (r["vendor_key"], _normalise(r["description"]))
+            if line not in front:
+                front[line], first[line] = [], n
+            front[line].append(r)
+    dropped = Counter((r["vendor_key"], _normalise(r["description"])) for r in kept.past[len(past) - moved:]
+                      if r.get("final_gl") in valid)  # fmt: skip
+    lines, made = dict(kept.lines), dict(kept.made)
+    for line in [*front, *(line for line in dropped if line not in front)]:
+        rows = kept.lines.get(line, [])
+        rows = front.get(line, []) + rows[: len(rows) - dropped[line]]
+        made.pop(line, None)
+        if rows:
+            lines[line] = rows
+        else:
+            del lines[line], first[line]
+    return _Older(past, valid, head, lines, first, made)
+
+
+def _extended(base: _Memory, shared: list[dict[str, Any]], older: _Older) -> _Memory:
+    """``_build_memory(shared + older.past, older.valid)`` from ``base``, the memory of ``shared``, going over the
+    lines of ``older`` only, and working out again only the patterns of those whose decisions changed since they were
+    made (in ``older.past``, carried forward, or in the shared rows: ``base.lines``' list of the line is another). The
+    older lessons rank after every shared row: each line they add decisions to keeps its latest decision (its account,
+    rank and cost center) and has its run of decisions worked out again; a line only in them is a new pattern, after
+    all of base's, in the order it is first met (ranked again as the shared rows change)."""
+    if not older.lines:
+        return base
+    start = len(shared) - base.offset - older.head  # an older lesson's rank: its number plus this
+    vendors = {line[0] for line in older.lines}
     patterns = list(base.patterns)
     where = {(p.vendor_key, _normalise(p.description)): n for n, p in enumerate(patterns) if p.vendor_key in vendors}
-    new = []
-    for line, seq in added.items():
-        p = _line_pattern(earlier.get(line, []) + seq)
-        if line in earlier:
+    new: list[tuple[int, _Pattern]] = []  # the lines only in the older lessons: (their first number, their pattern)
+    for line, rows in older.lines.items():
+        earlier = base.lines.get(line)  # the line's decisions in the shared rows, (rank, row) newest first
+        made = older.made.get(line)
+        if made is not None and made[0] is earlier:
+            p = made[1]
+            if earlier is None and p.rank != start + older.first[line]:
+                p = replace(p, rank=start + older.first[line])
+                older.made[line] = (None, p)
+        else:
+            if earlier is None:
+                p = _pattern(start + older.first[line], rows[0], [r["final_gl"] for r in rows])
+            else:
+                p = _pattern(*earlier[0], [r["final_gl"] for _, r in earlier] + [r["final_gl"] for r in rows])
+            older.made[line] = (earlier, p)
+        if earlier is not None:
             if line in where:  # (a line without words is in no memory)
                 patterns[where[line]] = p
         elif p.keys:
-            new.append(p)
-    patterns += new
+            new.append((older.first[line], p))
+    added = [p for _, p in sorted(new, key=lambda x: x[0])]
+    patterns += added
     usual, newest = dict(base.usual), dict(base.newest)
     for v in vendors:
         usual.pop(v, None)
         newest.pop(v, None)
-    for p in [patterns[n] for n in where.values()] + new:  # the vendors' patterns, in the memory's order
+    for p in [patterns[n] for n in where.values()] + added:  # the vendors' patterns, in the memory's order
         if not p.unconfirmed:
             usual.setdefault(p.vendor_key, Counter())[p.gl_code] += 1
         newest[p.vendor_key] = min(newest.get(p.vendor_key, p.rank), p.rank)
-    index = base.index.extended([p.keys for p in new], [p.gl_code for p in new])
+    index = base.index.extended([p.keys for p in added], [p.gl_code for p in added])
     return _Memory(patterns, index, usual, newest, offset=base.offset)
 
 
 def _line_pattern(seq: list[tuple[int, dict[str, Any]]]) -> _Pattern:
     """The pattern of one line from its decisions, (rank, row) newest first."""
-    rank, r = seq[0]  # the latest decision wins over older ones for another account
-    latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
+    rank, r = seq[0]
+    return _pattern(rank, r, [x["final_gl"] for _, x in seq])
+
+
+def _pattern(rank: int, r: dict[str, Any], accounts: list[str]) -> _Pattern:
+    """The pattern of one line whose latest decision is ``r`` (ranked ``rank``), from its decisions' accounts, newest
+    first: the latest decision wins over older ones for another account."""
+    latest = latest_decision(accounts, changed_account(r))
     return _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value, r.get("final_cc") or "",
                     rank, latest)  # fmt: skip
 
@@ -376,6 +460,29 @@ def _stems(words: set[str]) -> dict[str, str]:
         stem = w[:-2] if w.endswith("es") and len(w) > 5 else w[:-1] if w.endswith("s") and len(w) > 4 else w
         out.setdefault(stem, w)
     return out
+
+
+# Each chart of accounts' accounts and the stems of the words of their other columns (``_account_stems``), the latest
+# few charts: every line suggested reads them all (1,500 accounts, each line of each check of an invoice).
+_ACCOUNT_STEMS: dict[int, tuple[Any, list[tuple[str, frozenset[str]]]]] = {}
+
+
+def _account_stems(chart: Any) -> list[tuple[str, frozenset[str]]]:
+    """(account, the stems of the words its description and category have), in the chart's order: worked out once for
+    the chart (``Store.reference_data`` keeps it, shared and never changed, until the accounts change)."""
+    with _SAID_LOCK:
+        kept = _ACCOUNT_STEMS.get(id(chart))
+    if kept is not None and kept[0] is chart:
+        return kept[1]
+    found = [(row[chart.key_column], frozenset(_stems(tokens(" ".join(str(v) for k, v in row.items()
+                                                                       if k != chart.key_column)))))
+             for row in chart.rows]  # fmt: skip
+    with _SAID_LOCK:
+        _ACCOUNT_STEMS.pop(id(chart), None)
+        _ACCOUNT_STEMS[id(chart)] = (chart, found)
+        while len(_ACCOUNT_STEMS) > 4:
+            del _ACCOUNT_STEMS[next(iter(_ACCOUNT_STEMS))]
+    return found
 
 
 def _plural(n: int, word: str) -> str:
@@ -529,10 +636,8 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
     words_of_line = tokens(description)
     if words_of_line:
         line_stems = _stems(words_of_line)
-        for row in reference.chart_of_accounts.rows:
-            gl = row[reference.chart_of_accounts.key_column]
-            words = tokens(" ".join(str(v) for k, v in row.items() if k != reference.chart_of_accounts.key_column))
-            shared = sorted(line_stems[stem] for stem in set(line_stems) & set(_stems(words)))
+        for gl, stems in _account_stems(reference.chart_of_accounts):
+            shared = sorted(line_stems[stem] for stem in stems.intersection(line_stems))
             if len(shared) >= KEYWORD_MIN_OVERLAP:
                 score = 0.15 + 0.35 * len(shared) / len(words_of_line)
                 add(gl, score, "account description mentions " + ", ".join(f"“{w}”" for w in shared[:3]), "words")

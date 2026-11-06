@@ -127,6 +127,44 @@ def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], s
     return (added[:new] + rows[:old] + added[new:] + rows[old:])[:limit]
 
 
+def _carried(conn: Any, key: str, kept: tuple[tuple[Any, ...], list[dict[str, Any]]],
+             stamp: tuple[Any, ...]) -> list[dict[str, Any]] | None:  # fmt: skip
+    """``_past_memory``'s rows ``kept`` (their stamp, the rows) carried forward to ``stamp``: what reading them again
+    gives, reading only the vendor's lessons the whole memory just let go (from its last before to its new one). In
+    the memory's order (decisions, then history, each newest first) the rows past its last are a vendor's tail: once
+    the last moved forward and the vendor only gained decisions (ahead of all its lessons in that order), the lessons
+    let go go in front of those kept (with a decision just added, when more were added than the memory holds), and of
+    the vendor's newest ``FEEDBACK_READ`` as many of the oldest drop as it gained. None when anything else happened:
+    one of its lessons removed (or moved to another vendor), history of it imported, the memory's last moved back
+    (lessons forgotten), a database restored; then they are read again."""
+    (count, newest, text, last, history), rows = kept
+    count_now, _, _, last_now, history_now = stamp
+    gained = count_now - count
+    if newest is None or gained < 0 or (history_now, -last_now) > (history, -last):
+        return None
+    still = conn.execute(f"SELECT {_LESSON_TEXT} FROM feedback WHERE id = ?", (newest,)).fetchone()
+    if still is None or still[0] != text:  # its newest kept is gone, or is another one (a database restored)
+        return None
+    added = conn.execute("SELECT outcome = 'history' FROM feedback WHERE vendor_key = ? AND id > ?",
+                         (key, newest)).fetchall()  # fmt: skip
+    if len(added) != gained or any(h for (h,) in added):  # one of its lessons removed, or history imported
+        return None
+    if (history_now, last_now) == (history, last):
+        left = []
+    elif history_now == history:
+        left = fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ? AND (outcome = 'history') = ? AND "
+                          "id >= ? AND id < ?" + _ORDER, (key, history, last, last_now))  # fmt: skip
+    else:  # the last moved from the history to the decisions: the decisions after it, then the history up to the last
+        left = fetch_rows(conn, "SELECT * FROM feedback WHERE vendor_key = ? AND (((outcome = 'history') = 0 AND id "
+                          "< ?) OR ((outcome = 'history') = 1 AND id >= ?))" + _ORDER,
+                          (key, last_now, last))  # fmt: skip
+    # The vendor's newest FEEDBACK_READ: the decisions it gained, those it had that the memory still holds, then those
+    # past the memory's last, as many as are left.
+    held = min(FEEDBACK_READ, count) - len(rows) - len(left)  # those it had that the memory still holds
+    keep = min(FEEDBACK_READ - gained, count) - held
+    return rows if not left and keep == len(rows) else (left + rows)[:keep]
+
+
 class LearningMixin:
     # --- Learning memory ------------------------------------------------------------------------------
 
@@ -238,10 +276,12 @@ class LearningMixin:
 
     def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
         """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
-        it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Read again only once one of the
-        vendor's lessons or the memory's last changed: the GL suggestions' index extended by them (``suggest._PAST``)
-        knows the same list at once. Kept for ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` of their lessons, as that
-        index is, the latest used always (D-159)."""
+        it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Once the memory's last moved on (an
+        approval, past the memory's cap) and the vendor only gained lessons it holds, those kept are carried forward
+        (``_carried``, D-173); read again whole once anything else changed. The GL suggestions' index extended by them
+        (``suggest._PAST``) knows the same list at once, and the list carried forward by what moved in front of it.
+        Kept for ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` of their lessons, as that index is, the latest used
+        always (D-159)."""
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         history = last["outcome"] == "history"
         with self._conn() as conn, _one_snapshot(conn):
@@ -252,11 +292,13 @@ class LearningMixin:
                     _PAST_MEMORY[kept_key] = kept  # the latest used, kept the longest
             if kept is not None and kept[0] == stamp:
                 return kept[1]
-            missing = fetch_rows(
-                conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
-                "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
-                (key, FEEDBACK_READ, history, history, last["id"]),
-            )  # fmt: skip
+            missing = _carried(conn, key, kept, stamp) if kept is not None else None
+            if missing is None:
+                missing = fetch_rows(
+                    conn, "SELECT * FROM (SELECT * FROM feedback WHERE vendor_key = ?" + _ORDER + " LIMIT ?) WHERE "
+                    "(outcome = 'history') > ? OR ((outcome = 'history') = ? AND id < ?)" + _ORDER,
+                    (key, FEEDBACK_READ, history, history, last["id"]),
+                )  # fmt: skip
         with _FEEDBACK_LOCK:
             _PAST_MEMORY.pop(kept_key, None)
             _PAST_MEMORY[kept_key] = (stamp, missing)
