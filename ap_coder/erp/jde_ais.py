@@ -78,6 +78,9 @@ DEFAULT_RETRIES = 2  # a request that is safe to repeat, at most this many times
 RETRY_PAUSE = 1.0  # seconds before the first retry, doubled each time (tests set it to 0)
 BUSY = (502, 503, 504)
 KEPT_OPEN = 4  # connections a client keeps open unused, at most (one per thread that asked at once)
+# A connection kept open is used again only this soon: one unused longer may have been dropped silently on the way (a
+# firewall's idle timeout, a VPN reconnecting: no FIN, no RST), and a request sent into it would wait its whole timeout.
+IDLE_SECONDS = 30.0
 
 # What went wrong (``AisError.kind``).
 OFF, ADDRESS, UNREACHABLE, TIMEOUT, CERTIFICATE, AUTH, DENIED, NOT_FOUND, JDE, ANSWER = (
@@ -513,7 +516,8 @@ class AisClient:
         self._signing = threading.Lock()  # one sign-in at a time when several threads share the client
         self.retries = DEFAULT_RETRIES
         self._context: ssl.SSLContext | None = None
-        self._open: list[http.client.HTTPConnection] = []  # kept open, not in use (each used by one thread at a time)
+        # kept open, not in use (each used by one thread at a time), with when each was kept (``time.monotonic``)
+        self._open: list[tuple[float, http.client.HTTPConnection]] = []
         self._open_lock = threading.Lock()
 
     # -- the secrets to keep out of any text
@@ -553,12 +557,14 @@ class AisClient:
         return conn
 
     def _take(self, timeout: float) -> tuple[http.client.HTTPConnection, bool]:
-        """A connection to ask on, and whether it was kept open from an earlier request: one kept open that AIS has
-        not closed meanwhile, else a new one (connected here, its failures said as they are)."""
+        """A connection to ask on, and whether it was kept open from an earlier request: one kept open less than
+        IDLE_SECONDS ago that AIS has not closed meanwhile, else a new one (connected here, its failures said as they
+        are)."""
         with self._open_lock:
             while self._open:
-                conn = self._open.pop()
-                if conn.sock is not None and not _closed_meanwhile(conn.sock):
+                kept_at, conn = self._open.pop()
+                fresh = time.monotonic() - kept_at < IDLE_SECONDS
+                if fresh and conn.sock is not None and not _closed_meanwhile(conn.sock):
                     conn.sock.settimeout(timeout)
                     return conn, True
                 conn.close()
@@ -586,14 +592,14 @@ class AisClient:
         """A connection whose answer was read in full, kept open for the next request (at most KEPT_OPEN)."""
         with self._open_lock:
             if conn.sock is not None and len(self._open) < KEPT_OPEN:
-                self._open.append(conn)
+                self._open.append((time.monotonic(), conn))
                 return
         conn.close()
 
     def _close_connections(self) -> None:
         with self._open_lock:
             kept, self._open = self._open, []
-        for conn in kept:
+        for _, conn in kept:
             conn.close()
 
     def _once(self, method: str, path: str, body: Any, headers: dict[str, str],
