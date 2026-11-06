@@ -5,8 +5,8 @@ It answers every route AP Coder calls: OpenAI's ``/v1/models``, ``/v1/chat/compl
 ``/v1/embeddings``, and LM Studio's own ``/api/v0/models`` (0.3), ``/api/v1/models`` (0.4) and
 ``/api/v1/models/load`` / ``unload``. A chat request is answered as its kind asks (``kind_of``): a page shown to
 OvisOCR2 gets a transcription (``page_texts``, by the SHA-256 of the image, else ``page_text``); the GL question one
-account a line from its schema; the header question the fields of its schema (``header``); the AI reviewer's
-question agreement, disagreement or doubt (``reviewer``).
+account a line from its schema; the header question the fields of its schema (``headers``, by the SHA-256 of its
+first image, else ``header``); the AI reviewer's question agreement, disagreement or doubt (``reviewer``).
 
 How the model machine behaves, given when it starts or changed while it runs (``set``, or ``POST /__fake/set`` with
 the same names in JSON):
@@ -58,7 +58,8 @@ REVIEWERS = ("agree", "disagree", "unsure")
 PAGE_TEXT = "Page 1\n\nThank you for your business.\nPlease keep this copy for your records."
 CONTROL = "/__fake/"
 _SETTABLE = ("latency", "page_latency", "chat_latency", "load_latency", "slots", "fail_rate", "hang_rate",
-             "down_after", "down", "models", "reviewer", "header", "page_text", "page_texts", "time_scale")  # fmt: skip
+             "down_after", "down", "models", "reviewer", "header", "headers", "page_text", "page_texts",
+             "time_scale")  # fmt: skip
 
 
 def seconds_range(value: Any) -> tuple[float, float]:
@@ -252,6 +253,7 @@ class FakeModel:
         self._instances: dict[str, list[tuple[str, int]]] = {}
         self._loads = 0
         self._page_texts: dict[str, str] = {}
+        self._headers: dict[str, dict[str, Any]] = {}
         self.set(latency=latency, page_latency=latency if page_latency is None else page_latency,
                  chat_latency=latency if chat_latency is None else chat_latency, load_latency=load_latency,
                  slots=slots, fail_rate=fail_rate, hang_rate=hang_rate, down_after=down_after, down=False,
@@ -374,6 +376,8 @@ class FakeModel:
                 clean[name] = [model_spec(m) for m in value]
             elif name == "page_texts":
                 clean[name] = {str(k): str(v) for k, v in dict(value).items()}
+            elif name == "headers":
+                clean[name] = {str(k): dict(v) for k, v in dict(value).items()}
             elif name == "down":
                 clean[name] = bool(value)
             else:
@@ -387,6 +391,8 @@ class FakeModel:
                 self._instances = {m["id"]: [(m["id"], int(m["ctx"]))] if m["ctx"] else [] for m in self._specs}
             if "page_texts" in clean:
                 self._page_texts.update(clean.pop("page_texts"))
+            if "headers" in clean:
+                self._headers.update(clean.pop("headers"))
             self._state.update(clean)
             self._cond.notify_all()
             return self.settings()
@@ -396,6 +402,7 @@ class FakeModel:
             out = {k: v for k, v in self._state.items() if k not in ("header",)}
             out["models"] = [m["id"] for m in self._specs]
             out["page_texts"] = len(self._page_texts)
+            out["headers"] = len(self._headers)
             return out
 
     def release_hung(self) -> int:
@@ -653,7 +660,9 @@ class FakeModel:
         return {"lines": account_lines(body)}
 
     def answer_header(self, body: dict[str, Any]) -> Any:
-        header = self._state["header"]
+        images = images_of(body)
+        with self._cond:
+            header = self._headers.get(images[0] if images else "", self._state["header"])
         return {k: header.get(k) for k in (_schema(body).get("properties") or header)}
 
     def answer_review(self, body: dict[str, Any]) -> Any:

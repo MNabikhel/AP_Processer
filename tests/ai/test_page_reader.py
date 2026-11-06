@@ -553,7 +553,7 @@ class FakeClient:
 def client(monkeypatch):
     def install(*replies):
         fake = FakeClient(*replies)
-        monkeypatch.setattr(page_reader, "_client", lambda settings: fake)
+        monkeypatch.setattr(page_reader, "_client", lambda settings, base="": fake)
         return fake
 
     return install

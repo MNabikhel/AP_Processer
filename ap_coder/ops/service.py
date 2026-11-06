@@ -58,7 +58,9 @@ SERVER_FILE = ".ap_coder_server.json"  # written by the running dashboard (web/s
 ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certfile": "AP_TLS_CERT",
                 "keyfile": "AP_TLS_KEY", "allowed_hosts": "AP_ALLOWED_HOSTS", "proxy": "AP_SERVER_PROXY",
                 "workers": "AP_SERVER_WORKERS", "llm_parallel": "AP_LLM_PARALLEL",
-                "worker_threads": "AP_WORKER_THREADS", "capture_processes": "AP_CAPTURE_PROCESSES"}  # fmt: skip
+                "worker_threads": "AP_WORKER_THREADS", "capture_processes": "AP_CAPTURE_PROCESSES",
+                "llm_backup_url": "AP_LLM_BACKUP_URL",
+                "page_reader_backup_url": "AP_PAGE_READER_BACKUP_URL"}  # fmt: skip
 # Windows' own accounts: no password; the task names them by their SID.
 BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
             "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
@@ -90,6 +92,8 @@ class ServerSettings:
     llm_parallel: int = 1  # requests sent to LM Studio (or another model server) at once (D-111)
     worker_threads: int = 0  # requests each web worker runs at once (D-153); 0: ``app.WORKER_THREADS``
     capture_processes: int = 0  # processes reading the import queue (D-168); 0: ``server.capture_processes``' own
+    llm_backup_url: str = ""  # the chat model's backup model server (D-180); "": none
+    page_reader_backup_url: str = ""  # the page reader's, when it has a server of its own (D-180)
 
     @property
     def code_folder(self) -> Path:
@@ -214,7 +218,8 @@ def settings(data: Path, env: dict | None = None, **overrides: Any) -> ServerSet
             values[name] = min(high, max(low, int(values.get(name, getattr(ServerSettings, name)))))
         except (TypeError, ValueError):
             raise SettingsError(f"{name} {values.get(name)!r} is not a number.") from None
-    for name in ("host", "certfile", "keyfile", "proxy", "account", "task_name", "folder"):
+    for name in ("host", "certfile", "keyfile", "proxy", "account", "task_name", "folder", "llm_backup_url",
+                 "page_reader_backup_url"):  # fmt: skip
         values[name] = str(values.get(name) or getattr(ServerSettings, name)).strip()
     return ServerSettings(**values)
 
@@ -277,6 +282,9 @@ def serve_env(s: ServerSettings, data: Path) -> dict[str, str]:
         env["AP_WORKER_THREADS"] = str(s.worker_threads)
     if s.capture_processes:
         env["AP_CAPTURE_PROCESSES"] = str(s.capture_processes)
+    for name, var in (("llm_backup_url", "AP_LLM_BACKUP_URL"), ("page_reader_backup_url", "AP_PAGE_READER_BACKUP_URL")):
+        if getattr(s, name):
+            env[var] = getattr(s, name)
     return env
 
 

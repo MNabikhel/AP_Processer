@@ -1,0 +1,405 @@
+"""A backup model server (D-180): the breaker of each model server (the chat model's, the page reader's) sends the
+calls to the backup after two calls in a row the primary didn't answer, drops the calls still waiting on it, probes
+it in the background and takes it back only after it answered well for a while. Two stand-in model servers
+(``bench/fake_model.py``) on 127.0.0.1 play the Mac Studio and the Mac mini. Without a backup nothing changes."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import replace
+
+import pytest
+
+from ap_coder.ai import local_llm, page_reader, page_worker, pipeline, verifier
+from ap_coder.ai.inference import CodingError, InvoiceCoder, suggest_accounts
+from ap_coder.ai.local_llm import BACKUP, PRIMARY
+from ap_coder.ai.pipeline import ArrivalBreaker, InvoicePipeline
+from ap_coder.bench.fake_model import READER, FakeModel, page_key
+from ap_coder.core.config import Settings
+from ap_coder.core.paths import PROJECT_DIR
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store.folder import read_file
+from ap_coder.intake.imports import Reader
+from tests.conftest import SAMPLES
+
+REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test: these ask fake model servers
+CHAT = "gemma-4-12b-it"
+SWAPPED = "qwen/qwen3.5-9b"
+LINES = [(1, "Printer paper, 10 boxes", 40.0)]
+STEM = "harbourview_NS_HST_HPS-2026-0347"
+
+
+@pytest.fixture(autouse=True)
+def real_fetch(monkeypatch):
+    monkeypatch.setattr(local_llm, "_fetch_json", REAL_FETCH)
+    monkeypatch.setattr(pipeline, "ARRIVAL_BREAKER", ArrivalBreaker())
+    local_llm.forget_status()
+    local_llm.forget_failovers()
+    yield
+    local_llm.forget_status()
+    local_llm.forget_failovers()
+
+
+@pytest.fixture
+def quick(monkeypatch):
+    """The breaker's times made short: a second's hold, a probe every 0.1 s."""
+    monkeypatch.setattr(local_llm, "HOLD_SECONDS", 1.0)
+    monkeypatch.setattr(local_llm, "PROBE_SECONDS", 0.1)
+    monkeypatch.setattr(local_llm, "PROBE_TIMEOUT", 1.0)
+
+
+@pytest.fixture
+def two():
+    """The primary and its backup, the same models on both."""
+    with FakeModel(models=[CHAT, READER], slots=4) as primary, FakeModel(models=[CHAT, READER], slots=4) as backup:
+        yield primary, backup
+
+
+def _settings(base_url: str, backup_url: str = "", **llm) -> Settings:
+    s = Settings()
+    return replace(s, llm=replace(s.llm, provider="local", base_url=base_url, backup_url=backup_url, **llm))
+
+
+def _models_asked(fake: FakeModel, kind: str = "suggest") -> list[str]:
+    return [h["model"] for h in fake.history() if h["kind"] == kind]
+
+
+def _served(fake: FakeModel, kind: str) -> int:
+    return sum(1 for h in fake.history() if h["kind"] == kind and h["outcome"] == "served")
+
+
+def _until(condition, seconds: float = 10.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return condition()
+
+
+# --- B-1843 ---------------------------------------------------------------------------------------------------------
+
+
+def test_a_chat_model_lm_studio_swapped_is_asked_for_no_more(reference):
+    """B-1843: a coder kept the chat model it found first for its whole life, so once LM Studio had another one (the
+    model swapped), a capture process asked for the old one in vain until it was restarted: every arriving invoice's
+    lines were left for AP. It asks the server's model again (its status is kept 30 s)."""
+    with FakeModel(models=[CHAT, READER]) as fake:
+        coder = InvoiceCoder(_settings(fake.base_url), reference, provider="local")
+        assert suggest_accounts(coder, "Acme Supplies", LINES)
+        fake.set(models=[SWAPPED, READER])
+        local_llm.forget_status()  # (what 30 s does)
+        picks = suggest_accounts(coder, "Acme Supplies", LINES)
+        asked = _models_asked(fake)
+    assert picks and asked == [CHAT, SWAPPED], asked
+
+
+# --- Without a backup -------------------------------------------------------------------------------------------------
+
+
+def test_without_a_backup_nothing_changes(tmp_path, monkeypatch, reference):
+    """A laptop, or a server with one model machine: no breaker, no probe, nothing kept; every call to the one
+    server, as before."""
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    with FakeModel(models=[CHAT, READER]) as fake:
+        settings = _settings(fake.base_url)
+        assert local_llm.chat_failover(settings.llm) is None and page_reader.reader_failover(settings) is None
+        assert local_llm.serving_llm(settings.llm) is settings.llm
+        assert page_reader.reader_base_url(settings) == fake.base_url
+        assert local_llm.failover(local_llm.CHAT, fake.base_url, fake.base_url + "/") is None  # itself: no backup
+        coder = InvoiceCoder(settings, reference, provider="local")
+        assert suggest_accounts(coder, "Acme Supplies", LINES)
+        fake.set(down=True)
+        for _ in range(3):
+            with pytest.raises(CodingError):
+                suggest_accounts(coder, "Acme Supplies", LINES)
+        ours = [t.name for t in threading.enumerate() if t.name.startswith(("ap-coder-chat", "ap-coder-pages"))]
+        assert ours == []  # no probe, no call watched
+    assert not list((tmp_path / "llm").glob("failover-*"))  # (the slots' own lock files are there, as before)
+
+
+def test_the_backup_addresses_are_read_from_the_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("AP_LLM_BASE_URL", "studio.local:1234")
+    monkeypatch.setenv("AP_LLM_BACKUP_URL", "http://macmini.local:1234/v1/chat/completions")
+    settings = Settings.from_env(tmp_path / "missing.env")
+    assert settings.llm.backup_url == "http://macmini.local:1234/v1"
+    assert page_reader.reader_servers(settings) == ("http://studio.local:1234/v1", "http://macmini.local:1234/v1")
+    monkeypatch.setenv("AP_PAGE_READER_BASE_URL", "studio.local:8081")  # a page reader of its own: no backup...
+    assert page_reader.reader_servers(Settings.from_env(tmp_path / "missing.env"))[1] == ""
+    monkeypatch.setenv("AP_PAGE_READER_BACKUP_URL", "macmini.local:8081")  # ...unless it is given one
+    assert page_reader.reader_servers(Settings.from_env(tmp_path / "missing.env")) == (
+        "http://studio.local:8081/v1", "http://macmini.local:8081/v1")  # fmt: skip
+    monkeypatch.setenv("AP_LLM_BACKUP_URL", " ")
+    assert Settings.from_env(tmp_path / "missing.env").llm.backup_url == ""
+
+
+# --- The breaker ------------------------------------------------------------------------------------------------------
+
+
+def test_the_chat_calls_go_to_the_backup_once_the_primary_is_killed(two, reference):
+    """Killed: the first call that finds it gone fails (the invoice's lines left for AP, as before), the second moves
+    the calls and is answered by the backup at once; every call after goes there."""
+    primary, backup = two
+    coder = InvoiceCoder(_settings(primary.base_url, backup.base_url), reference, provider="local")
+    assert suggest_accounts(coder, "Acme Supplies", LINES)
+    primary.set(down=True)
+    killed = time.monotonic()
+    with pytest.raises(CodingError):
+        suggest_accounts(coder, "Acme Supplies", LINES)
+    assert suggest_accounts(coder, "Acme Supplies", LINES)  # moved, and asked again on the backup
+    took = time.monotonic() - killed
+    for _ in range(3):
+        assert suggest_accounts(coder, "Acme Supplies", LINES)
+    breaker = local_llm.chat_failover(coder.settings.llm)
+    assert breaker.state()["on"] == BACKUP and "not answering" in breaker.state()["why"]
+    assert _served(primary, "suggest") == 1 and _served(backup, "suggest") == 4 and took < 5, took
+
+
+def test_a_call_waiting_on_a_hung_primary_is_asked_again_on_the_backup_at_once(two, reference):
+    """Hung: a call under way (the AI reviewer's, minutes long) is dropped as soon as the calls leave the primary,
+    another call's finding, and asked again on the backup: not after its own ten minutes."""
+    primary, backup = two
+    settings = _settings(primary.base_url, backup.base_url, timeout_seconds=600)
+    coder = InvoiceCoder(settings, reference, provider="local")
+    coder._prepare_local()
+    primary.set(hang_rate=1.0)
+    answer: dict = {}
+
+    def ask() -> None:
+        started = time.monotonic()
+        answer["picks"] = suggest_accounts(coder, "Acme Supplies", LINES)
+        answer["seconds"] = time.monotonic() - started
+
+    asking = threading.Thread(target=ask)
+    asking.start()
+    assert _until(lambda: primary.stats()["hanging"] == 1)
+    breaker = local_llm.chat_failover(settings.llm)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # two calls found it hung (another process's, say)
+        breaker.failed(primary.base_url, "no answer in time")
+    asking.join(10)
+    primary.release_hung()
+    assert answer.get("picks") and answer["seconds"] < 5, answer
+    assert _served(backup, "suggest") == 1 and _served(primary, "suggest") == 0
+
+
+def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, quick):
+    """Hysteresis: the primary, probed in the background, is taken back after three answers in a row and the hold
+    (a second here); one that fails again soon after is kept away twice as long."""
+    primary, backup = two
+    breaker = local_llm.failover(local_llm.CHAT, primary.base_url, backup.base_url)
+    breaker.answered(primary.base_url, CHAT)  # (the model the probe asks)
+    primary.set(down=True)
+    moved = time.monotonic()
+    breaker.failed(primary.base_url, "not answering")
+    assert breaker.serving() == primary.base_url  # one failure: not yet
+    breaker.failed(primary.base_url, "not answering")
+    assert breaker.serving() == backup.base_url
+    time.sleep(0.5)
+    assert breaker.serving() == backup.base_url and breaker.state()["good"] == 0  # its probes go unanswered
+    primary.set(down=False)
+    assert _until(lambda: breaker.serving() == primary.base_url, 10)
+    back = time.monotonic()
+    assert back - moved >= local_llm.HOLD_SECONDS
+    probes = [h for h in primary.history() if h["kind"] == "chat" and h["outcome"] == "served"]
+    assert len(probes) >= local_llm.PROBES_TO_RETURN and all(h["model"] == CHAT for h in probes)
+    for _ in range(local_llm.FAILOVER_FAILURES):  # fails again at once: twice the hold
+        breaker.failed(primary.base_url, "not answering")
+    assert breaker.serving() == backup.base_url and breaker.state()["hold"] == 2 * local_llm.HOLD_SECONDS
+    assert _until(lambda: breaker.serving() == primary.base_url, 10)
+
+
+def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypatch):
+    """On the company server what one process finds moves every process's calls: its state is kept in the slots
+    folder (AP_LLM_SLOTS_DIR, which ``serve --server`` sets for all its processes)."""
+    primary, backup = two
+    monkeypatch.setenv(local_llm.SLOTS_ENV, str(tmp_path / "llm"))
+    code = ("import sys; from ap_coder.ai import local_llm\n"
+            "b = local_llm.failover(local_llm.CHAT, sys.argv[1], sys.argv[2])\n"
+            "for _ in range(local_llm.FAILOVER_FAILURES): b.failed(sys.argv[1], 'not answering')\n")  # fmt: skip
+    here = local_llm.failover(local_llm.CHAT, primary.base_url, backup.base_url)
+    assert here.serving() == primary.base_url
+    started = time.time()
+    subprocess.run([sys.executable, "-c", code, primary.base_url, backup.base_url], check=True, timeout=60,
+                   cwd=PROJECT_DIR, env=dict(os.environ))  # fmt: skip
+    assert _until(lambda: here.serving() == backup.base_url, 2 * local_llm.STATE_SECONDS + 1)
+    assert here.left_since() >= started
+    kept = json.loads(next((tmp_path / "llm").glob("failover-chat-*.json")).read_text(encoding="utf-8"))
+    assert kept["on"] == BACKUP and kept["moves"] == 1
+
+
+def test_a_failure_of_a_server_already_left_or_a_refusal_moves_nothing(two):
+    primary, backup = two
+    breaker = local_llm.failover(local_llm.PAGES, primary.base_url, backup.base_url)
+    breaker.failed(primary.base_url, "not answering")
+    breaker.answered(primary.base_url)  # an answer in between: two in a row are needed
+    breaker.failed(primary.base_url, "not answering")
+    assert breaker.serving() == primary.base_url
+    breaker.failed(backup.base_url, "not answering")  # the backup isn't in use: says nothing
+    breaker.failed("http://127.0.0.1:9/v1", "not answering")  # nor another server
+    assert breaker.state()["failures"] == {PRIMARY: 1, BACKUP: 0}
+
+    class Refused(Exception):
+        status_code = 404
+
+    assert local_llm.server_failure(Refused()) == "" and local_llm.server_failure(ConnectionRefusedError()) != ""
+    assert local_llm.server_failure(local_llm.ServerLeft("dropped by us")) == ""
+
+
+# --- The page reader ------------------------------------------------------------------------------------------------
+
+
+def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_backup_reads_it(two, monkeypatch):
+    """With a backup, a page read whose next word is HANG_SECONDS late on the primary is a hang (not its twenty
+    minutes): the second one moves the calls, and that page is read on the backup at once."""
+    primary, backup = two
+    monkeypatch.setattr(local_llm, "HANG_SECONDS", 1.0)
+    settings = _settings(primary.base_url, backup.base_url)
+    primary.set(hang_rate=1.0)
+    started = time.monotonic()
+    with pytest.raises(page_reader.PageReaderError) as first:
+        page_reader.transcribe(settings, b"page one", model=READER)
+    assert first.value.failed and first.value.temporary
+    text = page_reader.transcribe(settings, b"page two", model=READER)  # the second hang moves it
+    took = time.monotonic() - started
+    primary.release_hung()
+    assert text and took < 10, took
+    assert page_reader.reader_base_url(settings) == backup.base_url
+    assert backup.page_answers() == {page_key(b"page two"): 1} and not primary.page_answers()
+    assert local_llm.chat_failover(settings.llm).serving() == primary.base_url  # the chat model's breaker: its own
+
+
+@pytest.fixture
+def store(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    page_worker.save_test(store, {"model": READER, "ok": True, "fields_right": 9, "fields_total": 9})
+    return store
+
+
+def _off(primary: FakeModel, backup: FakeModel) -> Settings:
+    """The page reader on ``primary`` with ``backup``, the chat model not asked."""
+    s = _settings(primary.base_url, backup.base_url)
+    return replace(s, llm=replace(s.llm, provider="off"))
+
+
+def _invoice(store: Store, settings: Settings) -> int:
+    result = InvoicePipeline(settings, store.reference_data(), store=store).process(SAMPLES / f"{STEM}.pdf")
+    assert result.ok and store.page_read(result.invoice_id)["status"] == "waiting", result.error
+    return int(result.invoice_id)
+
+
+def test_a_read_in_flight_when_the_primary_dies_is_read_on_the_backup_and_stored_once(two, store):
+    """The page read under way when the calls leave the primary (another reader found it hung) is dropped and read
+    again on the backup at once: done, no try counted, its reading folded in once."""
+    primary, backup = two
+    settings = _off(primary, backup)
+    iid = _invoice(store, settings)
+    primary.set(hang_rate=1.0)
+    outcome: dict = {}
+    reading = threading.Thread(target=lambda: outcome.update(read=page_worker.read_one(settings, store)))
+    reading.start()
+    assert _until(lambda: primary.stats()["hanging"] >= 1, 30)
+    breaker = page_reader.reader_failover(settings)
+    for _ in range(local_llm.FAILOVER_FAILURES):
+        breaker.failed(primary.base_url, "no answer in time")
+    reading.join(30)
+    primary.release_hung()
+    read = outcome["read"]
+    assert read is not None and read.status == "done", read
+    assert store.page_read(iid)["status"] == "done" and not store.page_read(iid).get("tries")
+    assert sum(backup.page_answers().values()) >= 1 and not primary.page_answers()
+    assert page_worker.read_one(settings, store) is None  # nothing left in line: read once
+
+
+def test_a_read_cut_off_by_a_move_goes_back_in_line_at_once_its_try_not_counted(two, store):
+    iid = _invoice(store, _off(*two))
+    row = store.next_page_read(reader="r")
+    moved = page_worker._postpone_or_fail(store, row, READER, 0, 1.0, "the model server isn't answering", True)
+    assert moved.status == "postponed" and moved.again and "backup" in moved.message
+    assert store.page_read(iid)["status"] == "waiting" and not store.page_read(iid).get("tries")
+    row = store.next_page_read(reader="r")
+    counted = page_worker._postpone_or_fail(store, row, READER, 0, 1.0, "the model server isn't answering")
+    assert not counted.again and store.page_read(iid)["tries"] == 1
+
+
+# --- The arrival's chat call (D-168's breaker) ----------------------------------------------------------------------
+
+
+def _text_invoices(store: Store, n: int) -> list:
+    """``n`` text invoices (the samples' text copies, each made distinct), each with lines that ask the chat model."""
+    folder = store.path.parent / "invoices"
+    folder.mkdir(exist_ok=True)
+    texts = sorted(p for p in SAMPLES.glob("*.md") if p.name != "README.md")
+    read = []
+    for k in range(n):
+        path = folder / f"{k:02d}-{texts[k % len(texts)].name}"
+        path.write_text(texts[k % len(texts)].read_text(encoding="utf-8") + f"\n\nCopy {k}\n", encoding="utf-8")
+        read.append(read_file(path))
+    return read
+
+
+def test_arrivals_ask_the_backup_once_the_primary_hangs_not_nobody(two, tmp_path, monkeypatch):
+    """D-168's breaker stops asking after two arrivals in a row went unanswered: with a backup those two move the
+    calls instead, and every arrival after asks the backup, which answers."""
+    primary, backup = two
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv(pipeline.ARRIVAL_ENV, "2")
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    store.queue_imports(_text_invoices(store, 6), source="upload", person=True)
+    primary.set(hang_rate=1.0)
+    read = Reader(store, _settings(primary.base_url, backup.base_url, timeout_seconds=600), "r").read_all()
+    primary.release_hung()
+    assert read == 6 and len(store.list_invoices()) == 6
+    assert primary.stats()["hung"] == local_llm.FAILOVER_FAILURES and _served(backup, "suggest") == 4
+
+
+# --- A swapped chat model (item 5) ----------------------------------------------------------------------------------
+
+
+def _truth_header() -> dict:
+    truth = json.loads(page_reader.TEST_TRUTH.read_text(encoding="utf-8"))
+    return {k: truth.get(k) for k in ("vendor_name", "invoice_number", "invoice_date", "due_date", "po_number",
+                                      "gst_hst_registration_number", "subtotal", "tax_total", "grand_total")}  # fmt: skip
+
+
+def test_a_swapped_chat_model_decides_nothing_touchless_until_it_passes_its_self_test(store):
+    """The chat model AP Coder first ran with is trusted; one LM Studio swapped in isn't, until it read the page
+    reader's test invoice right: the AI reviewer waits meanwhile, and the person sees why."""
+    vision = [{"id": CHAT, "vision": True}, {"id": SWAPPED, "vision": True}, READER]
+    with FakeModel(models=[vision[0], READER]) as fake:
+        settings = _settings(fake.base_url)
+        assert page_worker.chat_untrusted(settings, store) == ""  # the first: qualified by its use
+        assert page_worker.chat_test_if_due(settings, store) is None
+        fake.set(models=[vision[1], READER])
+        local_llm.forget_status()
+        why = page_worker.chat_untrusted(settings, store)
+        assert SWAPPED in why and CHAT in why and "self-test" in why
+        verifier.save_settings(store, on=True, rounds=1, minutes=1.0)
+        taken = []
+        store.next_verification = lambda **kw: taken.append(kw)  # nothing is taken from its line
+        assert verifier.verify_one(settings, store) is None and not taken
+        failed = page_worker.chat_test_if_due(settings, store)  # the fake reads nothing on the test pages
+        assert failed is not None and not failed["ok"] and failed["model"] == SWAPPED
+        assert "failed its self-test" in page_worker.chat_untrusted(settings, store)
+        assert page_worker.chat_test_if_due(settings, store) is None  # not again at once
+        fake.set(headers={page_key(png): _truth_header() for png in page_reader.test_pages(page_reader.OVIS)})
+        tests = page_worker.chat_tests(store)
+        tests["models"].pop(SWAPPED)
+        store.set_setting(page_worker.CHAT_TEST_KEY, json.dumps(tests))
+        passed = page_worker.chat_test_if_due(settings, store)
+        assert passed["ok"], passed
+        assert page_worker.chat_untrusted(settings, store) == ""
+    assert "chat_model_tested" in [e["action"] for e in store.events()]
+
+
+def test_the_first_chat_model_is_the_one_ap_coder_was_qualified_with(store):
+    assert page_worker.chat_trust(store, "") == ""  # no chat model: nothing it decides
+    assert page_worker.chat_trust(store, CHAT) == ""  # the first one asked here
+    assert page_worker.chat_trust(store, SWAPPED) and page_worker.chat_trust(store, CHAT) == ""
+    assert page_worker.chat_tests(store)["first"] == CHAT

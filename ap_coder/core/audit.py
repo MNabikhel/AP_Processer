@@ -86,6 +86,7 @@ ACTIONS = {
     "sent_back": ("undo", "warn", "Sent back"),
     "proposal_updated": ("visibility", "info", "Page reader read it: proposal updated"),
     "page_reader_tested": ("fact_check", "info", "Page reader tested"),
+    "chat_model_tested": ("fact_check", "info", "Chat model tested"),
     "reopened": ("undo", "warn", "Reopened for correction"),
     "erp_register_imported": ("receipt_long", "info", "ERP invoice register imported"),
     "history_imported": ("history_edu", "info", "History imported"),
