@@ -90,7 +90,7 @@ def test_the_approved_pdf_of_a_vendor_named_beyond_latin_1_downloads(demo):
 def test_a_file_in_the_invoices_folder_that_cant_be_opened_never_breaks_process_invoices(demo, monkeypatch):
     """A scan still being written, a PDF open in another program, a OneDrive placeholder: reading it to see whether it
     was processed raised, and Process invoices (the page and "Process N files") answered 500."""
-    from ap_coder.core.store import Store
+    from ap_coder.intake import imports
     from ap_coder.web.core import invoice_dir
     from tests.webclient import PAGE
 
@@ -98,21 +98,21 @@ def test_a_file_in_the_invoices_folder_that_cant_be_opened_never_breaks_process_
     folder = invoice_dir(store)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "still-scanning.pdf").write_bytes(b"%PDF-1.4 half")
-    real = Store.find_by_hash
+    real = imports.read_file
 
-    def find_by_hash(self, path, include_failed=False):
+    def read_file(path):  # (the pick-up reads each new file once, D-168)
         if Path(path).name == "still-scanning.pdf":
             raise PermissionError(13, "The process cannot access the file", str(path))
-        return real(self, path, include_failed)
+        return real(path)
 
-    monkeypatch.setattr(Store, "find_by_hash", find_by_hash)
+    monkeypatch.setattr(imports, "read_file", read_file)
     page = client.get("/process")
     assert page.status_code == 200
     started = client.post("/process/folder", headers=PAGE)
     assert started.status_code == 200 and started.json()["job"] == "process"
     job = client.app.state.jobs.get("process")
     assert job.wait(60)
-    texts = [m["text"] for m in job.snapshot()["result"]["messages"]]
+    texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
     assert any("1 file could not be opened" in t for t in texts), texts
 
 

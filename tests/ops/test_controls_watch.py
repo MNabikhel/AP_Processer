@@ -143,7 +143,7 @@ def test_watch_once_fails_when_every_invoice_failed(tmp_path, monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             return SimpleNamespace(ok=self.ok, error="unreadable", output={"vendor_name": "V"}, report=None)
 
     monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
@@ -175,7 +175,7 @@ def test_a_crafted_email_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             processed.append(path.name)
             return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
 
@@ -226,7 +226,7 @@ def test_watch_once_processes_the_invoices_it_just_took_out_of_emails(tmp_path, 
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):
             processed.append(path.name)
             return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
 
@@ -333,3 +333,24 @@ def test_the_process_command_waits_for_another_pick_up_then_skips_a_file_it_stor
     said += capsys.readouterr().err
     assert "Skipping 1 file(s) already in the review queue" in said
     assert len(Store(tmp_path / "a.db").list_invoices()) == 1
+
+
+def test_a_watch_beside_the_servers_capture_processes_only_puts_files_in_line(tmp_path, monkeypatch, capsys):
+    """D-168: on the company server its capture processes read the import queue; a scheduled watch there puts the new
+    files in line and reads none itself (a laptop's watch, with no capture process, reads them)."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.ops import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", inbox / "new.pdf")
+    os.utime(inbox / "new.pdf", (time.time() - 60, time.time() - 60))
+    args = _watch_args(tmp_path, "--once")
+    store = Store(tmp_path / "a.db")
+    store.take_lease("capture:server-1", "server-1", 60)  # a capture process runs
+    read = []
+    monkeypatch.setattr(InvoicePipeline, "process", lambda self, path, **kw: read.append(path))
+    assert cli.main(args) == 0
+    assert read == [] and store.imports_open() == {"waiting": 1, "reading": 0}
+    assert "1 file(s) put in line: AP Coder's server reads them" in capsys.readouterr().err
+    assert cli.main(args) == 0 and store.imports_open()["waiting"] == 1  # in line once, not again at each check

@@ -509,7 +509,7 @@ def test_an_invoice_upload_over_the_size_limit_is_not_saved(store, monkeypatch):
     assert answer.json()["ok"], answer.text
     job = app.state.jobs.get(process.JOB)
     job.wait(30)
-    assert "larger than" in json.dumps(job.snapshot())
+    assert "larger than" in json.dumps(client.get("/process/status").json())  # (the import queue's run, D-168)
     assert not (process.invoice_dir(store) / "big.pdf").exists()
 
 

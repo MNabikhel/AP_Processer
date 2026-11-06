@@ -40,9 +40,9 @@ from pathlib import Path
 from ..ai.extraction import DOCUMENT_EXTENSIONS
 from ..core.paths import try_lock
 from . import triage
+from .files import EMAIL_EXTENSIONS, folder_names  # noqa: F401  (EMAIL_EXTENSIONS: imported from here too)
 from .msgfile import MsgError, html_to_text, read_msg
 
-EMAIL_EXTENSIONS = {".eml", ".msg"}
 MIN_IMAGE_BYTES = 15_000
 MAX_LOGO_BYTES = 150_000  # an inline picture larger than this is a photo of an invoice, not a signature logo
 SETTLE_SECONDS = 5  # an email changed more recently may still be being copied
@@ -502,12 +502,10 @@ def triage_log(folder: Path, limit: int = 500, keep: Callable[[dict], bool] | No
 
 
 def emails_in(folder: Path) -> list[Path]:
+    """The saved emails in ``folder``, as ``files.folder_names`` lists them (a hidden file is never one, B-1758)."""
     if not folder.is_dir():
         return []
-    # the name first: whether it is a file is asked of the saved emails only, not of a year of invoices (D-157); a
-    # hidden file (a Mac's "._mail.eml") is never one, as it is never an invoice (B-1758)
-    return sorted(p for p in folder.iterdir()
-                  if p.suffix.lower() in EMAIL_EXTENSIONS and not p.name.startswith(".") and p.is_file())  # fmt: skip
+    return [folder / name for name in folder_names(folder)[1]]
 
 
 def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:

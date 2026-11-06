@@ -338,16 +338,17 @@ def test_second_approval_on_an_invoice_someone_else_just_handled(client, store, 
 
 
 def _fake_pipeline(monkeypatch, vendor="Northwind"):
+    from ap_coder.ai import pipeline
     from ap_coder.web.pages import process
 
     class Pipeline:
         def __init__(self, *args, **kwargs):
             pass
 
-        def process(self, path):
+        def process(self, path, **kwargs):  # (sha256: as the import queue read it, D-168)
             return SimpleNamespace(ok=True, output={"vendor_name": vendor}, report=None, error=None)
 
-    monkeypatch.setattr(process, "InvoicePipeline", Pipeline)
+    monkeypatch.setattr(pipeline, "InvoicePipeline", Pipeline)  # what the import queue's reader makes
     return process
 
 
@@ -406,7 +407,8 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(client, store, monkeyp
     snap = _finished(client)
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
     assert any("Invoice; 1 invoice to the review queue" in line["text"] for line in snap["lines"])
-    assert snap["result"]["ok"] == 1
+    assert snap["result"]["ok"] == 1 and snap["result"]["label"] == "Processed 1 of 1"  # its attachment read once,
+    assert [m for m in snap["result"]["messages"] if m["tone"] != "ok"] == []  # as its own, never as a new file
 
 
 def _nested_email(depth: int) -> bytes:

@@ -638,6 +638,7 @@ class Server:
             except OSError:
                 continue
             roles[pid] = ("server" if pid == self.proc.pid else "background" if "--background-work" in command
+                          else "capture" if "--capture-work" in command
                           else "other" if "resource_tracker" in command else "web worker")  # fmt: skip
         return roles
 

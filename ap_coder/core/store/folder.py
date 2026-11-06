@@ -53,16 +53,18 @@ class FolderMixin:
 
     def files_stamp(self) -> tuple[Any, ...]:
         """What the import page's list of new files depends on besides the folder itself: the changes to
-        ``seen_files`` (counted), and the invoices (how many, the latest)."""
+        ``seen_files`` (counted), the invoices (how many, the latest) and the import queue (its latest batch, D-168)."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             return tuple(conn.execute(
-                "SELECT (SELECT value FROM settings WHERE key = 'seen_files'), COUNT(*), MAX(id) FROM invoices"
+                "SELECT (SELECT value FROM settings WHERE key = 'seen_files'), COUNT(*), MAX(id), (SELECT MAX(id) FROM "
+                "import_batches) FROM invoices"
             ).fetchone())  # fmt: skip
 
     def unseen_files(self, listed: list[tuple[str, int, int]]) -> set[str]:
         """The places of ``listed`` (place, size, time in nanoseconds) that are not a file an invoice was made from as
-        the pick-up last read it (failed attempts count: ``find_by_hash(include_failed=True)``), without reading
-        any: one the pick-up has not read yet, or that changed since, is new."""
+        the pick-up last read it (failed attempts count: ``find_by_hash(include_failed=True)``), nor one in line to
+        be read (the import queue, D-168), without reading any: one the pick-up has not read yet, or that changed
+        since, is new."""
         if not listed:
             return set()
         with self._conn() as conn:  # type: ignore[attr-defined]
@@ -71,7 +73,8 @@ class FolderMixin:
                 "seen_files AS f WHERE f.path = json_extract(j.value, '$[0]') AND (f.size IS NULL OR (f.size = "
                 "json_extract(j.value, '$[1]') AND f.mtime_ns = json_extract(j.value, '$[2]'))) AND EXISTS (SELECT 1 "
                 "FROM invoices AS i WHERE i.file_sha256 = f.sha256 UNION ALL SELECT 1 FROM invoices AS i WHERE "
-                "i.original_sha256 = f.sha256))",
+                "i.original_sha256 = f.sha256 UNION ALL SELECT 1 FROM import_files AS q WHERE q.status IN ('waiting', "
+                "'reading') AND q.sha256 = f.sha256))",
                 (json.dumps(listed),),
             ).fetchall()
         return {r[0] for r in rows}

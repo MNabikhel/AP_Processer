@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,19 @@ class CodingError(RuntimeError):
     def __init__(self, message: str = "", *, temporary: bool = False) -> None:
         super().__init__(message)
         self.temporary = temporary
+
+
+class ChatTimeout(CodingError):
+    """The chat model gave no answer in the time it was given (a slot to ask in, then the answer)."""
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(message, temporary=True)
+
+
+def _timed_out(exc: Exception) -> bool:
+    import openai
+
+    return isinstance(exc, openai.APITimeoutError)
 
 
 @dataclass(frozen=True)
@@ -335,11 +349,14 @@ class InvoiceCoder:
         return [{**system, "content": system["content"] + local_llm.json_instructions(schema or self.schema)}, *rest]
 
     def _local_create(self, model: str, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None, *,
-                      thinking: bool = False, timeout: float | None = None) -> Any:  # fmt: skip
+                      thinking: bool = False, timeout: float | None = None,
+                      deadline: float | None = None) -> Any:  # fmt: skip
         """One chat call to the local model, in the best way its server takes: the strict schema, else plain JSON
         mode, else the schema in the prompt; with the thinking switch, else without the fields the server refused.
         What worked is remembered for the next call. ``timeout``: the most this call may take, when less than
-        AP_LLM_TIMEOUT_SECONDS (the AI reviewer's time for an invoice)."""
+        AP_LLM_TIMEOUT_SECONDS (the AI reviewer's time for an invoice). ``deadline``: a ``time.monotonic()`` by which
+        the call has its answer, the wait for a chat slot included (an arriving invoice's, D-168), else
+        ``ChatTimeout``."""
         base = self.settings.llm.base_url
         mode = local_llm.start_mode(base, model)
         while True:
@@ -349,8 +366,15 @@ class InvoiceCoder:
                 kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
-                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel):  # llm_parallel at once (default one)
+                with local_llm.CHAT_LOCK.held(self.settings.llm.parallel, deadline):  # llm_parallel at once
+                    if deadline is not None:  # what is left once a slot is had
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            raise TimeoutError("no time left once a chat slot was free")
+                        kwargs["timeout"] = min(left, float(kwargs.get("timeout") or left))
                     return self.client.chat.completions.create(messages=sent, **kwargs)
+            except TimeoutError as exc:  # no slot in time: the call was never sent
+                raise ChatTimeout(f"The chat model was busy: no slot to ask in within the time given ({exc}).") from exc
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
                     refuse = local_llm.refuse_thinking_on if thinking else local_llm.refuse_thinking_off
@@ -362,6 +386,9 @@ class InvoiceCoder:
                     mode += 1
                     local_llm.remember_mode(base, model, mode)
                     continue
+                if deadline is not None and _timed_out(exc):
+                    raise ChatTimeout("The chat model gave no answer in the time an arriving invoice waits for it "
+                                      f"({kwargs.get('timeout', 0):.0f} s).") from exc  # fmt: skip
                 raise self._local_error(exc, kwargs.get("timeout")) from exc
 
     def _local_error(self, exc: Exception, timeout: float | None = None) -> CodingError:
@@ -369,16 +396,14 @@ class InvoiceCoder:
 
         llm = self.settings.llm
         if isinstance(exc, openai.APITimeoutError) and timeout:  # the AI reviewer's own limit, its minutes (B-1525)
-            return CodingError(
+            return ChatTimeout(
                 f"The chat model took longer than the AI reviewer's time left ({timeout:.0f}s): it may be slow on this "
-                "computer. Give the AI reviewer more minutes in Settings → Reading, or turn it off there.",
-                temporary=True,
+                "computer. Give the AI reviewer more minutes in Settings → Reading, or turn it off there."
             )
         if isinstance(exc, openai.APITimeoutError):
-            return CodingError(
+            return ChatTimeout(
                 f"The local model took longer than {timeout or llm.timeout_seconds:.0f}s. LM Studio may still be "
-                "loading it; try again, or allow longer with AP_LLM_TIMEOUT_SECONDS.",
-                temporary=True,
+                "loading it; try again, or allow longer with AP_LLM_TIMEOUT_SECONDS."
             )
         if isinstance(exc, (openai.APIConnectionError, ConnectionError)):
             local_llm.forget_status()
@@ -466,15 +491,18 @@ def _account_schema(reference: ReferenceData) -> dict[str, Any]:
 
 
 def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, str, float]], history: str = "",
-                     kept: Path | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+                     kept: Path | None = None,
+                     within: float | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
     """A local model's GL account (and cost center) for each line the approval memory could not code:
     line number -> (gl_code, cost_center, reason). The invoice itself is read by the local reader, which a
     small model is worse at than at choosing an account; this call is short, so it is quick on a laptop.
     Only codes from the chart come back (the schema lists them); anything else is dropped. ``kept``: a folder where
     each answer is kept, so the same question (model, lines, history, chart) is never asked twice: the page reader's
-    pass asks what arrival asked (D-131)."""
+    pass asks what arrival asked (D-131). ``within``: the most it may take, every batch's wait for a chat slot
+    included (an arriving invoice on the company server, D-168), else ``ChatTimeout``."""
     if not lines:
         return {}
+    deadline = None if within is None else time.monotonic() + within
     model = coder._prepare_local()
     schema = _account_schema(coder.reference)
     budget = int(coder.settings.llm.max_prompt_chars or 0)  # AP_LLM_MAX_PROMPT_CHARS: the whole prompt, both messages
@@ -500,7 +528,7 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
         batch = asked[first : first + SUGGEST_BATCH_LINES]
         try:
             out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc,
-                                      kept))  # fmt: skip
+                                      kept, deadline))  # fmt: skip
         except Exception as exc:  # the batches answered before keep their accounts (B-1342); the rest stay for AP
             if not out:
                 raise
@@ -517,8 +545,9 @@ SUGGEST_HISTORY_CHARS = 3_000  # of the approval history and AP's lessons
 
 
 def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], system: str, vendor: str,
-                   lines: list[tuple[int, str, float]], history: str, valid_gl: set[str],
-                   valid_cc: set[str], kept: Path | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+                   lines: list[tuple[int, str, float]], history: str, valid_gl: set[str], valid_cc: set[str],
+                   kept: Path | None = None,
+                   deadline: float | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
     """``suggest_accounts`` for one batch of lines: one call, or none when ``kept`` has its answer."""
     listing = "\n".join(f"{n}. {str(desc)[:SUGGEST_DESCRIPTION_CHARS]} | {amount:,.2f}" for n, desc, amount in lines)
     user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n{listing}"
@@ -535,7 +564,7 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
             data = None
         if isinstance(data, dict):
             return _picks(data, lines, valid_gl, valid_cc)
-    response = coder._local_create(model, messages, schema)
+    response = coder._local_create(model, messages, schema, deadline=deadline)
     reply = local_llm.read_reply(response.choices[0], coder.settings.llm.max_output_tokens)
     if reply.data is None:  # the lines stay for AP to code; the reason is logged, and shown by the doctor
         raise CodingError(reply.problem[:1].upper() + reply.problem[1:])

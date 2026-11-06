@@ -22,9 +22,10 @@ and uploads kept for a short while), ``samples``, ``users`` (server mode's accou
 D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
 restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
 (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
-pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``reports``
-(the big answers worked out once for every process of the company server, and the downloads its background process
-makes, D-169). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
+pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
+(the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every
+process of the company server, and the downloads its background process makes, D-169). A test that patches a
+module-level name (``_now``, ``json``...) patches it in the part that uses it.
 """
 
 from ._base import (  # noqa: F401  (what other modules import from here, and every name the one module had:
@@ -107,6 +108,7 @@ from .capture import CaptureMixin
 from .ephemeral import EphemeralMixin
 from .folder import FolderMixin
 from .hub import HubMixin
+from .imports import ImportsMixin
 from .invoices import InvoicesMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
@@ -136,6 +138,7 @@ class Store(
     HubMixin,
     ManagersMixin,
     FolderMixin,
+    ImportsMixin,
     ReportsMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""

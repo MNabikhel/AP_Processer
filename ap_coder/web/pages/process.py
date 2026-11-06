@@ -1,23 +1,23 @@
 """Import invoices: the setup checklist, uploading invoices, picking up new files in the invoices folder.
 
-Reading and coding runs as the background job "process" (``ap_coder/web/jobs.py``): the page uploads the files,
-then polls ``GET /process/status`` and shows each invoice as it is done. The demo invoices (load / remove) are here
-too; the review queue's welcome card uses the same routes.
+Each upload and each pick-up puts its files in the import queue (``core/store/imports.py``, D-168), which keeps them
+over a restart; they are read in turn, fairly between the people who brought them. On the company server its capture
+processes read them (``web/server.py``), never a web worker; on a laptop the dashboard's own job "process"
+(``ap_coder/web/jobs.py``) does, as before. The page polls ``GET /process/status`` (the queue's latest run) and shows
+each invoice as it is done. The demo invoices (load / remove) are here too; the review queue's welcome card uses the
+same routes.
 """
 
 from __future__ import annotations
 
 import collections
 import contextlib
-import contextvars
-import datetime as dt
 import json
 import logging
 import os
 import re
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -27,22 +27,17 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import (
-    NOT_A_FILE_TO_MENTION,
-    STILL_ARRIVING,
-    InvoicePipeline,
-    PipelineResult,
-    invoice_files,
-    other_files,
-)
+from ap_coder.ai.pipeline import PipelineResult
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import PROVINCE_NAMES, TAX_TYPES
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
-from ap_coder.core.store import REVIEW, Store
+from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN, REVIEW, Store
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake import inbox
+from ap_coder.intake.files import folder_names
+from ap_coder.intake.imports import NO_ROOM, RESTORING, Reader, has_room, noted, owner_id, pick_up
 from ap_coder.intake.mailbox import (
     EMAIL_EXTENSIONS,
     MAX_EMAIL_BYTES,
@@ -55,7 +50,6 @@ from ap_coder.intake.mailbox import (
 from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.ops.help import SERVER_LM_STUDIO
 from ap_coder.web import identity
-from ap_coder.web import jobs as jobs_module
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import (
     cache_dir,
@@ -66,7 +60,6 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     invoice_dir,
-    jobs,
     local_url,
     open_folder_here,
     page_router,
@@ -79,7 +72,7 @@ from ap_coder.web.core import (
     short_path,
 )
 from ap_coder.web.identity import person
-from ap_coder.web.jobs import Job
+from ap_coder.web.jobs import MAX_LINES, Job
 from ap_coder.web.pages.review import attention
 
 router = page_router()  # each plain handler: one connection a request
@@ -175,35 +168,6 @@ def save_upload(folder: Path, name: str, content: bytes) -> Path:
         n += 1
     target.write_bytes(content)
     return target
-
-
-def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
-    """(new files, files already in AP Coder): a file seen before, or a repeat within ``files``, is not read again."""
-    todo, already, seen, read = [], [], set(), []
-    for path in files:
-        read.append(read_file(path))
-        digest = read[-1][3]
-        if digest in seen or store.find_by_hash(path, sha=digest) is not None:
-            already.append(path)
-        else:
-            todo.append(path)
-        seen.add(digest)
-    store.note_files(read)  # what the import page lists (``folder_files``)
-    return todo, already
-
-
-def still_new(store: Store, files: list[Path], include_failed: bool = False) -> tuple[list[Path], list[Path]]:
-    """(the files still to read, the ones stored since they were listed): checked again once the import holds the
-    pick-up lock, as another pick-up (a scheduled watch) may have stored them meanwhile (B-1587). A file gone or
-    locked meanwhile (a picture the other one made a PDF of) is in neither: the next pick-up sees it if it is there.
-    ``include_failed``: a failed read counts as stored, as the folder pick-up lists them (B-1673; Retry reads one)."""
-    todo, stored = [], []
-    for path in files:
-        try:
-            (stored if store.find_by_hash(path, include_failed) is not None else todo).append(path)
-        except OSError:
-            continue
-    return todo, stored
 
 
 def email_line(mail: Unpacked, already: list[Path] | None = None) -> tuple[str, str]:
@@ -564,12 +528,13 @@ def needs_attention(store: Store, reference: ReferenceData | None, result: Pipel
     return inv["id"] in attention(store, reference, [inv])
 
 
-def run_summary(ok: int, todo: list[Path], skipped: list[Path], mails: list[Unpacked], note: str,
+def run_summary(ok: int, read: int, skipped: list[str], emails: int, to_person: int, note: str,
                 notes: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, Any]], str]:  # fmt: skip
-    """What a processing run says when it ends: (its messages, its one-line label). ``ok``: the files of ``todo`` read
-    and coded; ``skipped``: those already in AP Coder; ``mails``: the emails unpacked; ``note``: OvisOCR2's queue
-    (``queued_note``); ``notes``: messages from saving the upload, said first."""
-    failed = len(todo) - ok
+    """What a run of imports says when it ends: (its messages, its one-line label). ``ok``: the files of the ``read``
+    ones read and coded; ``skipped``: the names of those already in AP Coder; ``emails``: the saved emails unpacked,
+    ``to_person`` of them sorted to a person; ``note``: OvisOCR2's queue (``queued_note``); ``notes``: messages from
+    saving the uploads, said first."""
+    failed = read - ok
     messages = list(notes or [])
     if ok:
         ready = "It's" if ok == 1 else "They're"  # (B-430)
@@ -580,117 +545,68 @@ def run_summary(ok: int, todo: list[Path], skipped: list[Path], mails: list[Unpa
                                       "Failed / rejected.", "err"))  # fmt: skip
     if skipped:
         messages.append(flash_message(f"Skipped {ui.plural(len(skipped), 'file')} already in AP Coder.", "info",
-                                      [p.name for p in skipped], "content_copy"))  # fmt: skip
-    if not todo and not skipped and not mails:
+                                      list(skipped), "content_copy"))  # fmt: skip
+    if not read and not skipped and not emails:
         messages.append(flash_message("Nothing new to read.", "info"))
-    label = f"Processed {ok} of {len(todo) + len(skipped)}" if todo else "Nothing new to read"
-    if todo and skipped:  # every file of the run counted, the ones not read said (B-1184)
+    label = f"Processed {ok} of {read + len(skipped)}" if read else "Nothing new to read"
+    if read and skipped:  # every file of the run counted, the ones not read said (B-1184)
         label += f": {len(skipped)} already in AP Coder"
-    to_person = sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
     if to_person:  # every email counted, the ones sorted to a person too (B-1303)
-        files = len(todo) + len(skipped)
-        read = (f"{ui.plural(ok, 'invoice')} processed" if ok == files
-                else f"{ok} of {ui.plural(files, 'file')} processed")  # fmt: skip
-        parts = [read] if files else []
+        files = read + len(skipped)
+        parts = [f"{ui.plural(ok, 'invoice')} processed" if ok == files
+                 else f"{ok} of {ui.plural(files, 'file')} processed"] if files else []  # fmt: skip
         parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
         parts.append(f"{to_person} sent to Emails that need a person")
-        label = f"{ui.plural(len(mails), 'email')}: {', '.join(parts)}"
+        label = f"{ui.plural(emails, 'email')}: {', '.join(parts)}"
     return messages, label
 
 
-def process_files(store: Store, settings: Settings, paths: list[Path], *, already: list[Path] | None = None,
-                  emails: list[Unpacked] | None = None, notes: list[dict[str, Any]] | None = None,
-                  folder_emails: bool = False) -> Any:  # fmt: skip
-    """The job that reads and codes ``paths`` and sends them to the review queue. ``already``: files skipped as seen
-    before (said in the summary); ``emails``: saved emails unpacked for this run; ``notes``: messages from saving the
-    upload; ``folder_emails``: first unpack the saved emails waiting in the invoices folder (the folder pick-up)."""
-
-    actor = reviewer()  # who started it (the job's thread has no request to say)
-
-    def work(job: Job) -> dict[str, Any]:
-        # After another pick-up reading invoices into this database: a scheduled watch, ap_coder process (B-1587)
-        note = "Waiting for another pick-up of invoices to finish (a scheduled watch)"
-        lock = wait_for_pickup(data_dir(store), lambda: job.step(0, len(paths), note))
-        try:
-            return read(job)
-        finally:
-            lock.close()
-
-    def read(job: Job) -> dict[str, Any]:
-        # Listed before the lock: one stored since by another is not read; by the folder pick-up, nor one that failed.
-        todo, stored = still_new(store, paths, include_failed=folder_emails)
-        skipped, mails = [*(already or []), *stored], list(emails or [])
-        if folder_emails:
-            unpacked = unpack_folder(invoice_dir(store))
-            mails += unpacked
-            new, dup = split_new(store, [p for m in unpacked for p in m.saved])
-            todo += [p for p in new if p not in todo]
-            skipped += dup
-        for mail in mails:
-            text, tone = email_line(mail, skipped)
-            job.log(text, tone, "gpp_maybe" if tone == "err" and mail.triage else "mail")
-            inbox.log_sorted(store, mail)
-        job.step(0, len(todo), "Starting")
-        ok, errors = 0, []
-        started, clock = dt.datetime.now().isoformat(timespec="seconds"), time.monotonic()
-        waiting = store.page_reads_waiting()
-        pipeline = reference = None
-        if todo:
-            reference = store.reference_data()
-            pipeline = InvoicePipeline(settings, reference, cache_dir=cache_dir(store), store=store)
-        for n, path in enumerate(todo, start=1):
-            job.step(n - 1, len(todo), f"Reading and coding {path.name} ({n}/{len(todo)})", stage="reading")
-            result = pipeline.process(path)
-            if result.ok:
-                ok += 1
-                attention = needs_attention(store, reference, result)
-                name = result.output.get("vendor_name") or path.name
-                job.log(f"{name}: {'needs attention' if attention else 'ready'}", "warn" if attention else "ok",
-                        "flag" if attention else "check_circle")  # fmt: skip
-            else:
-                job.log(f"{path.name}: {result.error}", "err", "error")
-                errors.append(f"{path.name}: {result.error}")
-        failed = len(todo) - ok
-        if todo or skipped:  # the run in the audit trail (the finance hub's workflow_runs, D-103)
-            store.record_import_run("dashboard", files=len(todo), ok=ok, failed=failed, skipped=len(skipped),
-                                    started_at=started, seconds=time.monotonic() - clock, errors=errors,
-                                    actor=actor)  # fmt: skip
-        queued = max(0, store.page_reads_waiting() - waiting)
-        note = queued_note(settings, store, queued) if ok else ""
-        messages, label = run_summary(ok, todo, skipped, mails, note, notes)
-        return {"processed": len(todo), "ok": ok, "failed": failed, "queued": queued, "messages": messages,
-                "label": label}  # fmt: skip
-
-    return work
+def import_status(store: Store, settings: Settings | None = None) -> dict[str, Any]:
+    """The Process page's card, as a job's snapshot (``Job.snapshot``): the import queue's latest run (D-168), the
+    same in every web worker and after a restart. Running while any of its files is in line; then its summary."""
+    snap: dict[str, Any] = {"name": JOB, "state": "idle", "stage": "", "done": 0, "total": 0, "note": "",
+                            "lines": [], "result": None, "error": "", "started_at": "", "finished_at": "",
+                            "about": {}}  # fmt: skip
+    run = store.import_run(MAX_LINES)
+    if run is None:
+        return snap
+    counts, batches = run["counts"], run["batches"]
+    ok, read = counts.get("done", 0), counts.get("done", 0) + counts.get("failed", 0)
+    in_line = counts.get("waiting", 0) + counts.get("reading", 0)
+    lines = [line for b in batches for line in json.loads(b["lines"] or "[]")] + run["lines"]
+    snap.update(state="running" if in_line else "done", stage="reading", done=read, total=read + in_line,
+                lines=lines[-MAX_LINES:], started_at=batches[0]["created_at"])  # fmt: skip
+    if in_line:
+        reading = run["reading"]
+        if not has_room(store.path.parent):
+            snap["note"] = NO_ROOM
+        elif store.restoring():
+            snap["note"] = RESTORING
+        elif reading:
+            shown = ", ".join(reading[:3]) + (f" and {len(reading) - 3} more" if len(reading) > 3 else "")
+            snap["note"] = f"Reading and coding {shown} ({read + 1}/{read + in_line})"
+        else:
+            snap["note"] = f"{ui.plural(in_line, 'file')} in line to be read"
+        return snap
+    skipped = [name for b in batches for name in json.loads(b["skipped"] or "[]")] + run["skipped"]
+    notes = [m for b in batches for m in json.loads(b["notes"] or "[]")]
+    queued = run["page_reads"]
+    note = queued_note(settings, store, queued) if ok and settings is not None else ""
+    messages, label = run_summary(ok, read, skipped, sum(b["emails"] for b in batches),
+                                  sum(b["to_person"] for b in batches), note, notes)  # fmt: skip
+    snap.update(finished_at=run["finished_at"] or batches[-1]["finished_at"] or "",
+                result={"processed": read, "ok": ok, "failed": read - ok, "queued": queued, "messages": messages,
+                        "label": label})  # fmt: skip
+    return snap
 
 
 # --- The page ------------------------------------------------------------------------------------------------------
 
 
-def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
-    """(the files never processed, the files that can't be read now): a file still being written by a scanner, open
-    in another program or a cloud placeholder not downloaded is left for the next pick-up, never a broken page."""
-    digests, unreadable, read = {}, [], []
-    for path in files:
-        try:
-            read.append(read_file(path))  # each file read once (D-155)
-        except OSError:
-            unreadable.append(path)
-            continue
-        digests[path] = read[-1][3]
-    # The invoices made from them (``find_by_hash``, failed ones too), asked in one query, not one a file (D-157).
-    known = {r["value"] for r in store.summary_fetch(
-        "SELECT value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM invoices WHERE file_sha256 = value) OR "
-        "EXISTS (SELECT 1 FROM invoices WHERE original_sha256 = value)", (json.dumps(sorted(set(digests.values()))),),
-    )} if digests else set()  # fmt: skip
-    store.note_files(read)  # what the import page lists (``folder_files``)
-    return [p for p, digest in digests.items() if digest not in known], unreadable
-
-
 def not_read_here(folder: Path) -> list[str]:
     """The names of the files in the invoices folder of a kind AP Coder does not read (B-268)."""
     try:
-        return [p.name for p in other_files(folder, EMAIL_EXTENSIONS)] if folder.exists() else []
+        return folder_names(folder)[2] if folder.exists() else []
     except OSError:
         return []
 
@@ -704,35 +620,6 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
         return recent and looks_incomplete(path)
     except OSError:  # gone or locked meanwhile: next time
         return True
-
-
-_UNLISTED = ("readme", ".", "~$")  # README files, hidden files, Office lock files: not invoices, not mentioned
-
-
-def folder_names(folder: Path) -> tuple[list[str], list[str], list[str]]:
-    """The names of ``folder``'s invoice files, saved emails and files of a kind not read, in the order
-    ``invoice_files``, ``emails_in`` and ``other_files(folder, EMAIL_EXTENSIONS)`` list them, from one listing by
-    name: those three made a Path of each of 100,000 files, 2 s (D-166). Raises OSError."""
-    known = SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS | STILL_ARRIVING
-    names, emails, others = [], [], []
-    with os.scandir(folder) as entries:
-        for entry in entries:
-            name, lower = entry.name, entry.name.lower()
-            suffix = os.path.splitext(lower)[1]  # (``Path.suffix`` of a name that doesn't start with a dot)
-            shown = not lower.startswith(_UNLISTED)
-            if suffix in SUPPORTED_EXTENSIONS and shown and entry.is_file():
-                names.append(name)
-            if suffix in EMAIL_EXTENSIONS and not lower.startswith(".") and entry.is_file():  # (``emails_in``)
-                emails.append(name)
-            if suffix not in known and shown and lower not in NOT_A_FILE_TO_MENTION and entry.is_file():
-                others.append(name)
-    names.sort(key=os.path.normcase)
-    # A .md/.txt file beside a PDF or a picture of its name is a text copy of it (``invoice_files``).
-    parts = [os.path.splitext(name) for name in names]
-    documents = {stem.lower() for stem, suffix in parts if suffix.lower() not in TEXT_EXTENSIONS}
-    names = [name for name, (stem, suffix) in zip(names, parts, strict=True)
-             if suffix.lower() not in TEXT_EXTENSIONS or stem.lower() not in documents]  # fmt: skip
-    return names, sorted(emails, key=os.path.normcase), sorted(others, key=os.path.normcase)
 
 
 # ``folder_files`` by folder: (stamp, what it gives, when worked out); kept LISTED_SECONDS at most (a file written over
@@ -825,144 +712,124 @@ def process_page(request: Request) -> HTMLResponse:
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
-        job=jobs(request).get(JOB).snapshot(),
-        waiting=import_queue(request).files(),
-        waiting_text=waiting_text(import_queue(request).files()),
+        job=import_status(store, settings),
         demo_available=demo_offered(demo_count, total),
         demo_count=demo_count,
         where="/process",
     )  # fmt: skip
 
 
-# --- Imports queued behind the one running (D-99) -------------------------------------------------------------------
-# One import reads at a time. An upload that comes while one runs (a colleague's, on the server) is saved to the
-# invoices folder at once and waits here; when the running import finishes, the next one waiting starts, as the person
-# who uploaded it (their context). In this process only: after a restart its files are in the folder, listed as new.
+# --- The import queue (D-168) ---------------------------------------------------------------------------------------
+# An upload or a pick-up puts its files in line and answers at once. On a laptop (and a server of one web worker) the
+# job "process" of this process reads the queue until it is empty, whoever brought the files; on the company server
+# its capture processes read it, never a web worker.
+
+READER = owner_id("dashboard")  # this process's own reader, as the queue's rows name it
+FOLLOW_SECONDS = 1.0  # while another reader holds the last files, the job looks again this often
 
 
-class ImportQueue:
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.watching = False  # several web workers: a thread starts what waits here once another's import ends
-        self.waiting: collections.deque[tuple[contextvars.Context, Callable[[], tuple[Any, int]], int]] = (
-            collections.deque()
-        )
-
-    def files(self) -> int:
-        """How many files wait behind the import in progress."""
-        return sum(count for _, _, count in self.waiting)
+def capture_elsewhere(app: Any) -> bool:
+    """Whether the files are read by the company server's capture processes (several web workers, D-111), not here."""
+    return getattr(app.state, "processes", 1) > 1
 
 
-_queue_lock = threading.Lock()
+def queue_files(request: Request, read: list[Any], *, source: str, include_failed: bool = False,
+                notes: list[dict[str, Any]] | None = None, lines: list[dict[str, str]] | None = None,
+                skipped: list[str] | None = None, emails: int = 0, to_person: int = 0) -> dict[str, Any]:  # fmt: skip
+    """Put the files ``read`` (``read_file``'s tuples) in the import queue as one batch brought by the person asking,
+    then see that they are read (``start_reading``). What ``Store.queue_imports`` returns."""
+    who = person()
+    queued = get_store(request).queue_imports(
+        read, source=source, uploader=str(who.user_id) if who is not None and who.user_id else reviewer(),
+        actor=reviewer(), account=EVENT_ACTOR.get() or "", origin=EVENT_ORIGIN.get() or "", person=True,
+        include_failed=include_failed, notes=notes or [], lines=lines or [], skipped=skipped or [], emails=emails,
+        to_person=to_person,
+    )  # fmt: skip
+    start_reading(request.app)
+    return queued
 
 
-def import_queue(request: Request) -> ImportQueue:
-    state = request.app.state
-    with _queue_lock:
-        if getattr(state, "import_queue", None) is None:
-            state.import_queue = ImportQueue()
-        return state.import_queue
+def start_reading(app: Any) -> bool:
+    """See that the queue is read: here, the job "process" started unless it runs (True when it started); on the
+    company server, nothing (its capture processes look every second)."""
+    if capture_elsewhere(app):
+        return False
+    job = app.state.jobs.get(JOB)
+    store = app.state.store
+    return job.start(_read_here(store, app.state.settings_factory), then=lambda: _again(app, job))
 
 
-def _publish(queue: ImportQueue, job: Job) -> None:
-    """Several web workers: how many files this one holds queued, for every worker's progress (the caller holds
-    ``queue.lock``)."""
-    if job.shared is not None:
-        try:
-            job.shared.set_job_waiting(job.name, jobs_module.OWNER, queue.files(), jobs_module.STALE)
-        except Exception:  # noqa: BLE001 - a busy database: said again in a moment
-            pass
+def _again(app: Any, job: Job) -> None:
+    """After the job: files put in line as it ended are read too (unless it stopped for want of room)."""
+    store = app.state.store
+    if job.error or (job.result or {}).get("paused") or not store.imports_open(READER)["waiting"]:
+        return  # (a job that failed is not started again in a loop: the next import or start does)
+    start_reading(app)
 
 
-def _watch(queue: ImportQueue, job: Job) -> None:
-    """Several web workers (D-111): an import another worker runs ends without telling this one, so what waits here
-    is started once the job is free (looked at every 2 seconds)."""
-    while True:
-        time.sleep(2.0)
-        with queue.lock:
-            _start_next(queue, job)
-            _publish(queue, job)
-            if not queue.waiting:
-                queue.watching = False
-                return
+def _read_here(store: Store, settings: Any) -> Any:
+    def work(job: Job) -> dict[str, Any]:
+        reader = Reader(store, settings, READER, attention=needs_attention, cache_dir=cache_dir(store))
+        while True:
+            reader.read_all()
+            if reader.paused:
+                return {"paused": reader.paused}
+            found = store.imports_open(READER)
+            if not found["waiting"] and not found["reading"]:
+                return {}
+            time.sleep(FOLLOW_SECONDS)  # another reader holds the last ones (a watch): until they are done
+
+    return work
 
 
-def waiting_text(files: int) -> str:
-    return f"Waiting: {ui.plural(files, 'file')} queued behind the import in progress."
-
-
-def _waiting_files(queue: ImportQueue, job: Job) -> int:
-    """The files queued behind the import in progress: in every web worker's queue when there are several."""
-    if job.shared is None:
-        return queue.files()
+def resume(app: Any) -> None:
+    """At the start: files left in line by the last run (a restart, a power cut) are read again (a laptop's)."""
     try:
-        return job.shared.jobs_waiting(job.name)
-    except Exception:  # noqa: BLE001 - a busy database: this worker's own
-        return queue.files()
+        if any(app.state.store.imports_open(READER).values()):
+            start_reading(app)
+    except Exception:  # noqa: BLE001 - a busy database: the next import reads them
+        logging.getLogger(__name__).warning("the import queue was not looked at as AP Coder started", exc_info=True)
 
 
-def _next_import(queue: ImportQueue, job: Job) -> None:
-    """After an import: start the next one waiting (which of its files are new is decided now, so one read
-    meanwhile is skipped)."""
-    with queue.lock:
-        _start_next(queue, job)
-        _publish(queue, job)
+def _started(queued: dict[str, Any]) -> JSONResponse:
+    """The answer to an upload or a pick-up: the page follows the queue's run; told when others' files were in line."""
+    answer: dict[str, Any] = {"ok": True, "job": JOB, "status": "/process/status"}
+    if queued["queued"] and queued["ahead"]:
+        answer["queued"] = queued["queued"]
+        answer["toast"] = flash_message(
+            f"{ui.plural(queued['queued'], 'file')} in line with {ui.plural(queued['ahead'], 'file')} that came in "
+            "before: they're read in turn, so yours don't wait for all of them.", "info")  # fmt: skip
+    return JSONResponse(answer)
 
 
-def _start_next(queue: ImportQueue, job: Job) -> None:
-    """Start the first import waiting, if the job is free (the caller holds ``queue.lock``)."""
-    while queue.waiting and not job.running:
-        context, build, _ = queue.waiting[0]
+def _email_lines(store: Store, mails: list[Unpacked], read: list[Any], include_failed: bool) -> list[dict[str, str]]:
+    """Each email's line on the card (``email_line``), its attachments already in AP Coder said (``read``: what was
+    read of them); each logged as sorted."""
+    shas = {r[0]: r[3] for r in read}
+    saved = [(p, shas.get(str(p.parent.resolve() / p.name))) for m in mails for p in m.saved]
+    known = store.known_files([sha for _, sha in saved if sha], include_failed) if saved else set()
+    already, seen = [], set()
+    for path, sha in saved:
+        if sha in known or sha in seen:
+            already.append(path)
+        seen.add(sha)
+    lines = []
+    for mail in mails:
+        text, tone = email_line(mail, already)
+        lines.append({"text": text, "tone": tone, "icon": "gpp_maybe" if tone == "err" and mail.triage else "mail"})
+        inbox.log_sorted(store, mail)
+    return lines
+
+
+def _read_saved(mails: list[Unpacked], unreadable: list[Path]) -> list[Any]:
+    """``read_file`` of each attachment the emails saved (one that can't be read now goes to ``unreadable``)."""
+    read = []
+    for path in [p for m in mails for p in m.saved]:
         try:
-            started = context.run(_begin, queue, job, build)
-        except Exception:  # noqa: BLE001 - one batch that cannot start never holds up the rest
-            logging.getLogger(__name__).exception("A queued import could not start")
-            queue.waiting.popleft()
-            continue
-        if started:
-            queue.waiting.popleft()
-        return  # (not started: another import began meanwhile; this one waits for it)
-
-
-def _begin(queue: ImportQueue, job: Job, build: Callable[[], tuple[Any, int]]) -> bool:
-    work, total = build()
-    return job.start(work, total=total, then=lambda: _next_import(queue, job))
-
-
-def start_import(request: Request, work: Any, total: int) -> bool:
-    """Start reading (``work``) now, False while an import runs; the imports queued meanwhile follow it."""
-    queue, job = import_queue(request), jobs(request).get(JOB)
-    return job.start(work, total=total, then=lambda: _next_import(queue, job))
-
-
-def _start(request: Request, work: Any, total: int) -> JSONResponse:
-    if not start_import(request, work, total):
-        return refuse("AP Coder is already reading invoices. Wait for it to finish, then try again.", 409)
-    return JSONResponse({"ok": True, "job": JOB, "status": "/process/status"})
-
-
-def _start_or_queue(request: Request, build: Callable[[], tuple[Any, int]], files: int) -> JSONResponse:
-    """Start the import ``build`` makes (``(work, total)``), or queue it behind the one running."""
-    queue, job = import_queue(request), jobs(request).get(JOB)
-    started = {"ok": True, "job": JOB, "status": "/process/status"}
-    with queue.lock:
-        if not job.running and not queue.waiting:
-            work, total = build()
-            if job.start(work, total=total, then=lambda: _next_import(queue, job)):
-                return JSONResponse(started)
-        batch = (contextvars.copy_context(), build, files)
-        queue.waiting.append(batch)
-        _start_next(queue, job)  # (an import that ended without starting the next: never left waiting for nothing)
-        if not any(b is batch for b in queue.waiting):
-            return JSONResponse(started)
-        waiting = queue.files()
-        if job.shared is not None:
-            _publish(queue, job)
-            waiting = _waiting_files(queue, job)
-            if not queue.watching:
-                queue.watching = True
-                threading.Thread(target=_watch, args=(queue, job), name="ap-coder-import-queue", daemon=True).start()
-    return JSONResponse({**started, "queued": waiting, "toast": flash_message(waiting_text(waiting), "info")})
+            read.append(read_file(path))
+        except OSError:
+            unreadable.append(path)
+    return read
 
 
 @router.post("/process/upload")
@@ -1014,55 +881,69 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)
             if target.suffix.lower() in EMAIL_EXTENSIONS:  # its invoice attachments, not the email
-                mail = unpack(target, folder)
-                mails.append(mail)
-                saved.extend(mail.saved)
+                mails.append(unpack(target, folder))
                 continue
+            saved.append(noted(target, content))  # hashed once, from what was uploaded (D-168)
         except OSError as exc:
             notes.append(flash_message(f"{name} could not be saved to the invoices folder "
                                        f"({exc.strerror or type(exc).__name__}). Rename it or save it there yourself.",
                                        "err"))  # fmt: skip
             continue
-        saved.append(target)
+    unreadable: list[Path] = []
+    attached = _read_saved(mails, unreadable)
+    saved += attached
+    if unreadable:  # an email's attachment saved, then locked meanwhile (an antivirus): the folder's pick-up reads it
+        notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened just now: picked up "
+                                   "next time.", "warn", [p.name for p in unreadable]))  # fmt: skip
+    lines = _email_lines(store, mails, attached, include_failed=False)
+    queued = queue_files(request, saved, source="upload", notes=notes, lines=lines, emails=len(mails),
+                         to_person=_to_person(mails))  # fmt: skip
+    return _started(queued)
 
-    def build() -> tuple[Any, int]:  # when it starts: a file read by the import before it is then skipped
-        todo, already = split_new(store, saved)
-        return process_files(store, settings, todo, already=already, emails=mails, notes=notes), len(todo)
 
-    return _start_or_queue(request, build, len(saved))
+def _to_person(mails: list[Unpacked]) -> int:
+    return sum(1 for m in mails if m.error or (m.triage and m.triage.needs_person))
 
 
 @router.post("/process/folder")
 def process_folder(request: Request) -> JSONResponse:
-    """Read and code the new files in the invoices folder (and the invoices attached to saved emails there)."""
+    """Put the new files in the invoices folder (and the invoices attached to saved emails there) in line to be read
+    and coded. Only the files the pick-up hasn't read since they changed are read, each once (D-168)."""
     store, settings = get_store(request), get_settings(request)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
-    files, unreadable = not_processed(store, invoice_files(folder) if folder.exists() else [])
-    saving = [p for p in files if still_being_saved(p)]  # a scanner or a download still writing it (B-265)
-    files, unreadable = [p for p in files if p not in saving], unreadable + saving
-    todo, already = split_new(store, files)
-    notes = []
-    if unreadable:
-        notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or "
-                                   "open in another program): picked up next time.", "warn",
-                                   [p.name for p in unreadable]))  # fmt: skip
-    others = not_read_here(folder)
-    if others:
-        are = "are" if len(others) > 1 else "is"
-        notes.append(flash_message(f"{ui.plural(len(others), 'file')} in the invoices folder {are} not a kind AP Coder "
-                                   "reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) to have "
-                                   "them read.", "warn", others))  # fmt: skip
-    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes)
-    return _start(request, work, len(todo))
+    # One pick-up at a time (a scheduled watch): each only lists, unpacks the emails and puts files in line (B-1587).
+    lock = wait_for_pickup(data_dir(store), lambda: None)
+    try:  # (the folder listed before the emails are unpacked: their attachments are read once, as theirs)
+        read, unreadable, saving = pick_up(store, folder, still_being_saved) if folder.exists() else ([], [], [])
+        mails = unpack_folder(folder) if folder.exists() else []
+        attached = _read_saved(mails, unreadable)
+        read += attached
+        notes = []
+        unreadable += saving  # a scanner or a download still writing it (B-265)
+        if unreadable:
+            notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, "
+                                       "or open in another program): picked up next time.", "warn",
+                                       [p.name for p in unreadable]))  # fmt: skip
+        others = not_read_here(folder)
+        if others:
+            are = "are" if len(others) > 1 else "is"
+            notes.append(flash_message(f"{ui.plural(len(others), 'file')} in the invoices folder {are} not a kind AP "
+                                       "Coder reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) "
+                                       "to have them read.", "warn", others))  # fmt: skip
+        lines = _email_lines(store, mails, attached, include_failed=True)
+        queued = queue_files(request, read, source="folder", include_failed=True, notes=notes, lines=lines,
+                             emails=len(mails), to_person=_to_person(mails))  # fmt: skip
+    finally:
+        lock.close()
+    return _started(queued)
 
 
 @router.get("/process/status")
 def process_status(request: Request) -> JSONResponse:
-    """How far reading and coding got (the page polls this)."""
-    job = jobs(request).get(JOB)
-    snap = {**job.snapshot(), "waiting": _waiting_files(import_queue(request), job)}
+    """How far reading and coding got (the page polls this): the import queue's latest run."""
+    snap = import_status(get_store(request), get_settings(request))
     return JSONResponse(snap, headers={"Cache-Control": "no-store"})
 
 

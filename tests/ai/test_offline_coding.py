@@ -111,7 +111,8 @@ def test_the_local_models_examples_have_the_vendor_the_local_reader_found(tmp_pa
                            "gl_code": "6200", "cost_center": "", "amount": 10.0, "date": "2026-01-05"}])  # fmt: skip
     s = Settings()
     seen = {}
-    monkeypatch.setattr(InvoicePipeline, "_local_accounts", lambda self, result, history: seen.update(history=history))
+    monkeypatch.setattr(InvoicePipeline, "_local_accounts",
+                        lambda self, result, history, **kw: seen.update(history=history))  # fmt: skip
     pipe = InvoicePipeline(replace(s, llm=replace(s.llm, provider="local")), reference, store=store)
     result = pipe.process(SAMPLES / "chinook_AB_GST_CCO-26-10418.pdf")
 

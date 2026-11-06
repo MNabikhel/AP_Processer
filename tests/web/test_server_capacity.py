@@ -212,7 +212,7 @@ class _Server:
 
 
 def _recycle(tmp_path, monkeypatch, **limits):
-    state = SimpleNamespace(jobs=Jobs(), daily_backup=SimpleNamespace(thread=None), import_queue=None)
+    state = SimpleNamespace(jobs=Jobs(), daily_backup=SimpleNamespace(thread=None))
 
     async def page(scope, receive, send):
         pass
@@ -371,10 +371,10 @@ def test_the_supervisor_does_not_ask_the_ending_worker_alive_and_replaces_it_onc
 
 @pytest.mark.parametrize("what", ["job", "backup", "imports"])
 def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, monkeypatch, what):
-    """A request answered after ``Recycle`` looked (one on another thread, or in its DRAIN_SECONDS) may start a job, a
-    backup or queue an import: threads that end with the worker's process. Its lifespan waits for them once its
-    connections are closed (a service stop still ends it at the stop's deadline, ``join_all``); a laptop's doesn't."""
-    from ap_coder.web.pages.process import ImportQueue
+    """A request answered after ``Recycle`` looked (one on another thread, or in its DRAIN_SECONDS) may start a job or
+    a backup: threads that end with the worker's process. Its lifespan waits for them once its connections are closed
+    (a service stop still ends it at the stop's deadline, ``join_all``); a laptop's doesn't. Imports waiting their turn
+    are in the database now (D-168): nothing of theirs ends with it, so it doesn't wait for them."""
 
     def ending(processes: int) -> bool:
         app = create_app(web_settings(), store, start_reader=False, background=processes == 1, processes=processes)
@@ -387,15 +387,14 @@ def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, m
             threading.Timer(0.6, gate.set).start()
             app.state.daily_backup.thread = threading.Thread(target=gate.wait, args=(10,), daemon=True)
             app.state.daily_backup.thread.start()
-        else:
-            app.state.import_queue = ImportQueue()
-            app.state.import_queue.waiting.append((None, None, 1))
+        else:  # a file in line, read by the server's capture processes (a laptop's own job: monkeypatched away)
+            from ap_coder.core.store.folder import read_file
+            from ap_coder.web.pages import process
 
-            def imported() -> None:  # one timer, the gate first: with two, the queue could empty before the gate was
-                gate.set()  # set (both 0.6 s; under load either fires first), and the lifespan ended rightly with
-                app.state.import_queue.waiting.clear()  # ``done`` still False
-
-            threading.Timer(0.6, imported).start()
+            (store.path.parent / "in.pdf").write_bytes(b"%PDF-1.4 in line")
+            store.queue_imports([read_file(store.path.parent / "in.pdf")], source="upload")
+            monkeypatch.setattr(process, "start_reading", lambda app: False)
+            threading.Timer(0.6, gate.set).start()
 
         async def lifespan() -> None:
             async with app.router.lifespan_context(app):
@@ -406,7 +405,7 @@ def test_a_worker_ending_waits_for_its_own_work_started_after_it_looked(store, m
         gate.set()
         return done
 
-    assert ending(processes=2)  # one of the server's web workers: it waited for them
+    assert ending(processes=2) == (what != "imports")  # one of the server's web workers: it waited for its own
     assert not ending(processes=1)  # the laptop stops as before
 
 
@@ -473,7 +472,7 @@ def test_the_ending_workers_note_goes_once_it_ended_at_the_start_and_after_ten_m
         lambda *a, **k: SimpleNamespace(bind_socket=lambda: SimpleNamespace(listen=lambda n: None), backlog=2048),
     )
     monkeypatch.setattr(server, "Supervisor", Supervisor)
-    monkeypatch.setattr(server, "BackgroundWork", lambda db: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "Together", lambda works: SimpleNamespace(start=lambda: None, stop=lambda: None))
     monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
     assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
     assert seen == [False]

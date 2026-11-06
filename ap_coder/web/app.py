@@ -257,12 +257,11 @@ class EnvSettings:
 
 
 def own_work_running(state: Any) -> bool:
-    """Whether something this process runs on a thread of its own would end with it: a job, a backup, imports
-    waiting their turn (a web worker of the server waits for them before it ends: ``server.Recycle``)."""
+    """Whether something this process runs on a thread of its own would end with it: a job, a backup (a web worker
+    of the server waits for them before it ends: ``server.Recycle``). Imports waiting their turn are in the database
+    (D-168): nothing of theirs ends with it."""
     backup = getattr(state.daily_backup, "thread", None)
-    queue = getattr(state, "import_queue", None)
-    return (state.jobs.running_here() or (backup is not None and backup.is_alive())
-            or bool(queue is not None and queue.waiting))  # fmt: skip
+    return state.jobs.running_here() or (backup is not None and backup.is_alive())
 
 
 def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, ...]:
@@ -323,6 +322,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             (app.state.reader, app.state.azure_checker, app.state.jde_worker, app.state.queue_recheck,
              *made) = start_background_work(settings_factory, store)  # fmt: skip
             app.state.downloads = made[0] if made else None
+        if background and app.state.processes == 1:  # files left in the import queue by the last run (D-168)
+            from ap_coder.web.pages import process
+
+            process.resume(app)
         yield
         for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads"):
             worker = getattr(app.state, name, None)
@@ -444,9 +447,14 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         me = identity.person()
         if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
-        if not registry.known(name):
+        if name == "process":  # the imports' progress is the import queue's, the same in every web worker (D-168)
+            from ap_coder.web.pages.process import import_status
+
+            snapshot = import_status(core.get_store(request), core.get_settings(request))
+        elif not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
-        snapshot = registry.get(name).snapshot()
+        else:
+            snapshot = registry.get(name).snapshot()
         if only:  # a page following the job asks for what it shows (app.js watchJob): its state and these
             snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
