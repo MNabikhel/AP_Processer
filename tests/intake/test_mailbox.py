@@ -37,6 +37,16 @@ def test_invoice_attachments_only():
     assert not any("logo" in name for name, _ in found)  # the signature picture
 
 
+def test_a_hidden_file_named_like_an_email_is_never_unpacked_whatever_the_python(tmp_path):
+    """B-1758: a hidden file named like a saved email (a Mac's "._mail.eml" beside "mail.eml" on a shared drive, or
+    "..eml") was unpacked as an email, though hidden files are never invoices nor mentioned; and which of them counted
+    depended on the Python (3.14 reads the suffix of a name of leading dots another way). They are passed over now, as
+    the invoices folder's other hidden files are."""
+    for name in ("mail.eml", "._mail.eml", ".x.eml", "..eml", ".eml", "Note.MSG", ".hidden.msg"):
+        (tmp_path / name).write_bytes(_email().as_bytes())
+    assert [p.name for p in emails_in(tmp_path)] == ["Note.MSG", "mail.eml"]
+
+
 def test_unpack_saves_attachments_and_files_the_email(tmp_path):
     (tmp_path / "Invoice from Northwind.eml").write_bytes(_email().as_bytes())
     (tmp_path / "notes.txt").write_text("x")
