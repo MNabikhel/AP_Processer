@@ -38,6 +38,7 @@ from ..core.reference_data import ReferenceData, load_reference_data, load_table
 from ..core.schema import build_json_schema
 from ..core.store import SAMPLE_DATA_DIR, Store, default_db_path, private_dir
 from ..core.store.folder import read_file
+from ..core.store.imports import IMPORT_LEASE_SECONDS
 from ..intake.imports import Reader, owner_id, pick_up
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder, wait_for_pickup
 from . import server_update, service
@@ -513,6 +514,7 @@ def _process_queued(args: argparse.Namespace, store: Store, pipeline: InvoicePip
     skipped, unless ``--force``; the audit trail records the batch once read), the pick-up lock let go, then read
     here, ``--workers`` at once (D-168)."""
     owner = owner_id("process")
+    store.take_lease(f"reader:{owner}", owner, IMPORT_LEASE_SECONDS)  # its batch is its own while it runs
     readable = [read for _, read in taken if isinstance(read, tuple)]
     gone = [path.name for path, read in taken if not isinstance(read, tuple)]
     queued = store.queue_imports(readable, source="process", uploader=login_name(), actor=login_name(),

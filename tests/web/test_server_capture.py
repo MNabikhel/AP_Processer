@@ -20,14 +20,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_as_many_capture_processes_as_the_cores_less_two_each_with_its_share_of_threads(monkeypatch):
+    """One per core but two, as many as fit at CAPTURE_MB in the memory the web workers leave."""
     monkeypatch.delenv(server.CAPTURE_ENV, raising=False)
-    assert [server.capture_processes(cores) for cores in (1, 2, 4, 32)] == [1, 1, 2, 30]
+    plenty = 10**6
+    assert [server.capture_processes(cores, plenty) for cores in (1, 2, 4, 32)] == [1, 1, 2, 30]
+    assert [server.capture_processes(32, mb) for mb in (8_000, 16_000, 32_000, 64_000)] == [2, 2, 8, 20]
     monkeypatch.setenv(server.CAPTURE_ENV, "3")
-    assert server.capture_processes(32) == 3
+    assert server.capture_processes(32, 64_000) == 3
     for name in (server.OCR_THREADS_ENV, "OMP_NUM_THREADS"):
         monkeypatch.delenv(name, raising=False)
     env = server.capture_env(2, 2, cores=4)
-    assert env[server.CAPTURE_NUMBER_ENV] == "2" and env[server.OCR_THREADS_ENV] == "1" and env["OMP_NUM_THREADS"] == "1"
+    assert env[server.CAPTURE_NUMBER_ENV] == "2" and env[server.OCR_THREADS_ENV] == env["OMP_NUM_THREADS"] == "1"
     assert server.capture_env(1, 5, cores=32)[server.OCR_THREADS_ENV] == "6"
     monkeypatch.setenv(server.OCR_THREADS_ENV, "4")  # set by IT: kept
     assert server.capture_env(1, 30, cores=32)[server.OCR_THREADS_ENV] == "4"

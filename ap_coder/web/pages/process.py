@@ -762,8 +762,8 @@ def start_reading(app: Any) -> bool:
 def _again(app: Any, job: Job) -> None:
     """After the job: files put in line as it ended are read too (unless it stopped for want of room)."""
     store = app.state.store
-    if (job.result or {}).get("paused") or not store.imports_open()["waiting"]:
-        return
+    if job.error or (job.result or {}).get("paused") or not store.imports_open(READER)["waiting"]:
+        return  # (a job that failed is not started again in a loop: the next import or start does)
     start_reading(app)
 
 
@@ -774,7 +774,7 @@ def _read_here(store: Store, settings: Any) -> Any:
             reader.read_all()
             if reader.paused:
                 return {"paused": reader.paused}
-            found = store.imports_open()
+            found = store.imports_open(READER)
             if not found["waiting"] and not found["reading"]:
                 return {}
             time.sleep(FOLLOW_SECONDS)  # another reader holds the last ones (a watch): until they are done
@@ -785,7 +785,7 @@ def _read_here(store: Store, settings: Any) -> Any:
 def resume(app: Any) -> None:
     """At the start: files left in line by the last run (a restart, a power cut) are read again (a laptop's)."""
     try:
-        if app.state.store.imports_open()["waiting"] or app.state.store.imports_open()["reading"]:
+        if any(app.state.store.imports_open(READER).values()):
             start_reading(app)
     except Exception:  # noqa: BLE001 - a busy database: the next import reads them
         logging.getLogger(__name__).warning("the import queue was not looked at as AP Coder started", exc_info=True)

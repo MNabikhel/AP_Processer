@@ -380,6 +380,22 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
 
+  **The import queue and the capture processes** (D-168, schema 26): an upload, the Process button's pick-up, a
+  scheduled `watch`, `ap_coder process` and a Retry put their files in the import queue (`core/store/imports.py`:
+  `import_batches`, `import_files`, `import_turns`), each file hashed once on its way in, and answer at once. Beside
+  the background process, the server starts `server.capture_processes()` **capture processes** (`serve
+  --capture-work`, `server.run_capture`; one per core but two, `AP_CAPTURE_PROCESSES`; started again as the
+  background process is, stopped with it within 15 s, the file under way put back in line). Each takes a file at a
+  time (BEGIN IMMEDIATE, a lease of 120 s on the database's clock renewed every 20 s; a file whose reader stopped
+  twice is failed, with the reason, for Retry), a person's before a scheduled watch's and the people in turn
+  (`import_turns`), and reads it with `intake.imports.Reader`; its OCR's threads are its share of the cores
+  (`AP_OCR_THREADS`). No web worker reads an invoice. The Process page and `GET /process/status` show the queue's
+  latest run (`process.import_status`). On a laptop (and `--workers 1`) the dashboard's own job "process" reads the
+  queue, as it read its imports before, and takes up at its start what a restart left in line; `watch` reads what it
+  put in line unless a capture process runs. An invoice arriving on the server asks the chat model for at most
+  20 s, a chat slot included (`pipeline.ARRIVAL_SECONDS`, `AP_LLM_ARRIVAL_SECONDS`), and after two timeouts in a row
+  not for 2 minutes (`pipeline.ArrivalBreaker`); the page reader's pass asks again.
+
   **What one worker runs at once** (D-153, server mode only): the app's lifespan caps anyio's thread pool at
   `app.worker_threads()` (4; `AP_WORKER_THREADS`, `server.json`'s `worker_threads`); the long routes of
   `web/core.py:HEAVY_ROUTES` (reports, exports, Report a problem, backups, LM Studio and JD Edwards buttons) run in a

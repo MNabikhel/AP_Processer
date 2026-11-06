@@ -42,13 +42,17 @@ STOPPED_TWICE = ("AP Coder stopped twice while reading {name} (the computer rest
 RUN_SOURCE = {"upload": "dashboard", "folder": "dashboard", "retry": "dashboard", "watch": "watch",
               "process": "process"}  # fmt: skip
 
+# A batch of one reader's own (``only``: the command line's) is anyone's once that reader's ``reader:`` lease ran out
+# (it stopped). Asked with (the reader, time.time()).
+_TAKES = ("(b.only_owner IN ('', ?) OR NOT EXISTS (SELECT 1 FROM ephemeral e WHERE e.kind = 'lease' AND e.token = "
+          "'reader:' || b.only_owner AND e.expires_at >= ?))")  # fmt: skip
 # The next file a reader takes: a person's first, then the uploader served least recently, then the oldest; never one
-# whose content another reader is reading. Asked with (the reader, one batch only or None, the same).
+# whose content another reader is reading. Asked with (the reader, time.time(), one batch only or None, the same).
 _NEXT = (
     "SELECT f.id, f.batch, f.sha256, b.include_failed, b.force, b.uploader FROM import_files f JOIN import_batches b "
-    "ON b.id = f.batch WHERE f.status = 'waiting' AND b.only_owner IN ('', ?) AND (? IS NULL OR f.batch = ?) AND "
-    "NOT EXISTS (SELECT 1 FROM import_files r WHERE r.status = 'reading' AND r.sha256 = f.sha256) ORDER BY b.person "
-    "DESC, COALESCE((SELECT t.served FROM import_turns t WHERE t.uploader = b.uploader), 0), f.id LIMIT 1"
+    f"ON b.id = f.batch WHERE f.status = 'waiting' AND {_TAKES} AND (? IS NULL OR f.batch = ?) AND NOT EXISTS (SELECT "
+    "1 FROM import_files r WHERE r.status = 'reading' AND r.sha256 = f.sha256) ORDER BY b.person DESC, "
+    "COALESCE((SELECT t.served FROM import_turns t WHERE t.uploader = b.uploader), 0), f.id LIMIT 1"
 )
 _STORED = ("SELECT id FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?) AND (? OR status != 'failed') "
            "ORDER BY id DESC LIMIT 1")  # fmt: skip
@@ -131,7 +135,7 @@ class ImportsMixin:
             closed = self._expire_imports(conn)
             taken = None
             while taken is None:
-                row = conn.execute(_NEXT, (owner, batch, batch)).fetchone()
+                row = conn.execute(_NEXT, (owner, time.time(), batch, batch)).fetchone()
                 if row is None:
                     break
                 found = None if row["force"] else conn.execute(
@@ -187,11 +191,15 @@ class ImportsMixin:
                 "WHERE owner = ? AND status = 'reading'", (owner,),
             ).rowcount  # fmt: skip
 
-    def imports_open(self) -> dict[str, int]:
-        """The files in line ({"waiting", "reading"}), of every batch."""
+    def imports_open(self, owner: str | None = None) -> dict[str, int]:
+        """The files in line ({"waiting", "reading"}), of every batch; ``owner``: those waiting that it may take
+        (not another live reader's own)."""
         with self._conn() as conn:  # type: ignore[attr-defined]
-            found = dict(conn.execute("SELECT status, COUNT(*) FROM import_files WHERE status IN ('waiting', "
-                                      "'reading') GROUP BY status").fetchall())  # fmt: skip
+            found = dict(conn.execute(
+                "SELECT f.status, COUNT(*) FROM import_files f JOIN import_batches b ON b.id = f.batch WHERE f.status "
+                f"= 'reading' OR (f.status = 'waiting' AND (? IS NULL OR {_TAKES})) GROUP BY f.status",
+                (owner, owner, time.time()),
+            ).fetchall())  # fmt: skip
         return {status: int(found.get(status, 0)) for status in IMPORT_OPEN}
 
     def import_run(self, lines: int = 500) -> dict[str, Any] | None:

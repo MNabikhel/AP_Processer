@@ -345,6 +345,7 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
 # processes of their own (D-168), never in a web worker. What the processes share is in the database.
 
 CAPTURE_ENV = "AP_CAPTURE_PROCESSES"  # how many capture processes (default: one per core but two)
+CAPTURE_MB = 700  # what a capture process uses reading scans (measured: 660-680 MB, 4 cores, the day bench)
 OCR_THREADS_ENV = "AP_OCR_THREADS"  # ONNX Runtime's threads in each capture process (ops/offline.py)
 CAPTURE_NUMBER_ENV = "AP_CAPTURE_NUMBER"  # which one a capture process is (its log)
 CAPTURE_LEASE_SECONDS = 30.0  # a capture process renews its ``capture:`` lease: ``Store.capture_processes``
@@ -352,16 +353,21 @@ CAPTURE_IDLE_SECONDS = 1.0  # between two looks at an empty import queue
 CAPTURE_STOP_SECONDS = 12.0  # a stop gives the file under way this long, then puts it back in line (within 15 s)
 
 
-def capture_processes(cores: int | None = None) -> int:
+def capture_processes(cores: int | None = None, memory_mb: float | None = None) -> int:
     """How many capture processes the company server starts (D-168): AP_CAPTURE_PROCESSES, else one per core but two
-    (the web workers, the background process and the database keep those), at least one. 4 cores: 2; 32: 30."""
+    (the web workers, the background process and the database keep those), and no more than fit at CAPTURE_MB each in
+    the memory the web workers leave (``spare_mb``), 2 GB of it kept for the system and the database; at least one.
+    4 cores and 16 GB: 2; 32 cores and 64 GB: 20."""
     try:
         asked = int((os.environ.get(CAPTURE_ENV) or "").strip())
     except ValueError:
         asked = 0
     if asked > 0:
         return min(asked, 64)
-    return max(1, (cores or os.cpu_count() or 1) - 2)
+    by_cores = (cores or os.cpu_count() or 1) - 2
+    total = memory_mb if memory_mb is not None else memory_total_mb()
+    by_memory = int((total - spare_mb(total) - 2000) // CAPTURE_MB) if total else by_cores
+    return max(1, min(by_cores, by_memory))
 
 
 def capture_env(number: int, count: int, cores: int | None = None) -> dict[str, str]:

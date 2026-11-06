@@ -142,11 +142,16 @@ class Reader:
         counts.append(self._loop(stop, batch))
 
     def _heartbeat(self, done: threading.Event) -> None:
-        while not done.wait(self.lease / 6):
+        """Every lease/6 seconds: the files it reads, and its ``reader:`` lease (a batch of its own stays its own)."""
+        while True:
             try:
+                self.store.take_lease(f"reader:{self.owner}", self.owner, self.lease)
                 self.store.renew_imports(self.owner, self.lease)
             except Exception:  # noqa: BLE001 - a busy database: renewed next time, well within the lease
                 log.warning("the import queue's leases of %s were not renewed just now", self.owner, exc_info=True)
+            if done.wait(self.lease / 6):
+                self.store.drop_lease(f"reader:{self.owner}", self.owner)
+                return
 
     def _loop(self, stop: threading.Event, batch: int | None) -> int:
         read = 0

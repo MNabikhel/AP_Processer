@@ -242,7 +242,10 @@ and the service host only while it runs (it holds `service\host.lock`).
 second however many cores the server has, so the service runs N *web workers*, all answering on the same port, and
 one *background process* beside them for the work nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure
 check, JD Edwards, the review queue checked again after a change of settings, the daily backup, the finance hub's
-schedule). A worker or the background process that stops is
+schedule). The invoices brought in (uploads, the invoices folder, a scheduled watch) wait in an import queue in
+the database, kept over a restart, and are read by *capture processes* of their own, one per core but two
+(`AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by a web worker: a big batch doesn't slow the pages,
+and colleagues' batches are read in turn. A worker, the background process or a capture process that stops is
 started again on its own. `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
 the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.
 
