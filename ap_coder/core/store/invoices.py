@@ -440,14 +440,13 @@ class InvoicesMixin:
             self._log(conn, "unparked", invoice_id, actor)
 
     def parked(self) -> list[dict[str, Any]]:
-        """Parked invoices, the ones to follow up first."""
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, parked_reason, "
-                "follow_up FROM invoices WHERE status = ? ORDER BY follow_up IS NULL, follow_up, id",
-                (PARKED,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        """Parked invoices, the ones to follow up first: from the invoices' summary, whose rows are narrow (an
+        invoice's reason and follow-up day come last in its whole row, after its coding and text, B-1837)."""
+        return self.summary_fetch(
+            "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, parked_reason, follow_up "
+            "FROM invoice_summary WHERE status = ? ORDER BY follow_up IS NULL, follow_up, id",
+            (PARKED,),
+        )
 
     def add_note(self, invoice_id: int, actor: str, text: str) -> None:
         """A note on an invoice for the team (kept in its history)."""
