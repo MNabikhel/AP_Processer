@@ -1,25 +1,19 @@
-"""AP Coder run by a Windows scheduled task on the company server (D-100): ``python -m ap_coder service
-install|remove|start|stop|status``.
+"""AP Coder run as the company server's service (D-100, D-186): ``python -m ap_coder service
+install|remove|start|stop|status``, on Windows a scheduled task (``service_windows.py``), on a Mac a LaunchDaemon
+(``service_macos.py``).
 
-How it runs, with nothing to download and no pywin32: a **Windows scheduled task** (Task Scheduler is part of every
-Windows Server) that starts at boot under a dedicated local account, whether anyone is logged on or not. The task runs
-``<data folder>\\service\\run.cmd``, which runs ``python -m ap_coder service run``: the *service host*. The host starts
-the dashboard (``python -m ap_coder serve --server ...``) with the server settings, writes what it says to the rotating
-log ``<data folder>\\logs\\service.log``, and starts it again when it stops (after 5 s, then 10 s, ... up to 5
-minutes). The task also comes back every 5 minutes (a repeating trigger that does nothing while the host runs), so
-even a host that was ended is back within minutes. A plain ``sc.exe create`` of Python is not a real service (the
-Service Control Manager ends it after 30 s), and a ctypes service host does not work from a virtual environment's
-``python.exe`` (it starts the real Python as a second process, which cannot answer the Service Control Manager).
+What both share is here: the settings, the *service host* (``python -m ap_coder service run``, what the task or the
+daemon runs), the dashboard's own stop, ``status`` and the doctor's lines. The host starts the dashboard (``python -m
+ap_coder serve --server ...``) with the server settings, writes what it says to the rotating log ``<data
+folder>/logs/service.log``, and starts it again when it stops (after 5 s, then 10 s, ... up to 5 minutes), until the
+service is stopped: the ``stopped`` file ``service stop`` leaves, or, off Windows, SIGTERM or SIGINT (launchd's
+bootout, Ctrl+C), on which it stops the dashboard and ends with exit code 0 (launchd then leaves it stopped).
 
-Settings: ``<data folder>\\server.json`` (written by ``service install``; ``server-update`` keeps its record there
+Settings: ``<data folder>/server.json`` (written by ``service install``; ``server-update`` keeps its record there
 too), each overridden by an environment variable (:data:`ENV_SETTINGS`; the data folder's .env, which ``service run``
-reads into its environment, too, but for the backup model servers: :data:`OVER_ENV_FILE`). The ``run.cmd`` file is the
-one thing the task points at: ``server-update`` rewrites it for a new folder, so the task (and the account's password
-Windows keeps for it) never has to be registered again.
-
-``service stop`` leaves a ``stopped`` file beside ``run.cmd`` (the repeating trigger then starts nothing), asks the
-dashboard to stop (``POST /shutdown`` with the token of ``.ap_coder_server.json``, to this computer only) and ends the
-task. ``service start`` removes it and runs the task. Standard library only.
+reads into its environment, too, but for the backup model servers: :data:`OVER_ENV_FILE`). Which folder the service
+runs is one thing ``server-update`` changes (``switch_folder``): Windows' ``run.cmd``, the Mac's ``current`` link, so
+the task or the daemon never has to be registered again. Standard library only.
 """
 
 from __future__ import annotations
@@ -32,22 +26,24 @@ import json
 import logging
 import logging.handlers
 import os
+import signal
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape
 
 from .. import __version__
 from ..core.paths import PROJECT_DIR, private_dir, same_folder, try_lock
 
 WINDOWS = os.name == "nt"
+MACOS = sys.platform == "darwin"
 CONFIG_FILE = "server.json"  # in the data folder
-SERVICE_DIR = "service"  # in the data folder: run.cmd, the task's XML, host.json, host.lock, stopped
+SERVICE_DIR = "service"  # in the data folder: host.json, host.lock, stopped (and Windows' run.cmd, the task's XML)
 LOG_DIR = "logs"
 LOG_FILE = "service.log"
 TASK_NAME = "AP Coder"
@@ -66,12 +62,14 @@ ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certf
 # environment as every AP Coder process does: the backup model servers, given to the dashboard and left by its form
 # (D-180). The machine's own environment still wins.
 OVER_ENV_FILE = ("llm_backup_url", "page_reader_backup_url")
-# Windows' own accounts: no password; the task names them by their SID.
-BUILT_IN = {"system": "S-1-5-18", "localsystem": "S-1-5-18", "nt authority\\system": "S-1-5-18",
-            "local service": "S-1-5-19", "localservice": "S-1-5-19", "nt authority\\local service": "S-1-5-19",
-            "nt authority\\localservice": "S-1-5-19", "network service": "S-1-5-20", "networkservice": "S-1-5-20",
-            "nt authority\\network service": "S-1-5-20", "nt authority\\networkservice": "S-1-5-20"}  # fmt: skip
 RESTART_FIRST, RESTART_MOST, STEADY = 5.0, 300.0, 600.0  # seconds: first wait, longest wait, a run that counts as fine
+STOP_WAIT = 45.0  # seconds the dashboard has to stop once the host is asked to (its workers give requests 25: D-111)
+# The host's exit code off Windows for "start me again" (EX_TEMPFAIL; ``again``): launchd's KeepAlive starts it again
+# 10 s later, where a 0 would leave it stopped. Another host runs, or the folder to run changed (an update's recovery).
+HOST_AGAIN = 75
+# The Windows task's names, found here as before they moved to service_windows.py (``__getattr__``).
+WINDOWS_NAMES = ("BUILT_IN", "runner_path", "task_file", "runner_text", "write_runner", "account_sid", "task_xml",
+                 "create_command", "tie_to_host")  # fmt: skip
 
 Say = Callable[[str], None]
 
@@ -134,14 +132,46 @@ def read_config(data: Path) -> dict:
 
 
 def write_config(data: Path, **values: Any) -> Path:
-    """Set these values in server.json, keeping every other one (written whole, then renamed)."""
-    path = config_path(data)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Set these values in server.json, keeping every other one (``write_whole``)."""
     merged = {**read_config(data), **values}
-    part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    part.write_text(json.dumps(merged, indent=2), encoding="utf-8")
-    os.replace(part, path)
+    return write_whole(config_path(data), json.dumps(merged, indent=2).encode("utf-8"))
+
+
+def write_whole(path: Path, content: bytes, mode: int | None = None,
+                prepare: Callable[[Path], None] | None = None) -> Path:  # fmt: skip
+    """``path`` written whole or not at all, a power cut included: a temporary file beside it, flushed to the disk
+    (fsync), then renamed over it (``os.replace``), the folder flushed too (``sync_folder``). What the service starts
+    from (server.json, Windows' run.cmd, the Mac's LaunchDaemon) is never left empty or cut short. ``mode`` and
+    ``prepare`` (its owner) are set on the temporary file, before it takes the name."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f".{path.name}.{os.getpid()}.part")  # (a dot first, and not .plist: launchd reads none)
+    try:
+        with open(part, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        if mode is not None:
+            os.chmod(part, mode)
+        if prepare is not None:
+            prepare(part)
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    sync_folder(path.parent)
     return path
+
+
+def sync_folder(folder: Path) -> None:
+    """A rename in ``folder`` flushed to the disk (off Windows: Windows opens no folder, and NTFS logs a rename)."""
+    if WINDOWS:
+        return
+    with contextlib.suppress(OSError):
+        fd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _hosts(value: Any) -> tuple[str, ...]:
@@ -256,7 +286,7 @@ def save_settings(data: Path, s: ServerSettings) -> Path:
     return write_config(data, **values)
 
 
-# --- What the task runs -----------------------------------------------------------------------------------------------
+# --- What the service runs --------------------------------------------------------------------------------------------
 
 
 def folder_python(folder: Path) -> Path:
@@ -301,16 +331,16 @@ def service_dir(data: Path) -> Path:
     return data / SERVICE_DIR
 
 
-def runner_path(data: Path) -> Path:
-    return service_dir(data) / "run.cmd"
-
-
-def task_file(data: Path) -> Path:
-    return service_dir(data) / "ap-coder-task.xml"
-
-
 def stop_flag(data: Path) -> Path:
     return service_dir(data) / "stopped"
+
+
+def write_stop_flag(data: Path, again: str = "python -m ap_coder service start") -> Path:
+    """The ``stopped`` file: the host started meanwhile (the task's next run, the Mac's next start) ends at once."""
+    flag = stop_flag(data)
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text(f"stopped {dt.datetime.now():%Y-%m-%d %H:%M} ({again})\n", encoding="utf-8")
+    return flag
 
 
 def host_record(data: Path) -> Path:
@@ -324,7 +354,10 @@ def host_lock(data: Path) -> Path:
 
 def host_running(data: Path) -> bool:
     """A service host runs: it holds ``host_lock``. Not host.json's process number, which after a reboot or a kill
-    may be another program's (B-1588). Told by taking the lock, released at once when it was free."""
+    may be another program's (B-1588). Told by taking the lock, released at once when it was free; never made here
+    (no host ran yet): made by an administrator's sudo, it would be root's, and the Mac's host could not take it."""
+    if not host_lock(data).exists():
+        return False
     lock = try_lock(host_lock(data))
     if lock is None:
         return True
@@ -336,92 +369,8 @@ def log_path(data: Path) -> Path:
     return data / LOG_DIR / LOG_FILE
 
 
-def runner_text(folder: Path, data: Path) -> str:
-    """``run.cmd``: the data folder, server mode, and the service host of ``folder``. A % is doubled (cmd.exe)."""
-
-    def cmd(value: str | Path) -> str:
-        return str(value).replace("%", "%%")
-
-    python = f"{folder}\\.venv\\Scripts\\python.exe"  # (a .cmd file: always Windows)
-    return (
-        "@echo off\r\n"
-        'rem AP Coder\'s service host, written by "python -m ap_coder service install" and "server-update".\r\n'
-        "rem Change the settings in server.json (next to this folder), not here.\r\n"
-        f'set "AP_PRIVATE_DIR={cmd(data)}"\r\n'
-        'set "AP_SERVER_MODE=1"\r\n'
-        f'cd /d "{cmd(folder)}"\r\n'
-        f'"{cmd(python)}" -m ap_coder service run\r\n'
-    )
-
-
-def write_runner(data: Path, folder: Path) -> Path:
-    path = runner_path(data)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(runner_text(folder, data), encoding="utf-8", newline="")
-    return path
-
-
-def account_sid(account: str) -> str:
-    """Windows' own account's SID ("" for any other account)."""
-    return BUILT_IN.get(account.strip().lower(), "")
-
-
-def task_xml(s: ServerSettings, runner: Path, folder: Path, now: dt.datetime | None = None) -> str:
-    """The scheduled task: at boot (a minute after), and every 5 minutes (nothing happens while the host runs: one
-    instance only), for ever (no 3-day limit), at normal priority, on battery too, started again after a failure."""
-    start = (now or dt.datetime.now()).strftime("%Y-%m-%dT%H:%M:%S")
-    sid = account_sid(s.account)
-    user = f"<UserId>{sid}</UserId>" if sid else f"<UserId>{escape(s.account)}</UserId><LogonType>Password</LogonType>"
-    return f"""<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>AP Coder for the office: python -m ap_coder service (docs/SERVER.md).</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <BootTrigger><Enabled>true</Enabled><Delay>PT1M</Delay></BootTrigger>
-    <TimeTrigger>
-      <StartBoundary>{start}</StartBoundary><Enabled>true</Enabled>
-      <Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
-    </TimeTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">{user}<RunLevel>LeastPrivilege</RunLevel></Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>5</Priority>
-    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
-  </Settings>
-  <Actions Context="Author">
-    <Exec><Command>{escape(str(runner))}</Command><WorkingDirectory>{escape(str(folder))}</WorkingDirectory></Exec>
-  </Actions>
-</Task>
-"""
-
-
-def create_command(s: ServerSettings, xml: Path) -> list[str]:
-    """``schtasks /create``. Any account but Windows' own: ``/ru`` without ``/rp``, so schtasks asks for its password
-    itself (it is never on a command line, and Windows keeps it for the task)."""
-    cmd = ["schtasks", "/create", "/tn", s.task_name, "/xml", str(xml)]
-    if not account_sid(s.account):
-        cmd += ["/ru", s.account]
-    return [*cmd, "/f"]
-
-
 def run_command(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
-    """Run a Windows command (schtasks, taskkill). The one place commands run: tests record them instead."""
+    """Run a command of the service (schtasks, taskkill, launchctl). The one place they run: tests record them."""
     kwargs.setdefault("text", True)
     kwargs.setdefault("errors", "replace")
     return subprocess.run(cmd, check=False, **kwargs)  # noqa: S603
@@ -606,50 +555,64 @@ def host_logger(data: Path) -> logging.Logger:
     return log
 
 
-_JOBS: list[Any] = []  # the job objects that end the dashboard with the host (kept open while the host runs)
+class StopSignals:
+    """SIGTERM and SIGINT, off Windows (launchd's bootout, Ctrl+C): the host asks its dashboard to stop (SIGTERM), ends
+    it STOP_WAIT seconds later if it hasn't, then ends itself with exit code 0. Taken from ``install`` (in the main
+    thread) to ``restore``; Windows' host is ended with its task, its job object ending the dashboard (``tie_to_host``).
+    """
 
+    def __init__(self) -> None:
+        self.got = 0  # the signal received (0: none yet)
+        self.child: Any = None  # the dashboard, while it runs
+        self._before: dict[int, Any] = {}
 
-def tie_to_host(child: Any) -> None:
-    """Windows: put the dashboard in a job object that ends it when the host ends (the task ended, the host killed),
-    so a dashboard is never left running without its host. Nothing elsewhere; best effort."""
-    if not WINDOWS or not hasattr(child, "_handle"):
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
+    def install(self) -> StopSignals:
+        if not WINDOWS and threading.current_thread() is threading.main_thread():
+            for number in (signal.SIGTERM, signal.SIGINT):
+                self._before[number] = signal.signal(number, self._received)
+        return self
 
-        class Basic(ctypes.Structure):
-            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
-                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
-                        ("SchedulingClass", wintypes.DWORD)]  # fmt: skip
+    def restore(self) -> None:
+        for number, handler in self._before.items():
+            signal.signal(number, handler)
 
-        class Extended(ctypes.Structure):
-            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_ulonglong * 6),
-                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]  # fmt: skip
+    def _received(self, number: int, frame: Any) -> None:
+        self.got = number
+        self.end_child()
 
-        kernel = ctypes_kernel32()
-        job = kernel.CreateJobObjectW(None, None)
-        if not job:
+    def end_child(self) -> None:
+        """Ask the dashboard to stop, and end it once STOP_WAIT has gone by (a thread: the host reads its output)."""
+        child = self.child
+        if child is None:
             return
-        info = Extended()
-        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        kernel.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info))
-        if kernel.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(int(child._handle))):
-            _JOBS.append(job)
-    except (OSError, AttributeError, ValueError):
-        pass
+        with contextlib.suppress(OSError):
+            child.terminate()
+        timer = threading.Timer(STOP_WAIT, self._end, args=(child,))
+        timer.daemon = True
+        timer.start()
+
+    @staticmethod
+    def _end(child: Any) -> None:
+        if child.poll() is None:
+            with contextlib.suppress(OSError):
+                child.kill()
 
 
-def _wait(seconds: float, data: Path, sleep: Callable[[float], None]) -> None:
+def _wait(seconds: float, ended: Callable[[], bool], sleep: Callable[[float], None]) -> None:
     """Wait ``seconds``, a second at a time, ending early once the service is stopped."""
     left = seconds
-    while left > 0 and not stop_flag(data).exists():
+    while left > 0 and not ended():
         step = min(1.0, left)
         sleep(step)
         left -= step
+
+
+def again() -> int:
+    """The host's exit code when it must not run now but be started again soon (another host runs; the folder to
+    run changed, so the one it names starts next): 0 on Windows, as before, its task comes back every 5 minutes by
+    itself; elsewhere :data:`HOST_AGAIN`, as launchd's KeepAlive starts again only a host that ended with another
+    code than 0 (a 0 is a stop on purpose, left stopped)."""
+    return 0 if WINDOWS else HOST_AGAIN
 
 
 def run_host(
@@ -658,22 +621,24 @@ def run_host(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """Keep the dashboard running until the service is stopped (the ``stopped`` file). Settings are read again at each
-    start, so a change in server.json applies at the next restart."""
+    """Keep the dashboard running until the service is stopped: the ``stopped`` file, or (off Windows) SIGTERM or
+    SIGINT (``StopSignals``). Settings are read again at each start, so a change in server.json applies at the next
+    restart. The exit code is what launchd's KeepAlive (SuccessfulExit false) goes by: 0 when stopped on purpose (left
+    stopped); ``again()`` to be started again soon; a crash or a kill, started again."""
     from ..core.paths import env_path
     from .update_recovery import recover_at_start
 
-    # An update cut short (a power cut): acted on first, its own stop too (D-188). False: run.cmd names another
-    # folder now, which the task starts next.
+    # An update cut short (a power cut): acted on first, its own stop too (D-188). False: the folder to run is another
+    # now (run.cmd, or the Mac's ``current`` link), which the service starts next: ``again()``.
     if not recover_at_start(data, env_path("AP_DB_PATH") or data / "ap_coder.db", PROJECT_DIR):
-        return 0
+        return again()
     if stop_flag(data).exists():
-        return 0  # stopped on purpose: the repeating trigger starts nothing
+        return 0  # stopped on purpose: the repeating trigger (the Mac's next start) starts nothing
     # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
     # kill that number may be another program's, and the service would stay down (B-1585).
     lock = try_lock(host_lock(data))
     if lock is None:
-        return 0
+        return again()  # (Windows' task comes back in 5 minutes; launchd within 10 s)
     record = host_record(data)  # at once: while the lock is held, host.json is this host's (``stop`` relies on it)
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"),
@@ -681,13 +646,18 @@ def run_host(
     log = host_logger(data)
     log.info("Service host started (AP Coder %s, %s, process %s)", __version__, PROJECT_DIR, os.getpid())
     delay = RESTART_FIRST
+    signals = StopSignals().install()
+
+    def ended() -> bool:
+        return bool(signals.got) or stop_flag(data).exists()
+
     try:
-        while True:
+        while not signals.got:
             try:
                 s = settings(data)
             except SettingsError as exc:
                 log.error("%s", exc)
-                _wait(RESTART_MOST, data, sleep)
+                _wait(RESTART_MOST, ended, sleep)
                 if stop_flag(data).exists():
                     break
                 continue
@@ -702,22 +672,32 @@ def run_host(
                 log.error("The dashboard could not be started: %s", exc)
                 code = None
             else:
-                tie_to_host(child)
+                if WINDOWS:
+                    _backend().tie_to_host(child)
+                signals.child = child
+                if signals.got:  # (it came while the dashboard was being started)
+                    signals.end_child()
                 for line in child.stdout:
                     log.info("dashboard: %s", line.rstrip())
                 code = child.wait()
+                signals.child = None
+            if signals.got:
+                log.info("The dashboard stopped (exit code %s): the host was asked to stop (%s)", code,
+                         signal.Signals(signals.got).name)  # fmt: skip
+                break
             if stop_flag(data).exists():
                 log.info("The dashboard stopped (exit code %s): the service was stopped", code)
                 break
             if clock() - started >= STEADY:
                 delay = RESTART_FIRST
             log.warning("The dashboard stopped (exit code %s): starting it again in %d s", code, delay)
-            _wait(delay, data, sleep)
-            if stop_flag(data).exists():
+            _wait(delay, ended, sleep)
+            if ended():
                 log.info("The service was stopped")
                 break
             delay = min(delay * 2, RESTART_MOST)
     finally:
+        signals.restore()
         with contextlib.suppress(OSError):
             if int(_read_json(record).get("pid") or 0) == os.getpid():
                 record.unlink()
@@ -725,39 +705,66 @@ def run_host(
     return 0
 
 
-# --- install / remove / start / stop / status -------------------------------------------------------------------------
+# --- install / remove / start / stop / status: this computer's service ------------------------------------------------
+
+
+def backend() -> Any:
+    """This computer's service: Windows' scheduled task (``service_windows``), the Mac's LaunchDaemon
+    (``service_macos``); None elsewhere."""
+    if WINDOWS:
+        from . import service_windows
+
+        return service_windows
+    if MACOS:
+        from . import service_macos
+
+        return service_macos
+    return None
+
+
+def _backend() -> Any:
+    """``backend()``, or Windows' where there is none (``install --dry-run`` shows its task anywhere)."""
+    from . import service_windows
+
+    return backend() or service_windows
+
+
+def __getattr__(name: str) -> Any:
+    """The Windows task's names (:data:`WINDOWS_NAMES`), found here as before they moved to service_windows.py."""
+    if name in WINDOWS_NAMES:
+        from . import service_windows
+
+        return getattr(service_windows, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def start(data: Path, s: ServerSettings, say: Say = print) -> int:
-    stop_flag(data).unlink(missing_ok=True)
-    done = run_command(["schtasks", "/run", "/tn", s.task_name], capture_output=True)
-    if done.returncode:
-        say(f'The task "{s.task_name}" could not be started: {(done.stderr or done.stdout).strip()}')
-        return 1
-    say(f"Started. Staff open {address(s)}  (log: {log_path(data)})")
-    return 0
+    return _backend().start(data, s, say)
 
 
 def stop(data: Path, s: ServerSettings, say: Say = print) -> int:
-    """Stop the dashboard and its host, and keep the task from starting them again until ``service start``."""
-    flag = stop_flag(data)
-    flag.parent.mkdir(parents=True, exist_ok=True)
-    flag.write_text(
-        f"stopped {dt.datetime.now():%Y-%m-%d %H:%M} (python -m ap_coder service start)\n", encoding="utf-8"
-    )
-    stopped = dashboard_stopped(data, s)
-    run_command(["schtasks", "/end", "/tn", s.task_name], capture_output=True)
-    # Only the running host: it holds the host lock and wrote host.json as soon as it held it, so the record is read
-    # once the lock says a host runs. A record left by a host that was killed may name a number another process has
-    # since, an AP Coder watch among them (B-1590, B-1677).
-    host = int(_read_json(host_record(data)).get("pid") or 0) if host_running(data) else 0
-    if host and host != os.getpid() and runs_python_of(host, s.code_folder):
-        terminate(host)
-    if not stopped:
-        say("The dashboard did not stop: end python.exe in Task Manager (Details), then run this again.")
-        return 1
-    say("Stopped. It stays stopped, also after a restart of the server, until: python -m ap_coder service start")
-    return 0
+    """Stop the dashboard and its host, and keep them from starting again (at boot too) until ``service start``."""
+    return _backend().stop(data, s, say)
+
+
+def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = print) -> int:
+    return _backend().install(data, s, args, say)
+
+
+def remove(data: Path, s: ServerSettings, say: Say = print) -> int:
+    return _backend().remove(data, s, say)
+
+
+def installed(s: ServerSettings) -> bool:
+    """This computer's service is installed (False where there is none: ``server-update`` then stops nothing)."""
+    found = backend()
+    return bool(found and found.installed(s))
+
+
+def switch_folder(data: Path, folder: Path) -> None:
+    """The service runs ``folder`` from its next start (``server-update``): the Mac's ``current`` link pointed at it,
+    elsewhere Windows' run.cmd rewritten."""
+    _backend().switch_folder(data, folder)
 
 
 def address(s: ServerSettings) -> str:
@@ -766,71 +773,33 @@ def address(s: ServerSettings) -> str:
     return f"{scheme}://{name}:{s.port}" if s.port != (443 if s.https else 80) else f"{scheme}://{name}"
 
 
-def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = print) -> int:
-    folder = s.code_folder
-    if args.dry_run:
-        say(f"1. Save the settings in {config_path(data)}:")
-        say(json.dumps({**dataclasses.asdict(s), "allowed_hosts": list(s.allowed_hosts),
-                        "allowed_folders": list(s.allowed_folders), "folder": str(folder)}, indent=2))  # fmt: skip
-        say(f"2. Write {runner_path(data)}:")
-        say(runner_text(folder, data).replace("\r\n", "\n"))
-        say(f"3. Write the task {task_file(data)}:")
-        say(task_xml(s, runner_path(data), folder))
-        say(f"4. Register it: {shown(create_command(s, task_file(data)))}")
-        if not account_sid(s.account):
-            say(f"   (schtasks asks for {s.account}'s password)")
-        if not args.no_start:
-            say(f"5. Start it: {shown(['schtasks', '/run', '/tn', s.task_name])}")
-        say("Nothing was changed (dry run).")
-        return 0
-    if host_running(data):  # installed again while running: the new settings apply from the restart
-        stop(data, s, say)
-    save_settings(data, s)
-    write_runner(data, folder)
-    xml = task_file(data)
-    xml.write_text(task_xml(s, runner_path(data), folder), encoding="utf-16")
-    if not account_sid(s.account):
-        say(f"Windows asks for the password of {s.account} (it keeps it for the task).")
-    done = run_command(create_command(s, xml))
-    if done.returncode:
-        say(f"The task could not be registered (schtasks: exit code {done.returncode}). Run this as an "
-            "administrator; check the account's name and password.")  # fmt: skip
+def status_info(data: Path, s: ServerSettings, found: dict) -> dict:
+    """What ``service status --json`` says: the service (``found``, its backend's ``state``), the host, the dashboard's
+    ``/healthz`` answer (None when none answers), where its settings and log are."""
+    running = host_running(data)
+    host = _read_json(host_record(data)) if running else {}
+    health = dashboard_health(data, s)
+    dashboard = int(_read_json(data / SERVER_FILE).get("pid") or 0) if health else 0
+    return {"platform": _backend().NAME, **{k: v for k, v in found.items() if k not in ("line", "missing")},
+            "running": running, "pid": host.get("pid"), "started": host.get("started"),
+            "version": host.get("version") or (health or {}).get("version"),
+            "folder": host.get("folder") or (health or {}).get("folder"), "address": address(s),
+            "answering": health is not None, "health": health, "dashboard_pid": dashboard or None,
+            "stopped_on_purpose": stop_flag(data).exists(), "data": str(data), "settings": str(config_path(data)),
+            "log": str(log_path(data))}  # fmt: skip
+
+
+def status(data: Path, s: ServerSettings, say: Say = print, as_json: bool = False) -> int:
+    """The service, its host and the dashboard, in words (or JSON); 1 when the service is not installed."""
+    way = _backend()
+    found = way.state(data, s)
+    if as_json:
+        say(json.dumps(status_info(data, s, found), indent=2))
+        return 0 if found["installed"] else 1
+    if not found["installed"]:
+        say(found["missing"])
         return 1
-    say(f'Installed the scheduled task "{s.task_name}": it starts at boot as {s.account}.')
-    code = 0 if args.no_start else start(data, s, say)
-    say("\nNext steps (docs/SERVER.md):")
-    say(f"  - the firewall: netsh advfirewall firewall add rule name=\"AP Coder\" dir=in action=allow protocol=TCP "
-        f"localport={s.port}")  # fmt: skip
-    if not s.allowed_hosts:
-        say("  - the name staff type: --allowed-hosts apcoder.company.local (and that DNS alias)")
-    say("  - the first admin: python -m ap_coder users add --admin <username>")
-    say(f"  - check it: python -m ap_coder service status   (log: {log_path(data)})")
-    return code
-
-
-def remove(data: Path, s: ServerSettings, say: Say = print) -> int:
-    stop(data, s, lambda m: None)
-    done = run_command(["schtasks", "/delete", "/tn", s.task_name, "/f"], capture_output=True)
-    if done.returncode:
-        say(f'The task "{s.task_name}" could not be removed: {(done.stderr or done.stdout).strip()}')
-        return 1
-    stop_flag(data).unlink(missing_ok=True)
-    say(f'Removed the task "{s.task_name}". The data folder, {config_path(data).name} and the logs are kept.')
-    return 0
-
-
-def _task_state(done: subprocess.CompletedProcess) -> str:
-    """The task's state in ``schtasks /query /v /fo LIST``'s answer ("Ready", "Running"...; "?" when it says none)."""
-    return next((line.split(":", 1)[1].strip() for line in (done.stdout or "").splitlines()
-                 if line.strip().lower().startswith("status:")), "?")  # fmt: skip
-
-
-def status(data: Path, s: ServerSettings, say: Say = print) -> int:
-    done = run_command(["schtasks", "/query", "/tn", s.task_name, "/v", "/fo", "LIST"], capture_output=True)
-    if done.returncode:
-        say(f'The task "{s.task_name}" is not installed: python -m ap_coder service install')
-        return 1
-    say(f'Scheduled task "{s.task_name}": {_task_state(done)} (runs as {s.account})')
+    say(found["line"])
     host = _read_json(host_record(data))
     if host_running(data):
         say(f"Service host: running since {host.get('started', '?')} (process {host.get('pid')}, AP Coder "
@@ -844,7 +813,7 @@ def status(data: Path, s: ServerSettings, say: Say = print) -> int:
     else:
         say("Dashboard: not answering")
     if stop_flag(data).exists():
-        say("Stopped on purpose: python -m ap_coder service start starts it again.")
+        say(f"Stopped on purpose: {way.AGAIN} starts it again.")
     say(f"Settings: {config_path(data)}   Log: {log_path(data)}")
     return 0
 
@@ -872,9 +841,13 @@ def _readable(path: str) -> str:
     return ""
 
 
-def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOWS) -> list[tuple[str, str, str]]:
+def doctor_checks(data: Path, env: dict | None = None, *, windows: bool | None = None,
+                  macos: bool | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
     """(area, status, detail) of the server's own setup, as the doctor shows them: what it listens on, its HTTPS
-    files, the names staff type and, on Windows, the scheduled task. Reads files only (and asks schtasks)."""
+    files, the names staff type and the service: Windows' scheduled task, the Mac's LaunchDaemon (this computer's,
+    unless ``windows`` or ``macos`` is given). Reads files only (and asks schtasks or launchctl)."""
+    if windows is None and macos is None:
+        windows, macos = WINDOWS, MACOS
     try:
         s = settings(data, env)
     except SettingsError as exc:
@@ -898,27 +871,27 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool = WINDOW
     else:
         out.append(("server names", "WARN", "AP_ALLOWED_HOSTS is not set: only this computer's own names open AP "
                     "Coder; add the name staff type (service install --allowed-hosts)"))  # fmt: skip
-    if not windows:
-        out.append(("server service", "SKIP", "the scheduled task is on Windows only"))
-        return out
-    try:
-        done = run_command(["schtasks", "/query", "/tn", s.task_name, "/v", "/fo", "LIST"], capture_output=True)
-    except OSError as exc:
-        return [*out, ("server service", "WARN", f"schtasks could not be asked ({exc})")]
-    if done.returncode:
-        return [*out, ("server service", "WARN", f'the task "{s.task_name}" is not installed: python -m ap_coder '
-                       "service install")]  # fmt: skip
-    stopped = " (stopped on purpose: service start)" if stop_flag(data).exists() else ""
-    task = f'task "{s.task_name}": {_task_state(done)}, runs as {s.account}{stopped}'
-    return [*out, ("server service", "PASS", task)]
+    if windows:
+        from . import service_windows
+
+        return [*out, service_windows.doctor_check(data, s)]
+    if macos:
+        from . import service_macos
+
+        return [*out, service_macos.doctor_check(data, s)]
+    out.append(("server service", "SKIP", "the service is a scheduled task on Windows, a LaunchDaemon on a Mac"))
+    return out
 
 
 def add_parser(sub: Any) -> None:
-    p = sub.add_parser("service", help="The company server: run AP Coder as a scheduled task (docs/SERVER.md)")
+    p = sub.add_parser("service", help="The company server: run AP Coder as a Windows scheduled task or a Mac's "
+                       "LaunchDaemon (docs/SERVER.md)")  # fmt: skip
     p.add_argument("action", choices=["install", "remove", "start", "stop", "status", "run"],
-                   help="run: what the scheduled task runs (the service host)")  # fmt: skip
-    p.add_argument("--account", default=None, help=f"The Windows account it runs as (default {DEFAULT_ACCOUNT})")
-    p.add_argument("--task-name", default=None, help=f'The scheduled task\'s name (default "{TASK_NAME}")')
+                   help="run: what the scheduled task (the LaunchDaemon) runs: the service host")  # fmt: skip
+    p.add_argument("--account", default=None, help=f"The account it runs as (default {DEFAULT_ACCOUNT} on Windows, "
+                   "_apcoder on a Mac)")  # fmt: skip
+    p.add_argument("--task-name", default=None, help=f'The scheduled task\'s name (default "{TASK_NAME}"); on a Mac '
+                   "the LaunchDaemon's label is made from it (default com.apcoder.server)")  # fmt: skip
     p.add_argument("--port", type=int, default=None, help=f"Default {DEFAULT_PORT}")
     p.add_argument("--host", default=None, help=f"Address to listen on (default {DEFAULT_HOST}: every network)")
     p.add_argument("--certfile", default=None, help="The HTTPS certificate (PEM)")
@@ -937,16 +910,24 @@ def add_parser(sub: Any) -> None:
                    help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")
     p.add_argument("--dry-run", action="store_true", help="install: show what it would do, change nothing")
+    p.add_argument("--allow-root", action="store_true", help="install on a Mac: run it as root (a first test only)")
+    p.add_argument("--json", action="store_true", help="status: in JSON (for a monitoring script)")
 
 
 def main(args: argparse.Namespace) -> int:
     data = private_dir()
     if args.action == "run":
         return run_host(data)
-    if not WINDOWS and not (args.action == "install" and args.dry_run):
-        print("The service is for Windows (Task Scheduler). Elsewhere, run: python -m ap_coder serve --server",
-              file=sys.stderr)  # fmt: skip
+    if backend() is None and not (args.action == "install" and args.dry_run):
+        print("The service is for Windows (Task Scheduler) and macOS (launchd). Elsewhere, run: python -m ap_coder "
+              "serve --server", file=sys.stderr)  # fmt: skip
         return 2
+    way = _backend()
+    refused = way.command_refusal(args)
+    if refused:
+        print(refused, file=sys.stderr)
+        return 1
+    data = way.data_folder(data, args.task_name or TASK_NAME)  # (the Mac: its LaunchDaemon's when sudo left it out)
     try:
         given = {
             name: getattr(args, name)
@@ -964,8 +945,9 @@ def main(args: argparse.Namespace) -> int:
             )
         }
         # Never server.json's (B-1500): the service's account can write it, and these say what the task runs, as
-        # whom, and which task the administrator's schtasks changes. A built-in account only when named here.
-        given["account"] = args.account or DEFAULT_ACCOUNT
+        # whom, and which task the administrator's schtasks (launchctl) changes. A built-in account (root) only when
+        # named here.
+        given["account"] = args.account or way.DEFAULT_ACCOUNT
         given["task_name"] = args.task_name or TASK_NAME
         given["folder"] = str(Path(args.folder).resolve()) if args.folder else str(PROJECT_DIR)
         s = settings(data, **given)
@@ -981,6 +963,6 @@ def main(args: argparse.Namespace) -> int:
         "remove": lambda: remove(data, s),
         "start": lambda: start(data, s),
         "stop": lambda: stop(data, s),
-        "status": lambda: status(data, s),
+        "status": lambda: status(data, s, as_json=args.json),
     }
     return actions[args.action]()

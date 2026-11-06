@@ -882,6 +882,29 @@ jobs:
         if: always()
         run: pkill -f 'ap_coder|launch\.py|fake_lm_studio' || true
 
+  macos-service:
+    # The company server's service on a Mac (D-186), for real: the LaunchDaemon installed with sudo (GitHub's runner
+    # asks no password) as the runner's account, under a test label, on 127.0.0.1 over plain HTTP; the dashboard
+    # answers; its host is killed with kill -9 and launchd starts it again; service start while it runs restarts it;
+    # launchctl bootout (launchd's SIGTERM: the host ends its dashboard, then itself, and stays stopped); service stop,
+    # and it is still stopped a minute later; service start, and it answers; service remove, and the plist is gone.
+    # scripts/ci/macos_service.py (it prints the service's logs and what launchd says on a failure, and removes the
+    # test daemon).
+    name: The server's service on macOS (launchd)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: AP Coder in this folder's .venv, as the service runs it
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
+      - name: Install, kill, stop, start and remove the LaunchDaemon
+        run: .venv/bin/python scripts/ci/macos_service.py --data "$RUNNER_TEMP/APCoderData" --port 8597
+
   update-over-older-install:
     # The update a user does, from the oldest versions of main and from the last one before the web app, each really
     # installed the way its README said (scripts/ci/old_versions.py: its commit's files, its packages from PyPI),

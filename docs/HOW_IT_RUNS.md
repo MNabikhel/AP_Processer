@@ -356,8 +356,11 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 logins and four roles (`ap_coder/web/roles.py`), and no browser. It is not a Windows service: `python -m ap_coder
 service install` registers a **scheduled task** that starts at boot under its own account and runs
 `<data folder>\service\run.cmd`; that runs the service host (`ap_coder/ops/service.py:run_host`), which starts the
-dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. Updates are
-`python -m ap_coder server-update <bundle>` (`--back` to go back), not the launcher.
+dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. On a Mac it is
+a **LaunchDaemon** (`ap_coder/ops/service_macos.py:daemon`, D-186): launchd runs the same host from the `current` link
+beside the AP Coder folders, starts it again when it crashed or was killed, and leaves it stopped when it ended with 0
+(SIGTERM or the `stopped` file). Updates are `python -m ap_coder server-update <bundle>` (`--back` to go back), not
+the launcher.
 
   **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
   `server.json`'s `workers`, default `server.default_workers`: for the cores and the memory, D-153):
