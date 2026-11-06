@@ -218,7 +218,7 @@ def sample_data() -> dict[str, list[dict[str, Any]]]:
 
 KEYS = {"suppliers": "an8", "gl_accounts": "account_id", "business_units": "business_unit",
         "purchase_orders": "key", "vouchers": "key"}  # fmt: skip
-SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its length is the same)
+SORTED_KEPT = 2000  # a list of more rows than this is kept sorted between requests (while its rows are the same)
 
 
 class Generated:
@@ -277,7 +277,7 @@ class FakeAis:
         self.connections = 0  # connections opened to it (the client keeps one open, D-181)
         self.open: set[socket.socket] = set()
         self.silent: set[socket.socket] = set()  # connections nothing gets through any more (``silence_open``)
-        self.ordered: dict[str, tuple[tuple[int, int], list[dict[str, Any]], list[str]]] = {}  # big lists, sorted
+        self.ordered: dict[str, tuple[list[tuple[int, str]], list[dict[str, Any]], list[str]]] = {}  # big lists, sorted
 
     # -- running
     def __enter__(self) -> FakeAis:
@@ -501,7 +501,7 @@ class FakeAis:
         if isinstance(data, Generated):
             return data.after(after)
         field = KEYS[key]
-        stamp = (id(data), len(data))
+        stamp = [(id(r), str(r[field])) for r in data]  # (a row replaced, added, removed or given another key)
         with self.lock:
             kept = self.ordered.get(key)
         if kept is None or kept[0] != stamp or len(data) <= SORTED_KEPT:

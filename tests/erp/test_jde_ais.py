@@ -12,7 +12,7 @@ import pytest
 
 from ap_coder.core.store import Store
 from ap_coder.erp import jde_ais
-from tests.fake_ais import CA_FILE, PASSWORD, USER, FakeAis
+from tests.fake_ais import CA_FILE, PASSWORD, SORTED_KEPT, USER, FakeAis
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +98,20 @@ def test_a_connection_left_unused_a_while_is_not_used_again(ais, monkeypatch):
     began = time.monotonic()
     c.call("voucher_status", {"key": "K-1"}, idempotent=False)  # (as a voucher's request: never sent twice)
     assert time.monotonic() - began < 1 and ais.connections == 2
+
+
+def test_the_stand_in_serves_a_row_replaced_in_a_long_list(ais):
+    """B-1901 (the test stand-in): tests/fake_ais.py kept a list of more than SORTED_KEPT rows sorted while the list
+    and its length were the same, so a row replaced in it (a voucher voided and another entered) was served as it
+    was."""
+    base = ais.data["vouchers"][0]
+    ais.data["vouchers"] = [{**base, "key": f"00001-PV-{i:06d}-001", "invoice_number": f"N-{i}"}
+                            for i in range(SORTED_KEPT + 1)]  # fmt: skip
+    c = jde_ais.AisClient(ais.settings(), ais.mapping)
+    assert len(c.rows("vouchers", {})) == SORTED_KEPT + 1
+    ais.data["vouchers"][5] = {**base, "key": "00001-PV-999998-001", "invoice_number": "NEW-1"}
+    numbers = {r["invoice_number"] for r in c.rows("vouchers", {})}
+    assert "N-5" not in numbers and "NEW-1" in numbers
 
 
 def test_an_expired_token_is_asked_again_once(ais):
