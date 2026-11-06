@@ -1292,16 +1292,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 
     | a 2-page scan | both OCR engines | one engine (the second read straightened, enlarged) |
     |---|---:|---:|
-    | arrival | 28.6 → 28.5 s | 22.0 → 17.3 s |
-    | the page reader's pass (its blank pages, then the whole pipeline again) | 3.16 → 0.69 s | 6.59 → 0.67 s |
-    | of it, the reading (`analyze`) | 2.55 → 0.27 s | 6.12 → 0.24 s |
+    | arrival | 28.6 → 28.5 s | 35.6 → 28.9 s |
+    | the page reader's pass (its blank pages, then the whole pipeline again) | 3.16 → 0.69 s | 6.77 → 0.67 s |
+    | of it, the reading (`analyze`) | 2.55 → 0.27 s | 6.04 → 0.22 s |
     | teach mode's words | 1.80 → 0.41 s | |
     | the approval's template learning (`build_layout`) | 1.88 → 0.43 s | |
 
     The arrival with both engines is the OCR: drawing the pages for it took 1.6 s of 11 s on a quiet moment (PyMuPDF's
     PNG 1.43 s, read back 0.18 s), now 0.26 s, within the load's spread here. With one engine, the straightened page
-    is no longer made a PNG and read back. Teach mode's 0.41 s is importing RapidOCR (0.45 s) in a new process: in a
-    running one it is the reading's 0.05 s. What is read is the same in every row (each step's digest, before and
+    is no longer made a PNG and read back (that column with the cores loaded 5 to 7 times over). Teach mode's 0.41 s
+    is importing RapidOCR in a new process: in a running one, the same invoice's words again take 0.01 s (0.16 s
+    before, its last 4 pages' PNGs in memory). What is read is the same in every row (each step's digest, before and
     after).
 
   - **Not done, and why:**
