@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..capture.bridge import review_issues
-from ..capture.layout import CannotRead
+from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
@@ -349,7 +349,7 @@ def _check_pdf(path: Path) -> None:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:  # PyMuPDF one thread at a time (D-170)
             pages = None if doc.needs_pass else doc.page_count  # a password: said as such (``plain_error``)
     except Exception:  # noqa: BLE001 - damaged, or not a PDF: said by the reader that fails on it
         return
@@ -377,7 +377,7 @@ def _needs_password(path: Path) -> bool:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:
             return bool(doc.needs_pass)
     except Exception:  # noqa: BLE001 - only asked to word an error: a file that can't be opened says so otherwise
         return False

@@ -384,3 +384,38 @@ def test_fifty_pdfs_read_in_eight_threads_read_as_in_one(engine, tmp_path, monke
         if a[1] is not None:
             _same(a[1], b[1])
         assert a_pictures == b_pictures and a_png == b_png and a_words == b_words and a_sizes == b_sizes
+
+
+def test_pymupdf_outside_capture_holds_the_one_lock_too(tmp_path, monkeypatch, ground_truth):
+    """Every PDF opened outside ``capture/`` holds ``layout.PDF_LOCK`` too: the page reader's pages (its own lock is
+    gone), the AI reviewer's page images, the pipeline's look at a PDF, a picture made a PDF and a scan turned, an
+    email's PDF text and the approved invoice's stamp."""
+    from ap_coder.ai import imaging, page_reader, pipeline
+    from ap_coder.core.store import APPROVED
+    from ap_coder.erp import stamp
+    from ap_coder.intake import triage
+    from tests.conftest import SAMPLE_STEM, SAMPLES
+
+    pdf = tmp_path / "in.pdf"
+    pdf.write_bytes((SAMPLES / f"{SAMPLE_STEM}.pdf").read_bytes())
+    picture = tmp_path / "photo.png"
+    Image.new("RGB", (300, 400), "white").save(picture)
+    held, real = [], pymupdf.open
+
+    def opened(*args, **kwargs):
+        held.append(layout.PDF_LOCK._is_owned())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pymupdf, "open", opened)
+    data = pdf.read_bytes()
+    assert page_reader._page_count(data, True) == 2 and page_reader._render(data, True, page_reader.OVIS, [1])
+    assert imaging.render_page_images(pdf)
+    pipeline._check_pdf(pdf)
+    assert not pipeline._needs_password(pdf)
+    assert intake.image_to_pdf(picture, tmp_path / "photo.pdf") == 1
+    assert intake.original_of(tmp_path / "photo.pdf") is not None
+    intake.turn_upright(pdf, {1: 90})
+    assert triage.pdf_text(data)
+    invoice = {"id": 1, "status": APPROVED, "source_path": str(pdf), "final_output": ground_truth, "reviewer": "Ann"}
+    assert stamp.stamped_pdf(invoice).startswith(b"%PDF")
+    assert len(held) >= 10 and all(held)
