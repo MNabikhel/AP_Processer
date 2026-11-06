@@ -375,6 +375,13 @@ def test_once_the_lessons_change_the_vendors_memories_extended_from_the_older_on
     assert [key[1] for key in suggest._PAST] == [vendor_key(vendors[2])]
     asked(vendors[0])  # extended again from the new ones
     assert len(suggest._PAST) == 2 and all(kept[0] is shared for kept in suggest._PAST.values())
+    # Within their bytes too (D-171): each extended memory copies the shared index's lists and dicts it changes (0.35
+    # MB a vendor on the 100k seed, more with a real vocabulary); past PAST_BYTES_KEPT the oldest go, the latest kept.
+    own = [kept[4] for kept in suggest._PAST.values()]
+    assert all(size > 0 for size in own)
+    monkeypatch.setattr(suggest, "PAST_BYTES_KEPT", own[-1])
+    asked(vendors[1])
+    assert [key[1] for key in suggest._PAST] == [vendor_key(vendors[1])]
 
 
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():
@@ -386,6 +393,165 @@ def test_aggregate_and_tokens_cache_without_sharing_mutable_results():
     words = tokens("Nitrile gloves")
     words.add("changed")
     assert tokens("Nitrile gloves") == {"nitrile", "gloves"}
+
+
+# --- an approval updates the memory, it isn't built again (D-171) -------------------------------------------------
+
+
+def _lessons(rng, n: int, first_id: int, accounts: list[str]) -> list[dict]:
+    """``n`` random lessons, newest first, of a few vendors and lines that come back (some with no words that count,
+    some coded to an account the chart doesn't have, corrections among them; a word met once in a while, so words
+    come and go): as ``Store.feedback_rows`` gives."""
+    from ap_coder.core.memory import ACCEPTED, BULK, CODED, CORRECTED
+
+    items = [
+        "Nitrile gloves",
+        "Copy paper",
+        "Toner cartridge",
+        "Freight charge",
+        "Dell Latitude laptop",
+        "Brg assy",
+        "Hydraulic hose",
+        "Safety boots",
+        "Cable cat6",
+        "the item",
+        "Monthly cloud hosting",
+        "Diesel fluid",
+    ]
+    vendors = ["Acme Supply", "Beta Ltd", "Gamma Inc.", "Delta"]
+    rare = [f"{a}{b}" for a in ("zor", "kal", "vex", "mir", "tup") for b in ("ba", "di", "fo", "gu", "ke", "li")]
+    out = []
+    for n_id in range(first_id + n - 1, first_id - 1, -1):
+        v = rng.choice(vendors)
+        gl = rng.choice([*accounts, "9999"])  # (9999: not in the chart)
+        out.append(
+            {
+                "id": n_id,
+                "vendor_key": vendor_key(v),
+                "vendor_name": v,
+                "description": f"{rng.choice(items)}{rng.choice(['', '', ' XL', ' 2', f' {rng.choice(rare)}'])}",
+                "final_gl": gl,
+                "final_cc": rng.choice(["", "CC10"]),
+                "suggested_gl": rng.choice([gl, gl, "", "6000"]),
+                "outcome": rng.choice([ACCEPTED, ACCEPTED, CORRECTED, CODED, BULK]),
+                "created_at": f"2026-{n_id:06d}",
+            }
+        )
+    return out  # fmt: skip
+
+
+def _as_built(memory) -> tuple:
+    """``_held`` with each rank as its place in the rows (an updated memory's are less its ``offset``), and each line's
+    decisions."""
+    o = memory.offset
+    index = memory.index
+    return (
+        [(p.vendor_key, p.description, p.keys, p.gl_code, p.cost_center, p.rank + o, p.latest)
+         for p in memory.patterns],
+        index.entries, index.accounts, list(index.by_word.items()), dict(index.weight), list(index._by_letter.items()),
+        {v: list(c.items()) for v, c in memory.usual.items()}, {v: n + o for v, n in memory.newest.items()},
+        {line: [(rank + o, id(r)) for rank, r in seq] for line, seq in memory.lines.items()},
+        {line: (p.description, p.rank + o) for line, p in memory.pattern_of.items()},
+    )  # fmt: skip
+
+
+def test_an_approval_updates_the_suggestions_memory_to_exactly_what_building_it_gives(reference):
+    """After each approval every process built the GL suggestions' index again from the whole memory: 0.2 s at 50,000
+    lessons (more with a varied vocabulary), in every web worker, capture process and the background process. Its
+    lessons now go in front of the memory kept and only their lines (and those of the oldest lessons dropped past
+    the cap) are worked out again: the same patterns, ranks in the same order, the same index (its words in the
+    order a build meets them, so lines are found in the same order) and the same suggestions, approval after
+    approval."""
+    import random
+
+    tax_gls = reference.tax.tax_gl_codes()
+    valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    accounts = sorted(valid)[:6]
+    rng, cap = random.Random(171), 150
+    rows = _lessons(rng, 120, 1, accounts)
+    memory, next_id = suggest._build_memory(rows, valid), 121
+    for approval in range(80):
+        added = _lessons(rng, rng.choice([1, 1, 2, 3, 5, 12]), next_id, accounts)
+        next_id += len(added)
+        new_rows = (added + rows)[:cap]  # past the cap, the oldest dropped
+        updated = suggest._updated_memory(rows, memory, new_rows, valid)
+        built = suggest._build_memory(new_rows, valid)
+        assert updated is not None and _as_built(updated) == _as_built(built), approval
+        for item in ("Nitrile gloves XL", "Copy paper 2", "Toner", "Freight", "laptop", "cloud hosting"):
+            for v in ("Acme Supply", "Delta"):
+                key = vendor_key(v)
+                asked = (item, keys(item), key, updated, reference, valid, 3, "")
+                assert suggest._suggested(*asked) == suggest._suggested(item, keys(item), key, built, reference,
+                                                                         valid, 3, "")  # fmt: skip
+        rows, memory = new_rows, updated
+    assert memory.offset == next_id - 121
+
+
+def test_an_approval_updates_the_examples_patterns_to_exactly_what_working_them_out_gives():
+    """The patterns of the whole memory (``memory.aggregate``: the chat model's examples, the history check), worked
+    out again from every lesson after each approval in every process: updated now, the same patterns in the same
+    order."""
+    import random
+
+    from ap_coder.core import memory as memory_module
+
+    def held(found):
+        return [(p.vendor_key, p.vendor_name, p.description, p.gl_code, p.cost_center, p.approvals, p.corrections,
+                 p.last_seen, p.superseded) for p in found.patterns]  # fmt: skip
+
+    rng, cap = random.Random(1710), 150
+    rows = _lessons(rng, 120, 1, ["5000", "6000", "6100"])
+    kept, next_id = memory_module._aggregated(rows), 121
+    for approval in range(80):
+        added = _lessons(rng, rng.choice([1, 1, 2, 3, 5, 12]), next_id, ["5000", "6000", "6100"])
+        next_id += len(added)
+        new_rows = (added + rows)[:cap]
+        updated = memory_module._updated_aggregate(rows, kept, new_rows)
+        built = memory_module._aggregated(new_rows)
+        assert updated is not None and held(updated) == held(built), approval
+        assert {line: [id(r) for r in rs] for line, rs in updated.lines.items()} == {
+            line: [id(r) for r in rs] for line, rs in built.lines.items()}  # fmt: skip
+        assert held(memory_module._Aggregated(list(updated.groups.values()))) == held(
+            memory_module._Aggregated([built.groups[k] for k in updated.groups]))  # fmt: skip
+        rows, kept = new_rows, updated
+
+
+def test_the_memory_kept_is_updated_after_an_approval_and_built_again_after_any_other_change(
+    tmp_path, reference, monkeypatch
+):
+    """Through the store: an approval's lessons update the index and the patterns kept (none built); lessons
+    forgotten, the memory read again, or more than ``UPDATE_MOST`` lessons at once build them again."""
+    from ap_coder.core import memory as memory_module
+
+    built, real = [], suggest._build_memory
+    monkeypatch.setattr(suggest, "_build_memory", lambda rows, ok: built.append(len(rows)) or real(rows, ok))
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    monkeypatch.setattr(memory_module, "_AGGREGATED", memory_module.RowsCache())
+    aggregated, whole = [], memory_module._aggregated
+    monkeypatch.setattr(memory_module, "_aggregated", lambda rows: aggregated.append(len(rows)) or whole(rows))
+    store = Store(tmp_path / "ap.db")
+    store.import_history([{"vendor_name": "Acme", "description": f"Part {n}", "gl_code": "6000", "amount": 1.0,
+                           "date": f"2025-01-{n % 28 + 1:02d}"} for n in range(30)])  # fmt: skip
+
+    def approve(description: str, gl: str) -> None:
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+                         "VALUES ('acme', 'Acme', ?, ?, 'corrected', '2026-01-01')", (description, gl))  # fmt: skip
+
+    assert suggest_gl("Part 3", "Acme", store.feedback_rows(), reference)[0].gl_code == "6000"
+    assert aggregate(store.feedback_rows()) and (built, aggregated) == ([30], [30])
+    approve("Part 3", "6100")
+    approve("Part 3", "6100")  # (confirmed)
+    assert suggest_gl("Part 3", "Acme", store.feedback_rows(), reference)[0].gl_code == "6100"
+    assert [p.gl_code for p in aggregate(store.feedback_rows()) if p.description == "Part 3"] == ["6100", "6000"]
+    assert (built, aggregated) == ([30], [30])  # updated, not built
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM feedback WHERE id = 5")  # a lesson forgotten
+    suggest_gl("Part 3", "Acme", store.feedback_rows(), reference)
+    aggregate(store.feedback_rows())
+    assert (built, aggregated) == ([30, 31], [30, 31])
+    rows = store.feedback_rows()
+    assert memory_module.added_in_front(rows, [{"id": 0}] * (memory_module.UPDATE_MOST + 1) + rows) is None
 
 
 # --- the benchmark ----------------------------------------------------------------------------------------------

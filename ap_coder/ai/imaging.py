@@ -99,8 +99,10 @@ def _render_pdf(path: Path, max_pages: int, max_pixels: int | None) -> list[Page
     except ImportError as exc:  # pragma: no cover - depends on optional install
         raise RuntimeError("Vision mode for PDFs requires PyMuPDF: pip install pymupdf") from exc
 
+    from ..capture.layout import PDF_LOCK
+
     images = []
-    with pymupdf.open(path) as doc:
+    with PDF_LOCK, pymupdf.open(path) as doc:  # PyMuPDF one thread at a time (D-170)
         for index, page in enumerate(doc):
             if index >= max_pages:
                 break

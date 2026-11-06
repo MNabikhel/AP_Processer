@@ -18,6 +18,7 @@ Pure Python, no model: a few thousand past lines are compared in milliseconds th
 
 from __future__ import annotations
 
+import bisect
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -175,6 +176,46 @@ class Index:
                 out.by_word[k].append(i)
         for k in words:
             out.weight[k] = 1.0 / len({out.accounts[i] for i in out.by_word[k]})
+        return out
+
+    def updated(self, entries: list[frozenset[str]], accounts: list[str], front: int, new_of: list[int]) -> Index:
+        """The index of ``entries`` (and their ``accounts``): ``front`` lines first, then the lines of this one it
+        keeps, in its order, ``new_of[i]`` being where its line ``i`` is now (-1: gone). What one built of them all
+        holds, in the same order, its words too (``similar`` finds the same lines in the same order), going over the
+        words of the lines added and gone only and numbering the others again (D-171). This one stays as it is."""
+        out = Index.__new__(Index)
+        out.entries, out.accounts = entries, accounts
+        touched: set[str] = set()  # the words of the lines added or gone
+        for ks in entries[:front]:
+            touched.update(ks)
+        for i, n in enumerate(new_of):
+            if n < 0:
+                touched.update(self.entries[i])
+        by_word = {w: [n for i in lines if (n := new_of[i]) >= 0] for w, lines in self.by_word.items()}
+        added: dict[str, list[int]] = defaultdict(list)
+        for i, ks in enumerate(entries[:front]):
+            for k in ks:
+                added[k].append(i)
+        for k, lines in added.items():
+            by_word[k] = lines + by_word.get(k, [])
+
+        def place(word: str) -> tuple[int, int]:  # where a build first meets it: its first line, then its turn there
+            first = by_word[word][0]
+            return first, next(n for n, k in enumerate(entries[first]) if k == word)
+
+        # A build lists the words as it first meets them: the others keep their order, those touched go where it meets
+        # them now (by their first line, then their turn in it), and a word no line has any more is gone.
+        order = [w for w in self.by_word if w not in touched]
+        for word in sorted((w for w in touched if by_word.get(w)), key=place):
+            order.insert(bisect.bisect_left(order, place(word), key=place), word)
+        out.by_word = {w: by_word[w] for w in order}
+        out.weight = {w: weight for w, weight in self.weight.items() if w not in touched}
+        for word in touched:
+            if word in out.by_word:
+                out.weight[word] = 1.0 / len({accounts[i] for i in out.by_word[word]})
+        out._by_letter = defaultdict(list)
+        for word in order:
+            out._by_letter[word[0]].append(word)
         return out
 
     def similar(

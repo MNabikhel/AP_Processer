@@ -103,7 +103,7 @@ class InvoicesMixin:
                     _due(out, self.default_terms_days(), self.vendor_terms(key)) if out else None,  # its own (B-1311)
                 ),
             )
-            invoice_id = int(cur.lastrowid)
+            invoice_id = self._claim_noted(conn, int(cur.lastrowid), source_path.name)  # (the import queue's)
             if original_sha256:
                 # Earlier failed attempts at the same picture (before or after it was made a PDF) are replaced too.
                 conn.execute("DELETE FROM invoices WHERE (original_sha256 = ? OR file_sha256 = ?) AND status = ? "

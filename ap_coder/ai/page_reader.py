@@ -499,8 +499,8 @@ def load_reader(settings: Settings, model: str | None = None) -> str:
 
 # --- Looking at a page ------------------------------------------------------------------------------------------------
 
-# PyMuPDF isn't made for two threads at once (a page read in the background while another is shown).
-_RENDER_LOCK = threading.Lock()
+# PyMuPDF isn't made for two threads at once (a page read in the background while another is shown): every call on a
+# document holds ``capture.layout.PDF_LOCK``, the one lock of the process's PyMuPDF (D-170).
 # A picture records the resolution it was scanned at; a phone photo's 72 is no scan resolution.
 _SCAN_DPI = 100
 # The brands a HEIC/HEIF file names after "ftyp" at its start (an iPhone's photos).
@@ -516,7 +516,9 @@ def _page_count(data: bytes, pdf: bool) -> int:
     if pdf:
         import pymupdf
 
-        with _RENDER_LOCK, pymupdf.open(stream=data, filetype="pdf") as doc:
+        from ..capture.layout import PDF_LOCK
+
+        with PDF_LOCK, pymupdf.open(stream=data, filetype="pdf") as doc:
             return doc.page_count
     with _open_picture(data) as img:
         return max(1, int(getattr(img, "n_frames", 1) or 1))
@@ -552,7 +554,9 @@ def _render(data: bytes, pdf: bool, reader: Reader, numbers: Iterable[int]) -> d
     if pdf:
         import pymupdf
 
-        with _RENDER_LOCK, pymupdf.open(stream=data, filetype="pdf") as doc:
+        from ..capture.layout import PDF_LOCK
+
+        with PDF_LOCK, pymupdf.open(stream=data, filetype="pdf") as doc:
             for number in wanted:
                 if number > doc.page_count:
                     break
@@ -968,6 +972,8 @@ def _cache_put(digest: str, page: int, model: str, text: str, seconds: float) ->
         os.replace(temporary, path)
     except OSError as exc:
         log.warning("Page reader: couldn't keep a reading in %s (%s)", cache_dir(), exc)
+    else:
+        paths.prune_kept(cache_dir(), path)  # by age and size (D-171)
     _log_timing(model, seconds)
 
 

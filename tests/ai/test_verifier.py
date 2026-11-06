@@ -200,6 +200,87 @@ def test_the_queue(tmp_path):
     assert s.next_verification(after_page_reader=True) is None
 
 
+def _reviews(store, ground_truth, *rows):  # noqa: F811
+    """Invoices in the AI reviewer's line, each (why it is in line, its due date, hours it has waited)."""
+    import datetime as dt
+
+    ids = []
+    for reason, due, hours in rows:
+        invoice_id = store.add_invoice(PDF, ground_truth, None)
+        store.queue_verification(invoice_id, reason)
+        asked = (dt.datetime.now() - dt.timedelta(hours=hours)).isoformat(timespec="seconds")
+        with store._conn() as conn:
+            conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (due, invoice_id))
+            conn.execute("UPDATE verifications SET created_at = ? WHERE invoice_id = ?", (asked, invoice_id))
+        ids.append(invoice_id)
+    return ids
+
+
+def _reviewed(store):  # noqa: F811
+    order = []
+    while (row := store.next_verification(after_page_reader=False)) is not None:
+        order.append(row["invoice_id"])
+    return order
+
+
+def test_the_reviewer_reviews_what_a_person_asked_for_first(store, ground_truth):  # noqa: F811
+    """The review screen's "Have it checked again" before the invoices waiting longer, a touchless one or one due
+    sooner (D-171)."""
+    waiting, held, asked = _reviews(
+        store,
+        ground_truth,
+        ("every invoice", "2026-01-01", 3),
+        ("held for touchless", "2026-01-01", 2),
+        ("asked by Ann", "2027-01-01", 1),
+    )
+    assert _reviewed(store) == [asked, held, waiting]
+
+
+def test_then_an_invoice_touchless_processing_waits_on(store, ground_truth):  # noqa: F811
+    older, sooner, held = _reviews(
+        store,
+        ground_truth,
+        ("every invoice", "2026-03-01", 3),
+        ("every invoice", "2026-01-01", 2),
+        ("held for touchless", "2026-06-01", 1),
+    )
+    assert _reviewed(store) == [held, sooner, older]
+
+
+def test_then_the_one_due_soonest_and_of_those_due_alike_the_one_waiting_longest(store, ground_truth):  # noqa: F811
+    later, sooner, no_date, newer, oldest = _reviews(
+        store,
+        ground_truth,
+        ("every invoice", "2026-12-01", 5),
+        ("every invoice", "2026-11-10", 1),
+        ("every invoice", None, 9),
+        ("every invoice", "2026-11-20", 2),
+        ("demo", "2026-11-20", 3),
+    )
+    assert _reviewed(store) == [sooner, oldest, newer, later, no_date]
+
+
+def test_a_review_under_way_is_renewed_while_it_runs(store, monkeypatch):  # noqa: F811
+    """Its reviewer renews it (D-171), as the page reader does its reads: another takes it again only once this one
+    stopped renewing it for READING_STALE_SECONDS, not after two hours."""
+    import time
+
+    from ap_coder.core.store import Store, page_queue
+
+    monkeypatch.setattr(page_queue, "READING_RENEW_SECONDS", 0.05)
+    verifier.save_settings(store, on=True, rounds=1, minutes=1.0)
+    store.queue_verification(41, "asked by Ann")
+    renewed, real = [], Store.renew_verification
+    monkeypatch.setattr(Store, "renew_verification",
+                        lambda self, iid, reader: renewed.append((iid, reader)) or real(self, iid, reader))  # fmt: skip
+    monkeypatch.setattr(verifier, "_verify", lambda *a: time.sleep(0.4) or verifier.Outcome(41, "agreed"))
+    assert verifier.verify_one(_settings(), store).status == "agreed"
+    assert len(renewed) >= 3 and set(renewed) == {(41, page_worker.READER_ID)}
+    count = len(renewed)
+    time.sleep(0.2)
+    assert len(renewed) == count  # its heartbeat ended with it
+
+
 def test_a_review_that_ends_without_a_result_keeps_the_last_result(tmp_path):
     from ap_coder.core.store import Store
 
@@ -513,7 +594,7 @@ def test_the_background_thread_reviews_when_nothing_is_left_to_read(store, monke
     monkeypatch.setattr(verifier, "verify_one", lambda settings, store, **kw: seen.append(kw) or None)
     reader = page_worker.BackgroundReader(_settings, lambda: store)
     monkeypatch.setattr(page_worker, "ready", lambda settings, store: ("", "OvisOCR2 isn't running"))
-    assert reader._review_one(_settings(), store) == page_worker.IDLE_SECONDS
+    assert reader._review_one(_settings(), store) is None  # nothing reviewed: the round's pause is the reader's
     assert seen == [{"after_page_reader": False}]  # OvisOCR2 not running: nothing waits for it
 
 

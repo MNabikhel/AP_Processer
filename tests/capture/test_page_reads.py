@@ -100,7 +100,8 @@ def test_asking_again(store, ground_truth):
     again = store.page_read(a)
     assert (again["status"], again["error"], again["requested_by"]) == ("waiting", "", "Bob")
     assert again["created_at"] > asked_at
-    assert store.next_page_read()["invoice_id"] == b  # b was waiting before a was asked for again
+    assert store.next_page_read()["invoice_id"] == a  # a person asked for it: before b, waiting longer (D-171)
+    assert store.next_page_read()["invoice_id"] == b
 
 
 def test_finishing_a_read(store, ground_truth):
@@ -119,21 +120,27 @@ def test_finishing_a_read(store, ground_truth):
     assert store.page_reads_waiting() == 0 and store.next_page_read() is None
 
 
-def test_a_read_interrupted_long_ago_waits_again(store, ground_truth):
+def test_a_read_whose_reader_stopped_renewing_it_waits_again(store, ground_truth):
+    """A read under way is renewed by its reader every minute (D-171): one not renewed for 5 minutes (its process
+    paused, the computer slept) is in line again, in its place; it was 2 hours, the read never renewed."""
     a, b = _invoices(store, ground_truth, 2)
     asked_at = _ago(5)
     store.queue_page_read(a, "scan")
     _set(store, a, created_at=asked_at)
     store.queue_page_read(b, "scan")
     _set(store, b, created_at=_ago(4))
-    assert store.next_page_read()["invoice_id"] == a
-    _set(store, a, updated_at=_ago(1.5))  # within the time a long read may take
+    assert store.next_page_read(reader="r")["invoice_id"] == a
+    _set(store, a, updated_at=_ago(4 / 60))  # renewed 4 minutes ago: within the stale time
     assert store.page_read(a)["status"] == "reading" and store.page_reads_waiting() == 1
     assert not store.queue_page_read(a, "asked", requested_by="Ann")
-    _set(store, a, updated_at=_ago(2.5))  # the computer slept, or the app was closed
+    _set(store, a, updated_at=_ago(1.5))  # a long read, renewed all along...
+    assert store.renew_page_read(a, "r") and store.page_read(a)["status"] == "reading"
+    assert not store.renew_page_read(a, "another reader")  # (only its own reader renews it)
+    _set(store, a, updated_at=_ago(6 / 60))  # ...until 6 minutes without: its reader stopped
     assert store.page_read(a)["status"] == "waiting" and store.page_reads_waiting() == 2
     assert store.next_page_read()["invoice_id"] == a  # it kept its place in line
     assert store.page_read(a)["status"] == "reading"
+    assert not store.renew_page_read(a, "r")  # taken by another since: not the stopped reader's any more
     _set(store, a, updated_at=_ago(3))
     assert store.queue_page_read(a, "asked", requested_by="Ann")  # asking again puts it back, in its place
     assert (store.page_read(a)["status"], store.page_read(a)["created_at"]) == ("waiting", asked_at)
@@ -155,6 +162,74 @@ def test_two_readers_never_take_the_same_invoice(store, ground_truth):
         batches = [f.result() for f in [pool.submit(drain) for _ in range(4)]]
     taken = [i for batch in batches for i in batch]
     assert sorted(taken) == sorted(ids)  # each one exactly once
+
+
+# --- The order it is read in (D-171): a person's, then a touchless supplier's, then the earliest due ------------
+
+
+def _line(store, ground_truth, *rows):
+    """Invoices in line, each (reason, asked by, due date, hours waiting), the first waiting longest by default."""
+    ids = _invoices(store, ground_truth, len(rows))
+    for invoice_id, (reason, asked_by, due, hours) in zip(ids, rows, strict=True):
+        store.queue_page_read(invoice_id, reason, requested_by=asked_by)
+        _set(store, invoice_id, created_at=_ago(hours))
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (due, invoice_id))
+    return ids
+
+
+def _order(store):
+    order = []
+    while (row := store.next_page_read()) is not None:
+        order.append(row["invoice_id"])
+    return order
+
+
+def test_what_a_person_asked_for_is_read_first(store, ground_truth):
+    """A person's "Add it to OvisOCR2's queue" (or ``read-pages --invoice``) before the invoices waiting longer, and
+    before a touchless supplier's or one due sooner."""
+    from ap_coder.core.store.page_queue import TOUCHLESS_NEXT
+
+    waiting, touchless, asked = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-01-01", 3),
+        (TOUCHLESS_NEXT, "", "2026-01-01", 2),
+        ("not read yet", "Ann", "2027-01-01", 1),
+    )
+    assert [store.page_reads_ahead(i) for i in (asked, touchless, waiting)] == [0, 1, 2]
+    assert _order(store) == [asked, touchless, waiting]
+
+
+def test_then_a_new_invoice_touchless_processing_waits_on(store, ground_truth):
+    """A touchless supplier's new invoice is approved without a person once the page reader has read it: read before
+    the others in line, waiting longer or due sooner (``page_worker.queue_new_invoice``)."""
+    from ap_coder.core.store.page_queue import TOUCHLESS_NEXT
+
+    older, due_sooner, touchless = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-03-01", 3),
+        ("new invoice", "", "2026-01-01", 2),
+        (TOUCHLESS_NEXT, "", "2026-06-01", 1),
+    )
+    assert store.page_reads_ahead(touchless) == 0
+    assert _order(store) == [touchless, due_sooner, older]
+
+
+def test_then_the_one_due_soonest_and_of_those_due_alike_the_one_waiting_longest(store, ground_truth):
+    """Among the rest, the earliest due first (it is paid first), one with no due date (a credit note) last."""
+    later, sooner, no_date, same_newer, same_older = _line(
+        store,
+        ground_truth,
+        ("new invoice", "", "2026-12-01", 5),
+        ("new invoice", "", "2026-11-10", 1),
+        ("new invoice", "", None, 9),
+        ("new invoice", "", "2026-11-20", 2),
+        ("new invoice", "", "2026-11-20", 3),
+    )
+    assert [store.page_reads_ahead(i) for i in (sooner, same_older, same_newer, later, no_date)] == [0, 1, 2, 3, 4]
+    assert _order(store) == [sooner, same_older, same_newer, later, no_date]
 
 
 # --- Replacing the proposal --------------------------------------------------------------------------------------

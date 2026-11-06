@@ -106,6 +106,30 @@ def reading_as(mark: str) -> Iterator[str]:
             _READING.discard(mark)
 
 
+@contextlib.contextmanager
+def renewed(renew: Callable[[], bool]) -> Iterator[None]:
+    """While a read or a review under way runs: ``renew()`` (its queue row marked afresh, ``Store.renew_page_read``)
+    every READING_RENEW_SECONDS on a thread of its own, so another reader takes it again only once this one has
+    stopped renewing it (its process paused or gone, D-171). Never raises."""
+    from ..core.store import page_queue
+
+    done = threading.Event()
+
+    def beat() -> None:
+        while not done.wait(page_queue.READING_RENEW_SECONDS):
+            try:
+                if not renew():
+                    return  # no longer this reader's (put back in line, taken by another): nothing to renew
+            except Exception as exc:  # noqa: BLE001 - a busy database: renewed next time, well within the stale time
+                log.info("page reader: a read under way was not renewed just now (%s)", exc)
+
+    threading.Thread(target=beat, name="ap-coder-reading-heartbeat", daemon=True).start()
+    try:
+        yield
+    finally:
+        done.set()
+
+
 def saved_tests(store: Any) -> dict[str, dict[str, Any]]:
     """Every model's last test of the page reader on the invoice whose answers are known: {model: test}."""
     saved = store.get_json(TEST_KEY, {})
@@ -281,12 +305,16 @@ def skip_new_invoice(store: Any, invoice_id: int, pages: int, why: str) -> bool:
         return False
 
 
-def queue_new_invoice(store: Any, invoice_id: int | None, path: Path) -> bool:
-    """Queue a just-processed invoice for the page reader (every invoice but a text file). Never raises."""
+def queue_new_invoice(store: Any, invoice_id: int | None, path: Path, touchless: bool = False) -> bool:
+    """Queue a just-processed invoice for the page reader (every invoice but a text file). ``touchless``: its supplier
+    is touchless and only the page reader's reading is awaited to approve it: read before the others but those a
+    person asked for (``page_queue.TOUCHLESS_NEXT``, D-171). Never raises."""
+    from ..core.store.page_queue import TOUCHLESS_NEXT
+
     if not invoice_id or store is None or not wants_reading(path):
         return False
     try:
-        store.queue_page_read(invoice_id, "new invoice")
+        store.queue_page_read(invoice_id, TOUCHLESS_NEXT if touchless else "new invoice")
         return True
     except Exception as exc:  # the queue is an extra: processing must not fail over it
         log.warning("invoice %s: not queued for the page reader (%s)", invoice_id, exc)
@@ -474,7 +502,8 @@ def _read_one(settings: Settings, store: Any, cache_dir: Path | None, invoice_id
         return None
     iid = int(row["invoice_id"])
     try:
-        return _read_taken(settings, store, row, model, cache_dir, should_stop, finish_page)
+        with renewed(lambda: store.renew_page_read(iid, mark)):  # its heartbeat while it is read (D-171)
+            return _read_taken(settings, store, row, model, cache_dir, should_stop, finish_page)
     except Exception as exc:  # noqa: BLE001 - a bug here must not leave the invoice marked as being read for hours
         log.exception("page reader: invoice %s could not be read", iid)
         message = f"{type(exc).__name__}: {exc}"
@@ -716,7 +745,13 @@ class BackgroundReader(threading.Thread):
 
     With ``llm_parallel`` above 1 (D-111) it starts that many readers in all, each taking the next invoice in line
     (the queue's claim is one row changed, so no two take the same one) under a mark of its own (``reader_mark``);
-    only the first runs the self-test. The number is read when it starts (a change applies at the next start)."""
+    only the first runs the self-test. The number is read when it starts (a change applies at the next start).
+
+    The AI reviewer shares each reader's thread, so the two never ask the model server at once. On a laptop it
+    reviews when the page reader has nothing to read, as before (one LM Studio there may hold one model at a time). On
+    the company server it takes every other turn while both have work (D-171): under a backlog of pages, the invoices
+    read are reviewed meanwhile, and touchless processing approves those it waited on, instead of all after the
+    backlog."""
 
     def __init__(self, settings_factory: Callable[[], Settings], store_factory: Callable[[], Any],
                  cache_dir: Path | None = None, slot: int = 0) -> None:  # fmt: skip
@@ -730,6 +765,7 @@ class BackgroundReader(threading.Thread):
         self._halt = threading.Event()
         self.last: ReadOutcome | None = None
         self.last_test: dict[str, Any] | None = None  # the self-test it ran on its own, when it ran one
+        self._reviews_next = False  # the company server: the AI reviewer's turn, the page reader having read (D-171)
 
     def stop(self) -> None:
         self._halt.set()
@@ -742,9 +778,9 @@ class BackgroundReader(threading.Thread):
         for helper in self.helpers:
             helper.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
 
-    def _review_one(self, settings: Settings, store: Any) -> float:
-        """Nothing for the page reader to read: the AI reviewer reviews the next invoice in line (verifier.py), here
-        in the same thread so the two never ask LM Studio at once. The pause before the next round."""
+    def _review_one(self, settings: Settings, store: Any) -> float | None:
+        """The AI reviewer reviews the next invoice in line (verifier.py), here in the same thread so the two never
+        ask LM Studio at once. The pause before the next round; None when nothing waits for it."""
         from . import verifier
 
         try:
@@ -756,7 +792,7 @@ class BackgroundReader(threading.Thread):
             log.exception("AI reviewer round failed")
             return OFF_SECONDS
         if outcome is None:
-            return IDLE_SECONDS
+            return None
         log.info("AI reviewer: invoice %s %s (%s round(s), %.0f s)", outcome.invoice_id, outcome.status,
                  outcome.rounds, outcome.seconds)  # fmt: skip
         return OFF_SECONDS if outcome.status == "postponed" else 0.0
@@ -785,19 +821,33 @@ class BackgroundReader(threading.Thread):
                         self.last_test = tested
                         pause = 0.0 if tested.get("ok") else OFF_SECONDS
                     else:
-                        outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set,
-                                           **({"reader": self.mark} if self.slot else {}))  # fmt: skip
-                        if outcome is not None:
-                            self.last = outcome
-                            log.info("page reader: invoice %s %s (%s page(s), %.0f s)", outcome.invoice_id,
-                                     outcome.status, outcome.pages, outcome.seconds)  # fmt: skip
-                            pause = 0.0 if outcome.status != "postponed" else OFF_SECONDS
-                        else:
-                            pause = self._review_one(settings, store)
+                        pause = self._round(settings, store)
             except Exception:  # never let the thread die: the next round tries again
                 log.exception("page reader round failed")
                 pause = OFF_SECONDS
             self._halt.wait(pause)
+
+    def _round(self, settings: Settings, store: Any) -> float:
+        """One invoice read, or reviewed: on the company server the AI reviewer's turn after each one read, while it
+        has one (D-171); else the page reader's, the reviewer's when it has nothing. The pause before the next: none
+        after the reviewer's turn, even when the chat model didn't answer (the page reader reads on meanwhile)."""
+        from ..ops.offline import server_mode
+
+        reviews_next, self._reviews_next = self._reviews_next, False
+        if reviews_next and self._review_one(settings, store) is not None:
+            return 0.0
+        outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set,
+                           **({"reader": self.mark} if self.slot else {}))  # fmt: skip
+        if outcome is None:
+            pause = self._review_one(settings, store)
+            return IDLE_SECONDS if pause is None else pause
+        self.last = outcome
+        log.info("page reader: invoice %s %s (%s page(s), %.0f s)", outcome.invoice_id, outcome.status,
+                 outcome.pages, outcome.seconds)  # fmt: skip
+        if outcome.status == "postponed":
+            return OFF_SECONDS
+        self._reviews_next = server_mode()
+        return 0.0
 
 
 _background: BackgroundReader | None = None
@@ -908,20 +958,21 @@ def page_seconds(settings: Settings, model: str = "") -> float | None:
 
 def wait_seconds(settings: Settings, store: Any, model: str = "", invoice_id: int | None = None) -> float | None:
     """About how long until the page reader has read the whole queue (or, with ``invoice_id``, that invoice): the
-    invoices to read (those ahead of it, and itself) times the pages an invoice has had so far, times the time a page
-    takes on this computer, plus the self-test's pages while it hasn't passed. None before a page time is measured,
-    or when ``invoice_id`` isn't waiting."""
+    rounds of its ``llm_parallel`` readers to read them (those ahead of it, then itself) times the pages an invoice has
+    had so far, times the time a page takes on this computer, plus the self-test's pages while it hasn't passed. None
+    before a page time is measured, or when ``invoice_id`` isn't waiting."""
     seconds = page_seconds(settings, model)
     if seconds is None:
         return None
+    readers = max(1, int(settings.llm.parallel or 1))  # each reads one invoice at a time (``BackgroundReader``)
     try:
         if invoice_id is not None:
             read = store.page_read(invoice_id) or {}
             if read.get("status") not in ("waiting", "reading"):
                 return None
-            invoices = store.page_reads_ahead(invoice_id) + 1
+            invoices = store.page_reads_ahead(invoice_id) // readers + 1  # its round: those ahead, then itself
         else:
-            invoices = store.page_reads_waiting()
+            invoices = -(-store.page_reads_waiting() // readers)  # the rounds to read them all
         pages = store.page_read_pages_average() or 1.0
         test_pages = 0 if not model or confirmed(store, model) else TEST_PAGES
     except Exception as exc:  # noqa: BLE001 - an estimate is a courtesy

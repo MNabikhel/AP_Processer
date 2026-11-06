@@ -32,18 +32,21 @@ of the history, built once (``_memory``): a long history (years of ERP history) 
 from __future__ import annotations
 
 import re
+import sys
 import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.memory import (
+    PAST_BYTES_KEPT,
     PAST_KEPT,
     PAST_ROWS_KEPT,
     Latest,
     RowsCache,
     WithPast,
     _normalise,
+    added_in_front,
     changed_account,
     latest_decision,
     tokens,
@@ -95,7 +98,7 @@ class _Pattern:
     keys: frozenset[str]
     gl_code: str
     cost_center: str
-    rank: int  # how recent its latest decision is: 0 for the newest of all
+    rank: int  # how recent its latest decision is: lower is newer (its place in the rows, less the memory's ``offset``)
     latest: Latest  # AP's latest decision on the line (``memory.latest_decision``)
 
     @property
@@ -128,6 +131,12 @@ class _Memory:
     # ``suggest_gl``'s answers from this memory: (line, vendor key, limit, default) -> (the reference data, the
     # suggestions), the latest used last
     said: dict[tuple[str, str, int, str], tuple[ReferenceData, list[Suggestion]]] = field(default_factory=dict)
+    # What an approval's update starts from (``_updated_memory``, D-171): the lessons added in front of the rows built
+    # from since (a rank is a row's place less this, so the ranks kept stay as they were); each line's decisions,
+    # (vendor key, description normalised) -> [(rank, row)] newest first; and its pattern, for those with words.
+    offset: int = 0
+    lines: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = field(default_factory=dict)
+    pattern_of: dict[tuple[str, str], _Pattern] = field(default_factory=dict)
 
 
 SAID_KEPT = 1024  # lines whose suggestions each memory keeps
@@ -136,9 +145,9 @@ _SAID_LOCK = threading.Lock()
 
 _MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
 # A vendor's ``learning_rows`` past the whole memory's cap (``WithPast``), by whose they are: (the shared rows and the
-# accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended), the latest
-# used last (``_with_past``).
-_PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory]] = {}
+# accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended, the bytes it
+# holds of its own: ``_own_bytes``), the latest used last (``_with_past``).
+_PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory, int]] = {}
 _PAST_LOCK = threading.Lock()
 
 
@@ -148,33 +157,45 @@ def _memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
     another account. A vendor's rows past the whole memory's cap: the shared index, extended (``_with_past``)."""
     if isinstance(feedback, WithPast):
         return _with_past(feedback, valid)
-    return _MEMORY.get(feedback, valid, lambda: _build_memory(feedback, valid))
+    return _MEMORY.get(feedback, valid, lambda: _build_memory(feedback, valid),
+                       lambda rows, kept: _updated_memory(rows, kept, feedback, valid))  # fmt: skip
 
 
 def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
     """The memory of a vendor's ``learning_rows`` past the whole memory's cap: the shared rows' one, built once per
     change of the lessons (``_MEMORY``: the same list while the store's stamp holds, D-154), extended by the vendor's
     older lessons (``_extended``): what building it of all the rows gives, in milliseconds. Kept for ``PAST_KEPT``
-    vendors and ``PAST_ROWS_KEPT`` of their lessons, the latest used always (D-159), while the same lists come (the
-    store's, kept while its stamps hold). Once the shared rows are others (the lessons changed), the vendors' memories
-    extended from the older ones are let go: each holds all of its shared rows' memory (B-1719)."""
+    vendors, ``PAST_ROWS_KEPT`` of their lessons and ``PAST_BYTES_KEPT`` of their own (D-171), the latest used always
+    (D-159), while the same lists come (the store's, kept while its stamps hold). Once the shared rows are others (the
+    lessons changed), the vendors' memories extended from the older ones are let go: each holds all of its shared
+    rows' memory (B-1719)."""
     shared, past = feedback.shared, feedback.past
     with _PAST_LOCK:
         hit = _PAST.pop(feedback.key, None)
         if hit is not None and hit[0] is shared and hit[2] is past and hit[1] == valid:
             _PAST[feedback.key] = hit
             return hit[3]
-    base = _MEMORY.get(shared, valid, lambda: _build_memory(shared, valid))
+    base = _MEMORY.get(shared, valid, lambda: _build_memory(shared, valid),
+                       lambda rows, kept: _updated_memory(rows, kept, shared, valid))  # fmt: skip
     memory = _extended(base, shared, past, valid)
     with _PAST_LOCK:
         for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
             del _PAST[key]
         _PAST.pop(feedback.key, None)
-        _PAST[feedback.key] = (shared, valid, past, memory)
+        _PAST[feedback.key] = (shared, valid, past, memory, _own_bytes(memory))
         while len(_PAST) > 1 and (len(_PAST) > PAST_KEPT
-                                  or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT):  # fmt: skip
+                                  or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT
+                                  or sum(kept[4] for kept in _PAST.values()) > PAST_BYTES_KEPT):  # fmt: skip
             del _PAST[next(iter(_PAST))]
     return memory
+
+
+def _own_bytes(memory: _Memory) -> int:
+    """About what a memory extended for one vendor holds of its own: the lists and dicts ``_extended`` copied from the
+    shared memory (their own size, not the patterns and words they share with it)."""
+    index = memory.index
+    return sum(sys.getsizeof(x) for x in (memory.patterns, memory.usual, memory.newest, index.entries, index.accounts,
+                                          index.by_word, index.weight, index._by_letter))  # fmt: skip
 
 
 def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, Any]],
@@ -184,14 +205,14 @@ def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, 
     its latest decision (its account, rank and cost center) and has its run of decisions worked out again; a line only
     in ``past`` is a new pattern, after all of base's, in the order it is first met."""
     added: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # each line's decisions, newest first
-    for rank, r in enumerate(past, start=len(shared)):
+    for rank, r in enumerate(past, start=len(shared) - base.offset):
         if r.get("final_gl") in valid:
             added.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
     if not added:
         return base
     vendors = {line[0] for line in added}
     earlier: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # their decisions in the shared rows
-    for rank, r in enumerate(shared):
+    for rank, r in enumerate(shared, start=-base.offset):
         if r["vendor_key"] in vendors and r.get("final_gl") in valid:
             line = (r["vendor_key"], _normalise(r["description"]))
             if line in added:
@@ -200,11 +221,7 @@ def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, 
     where = {(p.vendor_key, _normalise(p.description)): n for n, p in enumerate(patterns) if p.vendor_key in vendors}
     new = []
     for line, seq in added.items():
-        seq = earlier.get(line, []) + seq
-        rank, r = seq[0]  # the latest decision wins over older ones for another account
-        latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
-        p = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value,
-                     r.get("final_cc") or "", rank, latest)  # fmt: skip
+        p = _line_pattern(earlier.get(line, []) + seq)
         if line in earlier:
             if line in where:  # (a line without words is in no memory)
                 patterns[where[line]] = p
@@ -220,7 +237,15 @@ def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, 
             usual.setdefault(p.vendor_key, Counter())[p.gl_code] += 1
         newest[p.vendor_key] = min(newest.get(p.vendor_key, p.rank), p.rank)
     index = base.index.extended([p.keys for p in new], [p.gl_code for p in new])
-    return _Memory(patterns, index, usual, newest)
+    return _Memory(patterns, index, usual, newest, offset=base.offset)
+
+
+def _line_pattern(seq: list[tuple[int, dict[str, Any]]]) -> _Pattern:
+    """The pattern of one line from its decisions, (rank, row) newest first."""
+    rank, r = seq[0]  # the latest decision wins over older ones for another account
+    latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
+    return _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value, r.get("final_cc") or "",
+                    rank, latest)  # fmt: skip
 
 
 def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
@@ -228,21 +253,86 @@ def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Mem
     for rank, r in enumerate(feedback):
         if r.get("final_gl") in valid:
             decisions.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
-    groups: dict[tuple[str, str], _Pattern] = {}
-    for key, seq in decisions.items():
-        rank, r = seq[0]  # the latest decision wins over older ones for another account
-        latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
-        groups[key] = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value,
-                               r.get("final_cc") or "", rank, latest)  # fmt: skip
+    groups = {line: _line_pattern(seq) for line, seq in decisions.items()}
     patterns = [p for p in groups.values() if p.keys]
-    usual: dict[str, Counter[str]] = defaultdict(Counter)
+    usual, newest = _usual(patterns, None)
+    index = Index([p.keys for p in patterns], [p.gl_code for p in patterns])
+    return _Memory(patterns, index, usual, newest, lines=decisions,
+                   pattern_of={line: p for line, p in groups.items() if p.keys})  # fmt: skip
+
+
+def _usual(patterns: list[_Pattern], vendors: set[str] | None) -> tuple[dict[str, Counter[str]], dict[str, int]]:
+    """Each vendor's (of ``vendors``, None: all) usual accounts and the rank of its latest decision, from the memory's
+    patterns in its order."""
+    usual: dict[str, Counter[str]] = {}
     newest: dict[str, int] = {}
     for p in patterns:
+        if vendors is not None and p.vendor_key not in vendors:
+            continue
         if not p.unconfirmed:  # a slip, maybe: no evidence for the vendor's usual account yet
-            usual[p.vendor_key][p.gl_code] += 1
+            usual.setdefault(p.vendor_key, Counter())[p.gl_code] += 1
         newest[p.vendor_key] = min(newest.get(p.vendor_key, p.rank), p.rank)
-    index = Index([p.keys for p in patterns], [p.gl_code for p in patterns])
-    return _Memory(patterns, index, dict(usual), newest)
+    return usual, newest
+
+
+def _updated_memory(kept_rows: list[dict[str, Any]], kept: _Memory, rows: list[dict[str, Any]],
+                    valid: frozenset[str]) -> _Memory | None:  # fmt: skip
+    """``_build_memory(rows, valid)`` from ``kept``, the memory of ``kept_rows``, when ``rows`` is lessons added in
+    front of them and the oldest dropped (``memory.added_in_front``): exactly what building it gives, the same
+    patterns in the same order and the same index, working out again only the lines the lessons added and dropped are
+    of. Ranks are kept: the new lessons' are below them all (``offset``). None when ``rows`` is anything else, or more
+    than ``memory.UPDATE_MOST`` lessons changed: then it is built (D-171)."""
+    added = added_in_front(kept_rows, rows)
+    if added is None:
+        return None
+    left = len(rows) - added
+    offset = kept.offset + added
+    new: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # the lines of the lessons added, as met
+    for place in range(added):
+        r = rows[place]
+        if r.get("final_gl") in valid:
+            new.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((place - offset, r))
+    dropped: Counter[tuple[str, str]] = Counter()  # each line's decisions dropped: its oldest
+    for r in kept_rows[left:]:
+        if r.get("final_gl") in valid:
+            dropped[(r["vendor_key"], _normalise(r["description"]))] += 1
+    lines, pattern_of = dict(kept.lines), dict(kept.pattern_of)
+    changed: dict[tuple[str, str], _Pattern | None] = {}
+    for line in [*new, *(line for line in dropped if line not in new)]:
+        seq = kept.lines.get(line, [])
+        seq = new.get(line, []) + seq[: len(seq) - dropped[line]]
+        if seq:
+            lines[line] = seq
+            changed[line] = _line_pattern(seq)
+        else:
+            del lines[line]
+            changed[line] = None
+        pattern_of.pop(line, None)
+        if changed[line] is not None and changed[line].keys:
+            pattern_of[line] = changed[line]
+    # The patterns in a build's order, by their latest decision: those of the lines added first, then the others as
+    # they were (a line only dropped from keeps its latest decision, its words and its account).
+    front = [p for line in new if (p := changed[line]) is not None and p.keys]
+    gone, again = set(), {}  # the patterns kept that go (moved to the front, or no decision left), those changed
+    for line, p in changed.items():
+        was = kept.pattern_of.get(line)
+        if was is not None and (line in new or p is None or not p.keys):
+            gone.add(id(was))
+        elif was is not None:
+            again[id(was)] = p
+    patterns, new_of = list(front), []
+    for p in kept.patterns:
+        if id(p) in gone:
+            new_of.append(-1)
+        else:
+            new_of.append(len(patterns))
+            patterns.append(again.get(id(p), p))
+    vendors = {line[0] for line in changed}
+    usual, newest = _usual(patterns, vendors)
+    usual.update((v, c) for v, c in kept.usual.items() if v not in vendors)
+    newest.update((v, n) for v, n in kept.newest.items() if v not in vendors)
+    index = kept.index.updated([p.keys for p in patterns], [p.gl_code for p in patterns], len(front), new_of)
+    return _Memory(patterns, index, usual, newest, offset=offset, lines=lines, pattern_of=pattern_of)
 
 
 Hits = dict[str, list[tuple[float, _Pattern]]]  # account -> [(similarity, pattern)]

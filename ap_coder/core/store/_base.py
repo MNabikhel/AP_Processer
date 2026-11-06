@@ -326,13 +326,13 @@ CREATE INDEX IF NOT EXISTS report_jobs_state ON report_jobs (state, id);
 CREATE INDEX IF NOT EXISTS report_jobs_owner ON report_jobs (owner, state);
 """
 
-# The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
-# interrupted (the computer slept, the app was closed): it waits in line again. ``reader`` names the process
-# reading it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
+# The page reader's queue (``page_reads.status``, ``page_queue``). A read not renewed for READING_STALE_SECONDS was
+# interrupted (the computer slept, its process paused): it waits in line again. ``reader`` names the process reading
+# it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
 # (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
 STALE_READING_HOURS = 2
-_IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
+_IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _reading_stale_before()
 
 # The Azure check's queue (``azure_checks.status``, ``ap_coder/ai/azure_check.py``): off unless AP turns it on in
 # Settings → Reading. A check still "checking" after STALE_READING_HOURS was interrupted: it waits in line again.
@@ -342,11 +342,11 @@ _AZURE_IN_LINE = (  # ? = _stale_before()
     "(azure_checks.status = 'waiting' OR (azure_checks.status = 'checking' AND azure_checks.updated_at < ?))"
 )
 
-# The AI reviewer's queue (``verifications.status``, ``ap_coder/ai/verifier.py``). A review still "verifying" after
-# STALE_READING_HOURS was interrupted: it waits in line again.
+# The AI reviewer's queue (``verifications.status``, ``ap_coder/ai/verifier.py``). A review not renewed for
+# READING_STALE_SECONDS (``page_queue``) was interrupted: it waits in line again.
 VERIFY_WAITING, VERIFY_RUNNING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED = (
     "waiting", "verifying", "done", "failed", "skipped")  # fmt: skip
-_VERIFY_IN_LINE = (  # ? = _stale_before()
+_VERIFY_IN_LINE = (  # ? = _reading_stale_before()
     "(verifications.status = 'waiting' OR (verifications.status = 'verifying' AND verifications.updated_at < ?))"
 )
 

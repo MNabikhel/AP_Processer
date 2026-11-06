@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..capture.bridge import review_issues
-from ..capture.layout import CannotRead
-from ..capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
+from ..capture.layout import PDF_LOCK, CannotRead
+from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
@@ -41,6 +41,7 @@ from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
+from ..core.store.imports import ClaimLost
 from ..intake.files import folder_names
 from . import azure_check, verifier
 from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
@@ -348,7 +349,7 @@ def _check_pdf(path: Path) -> None:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:  # PyMuPDF one thread at a time (D-170)
             pages = None if doc.needs_pass else doc.page_count  # a password: said as such (``plain_error``)
     except Exception:  # noqa: BLE001 - damaged, or not a PDF: said by the reader that fails on it
         return
@@ -376,7 +377,7 @@ def _needs_password(path: Path) -> bool:
     try:
         import pymupdf
 
-        with pymupdf.open(path) as doc:
+        with PDF_LOCK, pymupdf.open(path) as doc:
             return bool(doc.needs_pass)
     except Exception:  # noqa: BLE001 - only asked to word an error: a file that can't be opened says so otherwise
         return False
@@ -480,7 +481,7 @@ class InvoicePipeline:
         is read as before."""
         import hashlib
 
-        from ..core.paths import private_dir
+        from ..core.paths import private_dir, prune_kept
         from .inference import read_header
 
         try:
@@ -514,6 +515,8 @@ class InvoicePipeline:
             part.replace(kept)
         except OSError:
             pass
+        else:
+            prune_kept(kept.parent, kept)  # by age and size (D-171)
         return values
 
     def _reads_locally(self, path: Path) -> bool:
@@ -777,7 +780,11 @@ class InvoicePipeline:
                 why = skip_reason(self.settings, result.capture, result.autonomy, path)  # (server: D-111)
                 why = "" if result.chat_deferred else why  # its pass asks the chat model again (D-168)
                 if not why or not skip_new_invoice(self.store, result.invoice_id, result.capture.page_count, why):
-                    queue_new_invoice(self.store, result.invoice_id, path)
+                    touchless = result.autonomy.get("reason") == WAITING_FOR_PAGE_READER  # read first (D-171)
+                    queue_new_invoice(self.store, result.invoice_id, path, touchless=touchless)
+        except ClaimLost as exc:  # another reader took the file after this one stalled past its lease: it stores it
+            log.warning("%s", exc)
+            result.error = result.error or str(exc)
         except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
             log.exception("Could not save %s", path)
             result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

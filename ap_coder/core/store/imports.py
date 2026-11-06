@@ -20,6 +20,7 @@ the command that brought it (``intake/imports.py``).
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import time
@@ -56,6 +57,15 @@ _NEXT = (
 )
 _STORED = ("SELECT id FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?) AND (? OR status != 'failed') "
            "ORDER BY id DESC LIMIT 1")  # fmt: skip
+# The queue's file being read here, as (its id, the reader): the invoice made from it is stored only while the claim is
+# still that reader's, checked in the same transaction (``add_invoice``, B-1762). Set by ``intake.imports.Reader``.
+IMPORT_CLAIM: contextvars.ContextVar[tuple[int, str] | None] = contextvars.ContextVar("ap_coder_import_claim",
+                                                                                      default=None)  # fmt: skip
+
+
+class ClaimLost(Exception):
+    """The file's claim is no longer the reader's (it stalled past its lease, and another took the file): nothing of
+    its reading is stored."""
 
 
 class ImportsMixin:
@@ -249,6 +259,21 @@ class ImportsMixin:
                                     "AND expires_at >= ?", (time.time(),)).fetchone()[0])  # fmt: skip
 
     # --- Inside a transaction of the queue's
+
+    @staticmethod
+    def _claim_noted(conn: Any, invoice_id: int, name: str) -> int:
+        """In ``add_invoice``'s transaction: an invoice read from the import queue (``IMPORT_CLAIM``) is noted on its
+        file while its reader still holds it, else ``ClaimLost`` and nothing is stored (B-1762). ``invoice_id``."""
+        claim = IMPORT_CLAIM.get()
+        if (
+            claim is not None
+            and not conn.execute(
+                "UPDATE import_files SET invoice_id = ? WHERE id = ? AND owner = ? AND status = 'reading'",
+                (invoice_id, *claim),
+            ).rowcount
+        ):  # its reader stalled past its lease and another took the file: that one stores it
+            raise ClaimLost(f"{name} is read by another reader now: this reading is not stored")
+        return invoice_id
 
     def _expire_imports(self, conn: Any) -> set[int]:
         """The files whose reader stopped (lease run out): back in line, or failed (an invoice saying why) once this was

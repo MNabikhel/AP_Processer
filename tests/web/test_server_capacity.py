@@ -79,6 +79,26 @@ def test_server_json_gives_the_workers_their_threads(tmp_path, monkeypatch):
     assert service.settings(tmp_path).worker_threads == 40
 
 
+def test_server_json_says_how_many_capture_processes_read_the_imports(tmp_path, monkeypatch):
+    """``capture_processes`` in server.json reaches the dashboard as AP_CAPTURE_PROCESSES (the .env alone set it), and
+    the server starts that many; 0 or none: one per core but two, as before."""
+    from ap_coder.ops import service
+    from ap_coder.web import server
+
+    monkeypatch.delenv(server.CAPTURE_ENV, raising=False)
+    assert server.CAPTURE_ENV not in service.serve_env(service.settings(tmp_path), tmp_path)  # the default
+    service.write_config(tmp_path, capture_processes=3)
+    env = service.serve_env(service.settings(tmp_path), tmp_path)
+    assert env[server.CAPTURE_ENV] == "3"
+    monkeypatch.setenv(server.CAPTURE_ENV, env[server.CAPTURE_ENV])
+    assert server.capture_processes(cores=32, memory_mb=64_000) == 3
+    monkeypatch.delenv(server.CAPTURE_ENV)
+    service.write_config(tmp_path, capture_processes=500)
+    assert service.settings(tmp_path).capture_processes == 64
+    monkeypatch.setenv(server.CAPTURE_ENV, "2")  # the .env's still wins over server.json, as for the other keys
+    assert service.settings(tmp_path).capture_processes == 2
+
+
 # --- The long routes' lane ---------------------------------------------------------------------------------------
 
 

@@ -396,7 +396,17 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   queue, as it read its imports before, and takes up at its start what a restart left in line; `watch` reads what it
   put in line unless a capture process runs. An invoice arriving on the server asks the chat model for at most
   20 s, a chat slot included (`pipeline.ARRIVAL_SECONDS`, `AP_LLM_ARRIVAL_SECONDS`), and after two timeouts in a row
-  not for 2 minutes (`pipeline.ArrivalBreaker`); the page reader's pass asks again.
+  not for 2 minutes (`pipeline.ArrivalBreaker`); the page reader's pass asks again. An invoice is stored only while its
+  reader still holds its file (`IMPORT_CLAIM`, B-1762).
+
+  **The page reader's and the AI reviewer's queues** (D-171; `core/store/page_queue.py`, `lessons.py`): taken a
+  person's first ("Add it to OvisOCR2's queue", "Have it checked again"), then an invoice touchless processing waits
+  on (`page_queue.TOUCHLESS_NEXT`, the reviewer's "held for touchless"), then the earliest due, then the oldest. A read
+  or a review under way is renewed every minute by its reader (`page_worker.renewed`) and is in line again after 5
+  minutes without (`READING_STALE_SECONDS`); one whose process is gone is put back at once. On the server each reader
+  thread gives the AI reviewer a turn after each invoice it read (`BackgroundReader._round`); a laptop reviews once
+  nothing is left to read, as before. The model's answers kept in `.cache/page_reader`, `model_reading` and
+  `model_accounts` go after 30 days or past 512 MB each (`paths.prune_kept`).
 
   **What one worker runs at once** (D-153, server mode only): the app's lifespan caps anyio's thread pool at
   `app.worker_threads()` (4; `AP_WORKER_THREADS`, `server.json`'s `worker_threads`); the long routes of

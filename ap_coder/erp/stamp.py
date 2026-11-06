@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ai.extraction import DOCUMENT_EXTENSIONS
-from ..capture.layout import HEIF_EXTENSIONS
+from ..capture.layout import HEIF_EXTENSIONS, PDF_LOCK
 from ..coding.tax import TaxTreatment
 from ..core.store import APPROVED
 from .exports import distribution
@@ -197,16 +197,17 @@ def stamped_pdf(
     if not can_stamp(inv):
         raise ValueError(f"Invoice {inv.get('id')} is not fully approved ({inv.get('status')}): no APPROVED stamp.")
     gl_names = gl_names or {}
-    doc = _source_document(Path(inv.get("source_path") or ""))
-    try:
-        if doc.page_count:
-            _stamp(doc[0], inv)
-        _coding_pages(doc, inv, gl_names, tax_treatments)
-        if any(FALLBACK in f[4] for page in doc for f in page.get_fonts()):
-            doc.subset_fonts()  # only the characters used: keeps the file small
-        return doc.tobytes(garbage=3, deflate=True)
-    finally:
-        doc.close()
+    with PDF_LOCK:  # every call on the PDFs holds PyMuPDF's one lock (D-170)
+        doc = _source_document(Path(inv.get("source_path") or ""))
+        try:
+            if doc.page_count:
+                _stamp(doc[0], inv)
+            _coding_pages(doc, inv, gl_names, tax_treatments)
+            if any(FALLBACK in f[4] for page in doc for f in page.get_fonts()):
+                doc.subset_fonts()  # only the characters used: keeps the file small
+            return doc.tobytes(garbage=3, deflate=True)
+        finally:
+            doc.close()
 
 
 def file_name(inv: dict[str, Any]) -> str:
