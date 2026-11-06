@@ -729,6 +729,28 @@ def test_a_read_under_way_is_renewed_while_it_is_read(store, fake_reader, monkey
     assert len(renewed) == count and store.page_read(first.invoice_id)["status"] == "done"
 
 
+def test_a_read_another_reader_took_over_is_not_folded_in(store, fake_reader, monkeypatch):
+    """A reader paused past the stale time (a VM saved, with ``llm_parallel`` 2 or more) had its invoice taken by
+    another: as it woke it folded its reading in all the same and ended the other's read, so the invoice was read
+    twice and its figures counted twice (B-1770). Its reading is dropped: the other's is the one folded in."""
+    settings = _settings()
+    iid = _process(store, settings).invoice_id
+    faked = page_reader.read_document
+
+    def paused(*args, **kwargs):  # this reader paused as it read: another took the invoice meanwhile
+        with store._conn() as conn:
+            conn.execute("UPDATE page_reads SET updated_at = '2000-01-01T00:00:00', renewed = julianday('now') - 1 "
+                         "WHERE invoice_id = ?", (iid,))  # fmt: skip
+        assert store.next_page_read(reader="another")["invoice_id"] == iid
+        return faked(*args, **kwargs)
+
+    monkeypatch.setattr(page_reader, "read_document", paused)
+    outcome = page_worker.read_one(settings, store)
+    assert outcome.status == "skipped" and "another reader" in outcome.message and not outcome.updated, outcome
+    assert "page_reader" not in store.get_invoice(iid)["meta"] and page_worker.figure_totals(store) == {}
+    assert (store.page_read(iid)["status"], store.page_read(iid)["reader"]) == ("reading", "another")
+
+
 @pytest.mark.parametrize("server", [True, False])
 def test_on_the_server_the_reviewer_takes_every_other_turn(store, monkeypatch, server):
     """Under a backlog of pages the AI reviewer was starved: it reviewed only when nothing was left to read, so the

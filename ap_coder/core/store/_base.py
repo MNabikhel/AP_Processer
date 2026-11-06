@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS page_reads (
     invoice_id INTEGER PRIMARY KEY, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
     pages INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
+    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0, renewed REAL);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
 -- the latest finished reads (``page_read_pages_average``, the reading status of every page), not all sorted (B-1734)
 CREATE INDEX IF NOT EXISTS page_reads_done ON page_reads (status, updated_at);
@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
     rounds INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, result_json TEXT,
     error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    tries INTEGER NOT NULL DEFAULT 0);
+    tries INTEGER NOT NULL DEFAULT 0, renewed REAL);
 CREATE INDEX IF NOT EXISTS verifications_status ON verifications (status, created_at);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY AUTOINCREMENT, situation TEXT NOT NULL UNIQUE, vendor_key TEXT NOT NULL,
@@ -332,7 +332,11 @@ CREATE INDEX IF NOT EXISTS report_jobs_owner ON report_jobs (owner, state);
 # (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
 STALE_READING_HOURS = 2
-_IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _reading_stale_before()
+# A read (or review) under way is stale once not renewed for READING_STALE_SECONDS on the database's clock (``renewed``:
+# julianday('now'), which a change of the clocks doesn't move, B-1770); a row renewed before it had one, by its local
+# time (``updated_at``). ``{t}``: the table's name and a dot, or nothing; asked with ``page_queue._stale()``.
+_STALE = "COALESCE({t}renewed < julianday('now') - ? / 86400.0, {t}updated_at < ?)"
+_IN_LINE = f"(status = 'waiting' OR (status = 'reading' AND {_STALE.format(t='')}))"  # ? = page_queue._stale()
 
 # The Azure check's queue (``azure_checks.status``, ``ap_coder/ai/azure_check.py``): off unless AP turns it on in
 # Settings → Reading. A check still "checking" after STALE_READING_HOURS was interrupted: it waits in line again.
@@ -346,8 +350,9 @@ _AZURE_IN_LINE = (  # ? = _stale_before()
 # READING_STALE_SECONDS (``page_queue``) was interrupted: it waits in line again.
 VERIFY_WAITING, VERIFY_RUNNING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED = (
     "waiting", "verifying", "done", "failed", "skipped")  # fmt: skip
-_VERIFY_IN_LINE = (  # ? = _reading_stale_before()
-    "(verifications.status = 'waiting' OR (verifications.status = 'verifying' AND verifications.updated_at < ?))"
+_VERIFY_IN_LINE = (  # ? = page_queue._stale()
+    "(verifications.status = 'waiting' OR (verifications.status = 'verifying' AND "
+    f"{_STALE.format(t='verifications.')}))"
 )
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -612,16 +617,18 @@ class StoreCore:
         if version < 26:  # the import queue (D-168): its tables are made by _SCHEMA, its indexes here
             for sql in _INDEXES_26:
                 conn.execute(sql)
-        # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
-        # schema 15: looked for whatever the version).
+        # The page reader's queue remembers who is reading an invoice, how many reads were cut off (added within
+        # schema 15) and when a read was renewed on the database's clock (B-1770): looked for whatever the version.
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
-        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
+        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0"),
+                             ("renewed", "REAL")):  # fmt: skip
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
         # The AI reviewer's queue counts reviews the model server cut off before any answer, and remembers who is
         # reviewing an invoice, like the page reader's (looked for likewise).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
-        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''")):
+        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''"),
+                             ("renewed", "REAL")):  # fmt: skip
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE verifications ADD COLUMN {column} {kind}")
         # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the

@@ -435,6 +435,26 @@ def test_the_guards_below_are_not_vacuous_the_reviewer_agreeing_approves_a_coded
     assert done.status == verifier.AGREED and done.approved and store.get_invoice(iid)["status"] == "approved"
 
 
+def test_a_review_another_reader_took_over_is_not_folded_in(store, touchless, monkeypatch):  # noqa: F811
+    """The AI reviewer paused past the stale time (a VM saved): another reader took the review. As the first woke, its
+    end of the review was refused (B-787), but it folded its answer in all the same, and approved the invoice held
+    for it on that answer (B-1770). Only the reader whose review it still is folds its answer in."""
+    iid = _held_for_the_reviewer(store, monkeypatch, coded=True)  # (agreed, it would be approved: the test above)
+
+    def taken_meanwhile(fields):  # the reviewer paused as it asked: another reader took the review meanwhile
+        with store._conn() as conn:
+            conn.execute("UPDATE verifications SET updated_at = '2000-01-01T00:00:00', renewed = julianday('now') - 1 "
+                         "WHERE invoice_id = ?", (iid,))  # fmt: skip
+        assert store.next_verification(after_page_reader=False, reader="another")["invoice_id"] == iid
+        return _answer(fields=fields)
+
+    done = verifier.verify_one(_settings(), store, coder=FakeCoder(taken_meanwhile))
+    assert done.status == "skipped" and "another reader" in done.message and not done.approved, done
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and "verifier" not in inv["meta"]
+    assert (store.verification(iid)["status"], store.verification(iid)["reader"]) == ("verifying", "another")
+
+
 def test_the_reviewer_agreeing_does_not_approve_past_a_pending_azure_hold(store, touchless, monkeypatch):  # noqa: F811
     iid = _held_for_the_reviewer(store, monkeypatch, coded=True, azure_hold=True)
     done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))

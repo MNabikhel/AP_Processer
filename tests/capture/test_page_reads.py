@@ -22,10 +22,15 @@ def _ago(hours):
 
 
 def _set(store, invoice_id, **columns):
-    """Move a queued invoice in time (when it was asked for, when its read started)."""
+    """Move a queued invoice in time (when it was asked for, when its read was last renewed: ``updated_at``, as long
+    ago on the database's clock too unless ``renewed`` is given)."""
+    sets = [f"{column} = ?" for column in columns]
+    args = list(columns.values())
+    if "updated_at" in columns and "renewed" not in columns:
+        sets.append("renewed = julianday('now') - ? / 86400.0")
+        args.append((dt.datetime.now() - dt.datetime.fromisoformat(columns["updated_at"])).total_seconds())
     with sqlite3.connect(store.path) as conn:
-        sets = ", ".join(f"{column} = ?" for column in columns)
-        conn.execute(f"UPDATE page_reads SET {sets} WHERE invoice_id = ?", (*columns.values(), invoice_id))
+        conn.execute(f"UPDATE page_reads SET {', '.join(sets)} WHERE invoice_id = ?", (*args, invoice_id))
 
 
 def _report(confidence, review=False):
@@ -145,6 +150,51 @@ def test_a_read_whose_reader_stopped_renewing_it_waits_again(store, ground_truth
     assert store.queue_page_read(a, "asked", requested_by="Ann")  # asking again puts it back, in its place
     assert (store.page_read(a)["status"], store.page_read(a)["created_at"]) == ("waiting", asked_at)
     assert store.next_page_read()["invoice_id"] == a
+
+
+def test_a_read_under_way_stays_its_readers_when_the_clocks_go_forward(store, ground_truth, monkeypatch):
+    """Spring forward (2:00 becomes 3:00): a read's staleness was compared on the local time, so for up to a minute
+    (until its next renewal) every read and review under way looked an hour old, and a second reader took it while
+    the first still read it (B-1770). It is compared on the database's clock now, which a change of the clocks
+    doesn't move; a row renewed before the queue had that clock, on its local time as before."""
+    from ap_coder.core.store import lessons, page_queue
+
+    a, b = _invoices(store, ground_truth, 2)
+    store.queue_page_read(a, "scan")
+    assert store.next_page_read(reader="A")["invoice_id"] == a
+    store.queue_verification(b)
+    assert store.next_verification(after_page_reader=False, reader="A")["invoice_id"] == b
+
+    def ahead(seconds=0.0):  # the local time, an hour on
+        return (dt.datetime.now() + dt.timedelta(hours=1, seconds=seconds)).isoformat(timespec="seconds")
+
+    for module in (page_queue, lessons):
+        monkeypatch.setattr(module, "_now", ahead)
+    monkeypatch.setattr(page_queue, "_reading_stale_before", lambda: ahead(-page_queue.READING_STALE_SECONDS))
+    assert store.next_page_read(reader="B") is None and store.page_read(a)["status"] == "reading"
+    assert store.page_reads_waiting() == 0 and not store.queue_page_read(a, "asked", requested_by="Ann")
+    assert store.next_verification(after_page_reader=False, reader="B") is None
+    assert store.verification(b)["status"] == "verifying"
+    assert store.renew_page_read(a, "A") and store.renew_verification(b, "A")
+    _set(store, a, renewed=None, updated_at=_ago(1.5))  # renewed by an older AP Coder: its local time
+    assert store.page_read(a)["status"] == "waiting" and store.next_page_read(reader="B")["invoice_id"] == a
+
+
+def test_a_reader_whose_read_another_took_ends_nothing_of_the_others(store, ground_truth):
+    """A reader paused past the stale time (a VM saved) had its read taken by another: as it woke, its end of the
+    read (done, or back in line) was written over the other's read under way, which then read on unrenewed, a third
+    could take it too (B-1770). A reader ends only its own read now, as the AI reviewer's does (B-787)."""
+    (a,) = _invoices(store, ground_truth, 1)
+    store.queue_page_read(a, "scan")
+    assert store.next_page_read(reader="A")["invoice_id"] == a
+    _set(store, a, updated_at=_ago(6 / 60))  # A paused: not renewed for 6 minutes
+    assert store.next_page_read(reader="B")["invoice_id"] == a
+    assert not store.renew_page_read(a, "A")
+    for status in ("done", "waiting", "failed"):
+        assert not store.finish_page_read(a, status, MODEL, 1, 1.0, reader="A")
+    assert (store.page_read(a)["status"], store.page_read(a)["reader"]) == ("reading", "B")
+    assert store.renew_page_read(a, "B") and store.finish_page_read(a, "done", MODEL, 1, 1.0, reader="B")
+    assert store.page_read(a)["status"] == "done"
 
 
 def test_two_readers_never_take_the_same_invoice(store, ground_truth):
