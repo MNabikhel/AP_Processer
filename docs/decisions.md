@@ -2459,7 +2459,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-182** · **Posting through the JD Edwards API at 500 vouchers: each voucher its own outcome and the run goes on
   past a late answer; a lost answer sent again only once JD Edwards could have finished it; holds and the open period
   read just before each voucher; Z-table keys unique per data folder and after a restore; accruals follow the postings**
-  (scale goal phase 4, target 4; B-1857 to B-1863; changes D-105 where it says otherwise).
+  (scale goal phase 4, target 4; B-1857 to B-1863, and the review's B-1880 to B-1891; changes D-105 where it says
+  otherwise).
   - **Why:** one orchestration call per voucher, R04110ZA in each, against a 30-second timeout: the first late answer
     closed the client and queued the rest, so a batch went out one voucher per five minutes (500 ≈ 40 hours). Holds
     were not looked at after approval (R3), there was no fiscal period (R5), VLEDBT / VLEDTN collided across data
@@ -2511,10 +2512,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       not *Refused by JD Edwards* (B-1888).
     - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
       go-ahead, or refused, by JDE or by a dry run since its go-ahead (B-1885), unless the batch's files were
-      downloaded since, is not in the ERP; the kept answer's
-      question carries that set, as postings change no invoice. A download of the batch's files takes the go-ahead
-      off every voucher they hold (not locked: queued, held back, refused), so one loaded from them is never counted
-      as not in the ERP afterwards, a dry run again or not (B-1882).
+      downloaded since, is not in the ERP; the kept answer's question carries that set, as postings change no
+      invoice. A download of the batch's files takes the go-ahead off every voucher they hold (not locked: queued,
+      held back, refused), so one loaded from them is never counted as not in the ERP afterwards, a dry run again or
+      not (B-1882).
     - **Lookups, not scans** (B-1863): `jde.account_for` by (GL code, cost center), `held_vendor` by what makes a
       number or account the same.
     - **One rule for a tax's shares** (B-1889): a pay item per line (`MATCH_HEADER`), the tax not on G/L lines, takes
@@ -2534,10 +2535,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Measured:** 500 vouchers through the stand-in (each answered after 20 ms, one in ten late past a 0.3 s wait,
     half of them made, one in twenty refused): one go-ahead run of 40 s ends 475 posted and 25 refused, none unknown
     or queued, none made twice (525 sends, 75 lookups); the code before stops at the 8th (late), the other 492 queued.
+    With the resend wait counted from the loss (B-1880) the run of 38 s ends 474 posted, 25 refused and 1 being
+    checked (lost within the 3 s of its end), which the queue 3.5 s after posts: the same 475, 525 sends, 75 lookups.
+    The queue building a batch once (B-1884): 500 waiting 84 s → 0.2 s before the first send.
     `account_for` × 5,000 with a 20,000-row mapping: 12.8 s → 0.04 s; `held_vendor` with 3,000 on hold: 46 → 14 ms.
   - (`erp/{jde_post,jde,accruals}.py`, `coding/vendors.py`, `web/pages/{exports,settings_jde}.py`,
     `web/templates/{exports,settings_jde}.html`, `ops/help.py`, `docs/{JDE_ORCHESTRATIONS,JDE_E1,BUGS}.md`;
-    `tests/erp/test_jde_post_runs.py`, `tests/fake_ais.py` and the tests named in B-1857 to B-1863)
+    `tests/erp/test_jde_post_runs.py`, `tests/fake_ais.py` and the tests named in B-1857 to B-1863; the review's
+    fixes also `erp/jde_ais.py` (`jde_refused` only), `core/store/postings.py` (`lost_at`), `coding/tax.py` (a
+    docstring) and the tests named in B-1880 to B-1891)
 - **D-183** · **One money arithmetic, half up on the decimals printed, and one table of what counts as equal** (scale
   goal, phase 4, T1; R10 and G9 of `docs/archive/scale-2026-11/coding_erp.md`; B-1864 to B-1868).
   - **Why:** Python's `round` on a float is half-even on its binary value: 2.50 × 5% gave 0.12 and 0.30 × 5% gave
