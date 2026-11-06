@@ -1404,6 +1404,8 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if email and ("@" not in email or any(c.isspace() for c in email)):
         return refuse("The manager's email doesn't look like one (name@company.com).")
     _keep_draft(request, invoice_id, draft, True, form=form)  # the edits on screen stay for its return
+    # the next one while this one is in the queue: past those someone else has open, as park and approve (B-1939)
+    after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request) if user_id is not None else ""
     try:
         note = str(form.get("manager_note") or "")
         rid = store.send_to_manager(invoice_id, reviewer(), manager_name=name, manager_email=email,
@@ -1414,7 +1416,6 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if form.get("remember_manager") and centers and user_id is None:
         store.set_cost_center_manager(centers, name, email, reviewer())
     if user_id is not None:
-        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request)
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
     return done(request, f"/manager/{rid}", flash_message(

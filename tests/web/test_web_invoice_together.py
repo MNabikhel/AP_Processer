@@ -345,6 +345,23 @@ def test_on_the_server_the_next_after_an_action_is_not_one_someone_opened_since(
     assert not re.match(rf"/review/{after}(\?|$)", answer["redirect"])
 
 
+def test_on_the_server_send_to_the_manager_goes_next_past_one_someone_opened_since(store):
+    """B-1939: Send to the manager worked out the next invoice once this one had left the queue, where none is passed
+    over: it opened the one the form named, which Ann had opened since the screen was drawn."""
+    ann, bo = _person(store, "ann", "Ann Lee"), _person(store, "bo", "Bo Chen")
+    _account(store, "max", "Max Manager", role="manager")
+    manager = next(u for u in store.list_users() if u["username"] == "max")
+    first = clean_invoice(bo, store)
+    ids = store.listed_ids(REVIEW)
+    after = ids[(ids.index(first) + 1) % len(ids)]
+    page = bo.get(f"/review/{first}").text
+    data = {**form_of(store, first), **_screen(page), "next_id": str(after), "manager_user": str(manager["id"])}
+    ann.get(f"/review/{after}")
+    answer = bo.post(f"/review/{first}/manager", data=data, headers=PAGE).json()
+    assert answer["ok"] and re.match(r"/review/\d+", answer["redirect"])
+    assert not re.match(rf"/review/{after}(\?|$)", answer["redirect"])
+
+
 def test_on_a_laptop_nobody_else_is_shown_and_nothing_is_kept_of_who_has_it_open(laptop, store):
     inv_id = store.list_invoices(REVIEW)[0]["id"]
     screen = _open(laptop, inv_id)

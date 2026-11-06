@@ -2776,7 +2776,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       invoice without editing it yet is working on it too.
   - **Previous / Next** pass over the ones someone else has open, the screen saying so ("Next skips 2 that Ann Lee
     and Bo Chen have open."); every other one open, none is skipped. The invoice an action goes to next
-    (`next_url`) is never one someone else has open, the screen's `next_id` included when it was opened since.
+    (`next_url`) is never one someone else has open, the screen's `next_id` included when it was opened since:
+    worked out while the invoice is still in the queue (once it left it, none is passed over), Send to the manager's
+    too (B-1939).
     - A tab left is not said: an invoice opened and passed with Next stays "open" up to 2 minutes (no write when
       leaving; the expiry says it).
   - **The invoice's revision** (`Store.coding_revision`): the id of its last event that moved it in or out of the
