@@ -100,6 +100,41 @@ def test_two_tabs_on_one_invoice_the_second_to_check_is_told_and_writes_nothing_
     assert again.status_code == 200  # and goes on checking
 
 
+def test_two_tabs_whose_checks_overlap_the_second_to_write_is_refused(laptop, store, monkeypatch):
+    """B-1938: a check compared its screen's revision with the draft before working it out, and wrote the draft after:
+    two tabs whose checks overlapped both passed, and the one that ended last wrote over the other's edits without a
+    word. The draft is read again in the write's own transaction: the second to write is refused as out of date."""
+    import threading
+
+    from ap_coder.web import invoice_view as view
+
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    screens = {"one": _open(laptop, inv_id), "two": _open(laptop, inv_id)}
+    real, both = view.analyse, threading.Barrier(2, timeout=20)
+
+    def overlapped(*args: Any, **kwargs: Any) -> Any:
+        both.wait()  # each check has compared its revisions: both are worked out at once
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(view, "analyse", overlapped)
+    answers: dict[str, Any] = {}
+
+    def check(tab: str) -> None:
+        data = {**form_of(store, inv_id, vendor_name=f"From tab {tab}"), **screens[tab]}
+        answers[tab] = laptop.post(f"/review/{inv_id}/check", data=data, headers=PAGE)
+
+    tabs = [threading.Thread(target=check, args=(tab,)) for tab in screens]
+    for tab in tabs:
+        tab.start()
+    for tab in tabs:
+        tab.join(60)
+    assert sorted(a.status_code for a in answers.values()) == [200, 409]
+    first = next(tab for tab, a in answers.items() if a.status_code == 200)
+    refused = next(a for a in answers.values() if a.status_code == 409).json()["stale"]
+    assert refused["text"].startswith("Edited in another tab or window today at ")
+    assert store.invoice_draft(inv_id, "")["header"]["vendor_name"] == f"From tab {first}"
+
+
 def test_a_screen_whose_own_check_answered_after_its_poll_asked_is_not_out_of_date(laptop, store):
     """The poll (or a check sent while one was under way) carries the revision from before the screen's own check
     saved the draft: written by that screen, it is no other tab's."""

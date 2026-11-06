@@ -7,6 +7,7 @@ import json
 import math
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -442,10 +443,18 @@ class InvoicesMixin:
     # "draft-dropped:<invoice id>" of the person, D-184).
 
     def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any] | None, *, screen: str = "",
-                           seconds: float = 0) -> None:  # fmt: skip
+                           seconds: float = 0, expect: Callable[[dict[str, Any] | None], bool] | None = None
+                           ) -> bool:  # fmt: skip
         """Keep ``draft`` as ``person``'s edits of the invoice, or drop them (None): ``screen``, the review screen
-        whose check dropped them, is then remembered ``seconds`` (``draft_dropped_by``)."""
+        whose check dropped them, is then remembered ``seconds`` (``draft_dropped_by``). ``expect`` (a review
+        screen's, D-184): given the draft kept now (None: none), whether this one may replace it, read in the write's
+        own transaction: of two screens checking at once only the first writes. False: nothing was written."""
         with self._conn() as conn:
+            if expect is not None:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")  # read and written in one go: no other writer in between
+                if not expect(self.invoice_draft(invoice_id, person)):
+                    return False
             if draft is None:
                 conn.execute("DELETE FROM invoice_drafts WHERE invoice_id = ? AND person = ?", (invoice_id, person))
                 if screen:
@@ -456,13 +465,14 @@ class InvoicesMixin:
                         "expires_at = excluded.expires_at",
                         (f"draft-dropped:{invoice_id}", person, screen.encode(), now, now + seconds),
                     )
-                return
+                return True
             conn.execute(
                 "INSERT INTO invoice_drafts (invoice_id, person, draft, updated_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(invoice_id, person) DO UPDATE SET draft = excluded.draft, "
                 "updated_at = excluded.updated_at",
                 (invoice_id, person, json.dumps(draft), _now()),
             )
+        return True
 
     def draft_dropped_by(self, invoice_id: int, person: str) -> str:
         """The review screen whose check dropped ``person``'s draft of the invoice lately ("" none)."""

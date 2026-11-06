@@ -2796,6 +2796,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       A draft its own check dropped (its edits put back as stored, Undo after a line action) names that screen for
       2 minutes (`UNDONE_SECONDS`, an `ephemeral` row "draft-dropped:<id>" of the person), so the same holds then
       (B-1937); and Approve or Send to the manager clicked while a check is under way waits for its answer.
+    - A check (a line action, Send to the manager) writes the draft only while its screen is still at it, read again
+      in the write's own transaction (`save_invoice_draft`'s `expect`, BEGIN IMMEDIATE): of two tabs whose checks
+      overlap, the second to write is refused as out of date, never writing over the first (B-1938).
     - The page's first revision allows the one before it too ("<new> <old>"): the page keeps its draft once drawn,
       unless another writer holds the database (left to the next check).
   - **Out of date**: behind either revision, or the invoice gone from the queue, a check (409, `stale`), a line

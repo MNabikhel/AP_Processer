@@ -221,10 +221,17 @@ def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
 
 
 def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None,
-                screen: str = "") -> None:  # fmt: skip
+                screen: str = "", form: Any = None) -> None:  # fmt: skip
     """Keep the edits (``keep``) or drop them. ``saved_at`` is when they were last edited: the same edits checked again
     (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996).
-    ``screen``: the review screen they come from (the form's ``screen``), kept as the one that wrote them (D-184)."""
+    ``screen``: the review screen they come from (the form's ``screen``), kept as the one that wrote them (D-184).
+    ``form``: the screen's form (its ``screen`` and ``draft_rev``): written only while that screen is still at the
+    person's draft, read again in the write's own transaction; else refused as out of date (``_OutOfDate``: two tabs
+    whose checks overlap, the second to write, B-1938)."""
+    store, person = get_store(request), _person(person_key())
+    drawn = None if form is None else form.get("draft_rev")
+    screen = screen if form is None else _screen(form)
+    expect = None if drawn is None else lambda now: _at_draft(store, invoice_id, now, str(drawn), screen)
     if keep:
         edits = draft.to_dict()
         before = _drafts(request).get(invoice_id) or {}
@@ -236,11 +243,14 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
         if writer := before.get("screen") if same else screen:
             kept["screen"] = writer
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
+        if not store.save_invoice_draft(invoice_id, person, kept, expect=expect):  # first: it may be left undone
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
         _drafts(request)[invoice_id] = kept
     elif invoice_id in _drafts(request):  # (the screen's own requests sent meanwhile are still at it: ``_at_draft``)
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), None, screen=screen,
-                                              seconds=UNDONE_SECONDS)  # fmt: skip
+        if not store.save_invoice_draft(invoice_id, person, None, screen=screen, seconds=UNDONE_SECONDS, expect=expect):
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
         _drafts(request).pop(invoice_id, None)
 
 
@@ -1103,7 +1113,10 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     confidence this screen shows (edits and today's checks included). The form is read here; the checking runs on a
     threadpool thread, so a check never holds up the dashboard's other requests."""
     form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
-    return await run_in_threadpool(_check, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_check, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
@@ -1119,7 +1132,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
-    kept = _keep_checked(request, store, invoice_id, draft, analysis, _screen(form))  # written last: read nothing after
+    kept = _keep_checked(request, store, invoice_id, draft, analysis, form=form)  # written last: read nothing after
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
     codes = view.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
@@ -1147,14 +1160,14 @@ def _screen(form: Any) -> str:
 
 
 def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis,
-                  screen: str = "") -> bool:  # fmt: skip
-    """What a check of the screen keeps: the confidence it worked out (the queue shows the one the screen shows, edits
-    and today's checks included), and the edits as a draft, or none when there are none. Whether they are kept.
-    ``screen``: the screen's own (``_keep_draft``)."""
+                  screen: str = "", form: Any = None) -> bool:  # fmt: skip
+    """What a check of the screen keeps: the edits as a draft, or none when there are none, and the confidence it
+    worked out (the queue shows the one the screen shows, edits and today's checks included). Whether they are kept.
+    ``screen``, ``form``: the screen's own (``_keep_draft``; refused: nothing is kept)."""
+    kept = _keeps(draft, analysis)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None, screen, form)
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    kept = _keeps(draft, analysis)
-    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None, screen)
     return kept
 
 
@@ -1351,7 +1364,10 @@ async def send_to_manager(request: Request, invoice_id: int) -> JSONResponse:
     """Ask the manager of the invoice's cost centers to confirm how it is coded (D-138): the lines on screen are kept
     with the request and the invoice waits, parked, until the manager answers (pages/manager.py)."""
     form = await posted_form(request)
-    return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
@@ -1387,7 +1403,7 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
         return refuse("Say who the manager is.")
     if email and ("@" not in email or any(c.isspace() for c in email)):
         return refuse("The manager's email doesn't look like one (name@company.com).")
-    _keep_draft(request, invoice_id, draft, True, screen=_screen(form))  # the edits on screen stay for its return
+    _keep_draft(request, invoice_id, draft, True, form=form)  # the edits on screen stay for its return
     try:
         note = str(form.get("manager_note") or "")
         rid = store.send_to_manager(invoice_id, reviewer(), manager_name=name, manager_email=email,
@@ -1494,7 +1510,7 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
     """The grid with its new rows, kept as the draft; the page draws them and checks again (at the draft's revision
     now, ``draft_rev``)."""
     draft.lines = lines
-    _keep_draft(request, invoice_id, draft, True, screen=_screen(form))
+    _keep_draft(request, invoice_id, draft, True, form=form)
     ai = (get_store(request).get_invoice(invoice_id) or {}).get("ai_output") or {}
     return message(text, "ok", lines=_render_lines(reference, draft, ai), icon=icon,
                    draft_rev=_draft_rev(_drafts(request).get(invoice_id)))  # fmt: skip
