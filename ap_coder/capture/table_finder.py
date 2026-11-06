@@ -73,9 +73,9 @@ def _model() -> Any:
         return _session
 
 
-def find(png: bytes, page: int = 1) -> list[Box] | None:
-    """The tables on one page picture (PNG or JPEG bytes), as boxes (fractions of the page), top to bottom; None
-    when the model isn't here or couldn't look at the page."""
+def find(png: bytes | Any, page: int = 1) -> list[Box] | None:
+    """The tables on one page picture (PNG or JPEG bytes, or a Pillow picture), as boxes (fractions of the page), top
+    to bottom; None when the model isn't here or couldn't look at the page."""
     try:
         session = _model()
         if session is None:
@@ -86,14 +86,17 @@ def find(png: bytes, page: int = 1) -> list[Box] | None:
         return None
 
 
-def _find(session: Any, png: bytes, page: int) -> list[tuple[Box, float]]:
+def _find(session: Any, png: bytes | Any, page: int) -> list[tuple[Box, float]]:
     import numpy as np
     from PIL import Image
 
     from .layout import picture_formats
 
-    with Image.open(io.BytesIO(png), formats=picture_formats()) as image:
-        squeezed = image.convert("RGB").resize((SIDE, SIDE), Image.BILINEAR)
+    if isinstance(png, bytes):
+        with Image.open(io.BytesIO(png), formats=picture_formats()) as image:
+            squeezed = image.convert("RGB").resize((SIDE, SIDE), Image.BILINEAR)
+    else:
+        squeezed = png.convert("RGB").resize((SIDE, SIDE), Image.BILINEAR)
     pixels = np.asarray(squeezed, dtype=np.float32)[:, :, ::-1] / 255.0  # as the model was run in its project: BGR
     batch = np.ascontiguousarray(pixels.transpose(2, 0, 1)[np.newaxis, ...])
     output = session.run(None, {session.get_inputs()[0].name: batch})[0]
@@ -123,11 +126,12 @@ def _iou(a: Box, b: Box) -> float:
     return shared / whole if whole > 0 else 0.0
 
 
-def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
-    """Each page of the invoice as a small picture for the model (long side ``PICTURE_SIDE``): a PDF's pages rendered
-    as displayed (digital PDFs too: the model looks at the page, not its text), a picture's frames upright."""
+def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[Any]:
+    """Each page of the invoice as a small picture for the model (long side ``PICTURE_SIDE``, Pillow pictures): a PDF's
+    pages rendered as displayed (digital PDFs too: the model looks at the page, not its text), a picture's frames
+    upright. Straight from PyMuPDF and Pillow: no PNG made and read back."""
     path = Path(path)
-    out: list[bytes] = []
+    out: list[Any] = []
     from .layout import IMAGE_EXTENSIONS
 
     if path.suffix.lower() in IMAGE_EXTENSIONS:
@@ -142,18 +146,20 @@ def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
                 upright = ImageOps.exif_transpose(frame.copy())
                 pic = _on_paper(flatten_photo(upright) or upright)  # the page as OCR read it
                 pic.thumbnail((PICTURE_SIDE, PICTURE_SIDE), Image.BILINEAR)
-                buf = io.BytesIO()
-                pic.save(buf, "PNG")
-                out.append(buf.getvalue())
+                out.append(pic)
         return out
     import pymupdf
+    from PIL import Image
 
-    with pymupdf.open(path) as doc:
+    from .layout import PDF_LOCK, opened_pdf
+
+    with opened_pdf(path) as doc, PDF_LOCK:
         for i, page in enumerate(doc):
             if i >= max_pages:
                 break
             zoom = PICTURE_SIDE / max(page.rect.width, page.rect.height, 1)
-            out.append(page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png"))
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+            out.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
     return out
 
 
@@ -166,28 +172,41 @@ def find_tables(path: str | Path, max_pages: int = MAX_PAGES) -> dict[int, list[
     """The tables on each page of the invoice at ``path``: {page number: boxes}, a page with none left out; None when
     the table finder isn't available or the file can't be looked at (line items are then read from whole pages).
     The same file is looked at once: an invoice read again (with its supplier's template, or once the page reader has
-    read it) gets the tables found the first time."""
+    read it) gets the tables found the first time, from this process's memory or, in another process, from the
+    readings' folder (``layout.ocr_cache``: by the file's content, the pages, the model and how a page is drawn for it)
+    without a page drawn."""
     if not available():
         return None
-    import hashlib
+    from ..ops.offline import TABLE_FINDER_SHA256, table_finder_path
+    from .layout import file_sha256, keep, kept_name, read_kept
 
-    from ..ops.offline import table_finder_path
-
-    try:
-        key = (hashlib.sha256(Path(path).read_bytes()).hexdigest(), max_pages, str(table_finder_path()))
-    except OSError:
-        key = None
+    sha = file_sha256(path)
+    key = (sha, max_pages, str(table_finder_path())) if sha else None
     if key is not None:
         with _found_lock:
             if key in _found:
                 return {page: list(boxes) for page, boxes in _found[key].items()}
-    out = _find_tables(path, max_pages)
+    name = kept_name("tables", sha, max_pages, TABLE_FINDER_SHA256, SIDE, SURE, OVERLAP, PICTURE_SIDE) if sha else None
+    out = _kept_tables(read_kept(name)) if name else None
+    if out is None:
+        out = _find_tables(path, max_pages)
+        if name and out is not None:
+            found = {str(page): [[b.x0, b.y0, b.x1, b.y1] for b in boxes] for page, boxes in out.items()}
+            keep(name, {"tables": found})
     if key is not None and out is not None:
         with _found_lock:
             _found[key] = out
             while len(_found) > FOUND_KEPT:
                 _found.pop(next(iter(_found)))
     return None if out is None else {page: list(boxes) for page, boxes in out.items()}
+
+
+def _kept_tables(kept: dict[str, Any] | None) -> dict[int, list[Box]] | None:
+    try:
+        found = kept["tables"].items()
+        return {int(page): [Box(int(page), *map(float, box)) for box in boxes] for page, boxes in found}
+    except (KeyError, TypeError, ValueError, AttributeError):  # none kept, or not as written
+        return None
 
 
 def _find_tables(path: str | Path, max_pages: int) -> dict[int, list[Box]] | None:
