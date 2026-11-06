@@ -1340,12 +1340,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     - The background process makes them (`Runner`, started by `app.start_background_work`: in `serve
       --background-work`, or in the one process of `--workers 1`), 2 at a time, oldest first, each written beside the
       others under a name of its own and renamed once whole. A server of one process whose background work was not
-      started (a first test, `bench volume`) makes them on a thread of its own, which ends once none waits.
+      started (a first test, `bench volume`) makes them on a thread of its own, which ends once none waits; after a
+      restart, the page following a job the process before left, or its file asked for, starts it again (B-1777).
     - Each job is its owner's: another person's is "No such download". A person may download what the route's own
       role rule lets them (Read-only too: the file is theirs, nothing else changes); `GET /downloads/<id>` (how far
       it got) is READ and the owner's. The same file asked again while it waits is the same job, from two web
       workers at once too (one write transaction, and a unique index of the jobs waiting or being made). At most 3
       waiting or being made a person (a 429 says so). A file is kept an hour, the 5 latest of each person (`sweep`).
+      The sweep also removes a half-written file 60 s after its maker last noted how far it got (each note keeps the
+      file's time new, B-1773), and any file no job names once it is an hour old (its process killed before the job
+      was recorded made; one Windows refused to remove while it was sent: B-1775). A file whose job was not recorded
+      made is removed by its maker at once (B-1774, B-1776).
     - **A restart:** a background process that stops (an update, the service restarted) puts the job under way back
       in line, and the next one makes it; one killed is seen stopped after 60 s without a note of its progress and its
       jobs are taken again, twice in all, then fail with why; its late end is refused (the file is not the job's). A

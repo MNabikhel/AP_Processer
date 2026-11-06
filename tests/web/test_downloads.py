@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import errno
 import io
+import sqlite3
 import threading
 import time
 
@@ -213,6 +214,141 @@ def test_a_restart_while_a_file_is_made_puts_it_back_and_the_next_start_makes_it
     second = downloads.Runner(lambda: store).start()
     assert _followed(ann, job["status"])["state"] == "done" and ann.get(job["file"]).status_code == 200
     second.stop()
+
+
+def test_the_sweep_keeps_the_half_written_file_of_a_job_still_being_made(store, monkeypatch):
+    """A job that writes nothing for minutes (the duplicate audit's pairs worked out first, an Activity search that
+    finds little): the sweep leaves its half-written file, so it is made (B-1773: removed after 60 s, "it could not be
+    written"); one left by a maker that stopped is still removed."""
+    from ap_coder.web.pages import exports
+
+    opened, go = threading.Event(), threading.Event()
+
+    def slow(store, params, out, step):
+        step(0, 0, "Looking for bills paid twice…")
+        opened.set()
+        go.wait(10)  # (working it out: nothing written yet)
+        out.write(b"reason,first,second\r\n")
+
+    monkeypatch.setattr(exports, "write_duplicates", slow)
+    monkeypatch.setattr(downloads, "RENEW", 0.01)
+    job, _ = store.start_download("user:1", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
+    claimed = store.claim_download("background", downloads.STALE, downloads.FORMAT)
+    maker = threading.Thread(target=downloads.make, args=(store, claimed, "background"))
+    maker.start()
+    assert opened.wait(10)
+    part = next(downloads.folder(store).glob("*.part"))
+    stopped = downloads.folder(store) / "7.0123456789abcdef.part"  # (a maker that stopped while writing)
+    stopped.write_bytes(b"half")
+    later = time.time() + 120  # two minutes on, nothing written meanwhile
+    monkeypatch.setattr(time, "time", lambda: later)
+    ends = time.monotonic() + 5
+    while part.stat().st_mtime < later - 1 and time.monotonic() < ends:  # (its maker's next note of how far it got)
+        time.sleep(0.01)
+    downloads.sweep(store)
+    assert part.exists() and not stopped.exists()
+    go.set()
+    maker.join(10)
+    row = store.download_job(job)
+    assert row["state"] == reports.MADE, row["error"]
+    assert (downloads.folder(store) / row["file"]).read_bytes() == b"reason,first,second\r\n"
+
+
+def test_a_file_made_whose_end_could_not_be_recorded_is_not_left_on_the_disk(store, monkeypatch):
+    """The database full (or busy past its wait) as the job is recorded made: the job ends with why, and the whole
+    file is removed, not left in the folder named by no job, one more each time it is asked again (B-1774)."""
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(Store, "finish_download", full)
+    job, _ = store.start_download("user:1", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
+    _make_waiting(store)
+    assert store.download_job(job)["error"] == downloads.FULL
+    assert list(downloads.folder(store).iterdir()) == []
+
+
+def test_a_file_no_job_names_is_removed_by_a_later_sweep(store, monkeypatch):
+    """A file made whose job was never recorded made (its process killed in between), or whose job was forgotten
+    while Windows refused to remove it (being sent): a sweep removes it once it is an hour old (B-1775: kept for
+    good), and never a file made a moment ago (its job may be recorded made next) nor one a job names."""
+    import os
+    import pathlib
+
+    job, _ = store.start_download("user:1", "/exports/duplicates.csv", {}, "d.csv", 3, downloads.FORMAT)
+    _make_waiting(store)
+    place = downloads.folder(store)
+    kept = place / store.download_job(job)["file"]
+    killed, renamed = place / "41.0123456789abcdef.csv", place / "42.0123456789abcdef.csv"
+    for path in (killed, renamed):
+        path.write_bytes(b"x")
+    hours_ago = time.time() - 7200
+    os.utime(killed, (hours_ago, hours_ago))  # (its process killed two hours ago, before the job was recorded made)
+    downloads.sweep(store)
+    assert not killed.exists() and renamed.exists() and kept.exists()
+    real_unlink, sending = pathlib.Path.unlink, [True]
+
+    def unlink(self, missing_ok=False):
+        if self == kept and sending[0]:  # (being sent to the person: Windows refuses to remove it)
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", unlink)
+    later = time.time() + 7200
+    monkeypatch.setattr(time, "time", lambda: later)  # two hours on: the job is forgotten
+    downloads.sweep(store)
+    assert store.download_job(job) is None and kept.exists() and not renamed.exists()
+    sending[0] = False
+    downloads.sweep(store)  # the next one
+    assert list(place.iterdir()) == []
+
+
+def test_a_note_of_how_far_it_got_just_after_the_job_is_made_keeps_its_file(store, monkeypatch):
+    """The maker's note of how far it got, taken just after the job was recorded made (its thread ran first): the job
+    says done and its file is downloaded (B-1776: the file was removed, "That file is no longer kept")."""
+    monkeypatch.setattr(downloads, "RENEW", 0.01)
+    real_renew, real_finish, noted = Store.renew_download, Store.finish_download, threading.Event()
+
+    def renew(self, *args):
+        mine = real_renew(self, *args)
+        if not mine:  # (the job no longer being made)
+            noted.set()
+        return mine
+
+    def finish_then_paused(self, *args):
+        made = real_finish(self, *args)
+        noted.wait(5)  # (the other threads run meanwhile: the note is taken)
+        return made
+
+    monkeypatch.setattr(Store, "renew_download", renew)
+    monkeypatch.setattr(Store, "finish_download", finish_then_paused)
+    ann = _client(_app(store, processes=2, runner=False), "ann")
+    job = _asked(ann, "/exports/duplicates.csv")
+    _make_waiting(store)
+    assert noted.is_set() and _followed(ann, job["status"])["state"] == "done"
+    assert ann.get(job["file"]).status_code == 200
+
+
+def test_a_one_process_server_makes_the_files_the_process_before_it_left(store, monkeypatch):
+    """A server of one process without its background work (a first test, ``bench volume``) restarted while a file
+    waited or was being made: its file asked for, or the page following it, has it made (B-1777: "Making the file…"
+    for good, nothing making it, until another file was asked for)."""
+    monkeypatch.setattr(downloads, "WAIT_MOST", 10.0)  # (half an hour)
+    before = _client(_app(store, processes=2, runner=False), "ann")  # (the jobs it asked for: none made here)
+    alone = _client(_app(store, runner=False), "ann")  # the server after its restart
+    waiting = _asked(before, "/search/export.csv")
+    answer = alone.get(waiting["file"])  # (a bookmark: waited for, without the page's header)
+    assert answer.status_code == 200, answer.text
+    assert next(csv.reader(io.StringIO(answer.content.decode("utf-8-sig"))))[0] == "Vendor"
+    ends = time.monotonic() + 10
+    while str(store.path) in downloads._HERE and time.monotonic() < ends:  # (its maker ends once none waits)
+        time.sleep(0.01)
+    stopped = _asked(before, "/exports/duplicates.csv")
+    assert store.claim_download("gone:here", downloads.STALE, downloads.FORMAT)["id"] == stopped["job"]
+    with store._conn() as conn:  # (being made when the server stopped, two minutes ago)
+        conn.execute("UPDATE report_jobs SET renewed_at = renewed_at - 120 WHERE id = ?", (stopped["job"],))
+    assert _followed(alone, stopped["status"], seconds=10)["state"] == "done"
+    assert alone.get(stopped["file"]).status_code == 200
 
 
 def test_the_servers_background_process_makes_the_downloads_and_a_laptops_starts_no_runner(store, monkeypatch):

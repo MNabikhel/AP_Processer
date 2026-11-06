@@ -26,6 +26,7 @@ import contextlib
 import errno
 import importlib
 import logging
+import os
 import secrets
 import shutil
 import threading
@@ -151,10 +152,24 @@ def _start(request: Request, address: str) -> int | Response:
         job, _ = store.start_download(_owner(), address, params, name, AT_ONCE, FORMAT)
     if job is None:
         return refuse(TOO_MANY, status=429)
-    state = request.app.state
-    if getattr(state, "processes", 1) == 1 and getattr(state, "downloads", None) is None:
-        _make_here(store)  # a server of one process without its background work (a first test, a bench)
+    if _alone(request):
+        _make_here(store)
     return job
+
+
+def _alone(request: Request) -> bool:
+    """Whether this is a server of one process without its background work (a first test, a bench): it makes its
+    downloads itself (``_make_here``)."""
+    state = request.app.state
+    return getattr(state, "processes", 1) == 1 and getattr(state, "downloads", None) is None
+
+
+def _left(request: Request, job: dict[str, Any]) -> None:
+    """``job`` made here, on a server of one process without its background work, when the process before this one
+    left it waiting or stopped while making it (a restart): only a new file asked for started a maker (B-1777)."""
+    if _alone(request) and (job["state"] == reports.WAITING or (
+            job["state"] == reports.RUNNING and job["renewed_at"] < time.time() - STALE)):  # fmt: skip
+        _make_here(get_store(request))
 
 
 _HERE: dict[str, threading.Thread] = {}  # the one-process server's own maker of each database, while jobs wait
@@ -202,6 +217,7 @@ def _made(request: Request, job_id: int) -> tuple[Path, Kind, str] | Response | 
     if job["state"] == reports.FAILED:
         return refuse(job["error"] or NOT_MADE.format(why="it stopped"), status=500)
     if job["state"] != reports.MADE:
+        _left(request, job)
         return None
     path = folder(get_store(request)) / job["file"]
     if not path.is_file():
@@ -221,6 +237,7 @@ def _own_job(request: Request, job_id: int) -> dict[str, Any]:
 def download_status(request: Request, job_id: int) -> JSONResponse:
     """How far the person's download got, as ``app.js`` follows a job: running (waiting counts), done or error."""
     job = _own_job(request, job_id)
+    _left(request, job)
     state = {reports.MADE: "done", reports.FAILED: "error"}.get(job["state"], "running")
     note = job["note"]
     if job["state"] == reports.WAITING:
@@ -292,9 +309,13 @@ def make(store: Any, job: dict[str, Any], runner: str, halt: threading.Event | N
     part, made = place / f"{job['id']}.{token}.part", place / f"{job['id']}.{token}{kind.suffix}"
     progress = {"done": 0, "total": 0, "note": "Starting…"}
     lost, finished = threading.Event(), threading.Event()
+    kept = False  # whether the file made is the job's, recorded so (otherwise it is removed)
 
     def renew() -> None:
         while not finished.wait(RENEW):
+            with contextlib.suppress(OSError):  # (its time kept new: the sweep leaves a part being written, B-1773)
+                now = time.time()
+                os.utime(part, (now, now))
             try:
                 if not store.renew_download(job["id"], runner, progress["done"], progress["total"], progress["note"]):
                     lost.set()  # taken again by another (it seemed stopped), or gone
@@ -316,8 +337,7 @@ def make(store: Any, job: dict[str, Any], runner: str, halt: threading.Event | N
         with open(part, "wb") as out, store.session():
             writer(store, job["params"], out, step)
         part.replace(made)
-        if not store.finish_download(job["id"], runner, made.name, made.stat().st_size):
-            made.unlink(missing_ok=True)  # (no longer this runner's job)
+        kept = store.finish_download(job["id"], runner, made.name, made.stat().st_size)
     except Stopping:
         if halt.is_set():
             store.release_download(job["id"], runner)  # made again by the next start
@@ -332,7 +352,7 @@ def make(store: Any, job: dict[str, Any], runner: str, halt: threading.Event | N
     finally:
         finished.set()
         part.unlink(missing_ok=True)
-        if lost.is_set():
+        if not kept:  # (no longer this runner's job, or its end not recorded: no job names it, B-1774)
             made.unlink(missing_ok=True)
 
 
@@ -354,17 +374,22 @@ def _room(place: Path) -> bool:
 
 
 def sweep(store: Any) -> None:
-    """Remove the files of the jobs no longer kept (``KEEP``, ``KEPT_EACH``) and of a database restored since, and
-    the files left by a process that stopped while writing."""
+    """Remove the files of the jobs no longer kept (``KEEP``, ``KEPT_EACH``) and of a database restored since, the
+    files left by a process that stopped while writing (``STALE``: a job being made keeps its file's time new), and,
+    once ``KEEP`` old, any file no job names (its process stopped before the job was recorded made; one Windows
+    refused to remove while it was sent)."""
     place = folder(store)
     gone = store.sweep_downloads(KEEP, KEPT_EACH)
     for name in gone:
-        with contextlib.suppress(OSError):  # one being downloaded on Windows: the next time
+        with contextlib.suppress(OSError):  # one being downloaded on Windows: no job names it, removed later
             (place / name).unlink(missing_ok=True)
-    with contextlib.suppress(OSError):
-        for part in place.glob("*.part"):
-            if time.time() - part.stat().st_mtime > STALE:
-                part.unlink(missing_ok=True)
+    named, now = store.download_files(), time.time()
+    with contextlib.suppress(OSError):  # (no folder yet)
+        for path in list(place.iterdir()):
+            writing = path.suffix == ".part"
+            with contextlib.suppress(OSError):  # (one open on Windows: the next time)
+                if (writing or path.name not in named) and now - path.stat().st_mtime > (STALE if writing else KEEP):
+                    path.unlink(missing_ok=True)
 
 
 def written(write: Callable[[Any, dict[str, Any], BinaryIO, Step], None], store: Any, params: dict[str, Any]) -> bytes:
