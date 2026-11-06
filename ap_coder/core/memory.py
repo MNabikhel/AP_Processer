@@ -241,7 +241,7 @@ PAST_KEPT, PAST_ROWS_KEPT, PAST_BYTES_KEPT = 32, 60_000, 32 * 1024 * 1024
 # The same lessons by line (``PastLines``, D-178) are kept for this many vendors and about this many bytes of theirs in
 # each process (``Store._past_lines``).
 PAST_LINES_KEPT, PAST_LINES_BYTES = 4096, 64 * 1024 * 1024
-PAST_LINE_BYTES, PAST_RUN_BYTES = 400, 200
+PAST_LINE_BYTES, PAST_RUN_BYTES = 400, 245
 
 
 Line = tuple[str, str]  # a line: (vendor key, description normalised)
@@ -332,6 +332,11 @@ class PastLines:
                 lines[line] = tuple(runs)
             else:
                 lines.pop(line, None)
+        if len(names) > 2 * len(lines) + 64:  # the names of lines whose lessons all went, left out (B-1840)
+            held = [i for i, name in enumerate(names) if name in lines]
+            place = {old: new for new, old in enumerate(held)}
+            names = [names[i] for i in held]
+            order = array("I", (place[i] for i in order))
         return PastLines(len(order), head, lines, tuple(names), order)
 
     def encoded(self) -> dict[str, Any]:
@@ -362,9 +367,11 @@ class PastLines:
     @cached_property
     def size(self) -> int:
         """About the bytes it holds (measured: ``PAST_LINE_BYTES`` a line, ``PAST_RUN_BYTES`` a run besides, 4 a
-        lesson)."""
+        lesson, and their words: each run's description is a string of its own, B-1841)."""
         runs = sum(map(len, self.lines.values()))
-        return PAST_LINE_BYTES * len(self.lines) + PAST_RUN_BYTES * runs + 4 * self.n
+        words = sum(len(line[1]) for line in self.lines) + sum(
+            len(run[0]) + len(run[3]) + len(run[4]) for each in self.lines.values() for run in each)  # fmt: skip
+        return PAST_LINE_BYTES * len(self.lines) + PAST_RUN_BYTES * runs + 4 * self.n + words
 
 
 class WithPast(Sequence):

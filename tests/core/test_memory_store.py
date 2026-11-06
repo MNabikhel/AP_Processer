@@ -1084,3 +1084,48 @@ def test_the_lines_kept_for_every_process_are_taken_only_as_this_version_made_th
     with sqlite3.connect(store.path) as conn:
         conn.execute("DROP TABLE past_lines")
     assert asked().n == 5
+
+
+def _ticket(i: int, gl: str = "5000") -> dict:
+    return {"vendor_key": "acme plumbing", "description": f"Service call ticket {i} labour and parts",
+            "final_gl": gl, "final_cc": "100", "outcome": "accepted", "suggested_gl": "5000"}  # fmt: skip
+
+
+def test_a_vendors_older_lines_carried_forward_name_only_the_lines_they_hold(tmp_path):
+    # B-1840: a vendor's older lessons by line (D-178) carried forward kept the name of every line that ever passed
+    # through, its lessons gone or not: a vendor whose every line is new (a ticket number on each) named 12,000 lines
+    # where it held 2,000, in each process and in the copy every process reads.
+    from ap_coder.core.memory import PastLines
+
+    keep = 2000
+    lines = PastLines.of([_ticket(i) for i in range(keep, 0, -1)])
+    i = keep
+    for _ in range(200):  # 10,000 lessons through, 2,000 kept
+        lines = lines.carried([_ticket(i + k) for k in range(50, 0, -1)], keep)
+        i += 50
+    fresh = PastLines.of([_ticket(j) for j in range(i, i - keep, -1)])
+    assert len(lines.names) <= 2 * len(fresh.names) + 64
+    assert set(lines.lines) == set(fresh.lines) == set(PastLines.decoded(lines.encoded()).lines)
+
+
+def test_the_size_a_vendors_older_lines_are_counted_at_is_what_they_hold():
+    # B-1841: the size a vendor's older lessons by line are kept at (D-178's per-process cap) counted 200 bytes a run
+    # whatever its description: long descriptions held up to 1.8 times what was counted, so the 64 MB cap held more.
+    import gc
+    import json
+    import tracemalloc
+
+    from ap_coder.core.memory import PastLines
+
+    rows = [{"vendor_key": "acme supply", "description": (f"Item {j} " + "x" * 120)[:120],
+             "final_gl": "5000" if k % 3 else "5100", "final_cc": "100", "outcome": "accepted",
+             "suggested_gl": "5000"} for k in range(250) for j in range(40)]  # fmt: skip
+    text = json.dumps(PastLines.of(rows).encoded())
+    gc.collect()
+    tracemalloc.start()
+    before = tracemalloc.take_snapshot()
+    lines = PastLines.decoded(json.loads(text))
+    after = tracemalloc.take_snapshot()
+    tracemalloc.stop()
+    held = sum(s.size_diff for s in after.compare_to(before, "filename"))
+    assert 0.8 * lines.size <= held <= 1.1 * lines.size, (held, lines.size)
