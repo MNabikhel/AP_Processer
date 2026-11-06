@@ -1490,6 +1490,75 @@ def test_month_ends_received_pos_worked_out_in_one_process_are_taken_by_the_othe
     assert received("worker 2") == changed and decoded == []  # (worker 3's for that PO, its own for the other)
 
 
+def test_an_answer_only_shown_asked_while_another_works_it_out_again_is_the_one_before_not_waited_for(
+    tmp_path, monkeypatch
+):
+    """B-1834: once a settled answer (D-164) was past its settle, every page asking it while one worked it out again
+    waited for that one (Spend's p95 4.7 s and month-end's 7.5 s under 100 people at 100,000 invoices): in another
+    process (its lease held), or another thread of the same. They take the answer before instead, as the settle
+    allows for what a page only shows; the one working it out still does, and once it is kept it is taken. Never one
+    of another database (a restore), nor for an exact answer, nor when there is none before: those wait as before."""
+    from ap_coder.core.store import reports
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    rows = lambda: _vendor_rows(store)  # noqa: E731
+    settled = Shared(store, "rows", rows, version="t-1", topic="", changes=("vendors",), settle=30)
+    process("worker 1")
+    before = settled()
+    assert before == [] and settled.worked == 1
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+    clock[0] += 31
+    lease = f"answer/rows/{reports.asked_key(None)}"
+    assert store.take_lease(lease, "another process", 60)  # (it works the answer out again)
+    for name in ("worker 1", "worker 2"):  # (its own kept, and one with none: the database's)
+        process(name)
+        at = time.monotonic()
+        assert settled() == before and settled.worked == 1 and time.monotonic() - at < 1, name
+    stamp = store._answer_stamp("", ("vendors",))[0]
+    store.keep_answer("rows", reports.asked_key(None), "t-1", stamp, _vendor_rows(store), clock[0])
+    store.drop_lease(lease, "another process")
+    assert settled() == _vendor_rows(store) != before and settled.worked == 1  # (the other's, once kept)
+
+    # In one process: a thread working it out, another asking meanwhile.
+    previous = _vendor_rows(store)
+    _plain(store, "UPDATE vendors SET notes = 'a note'")
+    clock[0] += 31
+    began, finish = threading.Event(), threading.Event()
+    slow = Shared(store, "rows", lambda: began.set() or finish.wait(10) and _vendor_rows(store), version="t-1",
+                  topic="", changes=("vendors",), settle=30)  # fmt: skip
+    found = []
+    working = threading.Thread(target=lambda: found.append(slow()))
+    working.start()
+    assert began.wait(10)
+    at = time.monotonic()
+    assert settled() == previous != _vendor_rows(store) and time.monotonic() - at < 1 and settled.worked == 1
+    finish.set()
+    working.join(10)
+    assert found == [_vendor_rows(store)] and settled() == _vendor_rows(store) and settled.worked == 1
+
+    # Exact, or nothing before, or only another database's before: waited for.
+    exact = Shared(store, "rows", rows, version="t-1", topic="", changes=("vendors",))
+    _plain(store, "UPDATE vendors SET notes = 'another note'")
+    clock[0] += 31
+    assert store.take_lease(lease, "another process", 60)
+    for name, ask, restored in (("worker 4", exact, False), ("worker 5", settled, True)):
+        process(name)
+        if restored:  # (what is kept is of the database before a restore: another summary_id)
+            _plain(store, "UPDATE settings SET value = 'restored' WHERE key = 'summary_id'")
+        found.clear()
+        asking = threading.Thread(target=lambda ask=ask: found.append(ask()))
+        asking.start()
+        time.sleep(0.5)
+        assert not found, name  # (waiting)
+        store.keep_answer("rows", reports.asked_key(None), "t-1", store._answer_stamp("", ("vendors",))[0],
+                          ["theirs"], clock[0])  # fmt: skip
+        asking.join(10)
+        assert found == [["theirs"]], name
+
+
 def test_a_process_waiting_takes_the_answer_another_began_after_it_asked_though_a_change_came_meanwhile(
     tmp_path, monkeypatch
 ):
