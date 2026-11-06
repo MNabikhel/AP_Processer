@@ -148,7 +148,7 @@ def test_a_line_action_from_a_tab_behind_is_refused_and_one_at_the_draft_says_it
 def test_a_screen_drawn_before_an_approval_was_undone_cannot_approve_over_it(laptop, store):
     """B-1917: approved in one tab (or by someone else), the approval undone: back in the queue with its coding, the
     screen drawn before it still checked and approved, writing its old coding over the one approved. Its revision is
-    behind the invoice's: its checks are refused once, its approval "changed meanwhile"."""
+    behind the invoice's: its checks are refused once, and its approval as they are (B-1936)."""
     inv_id = clean_invoice(laptop, store)
     old = _open(laptop, inv_id)
     data = form_of(store, inv_id, invoice_number="APPROVED-1")
@@ -158,10 +158,32 @@ def test_a_screen_drawn_before_an_approval_was_undone_cannot_approve_over_it(lap
     stale = laptop.post(f"/review/{inv_id}/check", data={**form_of(store, inv_id), **old}, headers=PAGE)
     assert stale.status_code == 409 and stale.json()["stale"]["text"].startswith("Reopened by Jordan Lee today at ")
     answer = laptop.post(f"/review/{inv_id}/approve", data={**form_of(store, inv_id, invoice_number="OLD"), **old},
-                         headers=PAGE).json()  # fmt: skip
-    assert "changed meanwhile" in flash_text(laptop, answer)
+                         headers=PAGE)  # fmt: skip
+    assert answer.status_code == 409 and answer.json()["stale"] == stale.json()["stale"]
     inv = store.get_invoice(inv_id)
     assert inv["status"] == REVIEW and inv["final_output"]["invoice_number"] == "APPROVED-1"
+
+
+def test_approve_or_send_to_the_manager_from_a_tab_behind_is_refused_as_its_check_is(laptop, store):
+    """B-1936: Approve (or Send to the manager) from a tab behind the other's draft answered "changed meanwhile", a
+    redirect to the invoice that the page followed: drawn again from the other tab's draft, what was typed in this
+    one was gone (typed, then Approve at once: no check is sent first). While the invoice is in the queue it is
+    refused as its check is (409, ``stale``: the screen keeps its boxes); once it left it, "changed meanwhile"."""
+    inv_id = clean_invoice(laptop, store)
+    one, two = _open(laptop, inv_id), _open(laptop, inv_id)
+    data = {**form_of(store, inv_id, vendor_name="From tab one"), **one}
+    assert laptop.post(f"/review/{inv_id}/check", data=data, headers=PAGE).json()["draft"]
+    typed = {**form_of(store, inv_id, invoice_number="TYPED-IN-TWO"), **two, "manager_name": "Max Manager"}
+    for action in ("approve", "manager"):
+        answer = laptop.post(f"/review/{inv_id}/{action}", data=typed, headers=PAGE)
+        assert answer.status_code == 409 and "redirect" not in answer.json()
+        assert answer.json()["stale"]["text"].startswith("Edited in another tab or window today at ")
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+    assert store.invoice_draft(inv_id, "")["header"]["vendor_name"] == "From tab one"
+    store.approve_invoice(inv_id, dict(store.get_invoice(inv_id)["ai_output"]), "Bo Chen")  # left the queue
+    for action in ("approve", "manager"):
+        answer = laptop.post(f"/review/{inv_id}/{action}", data=typed, headers=PAGE).json()
+        assert "changed meanwhile" in flash_text(laptop, answer)
 
 
 def test_a_screen_approved_meanwhile_says_once_who_approved_it_and_when(laptop, store):
@@ -317,6 +339,29 @@ def test_in_a_browser_two_tabs_the_second_to_edit_turns_read_only_once_keeping_w
     two.keyboard.press("Tab")  # said once, never a toast per edit
     assert two.locator("[data-stale]").count() == 1 and two.locator("#toasts > *").count() == 0
     assert store.invoice_draft(inv_id, "")["header"]["invoice_number"] == "FROM-TAB-ONE"
+    assert errors_one == [] and errors_two == []
+
+
+def test_in_a_browser_typed_then_approved_at_once_from_a_tab_behind_keeps_what_was_typed(browser, store):
+    """B-1936: the approval's "changed meanwhile" was followed: the page drawn again from the other tab's draft, the
+    edit just typed (Approve at once sends no check first) gone. It turns read-only as its check would, keeping it."""
+    chromium, base = browser
+    inv_id = clean_invoice(client_for(store), store)
+    context = chromium.new_context(viewport={"width": 1400, "height": 1000})
+    one, errors_one = _tab(context, base, inv_id)
+    two, errors_two = _tab(context, base, inv_id)
+    one.fill("[form=inv][name=po_number]", "PO-FROM-ONE")
+    one.keyboard.press("Tab")
+    wait_until(one, lambda: "Draft saved" in one.inner_text("[data-checking]"))
+    two.fill("[form=inv][name=invoice_number]", "TYPED-IN-TWO")
+    two.click("[data-approve]")
+    two.wait_for_selector("[data-stale]", timeout=10000)
+    assert "Edited in another tab or window today at" in two.inner_text("[data-stale]")
+    assert two.input_value("[form=inv][name=invoice_number]") == "TYPED-IN-TWO"  # still there, to copy
+    assert two.locator("[form=inv][name=invoice_number]").evaluate("el => el.readOnly")
+    assert two.url == f"{base}/review/{inv_id}" and two.locator("#toasts > *").count() == 0
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+    assert store.invoice_draft(inv_id, "")["header"]["po_number"] == "PO-FROM-ONE"
     assert errors_one == [] and errors_two == []
 
 

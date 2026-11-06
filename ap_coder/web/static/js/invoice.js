@@ -1410,6 +1410,11 @@ if (reader) {
   }, { everyMs: every, firstMs: every, mostMs: 60000 });
 }
 
+// Approve or Send to the manager from a screen out of date: said as its check says it, what was typed kept (B-1936)
+document.addEventListener("apc:stale", (event) => {
+  if (event.detail.form === form) showStale(event.detail.stale);
+});
+
 /** The approve bar's draft revision (each check draws it again, D-184). */
 function draftRev() {
   return document.querySelector('[form="inv"][name="draft_rev"]');

@@ -2800,7 +2800,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     today at 10:41 a.m.", "Edited in another tab or window today at 10:41 a.m.", "Deleted by …"); the screen turns
     read-only (its boxes read-only, the approve bar gone, nothing more checked or sent) with what was typed still in
     its boxes to copy, and "Open it as it is now" opens the invoice as it is now in a new tab, beside them.
-    - An action from it (approve, send to the manager) is "changed meanwhile", as before (`changed_meanwhile`).
+    - An action from it (approve, send to the manager) is refused as its check is (409, `stale`), while the
+      invoice is in the queue: the screen turns read-only, what was typed still in its boxes (B-1936: the redirect
+      of "changed meanwhile" was followed, the page drawn again from the other tab's draft, the edit typed just before
+      Approve lost); once it left the queue (approved, parked, deleted…), "changed meanwhile" (`changed_meanwhile`).
     - A form posted without the revisions (not the screen's) is checked as before: "no longer in the review queue".
   - **Laptop**: one person: nobody else is shown and nothing of it is written; the revisions and the out-of-date
     screen hold between its tabs (the screen's poll asks every 30 to 60 s there too).

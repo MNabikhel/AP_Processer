@@ -502,6 +502,19 @@ _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval"
         PARKED: "parked", REVIEW: "in the review queue", FAILED: "a failed read"}  # fmt: skip
 
 
+def _acted_on_meanwhile(request: Request, store: Store, invoice_id: int, inv: dict[str, Any],
+                        form: Any) -> JSONResponse | None:  # fmt: skip
+    """An action of the screen (approve, send to the manager) from a screen out of date (``_out_of_date``): while
+    the invoice is in the review queue, refused as its check is (409, ``stale``: the screen says so and keeps what was
+    typed in its boxes, B-1936); once it left it, "changed meanwhile" (D-184). None: up to date."""
+    stale = _out_of_date(request, store, invoice_id, inv, form)
+    if stale is None:
+        return None
+    if inv["status"] == REVIEW:
+        return refuse(stale["text"], 409, stale=stale)
+    return changed_meanwhile(request, invoice_id)
+
+
 def changed_meanwhile(request: Request, invoice_id: int) -> JSONResponse:
     """The invoice was acted on after this screen was drawn (in another tab, or by someone else): say so plainly and
     show where it stands now (the queue, when it was deleted)."""
@@ -1161,8 +1174,8 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
 def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    if _out_of_date(request, store, invoice_id, inv, form):  # its screen is behind the invoice or the draft (D-184)
-        return changed_meanwhile(request, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     query = _nav_query(form)
@@ -1337,8 +1350,10 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW or _out_of_date(request, store, invoice_id, inv, form):  # (D-184)
+    if inv["status"] != REVIEW:
         return changed_meanwhile(request, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, _reference(store), inv, draft, reviewer())
     lines = [dict(li) for li in (analysis.output.get("line_items") or [])]
