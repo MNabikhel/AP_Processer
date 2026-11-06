@@ -101,7 +101,10 @@ Why these numbers:
    mkdir D:\APCoderData
    ```
 
-   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive.
+   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive. The data folder too
+   must be on one of the server's own disks: AP Coder's database can be damaged on a network share (a `\\server\share`
+   path or a mapped drive letter), so the server refuses to start there and says why; `doctor` says it too (*data
+   folder place*). For a copy on a share, set the backups' second folder (step 9).
 
 3. **Tell AP Coder where its data is, and that this is the server**, for every account on the server (the service and
    IT's console):
@@ -470,6 +473,13 @@ window, started at boot like AP Coder.
   undone. A file missing or damaged in the backup is taken from the second copy when it has it, else the page says
   which. The user accounts (passwords, roles, who is turned off) and paused logins stay as they are now, not as in the
   backup, and everyone is logged out, the Admin too. `server-update --back` and an update that fails do the same.
+  While the restore runs (a minute or two; longer for a year's database), everyone else's pages and requests, on
+  every web worker, get *AP Coder is being restored from a backup; back in a minute or two* (a 503 answer, which
+  tries again by itself), never a page drawn from a database being replaced; `/healthz` still answers, and the Admin's
+  own page waits for the restore. A marker beside the database (`ap_coder.db.restoring`) says a restore runs; it goes
+  when the restore ends, whether it worked or not. One left by a restore cut short (the server stopped during it) is
+  removed when AP Coder next starts, with a line in `logs\service.log` saying so: then check *Settings* → *Data &
+  backups*, and restore again if needed (the state before the restore was backed up first).
 - **Restoring from the console** (the same rules): `service stop`, then, in the AP Coder folder:
 
   ```bat
@@ -477,9 +487,15 @@ window, started at boot like AP Coder.
   .venv\Scripts\python.exe -m ap_coder backup restore ap_coder-20261201-090000.db
   ```
 
-  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't).
-  `backup now` makes a backup. Copying a `.db` over `D:\APCoderData\ap_coder.db` by hand brings back neither the
-  files nor the accounts as they are now: use the command.
+  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't); a service
+  started meanwhile answers *being restored* until it ends. `backup now` makes a backup. Copying a `.db` over
+  `D:\APCoderData\ap_coder.db` by hand brings back neither the files nor the accounts as they are now: use the command.
+- **A database that is gone**: when `D:\APCoderData\ap_coder.db` is missing but the data folder shows there was one
+  (its backups, an update's record in `server.json`, the sign-in codes' key, the access log, invoice files), the
+  server does not start with a new, empty database in its place: `logs\service.log` says so. Restore the newest
+  backup (`backup list`, then `backup restore <name>`, as above), or put the file back. To begin again with an empty
+  database on purpose, run `.venv\Scripts\python.exe -m ap_coder serve --server --new-database` once (it makes the
+  database; stop it with Ctrl+C), then `service start`.
 - **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone,
   **before making the first Admin (step 7)**:
   `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then
@@ -617,20 +633,48 @@ Without `--sha256` it refuses. `--no-hash-check` installs without the check: it 
 yourself on this server. (`certutil -hashfile <zip> SHA256` shows a file's SHA-256 too.)
 
 The first line shows the steps with the folders and files, and changes nothing (on a server where the service isn't
-installed yet, it says there is no service to stop or start). The second does them, in order:
+installed yet, it says there is no service to stop or start). The second does them, in order. First, while the
+version running keeps serving staff:
 
 1. checks the bundle: its SHA-256 is the one given, one AP Coder folder, every file it lists, nothing damaged, and
-   newer than the one running;
-2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
-3. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
-4. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
-5. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
-6. updates the database (the new version opens it once);
-7. runs the self-check (the sample invoices read right);
-8. starts the service from the new folder, and waits for it to answer.
+   newer than the one running (and that the disk has room for a copy of the database);
+2. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
+3. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
+4. updates a copy of the database with the new version (in `D:\APCoderData\service\update-check`, removed after),
+   which proves the update works on your data and says how long it takes;
+5. runs the self-check (the sample invoices read right).
 
-If step 5, 6, 7 or 8 fails, it puts the database backup back, switches the service back to the old folder and starts
-it again, and says why. The new folder is kept to look at; delete it when done.
+Then the switch, the only time staff see AP Coder closed:
+
+6. stops the service;
+7. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
+8. updates the database (the new version opens it once);
+9. starts the service from the new folder, and waits for it to answer. The backup is then copied to the second
+   backup folder, when one is set.
+
+It prints how long the service was down (from the stop to the new version answering) and each step's time, and
+keeps them in `server.json`'s `history` (`times`, in seconds). A year's database takes a few minutes for step 7 and
+the start; CI checks that with a database of 20,000 invoices it stays under 5 minutes on Windows (11 s on a Linux
+test computer, D-188). If step 2, 3, 4 or 5 fails, nothing was stopped or changed: the old version kept serving, and it says
+why. If step 6, 7, 8 or 9 fails, it puts the database backup back, switches the service back to the old folder and
+starts it again, and says why. Either way the new folder is kept to look at; delete it when done.
+
+**If the power goes off (or the window is closed) during an update**, where it was is in
+`D:\APCoderData\service\update.json` at each step. The service's next start (the server booting, or the scheduled
+task's 5-minute retry) and the next `server-update` act on it before anything else, and say what they did in
+`logs\service.log` or on screen:
+
+- cut short while it prepared, stopped the service or made the backup: the old version starts as it was (its
+  database was not touched); a backup cut short is removed;
+- cut short while the new version updated the database: the backup made a moment before (the service already
+  stopped, so nothing was done since) is put back, and the old version starts;
+- cut short at or after the switch: the update is finished and the new version starts (`server-update --back` goes
+  back if it turns out wrong). `server-update` goes back instead when the new version does not answer; the service
+  goes back when it still runs the old folder (run.cmd not rewritten yet);
+- cut short while it went back: going back is finished.
+
+`server-update` then stops there: run it again to update. While one `server-update` runs, another (and the service's
+retry) leaves it alone (`service\update.lock`).
 
 **Going back** after an update that went through, when the new version turns out wrong:
 
@@ -735,6 +779,10 @@ warn, and the system's log says so (step 6); once expired, the banner says so in
 | "Your temporary password has expired" | An Admin resets it again (*Users* → *Reset password*). |
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
+| `server-update` says "The update from ... was cut short" | An update stopped part way (a power cut, the window closed): it dealt with it (section 11 says how) and stopped there. Run `server-update` again to update. |
+| The log says "The data folder ... is on a network share" (or a network path, a network drive) | Move the data folder to one of the server's own disks (step 2), set `AP_PRIVATE_DIR` to it, and `service install` again; copy the backups to the share instead (step 9). |
+| The log says "The database ... is missing, but this data folder had one" | Restore the newest backup (section 9, *A database that is gone*), or put the file back. A new, empty database only on purpose: `serve --server --new-database`. |
+| Staff see "AP Coder is being restored from a backup" | An Admin restores a backup (section 9): it ends by itself. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
 | "That code doesn't match" every time | The phone's clock: set it to set the time automatically. The server's: `w32tm /query /status`, then `w32tm /resync`. Still wrong: *Users* → *Reset authenticator* (a new temporary password too), and they set the app up again. |
 | A new phone, or a lost one | An Admin: *Users* → *Reset authenticator* (it resets the password too: give them the temporary password shown). The last Admin: `users reset-2fa <username>` on the console, which prints it. |

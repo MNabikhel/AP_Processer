@@ -139,6 +139,8 @@ TOUCHPOINTS = {
     "there (no proxy); never run by the launcher",
     "scripts/ci/release_key.py": "git show of a commit in this checkout, for the Release workflow's key (no network); "
     "never run by the launcher",
+    "scripts/ci/server_update_downtime.py": "CI's timing of server-update: asks AP Coder's own /healthz on 127.0.0.1 "
+    "(no proxy); never run by the launcher",
 }
 _NETWORK = re.compile(
     r"^\s*(?:import|from)\s+(?:urllib\.request|urllib\.error|http\.client|socket|requests|httpx|webbrowser|aiohttp|"

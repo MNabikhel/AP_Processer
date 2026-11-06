@@ -377,7 +377,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
   and their progress (`ephemeral` rows `job-running:<process>`, renewed each second), the queued imports' count, the
   hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in
-  memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`). Each
+  memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`: every
+  worker answers everyone else 503 meanwhile, `web/maintenance.py`, D-188). Each
   worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
@@ -539,6 +540,7 @@ can corrupt an open SQLite database).
 | `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |
 | `.cache/pages/<2>/` | the review screen's page pictures, drawn once for all the web workers: named by the file's SHA-256, the page, the scale, the dpi, the size cap and the drawing's version; at most 1 GB, the oldest written removed first; none written while the disk has less than the backups' reserve free (D-160) | `web/document.py` `_kept_png` |
 | `service/run.cmd` (and the task's XML, `host.json`, `host.lock`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
+| `service/update.json`, `update.lock`, `update-check/` | while `server-update` runs: the step it is at (acted on at the next start or update if it was cut short), its lock, the copy of the database it updates first (D-188) | `server-update` (`ops/update_recovery.py`) |
 | `logs/service.log` | what the server said (rotating) | the service host |
 | `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |
 

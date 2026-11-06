@@ -159,6 +159,12 @@ def run_checks(
 
         for area, status, detail in [*doctor_checks(private_dir()), *server_rows(private_dir())]:
             add(area, status, detail)
+    from ..core.paths import default_db_path, env_path
+    from .safety import doctor_checks as place_checks
+
+    # The data folder on a network share (the server: FAIL, a laptop: WARN), and the server's database (D-188).
+    for area, status, detail in place_checks(private_dir(), env_path("AP_DB_PATH") or default_db_path(), server):
+        add(area, status, detail)
 
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine

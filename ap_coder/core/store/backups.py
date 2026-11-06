@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import json
 import os
 import re
 import shutil
@@ -50,6 +51,60 @@ class Restored:
 
 BACKUP_HOURS_ENV = "AP_BACKUP_HOURS"  # when the daily backup may start ("1-5"); unset: any time (``backup_window``)
 MISSED_WINDOW_HOURS = 30  # a daily backup this old is made at once, whatever the hours: a day is never skipped
+RESTORE_HOURS = 2  # a restore marker older than this is not believed (a restore takes minutes, not hours)
+
+
+def restore_marker(db: Path) -> Path:
+    """``<database>.restoring``, beside the database (never in it: it is the file being replaced) while a restore
+    runs: {"pid", "started", "backup"}. The background workers wait, and on the company server every web worker
+    answers the others that AP Coder is being restored (``web/maintenance.py``, D-188)."""
+    return db.with_name(db.name + ".restoring")
+
+
+def restore_under_way(db: Path) -> dict | None:
+    """The restore into ``db`` under way, in this process or another ({"pid", "started", "backup"}), None when none
+    is: no marker, one older than RESTORE_HOURS, or one whose process ended (it crashed: ``clear_left_restore``)."""
+    marker = restore_marker(db)
+    try:
+        text = marker.read_text(encoding="utf-8")
+        fresh = time.time() - marker.stat().st_mtime < RESTORE_HOURS * 3600
+        found = json.loads(text or "0")
+    except (OSError, ValueError):
+        return None
+    found = {"pid": found} if isinstance(found, int) else found  # (the process's id alone, as written before D-188)
+    if not isinstance(found, dict) or not fresh:
+        return None
+    try:
+        pid = int(found.get("pid") or 0)
+    except (TypeError, ValueError):
+        return None
+    from ap_coder.ai.page_worker import _pid_alive
+
+    return {**found, "pid": pid} if pid == os.getpid() or _pid_alive(pid) else None
+
+
+def clear_left_restore(db: Path) -> str:
+    """A restore marker left by a restore that never ended (AP Coder stopped during it: a crash, a power cut),
+    removed as AP Coder starts: what to say in the log ("" when none was left). Kept while a restore still holds
+    the backups' lock (``backup_files.exclusive``): one from the console, run as the service starts."""
+    marker = restore_marker(db)
+    if not marker.exists():
+        return ""
+    try:
+        with backup_files.exclusive(db.parent):
+            try:
+                found = json.loads(marker.read_text(encoding="utf-8") or "0")
+            except (OSError, ValueError):
+                found = {}
+            marker.unlink(missing_ok=True)
+    except backup_files.Busy:
+        return ""
+    found = found if isinstance(found, dict) else {}
+    which = f" of {found['backup']}" if found.get("backup") else ""
+    when = f", started {str(found['started'])[:16].replace('T', ' ')}," if found.get("started") else ""
+    return (f"A restore{which}{when} did not finish: AP Coder stopped during it. The state before it was backed up "
+            "first (backups, ...-before-restore.db): check Settings → Data & backups, and restore again if needed. "
+            f"Its marker {marker.name} was removed.")  # fmt: skip
 
 
 def backup_window(text: str | None) -> tuple[int, int] | None:
@@ -417,15 +472,8 @@ class BackupsMixin:
         with _RESTORING_LOCK:
             if str(self.path.resolve()) in _RESTORING:
                 return True
-        marker = self.path.with_name(self.path.name + ".restoring")
-        try:
-            pid = int(marker.read_text(encoding="utf-8").strip() or 0)
-            fresh = time.time() - marker.stat().st_mtime < 2 * 3600  # (a restore takes minutes, not hours)
-        except (OSError, ValueError):
-            return False
-        from ap_coder.ai.page_worker import _pid_alive
-
-        return fresh and pid != os.getpid() and _pid_alive(pid)
+        found = restore_under_way(self.path)
+        return found is not None and found["pid"] != os.getpid()
 
     def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
         """``restore_state``; the safety backup of the state replaced."""
@@ -440,12 +488,13 @@ class BackupsMixin:
 
     def _restore_state(self, backup: str | Path, *, keep_accounts: bool) -> Restored:
         key = str(self.path.resolve())
-        marker = self.path.with_name(self.path.name + ".restoring")
+        marker = restore_marker(self.path)
         with _RESTORING_LOCK:
             _RESTORING.add(key)
         try:
-            with contextlib.suppress(OSError):
-                marker.write_text(str(os.getpid()), encoding="utf-8")
+            with contextlib.suppress(OSError):  # (also what every web worker answers others meanwhile: D-188)
+                marker.write_text(json.dumps({"pid": os.getpid(), "started": _now(), "backup": Path(backup).name}),
+                                  encoding="utf-8")  # fmt: skip
             restored = self._restore_from(backup, keep_accounts=keep_accounts)
             # What was made from the replaced invoices goes with them: the company server's Spend workbook
             # (web/pages/spend.py, workbook_path).

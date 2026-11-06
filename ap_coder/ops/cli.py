@@ -177,6 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--workers", type=int, default=None, metavar="N",
                        help="Server mode: N web worker processes and one for the background work (default 1, or "
                        "AP_SERVER_WORKERS; the service: server.json's workers)")  # fmt: skip
+        p.add_argument("--new-database", action="store_true",
+                       help="Server mode: begin with a new, empty database although this data folder had one (its "
+                       "file is missing): only on purpose; else restore a backup (D-188)")  # fmt: skip
         p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
         p.add_argument("--capture-work", action="store_true", help=argparse.SUPPRESS)  # (its capture processes)
 
@@ -372,6 +375,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return server.run_background(Store(Path(args.db)))
     if args.capture_work:  # one of its capture processes, which read the import queue (D-168)
         return server.run_capture(Store(Path(args.db)))
+    from .safety import serve_refusal
+
+    refused = serve_refusal(Path(args.db), server_mode(), args.new_database)  # its folder checked first (D-188)
+    if refused:
+        print(refused, file=sys.stderr)
+        return 2
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None

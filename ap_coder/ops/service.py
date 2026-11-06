@@ -660,6 +660,13 @@ def run_host(
 ) -> int:
     """Keep the dashboard running until the service is stopped (the ``stopped`` file). Settings are read again at each
     start, so a change in server.json applies at the next restart."""
+    from ..core.paths import env_path
+    from .update_recovery import recover_at_start
+
+    # An update cut short (a power cut): acted on first, its own stop too (D-188). False: run.cmd names another
+    # folder now, which the task starts next.
+    if not recover_at_start(data, env_path("AP_DB_PATH") or data / "ap_coder.db", PROJECT_DIR):
+        return 0
     if stop_flag(data).exists():
         return 0  # stopped on purpose: the repeating trigger starts nothing
     # A host is running already when it holds the lock. Not when host.json names a live process: after a reboot or a
