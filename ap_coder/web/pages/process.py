@@ -16,6 +16,8 @@ import json
 import logging
 import os
 import re
+import secrets
+import sqlite3
 import threading
 import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -36,8 +38,7 @@ from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN, REVIEW, Store
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake import inbox
-from ap_coder.intake.files import folder_names
-from ap_coder.intake.imports import NO_ROOM, RESTORING, Reader, has_room, noted, owner_id, pick_up
+from ap_coder.intake.imports import NO_ROOM, RESTORING, Reader, has_room, list_folder, noted, owner_id, pick_up
 from ap_coder.intake.mailbox import (
     EMAIL_EXTENSIONS,
     MAX_EMAIL_BYTES,
@@ -606,14 +607,6 @@ def import_status(store: Store, settings: Settings | None = None) -> dict[str, A
 # --- The page ------------------------------------------------------------------------------------------------------
 
 
-def not_read_here(folder: Path) -> list[str]:
-    """The names of the files in the invoices folder of a kind AP Coder does not read (B-268)."""
-    try:
-        return folder_names(folder)[2] if folder.exists() else []
-    except OSError:
-        return []
-
-
 def still_being_saved(path: Path, now: float | None = None) -> bool:
     """Changed in the last minute and its end missing (``intake.looks_incomplete``): a scanner or a download is still
     writing it. Read now, half an invoice would be stored (and the whole one read again later as another). A file
@@ -625,47 +618,154 @@ def still_being_saved(path: Path, now: float | None = None) -> bool:
         return True
 
 
-# ``folder_files`` by folder: (stamp, what it gives, when worked out); kept LISTED_SECONDS at most (a file written over
-# in place changes no stamp)
+NOT_LISTED = "The invoices folder could not be listed just now ({why}): its new files show here once it can be."
+BEING_LISTED = "The invoices folder is being listed: its new files show here in a moment."
+LISTED_AT = "As the invoices folder was at {when}: it is being listed again, which takes a while for this folder."
+# The folder's new files and saved emails (None: not listed), the names of its files not read, what to say of it.
+Shown = tuple[list[dict[str, Any]] | None, list[str], str]
+
+# On a laptop, ``folder_files`` by folder: (stamp, what it gives, when worked out); kept LISTED_SECONDS at most (a file
+# written over in place changes no stamp)
 _LISTED: dict[str, tuple[tuple[Any, ...], tuple[list[dict[str, Any]], list[str]], float]] = {}
 LISTED_SECONDS = 60.0
+# On the company server, the folder as listed for every process (``shared_files``, D-176): listed again once the
+# folder changed and the listing is SHARED_REFRESH seconds old, or whatever changed once it is SHARED_MOST old; a
+# view waits SHARED_WAIT at most for the next one when the one kept is older than that. A file saved in the folder
+# shows within a minute.
+SHARED_REFRESH = 20.0
+SHARED_MOST = 45.0
+SHARED_WAIT = 5.0
+SHARED_POLL = 0.1
+LISTING_LEASE = 60.0  # seconds the process listing the folder holds it for the others, renewed as it goes
+_OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the listings' lease names it
+_LISTING: set[str] = set()  # the folders a thread of this process lists now
+_LISTING_LOCK = threading.Lock()
 
 
-def folder_files(store: Store) -> tuple[list[dict[str, Any]], list[str]]:
-    """(the files in the invoices folder not processed yet, saved emails too: their attachments are read; the names
-    of its files of a kind not read, ``not_read_here``), as the pick-up last read them: a page view reads none, it
-    looks at their size and time (``Store.unseen_files``, D-155). The invoices folder keeps the processed files:
-    reading every one on each view took 7 s at 100,000 invoices, and looking at each one's size and time still takes
-    1.5 s, so the list is worked out again only once the folder (a file added, removed or renamed), what a pick-up
-    read or the invoices changed, or a minute on (a scan written over another of its name). Listed at the folder's
-    resolved place, as the pick-up notes them (``read_file``)."""
+def folder_files(store: Store) -> Shown:
+    """(the files in the invoices folder not processed yet, saved emails too: their attachments are read, None when
+    it could not be listed; the names of its files of a kind not read; what to say of the listing, "" when nothing)
+    on a laptop, as the pick-up last read them: a page view reads none, it looks at their size and time
+    (``list_folder``, D-155). The invoices folder keeps the processed files: reading every one on each view took 7 s
+    at 100,000 invoices, and looking at each one's size and time still takes a second at 300,000, so the list is
+    worked out again only once the folder (a file added, removed or renamed), what a pick-up read or the invoices
+    changed, or a minute on (a scan written over another of its name). Listed at the folder's resolved place, as the
+    pick-up notes them (``read_file``)."""
     folder = invoice_dir(store).resolve()
     try:
         stamp = (folder.stat().st_mtime_ns, store.files_stamp())
     except OSError:  # no invoices folder yet
-        return [], []
+        return [], [], ""
     known = _LISTED.get(str(folder))
     if known is not None and known[0] == stamp and time.monotonic() - known[2] < LISTED_SECONDS:
-        return known[1]
-    names, emails, others = folder_names(folder)
-    listed = []
-    for place in [os.path.join(folder, name) for name in names]:
-        with contextlib.suppress(OSError):  # gone meanwhile
-            seen = os.stat(place)
-            listed.append((place, seen.st_size, seen.st_mtime_ns))
-    new = store.unseen_files(listed)
-    found = [(os.path.basename(place), size, False) for place, size, _ in listed if place in new]
-    for name in emails:
-        with contextlib.suppress(OSError):
-            found.append((name, os.stat(os.path.join(folder, name)).st_size, True))
-    rows = [{"name": name, "kb": f"{size / 1024:,.0f} KB", "email": email,
-             "icon": "mail" if email else "picture_as_pdf" if name.lower().endswith(".pdf") else "image"}
-            for name, size, email in found]  # fmt: skip
+        return *known[1], ""
+    try:
+        listing = list_folder(store, folder)
+    except OSError as exc:  # there, but not listable just now (B-1804)
+        return None, [], NOT_LISTED.format(why=exc.strerror or type(exc).__name__)
+    rows = _rows([(os.path.basename(place), size) for place, size, _ in listing.new], listing.emails)
     if len(_LISTED) > 8:  # (a test's many data folders)
         _LISTED.clear()
     if time.time_ns() - stamp[0] > 2e9:  # a folder changed just now may change again within its time's precision
-        _LISTED[str(folder)] = (stamp, (rows, others), time.monotonic())
-    return rows, others
+        _LISTED[str(folder)] = (stamp, (rows, listing.others), time.monotonic())
+    return rows, listing.others, ""
+
+
+def shared_files(store: Store) -> Shown:
+    """``folder_files`` on the company server, where no view lists the folder (D-176): the latest listing kept for
+    every process (``Store.kept_listing``), the files a pick-up put in line or read since left out at once (one
+    query on those files only). When it is due (``SHARED_REFRESH``, ``SHARED_MOST``) a thread of this process lists
+    the folder again (``list_for_all``) while the view shows the one kept, unless that is too old: the view then
+    waits a few seconds for the new one, or says when the one it shows was made."""
+    place = invoice_dir(store).resolve()
+    try:
+        mtime_ns = os.stat(place).st_mtime_ns
+    except OSError:  # no invoices folder yet
+        return [], [], ""
+    kept = store.kept_listing(str(place))
+    age = time.time() - kept[0] if kept is not None else -1.0
+    current = kept is not None and 0 <= age < SHARED_MOST
+    if not current or (kept[1] != mtime_ns and age >= SHARED_REFRESH):  # type: ignore[index]
+        list_for_all(store, place)
+        if not current:
+            kept = _next_listing(store, str(place), kept)
+    if kept is None:
+        return None, [], BEING_LISTED
+    began, _, found = kept
+    if found.get("error"):
+        return None, [], NOT_LISTED.format(why=found["error"])
+    listed = [(os.path.join(place, name), size, at) for name, size, at in found["files"]]
+    new = store.unseen_files(listed) if listed else set()
+    rows = _rows([(name, size) for (name, size, _), f in zip(found["files"], listed, strict=True) if f[0] in new],
+                 found["emails"])  # fmt: skip
+    shown = 0 <= time.time() - began < SHARED_MOST + SHARED_WAIT
+    return rows, found["others"], "" if shown else LISTED_AT.format(when=time.strftime("%H:%M", time.localtime(began)))
+
+
+def list_for_all(store: Store, place: Path) -> None:
+    """The invoices folder at ``place`` listed again for every process (``list_folder``, kept: ``Listing.keep``) by a
+    thread of this one, unless another thread or process lists it now (its lease, renewed as it lists: a slow network
+    folder, minutes at 300,000 files, is listed once). A folder that can't be listed is kept as such, with why."""
+    lease = f"folder-listing:{place}"
+    with _LISTING_LOCK:
+        if str(place) in _LISTING:
+            return
+        _LISTING.add(str(place))
+    try:
+        with store.briefly():  # (a busy database: the next view)
+            taken = store.take_lease(lease, _OWNER, LISTING_LEASE)
+    except sqlite3.Error:
+        taken = False
+    if not taken:
+        with _LISTING_LOCK:
+            _LISTING.discard(str(place))
+        return
+    threading.Thread(target=_list_for_all, args=(store, place, lease), name="ap-coder-folder-listing",
+                     daemon=True).start()  # fmt: skip
+
+
+def _list_for_all(store: Store, place: Path, lease: str) -> None:
+    renewed = [time.monotonic()]
+
+    def beat() -> None:
+        if time.monotonic() - renewed[0] >= LISTING_LEASE / 4:
+            store.renew_lease(lease, _OWNER, LISTING_LEASE)
+            renewed[0] = time.monotonic()
+
+    try:
+        with store.session():
+            try:
+                list_folder(store, place, beat).keep(store)
+            except OSError as exc:  # kept as such: each process's page says why
+                why = exc.strerror or type(exc).__name__
+                store.keep_listing(str(place), time.time(), 0, {"files": [], "emails": [], "others": [], "error": why})
+    except Exception:  # noqa: BLE001 - a busy database, the folder gone: the next view that finds it due lists it
+        logging.getLogger(__name__).warning("the invoices folder %s could not be listed for the import page", place,
+                                            exc_info=True)  # fmt: skip
+    finally:
+        with contextlib.suppress(Exception):
+            store.drop_lease(lease, _OWNER)
+        with _LISTING_LOCK:
+            _LISTING.discard(str(place))
+
+
+def _next_listing(store: Store, place: str, kept: Any) -> Any:
+    """The listing kept of ``place`` once another than ``kept`` is (``SHARED_WAIT`` at most; else ``kept``)."""
+    ends = time.monotonic() + SHARED_WAIT
+    while time.monotonic() < ends:
+        time.sleep(SHARED_POLL)
+        found = store.kept_listing(place)
+        if found is not None and (kept is None or found[0] != kept[0]):
+            return found
+    return kept
+
+
+def _rows(files: list[tuple[str, int]], emails: list[tuple[str, int]]) -> list[dict[str, Any]]:
+    """The page's rows of the new files and saved emails, (name, size) each."""
+    found = [(name, size, False) for name, size in files] + [(name, size, True) for name, size in emails]
+    return [{"name": name, "kb": f"{size / 1024:,.0f} KB", "email": email,
+             "icon": "mail" if email else "picture_as_pdf" if name.lower().endswith(".pdf") else "image"}
+            for name, size, email in found]  # fmt: skip
 
 
 RECENT = 6  # the newest invoices the page lists
@@ -695,7 +795,7 @@ def process_page(request: Request) -> HTMLResponse:
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     steps, coming, links = shown_setup(request, steps, next_step(steps))
     demo_count = store.demo_count()
-    files, not_read = folder_files(store)
+    files, not_read, folder_note = (shared_files if server_mode(request) else folder_files)(store)
     return render(
         request, "process.html", "process",
         # The demo still loaded and none of your own invoices yet: asked to remove it first, so its reviewer, lessons
@@ -710,8 +810,10 @@ def process_page(request: Request) -> HTMLResponse:
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
-        files=files,
+        files=files or [],
         not_read=not_read,
+        folder_note=folder_note,
+        folder_listed=files is not None,
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
@@ -948,8 +1050,13 @@ def process_folder(request: Request) -> JSONResponse:
     if lock is None:
         return refuse(BUSY_PICKUP, 409)
     try:  # (the folder listed before the emails are unpacked: their attachments are read once, as theirs)
-        read, unreadable, saving = pick_up(store, folder, still_being_saved) if folder.exists() else ([], [], [])
-        mails = unpack_folder(folder) if folder.exists() else []
+        listing = list_folder(store, folder) if folder.exists() else None
+        read, unreadable, saving = ([], [], []) if listing is None else pick_up(store, folder, still_being_saved,
+                                                                                listing)  # fmt: skip
+        mails = [] if listing is None else unpack_folder(folder)
+        if mails:  # the emails unpacked have left the folder: the import page no longer lists them (D-176)
+            listing.emails = [e for e in listing.emails if os.path.exists(os.path.join(listing.place, e[0]))]
+            listing.keep(store)
         attached = _read_saved(mails, unreadable)
         read += attached
         notes = []
@@ -958,7 +1065,7 @@ def process_folder(request: Request) -> JSONResponse:
             notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, "
                                        "or open in another program): picked up next time.", "warn",
                                        [p.name for p in unreadable]))  # fmt: skip
-        others = not_read_here(folder)
+        others = [] if listing is None else listing.others
         if others:
             are = "are" if len(others) > 1 else "is"
             notes.append(flash_message(f"{ui.plural(len(others), 'file')} in the invoices folder {are} not a kind AP "

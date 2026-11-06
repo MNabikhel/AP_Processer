@@ -116,7 +116,7 @@
       </div>
       {% if server_mode %}
       <p class="muted">This folder is on the server: a scanner or mail rule can save invoices there, or upload them above. New
-        files are listed here, ready to process.</p>
+        files are listed here within a minute, ready to process.</p>
       {% else %}
       <p class="muted">Copy invoices into this folder, or have a scanner or mail rule save them there. New files are listed
         here, ready to process.</p>
@@ -125,8 +125,11 @@
       <p class="muted"><span class="ms" aria-hidden="true">warning</span>
         Not read from this folder: {{ not_read | join(", ") }}. Save them as PDF (or JPEG) to have them read.</p>
       {% endif %}
+      {% if folder_note %}
+      <p class="muted"><span class="ms" aria-hidden="true">schedule</span> {{ folder_note }}</p>
+      {% endif %}
       {% if not files %}
-      {{ ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all") }}
+      {% if folder_listed %}{{ ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all") }}{% endif %}
       {% else %}
       <div class="table-wrap">
         <table class="apc-table">

@@ -583,6 +583,7 @@ def test_the_invoice_files_the_saved_emails_and_the_others_are_one_rule(tmp_path
     from ``invoice_files``, ``emails_in`` and ``other_files``, kept alike by a test. They are one rule now
     (``intake.files.folder_names``, D-168): each of the three is a part of it, the import page's too."""
     from ap_coder.ai.pipeline import invoice_files, other_files
+    from ap_coder.intake import imports
     from ap_coder.intake.files import folder_names
     from ap_coder.intake.mailbox import emails_in
     from ap_coder.web.pages import process
@@ -596,7 +597,7 @@ def test_the_invoice_files_the_saved_emails_and_the_others_are_one_rule(tmp_path
     for name in ("folder.pdf", "box.eml", "dir.docx"):  # folders named like files: never listed
         (tmp_path / name).mkdir()
     documents, emails, others = folder_names(tmp_path)
-    assert process.folder_names is folder_names
+    assert imports.folder_names is folder_names and process.list_folder is imports.list_folder
     assert ([p.name for p in invoice_files(tmp_path)], [p.name for p in emails_in(tmp_path)],
             [p.name for p in other_files(tmp_path)]) == (documents, emails, others)  # fmt: skip
     assert set(documents) == {"A.PDF", "Two.dots.png", "alone.txt", "b.pdf", "c.markdown", "photo.heic", "scan.JPG"}
@@ -650,3 +651,23 @@ def test_an_older_database_lists_none_of_its_invoices_files_as_new(app, client, 
     assert "Process 1 file" in client.get("/process").text
     Store(store.path)  # opened by this version
     assert "No new files" in client.get("/process").text
+
+
+def test_an_invoices_folder_that_cannot_be_listed_never_breaks_the_import_page(client, store, monkeypatch):
+    """B-1804: the invoices folder there but not listable just then (a network share gone between two looks, its
+    rights changed) failed the whole Import invoices page; the page says so instead, the rest of it as ever."""
+    from ap_coder.intake import files
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    real = files.os.scandir
+
+    def refused(path):
+        if not isinstance(path, int) and os.path.realpath(path) == os.path.realpath(folder):
+            raise PermissionError(13, "Access is denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(files.os, "scandir", refused)
+    answer = client.get("/process")
+    assert answer.status_code == 200 and "Setup" in answer.text
+    assert "The invoices folder could not be listed just now" in answer.text and "No new files" not in answer.text
