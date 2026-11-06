@@ -210,6 +210,189 @@ def test_the_pictures_kept_are_bounded_by_their_size_in_bytes(monkeypatch):
     assert document._png_cached.cache_info().currsize == 1
 
 
+# --- The company server's pictures, on disk for all its web workers (D-160) -------------------------------------------
+
+
+def _kept(folder: Path) -> list[Path]:
+    return sorted(p for p in folder.rglob("*") if p.is_file())
+
+
+def _drawn(monkeypatch) -> list[tuple]:
+    """Each picture drawn from now on (its arguments)."""
+    drawn: list[tuple] = []
+    real = document._draw_png
+    monkeypatch.setattr(document, "_draw_png", lambda *a: drawn.append(a) or real(*a))
+    return drawn
+
+
+def test_on_the_server_a_page_is_drawn_once_for_all_its_web_workers(tmp_path, monkeypatch):
+    """Each web worker drew the pages it was asked for (40 ms, 115 ms at scale 2) into its own 96 MB. One draws it
+    into the data folder's .cache/pages; any other worker reads it back, and none keeps it in memory. Named by the
+    file's content: the same file elsewhere has the same picture, another file at the same path its own."""
+    import subprocess
+    import sys
+
+    pdf, folder = tmp_path / "inv.pdf", tmp_path / ".cache" / "pages"
+    shutil.copy(SAMPLE, pdf)
+    worker = ("import sys; from pathlib import Path; from ap_coder.web import document; "
+              "sys.stdout.buffer.write(document.page_png(sys.argv[1], 1, 2, Path(sys.argv[2])))")  # fmt: skip
+    drawn_there = subprocess.run([sys.executable, "-c", worker, str(pdf), str(folder)], cwd=ROOT, capture_output=True,
+                                 check=True).stdout  # fmt: skip
+    assert png_size(drawn_there) == (2040, 2640)
+    (kept,) = _kept(folder)
+    assert kept.read_bytes() == drawn_there and kept.parent.name == kept.name[:2]
+    assert kept.name.endswith(f"-p1-s2-{document.DPI}dpi-{document.max_side(2)}px-d{document.DRAWING}.png")
+    drawn = _drawn(monkeypatch)
+    assert page_png(pdf, 1, 2, kept_in=folder) == drawn_there and drawn == []  # this worker: read back
+    elsewhere = tmp_path / "copy.pdf"
+    shutil.copy(pdf, elsewhere)
+    assert page_png(elsewhere, 1, 2, kept_in=folder) == drawn_there and drawn == []
+    assert document._png_cached.cache_info().currsize == 0  # nothing kept in memory
+    shutil.copy(ROOT / "samples" / "chinook_AB_GST_CCO-26-10418.pdf", pdf)  # another invoice at the same path
+    other = page_png(pdf, 1, 2, kept_in=folder)
+    assert other != drawn_there and len(drawn) == 1 and len(_kept(folder)) == 2
+    assert page_png(pdf, 1, 2) == other  # as a laptop draws it
+
+
+def test_a_picture_that_cant_be_kept_is_still_shown_and_nothing_half_written_is_left(tmp_path, monkeypatch):
+    """A full disk, or a folder that can't be made: the page is drawn each time."""
+    import errno
+
+    drawn = _drawn(monkeypatch)
+    blocked = tmp_path / "data"
+    blocked.write_text("a file where the folder would go", encoding="utf-8")
+    first = page_png(SAMPLE, 1, kept_in=blocked / ".cache" / "pages")
+    assert png_size(first) == (1020, 1320) and len(drawn) == 1
+    folder = tmp_path / "pages"
+    real = Path.write_bytes
+
+    def full(self, data):
+        real(self, data[: len(data) // 2])
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_bytes", full)
+    assert page_png(SAMPLE, 1, kept_in=folder) == first and page_png(SAMPLE, 1, kept_in=folder) == first
+    assert len(drawn) == 3 and _kept(folder) == []
+
+
+def test_a_picture_cut_short_or_empty_in_the_shared_folder_is_drawn_again_and_put_back(tmp_path, monkeypatch):
+    """B-1716: a server stopped hard (the power lost, a reset) just after a worker put a picture in the shared folder
+    can leave it empty, cut short or zero-filled at its own name: every worker then served it as it was, a broken
+    page, until it was pruned (weeks, at a 1 GB cap). It is drawn again and put back."""
+    drawn = _drawn(monkeypatch)
+    folder = tmp_path / "pages"
+    good = page_png(SAMPLE, 1, kept_in=folder)
+    (kept,) = _kept(folder)
+    for broken in (good[: len(good) // 3], b"", bytes(len(good)), good[:-1]):
+        kept.write_bytes(broken)
+        assert page_png(SAMPLE, 1, kept_in=folder) == good
+        assert kept.read_bytes() == good and _kept(folder) == [kept]
+    assert page_png(SAMPLE, 1, kept_in=folder) == good and len(drawn) == 5  # a whole one is read back, not drawn
+
+
+def test_on_windows_a_picture_being_read_is_left_as_it_is_and_a_refused_rename_is_tried_again(tmp_path, monkeypatch):
+    """Windows refuses to replace a file another process has open (B-1689): a picture another worker is reading."""
+    folder = tmp_path / "pages"
+    real = os.replace
+    refused: list[str] = []
+
+    def at_first_refused(src, dst):
+        if len(refused) < 2:
+            refused.append(str(dst))
+            raise PermissionError(13, "Access is denied")
+        real(src, dst)
+
+    def refused_each_time(src, dst):
+        refused.append(str(dst))
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", at_first_refused)
+    png = page_png(SAMPLE, 1, kept_in=folder)
+    (kept,) = _kept(folder)
+    assert len(refused) == 2 and kept.read_bytes() == png  # tried again, then put there
+    monkeypatch.setattr(os, "replace", refused_each_time)
+    kept.write_bytes(b"the same picture, put there by another worker")
+    document._keep(folder, kept, png)  # refused: the same picture is there, being read
+    assert len(refused) == 3 and kept.read_bytes() == b"the same picture, put there by another worker"
+    assert _kept(folder) == [kept]  # its own copy removed
+    document._keep(folder, kept.with_name(kept.name.replace("-p1-", "-p2-")), png)  # none there: tried, given up
+    assert len(refused) == 3 + 5 and _kept(folder) == [kept]
+
+
+def test_the_pictures_kept_are_pruned_oldest_first_to_three_quarters_never_the_newest(tmp_path, monkeypatch):
+    """At most ``PAGES_KEPT_BYTES`` (1 GB), looked at as a worker writes its first picture and after each sixteenth of
+    it; a picture half written by a worker that stopped goes once it is an hour old."""
+    folder, keys = tmp_path / "pages", ((1, 1), (2, 1), (1, 2), (2, 2))
+    sizes = [len(page_png(SAMPLE, n, s)) for n, s in keys]  # (as drawn: the same bytes)
+    pruned: list[Path] = []
+    real = document._prune
+    monkeypatch.setattr(document, "_prune", lambda f, newest: pruned.append(newest) or real(f, newest))
+    monkeypatch.setattr(document, "PAGES_KEPT_BYTES", 16 * (sizes[1] + sizes[2]))
+    for n, s in keys[:3]:
+        page_png(SAMPLE, n, s, kept_in=folder)
+    files = {(n, s): next(folder.glob(f"*/*-p{n}-s{s}-*.png")) for n, s in keys[:3]}
+    assert pruned == [files[(1, 1)], files[(1, 2)]]  # its first picture, then once a sixteenth was written
+    page_png(SAMPLE, 2, 2, kept_in=folder)
+    files[(2, 2)] = next(folder.glob("*/*-p2-s2-*.png"))
+    for at, key in enumerate(keys):  # written in that order
+        os.utime(files[key], (1_700_000_000 + at, 1_700_000_000 + at))
+    stale, writing = folder / "ab" / "x.png.1-2.part", folder / "ab" / "y.png.3-4.part"
+    stale.parent.mkdir(exist_ok=True)
+    for part in (stale, writing):
+        part.write_bytes(b"half")
+    os.utime(stale, (dt.datetime.now().timestamp() - 7200,) * 2)  # a worker stopped while writing it, 2 hours ago
+    monkeypatch.setattr(document, "PAGES_KEPT_BYTES", (sizes[0] + sizes[3]) * 4 // 3 + 1)  # over it, by far
+    real(folder, files[(1, 1)])  # the oldest written is the one just written (the newest): kept whatever its age
+    assert [key for key in keys if files[key].exists()] == [(1, 1), (2, 2)]  # the oldest others, down to 3/4
+    assert not stale.exists() and writing.exists()
+    monkeypatch.setattr(document, "PAGES_KEPT_BYTES", sizes[0] + sizes[3])
+    real(folder, files[(2, 2)])  # not over it: nothing goes
+    assert [key for key in keys if files[key].exists()] == [(1, 1), (2, 2)]
+
+
+def test_a_picture_is_not_kept_where_it_would_leave_the_disk_short_of_room(tmp_path, monkeypatch):
+    """The cap counts the pictures, not the disk: on a data disk with little room left they could fill it, and the
+    database's writes then fail. A picture is kept only while the disk keeps the backups' reserve free. The free space
+    is read every 5 seconds at most, counted down by what was written since."""
+    import time
+    import types
+
+    from ap_coder.core.store.backups import BACKUP_RESERVE
+
+    clock = types.SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(document, "time", types.SimpleNamespace(monotonic=lambda: clock.now, time=time.time,
+                                                                 sleep=lambda s: None))  # fmt: skip
+    one = page_png(SAMPLE, 1)
+    reads: list[Path] = []
+    free = {"bytes": BACKUP_RESERVE + len(one) + 1}  # room for that picture alone
+
+    def disk_usage(path):
+        reads.append(path)
+        if free["bytes"] is None:
+            raise OSError("not a disk this computer can read")
+        return types.SimpleNamespace(total=10**12, used=0, free=free["bytes"])
+
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    folder = tmp_path / "pages"
+    drawn = _drawn(monkeypatch)
+    assert page_png(SAMPLE, 1, kept_in=folder) == one and len(_kept(folder)) == 1 and len(reads) == 1
+    two = page_png(SAMPLE, 2, kept_in=folder)  # the reserve would be cut into: shown, not kept
+    assert png_size(two) == (1020, 1320) and len(_kept(folder)) == 1 and len(reads) == 1
+    page_png(SAMPLE, 2, kept_in=folder)
+    assert len(drawn) == 3 and len(reads) == 1  # drawn each time, the free space as counted down
+    free["bytes"] += 10 * len(two)  # room again (a backup removed): seen once 5 seconds have gone by
+    clock.now += 4.9
+    page_png(SAMPLE, 2, kept_in=folder)
+    assert len(_kept(folder)) == 1 and len(reads) == 1
+    clock.now += 0.2
+    page_png(SAMPLE, 2, kept_in=folder)
+    assert len(_kept(folder)) == 2 and len(reads) == 2
+    free["bytes"] = None  # a free space that can't be read: kept
+    clock.now += 5
+    page_png(SAMPLE, 1, 2, kept_in=folder)
+    assert len(_kept(folder)) == 3 and len(reads) == 3
+
+
 # --- Words ------------------------------------------------------------------------------------------------------------
 
 

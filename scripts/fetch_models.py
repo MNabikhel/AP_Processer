@@ -1,5 +1,6 @@
-"""Put the PP-OCRv5 OCR models where RapidOCR 3 looks for them, so scans are read with two OCR engines, and check
-the table finder's model (``capture/table_finder.py``), which AP Coder reads from the bundle's ``models/`` folder.
+"""Put the OCR models (PP-OCRv4 and PP-OCRv5) where RapidOCR 3 looks for them, so scans are read with two OCR engines,
+and check the table finder's model (``capture/table_finder.py``), which AP Coder reads from the bundle's ``models/``
+folder.
 
 AP Coder is an offline build: this copies the models from the ``models/`` folder of the offline bundle and
 never downloads them. RapidOCR 3 itself is never allowed to download them either (``ap_coder/ops/offline.py``).
@@ -13,7 +14,8 @@ Safe to run again: files already there (and intact) are kept.
 Downloading from the internet (www.modelscope.cn) happens only with the developers' / bundle builder's
 opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py sets it itself).
 
-rapidocr-onnxruntime (the PP-OCRv4 engine) carries its models inside its package: nothing to copy.
+The PP-OCRv4 models (and the angle classifier both engines use) come inside RapidOCR's package: they are checked and
+kept, and copied from the bundle only if damaged.
 """
 
 from __future__ import annotations
@@ -127,7 +129,7 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
           models: tuple[offline.ModelFile, ...] | None = None, log: Callable[[str], None] | None = None,
           waits: tuple[float, ...] | None = None, timeout: float | None = None,
           skip_hosts: set[str] | None = None) -> Result:  # fmt: skip
-    """Make ``target`` hold every model file of ``models`` (default: the PP-OCRv5 ones), intact: keep what is there,
+    """Make ``target`` hold every model file of ``models`` (default: both OCR engines'), intact: keep what is there,
     copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
     only with the ``AP_ALLOW_INTERNET=1`` opt-in). ``log``: where the error itself goes (the launcher's log), the
     window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`). ``skip_hosts``:
@@ -140,7 +142,7 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
     get = get or functools.partial(download, waits=waits, timeout=timeout)
     result = Result()
     target.mkdir(parents=True, exist_ok=True)
-    for model in offline.ppocrv5_files() if models is None else models:
+    for model in offline.ocr_files() if models is None else models:
         dest = target / model.name
         if intact(dest, model):
             result.kept.append(model.name)
@@ -185,7 +187,7 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
 
 def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str], None],
           log: Callable[[str], None] | None = None) -> Result:  # fmt: skip
-    """The launcher's step (scripts/launch.py, ensure_models): the PP-OCRv5 models into RapidOCR's folder, copied from
+    """The launcher's step (scripts/launch.py, ensure_models): the OCR models into RapidOCR's folder, copied from
     the offline bundle's models/ folder, or downloaded when ``online``; with ``table_finder``, the table finder's
     model too (online only, into the data folder's models/ folder). A first setup tries each download 3 times, waiting
     up to 30 s for an answer; a later start (trying again after a failed one) once, 10 s. A site not reached at all is
@@ -206,7 +208,8 @@ def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str],
 
 
 def came_with_package(name: str) -> bool:
-    """The model file ``name`` is part of RapidOCR's own package (its angle classifier is): nothing to download."""
+    """The model file ``name`` is part of RapidOCR's own package (the PP-OCRv4 models and the angle classifier are):
+    nothing to download."""
     import importlib.metadata
 
     try:
@@ -216,7 +219,7 @@ def came_with_package(name: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Put the PP-OCRv5 OCR models in place, from the offline bundle.")
+    parser = argparse.ArgumentParser(description="Put the OCR models in place, from the offline bundle.")
     parser.add_argument("--check", action="store_true", help="only report what is missing")
     parser.add_argument("--to", help="put the models in this folder (default: RapidOCR's own models folder)")
     parser.add_argument("--from", dest="source", help=f"copy from this folder (default: {BUNDLE_MODELS})")
@@ -228,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     table_finder(args)  # reported only: without it line items are read as before
     target = Path(args.to) if args.to else offline.model_dir()
     if target is None:
-        print("RapidOCR 3 is not installed: no OCR models to put in place (scans use rapidocr-onnxruntime if present).")
+        print("RapidOCR 3 is not installed: no OCR models to put in place (scans can't be read here).")
         return 0
     if args.check:
         missing = offline.missing_models(target, verify=True)

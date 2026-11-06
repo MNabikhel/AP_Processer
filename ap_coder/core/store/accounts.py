@@ -27,6 +27,7 @@ from ._base import (
     _now,
     parse_fx_rates,
 )
+from .summary import PAID_FROM, fetch_rows
 
 # How the reason for a second approval starts when it is the currency changed from the one read (D-132).
 CURRENCY_CHANGED = "the currency was changed from"
@@ -429,17 +430,17 @@ class AccountsMixin:
 
     def last_pay_froms(self, keys: list[str]) -> dict[str, str]:
         """``last_pay_from`` of each vendor key of ``keys`` that has one, in one query of the invoices' summary (its
-        approved coding's ``pay_from``): the review queue asks it of every vendor waiting (D-155)."""
+        approved coding's ``pay_from``): the review queue asks it of every vendor waiting (D-155). Each vendor's
+        latest is sought on the index ``summary_pay_from`` (B-1739), read in one step (``fetch_rows``)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            rows = conn.execute(
-                "SELECT vendor_key, code FROM (SELECT vendor_key, pay_from AS code, ROW_NUMBER() OVER (PARTITION BY "
-                "vendor_key ORDER BY reviewed_at DESC, id DESC) AS n FROM invoice_summary WHERE status IN ('approved', "
-                "'pending_approval') AND COALESCE(pay_from, '') != '' AND vendor_key IN (SELECT value FROM "
-                "json_each(?))) WHERE n = 1",
-                (json.dumps([k for k in keys if k]),),
-            ).fetchall()
-        return {r["vendor_key"]: str(r["code"]) for r in rows}
+            rows = fetch_rows(
+                conn,
+                "SELECT k.value AS vendor_key, (SELECT pay_from FROM invoice_summary WHERE vendor_key = k.value AND "
+                f"{PAID_FROM} ORDER BY reviewed_at DESC, id DESC LIMIT 1) AS code FROM json_each(?) AS k",
+                (json.dumps(sorted({k for k in keys if k})),),
+            )
+        return {r["vendor_key"]: str(r["code"]) for r in rows if r["code"] is not None}
 
     # --- Tax setup and policy ---------------------------------------------------------------------
 

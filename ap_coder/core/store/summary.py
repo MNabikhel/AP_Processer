@@ -31,9 +31,10 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from time import monotonic
 from typing import Any
 
-from ._base import APPROVED, FAILED, PENDING, REJECTED, REVIEW, _in_list
+from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -131,6 +132,10 @@ SIDE_TABLES = {"summary_facts": ("i_cost", "pay", "t_facts", "s_facts")}
 # An invoice's checks' codes (``i_codes``) are kept one row per code (``summary_codes``): Insights counts them.
 SIDE = (*(c for columns in SIDE_TABLES.values() for c in columns), "i_codes")
 
+# An invoice approved, or waiting for its second approval, with the bank account it was paid from: a vendor's latest
+# is the default of its next (``Store.last_pay_froms``); the partial index ``summary_pay_from`` holds these alone.
+PAID_FROM = "status IN ('approved', 'pending_approval') AND COALESCE(pay_from, '') != ''"
+
 SUMMARY_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS invoice_summary (id INTEGER PRIMARY KEY, "
     + ", ".join(f"{name} {kind}" for name, kind in MIRRORED)
@@ -173,6 +178,16 @@ SUMMARY_SCHEMA = (
     "cents REAL NOT NULL, amounts TEXT, PRIMARY KEY (invoice_id, part))",
     "CREATE TABLE IF NOT EXISTS summary_dirty (id INTEGER PRIMARY KEY)",
     "CREATE INDEX IF NOT EXISTS summary_vendors ON invoice_summary (status, vendor_key, vendor_name)",
+    # The queue's confidences in its order (``list_invoices``, B-1737), read without the rows.
+    "CREATE INDEX IF NOT EXISTS summary_queue_order ON invoice_summary (status, requires_review DESC, "
+    "adjusted_confidence, id)",
+    # The invoice directory's default order, newest received first (``directory.order_by`` of its "received", B-1740):
+    # its first page is read off it, not sorted out of every invoice.
+    "CREATE INDEX IF NOT EXISTS summary_received ON invoice_summary (COALESCE(created_at, '') = '', created_at DESC, "
+    "id DESC)",
+    # Each vendor's latest approved Pay from account (``Store.last_pay_froms``, B-1739), sought vendor by vendor.
+    f"CREATE INDEX IF NOT EXISTS summary_pay_from ON invoice_summary (vendor_key, reviewed_at, id, pay_from) WHERE "
+    f"{PAID_FROM}",
     # The learning memory's lessons by outcome, counted as they are added and removed (``feedback_counts``): the
     # review queue's accuracy and the memory's stamp read it instead of counting the lessons.
     "CREATE TABLE IF NOT EXISTS feedback_counts (outcome TEXT PRIMARY KEY, n INTEGER NOT NULL)",
@@ -184,9 +199,38 @@ SUMMARY_SCHEMA = (
 
 # What puts an invoice in ``summary_dirty``: any change to it, to one of its approval events (Insights counts the
 # latest approval, the tax report the issues it left open), and to the tax setup (an invoice coded by an older
-# version has its posting lines built again with it). The only triggers AP Coder makes (``backups``).
+# version has its posting lines built again with it).
 _DIRTY = "INSERT OR IGNORE INTO summary_dirty (id) VALUES"
 _LEGACY = "INSERT OR IGNORE INTO summary_dirty (id) SELECT id FROM invoice_summary WHERE legacy = 1"
+# The counts of changes the summary does not cover (D-159), ``changes/<kind>`` in settings, one more in the same
+# transaction as the change, however it is made: what ``summary_memo``'s ``changes`` stamps an answer with.
+_COUNT = ("INSERT INTO settings (key, value) VALUES ('changes/{}', '1') ON CONFLICT(key) DO UPDATE SET "
+          "value = CAST(value AS INTEGER) + 1")  # fmt: skip
+# Each vendor's own count (``changes/vendor/<key>``): an invoice of its added or deleted, or one of these changed (what
+# ``Store.vendor_invoices`` lists; a check's confidence is not one of them). A move between vendors counts for both.
+_VENDOR_COUNT = ("INSERT INTO settings (key, value) SELECT 'changes/vendor/' || {0}.vendor_key, '1' WHERE "
+                 "{0}.vendor_key IS NOT NULL{1} ON CONFLICT(key) DO UPDATE SET "
+                 "value = CAST(value AS INTEGER) + 1")  # fmt: skip
+_VENDOR_LISTED = ("status, export_batch, vendor_key, vendor_name, invoice_number, invoice_date, currency, grand_total, "
+                  "created_at, reviewed_at, final_output, ai_output")  # fmt: skip
+# An invoice approved or no longer approved, or its vendor or coding changed while approved (an export changes none).
+_APPROVED_CHANGED = ("(OLD.status IS 'approved') != (NEW.status IS 'approved') OR (NEW.status IS 'approved' AND "
+                     "(OLD.vendor_key IS NOT NEW.vendor_key OR OLD.final_output IS NOT NEW.final_output OR "
+                     "OLD.ai_output IS NOT NEW.ai_output))")  # fmt: skip
+
+
+def _counted(kind: str, *tables: str) -> dict[str, str]:
+    """The triggers counting ``changes/<kind>``: any insert, update or delete of ``tables``."""
+    return {
+        f"changes_{table}_{done}": f"CREATE TRIGGER changes_{table}_{done} AFTER {event} ON {table} BEGIN "
+        f"{_COUNT.format(kind)}; END"
+        for table in tables
+        for done, event in (("added", "INSERT"), ("changed", "UPDATE"), ("deleted", "DELETE"))
+    }
+
+
+# The only triggers AP Coder makes, made again as this version makes them at every start and in a backup being
+# restored (``make_triggers``, ``backups``).
 SUMMARY_TRIGGERS = {
     "summary_invoice_added": f"CREATE TRIGGER summary_invoice_added AFTER INSERT ON invoices BEGIN {_DIRTY} "
                              "(NEW.id); END",
@@ -213,7 +257,48 @@ SUMMARY_TRIGGERS = {
     "summary_tax_added": f"CREATE TRIGGER summary_tax_added AFTER INSERT ON tax_treatments BEGIN {_LEGACY}; END",
     "summary_tax_changed": f"CREATE TRIGGER summary_tax_changed AFTER UPDATE ON tax_treatments BEGIN {_LEGACY}; END",
     "summary_tax_deleted": f"CREATE TRIGGER summary_tax_deleted AFTER DELETE ON tax_treatments BEGIN {_LEGACY}; END",
+    **_counted("vendors", "vendors"),  # the vendor list (the master's ERP IDs, its GST/HST numbers)
+    "changes_approved_added": "CREATE TRIGGER changes_approved_added AFTER INSERT ON invoices WHEN NEW.status = "
+                              f"'approved' BEGIN {_COUNT.format('approved')}; END",
+    "changes_approved_changed": "CREATE TRIGGER changes_approved_changed AFTER UPDATE OF status, vendor_key, "
+                                f"final_output, ai_output ON invoices WHEN {_APPROVED_CHANGED} BEGIN "
+                                f"{_COUNT.format('approved')}; END",
+    "changes_approved_deleted": "CREATE TRIGGER changes_approved_deleted AFTER DELETE ON invoices WHEN OLD.status = "
+                                f"'approved' BEGIN {_COUNT.format('approved')}; END",
+    **_counted("suppliers", "supplier_outcomes"),  # the supplier learning records
+    **_counted("readers", "reader_outcomes"),  # the readers' scorecard
+    **_counted("purchase_orders", "purchase_orders", "po_lines"),
+    **_counted("register", "erp_invoices"),  # the ERP's invoice register
+    **_counted("lessons", "feedback"),  # the coding lessons, each vendor's
+    **_counted("situations", "lessons", "lesson_approvals"),  # the Lessons tab's
+    "changes_vendor_invoice_added": "CREATE TRIGGER changes_vendor_invoice_added AFTER INSERT ON invoices BEGIN "
+                                    f"{_VENDOR_COUNT.format('NEW', '')}; END",
+    "changes_vendor_invoice_changed": f"CREATE TRIGGER changes_vendor_invoice_changed AFTER UPDATE OF {_VENDOR_LISTED} "
+                                      f"ON invoices BEGIN {_VENDOR_COUNT.format('OLD', '')}; "
+                                      f"{_VENDOR_COUNT.format('NEW', ' AND NEW.vendor_key IS NOT OLD.vendor_key')}; "
+                                      "END",
+    "changes_vendor_invoice_deleted": "CREATE TRIGGER changes_vendor_invoice_deleted AFTER DELETE ON invoices BEGIN "
+                                      f"{_VENDOR_COUNT.format('OLD', '')}; END",
 }  # fmt: skip
+
+_ON = re.compile(r" ON (\w+) (?:WHEN|BEGIN) ")  # a trigger's table, in its SQL
+
+
+def make_triggers(conn: sqlite3.Connection, missing: bool = True, counts: bool = False) -> None:
+    """``SUMMARY_TRIGGERS`` as this version makes them: one there with other SQL (made by another version, or planted
+    under its name) is dropped and made again; with ``missing``, one not there is made too (at every start,
+    ``_summary_schema``). Without it (a backup's copy being restored, ``backups._own_triggers``), only those there are
+    made again: an older backup may lack their tables, which its migration makes first. With ``counts``, also the
+    counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720)."""
+    made = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} if counts else set()
+    for name, sql in SUMMARY_TRIGGERS.items():
+        if made.get(name, sql) != sql:
+            conn.execute(f"DROP TRIGGER {name}")
+        counted = counts and name.startswith("changes_") and {"settings", _ON.search(sql)[1]} <= tables
+        if made.get(name) != sql and (missing or name in made or counted):
+            conn.execute(sql)
+
 
 FTS_SCHEMA = "CREATE VIRTUAL TABLE invoice_search USING fts5(plain_name, raw_number, tokenize = 'trigram')"
 # What a ``summary_memo`` may depend on alone, so that it is worked out again only when that changed (an approval
@@ -235,13 +320,38 @@ TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
         if r and r["status"] not in (FAILED, REJECTED)
         else None
     ),
+    # What the review queue reads of an invoice in review (``bulk.queue_checks``, D-159); one the summary could not
+    # work out is read again from the invoice, so each change to it counts (a key equal to none).
+    "queue": lambda r: (
+        (object() if r["broken"] & BIT["queue"] else tuple(r[c] for c in QUEUE_READ))
+        if r and r["status"] == REVIEW
+        else None
+    ),
+    # The queue's lists as ``Store.list_invoices`` lists them (D-159), but their confidence: each check writes it, and
+    # it is read apart with their order at each ask (B-1737).
+    "listed": lambda r: tuple(r[c] for c in _LISTED_KEPT) if r and r["status"] in QUEUES else None,
 }
-_TOPIC_COLUMNS = ("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total", "currency",
-                  "export_batch", "w_key", "w_name", "w_codes", "w_corrected")  # fmt: skip
-_MEMO: dict[tuple[str, str], tuple[Any, Any]] = {}  # ``summary_memo``: (database, name) -> (stamp, value)
+QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
+_FOUND_TEXTS = ("q_found", "r_found")  # of them, the findings texts: each read once (``queue_rows``)
+QUEUES = (REVIEW, PARKED, PENDING)  # the lists the ``listed`` topic covers
+LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", "invoice_date", "due_date", "currency",
+                  "grand_total", "model_confidence", "adjusted_confidence", "requires_review", "error", "created_at",
+                  "reviewed_at", "reviewer", "second_reviewer")  # fmt: skip
+CONFIDENCE = ("adjusted_confidence", "requires_review")  # what a check writes (``Store.refresh_confidence``)
+_LISTED_KEPT = tuple(c for c in LISTED_COLUMNS if c not in CONFIDENCE)
+QUEUE_ORDER = "requires_review DESC, adjusted_confidence ASC, id ASC"  # the ones to review first (an index's order)
+_TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
+                                      "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
+                                      *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
+# ``summary_memo``: (database, name) -> (stamp, value, when it began to be worked out: ``monotonic``)
+_MEMO: dict[tuple[str, str], tuple[Any, Any, float]] = {}
 _MEMO_LOCK = threading.Lock()
-_COMPUTING: dict[tuple[str, str], threading.Lock] = {}  # one ``summary_memo`` worked out at a time, by name
+# One ``summary_memo`` worked out at a time, by name and what is asked (its ``repr``'s hash: two asks hashed alike only
+# wait for each other); past COMPUTING_KEPT, the locks no page holds are let go.
+_COMPUTING: dict[tuple[str, str, int], threading.Lock] = {}
+COMPUTING_KEPT = 256
 MEMO_WAIT = 600.0  # seconds a page waits for another one working the same value out (then works it out itself)
+COUNTS_SETTLE = 5.0  # seconds the counts by status a page only shows may be behind a change (``status_counts``)
 _FTS: dict[str, bool] = {}  # whether this process's SQLite has FTS5 with the trigram tokenizer
 _FTS_LOCK = threading.Lock()
 
@@ -358,37 +468,42 @@ def _decoded(text: Any) -> Any:
     return json.loads(text) if text else None
 
 
+def _holds(hit: tuple[Any, Any, float], stamp: tuple[Any, ...], settle: float) -> bool:
+    """Whether a kept answer (``_MEMO``) answers a question of ``stamp``: nothing it depends on changed, or, with
+    ``settle``, it was worked out less than ``settle`` seconds ago for the same question (``asked``, the stamp's last)
+    on the same database (``summary_id``, its first: a restore gives another)."""
+    kept = hit[0]
+    if kept == stamp:
+        return True
+    return settle > 0 and kept[0] == stamp[0] and kept[-1] == stamp[-1] and monotonic() - hit[2] < settle
+
+
 class SummaryMixin:
     # --- The invoices' summary (D-110) -------------------------------------------------------------------------
 
     @staticmethod
     def _summary_schema(conn: sqlite3.Connection) -> None:
-        """The summary's tables, indexes and triggers (made on every start, like ``_SCHEMA``); its FTS5 index when
-        this SQLite has FTS5."""
+        """The summary's tables, indexes and triggers (made on every start, like ``_SCHEMA``; the triggers as this
+        version makes them, ``make_triggers``); its FTS5 index when this SQLite has FTS5."""
         for sql in SUMMARY_SCHEMA:
             conn.execute(sql)
-        made = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
-        for name, sql in SUMMARY_TRIGGERS.items():
-            if name not in made:
-                conn.execute(sql)
+        make_triggers(conn)
         if fts_available():
             conn.execute(FTS_SCHEMA.replace("CREATE VIRTUAL TABLE", "CREATE VIRTUAL TABLE IF NOT EXISTS", 1))
 
     def _summary_migrate(self, conn: sqlite3.Connection) -> None:
         """The summary's tables (``_summary_schema``), built again in full when made by other rules (``SUMMARY_RULES``,
-        or none: a database of schema 18 or older), with triggers as this version makes them; and the search index,
-        when it was left behind by a computer whose SQLite has no FTS5."""
+        or none: a database of schema 18 or older); and the search index, when it was left behind by a computer whose
+        SQLite has no FTS5."""
         from ..memory import VENDOR_KEY_RULES
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'summary_rules'").fetchone()
         rules = f"{SUMMARY_RULES}/{VENDOR_KEY_RULES}"
         again = (row[0] if row else "") != rules
-        if again:  # made again, as this version makes it (its columns, its triggers)
+        if again:  # made again, as this version makes it (its columns)
             for table in ("invoice_summary", *SIDE_TABLES, "summary_codes", "summary_spend",
                           *(("invoice_search",) if fts_available() else ())):  # fmt: skip
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
-            for name in SUMMARY_TRIGGERS:
-                conn.execute(f"DROP TRIGGER IF EXISTS {name}")
             conn.execute("DELETE FROM settings WHERE key = 'search_behind'")
         self._summary_schema(conn)
         if again:
@@ -514,35 +629,64 @@ class SummaryMixin:
             )
         return out
 
-    def summary_memo(self, name: str, compute: Callable[[], Any], topic: str = "all", events: str = "") -> Any:
-        """``compute()``, worked out again only once the invoices changed since it was last, in this process (only
-        what of them ``topic`` names, ``TOPICS``; with ``events``, or once an event of that action was added): what
-        several pages read of every invoice (the vendors' invoice dates, the batches' totals). The value is shared:
-        read it, don't change it."""
+    def summary_memo(self, name: str, compute: Callable[[], Any], topic: str = "all", events: str = "",
+                     changes: str = "", asked: Any = None, settle: float = 0.0) -> Any:  # fmt: skip
+        """``compute()``, kept in this process and worked out again only once what it depends on changed (D-159),
+        whoever changed it (another process, plain SQL), as a stamp read from the database before the work says: the
+        database's ``summary_id`` (new after a restore, or a summary built again); with ``topic``, the generation of
+        what of the invoices' summary it names (``TOPICS``; "all": any of it; "": none); with ``events``, the count
+        of the events of that action; with ``changes``, the count the triggers keep of that kind of change
+        (``changes/<kind>``, ``SUMMARY_TRIGGERS``); and ``asked``, what the answer is for (compared with ==: give a
+        copy, and don't change it after). The latest of each ``name`` is kept, 64 at most.
+        ``settle`` (seconds; for an answer a page only shows: a count, a report): once what it depends on changed, the
+        answer kept is taken still while it was worked out less than ``settle`` seconds ago, for the same question and
+        the same ``summary_id`` (never past a restore): under a stream of changes it is worked out again at most every
+        ``settle`` seconds, not at each change, and is at most that old (D-164).
+        Inside a write under way (or a read transaction: ``conn.in_transaction``) it is worked out afresh, neither
+        kept nor taken from what is kept, nor waiting for another page working it out: that write may yet be undone,
+        and another page's work may need its lock. So is one that brought the summary up to date (the next keeps it).
+        The value is shared: read it, don't change it."""
+        reads, args = ["(SELECT value FROM settings WHERE key = 'summary_id')"], []
+        if topic:
+            reads.append("(SELECT value FROM settings WHERE key = ?)")
+            args.append(f"summary_generation/{topic}")
+        if events:
+            reads.append("(SELECT COUNT(*) || '/' || COALESCE(MAX(id), '') FROM events WHERE action = ?)")
+            args.append(events)
+        if changes:
+            reads.append("(SELECT value FROM settings WHERE key = ?)")
+            args.append(f"changes/{changes}")
         with self._conn() as conn:
-            self._summary_fresh(conn)
-            stamp = conn.execute(
-                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT value FROM settings WHERE key = "
-                "?), (SELECT COUNT(*) || '/' || COALESCE(MAX(id), '') FROM events WHERE action = ?)",
-                (f"summary_generation/{topic}", events),
-            ).fetchone()[:]
+            if topic:
+                self._summary_fresh(conn)
+            stamp = (*conn.execute(f"SELECT {', '.join(reads)}", args).fetchone(), asked)
+            writing = conn.in_transaction
+        if writing:
+            return compute()
         key = (str(self.path), name)
+        working = (*key, hash(repr(asked)))
         with _MEMO_LOCK:
             hit = _MEMO.get(key)
-            computing = _COMPUTING.setdefault(key, threading.Lock())
-        if hit is not None and hit[0] == stamp:
+            computing = _COMPUTING.setdefault(working, threading.Lock())
+            if len(_COMPUTING) > COMPUTING_KEPT:
+                for idle in [k for k, lock in _COMPUTING.items() if k != working and not lock.locked()]:
+                    del _COMPUTING[idle]
+        if hit is not None and _holds(hit, stamp, settle):
             return hit[1]
-        # One page works it out; the others asking meanwhile wait for it (not all at once, after each change: under
-        # load, many working out the same 100,000 rows at once each take many times longer).
+        # One page works it out; the others asking the same meanwhile wait for it (not all at once, after each change:
+        # under load, many working out the same 100,000 rows at once each take many times longer). Another ask of the
+        # name doesn't wait: that answer is not its own (B-1722).
         got = computing.acquire(timeout=MEMO_WAIT)
         try:
             with _MEMO_LOCK:
                 hit = _MEMO.get(key)
-            if hit is not None and hit[0] == stamp:
+            if hit is not None and _holds(hit, stamp, settle):
                 return hit[1]
+            at = monotonic()
             value = compute()
             with _MEMO_LOCK:
-                _MEMO[key] = (stamp, value)
+                _MEMO.pop(key, None)  # (the oldest kept goes first)
+                _MEMO[key] = (stamp, value, at)
                 while len(_MEMO) > 64:
                     _MEMO.pop(next(iter(_MEMO)))
             return value
@@ -587,19 +731,19 @@ class SummaryMixin:
         self, rows_sql: str, where: str, params: list[Any], order: str, limit: int, offset: int = 0
     ) -> list[int]:
         """The ids of the invoice directory's rows (``directory_rows``), in their order: an export then reads their
-        rows a part at a time (``directory_rows_of``)."""
+        rows a part at a time (``directory_rows_of``). Both are read in one step (``fetch_rows``, B-1735)."""
         with self._conn() as conn:
             self._summary_fresh(conn)
             sql = f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
-            return [r[0] for r in conn.execute(sql, [*params, limit, offset])]
+            return [r["id"] for r in fetch_rows(conn, sql, [*params, limit, offset])]
 
     def directory_rows_of(self, rows_sql: str, fields: str, ids: list[int]) -> list[dict[str, Any]]:
         """The invoice directory's rows of these invoices in this order (one gone meanwhile left out), with the date
         each one's export batch was made."""
         with self._conn() as conn:
             self._summary_fresh(conn)
-            page = conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}", (json.dumps(ids),))
-            found = {r["id"]: dict(r) for r in page}
+            sql = f"{rows_sql} SELECT {fields} FROM rows WHERE {_in_list('id')}"
+            found = {r["id"]: r for r in fetch_rows(conn, sql, (json.dumps(ids),))}
             rows = [found[i] for i in ids if i in found]
             wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
             made = f"SELECT id, created_at FROM export_batches WHERE {_in_list('id')}"
@@ -618,10 +762,12 @@ class SummaryMixin:
                 "reviewer, second_reviewer FROM invoice_summary WHERE status = ? ORDER BY COALESCE(reviewed_at, '') "
                 "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))  # fmt: skip
 
-    def status_counts(self) -> dict[str, int]:
-        """{status: how many invoices}, from the invoices' summary (counted again once one changed its status: every
-        page's rail shows two of them)."""
-        return dict(self.summary_memo("status_counts", self._status_counts, "status"))
+    def status_counts(self, settled: bool = False) -> dict[str, int]:
+        """{status: how many invoices}, from the invoices' summary (counted again once one changed its status).
+        ``settled``: for counts only shown (every page's rail, the queue's tabs), up to ``COUNTS_SETTLE`` seconds
+        behind a change (D-164, B-1738); what decides with them counts exactly."""
+        settle = COUNTS_SETTLE if settled else 0.0
+        return dict(self.summary_memo("status_counts", self._status_counts, "status", settle=settle))
 
     def _status_counts(self) -> dict[str, int]:
         with self._conn() as conn:
@@ -654,6 +800,24 @@ class SummaryMixin:
             params.append(json.dumps([int(i) for i in ids]))
         rows = self.summary_rows(where, params, "id", "requires_review DESC, adjusted_confidence ASC, id ASC")
         return [r["id"] for r in rows]
+
+    def queue_rows(self, ids: list[int]) -> list[dict[str, Any]]:
+        """The queue's facts (``id`` and ``QUEUE_READ``) of the invoices of ``ids`` in review, by id: the rows
+        ``summary_rows`` gives, but each findings text (``q_found``, ``r_found``) read once for all the invoices that
+        have it (the queue's share a few: 190 texts, 2.1 MB in its rows at 100,000 invoices, B-1741), in the same read
+        transaction as the rest."""
+        where, params = f"status = ? AND {_in_list('id')}", (REVIEW, json.dumps([int(i) for i in ids]))
+        columns = ", ".join(f"NULL AS {c}" if c in _FOUND_TEXTS else c for c in ("id", *QUEUE_READ))
+        texts = " UNION ALL ".join(f"SELECT '{c}' AS c, {c} AS text, json_group_array(id) AS ids FROM invoice_summary "
+                                   f"WHERE {where} AND {c} IS NOT NULL GROUP BY {c}" for c in _FOUND_TEXTS)  # fmt: skip
+        with self.summary_snapshot(), self._conn() as conn:
+            rows = fetch_rows(conn, f"SELECT {columns} FROM invoice_summary WHERE {where} ORDER BY id", params)
+            found = fetch_rows(conn, texts, params * len(_FOUND_TEXTS))
+        by_id = {r["id"]: r for r in rows}
+        for t in found:
+            for invoice_id in json.loads(t["ids"]):
+                by_id[invoice_id][t["c"]] = t["text"]
+        return rows
 
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""

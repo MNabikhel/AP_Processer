@@ -32,8 +32,6 @@ def launch(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "VENV_PY", venv / "bin" / "python")
     monkeypatch.setattr(module, "STATE", venv / "ap_coder_launcher.json")
     monkeypatch.setattr(module, "WINDOWS", False)
-    module.real_ensure_second_ocr = module.ensure_second_ocr
-    monkeypatch.setattr(module, "ensure_second_ocr", lambda state: "")  # its own tests below, on any Python
     return module
 
 
@@ -100,40 +98,6 @@ def test_ocr_add_on_failing_is_not_retried_on_every_start(launch, monkeypatch):
     assert len(calls) == 1
     level, text, installed = launch.ensure_packages(state)  # the next start
     assert len(calls) == 1 and not installed and level == "warn"
-
-
-def _second_ocr(launch, monkeypatch, *, python=(3, 14), has=(), ok=True):
-    """``ensure_second_ocr`` on ``python`` with the modules in ``has`` importable; pip succeeds when ``ok``."""
-    monkeypatch.setattr(launch.sys, "version_info", (*python, 0, "final", 0))
-    monkeypatch.setattr(launch.importlib.util, "find_spec", lambda name: object() if name in has else None)
-    monkeypatch.setattr(launch, "pip_source", lambda: WHEELHOUSE)
-    calls: list[list[str]] = []
-    monkeypatch.setattr(launch, "pip_install", lambda args: calls.append(list(args)) or ok)
-    return calls
-
-
-def test_the_second_ocr_engine_is_installed_on_python_3_14(launch, monkeypatch):
-    """rapidocr-onnxruntime says "below 3.13" in its metadata but works there: installed without that check."""
-    calls = _second_ocr(launch, monkeypatch, has={"rapidocr"})
-    assert launch.real_ensure_second_ocr({}) == ""
-    assert calls == [["--ignore-requires-python", launch.SECOND_OCR]]
-
-
-def test_the_second_ocr_engine_is_left_alone_where_pip_installs_it(launch, monkeypatch):
-    calls = _second_ocr(launch, monkeypatch, python=(3, 12), has={"rapidocr"})  # pip installs it with the rest
-    assert launch.real_ensure_second_ocr({}) == "" and calls == []
-    calls = _second_ocr(launch, monkeypatch, has={"rapidocr", "rapidocr_onnxruntime"})  # already there
-    assert launch.real_ensure_second_ocr({}) == "" and calls == []
-    calls = _second_ocr(launch, monkeypatch, has=set())  # no OCR add-on at all: said elsewhere
-    assert launch.real_ensure_second_ocr({}) == "" and calls == []
-
-
-def test_a_second_ocr_engine_that_cannot_be_installed_is_said_once(launch, monkeypatch):
-    state: dict = {}
-    calls = _second_ocr(launch, monkeypatch, has={"rapidocr"}, ok=False)
-    assert "one OCR engine" in launch.real_ensure_second_ocr(state)
-    assert state["ocr2_failed"] == launch.fingerprint() and len(calls) == 1
-    assert launch.real_ensure_second_ocr(state) == "" and len(calls) == 1  # not tried again on every start
 
 
 def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
@@ -764,7 +728,8 @@ def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypat
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     state: dict = {}
     launch.ensure_models(first=False, state=state)
-    assert len(downloads) == 4 * 3 and "Downloading the OCR models" in capsys.readouterr().out  # (+ the table finder)
+    # PP-OCRv4's 3 models (inside RapidOCR's package, but this folder is empty), PP-OCRv5's 2, and the table finder
+    assert len(downloads) == 6 * 3 and "Downloading the OCR models" in capsys.readouterr().out
 
 
 def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_models, monkeypatch, capsys):
@@ -786,7 +751,7 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     state: dict = {}
     launch.ensure_models(first=True, state=state)
     out = capsys.readouterr().out
-    assert len(downloads) == 4 * 3 and waited == list(fetch_models.RETRY_WAITS) * 4  # each file 3 times
+    assert len(downloads) == 6 * 3 and waited == list(fetch_models.RETRY_WAITS) * 6  # each file 3 times
     assert any("yolov8n_layout" in url for url in downloads)  # the table finder's model too
     assert "URLError" not in out and "Errno" not in out and "Run this again" not in out
     assert "Couldn't get ch_PP-OCRv5_mobile_det.onnx: the connection dropped, tried 3 times." in out
@@ -799,7 +764,7 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     downloads.clear()
     launch.ensure_models(first=False, state=state)  # the next start: tried again (once each, more briefly)
     out = capsys.readouterr().out
-    assert len(downloads) == 4 and "Downloading the OCR models again" in out
+    assert len(downloads) == 6 and "Downloading the OCR models again" in out
     launch.ensure_models(first=False, state=state)  # the third start today: the next try is tomorrow
     assert "AP Coder will try again tomorrow" in capsys.readouterr().out
     downloads.clear()
@@ -807,13 +772,13 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     assert downloads == []  # not a fourth time today
     state["models_tries"]["day"] = "2000-01-01"  # a later day
     launch.ensure_models(first=False, state=state)
-    assert len(downloads) == 4
+    assert len(downloads) == 6
 
     monkeypatch.setattr(fetch_models.urllib.request, "urlopen", lambda url, timeout=None: io.BytesIO(b"model"))
     monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.stat().st_size > 0)
     launch.ensure_models(first=False, state=state)  # the connection works again
     out = capsys.readouterr().out
-    assert "OCR models ready: 3 downloaded, and the table finder's." in out and "models_failed" not in state
+    assert "OCR models ready: 5 downloaded, and the table finder's." in out and "models_failed" not in state
 
 
 def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models, monkeypatch, capsys):

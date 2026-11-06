@@ -140,6 +140,8 @@ def _review(browser, invoice_id):
 
 
 GL = "[data-grid=lines] .pk-input[data-picker-name=line_gl]"
+# The vendor list the screen fetched (the address in #vendor-seed, D-160), read again from there
+VENDORS = "fetch(JSON.parse(document.getElementById('vendor-seed').textContent).url).then((r) => r.json())"
 
 
 def _options(page):
@@ -219,6 +221,34 @@ def test_in_a_browser_a_code_or_a_name_typed_then_clicking_away_picks_its_accoun
     assert value() == second and field.input_value() == accounts[second]
     typed_then_away("zzzz qqq")  # no account: the one it had, code and name
     assert value() == second and field.input_value() == accounts[second]
+    assert errors == []
+
+
+def test_in_a_browser_a_code_typed_then_the_page_scrolled_away_picks_its_account(browser, store):
+    """A GL code typed in full, then the page scrolled so the box goes out of view (to reach the approve bar) before
+    any click: the list closed and what was typed was lost, the box back to the account it had, as no click elsewhere
+    would leave it (B-1445). Out of view now picks as leaving the box does: the account typed when it names one,
+    else the account as it was (B-1713)."""
+    invoice_id = store.list_invoices(REVIEW)[-1]["id"]
+    options = invoice_view.gl_options(store.reference_data(), [])
+    accounts = {code: label for code, label in options if code != UNASSIGNED}
+    page, errors = _review(browser, invoice_id)
+    field = page.locator(GL).first
+    value = lambda: page.eval_on_selector("[data-grid=lines] select[name=line_gl]", "s => s.value")  # noqa: E731
+    first = next(code for code in accounts if code != value())
+
+    def typed_then_scrolled(text):
+        field.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.type(text)
+        assert page.locator(".pk-layer:not([hidden])").count() == 1  # its list open, what was typed in the box
+        page.evaluate("() => window.scrollBy(0, -innerHeight)")  # the box out of view: the list closes
+        page.wait_for_selector(".pk-layer", state="hidden")
+
+    typed_then_scrolled(first)
+    assert value() == first and field.input_value() == accounts[first]
+    typed_then_scrolled("zzzz qqq")  # no account: the one it had, code and name
+    assert value() == first and field.input_value() == accounts[first]
     assert errors == []
 
 
@@ -392,7 +422,7 @@ def test_in_a_browser_the_split_popover_closes_on_escape_and_gives_back_the_focu
 def test_in_a_browser_the_vendor_is_typed_or_picked_from_the_vendor_list(browser, store):
     invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Cascade"))
     page, errors = _review(browser, invoice_id)
-    vendors = json.loads(page.inner_text("#vendor-data"))
+    vendors = page.evaluate(VENDORS)
     target = vendors["list"][-1]
     vendor = page.locator("#vendor-name")
     vendor.fill("")
@@ -648,7 +678,7 @@ def test_in_a_browser_a_vendor_pointed_at_then_tab_keeps_the_name_typed(browser,
     """B-595: the vendor typed, the mouse resting on a vendor of the list, then Tab: the name typed was replaced by the
     vendor under the mouse."""
     page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
-    vendors = json.loads(page.inner_text("#vendor-data"))["list"]
+    vendors = page.evaluate(VENDORS)["list"]
     vendor = page.locator("#vendor-name")
     vendor.fill("")
     typed = vendors[0]["name"][:3].lower()
@@ -706,7 +736,7 @@ def test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor(browser, sto
     """B-597: while the vendor list showed, it covered "Not in the vendor list: … add it as a new vendor" under the
     field: its last row now says it, and adds the vendor."""
     page, errors = _review(browser, store.list_invoices(REVIEW)[0]["id"])
-    vendors = json.loads(page.inner_text("#vendor-data"))
+    vendors = page.evaluate(VENDORS)
     assert vendors["enforced"]
     vendor = page.locator("#vendor-name")
     vendor.fill("")
@@ -728,4 +758,193 @@ def test_in_a_browser_the_vendor_list_ends_with_add_as_a_new_vendor(browser, sto
     vendor.fill(vendors["list"][0]["name"][:-1])
     vendor.type(vendors["list"][0]["name"][-1])
     assert not any(t.startswith("Not in the vendor list") for t in _options(page).all_inner_texts())
+    assert errors == []
+
+
+# --- The vendor list fetched as the screen opens (D-160) -------------------------------------------------------------
+
+VENDOR_LIST = "**/review/vendors.json*"
+MATCH = "[data-vendor-match]"
+SAID = "[data-vendor-match] > span:not(.ms)"  # what the line under the vendor field says, its icon aside
+
+
+def _agence(store):
+    """The Agence invoice (its vendor in the vendor master), and a vendor of the list the page doesn't name."""
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.web.pages.invoice import business_number, vendor_options
+
+    inv = store.get_invoice(next(i["id"] for i in store.list_invoices(REVIEW) if "Agence" in (i["vendor_name"] or "")))
+    number = business_number((inv["ai_output"] or {}).get("gst_hst_registration_number"))
+    other = next(
+        v
+        for v in vendor_options(store)["list"]
+        if v["key"] != vendor_key(inv["vendor_name"]) and business_number(v["gst"]) != number and v["id"]
+    )
+    return inv, other
+
+
+def _held_open(browser, invoice_id, route, retry_ms=None, clock=False):
+    """The review screen with its vendor list's requests answered by ``route(route, n)`` (n: from 1)."""
+    chromium, base = browser
+    page = chromium.new_page(viewport=LAPTOP)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.asked = []
+    page.route(VENDOR_LIST, lambda r: page.asked.append(r.request.url) or route(r, len(page.asked)))
+    if retry_ms is not None:
+        page.add_init_script(f"window.AP_VENDORS_RETRY_MS = {retry_ms}")
+    if clock:
+        page.clock.install()
+    page.goto(f"{base}/review/{invoice_id}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    wait_until(page, lambda: page.asked)
+    return page, errors
+
+
+def test_in_a_browser_the_vendor_list_comes_after_the_page_and_a_list_opened_before_it_is_drawn_again(browser, store):
+    """The page holds only the vendors it names as it opens (#vendor-seed): the line under the vendor field is right
+    at once for the invoice's vendor. Another vendor typed before the list came is "Checking the vendor list…" (never
+    "Not in the vendor list"), and a vendor list opened meanwhile shows the vendors once they come. Fetched once."""
+    inv, other = _agence(store)
+    held = []
+    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r))
+    match = page.locator(SAID)
+    assert "In the vendor list" in match.inner_text()  # the invoice's own vendor, from the page
+    vendor = page.locator("#vendor-name")
+    vendor.fill(other["name"])
+    assert match.inner_text() == "Checking the vendor list…"
+    assert "warn" not in page.get_attribute(MATCH, "class")
+    vendor.fill("")
+    vendor.type(other["name"][:4].lower())  # the vendor list opened: nothing of it here yet
+    assert page.locator(".pk-layer").is_hidden()
+    held[0].continue_()
+    wait_until(page, lambda: _options(page).count() > 0)
+    names = [t.split("\n")[0] for t in _options(page).all_inner_texts()]
+    assert other["name"] in names and names[-1].startswith("Not in the vendor list: add as a new vendor")
+    _options(page).nth(names.index(other["name"])).click()
+    wait_until(page, lambda: other["id"] in match.inner_text())
+    assert match.inner_text().startswith("In the vendor list") and len(page.asked) == 1
+    assert errors == []
+
+
+def test_in_a_browser_a_vendor_added_before_the_vendor_list_came_is_kept_when_it_comes(browser, store, client):
+    """The vendor list fetched before a vendor was added on the screen: the vendor added stays in it, and the line
+    says so from the moment it is added."""
+    inv, other = _agence(store)
+    before = client.get(json.loads(re.search(r'id="vendor-seed">(.*?)</script>', client.get(
+        f"/review/{inv['id']}").text, re.S)[1])["url"]).text  # fmt: skip
+    held = []
+    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r))
+    page.click("[data-vendor-add] > summary")
+    page.fill("[data-new=name]", "Brand New Supply Co")
+    page.click("[data-new-go]")
+    match = page.locator(SAID)
+    wait_until(page, lambda: "Added here" in match.inner_text())
+    held[0].fulfill(status=200, content_type="application/json", body=before)  # the list as it was before
+    wait_until(page, lambda: page.evaluate("document.querySelector('#vendor-name').value") == "Brand New Supply Co")
+    page.wait_for_timeout(300)
+    assert "Added here, not in JD Edwards yet" in match.inner_text()
+    vendor = page.locator("#vendor-name")
+    vendor.fill("")
+    vendor.type("brand new")
+    offered = [t.split("\n")[0] for t in _options(page).all_inner_texts()]
+    assert offered[0] == "Brand New Supply Co" and not [t for t in offered[1:] if not t.startswith("Not in the")]
+    vendor.fill("")
+    vendor.type(other["name"][:4].lower())  # and the list's vendors are here
+    assert other["name"] in [t.split("\n")[0] for t in _options(page).all_inner_texts()]
+    assert errors == []
+
+
+@pytest.mark.parametrize("failure", ["dropped", "500", "502", "503"])
+def test_in_a_browser_a_vendor_list_that_did_not_come_is_asked_for_again_at_the_next_need(browser, store, failure):
+    """A fetch that failed (dropped, an error, the company server's proxy busy) left the screen with only the
+    vendors the page named. Meanwhile, with a vendor master, the line says the list could not be loaded, never "Not
+    in the vendor list" nor whose GST/HST number is printed, and the vendor list offers no "add as a new vendor"; the
+    next need (the vendor typed, the list opened), a while after the failure, asks for it again."""
+    inv, other = _agence(store)
+
+    def answer(route, n):
+        if n > 1:
+            route.continue_()
+        elif failure == "dropped":
+            route.abort()
+        else:
+            route.fulfill(status=int(failure), body="busy")
+
+    page, errors = _held_open(browser, inv["id"], answer, retry_ms=60_000)
+    match = page.locator(SAID)
+    page.wait_for_load_state("networkidle")  # the fetch as it opened failed, the opening check answered
+    vendor = page.locator("#vendor-name")
+    vendor.fill(other["name"])
+    said = match.inner_text()
+    assert said == "Couldn't load the vendor list: the check on approval still compares the vendor with it.", said
+    assert "warn" in page.get_attribute(MATCH, "class") and len(page.asked) == 1
+    vendor.fill("")
+    vendor.type(other["name"][:4].lower())
+    assert not any(t.startswith("Not in the vendor list") for t in _options(page).all_inner_texts())
+    page.keyboard.press("Escape")
+    vendor.fill(other["name"][:-1])
+    assert len(page.asked) == 1  # not again so soon after it failed
+    page.evaluate("window.AP_VENDORS_RETRY_MS = 0")  # (5 s in use)
+    vendor.fill(other["name"])  # a need, the wait over: asked for again
+    wait_until(page, lambda: other["id"] in match.inner_text())
+    assert match.inner_text().startswith("In the vendor list") and len(page.asked) == 2
+    assert errors == []
+
+
+def test_in_a_browser_a_failed_vendor_list_is_asked_for_again_though_the_clocks_time_was_set_back(browser, store):
+    """B-1718: the wait before the vendor list is asked for again was timed by the computer's clock: set back after a
+    failure (a time sync, someone changing the time), the list wasn't asked for again until the clock caught up (an
+    hour back: an hour of "Couldn't load the vendor list" and no "add as a new vendor"). The wait is timed as it
+    passes."""
+    inv, other = _agence(store)
+    page, errors = _held_open(browser, inv["id"], lambda r, n: r.abort() if n == 1 else r.continue_(), clock=True)
+    match = page.locator(SAID)
+    vendor = page.locator("#vendor-name")
+    vendor.fill(other["name"])
+    wait_until(page, lambda: match.inner_text().startswith("Couldn't load the vendor list"))
+    page.clock.set_system_time((page.evaluate("Date.now()") - 3_600_000) / 1000)  # an hour back (in seconds)
+    page.clock.run_for(5_100)
+    vendor.fill(other["name"][:-1])  # a need, the wait over: asked for again
+    wait_until(page, lambda: len(page.asked) == 2)
+    assert len(page.asked) == 2
+    vendor.fill(other["name"])
+    wait_until(page, lambda: other["id"] in match.inner_text())
+    assert match.inner_text().startswith("In the vendor list"), match.inner_text()
+    assert errors == []
+
+
+def test_in_a_browser_a_vendor_list_that_never_comes_is_asked_for_a_few_times_only(browser, store):
+    inv, other = _agence(store)
+    page, errors = _held_open(browser, inv["id"], lambda r, n: r.fulfill(status=503, body="busy"), retry_ms=20)
+    vendor = page.locator("#vendor-name")
+    for n in range(12):
+        page.wait_for_timeout(60)
+        vendor.fill(other["name"][: 3 + n])
+    page.wait_for_timeout(200)
+    assert len(page.asked) == 5
+    assert page.inner_text(SAID).startswith("Couldn't load the vendor list")
+    assert errors == []
+
+
+def test_in_a_browser_a_vendor_list_that_takes_too_long_is_given_up_and_asked_for_again(browser, store):
+    """A busy company server: the fetch is given up after 30 seconds, as a failure (asked for again 5 s on)."""
+    inv, other = _agence(store)
+    held = []
+    page, errors = _held_open(browser, inv["id"], lambda r, n: held.append(r), clock=True)
+    match = page.locator(SAID)
+    vendor = page.locator("#vendor-name")
+    vendor.fill(other["name"])
+    assert match.inner_text() == "Checking the vendor list…"
+    page.clock.run_for(29_000)
+    assert match.inner_text() == "Checking the vendor list…"
+    page.clock.run_for(1_500)
+    wait_until(page, lambda: match.inner_text().startswith("Couldn't load the vendor list"))
+    page.clock.run_for(5_100)
+    vendor.fill(other["name"][:-1])
+    wait_until(page, lambda: len(page.asked) == 2)
+    assert match.inner_text() == "Checking the vendor list…"
+    held[1].continue_()
+    vendor.fill(other["name"])
+    wait_until(page, lambda: other["id"] in match.inner_text())
     assert errors == []

@@ -1,5 +1,6 @@
 """Sales tax: the GST/HST and QST to claim back for a period, the claims to check first, and PST / QST possibly to
-self-assess. ``GET /sales-tax?start=&end=&show=risky|all``; the claims and the self-assessment list download as CSVs
+self-assess. ``GET /sales-tax?start=&end=&show=risky|all&rows=&self_rows=``: each list ``ROWS_SHOWN`` rows at a time
+("Show more", D-162); the claims and the self-assessment list download as CSVs, every row
 (``taxreturn.to_csv`` / ``taxreturn.self_assessment_csv``)."""
 
 from __future__ import annotations
@@ -11,10 +12,12 @@ from fastapi.responses import HTMLResponse, Response
 
 from ap_coder.coding import taxreturn
 from ap_coder.core import ui
-from ap_coder.web.core import address_day, get_store, money, page_router, render
+from ap_coder.web.core import address_day, get_store, money, page_router, render, shown_count
 from ap_coder.web.files import download
 
 router = page_router()  # each plain handler: one connection a request
+
+ROWS_SHOWN = 500  # the claims, and the self-assessments, listed at first and how many more each time ("Show more")
 
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
@@ -47,7 +50,8 @@ def period(start: str, end: str) -> tuple[dt.date, dt.date]:
 
 
 @router.get("/sales-tax", response_class=HTMLResponse)
-def sales_tax_page(request: Request, start: str = "", end: str = "", show: str = "") -> HTMLResponse:
+def sales_tax_page(request: Request, start: str = "", end: str = "", show: str = "", rows: str = "",
+                   self_rows: str = "") -> HTMLResponse:  # fmt: skip
     store = get_store(request)
     first, last = period(start, end)
     context = {"start": first.isoformat(), "end": last.isoformat(), "backwards": first > last}
@@ -71,6 +75,8 @@ def sales_tax_page(request: Request, start: str = "", end: str = "", show: str =
     ]
     only_risky = (show or ("risky" if at_risk else "all")) == "risky"
     items = taxreturn.self_assessment(store, first, last)
+    listed = at_risk if only_risky else report.claims
+    count, self_count = shown_count(rows, ROWS_SHOWN), shown_count(self_rows, ROWS_SHOWN)
     return render(
         request,
         "sales_tax.html",
@@ -79,11 +85,16 @@ def sales_tax_page(request: Request, start: str = "", end: str = "", show: str =
         report=report,
         tiles=tiles,
         by_type=report.by_type(),
-        shown=at_risk if only_risky else report.claims,
+        shown=listed[:count],
+        shown_total=len(listed),
+        rows=count,
         only_risky=only_risky,
         risky=risky,
         tones=ISSUE_TONES,
         self_items=items,
+        self_shown=items[:self_count],
+        self_rows=self_count,
+        step=ROWS_SHOWN,
         self_tiles=self_tiles(items),
     )
 

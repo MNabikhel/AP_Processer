@@ -16,7 +16,7 @@ import html
 import json
 import statistics
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any
 
 from ..coding.terms import parse_terms, payment
@@ -343,6 +343,31 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         "duplicates_stopped": stopped_count,
         "duplicates_stopped_total": {c: round(t, 2) for c, t in sorted(stopped.items())},
     }
+
+
+# The Insights page's figures (``compute`` and ``operations``: 2 s at 100,000 invoices, at each visit before): under a
+# stream of changes (100 people approving) worked out again at most this often in each process: shown only (D-166).
+SETTLE_SECONDS = 60.0
+
+
+def shown(store: Store) -> dict[str, Any]:
+    """``compute`` as the Insights page shows it: kept until the invoices' summary, the assumptions or whether the
+    internet is allowed change, and once the invoices changed worked out again at most every ``SETTLE_SECONDS``
+    (D-166). Shared: read it, don't change it. The business case's download is worked out afresh."""
+    from ..ops.offline import internet_allowed
+
+    a = Assumptions.load(store)
+    return store.summary_memo("insights", lambda: compute(store, a), asked=(replace(a), internet_allowed()),
+                              settle=SETTLE_SECONDS)  # fmt: skip
+
+
+def shown_operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
+    """``operations`` as the Insights page shows it: kept until the invoices' summary, the vendor list (its payment
+    terms) or the default terms change, and once the invoices or the vendors changed worked out again at most every
+    ``SETTLE_SECONDS`` (D-166). Shared: read it, don't change it."""
+    today = today or dt.date.today()
+    return store.summary_memo("insights_operations", lambda: operations(store, today), changes="vendors",
+                              asked=(today, store.default_terms_days()), settle=SETTLE_SECONDS)  # fmt: skip
 
 
 AGE_BUCKETS = (("0–2 days", 0, 2), ("3–7 days", 3, 7), ("8–14 days", 8, 14), ("15+ days", 15, 10**6))

@@ -656,3 +656,573 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Amended (B-1698):** nothing is still listed. The review screen's grid actions read the form on the event loop and
     run `@one_connection` functions on the threadpool, and `process_upload` is a plain `def`. The code rule also counts
     a message kept for the next page (`done(request, url, "…")`, `keep_flash`, `with_flash`) as a write.
+- **D-159** · **What a web worker keeps between requests, and how it knows it still holds** (phase 2 part 2's CPU:
+  `docs/archive/scale-2026-11/cpu.md` items 1-3, 5, 7 and 10).
+  - **Why:** the check and the invoice page redid, on every request, work whose answer changes a few times a day (the
+    vendor master as a dict of 20,000 vendors, twice; the held vendors' approved numbers, twice; the GL suggestions'
+    index of 50,000 lessons, again for each vendor in turn; the queue's checks and list): 82% of the CPU asked at 100
+    people.
+  - **The rule:** a kept answer holds only while a stamp, read from the database in the same request and before the
+    work, says nothing it depends on changed. It does not matter which process changed it (another worker, the
+    background process, plain SQL). Never a timer, never "this process wrote it".
+    - `Store.summary_memo(name, compute, topic="all", events="", changes="", asked=None)` (`core/store/summary.py`)
+      reads the stamp: the database's id (`summary_id`, new after a restore or a summary built again); with `topic`,
+      that summary topic's generation (`summary_generation/<topic>`; "" reads none, and leaves the summary as it is);
+      with `events`, the count of the events of that action; with `changes`, a count the triggers keep
+      (`changes/<kind>`); and `asked`, what the answer is for (a list's invoices, the vendors asked), compared with ==.
+    - The latest answer of each name is kept, 64 at most a process. One page works an answer out; the others asking
+      the same meanwhile (the name and `asked`) wait for it (`MEMO_WAIT`, then work it out themselves). Another ask of
+      the name works its own out alongside (B-1722: three Month-end periods took 0.5 + 1.0 + 1.5 s, now 0.5 s each);
+      the locks no page holds are let go past `COMPUTING_KEPT` (256). The answer is shared: read it, don't change it.
+    - **Only what is committed is kept.** `conn.in_transaction` is read with the stamp. Inside a write under way the
+      stamp counts that write's own changes and the answer reads them, and the write may yet be undone: a later
+      change, by anyone, would bring the count back to the same number. There the answer is worked out afresh, neither
+      taken from what is kept nor kept, and without waiting for the compute lock (the page holding it may need the
+      write's lock). So is one asked in a read transaction (`summary_snapshot`), or by a call that brought the
+      summary up to date (the next call keeps it).
+  - **Counts kept by triggers** (in `summary.SUMMARY_TRIGGERS`): `_COUNT` adds one to `settings('changes/<kind>')`
+    AFTER each INSERT, UPDATE and DELETE, in the same transaction as the change, however it is made:
+    - `vendors` (`vendors`): the vendor master's ERP IDs, its GST/HST numbers, the vendor list;
+    - `approved` (`invoices`): an invoice approved or no longer approved, or its `vendor_key`, `final_output` or
+      `ai_output` changed while approved; one added or deleted approved. An export changes nothing, nor a confidence;
+    - `suppliers` (`supplier_outcomes`), `readers` (`reader_outcomes`), `purchase_orders` (`purchase_orders`,
+      `po_lines`), `register` (`erp_invoices`), `lessons` (`feedback`), `situations` (`lessons`, `lesson_approvals`);
+    - each vendor's `changes/vendor/<key>`: an invoice of its added or deleted, or a column `vendor_invoices` lists
+      changed (`status, export_batch, vendor_key, vendor_name, invoice_number, invoice_date, currency, grand_total,
+      created_at, reviewed_at, final_output, ai_output`; not a check's confidence). An update counts OLD and NEW, so
+      a move between vendors counts for both.
+    - **Cost:** about 5-9 µs a row changed, whatever the trigger's body. 200,000 register rows: 1.2 → 2.8 s inserted
+      alone, 4.7 → 6.5 s through `import_erp_register` (a rare import, on a thread). Most writes change one row.
+  - **Triggers whose SQL changes:** at every start `make_triggers(conn, missing=True)` (from `_summary_schema`, in the
+    same transaction) makes those missing and drops and makes again any whose stored SQL differs from
+    `SUMMARY_TRIGGERS`: a later version may change a column list without building the summary again.
+    - A backup's check (`backups._check_backup_file`) accepts a trigger whose name is in `SUMMARY_TRIGGERS`, whatever
+      its SQL, and still refuses any other trigger and every view.
+    - The restore makes ours again in its private copy (`_own_triggers`, after the read-only check, before
+      `source.backup(target)`), so the SQL a backup gave them never runs, not even on another worker's change while
+      the restore goes on. A backup where one of ours can't be made (its table missing) is refused.
+    - The copy is the database for minutes before its migration (the data folder's files are copied first), the
+      workers answering. So it also gets the counts' triggers whose tables it has (`make_triggers(counts=True)`; a
+      backup made before D-159 has none) and a new `summary_id`: a change meanwhile is counted, and no answer kept
+      before is taken when a count comes back to its number. The migration gives it another `summary_id` (B-1720).
+    - **Going back:** a version before this one refuses the backups made by this one (they hold triggers it doesn't
+      know), and keeps those triggers in its database. `server-update --back` restores the pre-update backup, made by
+      the older version (`docs/SERVER.md` §11, `docs/UPGRADING.md`).
+  - **Two summary topics** (`summary.TOPICS`; no column changes, so no summary is built again):
+    - `queue`: what the queue reads of an invoice in review (`QUEUE_READ`, the columns `bulk.queue_checks` reads). One
+      the summary could not work out (`broken`) is read again from the invoice, so each change to it counts.
+    - `listed`: the queue's invoices (review, parked, pending) as `list_invoices` lists them (`LISTED_COLUMNS`, its
+      sort columns and the confidence included).
+  - **What is kept** (its stamp; what it holds at 100k, by tracemalloc):
+    - **The vendor master's ERP IDs** (`vendor_ids`): `changes/vendors`; 6.4 MB. Shared: no caller changes it.
+    - **The master's GST/HST numbers** (`master_by_tax_number`, for an invoice not found by name): `changes/vendors`;
+      6.8 MB. Only the vendors found are read, and `same_tax_number` decides on them.
+    - **The held vendors' approved numbers** (`approved_numbers`): `changes/approved` and the vendors asked; 0.07 MB
+      for 193 held vendors. When read, it seeks the vendors' index (`+status`): 218 → 19 ms. Each caller gets lists
+      of its own.
+    - **The queue's checks** (`bulk.queue_checks`): `queue`, the checks stamp, laptop or server, the invoices asked;
+      15 MB for 2,740 invoices. Fewer than `KEEP_FROM` (50) invoices are worked out each time. Each caller gets rows
+      and lists of its own; the findings in them are read-only (`MappingProxyType`, made so in `_today`): a copy of
+      each of the 34,000 findings took 18 ms a call, the rows and lists 2.5 ms.
+    - **The queue's lists** (`list_invoices` of review, parked, pending): `listed`; 2.8-3.1 MB each. Each caller gets
+      copies. The invoice page's Previous and Next read the review one (`navigation`).
+    - **The GL suggestions' index:**
+      - the shared memory's index is built once per change of the lessons (`suggest._MEMORY`: the same list while
+        D-154's stamps hold);
+      - a vendor's older lessons past the cap (`learning_rows` returns `memory.WithPast`: the shared rows, then those)
+        extend it (`suggest._with_past`, `_extended`, `Index.extended`): exactly what a whole build gives
+        (`tests/ai/test_coding_no_ai.py`, many vendors in turn), in 12-150 ms (1,400 to 43,000 older lessons) instead
+        of 0.2-0.37 s; 0.33-0.46 MB each, 11.7 MB for 32 (the bench's 9,830 patterns of 167 words);
+      - kept for 32 vendors and 60,000 of their lessons per process (`PAST_KEPT`, `PAST_ROWS_KEPT`), the latest used
+        always; the store keeps those lessons the same way (`_PAST_MEMORY`, 2 vendors before): 1.3 KB a lesson, 78 MB
+        at 60,000. A memory extended from the shared rows lets go of every one extended from others: each holds all
+        of its shared rows' memory (61.6 MB at 50,000 lessons), and 32 vendors asked between approvals kept 681 MB
+        (B-1719; 45.6 MB now).
+    - **A line's suggestions** (`_Memory.said`): with the memory and the reference data they came from; 1,024 per
+      memory, the latest used last, about 2.4 KB each. Callers get copies.
+  - **Measured** (the 100k seed read-only, an `immutable=1` URI; one process, CPU, medians of 20, the checks and the
+    pages of four vendors in turn; JD Edwards in use, as in cpu.md, which asks `vendor_ids` twice a check):
+    - the check 1,000 → 55 ms (743 → 56 without JD Edwards);
+    - the invoice page 1,717 → 762 ms; its vendor list (D-160) is most of what is left;
+    - `/review` 325 → 131 ms (105 alone): the 50 rows drawn 31 ms, `all_vendor_terms` 23 of them, `attention` 19, the
+      template 14, `queue_checks` 10 (the checks stamp 4);
+    - the page's Previous and Next 48 → 7 ms (3 alone).
+    - (The first build, lost, measured the check 1,244 → 96 ms, the page 1,811 → 544, `/review` 247 → 61 and Previous
+      and Next 26 → 1, on another seed.)
+  - **Not done:**
+    - a vendor's invoices (`vendor_invoices`) and the vendor list in the page: D-160's;
+    - the memory's whole index once per worker after each approval (0.27 s), then each vendor's extension again;
+    - the queue's answers refreshed row by row after a park: a park moves `queue` and `listed`, and the next `/review`
+      works them out whole (98 ms and 35-44 ms);
+    - the rest of `/review`: `all_vendor_terms` (the terms of 20,000 vendors read on each page), `attention`;
+    - the extended index's size in its cap: 0.33-0.46 MB a vendor here, but a big vocabulary could make it 2.6-4.4 MB
+      (review 2b's probe); past 1 MB a vendor, count each entry's size in the cap.
+  - (`core/store/summary.py`, `core/store/backups.py`, `vendors.py`, `learning.py`, `invoices.py`, `core/memory.py`,
+    `coding/bulk.py`, `coding/vendors.py`, `ai/suggest.py`, `ai/line_match.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/core/test_kept_answers.py`, `tests/core/test_backups.py`, `tests/erp/test_invoice_summary.py`,
+    `tests/ai/test_coding_no_ai.py`, `tests/ops/test_real_world_findings.py`)
+- **D-160** · **The review screen made light: the vendor list fetched and kept, page pictures drawn once for all
+  workers, a reader poll of a few bytes, each vendor's invoices kept** (scale goal, phase 2 part 2; rebuilt from
+  `docs/archive/scale-2026-11/part2/`, its reviews' findings designed in).
+  - **Why:** on the 100k database the 19,000-vendor list was built again for every invoice opened and was 3.3 MB of
+    its 3.6 MB. Each web worker drew the page pictures it was asked for (35 ms, 125 ms at scale 2) into its own 96 MB.
+    The reader poll put its panel in again every 20 seconds. Every check read all of its vendor's invoices (430 ms
+    for a vendor of 7,812).
+  - **The vendor list:** `GET /review/vendors.json?v=<version>` (READ, as the screen; no bank details in it).
+    `invoice.vendor_list` keeps, per process and per vendor-list stamp (`summary_memo`, `changes/vendors`; without a
+    vendor master also the `approved_vendors` topic): the JSON, it gzipped, its version (its hash), its count, and the
+    first vendor of each vendor key and GST/HST business number. The page holds `#vendor-seed`: the address, whether
+    a master enforces it, the count, the vendors it names as it opens (the invoice's, the one whose GST/HST number it
+    shows) and what it looked up, so a vendor it doesn't name is known not to be in the list. An editable screen
+    fetches the list as it opens (`app.fetchWithin`: 30 s); a read-only one doesn't. An open vendor list is drawn again
+    when it comes (`picker.refresh`); a vendor added on the screen is kept when it comes.
+    - **Before it comes** (review 2c item 2) the line under the vendor field says only what the seed knows: a vendor in
+      it, or one added here. Any other vendor is "Checking the vendor list…", in the plain tone.
+    - **A fetch that failed** (review 2c item 1: dropped, a 500, a 502/503, the deadline) is asked for again at the
+      next need (the list opened, the vendor typed, the line drawn again), at least 5 s after the last failure, 5 times
+      in all. Meanwhile, with a vendor master, the line says "Couldn't load the vendor list: the check on approval
+      still compares the vendor with it." It never says "Not in the vendor list", nor whose GST/HST number is printed;
+      without a master it says nothing. The list's "add as a new vendor" row waits for it; the fill from the list
+      waits once for a fetch under way, then fills from what is there.
+  - **Browser caching:** on a laptop, `private, max-age=31536000, immutable` while `v` is the list's version
+    (`no-cache` for another), with a weak ETag (304) and `Vary: Accept-Encoding`.
+    - **On the server B-1070 stands (decided):** every answer behind the login is `no-store`, the vendor list and the
+      page pictures included, so nothing of the company's stays in a shared computer's browser cache after logout.
+      Each editable screen fetches the list from the worker's memo: 350 KB gzipped and about 14 ms of CPU, on the
+      company network. Exempting them is one line in `identity._no_store`, a security decision, not a speed one.
+  - **Page pictures (server):** in `<data>/.cache/pages/<2>/`, named by the file's SHA-256, the page, the scale, the
+    DPI, the size cap and `DRAWING`. Written under a name of its own, then `os.replace`; on Windows retried, and left
+    when the same picture is there (B-1689's way). At most `PAGES_KEPT_BYTES` (1 GB), the oldest written removed first,
+    down to three quarters, never the newest; looked at as a worker writes its first picture there and after each
+    sixteenth of the cap. A full disk or a folder that can't be written draws each time. A worker keeps no picture in
+    memory there. The laptop is unchanged.
+    - **Room on the disk** (review 2c item 4): the cap counts the pictures, not the disk. No picture is written where
+      the disk's free space would fall under `backups.BACKUP_RESERVE` (512 MB), so the database and its backups keep
+      their room; the free space is read every 5 s at most (`ROOM_EVERY_SECONDS`), counted down by what was written
+      since. The picture is still served, drawn each time.
+  - **The reader poll:** the page's `data-tag` (`reader_tag`, what its panel shows); the poll (D-161's `app.poll`,
+    whose address may be a function, asked at each look) sends `?seen=<tag>`. While the panel is still that, the answer
+    is `{state, poll, tag, same}`, without it, and nothing is drawn again (the same answer each time: `poll` waits
+    longer).
+  - **Each vendor's invoices:** `Store.vendor_invoices` kept per process for the vendors asked most recently, its own
+    cache (not `summary_memo`): at most `VENDOR_ROWS_KEPT` (50,000 rows: about 1 KB a row, 50 MB) and
+    `VENDOR_KEYS_KEPT` (4,096 vendors: review 2b item 4, each name typed is asked for, most with no invoices), with a
+    running row total. One vendor is kept up to half the cap, so it never empties it of the others (B-1721); one of
+    more rows is read once in a page's session instead (`_session_memo`: the check's two calls). Stamped by
+    `summary_id` and `changes/vendor/<key>` (D-159's triggers; a check's confidence is not listed). Read inside a write
+    under way: afresh, not kept. Each caller gets rows of its own. The rows no longer carry
+    `adjusted_confidence`/`requires_review` (read by nothing).
+    - **The cap** (B-1721, measured on the 300,000-invoice seed, read-only): its biggest vendor has 23,174 invoices,
+      kept in 23.9 MB (1,031 bytes a row; 924 for one of 12,611), read in 1.2 s on a busy machine, each caller's copy
+      21 ms. Its check's two calls: 2 × 1.2 s each check under the 20,000 cap (never kept), about 45 ms once kept.
+  - **Measured** (100k database, read-only; one process's CPU, medians; before: 7d13f0b, where A1, A2, W2c and W2d
+    are merged; after: D-160 on it):
+    - the page: 3.64 MB → 332 KB; the same invoice again 2,391 → 1,302 ms, four vendors in turn 1,724 → 870 ms.
+      Without the "Learned" hints (`_lesson_hints`, 1.1 s for the biggest vendor, below): 1,220 → 180 ms and
+      1,444 → 638 ms. (On the A1 base alone, d5c8013: 2,454 → 1,405 ms, and 1,416 → 429 ms without the hints.)
+    - the vendor list: 19,008 vendors, 3.03 MB of JSON, 351 KB gzipped, served in 16 ms (a 304: 6 ms); built in about
+      0.8 s once per change in each worker, about 21 MB kept; the seed 354 bytes.
+    - a check's two calls (`vendor_findings`, `expected_tax_numbers`): 422 → 35 ms for a vendor of 7,812, 162 → 34 ms
+      (4,196), 107 → 18 ms (2,872), 48 → 7 ms (1,227).
+    - a picture: drawn 35-42 ms (scale 1, 73 KB) and 122 ms (scale 2, 156 KB); read back from the shared folder 0.1 ms
+      (the route's own cost aside). A poll: 268 → 64 bytes, its CPU unchanged (17 ms; the first build found 9 ms of
+      it in `reading_status`).
+  - **Not done:** the "Learned" hints' `lessons_for` counts each lesson's approvals with two correlated subqueries
+    (1.9 M rows of `lesson_approvals` on the 100k database: 1.1 s for a vendor of 30 lessons); `reading_status` costs
+    9 ms on every page, queue and poll; a JD Edwards sync rewrites every vendor's `erp_bank`/`erp_hold`, which resets
+    the vendor list in every worker (phase 4); the pilot tester's page pictures (`pages/manager.py`) could use the
+    shared folder; once the 5 tries are used, only a reload fetches the vendor list again.
+  - (`web/pages/invoice.py`, `web/document.py`, `web/roles.py`, `web/static/js/invoice.js`, `picker.js`, `app.js`,
+    `templates/invoice.html`, `_invoice_document.html`, `core/store/vendors.py`, `bench/load.py`;
+    `tests/web/test_web_invoice.py`, `test_web_picker.py`, `test_web_document.py`, `test_server_web.py`,
+    `test_server_security.py`, `test_roles.py`, `tests/core/test_kept_answers.py`, `test_store_perf.py`,
+    `tests/bench/test_bench_load.py`)
+- **D-161** · **Static files from memory at kept addresses, no compression, polls that wait, and a busy web worker
+  that hands its connections back** (B-1712; the phase 2 load run's 16-57 s static waits and its workers at 0.34 to
+  1.0 cores).
+  - **Static files from memory:** `core.read_static` reads the styles, scripts, fonts and logo once when AP Coder
+    starts. `app.StaticFromMemory` answers a GET or HEAD of one on the event loop: after the Host check, with the
+    security headers and the access log, before the session, the errors page and the backup check.
+    - At its plain address, the same status, headers and 304s as Starlette's `StaticFiles` (its ETag and
+      Last-Modified, so a browser's copy stays good across the change), laptop and server; a test compares every
+      file, both modes, for GET, HEAD, Range, If-None-Match, If-Modified-Since, POST and a file that isn't there.
+    - `StaticFiles` still answers what memory doesn't: a POST, a file that isn't there, a Range (at the file's plain
+      address). A file whose real path is outside its folder (a link out of it) is left out, as `StaticFiles` refuses
+      it (`follow_symlink=False`).
+    - Why: a static file costs about a millisecond, but `StaticFiles` read it on one of the worker's 4 threads
+      (D-153), behind pages of 1-2 s. Server CPU a request through uvicorn (server mode, four runs of 3,000 each):
+      a 304 0.85-1.03 → 0.41-0.47 ms, app.css 1.49-2.52 → 0.49-0.50 ms, app.js 1.46-2.52 → 0.45-0.46 ms, the 373 KB
+      icon font 3.26-4.38 → 0.50-0.56 ms; and no thread.
+    - A file edited while AP Coder runs is answered as it was at the start (a developer restarts `serve`).
+  - **Kept addresses:** the pages link each file at `/static/<build>/...` (`/fonts/<build>/...`,
+    `/assets/<build>/...`) through `core.static_url`, with `Cache-Control: public, max-age=31536000, immutable`; the
+    kept stylesheet names the fonts at theirs (its own ETag).
+    - The build is a hash of the files' contents, not the commit: a checkout's commit doesn't change with an edit not
+      yet committed (the edited script would be kept a year), and an update that changes no file keeps everyone's
+      copies.
+    - Another build's address (a page drawn before an update) answers the file as it is now with `no-cache`, for
+      `/static`, `/fonts` and `/assets` alike: never kept a year under an address that isn't its own. The plain
+      addresses answer as before (`/static` `no-cache`, `/fonts` and `/assets` without Cache-Control). Pages stay
+      `no-store`.
+    - Every template uses `static_url` (a test fails on a plain address: a page script loaded at its plain address
+      would be a second app.js module beside the page's own).
+  - **Measured** (bench load, a 3,000-invoice seed, 60 people, think 4 s, 2 web workers, 180 s; the 4 cores shared
+    with other agents).
+    - The first build (lost before it was pushed, rebuilt as written here), before → from memory → kept addresses
+      too: requests 22,834 → 26,344 → 6,045 (27,506 more from the browsers' caches); `/static` p95 1.82 s → 130 ms →
+      67 ms; `/fonts` and `/assets` p95 1.79 and 1.96 s → 25 and 52 ms; pages p50 3.25 s → 466 ms → 269 ms, p95
+      49.4 s → 6.10 s → 1.67 s; actions p95 50.8 s → 12.3 s → 2.05 s; requests over 30 s 745 → 0 → 0.
+    - The rebuild, all of D-161 against main, on a machine busier than the first build's (other agents' tests on its
+      cores), saturated both times: the people's work done +63% (requests other than static files 1,319 → 2,147;
+      invoices opened 140 → 252, checks 170 → 356), the workers at 1.11 and 0.33 → 1.07 and 1.02 cores; `/static` p95
+      7.51 s → 212 ms, `/fonts` 13.8 s → 59 ms; the pages stayed past what the people asked (p95 64 → 62 s).
+    - The rebuild, lighter (30 people, think 10 s): the same work in 5,193 → 1,681 requests (5,696 more from the
+      caches); `/static` p95 493 → 70 ms; pages p50 792 → 709 ms, p95 3.34 → 3.19 s; actions p95 1.95 → 1.56 s.
+  - **No compression** (laptop and server).
+    - gzip's CPU a MB of AP Coder's HTML and JSON (the first build, on the 100k database): level 1 4.4-6.6 ms, level
+      4 7.3-11.7, level 6 14-18, level 9 (Starlette's `GZipMiddleware` default) 60-75.
+    - The review screen (3.6 MB there, 565-630 ms of CPU): level 1 16-24 ms for 0.53 MB, level 9 241-271 ms. The
+      queue (85 KB): level 1 0.5 ms for 9 KB.
+    - On the office's gigabit network 3.6 MB take about 29 ms, which cost the server nothing; level 1 would cost 4-5
+      core-s a minute at 100 people (3% of the 4-core budget) and save no time anyone sees.
+    - Where it matters (a VPN at 20 Mb/s: 1.4 s against 0.2 s), IIS in front compresses `text/html` and
+      `application/json` only, at its lowest level (SERVER.md); never a download (CSV, xlsx, PDF, PNG, ZIP). Static
+      files are not compressed either: each browser fetches them once a build. Revisit if the review screen's
+      vendor list leaves the page.
+  - **Polls** (`app.js` `poll`, used by `pollJob` and the review screen's reading):
+    - Nothing while the tab is hidden; a look at once when it is shown again.
+    - After an answer the same as the last (or none), the wait is half as long again, up to three times the pace (a
+      job's at least 5 s); a change starts again at the pace.
+    - A look answered by the login stops it (B-1712): a 401, or a GET sent on to `/login`, or to `/who` (a laptop
+      shared on the office network asks a colleague's name again once AP Coder started again: a new key makes the
+      cookie no good). The job pages then go there and come back after it; the review screen stays as it is, and
+      its next check goes to the login with the edits kept (B-1594).
+    - `watchJob` asks `/jobs/<name>?only=done,note`: the state, done and note, not the job's 500 lines.
+  - **Deadlines** (`fetchWithin`, AbortController): a look 30 s, an action (`post`), the setup report and the words
+    on the page (a scan's pages may be read again, B-1715) 5 minutes; past it, the existing "didn't answer" wording.
+    `post(url, body, {ms})` takes 0 for none.
+    - A form marked `data-long` is sent with none: the actions the server runs whole in the request, however long
+      they take. Restore (a safety backup first, of a database of gigabytes), Past coding → Teach, the imports (GL
+      accounts and cost centers, bank accounts, vendor master, payment register, purchase orders, the JD Edwards GL
+      map and worksheet), a Finance Hub run, the bulk approval of clean invoices (its list grows with the queue)
+      and the page reader's model loaded (up to 5 minutes a try, B-1717). The JD Edwards posting and sync run as
+      jobs already; an export batch keeps its 5 minutes.
+  - **The workers' balance:** a busy worker hands its connections back (`server.HandBack`): while requests wait for
+    one of its threads, or for its long routes' lane (`core.run_heavy`: two reports taking its CPU, more waiting),
+    its answers say `Connection: close`. A pool or a lane full with nobody waiting is not busy. `KEEP_ALIVE_SECONDS`
+    stays 75.
+    - How a connection finds a worker: the workers listen on one socket, and the first to `accept()` takes it, on
+      Linux (epoll; uvicorn sets no `SO_REUSEPORT`) and on Windows (uvicorn's supervisor shares the listening socket,
+      B-1711, and each worker runs the selector loop, so every worker's `select()` wakes: B-1441 saw two woken for
+      one). A free worker's loop usually wins it: a busy one waits for the GIL behind its threads.
+    - What kept people on a busy worker is the browser keeping its connections (minutes: Chrome up to 5, Firefox
+      about 2) and the server 75 s. The harness's people closed theirs after 5 s unused (httpx's default), which hid
+      it: `bench load --keep-alive 300` keeps them as a browser does (the default stays 5, so earlier runs compare).
+    - Measured in the first build with people keeping connections 300 s: 50 people, think 10 s, 4 workers: one
+      worker did 54% of the work. Saturated (60 people, think 4 s, 2 workers), three pairs back to back: pages p95
+      5.2 / 24.0 / 33.3 s with 75 s alone, 4.1 / 19.6 / 16.6 s with HandBack; requests over 30 s 0 / 147 / 343
+      against 0 / 74 / 9. With the default people (5 s) no difference beyond the noise.
+    - The rebuild, people keeping connections 300 s (30 people, think 10 s, 2 workers), two pairs, the second in the
+      other order: the workers at 0.40 / 0.90 and 0.48 / 0.81 cores without HandBack, 0.67 / 0.65 and 0.64 / 0.64
+      with it; pages p95 4.68 and 19.7 s without, 6.41 and 5.44 s with (the machine's load average 4-6 from other
+      agents' tests: the balance is the steady result, the latencies are noise).
+    - The rebuild's saturated pair (above) at the default 5 s: 1.11 / 0.33 cores before, 1.07 / 1.02 after.
+    - A shorter keep-alive was refused: at 5 s, 12 requests got no answer in the saturated run (B-1295's race: an
+      idle connection closed as the browser sent on it).
+    - `Connection: close` comes in the answer: it arrives whole, the browser opens a new connection for its next
+      request, nothing is lost, and IIS ARR in front does the same. A new HTTPS connection costs the worker that
+      takes it 1.2 ms (0.4 ms resumed).
+  - **Not done:** the import's poll still sends its lines (up to 500, 57 KB; process.js shows them all); an upload
+    (XHR) has no deadline (it may take minutes); a poll without a session still draws the login page once before
+    it stops (`identity.py`); the access log writes on the event loop (`security.py`).
+  - (`web/core.py`, `web/app.py`, `web/server.py`, `web/templates/*`, `web/static/js/{app,invoice,help}.js`,
+    `bench/load.py`; `tests/web/test_web_app.py`, `test_server_browser.py`, `test_server_capacity.py`,
+    `test_web_settings.py`)
+- **D-162** · **The reports and pages still slow at 100,000 invoices: kept per change, listed a part at a time, or read
+  without waste** (phase 2 part 2).
+  - **Kept in each process** (`Store.summary_memo`, D-159's rule: a stamp read from the database before the work), on
+    the counts D-159's triggers keep (`SUMMARY_TRIGGERS`, `changes/<kind>`: any insert, update or delete of the
+    table, on any connection):
+    - "suppliers" (`supplier_outcomes`): every vendor's supplier learning record (`all_supplier_stats` without its
+      fields, asked the vendors) and the drawn vendors' field figures (`supplier_fields`): Learning → Supplier
+      learning, Settings → Automation;
+    - "readers" (`reader_outcomes`): the readers' scorecard: Settings → Reading, Learning → Readers;
+    - "purchase_orders" (`purchase_orders`, `po_lines`), with the summary's generation: month-end's received, not
+      invoiced PO lines, per period end (`accruals._received_not_invoiced`);
+    - "register" (`erp_invoices`), with the summary's generation: the duplicate payment audit's pairs
+      (`dupaudit.find`: its page and its CSV);
+    - "lessons" (`feedback`): each vendor's lesson counts (`vendor_summaries`: Vendors, Statements, the JDE
+      worksheet);
+    - "situations" (`lessons`, `lesson_approvals`): the Lessons tab's rows (`learning.lesson_rows`);
+    - the summary's generation alone: the Spend page's figures and currencies, per period, currency, GL categories
+      and rates (copies; `spend.figures`, `spend_currencies`; `read_figures` reads them now).
+    - **What a trigger costs:** about 37% more time on a 200,000-row import (A1's measurement in D-159: 4.7 → 6.5 s
+      through `import_erp_register`, a rare import, on a thread); most writes change one row.
+  - **Listed a part at a time, with Show more** (how many in the address, `web.core.shown_count`, which Supplier
+    learning's count uses too; the CSVs, tiles and search keep every row; with every row asked, each page is the one
+    it was): Sales tax's claims and self-assessments (500 each: `rows`, `self_rows`), Vendors (200: `shown`, kept
+    when one is opened), Purchase orders (200: `shown`). On the laptop too: a list under these sizes shows as before.
+  - **Read without waste:**
+    - `jde.resolve_an8` reads the vendor IDs without copying them for each invoice or vendor;
+    - Learning → Coding accuracy counts the approvals with SQLite (`insights.approval_counts`, as Activity);
+    - Settings → Data counts the invoices folder with `os.scandir` (0 for one it can't list, B-1723);
+    - `vendor_summaries` reads only the listed vendors' rows of the vendor list;
+    - `clean_fields_needed` (a pure search, asked twice a vendor) is cached.
+  - **What stays true:** a kept answer is what reading again gives (a two-Store test each,
+    `tests/core/test_kept_answers.py`, each failing without its count). Memory kept a worker at 100,000 invoices
+    (`tracemalloc`): the supplier records 28 MB (47 MB at the peak of working them out, which each request took
+    before); the rest under 2 MB each (the audit's pairs 1.7, the Lessons tab 1.1, the lesson counts 0.9, Spend 0.6,
+    month-end 0.2, the field figures 0.1; the scorecard and the currencies a few KB).
+  - **Under load:** the summary's generation changes with every invoice written, so month-end, the audit and Spend are
+    worked out again after each write. They help one person and pages asked again between writes, not 100 people.
+  - **Not done:**
+    - `/search/export.xlsx` (9-10 s at 50,000 rows): 70% of it is openpyxl writing 450,000 cells. A job per person,
+      as the Spend workbook, or a lighter writer.
+    - `/activity/events.csv` (11 s, 416,000 events): streamed as it is read (B-1597), so the download starts at once.
+    - Month-end worked out afresh: 8-9 s (69,000 codings read and decoded). A summary table of each invoice's
+      PO-billing lines (summary rules 3) would make it about 1.5 s.
+    - Insights (1.8-2 s, within a report's 3 s); `/process` (a seed artefact: no `seen_files`).
+  - (`core/store/{suppliers,capture,vendors}.py`, `erp/{accruals,dupaudit,spend,jde}.py`, `capture/supplier.py`,
+    `web/core.py`, `web/pages/{learning,settings,sales_tax,vendors,purchase_orders}.py` and their templates;
+    `tests/core/test_kept_answers.py`)
+- **D-163** · **RapidOCR 3 runs PP-OCRv4 too, read exactly as rapidocr-onnxruntime read it, on every Python; that
+  package is gone.** The first read, which the rule reader and the confidence table are tuned on, was
+  rapidocr-onnxruntime 1.4.4, published for Python up to 3.12: on 3.13 and 3.14 scans were read by PP-OCRv5 alone (its
+  second read the same model on an enlarged page), unless the launcher's install past its metadata worked.
+  - **What 1.4.4 ran:** PP-OCRv4 mobile det and rec (`ch_PP-OCRv4_det_infer.onnx`, `ch_PP-OCRv4_rec_infer.onnx`, its
+    characters in the model) and the v2.0 angle classifier (`ch_ppocr_mobile_v2.0_cls_infer.onnx`), on ONNX Runtime.
+    Pages over 2,000 pixels a side shrunk; det with the smaller side made 736, threshold 0.3, box threshold 0.5, unclip
+    ratio 1.6, dilation, the fast score, boxes under 4 pixels dropped; the angle classifier on (0.9); rec at 48 x 320
+    in batches of 6; lines scoring under 0.5 dropped.
+  - **RapidOCR 3.4.5** carries the same three files in its package (the same SHA-256), and its default settings are
+    those. The pre- and post-processing, the crops and the ONNX Runtime session options are the same code. Two steps
+    differ; `capture/layout.py` (`_read_as_rapidocr_onnxruntime`) takes them as 1.4.4 did:
+    - the boxes' order: 1.4.4 sorts them by their top left corner and swaps neighbours under 10 pixels apart; 3.4
+      groups them into lines first, which orders some differently, and the order sets which lines are recognised in
+      one batch (`_boxes_in_order`);
+    - a line's score: 3.4 rounds each character's probability, and their mean, to 5 decimals (`_decode_lines`).
+    - 3.4 also drops a line whose text is blank; 1.4.4 never gave one in the lines measured below.
+  - **The proof** (Python 3.12 with both installed, ONNX Runtime 1.31.1):
+    - **The OCR:** the 229 page images the app gives the first read (78 bench scans' pages, 73 of them straightened and
+      enlarged for a second read, 26 supplier-stream pages, 4 photos on a desk, 24 pages turned 90, 180 or 270 degrees
+      and their 24 enlarged copies): all 15,335 lines the same boxes, texts, scores and order as 1.4.4's, compared
+      whole. 1.4.4 again on 30 of them: the same. Without the two steps (14 images), every score differed (by up to
+      1e-5) and 7 had lines in another order.
+    - **The reading:** `scripts/same_behaviour.py --ref 62d2590`: tax, approve and read the same.
+    - **The benches** (`--quick --scanned 1`): `run`, 24 scans, the same before and after (field accuracy 100.0%,
+      verified precision 100.0% at 50.7% coverage, every invoice right, no silent error, ECE 0.0226; its failures and
+      evidence the same bytes). `lines`, every invoice a scan (B-1724): descriptions right 43.1% before and after;
+      the 17 AP corrected all right the next time, GL right 100%.
+  - **On Python 3.13 and 3.14** a venv made with `pip install -e ".[ocr]"` had no 1.4.4 (the launcher's had it). Now it
+    reads exactly as 3.12 does: the read probe's 60 readings are the same bytes as 3.12's before, and the benches' cases
+    the same. Against its PP-OCRv5-alone reading: `run` field accuracy 98.7 → 100.0%, invoices all right 87.5 → 100%,
+    no silent error 95.8 → 100%, ECE 0.0387 → 0.0226, verified coverage 52.4 → 50.7%; `lines` descriptions right on
+    the first reading 87.5 → 43.1%: 30 of the 33 lost differ only in spaces (PP-OCRv4 runs a scan's words together,
+    "Palletwrap18in.x1500ft"), each right after AP's one correction. Taking line descriptions from the PP-OCRv5 read
+    is not done here: the reader and its confidence table are tuned on PP-OCRv4's reading.
+  - **The bundle:** the rapidocr-onnxruntime wheel (14,915,192 bytes, one for every target) goes; the PP-OCRv4 det and
+    rec (15,603,475 bytes, stored as the ZIP stores every model) join `models/` as PP-OCRv5's are, so
+    `scripts/fetch_models.py` puts back a damaged copy and `--check` checks them: 0.7 MB more. Left out, the bundle
+    would be 14.9 MB smaller (RapidOCR's wheel has them).
+  - **Names:** the engines are "ppocrv4" (was "rapidocr") and "ppocrv5". The app's OCR cache keys a reading by
+    RapidOCR's version, so each page kept is read once more; the bench's `AP_OCR_CACHE` keeps its names.
+  - **Gone:** `ensure_second_ocr` (the launcher installed 1.4.4 on 3.13+ with `--ignore-requires-python`), and the
+    bundle builder's downloads past a package's metadata (`IGNORE_REQUIRES_PYTHON`).
+  - (`capture/layout.py`, `ops/offline.py`, `ai/reading.py`, `scripts/launch.py`, `scripts/fetch_models.py`,
+    `scripts/build_offline_bundle.py`, `scripts/check_deps.py`, `scripts/first_run.py`, `pyproject.toml`,
+    `docs/HOW_IT_RUNS.md`, `docs/tested-packages.txt`; `tests/offline/test_offline.py`, `tests/launcher/test_launch.py`,
+    `tests/capture/test_reading_once.py`)
+- **D-164** · **An answer a page only shows may settle for a few seconds after a change** (phase 2 part 2, measured
+  under load).
+  - **Why:** the first load run of part 2 (100 people on 100,000 invoices, part 1's settings) did twice part 1's work
+    (5,200 pages and actions against 2,600) on the same saturated 4 cores. Its profile (py-spy, two minutes of the
+    four workers): a third of their CPU was `summary_memo` working answers out again. Every approval, park or
+    check moves the summary's generations and counts, so the queue's checks, the day's figures, month-end and the
+    reports were worked out again at nearly every request; D-162 said so ("they help one person, not 100 people").
+  - **What:** `summary_memo(..., settle=seconds)`. Once what an answer depends on changed, the answer kept is still
+    taken while it was worked out less than `settle` seconds ago, for the same question (`asked`) on the same
+    database (`summary_id`: never past a restore). Inside a write under way it is worked out afresh, as before.
+    Under a stream of changes it is worked out at most every `settle` seconds in each process, and is at most that
+    old.
+  - **Where it may be used:** only for what a page shows and nobody acts on unchecked: counts, figures, reports, the
+    reading status. Never for what a check, an approval, an export or a posting decides with (the vendor IDs, the
+    approved numbers, a vendor's invoices, the checks an approval runs): those follow every change, as before.
+  - (`core/store/summary.py`; `tests/core/test_kept_answers.py`)
+- **D-165** · **The review queue, the invoice page and every page's reading status made cheap under a stream of
+  writes** (phase 2 part 2, B-1730 to B-1736).
+  - **Why:** in the first load run's profile (100 people on 100,000 invoices, 4 workers, D-164), `GET /review` took
+    27% of the workers' CPU, the invoice page 9% and the check 5.4%. Of `/review`: the queue's checks 8.8% (worked
+    out again after nearly every write), today's pills 6.9% (the late regular invoices), the reading status 6% (on
+    every page: the page reader's wait 4.3%), every vendor's terms 1.7%.
+  - **Each cause, and what now** (each exact, but the one pill):
+    - **The queue's findings** (B-1730): each time the queue's checks were worked out again, every finding of 2,654
+      invoices was decoded and made read-only one by one (133 ms), though they share 211 texts. `bulk._found` decodes
+      each text once, kept for every process (`_FOUND`, 1.5 MB here; past `FOUND_KEPT`, 4,096 texts, all let go):
+      shared, read-only, each invoice's list its own. The answer kept is 6.8 MB instead of 19.8.
+    - **The queue's order** (B-1731): a check writes the confidence it worked out, which moves its invoice in the
+      queue, and the queue's checks were kept for the invoices asked in their order. They are kept for the invoices
+      asked in any order (their answer is by invoice), so a check no longer works them out again; an approval, a
+      park or a rejection still does (the `queue` topic and the invoices asked move).
+    - **The late regular invoices** (B-1732): every vendor's invoice dates (98,720 rows, 0.95 s) after each upload or
+      rejection (the summary's `dates`). The queue only shows this pill, so it settles (`summary_memo(...,
+      settle=LATE_SETTLE)`, 60 s, `web/pages/review.py`). Sixty seconds and not a few: a vendor is late by days (its
+      cadence of a week to a quarter, plus at least five days' grace), so a minute behind changes nothing anyone
+      does, and 0.95 s every few seconds in each worker would still be most of the pill's cost. The Vendors page and
+      Month-end ask `recurring.detected` itself, exact as before.
+    - **The vendors' terms** (B-1733): the queue's 50 rows read the terms of every vendor (19,008: 27 ms) on each
+      visit; kept on `changes/vendors` (2.7 MB).
+    - **The reading status** (B-1734, B-1736): the page reader's wait sorted all 99,692 finished reads for the latest
+      50 (44 ms a page), the templates' count read all 3,008 templates (14.7 MB: 6 to 13 ms), the open queue listed
+      every invoice in review. Two indexes (`page_reads_done` by status and time, the partial
+      `supplier_profiles_template`) and an `EXISTS` make them 0.02, 0.1 and 0.02 ms. The indexes are in `_SCHEMA`,
+      made at every start where missing (about 0.1 s at 100,000 invoices), with no new schema version: an index
+      changes no data, and an older AP Coder opens such a database as before.
+    - **The directory's exports** (B-1735): their ids and rows were read one row at a time, the worker's lock on
+      Python handed back and forth at each row (50,000 ids: 0.2 s alone, 132 s beside three busy requests). Read in
+      one step (`fetch_rows`): 0.65 s so (0.24 s alone, 15% more than row by row).
+  - **Never settled:** the queue's checks and lists (bulk approval offers its invoices from them, and an invoice just
+    approved leaves the queue at once), the check, a vendor's invoices and the vendor IDs: they follow every change.
+    Bulk approval checks each invoice again anyway (`bulk_approve`).
+  - **Measured** (`p2c_queue/probe.py` in the session's scratchpad: the app on a copy of the 100,000-invoice database,
+    the queue as on the server, the bench's stand-in model as page reader with a page time measured; CPU of one
+    request, medians of 16; "after a check": a confidence written first, "after a park": an invoice parked or put
+    back first):
+
+    | request | alone | after a check | after a park |
+    |---|---:|---:|---:|
+    | `GET /review` | 159 → 83 ms | 545 → 137 ms | 597 → 236 ms |
+    | `GET /review/{id}` | 136 → 73 ms | 184 → 120 ms | 193 → 134 ms |
+
+    The check (46 to 68 ms, before and after alike, within the shared machine's noise) draws no reading status and
+    asks none of these.
+  - **Not done** (other files' owners):
+    - `list_invoices` of the queue's lists (`listed`, 48 ms) after every check's confidence: `/review` and the invoice
+      page's Previous and Next. A topic without the confidence, the confidences read apart and sorted, would keep the
+      rows (`core/store/summary.py`, `invoices.py`).
+    - The queue's facts read again after a park or an approval (`bulk._queue_rows`, 57 ms; the findings texts are 36
+      of them, JSON within JSON): the summary could keep each findings text once (`summary.py`). Read with each text
+      once by a window over them was slower (65 ms: SQLite sorts the texts).
+    - `status_counts` after each change of status (16 ms, every page's rail): a count, it may settle (`summary.py`).
+    - The queue's Pay from (`last_pay_froms`): 197 ms at each `/review` once any bank account is in use (none in the
+      load bench's seed): an index by vendor and approval time, or kept on a stamp (`accounts.py`, `summary.py`).
+    - The search page's first page sorts all 100,000 rows (`directory_ids`, 81 ms): an index for its default sort
+      (`summary.py`'s schema).
+    - The invoice page and the check: a vendor's invoices (`vendors.py`), its lessons (`learning.py`), the lines'
+      similarity search. `_to_fix` (15 ms) and the queue's template (14 ms) each `/review`.
+  - (`coding/bulk.py`, `web/pages/review.py`, `core/store/{_base,capture,summary}.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/coding/test_bulk.py`, `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
+    `tests/erp/test_directory.py`)
+- **D-166** · **Import invoices lists the folder once by name; month-end works out only the POs whose billing changed;
+  the reports a page only shows settle** (phase 2 part 3, B-1725; measured as thread CPU on the 100,000-invoice
+  database, alone and right after a change made elsewhere, against e889dc4).
+  - **Import invoices (GET /process):** D-162's "a seed artefact" was not one. The seed notes its files as an upgrade
+    does (`fill_seen_files`: each invoice's own file, its place trusted), and a real installation after an update, a
+    restore (the files put back at their own times, `seen_files` as backed up) or with 100,000 files is in that state.
+    Each list worked out again (the folder, a pick-up's notes or the invoices changed, or a minute on, in each worker)
+    took 3.7 s: `invoice_files`, `emails_in` and `other_files` each made a Path of every file. And `not_read_here`
+    listed the folder again at every view (0.6 s).
+    - Now one `os.scandir` by name gives the three lists (`process.folder_names`: the same names in the same order, a
+      test against the three); each file is looked at by its place as a string; the names not read are kept with
+      the list.
+    - 1.46 s afresh (the names 0.4, each file's size and time 0.4, the one query 0.6); nothing on a kept view.
+    - Its setup steps read every vendor of the vendor master, each column (20,000: 0.23 s), at every view, to count
+      them and those with an address number: now two columns, the counts kept until the vendor list or the numbers
+      set in Settings → JD Edwards change. The steps 0.25 s → 45 ms.
+  - **Month-end, received not invoiced:** every approval moved its stamp, so each visit decoded 69,000 codings (6.5 s).
+    - Each received PO's accruals are kept in the process (`accruals._PARTS`) with a digest of what they came from:
+      the database's `summary_id`, the PO and its lines, its billing invoices (which ones, their dates and PO, read
+      from the summary at each ask) and those invoices' vendors' change counts (`changes/vendor/<key>`, D-159).
+    - After a change, only the POs whose billing moved have their invoices decoded. Nothing read in a write under way
+      is kept, nor a PO billed by an invoice with no vendor key. Each answer is what working every PO out afresh
+      gives: a test after each kind of change, a restore and a write undone.
+    - At 100,000 invoices: 0.66 s when no PO's billing changed; 1.5 s after a change to the vendor with the most
+      billing invoices (1,156); 6.1 s the first time in a worker.
+    - The invoices not in the ERP yet (0.9 s at every visit) are kept per change. What is asked: the period end, the
+      G/L date's cutoff, the batches made after it and the tax setup; the POs' change count is part of what the
+      received lines are asked for. A change to any of these is another question, worked out at once.
+  - **Settled under a stream of changes (D-164):** only what a page shows, never what a check, an approval, an export
+    batch or a posting decides with. Each module's `SETTLE_SECONDS`:
+    - the recurring vendors (the queue's pill, Vendors, Month-end), 60 s: 0.83 s → 2 ms after a change;
+    - Spend's figures and currencies, 30 s: 2.2 s → 3 ms;
+    - Insights (`insights.shown`, `shown_operations`), kept per change, 60 s: 1.76 s at every visit → 6 ms;
+    - the Month-end page's schedule, 30 s: 8.9 s → 0.1 s after a change (the CSV, booked from, settles nothing:
+      10.1 → 2.7 s).
+    - **The lengths:** a settled request costs nothing, and a worker works an answer out at most once a `settle`.
+      The pill is asked at each view of the queue, the busiest page: 0.8 s every 60 s is 1.3% of a core a worker
+      (8% at 10 s), and a regular invoice is late by days. A change of one's own may show on a report up to that
+      long after. What is downloaded (the accruals CSV, the business case) is worked out afresh.
+  - **Exports:** what an undone batch held (`exported_totals`, every export event decoded: 0.54 s, read in every
+    worker after each batch made) is read only when an undone batch is listed: the others show their own invoices'
+    totals (`batch_totals`, kept per change, not settled, so a batch just made shows its amounts).
+  - **B-1725:** `postings.ensure` takes a column another connection added meanwhile as there. It stays at each
+    connection (45 µs): putting the table in the schema would not remove a concurrent add (a laptop's dashboard and
+    a command line migrating at once), and needs no schema change.
+  - **Not done:**
+    - `/search/export.xlsx`, 11.9 s at 50,000 rows: openpyxl writing the cells. A job a person waits on moves that
+      CPU, it doesn't cut it; a lighter writer is `erp/exports.streamed_sheet`'s.
+    - `/search/export.csv`, 1.8 s at 50,000 rows: the directory's reads and cells, none of it waste in the page.
+    - Sales tax, 1.25 s at every visit (`taxreturn.build`, `self_assessment`): within a report's 3 s. A kept answer
+      would follow the tax rates file in the data folder, the sites and JD Edwards' settings, which
+      `coding/taxreturn.py` reads: it belongs there.
+    - Month-end's first visit in a worker (8.5 s) and its 0.66 s kept path: D-162's summary table of each invoice's
+      PO-billing lines (`core/store/summary.py`).
+  - (`web/pages/process.py`, `erp/accruals.py`, `erp/recurring.py`, `erp/spend.py`, `erp/insights.py`,
+    `core/store/{purchasing,postings,vendors}.py`, `web/pages/{month_end,exports,insights}.py`;
+    `tests/web/test_web_process.py`, `tests/erp/test_accruals.py`, `tests/erp/test_insights.py`,
+    `tests/erp/test_suggest_recurring.py`, `tests/core/test_kept_answers.py`, `tests/core/test_store_races.py`)
+- **D-167** · **The review queue's last store costs under a stream of writes** (phase 2 part 2, B-1737 to B-1741:
+  D-165's "Not done" of the store).
+  - **Why:** after D-165, with 100 people checking, approving and parking, `/review` and the invoice page still read
+    again what a write moved even when they only show it, and once a bank account is in use (every real
+    installation; the load bench's seed had none) each `/review` ranked a year of approvals for the Pay from.
+  - **Each, and what now** (all exact, but the counts shown):
+    - **The queue's lists** (B-1737): the `listed` topic no longer covers the confidence (`CONFIDENCE`: what a check
+      writes). The rows are kept by id; each ask reads the confidences with the queue's order (`QUEUE_ORDER`, the
+      same `ORDER BY`) off a covering index (`summary_queue_order`) and gives each row its own. An invoice listed or
+      gone between the two reads (another worker's write) has the list read afresh. Not kept apart on a topic of
+      their own: under 100 people a check comes between nearly every two asks, so it would rarely hold, and it saves
+      about 8 ms only when nothing changed (a list asked with nothing changed costs 10 ms instead of 1.3).
+    - **The counts by status** (B-1738): `status_counts(settled=True)` settles for `COUNTS_SETTLE` (5 s): every
+      page's rail (`web/core.py:nav_counts`) and the queue's tabs. Five seconds: a count a person reads, at most one
+      approval behind. Exact still: the approval's "your queue is clear" (it then refreshes what the rail takes), the
+      first start's page (shown while `has_invoices` finds none; it offers the demo by them) and the demo's load.
+    - **The Pay from** (B-1739): each waiting vendor's latest is sought on a partial index (`summary_pay_from`:
+      vendor, approval time, id and account, of the approved or pending invoices with an account, `PAID_FROM`), one
+      seek a vendor, read in one step. Not kept on a stamp: each approval would move it. The seed sets up a CAD and
+      a USD account (`seed.BANK_ACCOUNTS`) before its templates are read, so each clone is paid from its currency's,
+      as approved.
+    - **The search page's first page** (B-1740): an index in the directory's default order (`summary_received`:
+      `directory.order_by` of "received", newest first, its expressions as they are). Another sort, direction or
+      filter sorts as before; the test reads the plan, so a change to `order_by` is seen.
+    - **The queue's facts** (B-1741): `Store.queue_rows` reads the facts without the findings texts, then each text
+      once with the ids that have it (grouped), in one read transaction (`summary_snapshot`). Not kept once in the
+      summary (a table of texts): that is a summary column changed, so `SUMMARY_RULES` moves and every database's
+      summary is built again at its next start (86 s at 100,000 invoices), for about 13 ms more.
+  - **The indexes** are in `SUMMARY_SCHEMA`, made at every start where missing (0.1 to 0.15 s each at 100,000
+    invoices), with no new schema version (as D-165): an index changes no data, and an older AP Coder opens the
+    database as before. Each write of a summary row keeps them up (the partial one only for an approved invoice
+    with an account).
+  - **Measured** (`p2c_store/probe.py` in the session's scratchpad, D-165's probe on a copy of the 100,000-invoice
+    database with three bank accounts in use; CPU of one request, medians of 16; "after a check": a confidence
+    written first, "after a park": an invoice parked or put back first):
+
+    | request | alone | after a check | after a park |
+    |---|---:|---:|---:|
+    | `GET /review` | 390 → 129 ms | 462 → 121 ms | 560 → 233 ms |
+    | `GET /review/{id}` | 90 → 88 ms | 124 → 91 ms | 134 → 130 ms |
+    | `POST /review/{id}/check` | 54 → 47 ms | 51 → 46 ms | 50 → 48 ms |
+
+    Each read on a request's one connection (`p2c_store/store_parts.py`): the queue's lists after a check 52 → 10
+    ms, Previous and Next's 50 → 9; the counts after a park 7.4 → 0.2 (settled); the Pay from of 1,028 vendors 281
+    → 6; the queue's facts 59 → 39; the search page's first page 83 → 5. The check (within noise) asks none of these.
+  - **Not done** (other files'):
+    - `/review` after a park: the queue's checks worked out again (72 ms, the facts 39 of them), the lists' rows
+      read again (48 ms); after a check and a park alike, `attention` (54 ms: with an account in use the Pay from
+      choice of each of 2,654 invoices, `banks.opening_choice` and `blocking`, about 25 ms, and `_to_fix`, 15 ms;
+      `web/pages/review.py`), the 50 rows and the template.
+    - The invoice page after a park: the review list's rows read again for Previous and Next (48 ms). The page and
+      the check: `analyse` (`finalise_coding`), `find_duplicates` (each of the vendor's invoice numbers normalized
+      in Python, about 1,270 a call, while the summary's `number_key` holds them normalized), `vendor_findings`.
+  - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
+    `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
+    `tests/bench/test_seed_volume.py`)

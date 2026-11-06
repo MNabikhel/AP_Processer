@@ -177,3 +177,52 @@ def test_the_exports_page_shows_an_undone_batch_per_currency(tmp_path):
     store.undo_export_batch(store.create_export_batch(ids, "csv"))
     page = client_for(store).get("/exports").text
     assert '40.00 <span class="muted">USD</span>' in page and "140.00" not in page
+
+
+def test_the_exports_page_reads_what_batches_held_from_the_audit_trail_only_for_an_undone_one(tmp_path, monkeypatch):
+    """D-166: the audit trail's export totals (``exported_totals``, every export event decoded: 0.5 s at 100,000
+    invoices, at each batch made in every web worker) are only what an undone batch shows: read only when one is."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    read = []
+    real = Store.exported_totals
+    monkeypatch.setattr(Store, "exported_totals", lambda self: read.append(1) or real(self))
+    invoice_id, output = _invoice(tmp_path, store, "1", 100.0)
+    store.approve_invoice(invoice_id, output, "Ann")
+    batch = store.create_export_batch([invoice_id], "csv")
+    client = client_for(store)
+    assert "100.00" in client.get("/exports").text and read == []
+    store.undo_export_batch(batch)
+    assert "100.00" in client.get("/exports").text and read == [1]
+
+
+def test_two_workers_adding_the_jde_postings_columns_at_once_both_carry_on(tmp_path):
+    """B-1725: the JD Edwards postings table gets its newer columns at its first use (``postings.ensure``, at every
+    connection ``jde_post`` opens). Two web workers' first Exports page at once both read the table's columns before
+    either had added one: the second's ALTER TABLE failed, a 500 (duplicate column name: rev). A column another
+    connection added meanwhile is now taken as there."""
+    from ap_coder.core.store import postings
+    from ap_coder.erp import jde_post
+
+    first, second = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    with sqlite3.connect(first.path) as conn:  # the table as D-104 made it, without D-105's columns
+        conn.execute(postings.TABLE[0])
+
+    class Meanwhile:
+        """``first``'s connection: once it has read the table's columns, ``second`` makes its own first use."""
+
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self.conn = conn
+
+        def execute(self, sql: str, *args):
+            found = self.conn.execute(sql, *args)
+            if sql.startswith("PRAGMA table_info"):
+                found = found.fetchall()
+                assert jde_post.postings(second) == []
+            return found
+
+    with first._conn() as conn:
+        postings.ensure(Meanwhile(conn))
+    assert jde_post.postings(first) == []
+    with sqlite3.connect(first.path) as conn:
+        columns = [r[1] for r in conn.execute("PRAGMA table_info(jde_postings)")]
+    assert set(postings.COLUMNS) <= set(columns) and len(columns) == len(set(columns))  # each column once

@@ -1,7 +1,7 @@
 """The company server under load, as many people use it at once: ``python -m ap_coder.bench load``.
 
     python -m ap_coder.bench load --users 10 --duration 60 --workers 2 [--ramp 10] [--think 10] [--out bench_load]
-        [--data DIR [--users-file FILE]] [--seed-invoices 2000] [--model-url URL] [--host ADDRESS]
+        [--data DIR [--users-file FILE]] [--seed-invoices 2000] [--model-url URL] [--host ADDRESS] [--keep-alive 5]
         [--baseline FILE [--max-regression 1.5]] [--quick]
 
 What it runs:
@@ -15,16 +15,17 @@ What it runs:
   invoices, ``--seed-invoices`` of them, each a file of its own, in every state; accounts in every role with their
   authenticator set up) and removed after the run (``--keep-data`` keeps it).
 - **The people**: ``--users N`` of them, 70% Clerks, 20% Approvers, 5% Admins and 5% Read-only, started over
-  ``--ramp`` seconds. Each is one browser (an httpx client with its own cookies, six connections, and a cache that
-  keeps the static files as the headers say: ``max-age``/``immutable`` kept, ``no-cache`` revalidated with
-  ``If-None-Match``/``If-Modified-Since``, ``no-store`` never kept). Each logs in (the password, then a code worked out
+  ``--ramp`` seconds. Each is one browser (an httpx client with its own cookies, six connections, each closed after
+  ``--keep-alive`` seconds unused, and a cache that keeps the static files as the headers say: ``max-age``/
+  ``immutable`` kept, ``no-cache`` revalidated with ``If-None-Match``/``If-Modified-Since``, ``no-store`` never
+  kept). Each logs in (the password, then a code worked out
   now by the app's own ``authenticator.code``), then works in weighted scenarios: the queue (tabs, filters, sorts,
   search, "show more"), an invoice opened as a browser opens it (the page, its styles, scripts and fonts, one to three
-  page images, the reader's poll while it is open), 3 to 6 edits each checked, then approve (with
-  "approve anyway" when only errors keep it closed), park or reject; second approvals; the directory, its CSV and
-  Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job polled; a bulk approval
-  (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's fetch sends (the
-  ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
+  page images, the vendor list through the cache, the reader's poll while it is open), 3 to 6 edits each checked,
+  then approve (with "approve anyway" when only errors keep it closed), park or reject; second approvals; the
+  directory, its CSV and Excel exports; Insights, Spend, Month-end and the other reports; an upload with its job
+  polled; a bulk approval (at most 50); an export batch (JD Edwards when it is set up). POSTs carry what the page's
+  fetch sends (the ``X-AP-Coder`` header, the Origin, ``Sec-Fetch-Site``) as multipart form data.
 - **Think time**: lognormal around ``--think`` seconds between scenarios, a third of it between the steps of one.
   Each person keeps a schedule (scheduled start, against coordinated omission): a step is due a think time after the
   previous one was due, and its time is counted from when it was due, so a slow server's waits are in the figures,
@@ -73,7 +74,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 ROLE_MIX = (("clerk", 0.70), ("approver", 0.20), ("admin", 0.05), ("readonly", 0.05))
 SCENARIOS = {  # each role's scenarios, by weight
@@ -100,6 +101,9 @@ STEP_THINK = 1 / 3  # the think time between the steps of one scenario: this sha
 THINK_SIGMA = 0.6  # the lognormal's spread: its p95 is about 2.7 times its median
 MAX_LAG = 60.0  # a person this far behind their schedule starts again from now
 JOB_POLL = 0.8  # app.js pollJob's interval
+# How long a person keeps a connection unused (--keep-alive): httpx's 5 s by default, so earlier runs compare. A browser
+# keeps its own for minutes (Chrome up to 5, Firefox about 2), which keeps people on the worker that took them (D-161).
+KEEP_ALIVE = 5.0
 JOB_MOST = 180.0  # an upload's job polled for at most this long
 BULK_MOST = 50  # invoices in one bulk approval (the page would post every candidate)
 EXPORT_MOST = 50  # invoices in one export batch
@@ -546,6 +550,7 @@ CSS_URL = re.compile(r"""url\(\s*["']?(/(?:fonts|static|assets)/[^"')\s]+)["']?\
 INVOICE_LINK = re.compile(r'href="/review/(\d+)"')
 VENDOR_LABEL = re.compile(r'aria-label="Review invoice from ([^"]+)"')
 READER_POLL = re.compile(r'<div data-reader[^>]*\bdata-poll="(\d+)"')
+READER_TAG = re.compile(r'<div data-reader[^>]*\bdata-tag="([^"]*)"')  # what its panel shows, which the poll sends back
 INVOICE_URL = re.compile(r"^/review/(\d+)(?:[?#]|$)")
 ACCESS_LOG = re.compile(r"access(?:-\d+)?\.log(?:\.\d+)?")  # a web worker's access log, or one rotated from it
 
@@ -710,8 +715,12 @@ class Screen:
         self.editable = bool(inv) and "data-readonly" not in inv["attrs"] and inv["method"] == "post"
         poll = READER_POLL.search(page)
         self.poll = int(poll.group(1)) if poll else 0
+        tag = READER_TAG.search(page)
+        self.tag = tag.group(1) if tag else ""
         viewer = json_script(page, "viewer-data") or {}
         self.pages = [p["src"] for p in viewer.get("pages", []) if isinstance(p, dict) and p.get("src")]
+        seed = json_script(page, "vendor-seed") or {}  # the vendor list's address (none to fetch: an empty list)
+        self.vendors = str(seed.get("url") or "") if isinstance(seed, dict) and seed.get("count") else ""
         options = json_script(page, "gl-options") or []
         self.accounts = [str(o[0] if isinstance(o, list) else o.get("value", o.get("code", ""))) for o in options
                          if isinstance(o, list | dict)]  # fmt: skip
@@ -863,7 +872,7 @@ class Person:
         self.client = httpx.AsyncClient(
             base_url=run.base, trust_env=False, follow_redirects=False,
             timeout=httpx.Timeout(run.timeout, connect=10.0),
-            limits=httpx.Limits(max_connections=6, max_keepalive_connections=6),
+            limits=httpx.Limits(max_connections=6, max_keepalive_connections=6, keepalive_expiry=run.keep_alive),
             headers={"User-Agent": "Mozilla/5.0 (AP Coder load test)", "Accept-Language": "en-CA,en;q=0.9",
                      "Accept-Encoding": "gzip, deflate"},
         )  # fmt: skip
@@ -1078,17 +1087,23 @@ class Person:
 
     async def open_invoice(self, invoice_id: int, due: float | None = None, url: str = "") -> Screen | None:
         """The review screen as the browser opens it: the page and its files, the first page image (sometimes more
-        pages, sometimes zoomed in) and the reader's poll (no check on opening: the page is drawn with its checks)."""
+        pages, sometimes zoomed in), the vendor list (an editable screen's) and the reader's poll (no check on
+        opening: the page is drawn with its checks)."""
         page = await self.page(url or f"/review/{invoice_id}", due, route="GET /review/{id}")
         if page is None:
             return None
         screen = Screen(invoice_id, page)
+        fetched = []
         if screen.pages:
             want = [screen.pages[0]] + [p for p in screen.pages[1:3] if self.rng.random() < 0.5]
             if self.rng.random() < 0.2:
                 first = screen.pages[0]
                 want.append(f"{first}{'&' if '?' in first else '?'}scale=2")
-            found = await asyncio.gather(*(self.static(p, "image") for p in want), return_exceptions=True)
+            fetched += [self.static(p, "image") for p in want]
+        if screen.editable and screen.vendors:  # the vendor list, as invoice.js fetches it (D-160): through the cache
+            fetched.append(self.static(screen.vendors, "vendors"))
+        if fetched:
+            found = await asyncio.gather(*fetched, return_exceptions=True)
             failed = next((f for f in found if isinstance(f, BaseException)), None)
             if failed is not None:
                 raise failed
@@ -1097,14 +1112,19 @@ class Person:
         return screen
 
     async def watch_reader(self, screen: Screen) -> None:
-        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5)."""
+        """The reader's poll while the screen is open (invoice.js: every data-poll seconds, at least 5), with what its
+        panel shows (``?seen=``: the answer is only "same" while it still is)."""
         every = max(5, screen.poll)
         while time.monotonic() + every < self.run.deadline:
             await asyncio.sleep(every)
             try:
-                answer = await self.send("GET", f"/review/{screen.id}/reader", "poll", accept="application/json")
-                if not answer.json().get("poll"):
+                answer = await self.send("GET", f"/review/{screen.id}/reader?seen={quote(screen.tag)}", "poll",
+                                         accept="application/json")  # fmt: skip
+                found = answer.json()
+                if not found.get("poll"):
                     return
+                if not found.get("same"):
+                    screen.tag = str(found.get("tag") or "")
             except (StepFailed, LoggedOut, ValueError):
                 continue
 
@@ -1404,6 +1424,7 @@ class Run:
     problems: list[str] = field(default_factory=list)
     jde: bool | None = None
     stopping: bool = False  # the people still under way are being stopped: their requests are recorded as cut off
+    keep_alive: float = KEEP_ALIVE  # seconds a person's connection is kept unused (--keep-alive)
 
     @property
     def post_headers(self) -> dict[str, str]:
@@ -1674,9 +1695,9 @@ def markdown(report: dict[str, Any]) -> str:
     out = [
         f"# Load test: {c['users']} people for {c['duration']:.0f} s on {c['workers']} worker(s)",
         "",
-        f"{report['started']}; ramp {c['ramp']:.0f} s, think {c['think']:.1f} s (median); {c['invoices']} invoices in "
-        f"{c['data']}; models: {c['model']}; people reach the server at {c['host']}. {pc['cores']} cores, Python "
-        f"{pc['python']}, {pc['system']}.",
+        f"{report['started']}; ramp {c['ramp']:.0f} s, think {c['think']:.1f} s (median), connections kept "
+        f"{c['keep_alive']:.0f} s unused; {c['invoices']} invoices in {c['data']}; models: {c['model']}; people reach "
+        f"the server at {c['host']}. {pc['cores']} cores, Python {pc['python']}, {pc['system']}.",
         "",
         "## Summary",
         f"- Requests: {r['total']} ({r['per_second']}/s); 5xx {r['errors_5xx']}, without an answer {r['no_answer']}, "
@@ -1767,6 +1788,8 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--model-slots", type=int, default=2, help="answers the stand-in works on at once (default 2)")
     p.add_argument("--host", default=None, help="the address people reach the server at (default: its network one)")
     p.add_argument("--timeout", type=float, default=120.0, help="seconds a request may take at most (default 120)")
+    p.add_argument("--keep-alive", type=float, default=KEEP_ALIVE,
+                   help="seconds a person keeps a connection unused (default 5; 300 as a browser does)")  # fmt: skip
     p.add_argument("--seed", type=int, default=1, help="random seed for the people's choices")
     p.add_argument("--out", default="bench_load", help="output folder (default bench_load)")
     p.add_argument("--baseline", default=None, help="an earlier report.json: fail on a route's p95 over it")
@@ -1832,7 +1855,7 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
         server.start()
         roots = {"server": server.proc.pid, **({"model": model.pid} if model is not None else {})}
         run = Run(f"http://{host}:{port}", host, a.users, a.duration, min(a.ramp, a.duration), a.think, a.timeout,
-                  a.seed)  # fmt: skip
+                  a.seed, keep_alive=a.keep_alive)  # fmt: skip
         started = dt.datetime.now().isoformat(timespec="seconds")
         sampler = Sampler(roots, time.monotonic())
         sampler.start()
@@ -1848,7 +1871,7 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
                "data": str(data) if not seeded_here else "a folder seeded for the run", "invoices": invoices,
                "seed_invoices": a.seed_invoices if seeded_here else None, "model": which, "host": host,
                "timeout": a.timeout, "seed": a.seed, "started_in": server.started_in, "stopped_in": server.stopped_in,
-               "stop_how": server.stop_how, "jde": run.jde}  # fmt: skip
+               "stop_how": server.stop_how, "jde": run.jde, "keep_alive": a.keep_alive}  # fmt: skip
         report = build_report(run, cfg, {"started": started, "harness": harness, "logs": logs, "audit": checked,
                                          "processes": sampler.summary()})  # fmt: skip
         baseline = json.loads(Path(a.baseline).read_text(encoding="utf-8")) if a.baseline else None

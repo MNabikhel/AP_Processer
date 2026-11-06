@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/settings.css') }}">{% endblock %}
 {% block content %}
 <nav class="tabs" aria-label="Settings">
   {% for key, label in tabs %}
@@ -10,4 +10,4 @@
 {% include "settings_" ~ tab ~ ".html" %}
 </div>
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/settings.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/settings.js') }}"></script>{% endblock %}

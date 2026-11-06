@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {# Help (pages/help.py): getting started in the Quick start's order, the checks grouped by what the tester does and
    folded (B-514), questions, and for IT where the data is. #}
-{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/settings.css') }}">{% endblock %}
 {% block aside %}<a class="btn primary" href="/help/quick-start"><span class="ms" aria-hidden="true">print</span>Quick start</a>
 <a class="btn" href="/help/report"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>
 <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>{% endblock %}
@@ -141,4 +141,4 @@
 </details>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/help.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/help.js') }}"></script>{% endblock %}

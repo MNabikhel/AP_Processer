@@ -187,7 +187,7 @@
   </div>
   {% set unloaded = models | rejectattr("is_loaded") | rejectattr("embedding") | sort(attribute="document_reader", reverse=true) | list %}
   {% if unloaded %}
-  <form method="post" action="/settings/reading/load-model" class="row st-load" data-busy="LM Studio is loading the model…">
+  <form method="post" action="/settings/reading/load-model" class="row st-load" data-busy="LM Studio is loading the model…" data-long>
     <label class="field">Load a model now
       <select name="model" title="A chat model with a 16,384-token context; OvisOCR2 with the context a page needs.">
         {% for m in unloaded %}<option value="{{ m.model }}">{{ m.model }}</option>{% endfor %}

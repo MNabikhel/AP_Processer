@@ -377,33 +377,34 @@ def _installed(module: str) -> bool:
         return False
 
 
-def _ppocrv5_ready() -> bool:
-    """RapidOCR 3 with its PP-OCRv5 models on disk. Without them it would download them on first use,
-    which an offline computer cannot: the other engine reads alone (scripts/fetch_models.py fetches them)."""
-    from ..ops.offline import ppocrv5_ready
+def _ready(engine: str) -> bool:
+    """RapidOCR 3 with the engine's models on disk ("ppocrv4": inside its package; "ppocrv5": from the offline
+    bundle). Without them it would download them on first use, which an offline computer cannot: the other engine
+    reads alone (scripts/fetch_models.py puts them in place)."""
+    from ..ops import offline
 
-    return ppocrv5_ready()
+    return offline.ppocrv5_ready() if engine == "ppocrv5" else offline.ppocrv4_ready()
 
 
 def _engine_name() -> str:
-    """The first-read OCR engine: "rapidocr" (rapidocr-onnxruntime, PP-OCRv4; the reader is tuned on
-    it) when installed, else "ppocrv5" (RapidOCR 3, PP-OCRv5). ``AP_OCR_ENGINE`` forces one."""
+    """The first-read OCR engine: "ppocrv4" (RapidOCR 3 with PP-OCRv4, read as rapidocr-onnxruntime read it; the reader
+    is tuned on it) when its models are there, else "ppocrv5" (PP-OCRv5). ``AP_OCR_ENGINE`` forces one."""
     forced = os.environ.get("AP_OCR_ENGINE")
     if forced:
         return forced
-    return "rapidocr" if _installed("rapidocr_onnxruntime") else "ppocrv5"
+    return "ppocrv4" if _ready("ppocrv4") else "ppocrv5"
 
 
 def second_engine_name() -> str:
     """The engine of the second read: the other model when both are installed (two models make
     independent mistakes), else the same one on a straightened, enlarged page."""
     first = _engine_name()
-    other = "ppocrv5" if first == "rapidocr" else "rapidocr"
-    return other if (_ppocrv5_ready() if other == "ppocrv5" else _installed("rapidocr_onnxruntime")) else first
+    other = "ppocrv5" if first == "ppocrv4" else "ppocrv4"
+    return other if _ready(other) else first
 
 
 def ocr_available() -> bool:
-    return _installed("rapidocr_onnxruntime") or (_installed("rapidocr") and _ppocrv5_ready())
+    return _installed("rapidocr") and (_ready("ppocrv4") or _ready("ppocrv5"))
 
 
 _ENGINES: dict[str, Any] = {}
@@ -413,29 +414,68 @@ def _engine(name: str | None = None) -> Any:
     """A callable: RGB image array -> [(quad, text, score), ...]."""
     name = name or _engine_name()
     if name not in _ENGINES:
-        from ..ops.offline import quiet_onnxruntime
+        from ..ops import offline
 
-        quiet_onnxruntime()  # both engines run on ONNX Runtime: its usage events off
-        if name == "ppocrv5":
-            from rapidocr import RapidOCR
+        offline.quiet_onnxruntime()  # both engines run on ONNX Runtime: its usage events off
+        from rapidocr import RapidOCR
 
-            from ..ops.offline import ppocrv5_engine_params
-
-            eng = RapidOCR(params=ppocrv5_engine_params())  # the model files on disk: RapidOCR never downloads
-
-            def run(img: Any) -> list:
-                res = eng(img)
-                if res.boxes is None:
-                    return []
-                return [(b.tolist(), t, float(c)) for b, t, c in zip(res.boxes, res.txts, res.scores, strict=False)]
-
-            _ENGINES[name] = run
-        else:
-            from rapidocr_onnxruntime import RapidOCR
-
-            eng4 = RapidOCR()
-            _ENGINES[name] = lambda img: eng4(img)[0]
+        # The model files on disk: RapidOCR never downloads.
+        eng = RapidOCR(params=offline.ppocrv5_engine_params() if name == "ppocrv5" else offline.ppocrv4_engine_params())
+        if name != "ppocrv5":
+            _read_as_rapidocr_onnxruntime(eng)
+        _ENGINES[name] = functools.partial(_run_rapidocr, eng)
     return _ENGINES[name]
+
+
+def _run_rapidocr(eng: Any, img: Any) -> list:
+    res = eng(img)
+    if res.boxes is None:
+        return []
+    return [(b.tolist(), t, float(c)) for b, t, c in zip(res.boxes, res.txts, res.scores, strict=False)]
+
+
+def _read_as_rapidocr_onnxruntime(eng: Any) -> None:
+    """RapidOCR 3 running PP-OCRv4 reads exactly as rapidocr-onnxruntime 1.4.4 did, which the reader is tuned on
+    (D-163): the same model files and settings, and two steps done as that package did them. The boxes found come in
+    its order (top to bottom by their top left corner, then left to right among those less than 10 pixels apart):
+    RapidOCR 3 groups them into lines first, which orders some differently and so which lines are recognised in one
+    batch. A line's score is the plain mean of its characters' (RapidOCR 3 rounds each, and the mean, to 5 decimals)."""
+    import types
+
+    eng.text_det.sorted_boxes = _boxes_in_order
+    eng.text_rec.postprocess_op.decode = types.MethodType(_decode_lines, eng.text_rec.postprocess_op)
+
+
+def _boxes_in_order(boxes: Any) -> Any:
+    """rapidocr-onnxruntime 1.4.4's order of the boxes found on a page (``RapidOCR.sorted_boxes``)."""
+    import numpy as np
+
+    out = sorted(boxes, key=lambda b: (b[0][1], b[0][0]))
+    for i in range(len(out) - 1):
+        for j in range(i, -1, -1):
+            if abs(out[j + 1][0][1] - out[j][0][1]) < 10 and out[j + 1][0][0] < out[j][0][0]:
+                out[j], out[j + 1] = out[j + 1], out[j]
+            else:
+                break
+    return np.array(out)
+
+
+def _decode_lines(decoder: Any, text_index: Any, text_prob: Any, _word_box: bool, *_: Any,
+                  remove_duplicate: bool = False) -> tuple[list, list]:  # fmt: skip
+    """RapidOCR 3.4's ``CTCLabelDecode.decode`` as rapidocr-onnxruntime 1.4.4's: each line's text, and its score the
+    mean of its characters' probabilities, unrounded (no word boxes: AP Coder asks for none)."""
+    import numpy as np
+
+    lines = []
+    for tokens, probs in zip(text_index, text_prob, strict=True):
+        keep = np.ones(len(tokens), dtype=bool)
+        if remove_duplicate:
+            keep[1:] = tokens[1:] != tokens[:-1]
+        for ignored in decoder.get_ignored_tokens():
+            keep &= tokens != ignored
+        text = "".join(decoder.character[i] for i in tokens[keep])
+        lines.append((text, np.mean(probs[keep].tolist() or [0]).tolist()))
+    return lines, []
 
 
 _ocr_cache_folder: contextvars.ContextVar[Path | None] = contextvars.ContextVar("ocr_cache_folder", default=None)
@@ -460,9 +500,8 @@ def _engine_signature(engine: str) -> str:
     """The engine and its package's version: a reading kept by another version of the OCR is not reused."""
     from importlib.metadata import PackageNotFoundError, version
 
-    package = "rapidocr" if engine == "ppocrv5" else "rapidocr_onnxruntime"
     try:
-        return f"{engine}-{version(package)}"
+        return f"{engine}-{version('rapidocr')}"
     except PackageNotFoundError:
         return engine
 
@@ -495,7 +534,7 @@ def _ocr_cached(png_bytes: bytes, run: Any, engine: str | None = None) -> Any:
 
     engine = engine or _engine_name()
     if env:  # the benchmark's own cache, as it always was
-        tag = "" if engine == "rapidocr" else f"-{engine}"
+        tag = "" if engine == "ppocrv4" else f"-{engine}"
     else:
         tag = f"-{_engine_signature(engine)}"
         _prune(folder)

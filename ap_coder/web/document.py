@@ -6,17 +6,23 @@ over it; boxes and words are fractions of the page (0..1, origin top-left), page
 viewer's 100% is the page's real size whatever resolution the picture was drawn at.
 
 Pictures are cached on the file's path, size and time (and the scale asked for): a page is drawn once however often it
-is asked for, the pictures kept being at most ``PICTURE_CACHE_BYTES`` in all (the least recently used go first). A
-page zoomed in is asked for at scale 2 or 3 (240 or 360 dpi, B-580), so it stays sharp; a scan (a picture, or a PDF
-page that is one picture) is never drawn sharper than it was scanned (B-594).
+is asked for, the pictures kept being at most ``PICTURE_CACHE_BYTES`` in all (the least recently used go first). On
+the company server they are kept on disk instead, once for all its web workers (``kept_in``: ``<data>/.cache/pages``,
+D-160). A page zoomed in is asked for at scale 2 or 3 (240 or 360 dpi, B-580), so it stays sharp; a scan (a picture,
+or a PDF page that is one picture) is never drawn sharper than it was scanned (B-594).
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import hashlib
 import io
 import math
+import os
+import shutil
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -35,6 +41,11 @@ SCALE_SIDES = {1: 1.0, 2: 2.0, 3: 2.5}  # the cap at each scale, as a multiple o
 SCREEN_DPI = 96
 PICTURE_CACHE_BYTES = 96 * 1024 * 1024  # the pictures kept, in all: a scan at scale 3 alone can be 10-15 MB
 SCAN_COVER = 0.9  # a PDF page whose one picture covers this much of it is a scan
+# The company server's pictures on disk (``kept_in``), shared by its web workers (D-160):
+PAGES_KEPT_BYTES = 1024 * 1024 * 1024  # at most, in all: past it the oldest written go, down to three quarters
+DRAWING = 1  # how a page is drawn: one more whenever that changes, so the pictures kept before are drawn again
+ROOM_EVERY_SECONDS = 5.0  # the disk's free space read again at most this often (counted down by what was written)
+PART_AGE_SECONDS = 3600  # a picture half written this long ago is a stopped worker's: removed as the folder is pruned
 
 # The order of the field list: as an invoice reads, header first, then the money, then the terms.
 FIELD_ORDER = (
@@ -96,15 +107,156 @@ def max_side(scale: int) -> int:
     return round(MAX_SIDE * SCALE_SIDES[clean_scale(scale)])
 
 
-def page_png(path: str | Path, number: int, scale: int = 1) -> bytes:
+def page_png(path: str | Path, number: int, scale: int = 1, kept_in: Path | None = None) -> bytes:
     """Page ``number`` (from 1) as PNG bytes, at ``scale`` times ``DPI`` (1, 2 or 3; a scan is never enlarged beyond
-    its own resolution). IndexError for a page the file doesn't have."""
+    its own resolution). IndexError for a page the file doesn't have. ``kept_in``: the folder the company server's web
+    workers share their pictures in (``_kept_png``), none kept in this process's memory; else kept in memory."""
     p = Path(path)
     if p.suffix.lower() not in VIEWABLE:
         raise IndexError(number)
     if not 1 <= number <= MAX_PAGES:
         raise IndexError(number)
+    if kept_in is not None:
+        return _kept_png(Path(kept_in), _stamp(p), int(number), clean_scale(scale))
     return _png_cached(*_stamp(p), int(number), clean_scale(scale))
+
+
+# --- The company server's pictures, on disk for all its web workers (D-160) -------------------------------------------
+# Each worker drew the pictures it was asked for (40 ms a page, 115 ms at scale 2) into its own memory. They are drawn
+# once, put in the data folder's ``.cache/pages`` and read back by any worker (8 ms, the route's own cost); the
+# operating system's file cache is the memory they share.
+
+_KEEPING = threading.Lock()
+_WRITTEN: dict[Path, int] = {}  # what this process wrote in each folder since it last pruned it (none yet: it prunes)
+_ROOM: dict[Path, tuple[float, int | None]] = {}  # the free space of each folder's disk, as read when (None: unknown)
+
+
+@functools.lru_cache(maxsize=256)
+def _sha256(path: str, _mtime: int, _size: int) -> str:
+    """The file's SHA-256, worked out once per version of it (its time and size)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _kept_png(folder: Path, stamp: tuple[str, int, int], number: int, scale: int) -> bytes:
+    """The picture from ``folder``, else drawn and put there. Named by the file's content, the page, the scale, the
+    dpi, the size cap and ``DRAWING``: a file replaced at the same path gets its own, and no picture is another file's
+    or drawn another way."""
+    sha = _sha256(*stamp)
+    target = folder / sha[:2] / f"{sha}-p{number}-s{scale}-{DPI}dpi-{max_side(scale)}px-d{DRAWING}.png"
+    try:
+        kept = target.read_bytes()
+        if _whole_png(kept):
+            return kept
+    except OSError:  # not there yet (or, on Windows, being put there)
+        pass
+    png = _draw_png(*stamp, number, scale)
+    _keep(folder, target, png)
+    return png
+
+
+_PNG_START, _PNG_END = b"\x89PNG\r\n\x1a\n", b"\x00\x00\x00\x00IEND\xaeB`\x82"
+
+
+def _whole_png(data: bytes) -> bool:
+    """Whether a picture read back is whole: a server stopped hard (the power lost, a reset) just after one was put
+    there can leave it empty, cut short or zero-filled; it is drawn again and put back then (B-1716)."""
+    return data.startswith(_PNG_START) and data.endswith(_PNG_END)
+
+
+def _keep(folder: Path, target: Path, png: bytes) -> None:
+    """``png`` put at ``target``: written under a name of its own, then renamed, so a worker never reads half a
+    picture. Not where the disk would be left short of room (``_room_for``); a full disk or a folder that can't be
+    written to leaves nothing behind, and the picture is drawn each time. The folder is pruned at this process's
+    first picture there, then after each sixteenth of ``PAGES_KEPT_BYTES`` it wrote."""
+    if not _room_for(folder, len(png)):
+        return
+    part = target.with_name(f"{target.name}.{os.getpid()}-{threading.get_ident()}.part")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part.write_bytes(png)
+        _replace(part, target)
+    except OSError:
+        return
+    finally:
+        with contextlib.suppress(OSError):
+            part.unlink(missing_ok=True)
+    with _KEEPING:
+        written = _WRITTEN.get(folder)
+        due = written is None or written + len(png) >= PAGES_KEPT_BYTES // 16
+        _WRITTEN[folder] = 0 if due else written + len(png)
+    if due:
+        _prune(folder, target)
+
+
+def _replace(part: Path, target: Path) -> None:
+    """``os.replace``. On Windows a picture another worker is reading can't be replaced: left as it is when it is there
+    (it is the same picture), else tried again a few times (as the Spend workbook, B-1689)."""
+    for attempt in range(5):
+        try:
+            os.replace(part, target)
+            return
+        except PermissionError:
+            if target.exists():
+                return
+            time.sleep(0.02 * (attempt + 1))
+
+
+def _room_for(folder: Path, size: int) -> bool:
+    """Whether ``size`` bytes more leave the disk of ``folder`` at least ``backups.BACKUP_RESERVE`` free: the database
+    and its backups need the room more than a picture does (the cap counts the pictures, not the disk). The free space
+    is read at most every ``ROOM_EVERY_SECONDS``, counted down meanwhile by what this process wrote; a disk whose free
+    space can't be read takes the picture."""
+    from ap_coder.core.store.backups import BACKUP_RESERVE
+
+    now = time.monotonic()
+    with _KEEPING:
+        at, free = _ROOM.get(folder, (-math.inf, None))
+        if now - at >= ROOM_EVERY_SECONDS:
+            at, free = now, _free_space(folder)
+        roomy = free is None or free - size >= BACKUP_RESERVE
+        _ROOM[folder] = (at, free - size if free is not None and roomy else free)
+        return roomy
+
+
+def _free_space(folder: Path) -> int | None:
+    """The free space of the disk ``folder`` is (or will be) on; None when it can't be read."""
+    place = next((p for p in (folder, *folder.parents) if p.exists()), None)
+    try:
+        return shutil.disk_usage(place).free if place is not None else None
+    except OSError:
+        return None
+
+
+def _prune(folder: Path, newest: Path) -> None:
+    """The pictures in ``folder``, once over ``PAGES_KEPT_BYTES``, down to three quarters of it, the oldest written
+    first, never ``newest``; a half-written one a stopped worker left, once ``PART_AGE_SECONDS`` old."""
+    kept, total, now = [], 0, time.time()
+    for path in folder.glob("*/*"):
+        try:
+            stat = path.stat()
+        except OSError:  # removed meanwhile (another worker pruning)
+            continue
+        if path.name.endswith(".part"):
+            if now - stat.st_mtime > PART_AGE_SECONDS:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+            continue
+        kept.append((stat.st_mtime_ns, str(path), stat.st_size))
+        total += stat.st_size
+    if total <= PAGES_KEPT_BYTES:
+        return
+    for _, name, size in sorted(kept):
+        if total <= PAGES_KEPT_BYTES * 3 // 4:
+            break
+        if name == str(newest):
+            continue
+        with contextlib.suppress(OSError):
+            os.unlink(name)
+            total -= size
 
 
 class CacheInfo(NamedTuple):

@@ -9,12 +9,14 @@ pages:
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
-* ``/static`` (this package's CSS and scripts), ``/fonts`` (Inter, the icons), ``/assets`` (logo).
+* ``/static`` (this package's CSS and scripts), ``/fonts`` (Inter, the icons), ``/assets`` (logo): from memory
+  (``StaticFromMemory``, D-161).
 """
 
 from __future__ import annotations
 
 import contextlib
+import email.utils
 import getpass
 import hmac
 import importlib
@@ -63,15 +65,56 @@ def os_user() -> str:
 
 
 class CheckedStaticFiles(StaticFiles):
-    """The dashboard's scripts and styles, which the browser checks again on every use (``Cache-Control: no-cache``).
-    js/app.js and js/invoice_viewer.js are imported without ``?v=`` (one URL, one module): left to guess, a browser
-    keeps running its old copy for weeks after an update. An unchanged file answers 304 to its ETag, so the check
-    costs nothing."""
+    """The dashboard's scripts and styles at their plain addresses (a page an older AP Coder drew, a bookmark), which
+    the browser checks again on every use (``Cache-Control: no-cache``): left to guess, a browser keeps running its
+    old copy for weeks after an update. An unchanged file answers 304 to its ETag, so the check costs nothing. The
+    pages link them at their kept addresses (``core.static_url``), answered from memory (``StaticFromMemory``)."""
 
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = core.CHECKED
         return response
+
+
+class StaticFromMemory:
+    """ASGI middleware: a GET or HEAD of a static file answered from memory (``core.read_static``), on the event loop:
+    no thread, no session (D-161). StaticFiles read each on one of a web worker's few threads, behind the pages. It
+    sits after the Host check, with the security headers and the access log, before the session, the errors page and
+    the backup check. At its plain address, the same status, headers and 304s as StaticFiles; at its kept address
+    (``core.static_url``), kept a year; at another build's, as it is now, checked again on every use. What memory
+    doesn't answer (a POST, a file that isn't there, a Range: the file at its plain address) goes on to the StaticFiles
+    mounts."""
+
+    def __init__(self, app: Any, static: core.Static | None = None) -> None:
+        self.app, self.static = app, core.read_static() if static is None else static
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        found = self.static.find(scope["path"]) if scope["type"] == "http" else None
+        if found is None or scope["method"] not in ("GET", "HEAD"):
+            await self.app(scope, receive, send)
+            return
+        plain, found = found
+        asked: dict[bytes, bytes] = {}
+        for name, value in scope["headers"]:
+            asked.setdefault(name.lower(), value)  # (the first of a header given twice, as Starlette reads it)
+        if b"range" in asked:
+            await self.app({**scope, "path": plain}, receive, send)
+            return
+        if _not_modified(found, asked):
+            await send({"type": "http.response.start", "status": 304, "headers": list(found.same)})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await send({"type": "http.response.start", "status": 200, "headers": list(found.headers)})
+        await send({"type": "http.response.body", "body": b"" if scope["method"] == "HEAD" else found.body})
+
+
+def _not_modified(found: core.StaticFile, asked: dict[bytes, bytes]) -> bool:
+    """As StaticFiles: If-None-Match names the ETag (or is *); without it, If-Modified-Since is not before the file's
+    time."""
+    if match := asked.get(b"if-none-match", b"").decode("latin-1"):
+        return match.strip() == "*" or found.etag in [tag.strip().removeprefix("W/") for tag in match.split(",")]
+    since = email.utils.parsedate(asked.get(b"if-modified-since", b"").decode("latin-1"))
+    return since is not None and since >= email.utils.parsedate(found.modified)
 
 
 class DailyBackup:
@@ -319,6 +362,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
+    app.add_middleware(StaticFromMemory)  # after the Host check, before the session (D-161)
     app.add_middleware(
         LocalOnly, address=address, extra=allowed_hosts(), server=server
     )  # + the server's names (AP_ALLOWED_HOSTS)
@@ -388,14 +432,17 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return JSONResponse({"ok": True, "stopping": True})
 
     @app.get("/jobs/{name}")
-    def job_status(name: str, request: Request) -> JSONResponse:
+    def job_status(name: str, request: Request, only: str = "") -> JSONResponse:
         registry = core.jobs(request)
         me = identity.person()
         if server and me is not None and not roles.allowed(me.role, roles.JOB_NEEDS.get(name, roles.ADMIN)):
             raise HTTPException(status_code=404, detail="No such job.")  # (as if there were none: D-109)
         if not registry.known(name):
             raise HTTPException(status_code=404, detail="No such job.")
-        return JSONResponse(registry.get(name).snapshot(), headers={"Cache-Control": "no-store"})
+        snapshot = registry.get(name).snapshot()
+        if only:  # a page following the job asks for what it shows (app.js watchJob): its state and these
+            snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> Any:

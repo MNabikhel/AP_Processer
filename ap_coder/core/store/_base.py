@@ -34,9 +34,10 @@ from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unre
 # 18: users, sessions, login_attempts (by _SCHEMA: server mode's accounts, D-97), later vendors.erp_bank (D-104) and
 # vendor_aliases (by _SCHEMA: a vendor name read wrong, as AP corrected it, D-119), line_texts (by _SCHEMA: a
 # supplier's line descriptions as AP approved them, D-120)
-SCHEMA_VERSION = 24  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
+SCHEMA_VERSION = 25  # 19: the invoices' summary and its triggers (summary.py, ``_summary_migrate``, D-110), 20: indexes
 # (B-1581), 22: the ERP register's vendor names and invoice numbers as the quick search compares them (D-157), 24: the
-# events' indexes by day and by person, the register's by number (D-156)
+# events' indexes by day and by person, the register's by number (D-156), 25: the lessons' approvals counted off an
+# index (B-1714)
 # Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
 # coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
 # the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
@@ -57,6 +58,13 @@ _INDEXES_24 = (
     "CREATE INDEX IF NOT EXISTS events_created ON events (created_at, action)",
     "CREATE INDEX IF NOT EXISTS events_actor ON events (actor)",
     "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)",
+)
+# Schema 25's index (B-1714): a lesson's corrections, and the ones agreeing with it, counted off the index alone
+# (``lessons._LESSON``: the review screen's "Learned" hints), not every approval that saw its situation (220,000 for
+# the biggest vendor at 100,000 invoices). It replaces the index by situation alone, a part of it.
+_INDEXES_25 = (
+    "DROP INDEX IF EXISTS lesson_approvals_situation",
+    "CREATE INDEX IF NOT EXISTS lesson_approvals_counted ON lesson_approvals (situation, corrected, value)",
 )
 # The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
 # clean-up added there changes it, so it runs once on every database.
@@ -102,8 +110,8 @@ _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 # What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
 # latest used last (``Store.vendor_lessons``).
 _VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
-# A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows)
-# (``Store.learning_rows``).
+# A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows), the
+# latest used last, ``memory.PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` lessons at most (``Store.learning_rows``).
 _PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 
 
@@ -198,6 +206,9 @@ CREATE TABLE IF NOT EXISTS supplier_profiles (
     key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', vendor_id TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'supervised', autonomous_since TEXT, audit_rate REAL, template_json TEXT,
     updated_at TEXT NOT NULL, updated_by TEXT, suspended_at TEXT);
+-- the suppliers with a learned template, counted without reading them (``supplier_templates_count``, B-1736)
+CREATE INDEX IF NOT EXISTS supplier_profiles_template ON supplier_profiles (key)
+    WHERE template_json IS NOT NULL AND template_json NOT IN ('', 'null', '{}');
 CREATE TABLE IF NOT EXISTS supplier_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_key TEXT NOT NULL, invoice_id INTEGER, field TEXT NOT NULL,
     ai_value TEXT, final_value TEXT, correct INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'review',
@@ -236,6 +247,8 @@ CREATE TABLE IF NOT EXISTS page_reads (
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
+-- the latest finished reads (``page_read_pages_average``, the reading status of every page), not all sorted (B-1734)
+CREATE INDEX IF NOT EXISTS page_reads_done ON page_reads (status, updated_at);
 CREATE TABLE IF NOT EXISTS azure_checks (
     invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL, status TEXT NOT NULL, pages INTEGER NOT NULL DEFAULT 0,
     compared INTEGER NOT NULL DEFAULT 0, agreed INTEGER NOT NULL DEFAULT 0, result_json TEXT,
@@ -260,7 +273,6 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     invoice_id INTEGER NOT NULL, situation TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
-CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
 CREATE TABLE IF NOT EXISTS bank_accounts (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
     currency TEXT NOT NULL DEFAULT 'CAD', institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '',
     account_number TEXT NOT NULL DEFAULT '', gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0,
@@ -561,6 +573,9 @@ class StoreCore:
                 conn.execute(sql)
         if version < 24:  # the events of a period and of a person, off an index (D-156)
             for sql in _INDEXES_24:
+                conn.execute(sql)
+        if version < 25:  # a lesson's approvals counted off an index (B-1714)
+            for sql in _INDEXES_25:
                 conn.execute(sql)
         # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
         # schema 15: looked for whatever the version).

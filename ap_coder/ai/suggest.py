@@ -32,11 +32,23 @@ of the history, built once (``_memory``): a long history (years of ERP history) 
 from __future__ import annotations
 
 import re
+import threading
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from ..core.memory import Latest, RowsCache, _normalise, changed_account, latest_decision, tokens, vendor_key
+from ..core.memory import (
+    PAST_KEPT,
+    PAST_ROWS_KEPT,
+    Latest,
+    RowsCache,
+    WithPast,
+    _normalise,
+    changed_account,
+    latest_decision,
+    tokens,
+    vendor_key,
+)
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from .line_match import Index, keys
 
@@ -113,16 +125,102 @@ class _Memory:
     index: Index
     usual: dict[str, Counter[str]]  # vendor key -> {account: different lines coded to it}
     newest: dict[str, int]  # vendor key -> rank of its latest decision
+    # ``suggest_gl``'s answers from this memory: (line, vendor key, limit, default) -> (the reference data, the
+    # suggestions), the latest used last
+    said: dict[tuple[str, str, int, str], tuple[ReferenceData, list[Suggestion]]] = field(default_factory=dict)
+
+
+SAID_KEPT = 1024  # lines whose suggestions each memory keeps
+_SAID_LOCK = threading.Lock()
 
 
 _MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
+# A vendor's ``learning_rows`` past the whole memory's cap (``WithPast``), by whose they are: (the shared rows and the
+# accounts their memory was built for, the vendor's older lessons it was extended by, the memory extended), the latest
+# used last (``_with_past``).
+_PAST: dict[Any, tuple[list[dict[str, Any]], frozenset[str], list[dict[str, Any]], _Memory]] = {}
+_PAST_LOCK = threading.Lock()
 
 
 def _memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
     """What AP approved, as patterns and their word index, built once for the same rows. ``feedback`` is newest
     first (``Store.feedback_rows``): the latest decision for a vendor's line wins over older ones that coded it to
-    another account."""
+    another account. A vendor's rows past the whole memory's cap: the shared index, extended (``_with_past``)."""
+    if isinstance(feedback, WithPast):
+        return _with_past(feedback, valid)
     return _MEMORY.get(feedback, valid, lambda: _build_memory(feedback, valid))
+
+
+def _with_past(feedback: WithPast, valid: frozenset[str]) -> _Memory:
+    """The memory of a vendor's ``learning_rows`` past the whole memory's cap: the shared rows' one, built once per
+    change of the lessons (``_MEMORY``: the same list while the store's stamp holds, D-154), extended by the vendor's
+    older lessons (``_extended``): what building it of all the rows gives, in milliseconds. Kept for ``PAST_KEPT``
+    vendors and ``PAST_ROWS_KEPT`` of their lessons, the latest used always (D-159), while the same lists come (the
+    store's, kept while its stamps hold). Once the shared rows are others (the lessons changed), the vendors' memories
+    extended from the older ones are let go: each holds all of its shared rows' memory (B-1719)."""
+    shared, past = feedback.shared, feedback.past
+    with _PAST_LOCK:
+        hit = _PAST.pop(feedback.key, None)
+        if hit is not None and hit[0] is shared and hit[2] is past and hit[1] == valid:
+            _PAST[feedback.key] = hit
+            return hit[3]
+    base = _MEMORY.get(shared, valid, lambda: _build_memory(shared, valid))
+    memory = _extended(base, shared, past, valid)
+    with _PAST_LOCK:
+        for key in [k for k, kept in _PAST.items() if kept[0] is not shared]:
+            del _PAST[key]
+        _PAST.pop(feedback.key, None)
+        _PAST[feedback.key] = (shared, valid, past, memory)
+        while len(_PAST) > 1 and (len(_PAST) > PAST_KEPT
+                                  or sum(len(kept[2]) for kept in _PAST.values()) > PAST_ROWS_KEPT):  # fmt: skip
+            del _PAST[next(iter(_PAST))]
+    return memory
+
+
+def _extended(base: _Memory, shared: list[dict[str, Any]], past: list[dict[str, Any]],
+              valid: frozenset[str]) -> _Memory:  # fmt: skip
+    """``_build_memory(shared + past, valid)`` from ``base``, the memory of ``shared``, going over ``past`` and the
+    shared rows' lines of its vendors only. ``past`` ranks after every shared row: each line it adds decisions to keeps
+    its latest decision (its account, rank and cost center) and has its run of decisions worked out again; a line only
+    in ``past`` is a new pattern, after all of base's, in the order it is first met."""
+    added: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # each line's decisions, newest first
+    for rank, r in enumerate(past, start=len(shared)):
+        if r.get("final_gl") in valid:
+            added.setdefault((r["vendor_key"], _normalise(r["description"])), []).append((rank, r))
+    if not added:
+        return base
+    vendors = {line[0] for line in added}
+    earlier: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}  # their decisions in the shared rows
+    for rank, r in enumerate(shared):
+        if r["vendor_key"] in vendors and r.get("final_gl") in valid:
+            line = (r["vendor_key"], _normalise(r["description"]))
+            if line in added:
+                earlier.setdefault(line, []).append((rank, r))
+    patterns = list(base.patterns)
+    where = {(p.vendor_key, _normalise(p.description)): n for n, p in enumerate(patterns) if p.vendor_key in vendors}
+    new = []
+    for line, seq in added.items():
+        seq = earlier.get(line, []) + seq
+        rank, r = seq[0]  # the latest decision wins over older ones for another account
+        latest = latest_decision([x["final_gl"] for _, x in seq], changed_account(r))
+        p = _Pattern(r["vendor_key"], r["description"], keys(r["description"]), latest.value,
+                     r.get("final_cc") or "", rank, latest)  # fmt: skip
+        if line in earlier:
+            if line in where:  # (a line without words is in no memory)
+                patterns[where[line]] = p
+        elif p.keys:
+            new.append(p)
+    patterns += new
+    usual, newest = dict(base.usual), dict(base.newest)
+    for v in vendors:
+        usual.pop(v, None)
+        newest.pop(v, None)
+    for p in [patterns[n] for n in where.values()] + new:  # the vendors' patterns, in the memory's order
+        if not p.unconfirmed:
+            usual.setdefault(p.vendor_key, Counter())[p.gl_code] += 1
+        newest[p.vendor_key] = min(newest.get(p.vendor_key, p.rank), p.rank)
+    index = base.index.extended([p.keys for p in new], [p.gl_code for p in new])
+    return _Memory(patterns, index, usual, newest)
 
 
 def _build_memory(feedback: list[dict[str, Any]], valid: frozenset[str]) -> _Memory:
@@ -221,12 +319,34 @@ def suggest_gl(
 ) -> list[Suggestion]:
     """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()`` (newest
     first); ``default_gl`` is the vendor master's default account for this vendor, if any. Never a tax account or
-    an account that is not in the chart of accounts."""
+    an account that is not in the chart of accounts. Worked out once for the same line, vendor and default, kept with
+    the memory and the reference data they came from (``_Memory.said``, ``SAID_KEPT`` lines, D-159): every check of
+    the review screen asks it again of each line. Each caller gets copies."""
     line = keys(description)
     if not line and not tokens(description) and not default_gl:
         return []
     tax_gls = reference.tax.tax_gl_codes()
     valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
+    memory = _memory(feedback, valid)
+    asked = (description, key, limit, default_gl)
+    with _SAID_LOCK:
+        kept = memory.said.pop(asked, None)
+        if kept is not None and kept[0] is reference:
+            memory.said[asked] = kept  # the latest used, kept the longest
+    if kept is None or kept[0] is not reference:
+        kept = (reference, _suggested(description, line, key, memory, reference, valid, limit, default_gl))
+        with _SAID_LOCK:
+            memory.said.pop(asked, None)
+            memory.said[asked] = kept
+            while len(memory.said) > SAID_KEPT:
+                del memory.said[next(iter(memory.said))]
+    return [replace(s, reasons=list(s.reasons)) for s in kept[1]]
+
+
+def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory, reference: ReferenceData,
+               valid: frozenset[str], limit: int, default_gl: str) -> list[Suggestion]:  # fmt: skip
+    """``suggest_gl`` worked out."""
     found: dict[str, Suggestion] = {}
     strong: dict[str, int] = {}  # account -> the highest priority of a source strong enough to code with it
 
@@ -246,8 +366,6 @@ def suggest_gl(
         if auto:
             strong[gl] = max(strong.get(gl, -1), PRIORITY[source])
 
-    key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
-    memory = _memory(feedback, valid)
     if default_gl:
         add(default_gl, 0.5, "the vendor's default GL account in the vendor master", "master")
     mine, others = _similar_lines(line, key, memory)

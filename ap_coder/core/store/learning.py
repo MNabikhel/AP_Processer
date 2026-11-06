@@ -10,7 +10,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from ..memory import ACCEPTED, BULK, CODED, CORRECTED, Pattern, _aggregate, vendor_key
+from ..memory import (
+    ACCEPTED,
+    BULK,
+    CODED,
+    CORRECTED,
+    PAST_KEPT,
+    PAST_ROWS_KEPT,
+    Pattern,
+    WithPast,
+    _aggregate,
+    vendor_key,
+)
 from ..reference_data import UNASSIGNED
 from ._base import (
     _FEEDBACK,
@@ -216,25 +227,29 @@ class LearningMixin:
         """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
         with. Past ``FEEDBACK_READ`` lessons the whole memory holds only the newest, so a vendor whose history was
         imported first would have none of its own; its older lessons then follow the shared list (in a new list,
-        the rows themselves shared). The shared list itself while it holds them all."""
+        the rows themselves shared: ``WithPast``, which says which rows are which). The shared list itself while it
+        holds them all."""
         rows = self.feedback_rows()
         if not vendor_name or len(rows) < FEEDBACK_READ:
             return rows
-        missing = self._past_memory(key or vendor_key(vendor_name), rows[-1])
-        return rows + missing if missing else rows
+        key = key or vendor_key(vendor_name)
+        missing = self._past_memory(key, rows[-1])
+        return WithPast(rows, missing, (str(self.path.resolve()), key, FEEDBACK_READ)) if missing else rows
 
     def _past_memory(self, key: str, last: dict[str, Any]) -> list[dict[str, Any]]:
         """This vendor's lessons that the whole memory, whose last lesson is ``last``, does not hold (the ones after
         it in its order, of the vendor's newest ``FEEDBACK_READ``), in that order. Read again only once one of the
-        vendor's lessons or the memory's last changed: the GL suggestions' index (``suggest._MEMORY``) knows the same
-        rows at once, where rows read again are told apart by what they say. The latest two vendors are kept, as that
-        index keeps two lists of rows."""
+        vendor's lessons or the memory's last changed: the GL suggestions' index extended by them (``suggest._PAST``)
+        knows the same list at once. Kept for ``PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` of their lessons, as that
+        index is, the latest used always (D-159)."""
         kept_key = (str(self.path.resolve()), key, FEEDBACK_READ)
         history = last["outcome"] == "history"
         with self._conn() as conn, _one_snapshot(conn):
             stamp = (*_vendor_stamp(conn, key), last["id"], history)
             with _FEEDBACK_LOCK:
-                kept = _PAST_MEMORY.get(kept_key)
+                kept = _PAST_MEMORY.pop(kept_key, None)
+                if kept is not None:
+                    _PAST_MEMORY[kept_key] = kept  # the latest used, kept the longest
             if kept is not None and kept[0] == stamp:
                 return kept[1]
             missing = fetch_rows(
@@ -245,7 +260,8 @@ class LearningMixin:
         with _FEEDBACK_LOCK:
             _PAST_MEMORY.pop(kept_key, None)
             _PAST_MEMORY[kept_key] = (stamp, missing)
-            while len(_PAST_MEMORY) > 2:
+            while len(_PAST_MEMORY) > 1 and (len(_PAST_MEMORY) > PAST_KEPT or sum(
+                    len(rows) for _, rows in _PAST_MEMORY.values()) > PAST_ROWS_KEPT):  # fmt: skip
                 _PAST_MEMORY.pop(next(iter(_PAST_MEMORY)))
         return missing
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">{% endblock %}
 {% block aside %}{% if not early %}<a class="btn" href="/insights/business-case" download title="Totals only: no vendor names, amounts of individual invoices or file names.">
   <span class="ms" aria-hidden="true">download</span>Business case (one page)</a>{% endif %}{% endblock %}
 {% block content %}

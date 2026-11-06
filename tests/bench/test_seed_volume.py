@@ -31,6 +31,31 @@ def seeded(tmp_path_factory):
     return data
 
 
+def test_a_seed_made_in_this_process_leaves_its_logging_as_it_was(tmp_path):
+    """B-1759: a seed made in the caller's own process (``--workers 1``: the tests, the load bench's small folder)
+    turned its INFO logging off for good (the clones' quiet, meant for their worker processes): every later test of
+    the run that reads a log (the access log, the background process's, the launcher window's) read nothing."""
+    import logging
+
+    before = logging.root.manager.disable
+    with isolated(tmp_path):
+        assert main(["seed", "--out", str(tmp_path / "data"), "--invoices", "200", "--vendors", "40", "--master",
+                     "300", "--gl", "200", "--cost-centers", "30", "--pos", "20", "--users", "8", "--queue", "60",
+                     "--register", "500", "--workers", "1"]) == 0  # fmt: skip
+    assert logging.root.manager.disable == before
+    said: list[str] = []
+    log = logging.getLogger("ap_coder.test.seed_logging")
+    handler = logging.Handler()
+    handler.emit = lambda record: said.append(record.getMessage())  # type: ignore[method-assign]
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    try:
+        log.info("an INFO line still reaches its log")
+    finally:
+        log.removeHandler(handler)
+    assert said == ["an INFO line still reaches its log"]
+
+
 def test_the_seed_makes_the_folder_it_says(seeded):
     report = json.loads((seeded / "seed.json").read_text(encoding="utf-8"))
     counts = report["counts"]
@@ -157,6 +182,23 @@ def test_each_clone_has_amounts_of_its_own_that_add_up(seeded):
         )
         assert round(doc["subtotal"] + doc["tax_total"], 2) == doc["grand_total"] == total == checks["grand_total"]
         assert lines == checks["line_sum"] and round(sum(r["amount"] for r in doc["gl_distribution"]), 2) == total
+
+
+def test_the_seed_has_its_bank_accounts_in_use_as_a_real_installation_has_them(seeded, tmp_path):
+    """B-1739: the seed set up no bank account, so the load runs never asked the queue's Pay from (each waiting
+    vendor's last account, 197 ms a visit at 100,000 invoices). Each invoice is paid from its currency's account: as
+    approved, and as the queue offers it."""
+    with isolated(tmp_path):
+        store = Store(seeded / "ap_coder.db")
+        accounts = [(a["code"], a["currency"]) for a in store.bank_accounts(active_only=True)]
+        assert accounts == [("CAD-OP", "CAD"), ("USD-OP", "USD")]
+        signed = store.summary_fetch("SELECT currency, pay_from, vendor_key FROM invoice_summary WHERE status IN "
+                                     "('approved', 'pending_approval')")  # fmt: skip
+        assert {r["currency"] for r in signed} == {"CAD", "USD"}
+        assert all(r["pay_from"] == f"{r['currency']}-OP" for r in signed)
+        waiting = store.summary_fetch("SELECT DISTINCT vendor_key FROM invoice_summary WHERE status = ?", (REVIEW,))
+        last = store.last_pay_froms([r["vendor_key"] for r in waiting])
+        assert last and set(last.values()) <= {"CAD-OP", "USD-OP"}
 
 
 def test_the_seed_stands_in_for_the_day_s_backup_so_serving_it_copies_nothing(seeded, tmp_path):

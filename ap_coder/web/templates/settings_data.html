@@ -80,7 +80,7 @@
 
   <details class="st-details st-danger" id="restore"{% if chosen %} open{% endif %}>
     <summary><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore a backup…</summary>
-    <form method="post" action="/settings/data/restore" class="stack" data-busy="Restoring…" data-restore>
+    <form method="post" action="/settings/data/restore" class="stack" data-busy="Restoring…" data-restore data-long>
       <label class="field">Backup to restore
         <select name="name" required>{% for b in backups %}<option value="{{ b.name }}"{% if b.name == chosen %} selected{% endif %}>{{ b.name }} · {{ b.made }} · {{ b.state }}</option>{% endfor %}</select></label>
       <p>Put AP Coder back as it was at this backup? The database and the invoice files, saved emails and attachments go

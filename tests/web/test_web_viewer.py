@@ -672,3 +672,42 @@ def test_in_a_browser_the_hand_and_a_turned_page_are_said_on_the_page(browser, s
     page.keyboard.up(" ")
     assert _mode(page) == ""
     assert errors == []
+
+
+def _teach_held(browser, store):
+    """The review screen with its words on the page (/words) held, Teach a field → Go clicked."""
+    chromium, base = browser
+    page = chromium.new_page(viewport=LAPTOP)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.held = []
+    page.route("**/words", lambda r: page.held.append(r))
+    page.clock.install()
+    page.goto(f"{base}/review/{_id(store, 'Cascade')}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    page.click("[data-teach] > summary")
+    page.select_option("[data-teach-field]", "invoice_number")
+    page.click("[data-teach-go]")
+    wait_until(page, lambda: page.held)
+    return page, errors
+
+
+def test_in_a_browser_teaching_a_field_waits_for_words_that_take_long_and_says_plainly_when_none_came(browser, store):
+    """B-1715: the words on the page were given up after 30 s, as a look is, though they can take longer (a scan's
+    pages read again after an OCR update, a busy company server): the reviewer read the browser's own "signal is
+    aborted without reason", and the next click asked for them again while the server still worked out the first.
+    They are waited for as an action is (5 minutes); none by then is said as AP Coder not answering."""
+    page, errors = _teach_held(browser, store)
+    page.clock.run_for(31_000)  # past a look's 30 s (a toast would be up for 9 s)
+    page.wait_for_timeout(300)
+    assert page.locator("#toasts > *").count() == 0, page.inner_text("#toasts")
+    page.held[0].continue_()
+    wait_until(page, lambda: page.clock.run_for(100) or page.locator(".iv-w").count() > 0)  # the words drawn
+    assert page.locator(".iv-w").count() > 0 and errors == []
+    page.close()
+    page, errors = _teach_held(browser, store)
+    page.clock.run_for(5 * 60_000 + 1_000)
+    wait_until(page, lambda: page.locator("#toasts > *").count() > 0)
+    said = page.inner_text("#toasts")
+    assert "AP Coder didn't answer" in said and "signal" not in said and len(page.held) == 1, said
+    assert errors == []

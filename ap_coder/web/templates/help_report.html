@@ -2,7 +2,7 @@
 {# Help → Report a problem (pages/help.py report_page): what to write, and the two reports to copy. Both are the
    command line's own (doctor, share-report): no keys, vendor names, amounts or file names. #}
 {% block title %}Report a problem · AP Coder{% endblock %}
-{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/settings.css') }}">{% endblock %}
 {% block heading %}Report a problem{% endblock %}
 {% block subtitle %}What to send so a problem can be fixed. Nothing here is sent by AP Coder: you copy it and send it yourself.{% endblock %}
 {% block aside %}<a class="btn" href="/help"><span class="ms" aria-hidden="true">arrow_back</span>Back to Help</a>{% endblock %}
@@ -67,4 +67,4 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script type="module" src="/static/js/help.js?v={{ static_version }}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{{ static_url('/static/js/help.js') }}"></script>{% endblock %}

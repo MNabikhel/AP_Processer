@@ -18,10 +18,10 @@
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { HEADERS, follow, post, toast } from "./app.js";
+import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
-import { enhance, fold, registerGroups, setAction, setSource, setValue } from "./picker.js";
+import { enhance, fold, refresh, registerGroups, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -545,16 +545,63 @@ if (split) {
   });
 }
 
-/* ---------- The vendor, from the vendor list ---------- */
+/* ---------- The vendor, from the vendor list ----------
+   The page holds only the list's seed (#vendor-seed: its address, whether a vendor master enforces it, its count, the
+   vendors the screen names as it opens and what it was asked about): the list itself (20,000 vendors are 3 MB) is
+   fetched as an editable screen opens, and a laptop's browser keeps it (D-160). Until it is here the line under the
+   vendor field says only what the seed knows; a fetch that failed is asked for again at the next need (the list
+   opened, the vendor typed). */
 
 const vendorInput = document.getElementById("vendor-name");
 const vendorMatch = document.querySelector("[data-vendor-match]");
 const vendorAdd = document.querySelector("[data-vendor-add]");
-let vendors = { enforced: false, list: [] };
+let seed = { url: "", enforced: false, count: 0, list: [], asked: {} };
 try {
-  vendors = JSON.parse(document.getElementById("vendor-data")?.textContent || "null") || vendors;
+  seed = { ...seed, ...JSON.parse(document.getElementById("vendor-seed")?.textContent || "null") };
 } catch {
   /* no vendor list on this page */
+}
+let vendors = { enforced: Boolean(seed.enforced), list: [...seed.list] };
+const addedHere = []; // the vendors added on this screen: kept when the list comes
+const VENDORS_TRIES = 5; // a fetch that failed (dropped, a 500, a 502/503, its deadline) is asked for again: 5 in all,
+const VENDORS_RETRY_MS = 5000; // at least this long after the last failure (window.AP_VENDORS_RETRY_MS: the tests')
+const vendorList = { whole: !seed.url || !seed.count, loading: null, tries: 0, failedAt: 0 };
+
+/** The vendor list fetched, once (again after a failure, at a need): the fetch under way, or null for none. */
+function loadVendors() {
+  if (vendorList.whole || vendorList.loading) return vendorList.loading;
+  const wait = window.AP_VENDORS_RETRY_MS ?? VENDORS_RETRY_MS;
+  if (vendorList.tries >= VENDORS_TRIES || (vendorList.failedAt && performance.now() - vendorList.failedAt < wait)) {
+    return null;
+  }
+  vendorList.tries += 1;
+  vendorList.loading = (async () => {
+    try {
+      const response = await fetchWithin(seed.url, { headers: { Accept: "application/json" } }); // (30 s: LOOK_MS)
+      if (!response.ok) throw new Error(`${response.status}`);
+      const got = await response.json();
+      const added = new Set(addedHere.map((v) => v.key));
+      vendors = { enforced: Boolean(got.enforced), list: got.list.filter((v) => !added.has(v.key)).concat(addedHere) };
+      vendorList.whole = true;
+    } catch {
+      vendorList.failedAt = performance.now(); // as time passes, whatever the clock says (B-1718); also: the session
+      // ended (the login page, no JSON)
+    }
+    vendorList.loading = null;
+    showVendorMatch();
+    refresh(vendorInput); // a vendor list opened meanwhile shows them now
+  })();
+  return vendorList.loading;
+}
+
+/** Whether the vendors found for ``typed`` (a vendor key) and ``bn`` (a GST/HST business number) are all there are:
+    the whole list is here, or these are what the seed was asked about, and it names the vendors it found for them. */
+function listKnows(typed, bn) {
+  return vendorList.whole || ((!typed || typed === seed.asked.vendor) && (!bn || bn === seed.asked.number));
+}
+
+function findVendor(key) {
+  return key ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === key) : null;
 }
 
 /* A vendor name's key, exactly as memory.vendor_key gives it (accents, ligatures, punctuation, "&"/"and", a leading
@@ -610,10 +657,15 @@ function vendorLine(icon, tone, text, action) {
 function showVendorMatch() {
   if (!vendorInput || !vendorMatch) return;
   const typed = vendorKey(vendorInput.value);
-  const found = typed ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === typed) : null;
+  const found = findVendor(typed);
+  // (a number filled from the vendor list is that vendor's: it says nothing about who sent the invoice)
+  const filled = "gst_hst_registration_number" in (fromVendor().fields || {});
+  const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
+  const knows = listKnows(typed, bn); // else what the list says of them is not known yet
+  const count = vendorList.whole ? vendors.list.length : seed.count;
   const sure = vendorInput.closest("[data-field]")?.querySelector(".lbl .inv-sure");
   const flagged = vendorInput.closest("[data-field]")?.classList.contains("is-flagged");
-  if (sure) sure.hidden = sure.dataset.dropped === "1" || flagged || (!found && vendors.enforced && vendors.list.length > 0);
+  if (sure) sure.hidden = sure.dataset.dropped === "1" || flagged || (!found && vendors.enforced && knows && count > 0);
   if (found) {
     const an8 = vendorMatch.dataset.an8;
     // JD Edwards in use: the supplier number it gets (AN8), said as such
@@ -627,9 +679,17 @@ function showVendorMatch() {
     else vendorLine("verified", "ok", `In the vendor list${id}`);
     return;
   }
-  // (a number filled from the vendor list is that vendor's: it says nothing about who sent the invoice)
-  const filled = "gst_hst_registration_number" in (fromVendor().fields || {});
-  const bn = filled ? "" : businessNumber(input("gst_hst_registration_number")?.value);
+  if (!knows) {
+    // never "Not in the vendor list", nor whose GST/HST number it is, from the seed alone: the list is asked for (again)
+    if (loadVendors()) vendorLine("hourglass_top", "", "Checking the vendor list…");
+    else if (vendors.enforced) {
+      vendorLine("cloud_off", "warn", "Couldn't load the vendor list: the check on approval still compares the vendor with it.");
+    } else {
+      vendorMatch.replaceChildren();
+      vendorMatch.className = "inv-vendor-match small";
+    }
+    return;
+  }
   const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
   if (byNumber) {
     // good to know (as the checks say it), not a warning (B-827)
@@ -642,7 +702,7 @@ function showVendorMatch() {
   // Without a vendor master the list is only the vendors approved before: a new one is no mistake, so say nothing;
   // and the check's own note under the field says it already (B-796): said once.
   const note = vendorInput.closest("[data-field]")?.querySelector(":scope > [data-flag]:not([hidden]) [data-flag-text]");
-  if (!vendors.list.length || !vendors.enforced || /vendor list/i.test(note?.textContent || "")) {
+  if (!count || !vendors.enforced || /vendor list/i.test(note?.textContent || "")) {
     vendorMatch.replaceChildren();
     vendorMatch.className = "inv-vendor-match small";
     return;
@@ -703,10 +763,15 @@ function showFromVendor() {
 
 let vendorBefore = vendorInput?.value ?? ""; // the vendor as it was before the change being made (Undo's)
 
-/** The vendor field changed (picked, or left after typing): fill from the vendor list, with Undo. */
-function vendorChanged() {
+/** The vendor field changed (picked, or left after typing): fill from the vendor list, with Undo. A vendor the seed
+    doesn't know waits for the list being fetched, once: it fills from what is here then. */
+function vendorChanged(waited = false) {
   if (!vendorInput || !fromVendorBox) return;
   const key = vendorKey(vendorInput.value);
+  if (!waited && !findVendor(key) && !listKnows(key, "")) {
+    const loading = loadVendors();
+    if (loading) return void loading.then(() => vendorChanged(true));
+  }
   const state = fromVendor();
   const fields = stillFilled(state);
   const before = vendorBefore;
@@ -841,18 +906,20 @@ function showFlags(flags, errors = []) {
 vendorInput?.addEventListener("input", showVendorMatch);
 // The vendor field's list (picker.js): the vendors of the vendor list, with their ERP ID and GST/HST number.
 if (vendorInput) {
-  setSource(vendorInput, () =>
-    vendors.list.map((v) => ({
+  setSource(vendorInput, () => {
+    loadVendors(); // opened before the list came, or after it failed: asked for (again); drawn again when it comes
+    return vendors.list.map((v) => ({
       value: v.name,
       extra: [v.id, v.gst ? `GST/HST ${v.gst}` : "", v.added ? "added here" : ""].filter(Boolean).join(" · "),
-    })),
-  );
+    }));
+  });
 }
 input("gst_hst_registration_number")?.addEventListener("input", showVendorMatch);
 // The vendor list's last row, while it covers the line under the field (B-597): a name not in the list is added.
 if (vendorInput && vendorAdd) {
   setAction(vendorInput, (typed) => {
     const key = vendorKey(typed);
+    if (!vendorList.whole) return null; // whether it is new is known once the list is here
     if (!vendors.enforced || !key || vendors.list.some((v) => (v.key ?? vendorKey(v.name)) === key)) return null;
     return {
       label: "Not in the vendor list: add as a new vendor…",
@@ -893,6 +960,7 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
   }
   const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
   vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]); // the vendor field offers it now
+  addedHere.push(added); // and still once the list comes
   vendorAdd.removeAttribute("open");
   if (answer.toast) toast(answer.toast);
   setVendor(added.name);
@@ -924,9 +992,16 @@ function showField(name) {
 
 let words = null;
 
+/** The words on the page, asked for once. Waited for as an action is: a scan's pages are read again when their OCR
+    isn't kept (an OCR update since it came in), or a busy server takes a while (B-1715). */
 async function loadWords() {
   if (words) return words;
-  const response = await fetch(`${base}/words`, { headers: { Accept: "application/json" } });
+  let response;
+  try {
+    response = await fetchWithin(`${base}/words`, { headers: { Accept: "application/json" } }, ACTION_MS);
+  } catch {
+    throw new Error(noAnswer());
+  }
   const answer = await response.json().catch(() => ({ ok: false, error: "The words on the page can't be read." }));
   if (!answer.ok) throw new Error(answer.error);
   words = answer.words;
@@ -1286,22 +1361,20 @@ document.addEventListener("apc:ask-why", (event) => {
 const reader = document.querySelector("[data-reader][data-poll]");
 if (reader) {
   const every = Math.max(5, Number(reader.dataset.poll) || 20) * 1000;
-  const look = async () => {
-    try {
-      const response = await fetch(`${base}/reader`, { headers: { Accept: "application/json" }, cache: "no-store" });
-      const answer = await response.json();
-      if (!answer.poll) {
-        await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
-        location.reload();
-        return;
+  // Looked at less often while nothing changes, never while the tab is hidden, and no more once the session ended.
+  // seen: what the panel shows; while it still is, the answer is only "same", without the panel (D-160)
+  poll(() => `${base}/reader?seen=${encodeURIComponent(reader.dataset.tag || "")}`, async (answer) => {
+    if (answer.poll) {
+      if (!answer.same) {
+        reader.innerHTML = answer.html; // drawn by the server, every text escaped
+        reader.dataset.tag = answer.tag || "";
       }
-      reader.innerHTML = answer.html; // drawn by the server, every text escaped
-    } catch {
-      /* not answering now: look again later */
+      return false;
     }
-    setTimeout(look, every);
-  };
-  setTimeout(look, every);
+    await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
+    location.reload();
+    return true;
+  }, { everyMs: every, firstMs: every });
 }
 
 /* ---------- Keys ---------- */
@@ -2660,6 +2733,7 @@ function lockFields() {
 showMailLanguage();
 titleTaxCodes();
 fillSplitLines();
+if (form && !readOnly) loadVendors(); // the vendor list, fetched as an editable screen opens (D-160)
 showVendorMatch();
 for (const name of absentList()) viewer?.setEdited(name, "", true); // marked before: the Fields list says so
 lastSums = tickedSums(); // what the tax lines follow from now on (B-610)

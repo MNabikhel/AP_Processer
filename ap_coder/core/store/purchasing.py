@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-from ...coding.po import OPEN, po_key
+from ...coding.po import CLOSED, OPEN, po_key
 from ...coding.rules import Rule
 from ..memory import vendor_key
 from ._base import (
@@ -20,7 +20,7 @@ from ._base import (
 )
 from .summary import BIT, fetch_rows
 
-BILLING_BATCH = 500  # the codings ``billing_invoices`` reads at a time
+BILLING_BATCH = 500  # the codings ``billing_codings`` reads at a time
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
 # Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
 # null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
@@ -124,32 +124,54 @@ class PurchasingMixin:
                 found[key] = {**heads[key], "lines": rows, "total": round(sum(li["amount"] for li in rows), 2)}
         return found
 
-    def billing_invoices(self, po_keys: list[str], vendor_keys: list[str]) -> Iterator[dict[str, Any]]:
-        """The invoices ``po_invoices`` gives for each of ``po_keys`` and ``vendor_invoices_without_po`` for each of
-        ``vendor_keys``, by id, each once (with its ``po_key`` and ``vendor_key``), and of each coding only what
-        billing a PO reads (its invoice date and lines, read out by SQLite: the rest of it is not decoded); read from
-        the invoices' summary in one query, then a batch of codings at a time (the lines of every invoice of a
-        vendor are never held at once)."""
+    def received_po_keys(self) -> list[str]:
+        """The POs month-end accrues lines of (not closed, a line received), in ``purchase_orders``' order."""
         with self._conn() as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT po_key FROM purchase_orders p WHERE status != ? AND EXISTS (SELECT 1 FROM po_lines l WHERE "
+                "l.po_key = p.po_key AND l.received_quantity IS NOT NULL) ORDER BY po_number", (CLOSED,),
+            )]  # fmt: skip
+
+    def billing_rows(self, po_keys: list[str], vendor_keys: list[str]
+                     ) -> tuple[list[tuple[Any, ...]], dict[str, Any], tuple[Any, ...] | None]:  # fmt: skip
+        """(the invoices ``po_invoices`` gives for each of ``po_keys`` and ``vendor_invoices_without_po`` for each of
+        ``vendor_keys``, by id, each once: (id, invoice date, ``po_key``, ``vendor_key``); the count of changes of each
+        of their vendors, an invoice of its added, deleted or changed: ``changes/vendor/<key>``, D-159; the database's
+        ``summary_id``, or None when read in a write under way, which may yet be undone, not this read's own bringing
+        the summary up to date), from the invoices' summary in one read: most invoices, read in order, not by an
+        index. Their codings: ``billing_codings``."""
+        with self._conn() as conn:
+            writing = conn.in_transaction
             self._summary_fresh(conn)
-            picked = fetch_rows(
-                conn,
-                "SELECT id, status, invoice_number, invoice_date, po_key, vendor_key FROM invoice_summary WHERE status "
-                f"IN {_ACTIVE_IN} AND ({_in_list('po_key')} OR (po_key = '' AND {_in_list('vendor_key')})) ORDER BY id",
+            rows = [tuple(r) for r in conn.execute(
+                f"SELECT id, invoice_date, po_key, vendor_key FROM invoice_summary WHERE +status IN {_ACTIVE_IN} AND "
+                "(+po_key IN (SELECT value FROM json_each(?)) OR (+po_key = '' AND +vendor_key IN (SELECT value FROM "
+                "json_each(?)))) ORDER BY id",
                 (*ACTIVE_STATUSES, json.dumps(list(po_keys)), json.dumps([k for k in vendor_keys if k])),
-            )
-        for start in range(0, len(picked), BILLING_BATCH):
-            batch = picked[start : start + BILLING_BATCH]
+            )]  # fmt: skip
+            vendors = sorted({r[3] for r in rows if r[3] is not None})
+            counts = dict(conn.execute(
+                "SELECT substr(key, 16), value FROM settings WHERE key IN (SELECT 'changes/vendor/' || value FROM "
+                "json_each(?))", (json.dumps(vendors),),
+            ).fetchall())  # fmt: skip
+            found = conn.execute("SELECT value FROM settings WHERE key = 'summary_id'").fetchone()
+        return rows, counts, None if writing else (found[0] if found else None,)
+
+    def billing_codings(self, ids: list[int]) -> Iterator[tuple[int, dict[str, Any]]]:
+        """(id, what billing a PO reads of its coding: its invoice date and lines, read out by SQLite, the rest of it
+        not decoded) of each of ``ids`` still there, in their order, a batch of codings at a time (the lines of every
+        invoice of a vendor are never held at once)."""
+        for start in range(0, len(ids), BILLING_BATCH):
+            batch = ids[start : start + BILLING_BATCH]
             with self._conn() as conn:
-                found = conn.execute(_BILLING_FACTS, (json.dumps([r["id"] for r in batch]),)).fetchone()[0]
+                found = conn.execute(_BILLING_FACTS, (json.dumps(batch),)).fetchone()[0]
             read = {n: (facts, doc) for n, facts, doc in json.loads(found)}
-            for r in batch:
-                if r["id"] not in read:  # deleted since
+            for n in batch:
+                if n not in read:  # deleted since
                     continue
-                facts, doc = read[r["id"]]
+                facts, doc = read[n]
                 # Not an object of valid JSON: the coding read as it was, failing as it did.
-                coding = json.loads(doc) if facts is None else {"invoice_date": facts[0], "line_items": facts[1]}
-                yield {**r, "coding": coding}
+                yield n, json.loads(doc) if facts is None else {"invoice_date": facts[0], "line_items": facts[1]}
 
     def purchase_orders(self) -> list[dict[str, Any]]:
         """Every PO with its total and how much has been invoiced against it (invoices in review included)."""

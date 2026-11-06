@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
+from collections import OrderedDict
 from typing import Any
 
 from ..memory import vendor_key
@@ -25,6 +27,31 @@ from .summary import fetch_rows
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
 # output is parsed for a few fields.
 _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, 'null'), '{}')"
+
+# Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
+# most VENDOR_ROWS_KEPT rows in all (about 1 KB a row: 50 MB), one vendor up to half of them (a year's biggest vendor
+# has about 23,000), and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is asked for, most with no
+# invoices), the rows held counted as they are kept and dropped.
+VENDOR_ROWS_KEPT = 50_000
+VENDOR_KEYS_KEPT = 4_096
+_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = OrderedDict()
+_VENDOR_ROWS_HELD = 0
+_VENDOR_ROWS_LOCK = threading.Lock()
+
+
+def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, ...], rows: list[dict[str, Any]]) -> None:
+    """``rows`` kept as the newest; the vendors asked longest ago go while over either cap. A vendor of more rows than
+    half the cap is not kept: the other half stays for the others (B-1721)."""
+    global _VENDOR_ROWS_HELD
+    if len(rows) > VENDOR_ROWS_KEPT // 2:
+        return
+    with _VENDOR_ROWS_LOCK:
+        before = _VENDOR_ROWS.pop(key, None)
+        _VENDOR_ROWS[key] = (stamp, rows)
+        _VENDOR_ROWS_HELD += len(rows) - (len(before[1]) if before else 0)
+        while _VENDOR_ROWS_HELD > VENDOR_ROWS_KEPT or len(_VENDOR_ROWS) > VENDOR_KEYS_KEPT:
+            _, (_, dropped) = _VENDOR_ROWS.popitem(last=False)
+            _VENDOR_ROWS_HELD -= len(dropped)
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -389,9 +416,20 @@ class VendorsMixin:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
 
+    def master_vendor_ids(self) -> list[tuple[str, str]]:
+        """(vendor key, ERP ID) of each vendor of the vendor master: what Import invoices' setup step counts, at every
+        view (``master_vendors``' every column of 20,000 vendors took 0.23 s, D-166)."""
+        with self._conn() as conn:
+            return [tuple(r) for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE in_master = 1")]
+
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
-        invoice whose vendor name differs but whose GST/HST number matches still gets its ID."""
+        invoice whose vendor name differs but whose GST/HST number matches still gets its ID. Kept in each process
+        until the vendor list changes (``changes/vendors``, D-159): each check asks it twice. Shared: read it, don't
+        change it."""
+        return self.summary_memo("vendor_ids", self._vendor_ids, topic="", changes="vendors")
+
+    def _vendor_ids(self) -> dict[str, str]:
         from ...coding.vendors import norm_tax_number
 
         with self._conn() as conn:
@@ -404,6 +442,44 @@ class VendorsMixin:
                 if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
                     ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
         return ids
+
+    def master_by_tax_number(self, number: Any) -> list[dict[str, Any]]:
+        """The vendor master's vendors whose GST/HST number is the registration ``number`` is (``same_tax_number``),
+        in the list's order: for an invoice not found by name. Only those vendors are read, found by the master's
+        numbers kept in each process until the vendor list changes (``changes/vendors``, D-159)."""
+        from ...coding.vendors import _BUSINESS_NUMBER, norm_tax_number, same_tax_number
+
+        text = norm_tax_number(number)
+        if not text:
+            return []
+        exact, business = self.summary_memo("master_numbers", self._master_numbers, topic="", changes="vendors")
+        found = {*exact.get(text, ()), *(business.get(text[:9], ()) if _BUSINESS_NUMBER.fullmatch(text) else ())}
+        if not found:
+            return []
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM vendors WHERE rowid IN (SELECT value FROM json_each(?)) AND in_master = 1 "
+                "ORDER BY rowid", (json.dumps(sorted(found)),),
+            )]  # fmt: skip
+        return [r for r in rows if same_tax_number(r["expected_gst"], number)]
+
+    def _master_numbers(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+        """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:
+        the rowids of those whose number is it, with or without its RT suffix}): every vendor ``same_tax_number``
+        could match is in one of them."""
+        from ...coding.vendors import _BUSINESS_NUMBER, norm_tax_number
+
+        with self._conn() as conn:
+            rows = conn.execute("SELECT rowid, expected_gst FROM vendors WHERE in_master = 1 AND expected_gst != ''")
+            exact: dict[str, list[int]] = {}
+            business: dict[str, list[int]] = {}
+            for rowid, gst in rows:
+                text = norm_tax_number(gst)
+                if text:
+                    exact.setdefault(text, []).append(rowid)
+                    if _BUSINESS_NUMBER.fullmatch(text):
+                        business.setdefault(text[:9], []).append(rowid)
+        return exact, business
 
     def all_vendor_terms(self) -> dict[str, str]:
         """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""
@@ -419,18 +495,48 @@ class VendorsMixin:
         return row[0] if row else ""
 
     def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
-        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried. Read once
-        per page while nothing changes (``_session_memo``): the vendor checks and the tax-number notes both ask."""
-        return self._session_memo(("vendor_invoices", key), lambda: self._vendor_invoices(key))
+        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried: the vendor
+        checks and the tax-number notes both ask, at every check of the review screen. Kept in this process for each
+        vendor (``_keep_vendor_rows``, D-160) while its stamp, read before the rows, holds: the database's
+        ``summary_id`` and the vendor's count of changes (``changes/vendor/<key>``, kept by triggers: an invoice of its
+        added or deleted, or a column listed here changed, whoever changed it). A vendor too big to keep is read once in
+        a page's session (``_session_memo``, B-1721). Inside a write under way they are read afresh and not kept: it
+        may yet be undone. Each caller gets rows of its own."""
+        with self._conn() as conn:
+            stamp = tuple(conn.execute(
+                "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), "
+                "(SELECT value FROM settings WHERE key = ?)", (f"changes/vendor/{key}",),
+            ).fetchone())  # fmt: skip
+            writing = conn.in_transaction
+        if writing:
+            return self._vendor_invoices(key)
+        kept = (str(self.path), key)
+        with _VENDOR_ROWS_LOCK:
+            hit = _VENDOR_ROWS.get(kept)
+            if hit is not None and hit[0] == stamp:
+                _VENDOR_ROWS.move_to_end(kept)
+        if hit is None or hit[0] != stamp:
+            rows = self._session_memo(("vendor_invoices", key, stamp), lambda: self._vendor_invoices(key), shared=True)
+            hit = (stamp, rows)
+            _keep_vendor_rows(kept, *hit)
+        return [dict(r) for r in hit[1]]
 
     def approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
         """{vendor key: [(the GST/HST number, the bank account) each approved invoice of it carried]}, for the vendors
-        ``keys`` (the vendors on hold: ``coding.vendors.held_vendor``), in one read; "" for one not carried."""
-        with self._conn() as conn:
+        ``keys`` (the vendors on hold: ``coding.vendors.held_vendor``), in one read; "" for one not carried. Kept in
+        each process until an approved invoice changes (``changes/approved``) or other vendors are asked (D-159):
+        each check asks it twice. Each caller gets lists of its own."""
+        asked = tuple(keys)
+        kept = self.summary_memo("approved_numbers", lambda: self._approved_numbers(list(asked)), topic="",
+                                 changes="approved", asked=asked)  # fmt: skip
+        return {key: list(numbers) for key, numbers in kept.items()}
+
+    def _approved_numbers(self, keys: list[str]) -> dict[str, list[tuple[Any, Any]]]:
+        with self._conn() as conn:  # (``+status``: by the vendors' index, not every approved invoice's)
             rows = conn.execute(
                 f"SELECT vendor_key, json_extract({_DOC}, '$.gst_hst_registration_number'), json_extract({_DOC}, "
                 "'$.remit_bank_account') FROM invoices WHERE vendor_key IN (SELECT value FROM json_each(?)) AND "
-                "status = 'approved' ORDER BY id DESC", (json.dumps(keys),)
+                "+status = 'approved' ORDER BY id DESC", (json.dumps(keys),)
             ).fetchall()  # fmt: skip
         out: dict[str, list[tuple[Any, Any]]] = {}
         for key, gst, bank in rows:
@@ -452,7 +558,7 @@ class VendorsMixin:
                 dict(r)
                 for r in conn.execute(
                     f"""SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
-                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at, {fields}
+                              grand_total, created_at, reviewed_at, {fields}
                        FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
                     (key,),
                 )
@@ -514,15 +620,11 @@ class VendorsMixin:
         """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
         totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)  # read again once an invoice changed
         rows = [dict(r) for r in totals]
-        with self._conn() as conn:
-            lessons = {
-                r["vendor_key"]: dict(r)
-                for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
-                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
-                )
-            }
-            masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+        lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
+        with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)
+            listed = (json.dumps([r["vendor_key"] for r in rows]),)
+            masters = {r["vendor_key"]: dict(r) for r in conn.execute(
+                f"SELECT * FROM vendors WHERE {_in_list('vendor_key')}", listed)}  # fmt: skip
         rates = self.fx_rates()
         for r in rows:
             # Per currency: dollars and euros do not add up, and a USD-only vendor did not spend 0.00 CAD.
@@ -544,6 +646,18 @@ class VendorsMixin:
             r["added_here"] = master.get("in_master") == 2
             r["has_record"] = bool(master)  # in the vendor list, added here or set up by AP (on hold, notes)
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
+
+    def _vendor_lessons(self) -> dict[str, dict[str, Any]]:
+        """{vendor: its lessons, the lines AP reviewed and those it confirmed}: ``vendor_summaries``' part of the
+        coding memory, kept until a lesson changes (``changes/lessons``)."""
+        with self._conn() as conn:
+            return {
+                r["vendor_key"]: dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome NOT IN ('history', 'coded', 'bulk')) lines,
+                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
+                )
+            }
 
     def vendor_name_checks(self, ids: list[int]) -> dict[int, str]:
         """{invoice id: how sure the capture is of its vendor name} ("verified", "likely", "check", "missing"), in

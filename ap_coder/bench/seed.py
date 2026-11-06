@@ -2,7 +2,8 @@
 the volume and load benches (docs/SCALE_GOAL.md, phase 0).
 
 What it holds, by default for N invoices: 3,000 vendors with invoices among a vendor master of 20,000, 1,500 GL
-accounts, 300 cost centers, 3,000 POs, invoices spread over 12 months (the newest 3,000 waiting in the review queue,
+accounts, 300 cost centers, our bank accounts in CAD and USD (each invoice paid from its currency's: the Pay from of
+every approval), 3,000 POs, invoices spread over 12 months (the newest 3,000 waiting in the review queue,
 parked or for a second approval; the rest approved, nearly all exported in daily batches, a few rejected or failed),
 their events (arrival, approval, second approval, export, park, reject) and the people's logins, the learning memory
 (a line of feedback per approved line, lessons, the readers' and suppliers' scores, the lines as approved), the JD
@@ -70,6 +71,10 @@ APPROVAL_LIMIT = 25_000  # CAD: over it, a second approval (Settings → Review)
 # amounts of its own (a vendor's invoices of one amount are as rare as on real ones: the duplicate checks pair them)
 FACTORS = (0.05, 2.0)
 FX_RATES = "USD=1.37"
+# Our bank accounts (D-66), as a real installation has them: an invoice is paid from its currency's default, so every
+# approval records one, and the queue asks each waiting vendor's last (``Store.last_pay_froms``, B-1739).
+BANK_ACCOUNTS = ({"code": "CAD-OP", "name": "Operating account", "currency": "CAD", "is_default": "yes"},
+                 {"code": "USD-OP", "name": "US dollar account", "currency": "USD", "is_default": "yes"})  # fmt: skip
 CREDIT_NOTE = "northwind_ON_HST_CN-2026-0047"  # the template a share of the clones of every vendor use
 SHARES = {"parked": 0.05, "rejected": 0.01, "failed": 0.003, "credit": 0.02, "po": 0.15}
 CHUNK = 1000  # clones made by a worker at a time
@@ -317,9 +322,11 @@ def _reference(store: Any, rng: random.Random, vendors: int, master: int, gl: in
                cost_centers: int) -> list[dict[str, Any]]:  # fmt: skip
     """The sample setup grown to ``gl`` accounts and ``cost_centers`` centers, the review settings; the vendors (not
     yet in the vendor master: ``_master``) as dicts."""
+    from ap_coder.coding import banks
     from ap_coder.core.store import load_sample_purchase_orders, load_sample_setup, load_sample_vendor_master
 
     load_sample_setup(store)
+    store.save_bank_accounts(banks.clean_rows(BANK_ACCOUNTS)[0])
     have = {r["code"] for r in store.list_accounts("gl_accounts")}
     categories = ("Operating Expenses", "Cost of Sales", "Fixed Assets", "Prepaids", "Facilities", "Travel")
     rows, code = [], 20_000
@@ -653,6 +660,16 @@ def logging_off() -> None:
     logging.disable(logging.INFO)
 
 
+def _logging_level(level: int | None = None) -> int:
+    """The level ``logging.disable`` holds now; with ``level``, put back to it (a seed made in this process leaves the
+    caller's logging as it was, B-1759)."""
+    import logging
+
+    if level is not None:
+        logging.disable(level)
+    return logging.root.manager.disable
+
+
 def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
@@ -928,6 +945,7 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
     totals: dict[int, float] = {}
     at_id, at_total = columns.index("id"), columns.index("grand_total")
     conn = _bulk(store.path)
+    quiet = _logging_level()  # the clones' quiet (``_init``), meant for their own processes: undone here (B-1759)
     try:
         if workers > 1:
             pool = get_context("spawn").Pool(workers, initializer=_init, initargs=(context,))
@@ -963,6 +981,7 @@ def _write(store: Any, out: Path, plan: list[Clone], templates: list[dict[str, A
         conn.execute("COMMIT")
     finally:
         conn.close()
+        _logging_level(quiet)
     return counts, totals
 
 

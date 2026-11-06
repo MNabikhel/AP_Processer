@@ -343,6 +343,75 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     assert any(v["erp_id"] == "V1" for v in busy.master_vendors())
 
 
+# --- Long lists, a part at a time (D-162) -------------------------------------------------------------------------
+
+
+def test_how_many_rows_a_long_list_shows():
+    """``shown_count``: the step, or more in whole steps of it, a million at most; the step for junk or too few."""
+    from ap_coder.web.core import shown_count
+
+    asked = ("", None, "abc", "1.5", "-3", "0", "1", "50", "51", "100", "149", 400)
+    assert [shown_count(value, 50) for value in asked] == [50, 50, 50, 50, 50, 50, 50, 50, 100, 100, 150, 400]
+    assert shown_count("99999999", 200) == shown_count(10**9, 500) == 1_000_000
+
+
+def test_the_vendor_list_shows_a_part_at_a_time_and_keeps_its_length_when_one_is_opened(client, busy, monkeypatch):
+    """Vendors, ``VENDORS_SHOWN`` at a time ("Show more"): the tiles count every one, search finds any, one beyond
+    the part shown opens, and its links keep the list's length; under the step, the page is as it was."""
+    from markupsafe import escape
+
+    from ap_coder.web.pages import vendors as page
+
+    vendors = page.sort_vendors(busy.vendor_summaries(), "spend")
+    whole = client.get("/vendors").text
+    assert len(vendors) > 4 and "Show more" not in whole and 'id="more-vendors"' not in whole
+    monkeypatch.setattr(page, "VENDORS_SHOWN", 2)
+
+    def listed(text: str) -> list[str]:
+        return re.findall(r'class="vendor-link" href="/vendors\?([^"]*)"', text)
+
+    first = client.get("/vendors").text
+    assert len(listed(first)) == 2 and f"2 of {len(vendors)} vendors shown" in first
+    assert '<a class="btn sm" href="/vendors?view=all&amp;q=&amp;sort=spend&amp;shown=4#more-vendors">' in first
+    assert f"{sum(v['invoices'] for v in vendors)} invoices" in first  # (the tiles: every vendor)
+    more = client.get("/vendors?shown=3").text  # (whole steps)
+    assert len(listed(more)) == 4 and more.count('id="more-vendors"') == 1 and "shown=6#more-vendors" in more
+    assert all(link.startswith("view=all&amp;q=&amp;sort=spend&amp;shown=4&open=") for link in listed(more))
+    everyone = client.get("/vendors?shown=1000000").text
+    assert len(listed(everyone)) == len(vendors) and "Show more" not in everyone
+    last = vendors[-1]
+    assert str(escape(last["vendor_name"])) in client.get("/vendors", params={"q": last["vendor_name"]}).text
+    opened = client.get("/vendors", params={"open": last["vendor_key"], "shown": "4"}).text
+    assert f'name="key" value="{escape(last["vendor_key"])}"' in opened and len(listed(opened)) == 4
+    assert 'href="/vendors?view=all&amp;q=&amp;sort=spend&amp;shown=4#list"' in opened  # (Close keeps it too)
+
+
+def test_the_po_list_shows_a_part_at_a_time(client, busy, monkeypatch):
+    """Purchase orders, ``POS_SHOWN`` at a time ("Show more"): the tiles count every PO, search finds any, and one
+    beyond the part shown opens."""
+    from ap_coder.web.pages import purchase_orders as page
+
+    pos = [p for p in busy.purchase_orders() if p["status"] == po_mod.OPEN]
+    assert len(pos) > 2 and "Show more" not in client.get("/purchase-orders").text
+    monkeypatch.setattr(page, "POS_SHOWN", 1)
+
+    def listed(text: str) -> list[str]:
+        return re.findall(r'<td><a href="/purchase-orders\?([^"]*)#po"><b>', text)
+
+    first = client.get("/purchase-orders").text
+    assert len(listed(first)) == 1 and f"1 of {len(pos)} purchase orders shown" in first
+    assert '<a class="btn sm" href="/purchase-orders?q=&amp;status=open&amp;shown=2#more-pos">' in first
+    assert f"{len(busy.purchase_orders())} in total" in first  # (the tiles: every PO)
+    more = client.get("/purchase-orders?shown=2").text
+    assert len(listed(more)) == 2 and more.count('id="more-pos"') == 1
+    assert all(link.startswith("q=&amp;status=open&amp;shown=2&po=") for link in listed(more))
+    last = pos[-1]
+    found = client.get("/purchase-orders", params={"q": last["po_number"]}).text
+    assert len(listed(found)) == 1 and f"<b>{last['po_number']}</b>" in found
+    opened = client.get("/purchase-orders", params={"po": last["po_key"]}).text
+    assert len(listed(opened)) == 1 and f"<div><b>{last['po_number']}</b>" in opened  # (its lines, below)
+
+
 # --- Purchase orders ----------------------------------------------------------------------------------------------
 
 

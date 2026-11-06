@@ -190,3 +190,36 @@ def test_without_gl_accounts_the_background_writes_nothing(store, monkeypatch):
     work.stop()
     work.thread.join(30)
     assert leases == [] and store.stale_checks(store.checks_stamp())
+
+
+def test_the_queues_findings_are_decoded_once_for_all_the_invoices_that_have_them(store):
+    """B-1730: under 100 people each approval, park or reject made the queue work its checks out again, and each time
+    every finding of its 2,654 invoices was decoded and made read-only again (133 ms of the 258 at 100,000 invoices),
+    though they share a few texts (211). Each text is decoded once: the invoices with the same findings, and the
+    answer worked out again after a park, share them; each invoice's list is its own; and what the queue shows is
+    what reading the invoices gives, stored checks or checked again after a change of settings."""
+    ids = _queue(store)
+
+    def found(checks):
+        return {i: [(f["severity"], f["code"]) for f in checks[i]["found"]] for i in checks}
+
+    first = bulk.queue_checks(store, ids, recheck=False)[0]
+    store.park_invoice(ids[0], "jane", "waiting for the PO")
+    ids = ids[1:]
+    again = bulk.queue_checks(store, ids, recheck=False)[0]
+    assert sorted(again) == sorted(ids) and found(again) == _as_read(store, ids)
+    texts = {i: store.summary_rows("id = ?", (i,), "q_found")[0]["q_found"] for i in ids}
+    shown = [i for i in ids if again[i]["found"]]
+    same = max(([i for i in shown if texts[i] == texts[j]] for j in shown), key=len)
+    assert len(same) > 1, texts  # (the demo's invoices share some findings)
+    for i in shown:
+        assert all(f is g for f, g in zip(again[i]["found"], first[i]["found"], strict=True))  # not decoded again
+    a, b = same[:2]
+    assert all(f is g for f, g in zip(again[a]["found"], again[b]["found"], strict=True))
+    assert again[a]["found"] is not again[b]["found"]
+    again[a]["found"].append({"severity": "error", "code": "CHANGED_BY_THE_CALLER"})
+    assert found(bulk.queue_checks(store, ids, recheck=False)[0]) == _as_read(store, ids)
+    _held(store)
+    bulk.recheck_queue(store)  # their checks made against other settings: the queue's re-check with the stored ones
+    checks, updating = bulk.queue_checks(store, ids, recheck=False)
+    assert updating == 0 and found(checks) == _as_read(store, ids)

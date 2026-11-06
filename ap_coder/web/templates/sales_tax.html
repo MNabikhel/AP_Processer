@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_tiles.html" import tile_row %}
-{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% block content %}
 <section class="card">
   <form method="get" action="/sales-tax" class="row period">
@@ -67,7 +67,7 @@
       <thead><tr><th>Vendor</th><th>Date</th><th>Tax</th><th class="r">Amount</th><th>To check</th></tr></thead>
       <tbody>
         {% for c in shown %}
-        <tr>
+        <tr{% if loop.index > 1 and loop.index == rows - step + 1 %} id="more-claims"{% endif %}>
           <td class="w"><b>{{ c.vendor }}</b><div class="muted">{{ c.invoice_number }}</div></td>
           <td>{{ c.invoice_date }}</td>
           <td class="w">{{ ui.tax_chip(c.tax_type) }} {{ c.province }} {{ "%g" | format(c.rate * 100) }}%<div class="muted">{{ c.registration or "no number" }}</div></td>
@@ -78,6 +78,10 @@
       </tbody>
     </table>
   </div>
+  {%- if shown_total > shown | length %}
+  <p class="row"><span class="muted">{{ shown | length | num }} of {{ shown_total | num }} shown; the CSV has every one.</span>
+    <a class="btn sm" href="/sales-tax?start={{ start }}&end={{ end }}&show={{ 'risky' if only_risky else 'all' }}&rows={{ rows + step }}{% if self_rows > step %}&self_rows={{ self_rows }}{% endif %}#more-claims">Show more</a></p>
+  {%- endif %}
   {% else %}
   <p class="muted">Nothing to check.</p>
   {% endif %}
@@ -101,8 +105,8 @@
     <table class="apc-table">
       <thead><tr><th>Vendor</th><th>Date</th><th>Tax</th><th class="r">Subtotal</th><th class="r">Estimate</th></tr></thead>
       <tbody>
-        {% for s in self_items %}
-        <tr>
+        {% for s in self_shown %}
+        <tr{% if loop.index > 1 and loop.index == self_rows - step + 1 %} id="more-self"{% endif %}>
           <td class="w"><b>{{ s.vendor }}</b><div class="muted">{{ s.invoice_number }}</div>{% if s.note %}<div class="small" data-sa-note>{{ s.note }}</div>{% endif %}</td>
           <td>{{ s.invoice_date }}</td>
           <td>{{ s.tax_type }} {{ s.province }} {{ "%g" | format(s.rate * 100) }}%</td>
@@ -113,6 +117,10 @@
       </tbody>
     </table>
   </div>
+  {%- if self_items | length > self_shown | length %}
+  <p class="row"><span class="muted">{{ self_shown | length | num }} of {{ self_items | length | num }} shown; the CSV has every one.</span>
+    <a class="btn sm" href="/sales-tax?start={{ start }}&end={{ end }}&show={{ 'risky' if only_risky else 'all' }}{% if rows > step %}&rows={{ rows }}{% endif %}&self_rows={{ self_rows + step }}#more-self">Show more</a></p>
+  {%- endif %}
   <p class="muted small">These approved invoices are for a supply in a province with PST or QST, and the vendor charged none
     (often an out-of-province vendor). Your company may have to self-assess it on its provincial return. The estimate
     applies the official rate to the whole subtotal: exempt goods and services owe nothing, so check each one.

@@ -221,6 +221,112 @@ def test_received_not_invoiced_gives_what_matching_each_po_in_turn_gave(tmp_path
     assert not any(a.reference.startswith(("PO-73 ", "PO-75 ")) for a in found)  # closed, nothing received
 
 
+def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_changed(tmp_path, monkeypatch):
+    """D-166: each received PO's accruals are kept in each process (``accruals._PARTS``) and worked out again, its
+    invoices' codings decoded, only once its lines, its billing invoices (which, their dates and PO) or those
+    invoices' vendors' invoices changed, whoever changed them (another Store, plain SQL); never past a restore or a
+    write under way, which may yet be undone. Each time, what working every PO out afresh gives (6.5 s of decoding at
+    100,000 invoices, at every change before)."""
+    from tests.core.test_kept_answers import _plain, _po_line
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([_po_line(1, 4.0), _po_line(2, 1.0),
+                                  {**_po_line(1, 5.0), "po_number": "PO-2", "vendor_name": "Bolt Works"}])  # fmt: skip
+    acme, bolt = store.received_po_keys()
+    end = dt.date(2026, 10, 31)
+    decoded: list[int] = []
+    real = Store.billing_codings
+    monkeypatch.setattr(Store, "billing_codings", lambda self, ids: decoded.extend(ids) or real(self, ids))
+
+    def bill(vendor: str, po: str, quantity: float, day: str = "2026-10-03") -> dict:
+        line = {"line_number": 1, "description": "Bolts size 1", "quantity": quantity, "unit_price": 2.0,
+                "amount": 2.0 * quantity, "predicted_gl_code": "6010"}  # fmt: skip
+        return {"vendor_name": vendor, "invoice_number": f"{vendor}-{quantity}", "po_number": po,
+                "invoice_date": day, "currency": "CAD", "line_items": [line], "subtotal": 2.0 * quantity,
+                "grand_total": 2.1 * quantity}  # fmt: skip
+
+    def received() -> tuple[list[tuple], list[int]]:
+        decoded.clear()
+        found = accruals._received_not_invoiced(store, end)
+        read, kept = sorted(decoded), dict(accruals._PARTS)
+        accruals._PARTS.clear()
+        assert found == accruals._received_not_invoiced(store, end)  # what working every PO out afresh gives
+        accruals._PARTS.update(kept)
+        return [(a.reference, a.amount) for a in found], read
+
+    a = other.add_invoice(tmp_path / "a.pdf", bill("Acme Supply", "PO-1", 4), {})
+    b = other.add_invoice(tmp_path / "b.pdf", bill("Bolt Works", "PO-2", 2), {})
+    assert received() == ([("PO-1 line 2", 2.0), ("PO-2 line 1", 6.0)], [a, b])
+    assert received() == ([("PO-1 line 2", 2.0), ("PO-2 line 1", 6.0)], [])  # (kept)
+    other.approve_invoice(b, bill("Bolt Works", "PO-2", 3), "Jordan Lee")
+    assert received() == ([("PO-1 line 2", 2.0), ("PO-2 line 1", 4.0)], [b])  # Acme's PO kept
+    _plain(store, "UPDATE invoices SET ai_output = ? WHERE id = ?", json.dumps(bill("Acme Supply", "PO-1", 1)), a)
+    assert received() == ([("PO-1 line 1", 6.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 4.0)], [a])
+    _plain(store, "UPDATE invoices SET po_key = ? WHERE id = ?", bolt, a)  # (its PO alone: no count moves)
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 2.0)], [a, b])
+    _plain(store, "UPDATE invoices SET invoice_date = '2026-11-02' WHERE id = ?", b)  # after the period end
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 8.0)], [a, b])
+    backup = store.backup_now("manual")
+    _plain(store, "UPDATE invoices SET invoice_date = '2026-10-02' WHERE id = ?", b)
+    assert received()[0][-1] == ("PO-2 line 1", 2.0)
+    store.restore_from(backup)
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 8.0)], [a, b])  # (afresh)
+    with pytest.raises(RuntimeError), store.session(), store._conn() as conn:  # a write under way: never kept
+        conn.execute("UPDATE invoices SET invoice_date = '2026-10-02' WHERE id = ?", (b,))
+        assert accruals._received_not_invoiced(store, end)[-1].amount == 2.0
+        raise RuntimeError("undone")
+    assert received() == ([("PO-1 line 1", 8.0), ("PO-1 line 2", 2.0), ("PO-2 line 1", 8.0)], [])
+    assert acme in accruals._PARTS[(str(store.path), end.isoformat())]
+
+
+def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_po_or_the_setup_does(
+    tmp_path, monkeypatch
+):
+    """D-166: the invoices not in the ERP yet are kept until an invoice, the tax setup, JD Edwards' G/L date or the
+    batches made after the period end change (0.9 s at 100,000 invoices, at every visit before). What the page shows
+    (``build(settle=)``): once an invoice changed elsewhere, worked out again at most every
+    ``accruals.SETTLE_SECONDS``; a PO imported, the tax setup or the G/L date changed: another question, at once. The
+    CSV (``build`` without ``settle``) always follows."""
+    from ap_coder.coding.tax import EXPENSE_TO_LINE
+    from ap_coder.core.store import summary
+    from ap_coder.erp import jde
+    from tests.core.test_kept_answers import _plain, _po_line
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    worked: list[int] = []
+    real = accruals._not_in_erp
+    monkeypatch.setattr(accruals, "_not_in_erp", lambda *a: worked.append(1) or real(*a))
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    other = Store(store.path)
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    invoice = other.add_invoice(tmp_path / "a.pdf", nw, {})
+
+    def shown(settle: float = accruals.SETTLE_SECONDS) -> tuple[set, set, int]:
+        items = accruals.build(store, END, settle=settle)
+        return {a.source for a in items}, {a.note for a in items if a.source == accruals.NOT_IN_ERP}, len(worked)
+
+    review, approved = f"in review, {accruals.PROPOSED}", "approved, not exported"
+    assert shown() == ({accruals.NOT_IN_ERP}, {review}, 1) == shown()
+    other.approve_invoice(invoice, nw, "Jane")
+    clock[0] += accruals.SETTLE_SECONDS - 1
+    assert shown() == ({accruals.NOT_IN_ERP}, {review}, 1)  # changed under 30 s ago: settled
+    clock[0] += 1
+    assert shown() == ({accruals.NOT_IN_ERP}, {approved}, 2)
+    other.set_tax_treatment("GST", EXPENSE_TO_LINE)
+    assert shown()[2] == 3  # (the tax setup: at once)
+    settings = jde.load(store)
+    settings.gl_date = jde.GL_DATE_EXPORT
+    jde.save(other, settings)
+    assert shown()[2] == 4  # (the G/L date: at once)
+    other.import_purchase_orders([_po_line(1, 4.0)])
+    assert shown()[0] == {accruals.RECEIVED, accruals.NOT_IN_ERP}  # (a PO: at once)
+    _plain(store, "UPDATE invoices SET status = 'rejected' WHERE id = ?", invoice)
+    assert shown()[1] == {approved}  # settled
+    assert shown(settle=0)[1] == set()  # the CSV: always what reading again gives
+
+
 def test_default_period_end():
     assert accruals.default_period_end(dt.date(2026, 10, 3)) == dt.date(2026, 9, 30)
     assert accruals.default_period_end(dt.date(2026, 10, 20)) == dt.date(2026, 10, 31)

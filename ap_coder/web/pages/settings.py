@@ -457,6 +457,17 @@ def backup_failure(store: Store) -> str:
     return f"{when.replace('T', ' ')}: {what}" if status else ""
 
 
+def file_count(folder: Path) -> int:
+    """What the invoices folder holds, hidden files and folders too, counted without a ``Path`` for each of 100,000
+    files (D-162). 0 for a folder that can't be listed (a Windows permission, a share gone) or a file there, as
+    ``Path.glob`` gave (B-1723)."""
+    try:
+        with os.scandir(folder) as entries:
+            return sum(1 for _ in entries)
+    except OSError:
+        return 0
+
+
 def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
     """``chosen``: the backup *Restore this state* was pressed for (``?restore=``): picked and shown in the restore
     form, which still asks for RESTORE typed."""
@@ -468,7 +479,7 @@ def data_context(store: Store, chosen: str = "") -> dict[str, Any]:
         "data_path": str(data_dir(store)),
         "db_size": size_text(store.path),
         "invoice_count": sum(store.status_counts().values()),
-        "file_count": len(list(folder.glob("*"))) if folder.exists() else 0,
+        "file_count": file_count(folder) if folder.exists() else 0,
         "lesson_count": f"{store.metrics()['lines_reviewed']:,}",  # one definition: AP's own reviewed lines (B-532)
         "history_count": store.history_count(),  # past coding imported from the ERP, counted apart
         "backups": [backup_row(b, seen) for b in backups],

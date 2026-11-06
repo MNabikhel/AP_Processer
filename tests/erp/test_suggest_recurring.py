@@ -8,6 +8,7 @@ from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store
 from ap_coder.erp import recurring
 from tests.conftest import copy_database
+from tests.core.test_kept_answers import _plain
 from tests.webclient import client_for, draft_form, follow, post
 
 
@@ -74,6 +75,44 @@ def test_late_vendors_are_listed_first():
     rows = _invoices("late", "2026-01-01", 30, 5) + _invoices("fine", "2026-05-01", 30, 5)
     found = recurring.detect(rows, today=dt.date(2026, 9, 25))
     assert [r.vendor_key for r in found] == ["late", "fine"]
+
+
+def test_the_recurring_vendors_follow_their_invoices_and_settle_for_a_minute_under_changes(
+    tmp_path, ground_truth, monkeypatch
+):
+    """The recurring vendors (the queue's pill, Vendors, Month-end) are kept on the invoices' vendors, dates and totals
+    (the summary's "dates", D-110), whoever changed them; once one changed they are worked out again at most every
+    ``recurring.SETTLE_SECONDS`` (D-166), never past it."""
+    from ap_coder.core.store import summary
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def bill(day: str) -> int:
+        path = tmp_path / f"{day}.pdf"
+        path.write_bytes(day.encode())
+        doc = {**ground_truth, "vendor_name": "Hydro Power", "invoice_number": day, "invoice_date": day}
+        return other.add_invoice(path, doc, {"requires_review": True})
+
+    def last(today=dt.date(2026, 10, 3)) -> list:
+        return [(r.vendor_name, r.last_date.isoformat()) for r in recurring.detected(store, today=today)]
+
+    for day in ("2026-06-01", "2026-07-01", "2026-08-01"):
+        bill(day)
+    assert last() == [("Hydro Power", "2026-08-01")]
+    september = bill("2026-09-01")
+    clock[0] += recurring.SETTLE_SECONDS - 1
+    assert last() == [("Hydro Power", "2026-08-01")]  # changed, worked out under a minute ago: settled
+    unsettled = recurring.detected(store, today=dt.date(2026, 10, 3), settle=0)  # (Month-end's CSV)
+    assert [r.last_date.isoformat() for r in unsettled] == ["2026-09-01"]
+    assert last(dt.date(2026, 10, 4)) == [("Hydro Power", "2026-09-01")]  # (another day: afresh)
+    clock[0] += 1
+    assert last() == [("Hydro Power", "2026-09-01")]
+    _plain(store, "UPDATE invoices SET invoice_date = '2026-09-02' WHERE id = ?", september)
+    clock[0] += recurring.SETTLE_SECONDS
+    assert last() == [("Hydro Power", "2026-09-02")]
+    assert last() == [("Hydro Power", "2026-09-02")]  # (kept)
 
 
 def test_suggestion_button_codes_the_line(tmp_path, demo_template):

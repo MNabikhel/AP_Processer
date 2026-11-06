@@ -679,7 +679,12 @@ class CaptureMixin:
 
     def reader_scorecard(self) -> list[dict[str, Any]]:
         """Each reader's record against AP's approvals: {reader, fields (compared), agreed (with AP), rate,
-        invoices}. Reader "fused" is the combined value AP saw on the review screen."""
+        invoices}. Reader "fused" is the combined value AP saw on the review screen. Kept until a reader outcome
+        changes (D-162)."""
+        kept = self.summary_memo("reader_scorecard", self._reader_scorecard, topic="", changes="readers")
+        return [dict(r) for r in kept]
+
+    def _reader_scorecard(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT reader, COUNT(*) fields, SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices
@@ -861,8 +866,9 @@ class CaptureMixin:
         itself against what AP approved)."""
         sql = f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}"
         args: list[Any] = [_stale_before()]
-        if still_open:
-            sql += " AND invoice_id IN (SELECT id FROM invoices WHERE status IN (?, ?, ?))"
+        if still_open:  # each one's invoice looked up, not every invoice in review listed first (B-1736)
+            sql += (" AND EXISTS (SELECT 1 FROM invoices WHERE invoices.id = page_reads.invoice_id AND invoices.status "
+                    "IN (?, ?, ?))")  # fmt: skip
             args += [REVIEW, PARKED, PENDING]
         with self._conn() as conn:
             row = conn.execute(sql, args).fetchone()
@@ -881,7 +887,7 @@ class CaptureMixin:
 
     def supplier_templates_count(self) -> int:
         """How many suppliers have a learned template (for "How AP Coder reads every invoice"), without reading
-        them."""
+        them: off the partial index of those (``supplier_profiles_template``, B-1736)."""
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM supplier_profiles WHERE template_json IS NOT NULL "

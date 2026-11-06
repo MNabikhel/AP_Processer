@@ -103,7 +103,7 @@ def _ocr() -> ReaderLine:
     from ..ops import offline
 
     v4 = offline.ppocrv4_installed()
-    v5 = offline.ppocrv5_installed() and not offline.missing_models()
+    v5 = offline.ppocrv5_installed() and not offline.missing_models(models=offline.ppocrv5_files())
     photos = "" if importlib.util.find_spec("pillow_heif") else " iPhone photos (HEIC) need the photo add-on too."
     if v4 and v5:
         return ReaderLine(OCR, WARN if photos else OK, "Scans and photos: two OCR models read each page on this "

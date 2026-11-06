@@ -93,13 +93,16 @@ def test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_index
                            "gl_code": "5100", "amount": 10.0, "date": "2025-06-01"} for i in range(30)])  # fmt: skip
     monkeypatch.setattr(store_mod.learning, "FEEDBACK_READ", 20)
     monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
-    builds = []
-    build = suggest._build_memory
+    monkeypatch.setattr(suggest, "_PAST", {})
+    builds, extensions = [], []
+    build, extend = suggest._build_memory, suggest._extended
     monkeypatch.setattr(suggest, "_build_memory", lambda *a: builds.append(1) or build(*a))
+    monkeypatch.setattr(suggest, "_extended", lambda *a: extensions.append(1) or extend(*a))
     for vendor in ["Northwind IT Solutions Inc.", "Zenith Freight 29", "Northwind IT Solutions Inc.",
                    "Zenith Freight 28", "Northwind IT Solutions Inc."]:  # fmt: skip
         suggest.suggest_gl("Dell Latitude laptop", vendor, store.learning_rows(vendor), reference)
-    assert len(builds) == 2  # Northwind's own list, and the shared one
+    # The shared one, built once; Northwind's older lesson added to it once (D-159: no index of its own list).
+    assert len(builds) == 1 and len(extensions) == 1
 
 
 def test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole(tmp_path):
