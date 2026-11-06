@@ -335,6 +335,9 @@ class Run:
     # --- The report
 
     def report(self, idle: list[tuple[float, int]]) -> dict[str, Any]:
+        from ap_coder.ai.pipeline import ARRIVAL_ENV, ARRIVAL_SECONDS
+        from ap_coder.web.server import capture_processes
+
         wall = self.since()
         self.cpu.sample()
         invoices, reads, reviews = self.db.invoices(), self.db.page_reads(), self.db.reviews()
@@ -361,6 +364,14 @@ class Run:
         drain = max([*ends, arrival_end or 0.0]) if reads else arrival_end
         reviews_done = [v for v in reviews if v["status"] == "done"]
         review_ends = sorted(t for t in (at(v["updated_at"]) for v in reviews_done) if t is not None)
+        # The AI reviewer starved: how many of its reviews ended while the page reader still had invoices in line, and
+        # how long each invoice waited for its review once the page reader had read it.
+        read_spans = [(at(r["created_at"]), at(r["updated_at"])) for r in done]
+        while_reading = sum(1 for t in review_ends if any(a is not None and b is not None and a <= t < b
+                                                          for a, b in read_spans))  # fmt: skip
+        read_end = {r["invoice_id"]: at(r["updated_at"]) for r in done}
+        review_waits = [at(v["updated_at"]) - read_end[v["invoice_id"]] for v in reviews_done
+                        if read_end.get(v["invoice_id"]) is not None and at(v["updated_at"]) is not None]  # fmt: skip
         probe_drop = [s for t, s, code in self.probes if code == 200 and t <= (drain or wall)]
         probe_errors = [(t, code) for t, _, code in self.probes if code != 200]
         log = self.server.log_counts()
@@ -380,7 +391,18 @@ class Run:
 
         stretch = (1 / scale - 1) if 0 < scale < 1 else 0.0
         parallel = self.a.llm_parallel or self.a.slots
-        arrival_model = model_seconds(("suggest",), arrival_end)  # the import asks one at a time: its waits are its own
+        cpu = self.cpu.report(self.cpu_before, wall)
+        # The arrival's chat answers: each capture process waits for its own, side by side (D-168), and at most the
+        # arrival's limit, its wait for a chat slot included (``pipeline.ARRIVAL_SECONDS``): at full latency each one
+        # takes its time stretched back, cut at that limit, the capture processes waiting at once.
+        limit = float(self.server.settings.get(ARRIVAL_ENV) or ARRIVAL_SECONDS)
+        capture = (cpu.get("processes") or {}).get("capture", {}).get("processes") or capture_processes()
+        arrival_model = sum(
+            min(h["seconds"] / scale, limit) - h["seconds"]
+            for h in history
+            if h["kind"] == "suggest" and h["outcome"] in ("served", "failed") and h["t"] >= fake_t
+            and (arrival_end is None or h["t"] - fake_t <= arrival_end)
+        ) / max(1, capture) if stretch else 0.0  # fmt: skip
         # The background readers' answering, as many at once as both the model's slots and the readers allow (a wait
         # in line is another request's answering, counted already).
         at_once = max(1, min(self.a.slots, parallel))
@@ -388,7 +410,6 @@ class Run:
         page_model = model_seconds(("page", "header", "suggest", "review"), service=True)
         per_invoice = page_model / max(1, len(invoices)) / scale if scale else None
         capacity = (WORKING_DAY_HOURS * 3600 * self.a.slots / per_invoice) if per_invoice else None
-        cpu = self.cpu.report(self.cpu_before, wall)
         failures = (len(failed_imports) + len(read_failed) + sum(v["status"] == "failed" for v in reviews)
                     + len(probe_errors) + log["database is locked"] + log["Traceback"])  # fmt: skip
         results = {
@@ -406,6 +427,7 @@ class Run:
             "reviews_failed": sum(v["status"] == "failed" for v in reviews),
             "reviews_open_at_end": sum(v["status"] in ("waiting", "verifying") for v in reviews),
             "first_review_seconds": review_ends[0] if review_ends else None,
+            "reviews_while_reads_waited": while_reading, "review_wait_after_read": _summary(review_waits),
             "reviews_per_hour": _rate(len(review_ends), review_ends[-1] - review_ends[0] if len(review_ends) > 1
                                       else None),
             "probe_p50_idle": _pct([s for s, _ in idle], 0.5), "probe_p95_idle": _pct([s for s, _ in idle], 0.95),
@@ -414,7 +436,7 @@ class Run:
             "probe_errors": len(probe_errors), "failures": failures,
         }  # fmt: skip
         full = {
-            "arrival_seconds": _round(arrival_end + arrival_model * stretch) if arrival_end is not None else None,
+            "arrival_seconds": _round(arrival_end + arrival_model) if arrival_end is not None else None,
             "drain_seconds": _round(drain + background_model * stretch) if drain is not None else None,
             "model_seconds_per_invoice": _round(per_invoice), "invoices_a_working_day": _round(capacity, 0),
         }  # fmt: skip
@@ -907,6 +929,11 @@ def markdown(report: dict[str, Any]) -> str:
         f"{r['reviews_failed']} / {r['reviews_open_at_end']} | |",
         f"| AI reviewer, reviews an hour (first one after) | {_num(r['reviews_per_hour'])} "
         f"({_hms(r['first_review_seconds'])}) | |",
+        f"| AI reviewer: reviews done while the page reader had invoices in line | "
+        f"{r.get('reviews_while_reads_waited', '-')} | |",
+        f"| AI reviewer: an invoice's wait for it once read, median / max | "
+        f"{_hms((r.get('review_wait_after_read') or {}).get('median'))} / "
+        f"{_hms((r.get('review_wait_after_read') or {}).get('max'))} | |",
         f"| model time an invoice | | {full['model_seconds_per_invoice'] or '-'} s |",
         f"| invoices the model machine serves in a {WORKING_DAY_HOURS:g}-hour day | | "
         f"{_num(full['invoices_a_working_day'])} |",
@@ -973,7 +1000,8 @@ def markdown(report: dict[str, Any]) -> str:
         lines.append("")
     lines += [
         "Notes: at full latency is an estimate. Arrival adds back the chat model's answers the import waited for "
-        "(GL suggestions), the page reader its pages, header and review answers divided by AP_LLM_PARALLEL; the work "
+        "(GL suggestions), each at most the arrival's limit and the capture processes waiting side by side; the "
+        "page reader its pages, header and review answers divided by AP_LLM_PARALLEL; the work "
         "on this computer (OCR, the pipeline) is as measured. The app's own timers are real time: a minute's pause "
         "after a failed read, 30 s when nothing waits, the model status kept 10-30 s. Failover: " + FAILOVER + ".",
     ]
