@@ -24,7 +24,7 @@ Lines marked **CONFIRM** are what the JDE team must check for their tools releas
 | AIS address | `https://<server>:<port>` saved in Settings → JD Edwards E1 → API connection | the AIS Server's HTTPS address and port |
 | Version check | `GET /jderest/v2/defaultconfig` (its `aisVersion`; not required) | that it answers |
 | Sign in | `POST /jderest/v2/tokenrequest` with `{"username", "password", "environment", "role", "deviceName"}`; the token is read from `userInfo.token` | the v2 path on your release |
-| Each call | `POST /jderest/v3/orchestrator/<name>`, header `jde-AIS-Auth: <token>` and `jde-AIS-Auth-Device`, on one connection kept open (HTTP/1.1 keep-alive; a new one when AIS has closed it) | v3 orchestrator path; that AIS (and a load balancer before it) keeps a connection open between calls |
+| Each call | `POST /jderest/v3/orchestrator/<name>`, header `jde-AIS-Auth: <token>` and `jde-AIS-Auth-Device`, on one connection kept open (HTTP/1.1 keep-alive; a new one when AIS has closed it, or after 30 seconds unused) | v3 orchestrator path; that AIS (and a load balancer before it) keeps a connection open between calls |
 | Basic authentication (option) | `Authorization: Basic …` on each call, with `jde-AIS-Auth-Environment`, `-Role` and `-Device` | that your AIS allows Basic on v3 |
 | Expired token | HTTP **444** (AIS's invalid-token status): AP Coder signs in again once | the status your AIS answers |
 | Sign out | `POST /jderest/v2/tokenrequest/logout` with `{"token"}` | |
@@ -69,7 +69,10 @@ All five page the same way: AP Coder sends `MaxRows` and the key of the last row
 page) and asks again while a page comes back full, however many pages there are. Rows come back sorted by that key,
 always in the same order: AP Coder writes each page as it comes, and a sync that stopped (AIS down at page 300, the
 computer restarted) goes on the next time after the last row it wrote. The vouchers are also read one supplier at a
-time while an invoice is reviewed.
+time while an invoice is reviewed. A read that decides what leaves AP Coder (the vouchers' reads that remove those
+no longer listed, the POs' whole read that closes them) also asks again after a page shorter than `MaxRows` unless
+it is shorter than one before it, so it ends on an empty or a shorter page even if AIS gives fewer rows a page than
+asked; one that ends otherwise (its last row without its key) removes and closes nothing.
 
 **What changed, each night** (D-181): AP Coder sends `ChangedSince`, a date (`date_format`) a day before its last
 good read of that part began, and expects the rows added or changed on or after it (the update dates below). Once a
@@ -150,8 +153,10 @@ added up): `Key` (KCO-DCT-DOC-SFX), `DocumentNumber` (RPDOC), `DocumentType` (RP
 `OpenAmount` (RPAAP), `PayStatus` (RPPST: P paid, A approved, H held), `BatchNumber` (RPICU). Voided vouchers are left
 out. Each night AP Coder reads what changed in the window, then every voucher of the last 31 days (`ChangedSince`
 blank, `FromInvoiceDate` 31 days back): a voucher of those days it had that is no longer listed (voided this month)
-leaves its register; an older one, at the week's whole read of the window. Most or all of the vouchers of a read's
-days gone at once is refused as a wrong answer (a filter, row security). The `Key` is the voucher's for good: AP Coder
+leaves its register; an older one, or one without an invoice date, at the week's whole read of the window; the
+vouchers dated on a read's `FromInvoiceDate` itself are left be, whether it includes that day or not. Most or all
+of the vouchers of a read's days gone at once is refused as a wrong answer (a filter, row security). The `Key` is
+the voucher's for good: AP Coder
 keeps each voucher by it. While an invoice is reviewed AP Coder asks with the supplier's number and the same `FromInvoiceDate`, page after
 page (`AfterKey`), and compares invoice numbers itself (it ignores dashes, spaces and leading zeros), so the
 orchestration need not match numbers loosely. A supplier with more than 40 pages of vouchers even then is asked by its
@@ -296,8 +301,10 @@ dry runs agree with what AP expects.
 
 1. The AIS address, port and tools release; the v2 token request, v2 logout and v3 orchestrator paths.
 2. Token or Basic authentication on the v3 orchestrator; the HTTP status for an expired token (444).
-3. The date format of the orchestrations' inputs and outputs (YYYY-MM-DD here).
-4. AIS's maximum rows for a data request, and the page size AP Coder asks for (500).
+3. The date format of the orchestrations' inputs and outputs (YYYY-MM-DD here): AP Coder reads the dates it is
+   given in it too.
+4. AIS's maximum rows for a data request, and the page size AP Coder asks for (500): not below it, else each read
+   that removes nothing (suppliers, accounts, what changed) ends at AIS's maximum.
 5. The service user, its environment (production and test) and role, its password policy, and the security in the
    role table above.
 6. The orchestration names, or the renamed ones in a copy of `jde_orchestrations.json`.
@@ -327,7 +334,9 @@ dry runs agree with what AP expects.
     `APC_Vouchers_Read`): until then month end counts a voucher in a pending batch as in the ERP.
 21. `ChangedSince` on the four reads (D-181): which update dates each covers (a supplier's bank account or address
     changed, a PO line received, a voucher paid or voided), that it is inclusive and in `date_format`, and that the
-    PO read with it lists the lines closed since (999); and that each read keeps its rows in the same order by its
-    key (a stopped sync goes on after the last key it wrote).
+    PO read with it lists the lines closed since (999); that each read keeps its rows in the same order by its key
+    (a stopped sync goes on after the last key it wrote) and gives every row its key; and whether `FromInvoiceDate`
+    includes its own day (AP Coder leaves the vouchers of that day be either way).
 22. That the AIS Server and any load balancer before it keep a connection open between calls (HTTP keep-alive), and
-    for how long unused; AP Coder opens a new one when it finds the old one closed.
+    for how long unused; AP Coder opens a new one when it finds the old one closed, or after 30 seconds unused (a
+    firewall or VPN may drop an idle connection without a word).
