@@ -293,3 +293,23 @@ def test_a_voucher_without_a_date_voided_in_jde_leaves_at_the_whole_read(store, 
     ais.data["vouchers"].remove(undated)  # voided in JDE
     assert jde_sync.sync(store, parts=("vouchers",), full=True)["parts"]["vouchers"]["removed"] == 1
     assert "B-9" not in _numbers(store) and "B-0" in _numbers(store)
+
+
+def test_a_po_whose_lines_jde_closes_on_different_days_closes_with_its_last(store, ais):
+    """B-1896: a PO's lines here have no status of their own, and the lines a read of what changed kept took the PO's,
+    open: a PO whose first line JDE closed one day and its last another stayed open here until the week's whole
+    read. A line JDE closed (999) leaves its PO's lines while another is open, as a whole read lists the open lines
+    alone; the last one closed closes the PO."""
+    for row in ais.data["purchase_orders"]:
+        row["_changed"] = LONG_AGO
+    connect(store, ais)
+    jde_sync.sync(store, parts=("purchase_orders",))
+    first, last = ais.data["purchase_orders"]
+    first.update(next_status=jde_sync.CLOSED_STATUS, _changed=_day(0))  # closed in JDE
+    jde_sync.sync(store, parts=("purchase_orders",))
+    po = store.purchase_order("4512")
+    assert po["status"] == "open" and [li["line_number"] for li in po["lines"]] == [2]
+    first["_changed"] = LONG_AGO  # (a later day: changed before the read's ChangedSince)
+    last.update(next_status=jde_sync.CLOSED_STATUS, _changed=_day(0))
+    assert jde_sync.sync(store, parts=("purchase_orders",))["parts"]["purchase_orders"]["mode"] == jde_sync.CHANGES
+    assert store.purchase_order("4512")["status"] == "closed"

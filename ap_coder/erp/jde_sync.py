@@ -330,6 +330,14 @@ def _with_lines_kept(rows: list[dict[str, Any]], before: dict[str, dict[str, Any
     return out
 
 
+def _open_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each PO's open lines, as a whole read lists them: a line JDE closed (999) leaves while another line of its PO
+    is open (a line here has no status of its own: one kept by a later read of what changed is taken as open); with
+    none open, every line stays and the PO is closed."""
+    open_pos = {po_mod.po_key(r["po_number"]) for r in rows if r.get("status") != po_mod.CLOSED}
+    return [r for r in rows if r.get("status") != po_mod.CLOSED or po_mod.po_key(r["po_number"]) not in open_pos]
+
+
 def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
     names = run.names(store)
     records = []
@@ -349,7 +357,7 @@ def _purchase_orders(store: Any, found: list[dict[str, Any]], run: _Run, read: d
     before = store.purchase_orders_by_key(keys)
     if run.mode == CHANGES:
         rows = _with_lines_kept(rows, before)
-    result = store.import_purchase_orders(rows, actor=run.actor, log=False)
+    result = store.import_purchase_orders(_open_lines(rows), actor=run.actor, log=False)
     after = store.purchase_orders_by_key(keys)
     _note(run.report, "added", [after[k]["po_number"] for k in keys if k in after and not _po_lines(before.get(k))])
     _note(run.report, "changed", [after[k]["po_number"] for k in keys if k in after and _po_lines(before.get(k))
