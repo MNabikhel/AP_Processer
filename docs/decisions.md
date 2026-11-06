@@ -2061,7 +2061,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     out afresh gives (nothing kept in any process or the database). Each rule of `billing_lines` mutated (the
     count, the pruned log, the `summary_id`, the changed invoices left in, kept rows used or written in a write
     under way), a PO's digest without its vendor's invoices on no PO or kept with an invoice of no vendor: each fails
-    it; the moment left out fails B-1818's test (another worker's approval while month-end reads).
+    it; the moment left out fails B-1818's test (another worker's approval while month-end reads). After a change of
+    one of a vendor's invoices, another process with nothing of its own decodes that invoice alone, and the vendor's
+    row is written again once enough were decoded since.
   - **Measured** (CPU of the second process, `time.process_time`, medians of 5; the first process parked, edited
     (a line's quantity, plain SQL) or approved (a line's words changed) an invoice of the biggest vendor; a
     20,000-invoice seed of its own, 4 cores shared with two other agents; before: 88d82e0, each pair run together).
