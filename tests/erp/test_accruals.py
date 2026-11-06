@@ -288,12 +288,13 @@ def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_p
     ``accruals.SETTLE_SECONDS``; a PO imported, the tax setup or the G/L date changed: another question, at once. The
     CSV (``build`` without ``settle``) always follows."""
     from ap_coder.coding.tax import EXPENSE_TO_LINE
-    from ap_coder.core.store import summary
+    from ap_coder.core.store import reports, summary
     from ap_coder.erp import jde
     from tests.core.test_kept_answers import _plain, _po_line
 
     clock = [1000.0]
     monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])  # (worked out once for every process, D-169)
     worked: list[int] = []
     real = accruals._not_in_erp
     monkeypatch.setattr(accruals, "_not_in_erp", lambda *a: worked.append(1) or real(*a))

@@ -13,7 +13,7 @@ import csv
 import datetime as dt
 import io
 from collections.abc import Iterable, Iterator
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import urlencode
 
 from fastapi import Request
@@ -27,6 +27,7 @@ from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import address_day, get_store, page_router, render, server_mode
 from ap_coder.web.files import download
+from ap_coder.web.pages import downloads
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -262,15 +263,40 @@ def activity_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/activity/events.csv")
-def activity_csv(request: Request) -> Response:
-    """The events the page shows with the same filters, all of them (not only a page), sent as they are read
-    (B-1597)."""
-    group, person, query, _ = _filters(request)
-    shown = filter_events(get_store(request), group, person, query, hidden=_hidden(request))
-    name = f"ap_coder_activity_{dt.date.today()}.csv"
+async def activity_csv(request: Request) -> Response:
+    """The events the page shows with the same filters, all of them (not only a page): on a laptop sent as they are
+    read (B-1597), on the company server made by its background process (``downloads``, D-169)."""
+    return await downloads.answer(request, "/activity/events.csv", _csv_now)
+
+
+def _csv_now(request: Request) -> Response:
+    params, name = csv_params(request)
+    shown = filter_events(get_store(request), params["group"], params["person"], params["q"], hidden=params["hidden"])
     return StreamingResponse(events_csv(shown), media_type="text/csv; charset=utf-8",
                              headers={"Content-Disposition": f'attachment; filename="{name}"',
                                       "Cache-Control": "no-store"})  # fmt: skip
+
+
+def csv_params(request: Request) -> tuple[dict[str, Any], str]:
+    """What the events' CSV is of (the page's filters, and the events the person asking may not see) and its name."""
+    group, person, query, _ = _filters(request)
+    return ({"group": group, "person": person, "q": query, "hidden": list(_hidden(request))},
+            f"ap_coder_activity_{dt.date.today()}.csv")  # fmt: skip
+
+
+def write_csv(store: Store, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    """The events' CSV (``csv_params``) to ``out``, as the laptop sends it."""
+    count = 0
+
+    def counted() -> Iterator[dict[str, Any]]:
+        nonlocal count
+        for event in filter_events(store, params["group"], params["person"], params["q"], hidden=params["hidden"]):
+            count += 1
+            yield event
+
+    for chunk in events_csv(counted()):
+        out.write(chunk)
+        step(count, 0, f"{ui.plural(count, 'event')} written")
 
 
 @router.get("/activity/controls-report")

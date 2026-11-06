@@ -242,8 +242,9 @@ and the service host only while it runs (it holds `service\host.lock`).
 second however many cores the server has, so the service runs N *web workers*, all answering on the same port, and
 one *background process* beside them for the work nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure
 check, JD Edwards, the review queue checked again after a change of settings, the daily backup, the finance hub's
-schedule). A worker or the background process that stops is
-started again on its own. `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
+schedule), and for the long downloads (search to Excel, the Activity CSV, the duplicate audit: the page says how far
+the file got and downloads it once made; each person's own, kept an hour in `.cache\downloads\made`). A worker or the
+background process that stops is started again on its own (a download it was making is made again). `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
 the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.
 
 - **The default** (D-153): one worker per processor core but an eighth of them, and no more than fit in the memory at

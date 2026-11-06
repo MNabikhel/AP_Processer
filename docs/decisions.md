@@ -1226,6 +1226,107 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{summary,invoices,accounts}.py`, `coding/bulk.py`, `web/core.py`, `web/pages/review.py`,
     `bench/seed.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`,
     `tests/bench/test_seed_volume.py`)
+- **D-169** · **The long downloads made by the server's background process; the big answers worked out once for
+  every process; search to Excel written without openpyxl's cells; schema 27** (scale goal phase 3, item δ).
+  - **Why:** at 25 people the web workers were half busy, yet a page's p95 was 4.45 s
+    (`docs/archive/scale-2026-11/phase2b-load-100-people.md`): Python runs one thread of a process at a time, and a
+    long request (search to Excel 9-12 s, the Activity CSV 7-16 s, the duplicates CSV's first 11-15 s) held its
+    worker's while the light pages beside it waited. And the answers kept in a worker's memory (`summary_memo`) were
+    worked out again in each worker: month-end's first visit 5-8.6 s, the duplicate audit 7-15 s.
+  - **The downloads** (`web/pages/downloads.py`; the jobs in `report_jobs`, `core/store/reports.py`): on the company
+    server search to Excel and to CSV, the Activity CSV, the duplicate audit's CSV and the accruals CSV (`KINDS`).
+    - The page's link (`a[data-download-job]`, `app.js`) asks its own address with the page's header: the web worker
+      reads what the file is of (the filters; the person's default layout; the events they may see) and answers with
+      the job, at once. The link says how far it got ("Making the file: 12,000 of 50,000 invoices written", or how
+      many files wait before it), then the file downloads from its own address with `job=<id>`, so the access log and
+      Activity's "Downloaded" name it as before.
+    - Asked without that header (a bookmark, a script, the load bench), the worker waits for the job holding no thread
+      (an async handler that looks at the job every 0.05 s, then up to every 0.25 s), then sends the file as before.
+    - The background process makes them (`Runner`, started by `app.start_background_work`: in `serve
+      --background-work`, or in the one process of `--workers 1`), 2 at a time, oldest first, each written beside the
+      others under a name of its own and renamed once whole. A server of one process whose background work was not
+      started (a first test, `bench volume`) makes them on a thread of its own, which ends once none waits.
+    - Each job is its owner's: another person's is "No such download". A person may download what the route's own
+      role rule lets them (Read-only too: the file is theirs, nothing else changes); `GET /downloads/<id>` (how far
+      it got) is READ and the owner's. The same file asked again while it waits is the same job, from two web
+      workers at once too (one write transaction, and a unique index of the jobs waiting or being made). At most 3
+      waiting or being made a person (a 429 says so). A file is kept an hour, the 5 latest of each person (`sweep`).
+    - **A restart:** a background process that stops (an update, the service restarted) puts the job under way back
+      in line, and the next one makes it; one killed is seen stopped after 60 s without a note of its progress and its
+      jobs are taken again, twice in all, then fail with why; its late end is refused (the file is not the job's). A
+      job an older AP Coder left fails ("AP Coder was updated…": what its filters mean may have changed).
+    - **A full disk:** under `backups.BACKUP_RESERVE` free before it starts (D-160's rule), or full while it writes
+      (ENOSPC, SQLite's "disk is full"), the job ends with why; nothing half written is left.
+    - **A restore** empties `.cache/downloads` (D-156's amendment, `made/` with it), and the jobs of the database
+      before are no one's (another `summary_id`): none is made, none is shown, the next sweep forgets them.
+    - The routes left the long routes' lane (`core.HEAVY_ROUTES`): their worker only waits. On a laptop each is made
+      as it is asked for, as before (the Activity CSV sent as it is read, B-1597).
+    - **Not made so:** the Sales tax CSVs (0.4-0.8 s, within a report's 3 s); the Spend workbook stays a `web/jobs.py`
+      job in the worker that started it (D-156; `web/pages/spend.py` is another's).
+  - **Worked out once for every process** (`Store.shared_answer`, the table `report_answers`): an answer with the
+    stamp it was worked out under, read before the work as `summary_memo` reads its own (D-159): the database's
+    `summary_id`, the summary's generation, the counts of changes the triggers keep, and what it is for (`asked`, by a
+    digest of its `repr`). A process with nothing kept takes it while the stamp read now is the same.
+    - **JSON only**, never pickle (what is read back is data, never code); each answer gives its own format (`version`,
+      with AP Coder's version): one an older AP Coder wrote, another format, or one that is not JSON is worked out
+      again. At most 16 MB (`ANSWER_MOST_BYTES`): a bigger one is kept in its process only. The 8 latest of each name.
+    - One process works it out: a lease in `ephemeral` (`answer/<name>/<asked>`, 5 minutes at most); one asking the
+      same meanwhile waits up to 30 s for it, then works it out itself. One thread of a process at a time (a lock).
+    - Each process keeps its own copy (32 at most): asked again, nothing is read from the database but the stamp.
+    - `settle` (D-164) holds across processes by when the work began (`reports.wall`): once what it depends on
+      changed, an answer begun less than `settle` seconds ago on the same database is taken, in whichever process it
+      was made, so it is never older than that (two settles stacked would have made it twice as old).
+    - In a write under way (or a read transaction) it is worked out afresh, neither read nor kept, as `summary_memo`.
+      Its write waits at most a moment for another writer (`briefly`); a busy or full database just doesn't keep it.
+    - **Used for:** the duplicate audit's pairs (its page and CSV; `changes/register` and the generation, as D-162);
+      month-end's received, not invoiced lines and the invoices not in the ERP yet (what they were asked by, as
+      D-166; the page's 30 s settle now across processes); and each received PO's accruals by the digest of what they
+      come from (D-166's `_PARTS`, kept for all as `received_parts`): a process with none kept decodes none of the
+      billing invoices another one decoded, and after a change only those of the POs whose billing changed.
+    - **Month-end:** this, not D-162's summary table of each invoice's PO-billing lines: that is a summary column, so
+      `SUMMARY_RULES` moves and every database's summary is built again at its next start (86 s at 100,000 invoices,
+      D-167), and the 0.5 s kept path (the POs' lines, the billing invoices' rows) stays either way.
+    - **Not shared:** the recurring vendors (0.7 s a process at most every 60 s): the queue's late pill settles it
+      again on top (`web/pages/review.py`), so a shared settled answer could be shown twice as old as D-165 says; the
+      vendor list (`web/pages/invoice.py`, 0.8 s a worker a change); Sales tax (D-166: `coding/taxreturn.py`'s).
+  - **Search to Excel** is written by `exports.sheet_workbook`: the workbook's parts written as text a row at a
+    time, the cells as openpyxl writes them (numbers "%.16g", dates as Excel's serial days, text inline with its
+    spaces kept, `#N/A` and the like as errors, a formula-looking text quoted), the same formats, header, widths,
+    frozen header and filter. What it holds is what the whole sheet held in memory (`exports._sheet`) holds, cell by
+    cell, read back and compared (`tests/erp/test_directory.py`, with numbers past 2^53, spaces only, 40,000
+    characters, dates before 1900-03-01). `streamed_sheet` (D-157) is gone. On a laptop too.
+  - **Schema 27:** `report_answers` and `report_jobs`, made by `_SCHEMA` at every start. Another change takes 26; its
+    migration comes before this one at the integration. Going back: an older version refuses a database of schema 27
+    (`DatabaseTooNew`), and `server-update --back` restores the pre-update backup.
+  - **Measured** (`p3_delta/` in the session's scratchpad: a copy of the 100,000-invoice database at schema 27,
+    against fd5d166 on the seed itself; the machine shared with two other agents' work, its load 3 to 9, so each
+    figure beside the one it is compared with):
+    - **A web worker's part** of each download on the server, asked by the page: 8-80 ms (7-46 ms of CPU). Before, it
+      made the whole file: search to Excel 8.6 s, to CSV 1.1 s, the Activity CSV 8.6 s, the duplicates CSV 6.8 s
+      the first time in each worker (`bench volume`, admin).
+    - **The background process's:** search to Excel 8.6-9.2 → 2.2-2.3 s (8.2-8.5 → 2.2 s of CPU: the writer), to CSV
+      1.1-1.3 s, the Activity CSV 5.4-5.7 s, the duplicates CSV 0.02 s (the pairs shared), the accruals CSV 0.8 s the
+      first time, 0.04 s after.
+    - **The first time in a process** (a fresh Python each, the month-end page's answers and the audit's pairs):
+      before, 5.0-6.2 s and 6.7-7.2 s in every process; now 5.0 s and 6.4 s in the server's first, then 0.8 s (the
+      recurring vendors, not shared) and 0.01 s in each other.
+    - **`bench volume --roles admin --only` the changed routes** (one process; asked without the page's header, so
+      the time to the file, made beside the request on a thread of its own): search to Excel 8.57 → 2.26-2.58 s,
+      to CSV 1.12 → 1.59-1.79 s (the file written, then sent; a look at the job every 0.25 s at most), the
+      Activity CSV 8.56 → 7.54-7.75 s, the accruals CSV 0.05 → 0.16 s, the duplicates CSV's and month-end's first
+      6.8 and 5.4 s → 7.0-7.4 and 5.4-5.7 s (the server's first: the same work), Exports and month-end after it the
+      same.
+  - **Not done:**
+    - The load bench asks for the downloads without the page's header (`bench/load.py` `export_search`): its worker
+      then waits holding no thread while the background process makes the file.
+    - The Activity CSV (5.4 s in the background, each event decoded for its words), the Spend workbook made in the
+      background process, the recurring vendors and the vendor list shared.
+    - The background process warming the shared answers after a change (the first ask after it works them out).
+  - (`core/store/{reports,_base,__init__}.py`, `erp/{accruals,dupaudit,directory,exports}.py`,
+    `web/pages/{downloads,search,activity,exports,month_end,__init__}.py`, `web/{app,core,files,roles}.py`,
+    `web/static/js/app.js`, the four pages' templates, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/core/test_reports.py`, `tests/core/test_kept_answers.py`, `tests/web/test_downloads.py`,
+    `tests/erp/test_directory.py`, `tests/erp/test_accruals.py`)
 - **D-170** · **A scanned page is drawn and OCR'd once, whatever reads it and in whichever process; OCR reads the
   page's pixels, with no PNG between; PyMuPDF one thread at a time; one HTTP client a model server; the totals
   solver pruned. What is read is the same, byte for byte** (phase 3, item β; B-1760).

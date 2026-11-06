@@ -369,7 +369,9 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
   `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
-  laptop's start; the queue page shows the earlier checks meanwhile and says so), the daily
+  laptop's start; the queue page shows the earlier checks meanwhile and says so), the long downloads (search to
+  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs: `web/pages/downloads.py`, D-169; the jobs in
+  `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
   `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
@@ -428,6 +430,14 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write.
+
+  **Worked out once for every process** (D-169): the duplicate audit's pairs, month-end's received, not invoiced
+  lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the ERP yet
+  are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's `report_answers` as JSON, with the
+  stamp they were worked out under, read before the work as `summary_memo`'s; a process with none of them kept takes
+  them from there while the stamp holds (0.01 s for the audit and 0.8 s for month-end's page in a second worker, at
+  100,000 invoices, instead of 6-7 s and 5-6 s in each one). One process works an answer out while the others wait
+  for it; one an older AP Coder wrote, over 16 MB, or worked out in a write under way is not kept for the others.
 
   The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches

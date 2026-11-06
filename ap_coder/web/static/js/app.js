@@ -18,6 +18,8 @@
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
      [data-dismiss]                   removes its message
      [data-job-status="/jobs/name"]   background work under way: says how far it got, reloads the page when done
+     a[data-download-job]             on the company server, a download its background process makes: asked for, its
+                                      progress said on the link, the file downloaded once made (D-169)
 */
 
 export const HEADERS = { "X-AP-Coder": "1" };
@@ -335,6 +337,42 @@ document.querySelectorAll("[data-job-status]").forEach((el) => {
   watchJob(el.dataset.jobStatus, (snap) => {
     if (snap.state === "running" && snap.note) el.textContent = `${said}: ${snap.note}`;
   });
+});
+
+// A long download on the company server (a[data-download-job]: search to Excel, the Activity CSV...) is made by its
+// background process (D-169): the link asks for it, says how far it got, and the file downloads once made. On a laptop
+// the link downloads as it always did.
+document.addEventListener("click", async (event) => {
+  const link = event.target.closest("a[data-download-job]");
+  if (!link || !document.body.hasAttribute("data-server") || event.defaultPrevented || event.button !== 0) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  if (link.getAttribute("aria-busy") === "true") return; // asked already: being made
+  const label = link.innerHTML;
+  const say = (text) => (link.textContent = text);
+  link.setAttribute("aria-busy", "true");
+  link.classList.add("busy");
+  say("Making the file…");
+  let answer;
+  try {
+    const asked = { headers: { ...HEADERS, Accept: "application/json" }, cache: "no-store", credentials: "same-origin" };
+    const response = await fetchWithin(link.href, asked);
+    if (loggedOut(response)) return location.reload();
+    answer = await response.json();
+  } catch {
+    answer = { ok: false, error: noAnswer() };
+  }
+  let snap = null;
+  if (answer.ok && answer.status) {
+    const told = (s) => s.state === "running" && say(s.note ? `Making the file: ${s.note}` : "Making the file…");
+    snap = await pollJob(answer.status, told, 500);
+    if (snap === null) return location.reload(); // the session ended: the login, then back here
+  }
+  link.removeAttribute("aria-busy");
+  link.classList.remove("busy");
+  link.innerHTML = label;
+  if (snap && snap.state === "done") return location.assign(answer.file);
+  follow({ error: (snap && snap.error) || answer.error || "The file could not be made. Try again." });
 });
 
 // Esc closes the open popovers; the keyboard focus inside one goes back to its button (Split a line…, Apply to all).
