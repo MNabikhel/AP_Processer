@@ -673,8 +673,10 @@ class Drill:
         drill ended (taken back); what each answered from the drill's start until then."""
 
         def first(found: list[dict[str, Any]], kind: str, after: float) -> float | None:
+            """When the first answer of ``kind`` asked after ``after`` came (one asked before, answered late, says
+            nothing of where the calls went: a slow drill's)."""
             ends = [t_of(h) + h["seconds"] for h in found
-                    if h["kind"] == kind and h["outcome"] == "served" and t_of(h) + h["seconds"] >= after]  # fmt: skip
+                    if h["kind"] == kind and h["outcome"] == "served" and t_of(h) >= after]  # fmt: skip
             return min(ends) if ends else None
 
         moved = {k: first(backup, k, start) for k in SERVED}

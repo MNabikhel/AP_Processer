@@ -549,3 +549,11 @@ def test_a_backup_address_is_saved_only_on_the_company_network_and_never_the_mai
     assert "AP_PAGE_READER_BACKUP_URL" not in read_env(env)
     cleared = post(client, "/settings/reading/servers", {"chat_backup": ""})
     assert cleared.status_code == 200 and read_env(env).get("AP_LLM_BACKUP_URL", "") == ""
+
+
+def test_a_chat_model_not_trusted_yet_is_said_on_the_reviewer_s_card(client, status, monkeypatch):
+    """D-180: a chat model other than the one AP Coder was qualified with: the person sees why the AI reviewer waits."""
+    why = "the chat model is now qwen/qwen3.5-9b, not gemma-4-12b-it, which AP Coder was qualified with"
+    monkeypatch.setattr(page_worker, "chat_untrusted", lambda settings, store: why)
+    page = _text(client.get("/settings/reading").text)
+    assert "The AI reviewer waits: " + why in page and "no invoice is approved without a person" in page

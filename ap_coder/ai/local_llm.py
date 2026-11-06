@@ -701,17 +701,18 @@ class Failover:
         return float(self.state()["left"] or 0.0)
 
     def answered(self, base_url: str, model: str = "") -> None:
-        """A call to ``base_url`` was answered (``model``: the model that answered, which the probe then asks)."""
+        """A call to ``base_url`` was answered (``model``: the model that answered; the probe asks the primary's first
+        one, any of its models telling whether it answers)."""
         role = self.role(base_url)
         if role is None:
             return
         s = self.state()
-        if not s["failures"].get(role) and not (role == PRIMARY and model and model != s["model"]):
+        if not s["failures"].get(role) and not (role == PRIMARY and model and not s["model"]):
             return
 
         def change(s: dict[str, Any]) -> None:
             s["failures"][role] = 0
-            if role == PRIMARY and model:
+            if role == PRIMARY and model and not s["model"]:
                 s["model"] = model
 
         self._update(change)
