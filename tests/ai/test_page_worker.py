@@ -721,9 +721,17 @@ def test_a_read_under_way_is_renewed_while_it_is_read(store, fake_reader, monkey
     monkeypatch.setattr(Store, "renew_page_read",
                         lambda self, iid, reader: renewed.append((iid, reader)) or real(self, iid, reader))  # fmt: skip
     faked = page_reader.read_document
-    monkeypatch.setattr(page_reader, "read_document", lambda *a, **k: time.sleep(0.4) or faked(*a, **k))
+
+    def read(*a, **k):  # reads until renewed 3 times (a write takes ~150 ms on Windows)
+        deadline = time.monotonic() + 10
+        while len(renewed) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return faked(*a, **k)
+
+    monkeypatch.setattr(page_reader, "read_document", read)
     assert page_worker.read_one(settings, store).status == "done"
     assert len(renewed) >= 3 and set(renewed) == {(first.invoice_id, page_worker.READER_ID)}
+    time.sleep(0.1)  # (a renewal that began as the read ended)
     count = len(renewed)
     time.sleep(0.2)
     assert len(renewed) == count and store.page_read(first.invoice_id)["status"] == "done"

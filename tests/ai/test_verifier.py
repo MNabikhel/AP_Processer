@@ -273,9 +273,17 @@ def test_a_review_under_way_is_renewed_while_it_runs(store, monkeypatch):  # noq
     renewed, real = [], Store.renew_verification
     monkeypatch.setattr(Store, "renew_verification",
                         lambda self, iid, reader: renewed.append((iid, reader)) or real(self, iid, reader))  # fmt: skip
-    monkeypatch.setattr(verifier, "_verify", lambda *a: time.sleep(0.4) or verifier.Outcome(41, "agreed"))
+
+    def review(*_: object) -> verifier.Outcome:  # runs until renewed 3 times (a write takes ~150 ms on Windows)
+        deadline = time.monotonic() + 10
+        while len(renewed) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return verifier.Outcome(41, "agreed")
+
+    monkeypatch.setattr(verifier, "_verify", review)
     assert verifier.verify_one(_settings(), store).status == "agreed"
     assert len(renewed) >= 3 and set(renewed) == {(41, page_worker.READER_ID)}
+    time.sleep(0.1)  # (a renewal that began as the review ended)
     count = len(renewed)
     time.sleep(0.2)
     assert len(renewed) == count  # its heartbeat ended with it
