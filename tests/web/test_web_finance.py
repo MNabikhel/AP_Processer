@@ -391,6 +391,28 @@ def test_month_end_shows_the_accruals_and_downloads_them(client, busy):
     assert client.get("/month-end?end=not-a-date").status_code == 200  # the default period instead
 
 
+def test_month_end_finds_each_rows_gl_account_by_its_code_not_by_reading_the_chart_for_each(client, busy, monkeypatch):
+    """B-1800: month-end looked each row's GL account up by reading the chart of accounts from its top (8,215 rows on
+    1,500 accounts: 0.25 s of each visit at 20,000 invoices); the chart is read once a visit, each code's first row
+    named as before."""
+    import html
+
+    from ap_coder.core.reference_data import ReferenceTable, short_name
+
+    end = dt.date.today() + dt.timedelta(days=60)
+    items = accruals.build(busy, end)
+    chart = busy.reference_data().chart_of_accounts
+    named = {a.gl_code for a in items if chart.get(a.gl_code)}
+    assert named
+    looked: list[str] = []
+    real = ReferenceTable.get
+    monkeypatch.setattr(ReferenceTable, "get", lambda self, code: looked.append(code) or real(self, code))
+    text = client.get(f"/month-end?end={end}").text
+    assert looked == []
+    for code in named:
+        assert html.escape(short_name(real(chart, code)["description"])) in text
+
+
 def test_sales_tax_claims_and_self_assessment_downloads(client, busy):
     start, end = dt.date(2020, 1, 1), dt.date.today()
     report = taxreturn.build(busy, start, end)

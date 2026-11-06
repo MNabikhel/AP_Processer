@@ -183,8 +183,11 @@ _AT = 65536  # a cost line's place in the period's (``parts``' order): invoice *
 _LAST = 1 << 62  # the places after every line of the summary (the lines ``_broken_lines`` reads)
 BY = {"vendor": "s.p_vendor", "gl_code": "p.gl_code", "cost_center": "p.cost_center"}  # ``total_by``'s keys
 # Under a stream of approvals the Spend page's figures and currencies (1.9 s and 0.4 s at 100,000 invoices) are worked
-# out again at most this often in each process: a page that only shows them (D-164, D-166).
+# out again at most this often, once for every process: a page that only shows them (D-164, D-166, B-1797).
 SETTLE_SECONDS = 30.0
+# Their format as they are kept for every process (``Store.shared_answer``): another when it changes, so what an older
+# AP Coder kept is worked out again.
+FIGURES_FORMAT = "spend-1"
 
 
 class _Sums:
@@ -207,9 +210,9 @@ class _Sums:
 
 def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
     """``currencies(parts(store, start, end))``, kept until the invoices' summary changes (D-162), and under a stream
-    of changes worked out again at most every ``SETTLE_SECONDS`` (D-166)."""
-    return list(store.summary_memo("spend_currencies", lambda: _spend_currencies(store, start, end),
-                                   asked=(start, end), settle=SETTLE_SECONDS))  # fmt: skip
+    of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), once for every process (B-1797)."""
+    return list(store.shared_answer("spend_currencies", lambda: _spend_currencies(store, start, end),
+                                    version=FIGURES_FORMAT, asked=(start, end), settle=SETTLE_SECONDS))  # fmt: skip
 
 
 def _spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
@@ -230,10 +233,16 @@ def figures(store: Store, start: dt.date, end: dt.date, currency: str, category:
     (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
     ``by``: for each key of ``BY``, its ``total_by``. Kept until the invoices' summary changes (D-162), and under a
     stream of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), for these dates, currency,
-    categories and rates: read it, don't change it."""
+    categories and rates, once for every process (B-1797): read it, don't change it."""
     asked = (start, end, currency, dict(category), None if rates is None else dict(rates))  # (copies)
-    return store.summary_memo("spend_figures", lambda: read_figures(store, start, end, currency, category, rates),
-                              asked=asked, settle=SETTLE_SECONDS)  # fmt: skip
+    return store.shared_answer("spend_figures", lambda: read_figures(store, start, end, currency, category, rates),
+                               version=FIGURES_FORMAT, decode=_figures_of, asked=asked,
+                               settle=SETTLE_SECONDS)  # fmt: skip
+
+
+def _figures_of(data: dict[str, Any]) -> dict[str, Any]:
+    """``figures`` as kept for every process (JSON) made what it was: each ``total_by`` row a tuple again."""
+    return {**data, "by": {key: [tuple(row) for row in rows] for key, rows in data["by"].items()}}
 
 
 def read_figures(store: Store, start: dt.date, end: dt.date, currency: str, category: dict[str, str],

@@ -29,9 +29,21 @@ TITLES = {
 _ROW_ID = re.compile(r"\s*\(#\d+\)$")  # "Invoice SIL-4471 (#4)": the row id stays in the CSV, not on screen
 
 
-def gl_cell(reference: ReferenceData | None, code: str) -> dict[str, Any]:
-    """A GL account for display: its code (UNASSIGNED reads as "Needs an account"), its short name."""
-    row = reference.chart_of_accounts.get(code) if reference and code else None
+def chart_by_code(reference: ReferenceData | None) -> dict[str, dict[str, str]]:
+    """The chart of accounts by code, each code's first row (as ``ReferenceTable.get`` finds it): read once a visit,
+    not from its top for each row (B-1800)."""
+    found: dict[str, dict[str, str]] = {}
+    if reference:
+        table = reference.chart_of_accounts
+        for row in table.rows:
+            found.setdefault(row[table.key_column], row)
+    return found
+
+
+def gl_cell(chart: dict[str, dict[str, str]], code: str) -> dict[str, Any]:
+    """A GL account for display: its code (UNASSIGNED reads as "Needs an account"), its short name (``chart``:
+    ``chart_by_code``)."""
+    row = chart.get(code) if code else None
     return {
         "code": NEEDS_GL if code == UNASSIGNED else (code or "—"),
         "name": short_name((row or {}).get("description", "")),
@@ -61,14 +73,14 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     for source, (n, by_currency) in accruals.summary(items).items():
         value, hint = tile_text(n, by_currency, rates)
         tiles.append((TITLES[source], value, hint))
-    reference = reference_or_none(store) if items or no_date else None
+    chart = chart_by_code(reference_or_none(store) if items or no_date else None)
     flagged: dict[str, float] = {}  # dated over a year before the period end: accrued, flagged (B-474)
     for a in items:
         if a.old:
             flagged[a.currency or "CAD"] = round(flagged.get(a.currency or "CAD", 0.0) + a.amount, 2)
     old_invoices = len({a.reference for a in items if a.old})
     currencies, by_account = accruals.by_gl_columns(items)
-    by_gl = [{"gl": gl_cell(reference, gl), "totals": totals} for gl, totals in by_account]
+    by_gl = [{"gl": gl_cell(chart, gl), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
     groups = []
     for source in accruals.SOURCES:
@@ -77,7 +89,7 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "vendor": a.vendor,
                 "reference": _ROW_ID.sub("", a.reference),
                 "description": a.description,
-                "gl": gl_cell(reference, a.gl_code),
+                "gl": gl_cell(chart, a.gl_code),
                 "cost_center": (NEEDS_CC if a.cost_center == UNASSIGNED else a.cost_center) if a.cost_center else "",
                 "amount": a.amount,
                 "currency": a.currency,

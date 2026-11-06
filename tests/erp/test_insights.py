@@ -77,12 +77,13 @@ def test_the_insights_pages_figures_follow_their_data_and_settle_for_a_minute_un
     terms, the default terms or the assumptions change, whoever changed them (another Store, plain SQL); once the
     invoices or the vendors changed they are worked out again at most every ``insights.SETTLE_SECONDS`` (D-166); a
     change of the assumptions or of the default terms is another question, worked out at once."""
-    from ap_coder.core.store import summary
+    from ap_coder.core.store import reports, summary
     from ap_coder.erp import insights
     from tests.core.test_kept_answers import NOW, _invoice, _plain
 
     clock = [1000.0]
     monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])  # (worked out once for every process, B-1799)
     worked = {"compute": 0, "operations": 0}
     for name, real in (("compute", insights.compute), ("operations", insights.operations)):
         monkeypatch.setattr(insights, name, lambda *a, real=real, name=name: worked.update({name: worked[name] + 1})

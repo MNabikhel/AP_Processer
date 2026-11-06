@@ -96,6 +96,30 @@ def test_another_vendors_erp_bill_with_the_same_number_and_amount_is_still_found
     assert [h.source for h in search.find(store, "other supplies")] == ["ERP"]
 
 
+def test_the_quick_searchs_erp_hits_read_each_vendor_name_once_not_each_register_row(tmp_path, monkeypatch):
+    """B-1801: the quick search's hits in the ERP register worked each row's vendor name out again, and its invoice
+    number for a search with no number (3,577 rows of one vendor: 0.1 s of a search's 0.15 at 20,000 invoices). Each
+    name is worked out once a search, the number only when one is searched for; each hit scores as before."""
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics" if n % 3 else "Granite Supply Co",
+                                "invoice_number": f"G-{n}", "invoice_date": "2026-09-01", "total": 100.0 + n}
+                               for n in range(30)])  # fmt: skip
+    plained: list[str] = []
+    numbered: list[str] = []
+    real_plain, real_number = search._plain, search.norm_invoice_number
+    monkeypatch.setattr(search, "_plain", lambda text: plained.append(text) or real_plain(text))
+    monkeypatch.setattr(search, "norm_invoice_number", lambda text: numbered.append(text) or real_number(text))
+    hits = search.erp_hits(store, ["granite"], [])
+    assert sorted(h.row["invoice_number"] for h in hits) == sorted(f"G-{n}" for n in range(30))
+    assert sorted(plained) == ["Granite Logistics ", "Granite Supply Co "] and numbered == []
+    plained.clear()
+    hits = search.erp_hits(store, ["granite"], ["G-1"])
+    assert [h.row["invoice_number"] for h in hits] == ["G-1"] and numbered  # (a number: compared)
+    for words, numbers in ((["granite"], []), (["supply"], ["106"]), ([], ["G-1"])):
+        hits = search.erp_hits(store, words, numbers)
+        assert hits and [h.score for h in hits] == [search._score(h.row, words, numbers) for h in hits]
+
+
 def test_who_acts_next_on_an_invoice_in_each_state():
     """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
     from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
