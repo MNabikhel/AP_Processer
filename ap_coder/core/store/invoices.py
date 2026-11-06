@@ -43,6 +43,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .learning import forget_past_lines
 from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
 
@@ -469,6 +470,7 @@ class InvoicesMixin:
         autonomy), its reader scores, a vendor name it corrected (D-119), its lines' descriptions (D-120) and what it
         taught the supplier's template (``_withdraw_template``, capture.py). Returns what became of the template, for
         the event's detail ({} when the approval taught it nothing)."""
+        forget_past_lines(conn, invoice_id)
         for table in ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases", "line_texts"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
         _store_class()._withdraw_lessons(conn, invoice_id)
@@ -509,6 +511,7 @@ class InvoicesMixin:
                     "status": row["status"], "lessons_forgotten": forget_lessons,
                 })  # fmt: skip
             if forget_lessons:
+                forget_past_lines(conn, invoice_id)
                 for table in ("feedback", "vendor_aliases", "line_texts"):
                     conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
                 self._withdraw_lessons(conn, invoice_id)

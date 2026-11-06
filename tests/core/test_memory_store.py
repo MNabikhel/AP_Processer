@@ -1129,3 +1129,23 @@ def test_the_size_a_vendors_older_lines_are_counted_at_is_what_they_hold():
     tracemalloc.stop()
     held = sum(s.size_diff for s in after.compare_to(before, "filename"))
     assert 0.8 * lines.size <= held <= 1.1 * lines.size, (held, lines.size)
+
+
+def test_a_vendors_older_lines_kept_for_every_process_go_with_the_lessons_an_invoice_forgets(tmp_path):
+    # B-1842: reopening, rejecting or deleting an invoice with its lessons removed those lessons but left the copy of
+    # its vendor's older lessons by line that every process reads (D-178): never used again (its stamp no longer
+    # holds), but their words and accounts stayed in the database, and in its backups, until the vendor was asked.
+    import sqlite3
+
+    store = Store(tmp_path / "ap.db")
+    with sqlite3.connect(store.path) as conn:
+        for invoice_id, vendor in ((7, "acme"), (8, "beta")):
+            conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at, "
+                         "invoice_id) VALUES (?, ?, 'Gloves', '6100', 'corrected', datetime('now'), ?)",
+                         (vendor, vendor, invoice_id))  # fmt: skip
+            conn.execute("INSERT INTO past_lines (vendor_key, stamp, body) VALUES (?, '[]', '{}')", (vendor,))
+    with store._conn() as conn:
+        store._forget_learning(conn, 7)
+    store.delete_invoice(8, forget_lessons=True)
+    with sqlite3.connect(store.path) as conn:
+        assert conn.execute("SELECT vendor_key FROM past_lines").fetchall() == []

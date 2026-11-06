@@ -192,6 +192,13 @@ def _moved(conn: Any, key: str, kept: tuple[Any, ...], had: int, stamp: tuple[An
     return left, min(FEEDBACK_READ - gained, count) - held
 
 
+def forget_past_lines(conn: Any, invoice_id: int) -> None:
+    """The copy every process reads of the older lessons by line (``past_lines``, D-178) of each vendor whose lessons
+    an invoice is about to forget: no longer what the lessons say, and none of their words left behind (B-1842)."""
+    conn.execute("DELETE FROM past_lines WHERE vendor_key IN (SELECT DISTINCT vendor_key FROM feedback WHERE "
+                 "invoice_id = ?)", (invoice_id,))  # fmt: skip
+
+
 class LearningMixin:
     # --- Learning memory ------------------------------------------------------------------------------
 
