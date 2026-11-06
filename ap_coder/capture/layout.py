@@ -1269,8 +1269,8 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
             elif use_ocr:
                 try:
                     scanned = ocr_image(_pdf_page(sha, doc, page, i), number)
-                    with PDF_LOCK:  # the page is rendered finer than it was scanned
-                        scanned.dpi = _native_dpi(page) or scanned.dpi
+                    with PDF_LOCK:  # rendered finer than it was scanned; one of its own shapes, never scanned (B-1761)
+                        scanned.dpi = _native_dpi(page)
                     pages.append(scanned)
                     sources.add("ocr")
                 except Exception as exc:  # a page OCR cannot read is kept empty and counted unread, never fatal
