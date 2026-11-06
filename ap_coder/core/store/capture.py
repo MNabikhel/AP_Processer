@@ -618,6 +618,12 @@ class CaptureMixin:
             )
         return sum(1 for r in rows if r.get("corrected"))
 
+    def line_texts_stamp(self) -> tuple[Any, ...]:
+        """What tells whether the line descriptions AP corrected changed (any added, replaced or withdrawn): their
+        newest id and their count. No count of changes follows the table (B-1839)."""
+        with self._conn() as conn:
+            return tuple(conn.execute("SELECT MAX(id), COUNT(*) FROM line_texts").fetchone())
+
     def line_texts(self, key: str, limit: int = 2000) -> list[dict[str, Any]]:
         """Supplier ``key``'s remembered lines, newest first."""
         if not key:

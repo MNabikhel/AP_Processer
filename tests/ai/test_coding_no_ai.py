@@ -361,7 +361,8 @@ def test_a_vendors_older_lessons_extend_the_shared_index_to_what_building_it_who
     monkeypatch.setattr(suggest, "PAST_ROWS_KEPT", 1)
     rows = store.learning_rows(vendors[3])
     suggest._memory(rows, valid)
-    assert list(suggest._PAST) == [rows.key] and list(store_base._PAST_MEMORY) == [rows.key]  # the latest always
+    assert list(suggest._PAST) == [rows.key]  # the latest always
+    assert rows.past and list(store_base._PAST_MEMORY) == [rows.key]  # (the store's rows: read once they are read)
     hose = next(p for p in suggest._memory(store.learning_rows("Vendor 0 Inc."), valid).patterns
                 if p.description == "Hydraulic hose")  # fmt: skip
     assert hose.gl_code == "6230" and hose.unconfirmed  # the reversal of the decisions only the past lessons hold
@@ -458,14 +459,17 @@ def test_a_vendors_extended_memory_carried_forward_after_each_approval_is_what_b
     valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
     accounts = sorted(valid)[:6]
     rng, store = random.Random(1730), Store(tmp_path / "ap.db")
-    carried, real = [], suggest._carried
+    carried, real = [], memory_module.PastLines.carried
 
-    def carry(kept, past):
-        older = real(kept, past)
-        carried.append(older is not None)
-        return older
+    def carry(older, front, keep):  # the store's lines carried forward (D-178), their runs kept but those that moved
+        found = real(older, front, keep)
+        carried.append(found is not older)
+        return found
 
-    monkeypatch.setattr(suggest, "_carried", carry)
+    monkeypatch.setattr(memory_module.PastLines, "carried", carry)
+    whole, real_of = [], memory_module.PastLines.of.__func__
+    monkeypatch.setattr(memory_module.PastLines, "of", classmethod(lambda cls, rows: whole.append(1) or real_of(cls,
+                        rows)))  # fmt: skip
     invoice = [0]
 
     def add(n, outcome=None):
@@ -502,7 +506,7 @@ def test_a_vendors_extended_memory_carried_forward_after_each_approval_is_what_b
                 key = vendor_key(vendor)
                 assert suggest._suggested(item, keys(item), key, memory, reference, valid, 3, "") == suggest._suggested(
                     item, keys(item), key, built, reference, valid, 3, ""), (step, vendor, item)  # fmt: skip
-    assert carried.count(True) > 150 and carried.count(False) > 5, (carried.count(True), carried.count(False))
+    assert carried.count(True) > 120 and len(whole) > 5, (carried.count(True), carried.count(False), len(whole))
 
 
 def test_aggregate_and_tokens_cache_without_sharing_mutable_results():

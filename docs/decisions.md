@@ -2008,3 +2008,253 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/load.py`; `tests/web/test_web_process_listing.py`, `tests/web/test_web_process.py`,
     `tests/intake/test_files.py`, `tests/intake/test_imports.py`, `tests/core/test_imports.py`,
     `tests/bench/test_bench_load.py`)
+- **D-177** · **Month-end's billing invoices' lines kept for every process by vendor and brought up to date from the
+  vendors' change log; a line matched by its description alone when no price can change it; the POs and their
+  billing read in one moment** (scale goal, phase 3 part 3, Q1; B-1818; changes D-166's and D-169's received POs).
+  - **Why (verified):** at 300,000 invoices and 100 people, month-end was 22% of the busiest web workers' CPU,
+    `_received_not_invoiced` 18.2% of it: `billing_codings` 9.3% (the SQL 4.5%, the JSON 4.1%), `positive_lines`
+    4.0%, `_accrued`'s `billed_on` 3.4%. Each received PO's accruals are kept by a digest holding the counts of
+    changes of its billing invoices' vendors (`_made_of`), so a change to any invoice of a vendor put every PO of the
+    vendor in `todo`, and every billing invoice of those POs (those quoting it, and every invoice of the vendor on
+    no PO: 23,000 for the biggest at 300,000) was decoded and its lines read again; nothing was kept per invoice.
+    Under load many vendors change between two computes: at 300,000, tens of thousands of invoices each time.
+  - **The choice: in the database, not each process** (measured on a 20,000-invoice seed of this code):
+    - What month-end reads of an invoice (its coding's date, its lines billing a quantity) is about 450 bytes held
+      in Python, 300 as JSON. Billing invoices are 70% of all (13,918 at 20,000, about 210,000 at 300,000: 95 MB in
+      each process), and the vendors with invoices in the review queue hold 81% of them.
+    - Simulated at 300,000 (the seed's vendors' billing invoices x15, changes drawn by the queue's share), with 60
+      changes between two computes: keeping none decodes 75,420 invoices a compute; a process keeping at most 50,000
+      (23 MB, its vendors asked longest ago going first) 74,935: it thrashes; 100,000 (45 MB) 9,736; 150,000 (68 MB)
+      1,198, most billing invoices in every worker. With 10 changes: 30,723, 14,223, 1,709, 464.
+    - A vendor's row read back from the database costs 4.6 us an invoice (2.8 the JSON), against 34 us to decode
+      its coding again; nothing held in any worker, no first decode in each.
+  - **What:**
+    - `report_answers`, a row a vendor (`purchasing.BILLING_ANSWER` and its key, `BILLING_FORMAT`): each billing
+      invoice's [id, date, lines], stamped (`summary_id`, the log's last change, the vendor's count of changes) as
+      `vendor_invoices`' rows are (D-174). `Store.billing_lines` reads it with the log in the same moment: a row of
+      another `summary_id` (a restore), from before the log's first change (pruned since), or whose vendor's count
+      moved by more than the log says (an older AP Coder, B-1811) is decoded whole; otherwise only the invoices the
+      log names since. A row is written again once `BILLING_REWRITE` (32) of its invoices, and a sixteenth of them,
+      were decoded since: until then each read decodes those again (the biggest vendor's row is 7 MB at 300,000).
+      Not kept: an invoice with no vendor key (no log follows it), a coding not read so (not an object, its lines
+      not lines: read as before at each use, failing where it did) and one with a NaN. Inside a write under way
+      nothing kept is used or kept.
+    - **One moment** (`Store.billing_moment`, B-1818): the received POs, the invoices billing them (the summary
+      brought up to date first), the log, the vendors' rows and the codings decoded, in one read
+      (`learning.one_snapshot`); the rows to keep are written once it is over, never in it. The answer's stamps are
+      as before (`changes/purchase_orders`, the summary's generation; each PO's digest with its vendors' counts): a
+      change of a vendor's invoice still works its POs out again, from the lines kept. A vendor's invoices on no PO
+      are digested once for all its POs.
+    - **Matching** (`coding/po.billed_on`, `_price_decides`): a PO line's price, when it is an invoice line's, can
+      change what the line matches only when that PO line resembles it, at the same price, at least as much as the
+      most alike does at any price and enough to match (`MATCH_THRESHOLD`). With none of them a line matches
+      nothing; with only the most alike, itself enough, that one: by its description alone (most lines); otherwise
+      only those PO lines' price bands are looked at. The same quantities to the last bit as matching each line in
+      turn (`billed_by_line`): random POs and lines with prices at each edge of a band, then with how alike they are
+      drawn from values that tie exactly at the same price (0.25 + 0.2 = 0.45); three mutations caught, two that only
+      look at more bands than needed survive (the same matches).
+  - **Proven** (`tests/erp/test_accruals.py`): random changes by two workers and plain SQL, with a log of 8 changes
+    and of 1,000 (an invoice added, approved with other lines, its lines, date or coding's date changed, moved to
+    another vendor, to none or to another PO, deleted, exported and undone, parked, rejected and reopened; the POs
+    imported again; an older AP Coder's change, logged nowhere; a write undone with month-end asked inside it; a
+    restore), each worker asking at either period end: the accruals CSV and the page byte for byte what working them
+    out afresh gives (nothing kept in any process or the database). Each rule of `billing_lines` mutated (the
+    count, the pruned log, the `summary_id`, the changed invoices left in, kept rows used or written in a write
+    under way), a PO's digest without its vendor's invoices on no PO or kept with an invoice of no vendor: each fails
+    it; the moment left out fails B-1818's test (another worker's approval while month-end reads). After a change of
+    one of a vendor's invoices, another process with nothing of its own decodes that invoice alone, and the vendor's
+    row is written again once enough were decoded since.
+  - **Measured** (CPU of the second process, `time.process_time`, medians of 5; the first process parked, edited
+    (a line's quantity, plain SQL) or approved (a line's words changed) an invoice of the biggest vendor; a
+    20,000-invoice seed of its own, 4 cores shared with two other agents; before: 88d82e0, each pair run together).
+    Received, not invoiced, in seconds; month-end in all in brackets (the rest is its invoices not in the ERP yet):
+
+    | one change of the vendor's invoices | park | edit | approve |
+    |---|---:|---:|---:|
+    | its 1,560 billing invoices, before | 0.36 (1.04) | 0.38 (1.04) | 0.35 (0.97) |
+    | after | 0.22 (0.80) | 0.24 (0.82) | 0.25 (0.84) |
+    | made as big as 300,000's biggest (17,889 billing invoices), before | 0.96 (1.45) | 0.96 (1.48) | 0.93 (1.56) |
+    | after | 0.39 (0.97) | 0.38 (0.92) | 0.40 (1.02) |
+
+    60 changes of any vendors' invoices between two computes: 0.47 (1.08) before, 0.28 (0.84) after. The first
+    compute on the database, every vendor's row written: 1.10 (1.90) before, 1.16 (1.97) after.
+
+    What is left after a change at 20,000 is mostly the same at every compute: every received PO read (2,965), the
+    summary's 13,918 billing rows and their digests, the shared parts read and written again; at the vendor of
+    17,889, its row read back (60 ms) and its lines matched to its PO again.
+
+  - **Not done:**
+    - A compute still reads every received PO (3,000: 50 ms), the summary's billing rows (all of them: about 0.2 s
+      at 300,000), their digests, and matches each PO it works out again to all its billing lines. A PO's billed
+      quantities kept and updated would sum them in another order than a fresh compute: not the same to the last bit.
+    - The first compute on a database writes every vendor's row (about 63 MB at 300,000, once).
+    - The other half of month-end after a change, its invoices not in the ERP yet, still decodes each of them
+      (D-175's open item: their checks' `validation` is in no vendor's count).
+  - (`core/store/purchasing.py`, `erp/accruals.py`, `coding/po.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/erp/test_accruals.py`)
+- **D-178** · **A vendor's older lessons read by line, kept in the database for every process and carried forward;
+  their rows read only when an invoice's reading asks for them** (scale goal, phase 3 part 3, Q2; changes D-173's
+  `_OLDER` and what `learning_rows` reads at once).
+  - **Why:** at 300,000 invoices `_past_read` was 12.9% of the web workers' CPU. A probe of 400 checks of the review
+    queue's invoices (no writes): 380 read the vendor's lessons past the memory's cap whole, 8,200 rows and about
+    115 ms of CPU each. Each process kept 32 vendors' and 60,000 of their rows (22 vendors there) while the queue's
+    invoices came from 1,041; most vendors have thousands past the memory (`FEEDBACK_READ` 50,000 of 1.29 million).
+    D-173's carry forward held for the vendors kept, and most were not. A check only needs them for the GL
+    suggestions (`invoice_view.suggestions`), which read of them each line's decisions, not the rows.
+  - **The candidates, measured** (one vendor of a 20,000-invoice seed with 800,000 older lessons added for 100
+    vendors with invoices in review, half on their own few lines, half with 2,500 lines each; CPU by
+    `time.process_time`, 11,500 / 8,908 rows):
+    - as before (`SELECT *`, a dict a row): 195 / 127 ms, SQLite alone 120 / 83 ms (it sorts all the vendor's rows);
+    - (a) only the columns the consumers read: 106 / 76 ms; still a cost a row, and rows of a byte cap still miss;
+    - (b) the rows kept for every process as JSON: decoded in 32 / 24 ms, but 5.7 / 4.3 MB a vendor to write again
+      at each change (the biggest vendors change with nearly every approval);
+    - (b) the same lessons by line: 1 KB / 0.19 MB of JSON, decoded in 0.0 / 2.9 ms (11 ms into objects with 5,160
+      runs). Taken;
+    - (c) a read of only the lines an invoice's lines can match: not built. The index's word weights (one over the
+      accounts each word's lines go to) and the vendor's usual account count every line, so leaving out the lines
+      that can't match changes the suggestions of those that can.
+  - **What** (`core/memory.py` `PastLines`, `core/store/learning.py` `_past_lines`, `ai/suggest.py` `_extended`):
+    - `PastLines`: the lessons past the memory by line (vendor key, description normalised), each line's runs of
+      lessons in a row on one account, newest first, each with its newest's number, description, cost center and
+      whether it changed the account (`changed_account`); whatever the chart (the suggestions take the runs on its
+      accounts). And each lesson's line in their order (an `array` of 4 bytes a lesson), which says whose oldest goes
+      when the vendor's newest `FEEDBACK_READ` drop one. `carried(front, keep)` is `of(front + rows)[:keep]` going
+      over those only, the lines it doesn't change keeping their runs (the same tuples).
+    - `Store._past_lines`: read with the stamp of `_past_memory` (the vendor's lessons stamp, the memory's last, in
+      one snapshot with the whole memory's stamp, B-1809's lesson: read across a change, used once and not kept).
+      Kept in each process (`_base._PAST_LINES`, `PAST_LINES_KEPT` 4,096 vendors and `PAST_LINES_BYTES` 64 MB by
+      `PastLines.size`, counting each run's words: 0.87-1.01 of tracemalloc, B-1841), else taken from the database's
+      copy (`past_lines`: the stamp, with this version and `FEEDBACK_READ`, and the lines as JSON; never pickle; AP
+      Coder's version rarely moves, so a change to what a copy means, its runs or how a line is normalised, must move
+      `PAST_LINES_FORMAT` in `core/store/learning.py`), carried forward from either by
+      D-173's rule (`_moved`, shared with the rows: only the lessons the memory let go are read, six columns of them),
+      read whole only when neither can be (a lesson of the vendor removed or moved, history of it imported, the memory's
+      last moved back, a restore whose lessons took other ids). The copy is written again once a process carried it
+      `PAST_WRITE_AFTER` (64) lessons on, or read them whole; never inside a write under way, and only if the database
+      is free within `BRIEF_WAIT_MS` (`_briefly_or`). One that can't be read, or doesn't add up, is worked out again.
+    - `WithPast` is no longer a list: the rows past the cap are read (`_past_memory`, as before) only when it is read
+      as one (an arrival's examples, history check and tax codes), never by the suggestions, which read `older`.
+    - `suggest._extended` goes over the lines of `PastLines`, a line's pattern made again only when its runs or its
+      decisions in the shared rows are other objects than when it was made (`_OLDER`: the patterns made, by vendor);
+      D-173's `_Older`, `_grouped` and `_carried` go.
+    - What changes lessons in place clears the copies with them: the upgrades that recompute vendor keys and clean
+      the memory (`_base._migrate`), Forget history and a lesson forgotten on the Learning page (the vendor's).
+      Schema 27 still: the table is made by `_SCHEMA` (an older version leaves it be; a backup has it, consistent
+      with its lessons, so a restore carries it forward).
+  - **Measured** (the seed above; 300 checks drawn from the 100 vendors, their mean; the 4 cores shared):
+
+    | CPU per check (mean) | before | after |
+    |---|---:|---:|
+    | a vendor on few lines, nothing approved meanwhile | 160 ms | 14 ms (39 in the first process) |
+    | a vendor on 2,500 lines | 225 ms | 52 ms (84) |
+    | under a stream, an approval every third check: few lines | 174 ms | 21 ms |
+    | the same: 2,500 lines | 245 ms | 73 ms |
+    | an approval | 20.6 ms | 19.3 ms |
+
+    The probe of the 300k seed (`learning_rows` of 400 invoices of the review queue, here from its 957 vendors, a
+    process that keeps nothing yet): read whole 354 times (1.59 million rows) → never (147 times where no process
+    had asked before: 1,211 lessons, the copies made), about 69 → 3.4 ms of CPU an ask.
+    Under the stream: 248 of 300 checks read the rows whole before; after, 90 took the lines from the database's
+    copy (14.5 ms mean, the 2,500-line vendors' JSON), one wrote it again, none read the rows. What is left on the
+    2,500-line vendors is the extended memory's patterns made once in a process (64 ms cold, 14 ms warm). A web
+    worker after 200 checks of the 100 vendors (tracemalloc, beyond the shared memory): 155 → 149 MB, holding 62
+    vendors' lines and 32 vendors' patterns instead of 7 vendors' rows. The real seeds' vendors are on few lines (41
+    descriptions in all on the 20,000-invoice seed), the first case.
+  - **The proof:**
+    - `tests/core/test_memory_store.py`: two processes on one database (each its own caches), 250 random steps
+      (approvals, some vendors past the cap of their own, invoices approved again, lessons forgotten by the Learning
+      page and by plain SQL, history imported, an upgrade, more than the memory holds at once, a restore), vendors
+      asked in either: the lines are what reading the lessons whole gives, the rows too when read, and the GL
+      suggestions those of a memory built of all the rows (480 asks, 151 from the copy, 206 copies written). D-173's
+      300 steps, its edges and B-1809's race now check the lines too; a copy of another version or memory size, or
+      one that can't be read or doesn't add up, or no table, is worked out again. Twelve sabotages (a drop, a number
+      off, a run's newest kept, runs merged across accounts, a flag lost in the JSON, a copy's stamp not compared, one
+      of another memory size, the lean read without `suggested_gl`, the race kept, three of `_extended`'s reuse),
+      each caught.
+    - On the seed above, 400 invoices of the queue (300 of the 100 vendors): every line's suggestions, and on 100 of
+      them the examples chosen and the history check, the same byte for byte as before.
+    - `scripts/same_behaviour.py --ref 88d82e0 approve pipeline` (Python 3.12): the same. `bench coding
+      --realistic`: the same lines, byte for byte (the reports but their time).
+  - **Not done:**
+    - A capture process reading an invoice of a vendor past the cap reads its lines too (from the copy, or whole once
+      for every process), besides its rows as before.
+    - Two processes finding no copy they can carry forward each read the lessons whole (no lease between them).
+    - Reopening, rejecting or deleting an invoice forgetting its lessons (`core/store/invoices.py`) leaves the
+      vendor's copy until its next ask writes it again (it is never used: its stamp is another).
+  - (`core/memory.py`, `core/store/{learning,_base}.py`, `ai/suggest.py`, `docs/HOW_IT_RUNS.md`;
+    `tests/core/test_memory_store.py`, `tests/ai/test_coding_no_ai.py`)
+- **D-179** · **What the pages only show at 300,000 invoices: Sales tax and Learning worked out once for every process
+  and settled; a settled answer's askers take the one before while another works it out; Previous and Next read the
+  queue's ids; the duplicate check and the parked list off the summary** (scale goal phase 3 part 3, Q3; B-1832 to
+  B-1837).
+  - **Why:** the profile of the two busiest web workers with 100 people on 300,000 invoices (phase 3 part 2,
+    [phase3b-load-100-people.md](archive/scale-2026-11/phase3b-load-100-people.md)) had, beside month-end's accruals
+    and a vendor's older lessons (other work): an invoice's page 16.8% and its check 15.7% (`list_invoices` 5.1%,
+    `vendor_findings` 4.6%, `find_duplicates` 3.3%), the queue 14.8%, Sales tax 6.3%, Learning 5.9%; and at
+    100,000 Spend's and month-end's p95 (4.7 s, 7.5 s) were the others asking waiting for the one working them out.
+  - **What:**
+    - **The duplicate check** seeks the invoice number as it compares (the summary's `number_key`, its index), not
+      every invoice of the vendor read and compared in Python (B-1832).
+    - **Previous and Next** in the queue's own order (no search, sort or view of its own: the queue's links) read
+      its ids alone off `summary_queue_order` (`Store.listed_ids`), not the whole list again after each approval
+      (B-1833).
+    - **A settled answer** (`shared_answer(..., settle=)`, D-164): while another thread or process works it out
+      again, the others asking take the answer before, this database's latest (in the process, or the database's
+      when later), instead of waiting up to `ANSWER_WAIT`; with none, or an exact answer, they wait as before
+      (B-1834). Its age is then at most the settle and the time the other takes to work it out: D-164's "at most
+      that old" now reads "at most that old, but for the work under way". Month-end's settled answers too. Only an
+      answer whose work began less than the settle and `ANSWER_WAIT` ago is shown so, and only while another thread
+      holds the work or another process its hold: a database too busy to give the hold is not another process
+      working it out (B-1838).
+    - **Sales tax:** what the page shows (totals, counts, the rows listed: `sales_tax.shown`) is one shared answer
+      for the dates, the view and its rows, settling 30 s as Spend's; `taxreturn.setup_key` (the tax setup, the rate
+      table, our provinces, JD Edwards' settings and batches) is part of what it is asked for, so a change of one
+      shows at once. The CSVs, filed from, are worked out afresh, as month-end's (B-1835). Kept whole, the quarter's
+      claims would pass `ANSWER_MOST_BYTES` at 300,000 invoices and hold 100,000 claims in each worker: what the page
+      shows is a few hundred rows.
+    - **Learning:** the Coding accuracy tab's metrics, approval counts and corrections are shared answers settling
+      60 s as Insights' (`changes/lessons`, `changes/situations` and the summary's generation), with the count of the
+      page's own changes (`lessons_forgotten`, `history_imported`) as what they are asked for: a lesson forgotten or
+      taught there shows at once. The latest lessons and the memory list are read at each visit, as before (B-1836).
+    - **The parked list** (the queue's follow-up pill and Parked tab) is read off the summary, not the invoices'
+      whole rows, whose reason and follow-up day come last (B-1837).
+  - **Kept exact, or not done (measured at 20,000 invoices, scaled by the vendor sizes at 300,000):**
+    - **A check's vendor history** (`vendor_invoices`, 3.6% at 300,000): each vendor's rows are kept and brought up
+      to date from the vendors' change log (D-174), but the queue's 1,041 vendors hold about 237,000 invoices and a
+      worker keeps 50,000 (`VENDOR_ROWS_KEPT`): most checks read their vendor again, the big ones' thousands of rows
+      (an expected few thousand a check). Reading them is 9 ms of plain columns and 23 ms of `json_extract` of their
+      five numbers from each coding for the biggest vendor at 20,000 (1,577 rows); the same rows off the summary take
+      3.9 ms. The numbers kept in the summary (the GST/HST number is, `gst_number`; QST, PST, the bank account and the
+      original invoice number are not) would make that read 8 times cheaper: a summary rule and schema change, its
+      rebuild at the upgrade, in `core/store/{summary,vendors}.py` (not this work's files).
+    - **The recurring vendors** (the queue's late pill, 3.9%): worked out once a minute for every process (about 2 s
+      at 300,000); kept up to date by each vendor's count of changes (D-175's estimate: a third of it) is
+      `erp/recurring.py`'s, not this work's. Their askers now take the answer before while it is worked out (above).
+    - **The queue's lists** (`list_invoices` of the three queues, 45 ms at 20,000 after each approval or park): the
+      queue's size, not the database's, sets it; brought up to date by the invoices changed would need a change log of
+      the summary.
+    - **Sales tax kept up to date** rather than settled: under 100 people the queue's approvals of invoices dated in
+      the default quarter change it all day, and the summary keeps no list of the invoices changed since (D-175).
+    - In an invoice's analysis the rest that grows with the database is the learning memory's (`learning_rows`,
+      `suggest_gl`: other work).
+  - **Measured** (CPU by `time.process_time`, the 4 cores shared with two other agents; a 20,000-invoice seed of this
+    code; a change made in another process before each ask):
+
+    | | before (88d82e0) | after |
+    |---|---:|---:|
+    | an invoice's page after a park elsewhere (20 invoices, each its first) | 86.5 ms | 43.8 ms |
+    | its check | 32.2 ms | 31.4 ms |
+    | the duplicate check, the biggest vendor (1,577 invoices) | 6.3 ms | 1.1 ms |
+    | Sales tax after an approval elsewhere, within the settle | 113 ms | 17 ms |
+    | Sales tax with nothing changed | 119 ms | 15 ms |
+    | Learning after an approval elsewhere, within the settle | 57 ms | 17 ms |
+    | a second worker asking Spend 0.1 s after a first, past the settle (wall) | 0.53 s | 0.02 s |
+    | month-end's two workers so (wall) | 1.09 / 1.05 s | 0.56 / 0.69 s |
+    | the parked list, 146 invoices, on a request's own connection | 3.6 ms | 2.1 ms |
+
+    The same bodies, byte for byte, from the code before and now on the same seed: 14 Sales tax pages and CSVs, 6
+    Learning pages, 8 queue pages (its tabs and views), 12 invoice pages (the queue's own view and five others),
+    and 20 invoice pages and checks in a row; `scripts/same_behaviour.py --ref 88d82e0 tax approve`: same.
+  - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
+    `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
+    `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)

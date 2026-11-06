@@ -434,8 +434,9 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
     laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
     with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
-    invoice page's Previous and Next read; the `listed` topic, which a check's confidence doesn't move: the
-    confidences are read with the queue's order at each ask, off an index, D-167; about 3 MB each);
+    invoice page's Previous and Next read in a view of the queue's own; the `listed` topic, which a check's
+    confidence doesn't move: the confidences are read with the queue's order at each ask, off an index, D-167; about
+    3 MB each). In the queue's own order Previous and Next read its ids alone, off that index (D-179);
   * the vendors' payment terms the queue's rows are due by (`changes/vendors`, 2.7 MB), and the vendors whose
     regular invoice is late (the summary's `dates`, settled for 60 s after a change: the queue only shows them,
     D-164, D-165);
@@ -443,11 +444,16 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
     behind a change (D-167); what decides with them (the queue is clear, the demo may load) counts exactly.
 
   Beside them, the GL suggestions (`ai/suggest.py`): the whole learning memory's index, built once per change of the
-  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), with the
-  lessons themselves (`Store.learning_rows`), for 32 vendors and 60,000 of their lessons a process (about 80 MB,
-  `memory.PAST_KEPT`, `PAST_ROWS_KEPT`). An approval moves the memory's last lesson: those lessons and their lines
-  are carried forward, only the lessons the memory let go read and gone over (D-173); anything else reads them again.
-  And each memory's answers for 1,024 lines (`_Memory.said`, with the reference data they came from).
+  lessons; for a vendor whose lessons go past the memory's cap, that index extended by them (`_with_past`), for 32
+  vendors a process (`memory.PAST_KEPT`, `PAST_BYTES_KEPT`). It reads those older lessons by line
+  (`memory.PastLines`, `Store._past_lines`): kept in each process for up to 4,096 vendors and about 64 MB
+  (`PAST_LINES_KEPT`, `PAST_LINES_BYTES`), and in the database for every process (`past_lines`, JSON with the stamp
+  they were worked out under), so a check of the review screen never reads them row by row (D-178). The rows
+  themselves are read only when an invoice's reading asks for them (its examples, its history check, its tax codes),
+  for 32 vendors and 60,000 of their lessons a process (`PAST_ROWS_KEPT`). An approval moves the memory's last
+  lesson: the lines and the rows are carried forward, only the lessons the memory let go read (D-173); anything else
+  reads them again, once for every process. And each memory's answers for 1,024 lines (`_Memory.said`, with the
+  reference data they came from).
 
   Kept for the reports and long pages (D-162), with what each held at 100,000 invoices: every vendor's supplier
   learning record (Supplier learning, Settings → Automation; `changes/suppliers`), about 28 MB a worker, and the
@@ -461,15 +467,19 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   the recurring vendors and Insights are worked out once for every process (below).
 
   **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, month-end's received, not
-  invoiced lines (and each received PO's accruals, by the digest of what they come from) and its invoices not in the
-  ERP yet, Spend's figures and currencies, the recurring vendors (the queue's late pill, Vendors, Month-end) and the
-  Insights page's figures are kept by `Store.shared_answer` (`core/store/reports.py`) in the database's
-  `report_answers` as JSON, with the stamp they were worked out under, read before the work as `summary_memo`'s; a
+  invoiced lines (and each received PO's accruals, by the digest of what they come from, and what it reads of each
+  invoice billing them, a row a vendor brought up to date from the vendors' change log: after a change only the
+  invoices changed since are decoded again, D-177) and its invoices not in the ERP yet, Spend's figures and
+  currencies, the recurring vendors (the queue's late pill, Vendors, Month-end), the Insights page's figures, what the
+  Sales tax page shows (30 s) and the Learning page's coding accuracy figures and corrections (60 s, D-179) are kept
+  by `Store.shared_answer` (`core/store/reports.py`) in the database's `report_answers` as JSON, with the stamp they
+  were worked out under, read before the work as `summary_memo`'s; a
   process with none of them kept takes them from there while the stamp holds (0.01 s for the audit and 0.8 s for
   month-end's page in a second worker, at 100,000 invoices, instead of 6-7 s and 5-6 s in each one; Spend's 3 ms
   instead of 0.47 s at 20,000). Those a page only shows settle as before (D-164), by when their work began in
   whichever process did it. One process works an answer out while the others wait for it, and take it even when
-  something changed meanwhile (it was worked out after they asked, B-1802); one an older AP Coder wrote, over 16 MB,
+  something changed meanwhile (it was worked out after they asked, B-1802); of those a page only shows, the others
+  take the answer before meanwhile instead (this database's latest, D-179). One an older AP Coder wrote, over 16 MB,
   or worked out in a write under way is not kept for the others.
 
   **The invoices folder listed once for every process** (D-176): Import invoices on the server shows the folder's

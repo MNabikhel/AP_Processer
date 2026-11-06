@@ -280,18 +280,22 @@ def _with_query(path: str, query: dict[str, str]) -> str:
 def navigation(store: Store, invoice_id: int, query: dict[str, str], request: Request | None = None) -> dict[str, Any]:
     """The invoices Previous / Next step through: the queue as shown (filter, search, sort in ``query``), or the
     whole queue if this invoice isn't part of that view. ``request``: the person asking, whose invoices with edits
-    kept the queue shows under Needs attention (B-1620)."""
-    pending = store.list_invoices(REVIEW)
+    kept the queue shows under Needs attention (B-1620). In the queue's own order (no search, sort or view of its
+    own) only its ids are read (B-1833)."""
     show = query.get("show", "all")
-    reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
-    if show in ("attention", "ready") and request is not None:
-        reasons.update(draft_reasons(request, pending))
-    shown = {"attention": [i for i in pending if i["id"] in reasons],
-             "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
-    shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
-    ids = [i["id"] for i in shown]
-    if invoice_id not in ids:
-        ids = [i["id"] for i in pending]
+    if show not in ("attention", "ready") and not query.get("q") and query.get("sort", "priority") == "priority":
+        ids = store.listed_ids(REVIEW)
+    else:
+        pending = store.list_invoices(REVIEW)
+        reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
+        if show in ("attention", "ready") and request is not None:
+            reasons.update(draft_reasons(request, pending))
+        shown = {"attention": [i for i in pending if i["id"] in reasons],
+                 "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
+        shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
+        ids = [i["id"] for i in shown]
+        if invoice_id not in ids:
+            ids = [i["id"] for i in pending]
     if invoice_id not in ids:
         return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": "", "next_id": None}
     position = ids.index(invoice_id)

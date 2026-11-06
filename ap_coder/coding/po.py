@@ -51,6 +51,7 @@ PRICE_FLOOR_SHARE = 0.10  # ...but the 50 cents never more than 10% of the PO pr
 AMOUNT_TOLERANCE_ABS = 1.00  # a line's amount may be 2% or a dollar above its quantity at the PO price
 TOTAL_TOLERANCE = 0.02  # invoices on a PO may total 2% more than the PO (rounding, small freight)
 MATCH_THRESHOLD = 0.45
+SAME_PRICE = 0.2  # what a PO line's price, the same as an invoice line's, adds to how much the two resemble
 
 Finding = tuple[str, str, str, "int | None"]
 
@@ -210,7 +211,7 @@ def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Calla
     for n, pl in enumerate(po_lines):
         score = similarity(description, pl.get("description", ""))
         if same_price(n, pl):
-            score += 0.2
+            score += SAME_PRICE
         if score > best_score:
             best, best_score = pl, score
     return int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None
@@ -534,20 +535,46 @@ def positive_lines(invoices: Iterable[dict[str, Any]]) -> list[tuple[Any, float,
 def billed_on(po: dict[str, Any], lines: Iterable[tuple[Any, float, float]]) -> dict[int, float]:
     """``billed_by_line(po, invoices, positive_only=True)`` from the ``positive_lines`` of ``invoices``: each
     description and price matched to the PO's lines once, not once a line (month-end matches every invoice of a
-    vendor to each of its POs): what decides is the description and which PO lines have the same price."""
+    vendor to each of its POs): what decides is the description and which of the PO lines whose price may change what
+    it matches (``_price_decides``: most often none) have the same price."""
     billed: dict[int, float] = {}
     bands = [_price_band(float(pl.get("unit_price") or 0)) for pl in po["lines"]]
     matched: dict[tuple[Any, tuple[int, ...]], int | None] = {}
+    deciding: dict[Any, tuple[tuple[int | None] | None, tuple[int, ...]]] = {}  # by description: ``_price_decides``
     for description, price, quantity in lines:
-        size = abs(price)
-        same = tuple(n for n, (at, room) in enumerate(bands) if abs(size - at) <= room)
-        key = (description, same)
-        if key not in matched:
-            matched[key] = _po_line(description, po["lines"], lambda n, _, same=same: n in same)
-        po_line = matched[key]
+        if description not in deciding:
+            deciding[description] = _price_decides(description, po["lines"])
+        found, by_price = deciding[description]
+        if found is not None:
+            po_line = found[0]
+        else:
+            size = abs(price)
+            same = tuple(n for n in by_price if abs(size - bands[n][0]) <= bands[n][1])
+            key = (description, same)
+            if key not in matched:
+                matched[key] = _po_line(description, po["lines"], lambda n, _, same=same: n in same)
+            po_line = matched[key]
         if po_line is not None:
             billed[po_line] = billed.get(po_line, 0.0) + quantity
     return billed
+
+
+def _price_decides(
+    description: Any, po_lines: list[dict[str, Any]]
+) -> tuple[tuple[int | None] | None, tuple[int, ...]]:
+    """((what ``_po_line`` gives a line of ``description`` whatever its price,) or None; the positions of the PO lines
+    whose price, when it is the line's, may change that): those that resemble it, at the same price, at least as much
+    as the most alike does at any price, and enough to match. No other line's price can: that line is never the most
+    alike, or never enough. With none of them it matches nothing; with only the most alike, itself enough, that one."""
+    alike = [similarity(description, pl.get("description", "")) for pl in po_lines]
+    at_same = [score + SAME_PRICE for score in alike]  # (as ``_po_line`` adds it)
+    floor = max([MATCH_THRESHOLD, *alike])
+    by_price = tuple(n for n, score in enumerate(at_same) if score >= floor)
+    if not by_price:
+        return (None,), ()
+    if len(by_price) == 1 and alike[by_price[0]] >= MATCH_THRESHOLD:
+        return (int(po_lines[by_price[0]]["line_number"]),), ()
+    return None, by_price
 
 
 def template_csv() -> bytes:

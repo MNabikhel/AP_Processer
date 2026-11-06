@@ -27,11 +27,14 @@ stronger over time; a reviewer can delete any bad record.
 
 from __future__ import annotations
 
+import base64
 import operator
 import re
+import sys
 import unicodedata
+from array import array
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Any
@@ -235,17 +238,201 @@ def added_in_front(kept: list[dict[str, Any]], rows: list[dict[str, Any]]) -> in
 # kept within PAST_BYTES_KEPT too (D-171): each copies the lists and dicts of the shared index it changes, 0.35 MB a
 # vendor on the 100k seed (9,850 lines but 167 words), several MB with a real vocabulary.
 PAST_KEPT, PAST_ROWS_KEPT, PAST_BYTES_KEPT = 32, 60_000, 32 * 1024 * 1024
+# The same lessons by line (``PastLines``, D-178) are kept for this many vendors and about this many bytes of theirs in
+# each process (``Store._past_lines``).
+PAST_LINES_KEPT, PAST_LINES_BYTES = 4096, 64 * 1024 * 1024
+PAST_LINE_BYTES, PAST_RUN_BYTES = 400, 245
 
 
-class WithPast(list):
+Line = tuple[str, str]  # a line: (vendor key, description normalised)
+# A run of a line's lessons in a row on one account, newest first: (the account, the lessons, the number of its newest,
+# that one's description, its cost center, whether it changed the account: ``changed_account``)
+Run = tuple[str, int, int, str, str, bool]
+
+
+def _run(r: dict[str, Any], n: int, lessons: int = 1) -> Run:
+    return (r["final_gl"], lessons, n, r["description"], r.get("final_cc") or "", changed_account(r))
+
+
+@dataclass(frozen=True, eq=False)
+class PastLines:
+    """A vendor's lessons past the whole memory's cap (``WithPast.past``) by line, whatever the chart: what the GL
+    suggestions read of them (``suggest._extended``), a few thousand lines where the lessons can be tens of thousands
+    (D-178). Kept in the database for every process (``Store._past_lines``) and carried forward as the memory moves
+    on (``carried``), so they are read whole once, not on every check. Shared: read it, don't change it."""
+
+    n: int  # the lessons
+    head: int  # the number of the newest: a lesson's place is its number less this (those put in front: lower)
+    lines: dict[Line, tuple[Run, ...]]  # each line's runs of lessons on one account, newest first
+    names: tuple[Line, ...]  # the lines ``order`` names (one may have no lessons left)
+    order: array  # each lesson's line (its place in ``names``), newest first: which line's oldest goes when one drops
+
+    @classmethod
+    def of(cls, rows: list[dict[str, Any]]) -> PastLines:
+        """From the lessons, newest first (``Store.learning_rows``' order)."""
+        made: dict[Line, list[Run]] = {}
+        where: dict[Line, int] = {}
+        order = array("I")
+        for n, r in enumerate(rows):
+            line = (r["vendor_key"], _normalise(r["description"]))
+            runs = made.get(line)
+            if runs is None:
+                where[line] = len(where)
+                made[line] = [_run(r, n)]
+            elif runs[-1][0] == r["final_gl"]:  # (an older lesson of the run: its newest stays the one it names)
+                gl, lessons, *newest = runs[-1]
+                runs[-1] = (gl, lessons + 1, *newest)  # type: ignore[assignment]
+            else:
+                runs.append(_run(r, n))
+            order.append(where[line])
+        return cls(len(rows), 0, {line: tuple(runs) for line, runs in made.items()}, tuple(where), order)
+
+    def carried(self, front: list[dict[str, Any]], keep: int) -> PastLines:
+        """These lessons with ``front`` (newest first, all newer than they are) put in front, then the oldest past
+        ``keep`` dropped: ``PastLines.of(front + rows)[:keep]`` (the store's ``_carried``), going over those only.
+        The lines they don't change keep their runs (the same tuples: ``suggest._extended`` works their patterns out
+        once); itself when nothing changes."""
+        if not front and keep >= self.n:
+            return self
+        changed: dict[Line, list[Run]] = {}
+        names, where = list(self.names), None
+        head = self.head - len(front)
+        lead = array("I")
+        for n, r in zip(range(self.head - 1, head - 1, -1), reversed(front), strict=True):  # the oldest first
+            line = (r["vendor_key"], _normalise(r["description"]))
+            runs = changed.get(line)
+            if runs is None:
+                runs = changed[line] = list(self.lines.get(line, ()))
+            if runs and runs[0][0] == r["final_gl"]:
+                runs[0] = _run(r, n, runs[0][1] + 1)
+            else:
+                runs.insert(0, _run(r, n))
+            if where is None:
+                where = {name: i for i, name in enumerate(names)}
+            if line not in where:
+                where[line] = len(names)
+                names.append(line)
+            lead.append(where[line])
+        lead.reverse()
+        order = lead + self.order
+        for i in reversed(order[keep:]):  # the oldest go: each its line's oldest
+            line = names[i]
+            runs = changed.get(line)
+            if runs is None:
+                runs = changed[line] = list(self.lines[line])
+            gl, lessons, *newest = runs[-1]
+            if lessons > 1:
+                runs[-1] = (gl, lessons - 1, *newest)  # type: ignore[assignment]
+            else:
+                runs.pop()
+        del order[keep:]
+        lines = dict(self.lines)
+        for line, runs in changed.items():
+            if runs:
+                lines[line] = tuple(runs)
+            else:
+                lines.pop(line, None)
+        if len(names) > 2 * len(lines) + 64:  # the names of lines whose lessons all went, left out (B-1840)
+            held = [i for i, name in enumerate(names) if name in lines]
+            place = {old: new for new, old in enumerate(held)}
+            names = [names[i] for i in held]
+            order = array("I", (place[i] for i in order))
+        return PastLines(len(order), head, lines, tuple(names), order)
+
+    def encoded(self) -> dict[str, Any]:
+        """As JSON (``decoded`` gives it back): the database keeps it for every process."""
+        order = array("I", self.order)
+        if sys.byteorder != "little":
+            order.byteswap()
+        where = {line: i for i, line in enumerate(self.names)}
+        return {"n": self.n, "head": self.head, "names": [list(line) for line in self.names],
+                "lines": [[where[line], [list(run) for run in runs]] for line, runs in self.lines.items()],
+                "order": base64.b64encode(order.tobytes()).decode("ascii")}  # fmt: skip
+
+    @classmethod
+    def decoded(cls, value: dict[str, Any]) -> PastLines:
+        names = tuple((str(v), str(d)) for v, d in value["names"])
+        order = array("I")
+        order.frombytes(base64.b64decode(value["order"]))
+        if sys.byteorder != "little":
+            order.byteswap()
+        lines = {names[i]: tuple((str(gl), int(k), int(n), str(d), str(cc), bool(ch)) for gl, k, n, d, cc, ch in runs)
+                 for i, runs in value["lines"]}  # fmt: skip
+        found = cls(int(value["n"]), int(value["head"]), lines, names, order)
+        each = Counter(names[i] for i in order)  # (a place past the names: IndexError)
+        if found.n != len(order) or each != {line: sum(run[1] for run in runs) for line, runs in lines.items()}:
+            raise ValueError("not the lessons it says")
+        return found
+
+    @cached_property
+    def size(self) -> int:
+        """About the bytes it holds (measured: ``PAST_LINE_BYTES`` a line, ``PAST_RUN_BYTES`` a run besides, 4 a
+        lesson, and their words: each run's description is a string of its own, B-1841)."""
+        runs = sum(map(len, self.lines.values()))
+        words = sum(len(line[1]) for line in self.lines) + sum(
+            len(run[0]) + len(run[3]) + len(run[4]) for each in self.lines.values() for run in each)  # fmt: skip
+        return PAST_LINE_BYTES * len(self.lines) + PAST_RUN_BYTES * runs + 4 * self.n + words
+
+
+class WithPast(Sequence):
     """``Store.learning_rows`` of a vendor with lessons past the whole memory's cap: the whole memory's rows
     (``shared``, the same list while its lessons are the same), then the vendor's lessons it does not hold (``past``,
     the same list too while they are). ``key``: whose (the database, the vendor). The GL suggestions build the shared
-    rows' index once and extend it by the past ones (``suggest._with_past``)."""
+    rows' index once and extend it by the past ones' lines (``older``: ``suggest._with_past``). Not a list: the past
+    rows are read only when it is read as one (``past`` may be what reads them, called once), and the GL suggestions
+    of the review screen never do (D-178). Read it, don't change it."""
 
-    def __init__(self, shared: list[dict[str, Any]], past: list[dict[str, Any]], key: Any) -> None:
-        super().__init__(shared + past)
-        self.shared, self.past, self.key = shared, past, key
+    def __init__(self, shared: list[dict[str, Any]], past: list[dict[str, Any]] | Callable[[], list[dict[str, Any]]],
+                 key: Any, older: PastLines | None = None) -> None:  # fmt: skip
+        self.shared, self.key = shared, key
+        self._past, self._older, self._rows = past, older, None
+
+    @property
+    def past(self) -> list[dict[str, Any]]:
+        if callable(self._past):
+            self._past = self._past()
+        return self._past
+
+    @property
+    def older(self) -> PastLines:
+        """``past`` by line (given, or worked out from them)."""
+        if self._older is None:
+            self._older = PastLines.of(self.past)
+        return self._older
+
+    def _all(self) -> list[dict[str, Any]]:
+        if self._rows is None:
+            self._rows = self.shared + self.past
+        return self._rows
+
+    def __len__(self) -> int:
+        return len(self._all())
+
+    def __getitem__(self, i: Any) -> Any:
+        return self._all()[i]
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return iter(self._all())
+
+    def __reversed__(self) -> Iterator[dict[str, Any]]:
+        return reversed(self._all())
+
+    def __contains__(self, row: Any) -> bool:
+        return row in self._all()
+
+    def __eq__(self, other: Any) -> bool:
+        return self._all() == (other._all() if isinstance(other, WithPast) else other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __add__(self, other: Any) -> list[dict[str, Any]]:
+        return self._all() + list(other)
+
+    def __radd__(self, other: Any) -> list[dict[str, Any]]:
+        return list(other) + self._all()
+
+    def __repr__(self) -> str:
+        return f"WithPast({self._all()!r})"
 
 
 _AGGREGATED = RowsCache()

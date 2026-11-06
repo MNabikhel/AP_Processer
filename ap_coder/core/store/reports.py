@@ -96,9 +96,11 @@ class ReportsMixin:
         holds too: its work began after this ask did (it was being worked out while this one waited, B-1802).
         ``settle`` (an answer a page only shows, D-164): once what it depends on changed, one whose work began less
         than that many seconds ago on the same database is taken still, in whichever process it was made, so it is
-        never older than that. While another thread or process works it out, it is waited for (``ANSWER_WAIT``).
-        ``encode``/``decode``: the value to JSON-ready data and back. In a write under way (or a read transaction) it
-        is worked out afresh, neither read nor kept. The value is shared: read it, don't change it."""
+        never older than that but by the time another takes to work it out: while another thread or process works it
+        out, the answer before (this database's latest) is taken meanwhile (B-1834); with no such answer, or without
+        ``settle``, it is waited for (``ANSWER_WAIT``). ``encode``/``decode``: the value to JSON-ready data and back.
+        In a write under way (or a read transaction) it is worked out afresh, neither read nor kept. The value is
+        shared: read it, don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
@@ -114,12 +116,21 @@ class ReportsMixin:
                 return True
             return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)
 
+        def before(found: tuple[Any, Any, float] | None) -> bool:
+            """Whether ``found`` may be shown while another works the answer out again: settled, of this database, its
+            work begun less than the settle and the longest wait ago (B-1838: never older than that)."""
+            return bool(settle and found is not None and found[0][:1] == seen[:1]
+                        and 0 <= began - found[2] < settle + ANSWER_WAIT)  # fmt: skip
+
         with _KEPT_LOCK:
             hit = _KEPT.get(here)
             working = _WORKING.setdefault(here, threading.Lock())
         if holds(hit):
             return hit[1]  # type: ignore[index]
-        got = working.acquire(timeout=ANSWER_WAIT)
+        if not before(hit):
+            got = working.acquire(timeout=ANSWER_WAIT)
+        elif not (got := working.acquire(blocking=False)):
+            return hit[1]  # type: ignore[index]  (another thread here works it out again: the one before meanwhile)
         try:
             with _KEPT_LOCK:
                 hit = _KEPT.get(here)
@@ -129,8 +140,14 @@ class ReportsMixin:
             lease, taken, took = f"answer/{name}/{key}", True, holds(found, later=True)
             if not took:
                 taken = self._briefly_or(lambda: self.take_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
+                # Another process works it out (its hold: not just a database too busy to give one, B-1838)
+                other = not taken and self._lease_held(lease)
+                if other and before(hit) and not (before(found) and found[2] > hit[2]):  # type: ignore[index]
+                    return hit[1]  # type: ignore[index]  (another process works it out again: the one before meanwhile)
+                took = other and before(found)  # (or the database's, when it is the latest)
                 until = time.monotonic() + ANSWER_WAIT
-                while not taken and time.monotonic() < until:  # another process works it out: taken once written
+                # another process works it out, with no answer before to show: taken once written
+                while not taken and not took and time.monotonic() < until:
                     time.sleep(ANSWER_POLL)
                     found = self.kept_answer(name, key, version)
                     took = holds(found, later=True)
