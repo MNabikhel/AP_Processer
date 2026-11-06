@@ -47,17 +47,17 @@ def text_table_items(path: str | Path, layout: DocLayout,
     table this reader can't find)."""
     if layout.source != "text":
         return []
-    import pymupdf
-
+    from .layout import PDF_LOCK, opened_pdf
     from .reader import credit_printed_positive
 
     items: list[LineReading] = []
     try:
-        with pymupdf.open(path) as doc:
+        with opened_pdf(path) as doc:  # PyMuPDF's calls holding its lock (B-1780)
             for page_layout in layout.pages:
-                if page_layout.number > doc.page_count or not page_layout.words:
-                    continue
-                rules = vertical_rules(doc[page_layout.number - 1])
+                with PDF_LOCK:
+                    if page_layout.number > doc.page_count or not page_layout.words:
+                        continue
+                    rules = vertical_rules(doc[page_layout.number - 1])
                 items += _page_items(page_layout, rules, (tables or {}).get(page_layout.number) or [])
     except Exception as exc:  # noqa: BLE001 - an extra reader: never fatal
         log.warning("%s: the PDF's table not read (%s)", Path(path).name, exc)

@@ -255,7 +255,7 @@ def _prune(folder: Path, newest: Path) -> None:
         if name == str(newest):
             continue
         with contextlib.suppress(OSError):
-            os.unlink(name)
+            Path(name).unlink(missing_ok=True)  # one gone already (another worker pruning) is gone too (B-1779)
             total -= size
 
 
