@@ -15,7 +15,10 @@ answers as AIS does, as far as AP Coder uses it:
   with CODE / TITLE / DESC, ``jde__status`` ERROR).
 * ``script(name, *steps)``: what the next calls of an orchestration (or "token") do instead: an HTTP status, "slow"
   (answer after ``slow_seconds``, longer than the client waits), "slow-after" (do the work, then answer late: the
-  request reached JDE), "drop" (close the connection without an answer).
+  request reached JDE), "late-made" (JDE still making it after the client gave up: the work done after
+  ``slow_seconds``), "drop" (close the connection without an answer), ("refuse", code, text) (JDE's error shape).
+* ``plan(key, inputs)``: the step of a call nothing is scripted for (None: as usual), e.g. every tenth voucher late;
+  ``latency``: seconds each voucher call takes before it is answered (R04110ZA's run).
 
 Every request is recorded in ``calls`` ((path, the orchestration's inputs or {}), the password never kept).
 """
@@ -221,6 +224,8 @@ class FakeAis:
         self.scripts: dict[str, list[Any]] = {}
         self.by_key: dict[str, dict[str, Any]] = {}  # idempotency key -> the voucher made
         self.next_doc = 10001
+        self.plan: Any = None  # (key, inputs) -> the step of a call nothing is scripted for
+        self.latency = 0.0  # seconds each voucher call takes before its answer
         self.lock = threading.Lock()
         self.server: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
@@ -348,8 +353,14 @@ class FakeAis:
                 return self._send(h, 403, {"message": f"User {USER} is not authorized to run {name}",
                                            "status": "ERROR"})  # fmt: skip
             step = self._step(key)
+            if step is None and self.plan is not None:
+                step = self.plan(key, self._inputs(key, body))
+            if key in ("voucher_create", "voucher_status") and self.latency:
+                time.sleep(self.latency if key == "voucher_create" else self.latency / 10)
             if self._play(h, step):
                 return None
+            if step == "late-made":  # the client gave up meanwhile: JDE makes it all the same
+                time.sleep(self.slow_seconds)
             status, answer = self._run(key, body)
             if step == "slow-after":
                 time.sleep(self.slow_seconds)
@@ -360,8 +371,11 @@ class FakeAis:
         return self._play(h, self._step(key))
 
     def _play(self, h: BaseHTTPRequestHandler, step: Any) -> bool:
-        if step is None or step == "slow-after":
+        if step is None or step in ("slow-after", "late-made"):
             return False
+        if isinstance(step, tuple) and step[0] == "refuse":
+            self._send(h, 500, jde_error("Voucher_Entry", (step[1], step[2])))
+            return True
         if step == "slow":
             time.sleep(self.slow_seconds)
             self._send(h, 200, {})

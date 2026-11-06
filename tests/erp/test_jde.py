@@ -107,7 +107,12 @@ def test_a_full_invoice_per_province(stem, area, code, gross, distribution):
     final = inv["final_output"]
     assert (head["VLTXA1"], head["VLEXR1"], head["VLAG"]) == (area, code, str(gross))
     assert head["VLATXA"] == head["VLSTAM"] == ""  # gross mode: never both
-    assert (head["VLEDUS"], head["VLEDBT"], head["VLEDTN"], head["VLEDLN"]) == ("APCODER", "APC7", "APC1", "1")
+    assert (head["VLEDUS"], head["VLEDBT"], head["VLEDTN"], head["VLEDLN"]) == (
+        "APCODER",
+        "APC7",
+        f"APC1-{jde.invoice_site(inv)}",
+        "1",
+    )  # (no batch code given: as before; D-182)
     assert (head["VLEDSP"], head["VLEDTC"], head["VLEDTR"], head["VLDCT"], head["VLCO"]) == (
         "0",
         "A",
@@ -125,7 +130,7 @@ def test_a_full_invoice_per_province(stem, area, code, gross, distribution):
     first = final["line_items"][0]
     assert lines[0]["VNANI"] == f"{first['predicted_cost_center']}.{first['predicted_gl_code']}"
     assert {r["VNAM"] for r in lines} == {"2"} and {r["VNLT"] for r in lines} == {"AA"}
-    assert {r["VNEDTN"] for r in lines} == {"APC1"} and {r["VNDCT"] for r in lines} == {"PV"}
+    assert {r["VNEDTN"] for r in lines} == {head["VLEDTN"]} and {r["VNDCT"] for r in lines} == {"PV"}
 
 
 def test_tax_amount_mode_writes_taxable_and_tax_instead_of_gross():
@@ -180,7 +185,7 @@ def test_a_po_matched_invoice():
     on, ab = files[jde.HEADER_FILE]
     assert (on["VLPO"], on["VLPDCT"], on["VLPKCO"], on["VLAG"]) == ("PO-88213", "OP", "00001", "1801785")
     assert ab["VLPO"] == ""
-    assert "APC1" not in {r["VNEDTN"] for r in files[jde.DIST_FILE]}  # the PO invoice has no G/L lines
+    assert on["VLEDTN"] not in {r["VNEDTN"] for r in files[jde.DIST_FILE]}  # the PO invoice has no G/L lines
     matches = files[jde.MATCH_FILE]
     assert [m["LNID"] for m in matches] == ["1", "2", "3", "4", "5"]
     assert (matches[0]["DOCO"], matches[0]["UORG"], matches[0]["PRRC"], matches[0]["AEXP"]) == (
@@ -369,6 +374,35 @@ def test_account_columns_mode_and_mapping():
     assert jde.ani(jde.account_for("6010", "CC400", no_cc)) == "1.6010"
 
 
+def test_the_account_of_each_line_is_found_without_reading_the_whole_mapping():
+    """B-1863: ``account_for`` read the account mapping from the top for each line (twice when a line's cost center
+    had no row of its own): with the 20,000 rows a JD Edwards sync adds, 5,000 lines (a 500-voucher batch) took 13
+    seconds, at every check, dry run, go-ahead and download. The mapping is looked up by GL code and cost center, the
+    first row of each as before, and again once the mapping is another or has grown."""
+    import time
+
+    rows = [jde.GlMap(f"{6000 + i}", "CC1" if i % 2 else "", "B1", f"{6000 + i}", f"{i % 7}") for i in range(20000)]
+    rows += [jde.GlMap("6002", "", "SECOND", "6002")]  # a second row of a code: the first one counts
+    settings = jde.JdeSettings(default_bu="CC9", gl_map=rows)
+    asked = [(f"{6000 + i * 7 % 30000}", ("CC1", "CC2", "")[i % 3]) for i in range(5000)]
+
+    def scanned(gl: str, cc: str) -> jde.GlMap | None:  # the mapping read row by row, as before
+        exact = next((m for m in rows if m.gl_code == gl and m.cost_center == cc), None)
+        row = exact or next((m for m in rows if m.gl_code == gl and not m.cost_center), None)
+        return jde.GlMap(gl, cc, row.bu or cc or "CC9", row.obj or gl, row.sub, row.sbl, row.sblt) if row else (
+            jde.GlMap(gl, cc, cc or "CC9", gl))  # fmt: skip
+
+    expected = [scanned(gl, cc) for gl, cc in asked[:300]]
+    started = time.perf_counter()
+    found = [jde.account_for(gl, cc, settings) for gl, cc in asked]
+    assert time.perf_counter() - started < 1.0
+    assert found[:300] == expected and jde.account_for("6002", "", settings).bu == "B1"
+    settings.gl_map.append(jde.GlMap("99999", "", "NEW", "7000"))  # a row added: found at once
+    assert jde.account_for("99999", "", settings).obj == "7000"
+    settings.gl_map = [jde.GlMap("6002", "", "ONLY", "6002")]  # another mapping
+    assert jde.account_for("6002", "", settings).bu == "ONLY"
+
+
 def test_a_subledger_too_long_for_jd_edwards_holds_the_voucher_back_before_the_batch():
     """VNSBL holds 8 characters and VNSBLT one: a longer mapping (from a spreadsheet) failed only when JD Edwards
     loaded the batch, where the business unit, object and subsidiary are checked before it is made."""
@@ -404,7 +438,7 @@ def test_the_g_l_bank_account_follows_the_pay_from_account_when_it_is_mapped():
     none = _invoice(AB, 3)
     assert "VLGLBA" not in _files([paid])[jde.HEADER_FILE][0]
     settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bank_glba={"CAD-OP": "00012345"})
-    rows = {r["VLEDTN"]: r for r in _files([paid, other, none], settings)[jde.HEADER_FILE]}
+    rows = {r["VLEDTN"].split("-")[0]: r for r in _files([paid, other, none], settings)[jde.HEADER_FILE]}
     assert [rows[f"APC{i}"]["VLGLBA"] for i in (1, 2, 3)] == ["00012345", "", ""]
     assert jde.header_columns(settings) == [*jde.HEADER_COLUMNS, "VLGLBA"]
     assert jde.JdeSettings.from_json(settings.to_json()).bank_glba == {"CAD-OP": "00012345"}
@@ -417,7 +451,7 @@ def test_an_unmapped_pay_from_account_is_said_and_codes_match_whatever_their_cas
     cad = _invoice(ON, 1, pay_from_account="CAD-OP")
     usd = _invoice(USD, 2, pay_from_account="USD-OP")
     settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, bank_glba={"cad-op": "00012345"})
-    rows = {r["VLEDTN"]: r for r in _files([cad, usd], settings)[jde.HEADER_FILE]}
+    rows = {r["VLEDTN"].split("-")[0]: r for r in _files([cad, usd], settings)[jde.HEADER_FILE]}
     assert rows["APC1"]["VLGLBA"] == "00012345" and rows["APC2"]["VLGLBA"] == ""
     none = _invoice(AB, 3)
     notes = jde.bank_notes([cad, usd, none], settings)
@@ -628,7 +662,11 @@ def test_exports_page_jde_flow(db, cost_centers_demo_template):
     assert download.status_code == 200 and download.content[:2] == b"PK"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
-        assert (head["VLEDBT"], head["VLAN8"], head["VLEDTN"]) == (f"APC{batch['id']}", "10023", f"APC{northwind}")
+        assert (head["VLEDBT"].split("-")[0], head["VLAN8"], head["VLEDTN"].split("-")[0]) == (
+            f"APC{batch['id']}",
+            "10023",
+            f"APC{northwind}",
+        )  # and a code of each (D-182)
         assert len(_csv(zf.read(jde.DIST_FILE))) == 6  # five lines and the HST on its own (D-93)
     # Exported once: the same invoice cannot be exported again until the batch is undone.
     assert (
@@ -675,7 +713,7 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db, cost_centers_dem
     settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "N10023"}  # not an AN8
     jde.save(store, settings)
     again = vouchers()
-    assert [r["VLEDTN"] for r in _csv(again[jde.HEADER_FILE])] == [f"APC{northwind['id']}"]
+    assert [r["VLEDTN"].split("-")[0] for r in _csv(again[jde.HEADER_FILE])] == [f"APC{northwind['id']}"]
     with zipfile.ZipFile(io.BytesIO(jde_file(store, batch["id"])[0])) as zf:
         text = zf.read("README.txt").decode()
         dry = zf.read("DRY_RUN.txt").decode()
@@ -721,7 +759,7 @@ def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_aga
     with zipfile.ZipFile(io.BytesIO(answer.content)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
         readme = zf.read("README.txt").decode()
-    assert head["VLEDTN"] == f"APC{inv_id}" and head["VLDDJ"] == ""
+    assert head["VLEDTN"].startswith(f"APC{inv_id}-") and head["VLDDJ"] == ""
     assert "check before loading" in readme and "due date 3026-10-14" in readme
 
 

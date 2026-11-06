@@ -91,6 +91,47 @@ def test_exports_dry_run_post_and_the_voucher_number(tmp_path, ais, monkeypatch)
     assert len(header) == 1  # only the column names: the voucher is in JDE already
 
 
+def test_the_posting_job_shows_each_vouchers_outcome_as_it_goes(tmp_path, ais, monkeypatch):
+    """D-182: the go-ahead's job said only "Posting the vouchers…" for the whole run: it counts the vouchers done and
+    how they went (posted, being checked, refused, waiting)."""
+    from tests.erp.test_jde import QC
+
+    store, batch = batch_of(tmp_path, ais, "northwind_ON_HST_NW-2026-0912", QC)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    client = client_for(store)
+    post(client, f"/exports/batches/{batch}/jde-api/dry-run")
+    _wait(client, "jde-api")
+    ais.script("voucher_create", 503, 503, 503)  # the first turned away by AIS: JD Edwards can't be asked now
+    seen = []
+    real = client.app.state.jobs.get("jde-api").step
+    monkeypatch.setattr(client.app.state.jobs.get("jde-api"), "step", lambda *a, **k: seen.append(a) or real(*a, **k))
+    post(client, f"/exports/batches/{batch}/jde-api/post")
+    _wait(client, "jde-api")
+    assert seen[1:] == [(1, 2, "Posting the vouchers to JD Edwards… 1 of 2: 1 waiting"),
+                        (2, 2, "Posting the vouchers to JD Edwards… 2 of 2: 2 waiting")], seen  # fmt: skip
+    post(client, "/exports/jde-api/retry")
+    _wait(client, "jde-api")
+    shown = client.app.state.jobs.get("jde-api").snapshot()
+    assert (shown["done"], shown["total"]) == (2, 2) and shown["note"].endswith("2 of 2: 2 posted"), shown
+
+
+def test_a_g_l_date_moved_into_the_open_period_is_shown_and_the_go_ahead_confirms_it(tmp_path, ais, monkeypatch):
+    """D-182 (B-1861): the dry run's row says the G/L date was moved, and the go-ahead's question names it."""
+    from ap_coder.erp import jde
+
+    store, batch = batch_of(tmp_path, ais)  # dated 14 September
+    settings = jde.load(store)
+    settings.open_from = "2026-10-01"
+    jde.save(store, settings)
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    client = client_for(store)
+    post(client, f"/exports/batches/{batch}/jde-api/dry-run")
+    _wait(client, "jde-api")
+    page = client.get(f"/exports?batch={batch}").text
+    assert "G/L date moved to 2026-10-01, the first day of JD Edwards&#39; open period" in page
+    assert "1 voucher has its G/L date moved into the open period (see Message): posting confirms it." in page
+
+
 def test_exports_the_queue_and_jde_down(tmp_path, ais, monkeypatch):
     store, batch = batch_of(tmp_path, ais)
     monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)

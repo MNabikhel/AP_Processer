@@ -2258,6 +2258,57 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{invoices,reports}.py`, `coding/taxreturn.py`, `web/pages/{invoice,sales_tax,learning}.py`,
     `web/templates/sales_tax.html`, `docs/HOW_IT_RUNS.md`; `tests/core/test_store_perf.py`,
     `tests/core/test_kept_answers.py`, `tests/web/test_web_finance.py`, `tests/web/test_web_analytics.py`)
+- **D-182** · **Posting through the JD Edwards API at 500 vouchers: each voucher its own outcome and the run goes on
+  past a late answer; a lost answer sent again only once JD Edwards could have finished it; holds and the open period
+  read just before each voucher; Z-table keys unique per data folder and after a restore; accruals follow the postings**
+  (scale goal phase 4, target 4; B-1857 to B-1863; changes D-105 where it says otherwise).
+  - **Why:** one orchestration call per voucher, R04110ZA in each, against a 30-second timeout: the first late answer
+    closed the client and queued the rest, so a batch went out one voucher per five minutes (500 ≈ 40 hours). Holds
+    were not looked at after approval (R3), there was no fiscal period (R5), VLEDBT / VLEDTN collided across data
+    folders and after a restore (R6), and month end counted an API voucher not posted as in the ERP (R4).
+  - **What:**
+    - **A run** (`jde_post._run`, `_Run`): the lookups first (each row JDE has or may have, by its key), then the
+      sends one after another, then the run's late ones once their answer is `LOOK_AFTER` (30 s) old. A late answer
+      (the request reached JDE: a timeout, the connection cut, 502 / 504, an answer not read) is *unknown* and the
+      run goes on; JDE not reached (refused connection, 503 after the retries, the sign-in or the permission refused)
+      or `LATE_STOP` (3) late answers in a row stop it, the rest queued saying why; so does the run's time
+      (`post_minutes`, 60). A voucher's request waits `voucher_timeout` (120 s), the connection's 30 s stays for the
+      reads and lookups. The exports page's job shows done of total, posted, being checked, refused, waiting, held.
+    - **Never twice:** a lookup's "not there" for a send whose answer was lost is believed only once the send is
+      `resend_minutes` (10) old (`_in_flight`): before, the row stays unknown and locked (B-1858). A refusal that JDE
+      answered (its error shape) is looked up and believed at once, as before.
+    - **Holds** (`coding.vendors.voucher_hold`): AP Coder's own and JD Edwards' as the last supplier sync left it,
+      indexed until the vendor list changes; held, the voucher is queued saying why, the dry run refuses it.
+    - **The open period** (`open_from`, `open_to`, `closed_period` in Settings → JD Edwards E1; none read from JDE:
+      no orchestration offers it yet): a G/L date before it is moved to its first day (`JDE_GL_DATE_MOVED`, a
+      warning on the review screen; the dry run's row says it; the go-ahead's question names it and its event keeps
+      `gl_moved`) or held (`JDE_PERIOD_CLOSED`); after it, held. The same G/L date goes in the files. Just before
+      each voucher the period is read again (a period closed mid-batch: the rest back to *checked*, dry run again);
+      JDE refusing a G/L date as closed (`PERIOD_REFUSED`: PBCO, "closed period"…) holds back the run's others of
+      that month and before.
+    - **Z-table keys** (`jde.batch_number`, `invoice_site`, `batch_site`): VLEDTN = `APC` + invoice id + `-` + 8
+      characters of a digest of the invoice's file and when it was added (the identity a restore uses, D-105);
+      VLEDBT = prefix + batch + `-` + up to 4 characters of a digest of the batch (when made, its number, its
+      invoices) as room allows in 15. Deterministic: the same each time a voucher is sent or its batch downloaded,
+      so the files and the API agree; another invoice or batch under the same number gets others. An upgrade changes
+      the keys of what is not sent yet: a dry run passed before it is "changed since its dry run" (dry run again).
+    - **Accruals** (`jde_post.not_posted` in `accruals._not_in_erp`): queued, being sent, unknown, held back after its
+      go-ahead, or refused (unless the batch's files were downloaded since) is not in the ERP; the kept answer's
+      question carries that set, as postings change no invoice.
+    - **Lookups, not scans** (B-1863): `jde.account_for` by (GL code, cost center), `held_vendor` by what makes a
+      number or account the same.
+  - **Not done, for the JDE team** (docs/JDE_ORCHESTRATIONS.md, items 15 to 20): the batch-level orchestration (one
+    R04110ZA per batch) and a status lookup of many keys at once; R04110ZA's error IDs for a closed period; whether
+    VLPST `A` overrides a supplier's hold; how long a voucher request can still run after AIS gave up (the 10
+    minutes); a JDE batch still pending (F0011 ICIST / F0411 RPPOST) is not known to AP Coder, so a voucher posted
+    into a pending batch counts as in the ERP.
+  - **Measured:** 500 vouchers through the stand-in (each answered after 20 ms, one in ten late past a 0.3 s wait,
+    half of them made, one in twenty refused): one go-ahead run of 40 s ends 475 posted and 25 refused, none unknown
+    or queued, none made twice (525 sends, 75 lookups); the code before stops at the 8th (late), the other 492 queued.
+    `account_for` × 5,000 with a 20,000-row mapping: 12.8 s → 0.04 s; `held_vendor` with 3,000 on hold: 46 → 14 ms.
+  - (`erp/{jde_post,jde,accruals}.py`, `coding/vendors.py`, `web/pages/{exports,settings_jde}.py`,
+    `web/templates/{exports,settings_jde}.html`, `ops/help.py`, `docs/{JDE_ORCHESTRATIONS,JDE_E1,BUGS}.md`;
+    `tests/erp/test_jde_post_runs.py`, `tests/fake_ais.py` and the tests named in B-1857 to B-1863)
 - **D-183** · **One money arithmetic, half up on the decimals printed, and one table of what counts as equal** (scale
   goal, phase 4, T1; R10 and G9 of `docs/archive/scale-2026-11/coding_erp.md`; B-1864 to B-1868).
   - **Why:** Python's `round` on a float is half-even on its binary value: 2.50 × 5% gave 0.12 and 0.30 × 5% gave

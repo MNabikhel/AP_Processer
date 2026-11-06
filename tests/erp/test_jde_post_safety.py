@@ -350,6 +350,9 @@ def test_a_dry_run_never_writes_over_a_voucher_that_went_out_meanwhile(tmp_path,
 
 
 def test_the_batch_files_leave_out_every_voucher_jde_may_hold(tmp_path, ais):
+    # the second turned away by AIS (busy, never reached JDE): the run goes on past the first's late answer (D-182)
+    ais.plan = lambda key, inputs: 503 if inputs.get("mode") == "FINAL" and inputs["pay_items"][0]["VLVINV"] == (
+        "SIL-4471") else None  # fmt: skip
     store, batch = lost_answer(tmp_path, ais, ON, QC)
     data, _name, _kind = exports.jde_file(store, batch)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:

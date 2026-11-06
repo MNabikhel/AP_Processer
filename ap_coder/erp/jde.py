@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import re
@@ -105,6 +106,10 @@ LINE_NUMBERING = {
 }
 GL_DATE_INVOICE, GL_DATE_EXPORT = "invoice", "export"
 GL_DATES = {GL_DATE_INVOICE: "The invoice date", GL_DATE_EXPORT: "The day the batch is exported"}
+# A G/L date before the open period (D-182): moved to its first day (said, and confirmed by the go-ahead), or held.
+CLOSED_MOVE, CLOSED_HOLD = "move", "hold"
+CLOSED_PERIODS = {CLOSED_MOVE: "Move its G/L date to the first day of the open period",
+                  CLOSED_HOLD: "Hold the invoice back"}  # fmt: skip
 
 # Which taxes E1 itself posts (so they are NOT in the distribution), by tax explanation code.
 RECOVERABLE_BY_CODE: dict[str, frozenset[str]] = {
@@ -226,6 +231,17 @@ class JdeSettings:
     terms_codes: dict[str, str] = field(default_factory=dict)
     send_due_date: bool = True
     gl_date: str = GL_DATE_INVOICE
+    # JD Edwards' open period (D-182, R5): G/L dates from ``open_from`` to ``open_to`` (blank: no end) take postings;
+    # one before it is in a closed period (``closed_period``: moved or held), one after it is held. Blank: not checked.
+    open_from: str = ""
+    open_to: str = ""
+    closed_period: str = CLOSED_MOVE
+    # Posting through the API (D-182): how long a voucher's request may take (R04110ZA runs in it), how long one run
+    # may send, and how long after a send whose answer was lost JDE's "not there" is believed (it may still be making
+    # it): sent again only after that.
+    voucher_timeout: float = 120.0
+    post_minutes: float = 60.0
+    resend_minutes: float = 10.0
     default_bu: str = ""
     bu_from_cost_center: bool = True
     use_default_rule: bool = True
@@ -292,6 +308,15 @@ class JdeSettings:
             out.line_numbering = SEQUENTIAL
         if out.gl_date not in GL_DATES:
             out.gl_date = GL_DATE_INVOICE
+        out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
+        if out.closed_period not in CLOSED_PERIODS:
+            out.closed_period = CLOSED_MOVE
+        for name, low, high in (("voucher_timeout", 0.1, 900.0), ("post_minutes", 0.01, 1440.0),
+                                ("resend_minutes", 0.0, 1440.0)):  # fmt: skip
+            try:
+                setattr(out, name, min(high, max(low, float(getattr(out, name)))))
+            except (TypeError, ValueError):
+                setattr(out, name, getattr(base, name))
         return out
 
     @property
@@ -339,7 +364,44 @@ def settings_problems(settings: JdeSettings) -> list[str]:
         out.append("Document type (VLDCT) must be 2 characters, e.g. PV, or blank.")
     if not re.fullmatch(r"[A-Z]{3}", settings.domestic_currency.strip().upper()):
         out.append("Domestic currency must be a 3-letter code, e.g. CAD.")
+    if settings.open_from and settings.open_to and settings.open_to < settings.open_from:
+        out.append("The open period must end on or after its first day.")
     return out
+
+
+def gl_date_of(
+    final: Mapping[str, Any], settings: JdeSettings, on: dt.date | None = None
+) -> tuple[dt.date, dt.date | None]:
+    """(the voucher's G/L date (VLDGJ / VNDGJ), the date it was moved from: None when not moved). The invoice date, or
+    the batch's day (``on``, else today) with Settings' G/L date; one before the open period, closed, is moved to its
+    first day when closed periods are moved (D-182, R5)."""
+    day = on or dt.date.today()
+    base = day if settings.gl_date == GL_DATE_EXPORT else (_date(final.get("invoice_date")) or day)
+    first = _date(settings.open_from)
+    if first and base < first and settings.closed_period == CLOSED_MOVE:
+        return first, base
+    return base, None
+
+
+def period_problem(day: dt.date, settings: JdeSettings) -> str:
+    """Why a voucher with G/L date ``day`` can't be posted ("" when it can): in a closed period (before the open one:
+    a date not moved), or after the open period (never moved, D-182)."""
+    first, last = _date(settings.open_from), _date(settings.open_to)
+    if first and day < first:
+        return (f"G/L date {day} is in a closed period (JD Edwards' open period starts {first}, Settings → JD Edwards "
+                "E1): held until the period is open, or set closed periods to be moved")  # fmt: skip
+    if last and day > last:
+        return (f"G/L date {day} is after the open period (it ends {last}, Settings → JD Edwards E1): held until that "
+                "period is open")  # fmt: skip
+    return ""
+
+
+MOVED = "G/L date moved to"
+
+
+def moved_note(day: dt.date, moved: dt.date) -> str:
+    """What the review screen and the dry run say of a G/L date moved into the open period."""
+    return f"{MOVED} {day}, the first day of JD Edwards' open period: {moved} is in a closed period"
 
 
 # --- Formats ---------------------------------------------------------------------------------------------
@@ -389,6 +451,15 @@ def _split(total: int, weights: list[int], unit: int = 1) -> list[int]:
     return shares
 
 
+def from_julian(value: Any) -> dt.date | None:
+    """The date of an E1 "Julian" CYYDDD (``julian``'s), None when it isn't one."""
+    try:
+        n = int(value)
+        return dt.date(1900 + n // 1000, 1, 1) + dt.timedelta(days=n % 1000 - 1)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _date(value: Any) -> dt.date | None:
     try:
         return dt.date.fromisoformat(str(value or "").strip()[:10])
@@ -418,14 +489,26 @@ def resolve_an8(final: dict[str, Any], vendor_lookup: VendorLookup, settings: Jd
     return _vendor_id(final, vendor_lookup or {}).strip()  # (read, not copied: once per invoice or vendor)
 
 
+def _gl_index(settings: JdeSettings) -> dict[tuple[str, str], GlMap]:
+    """The account mapping by (GL code, cost center), the first row of each (as read from the top): made once for
+    these settings, again once their mapping is another list or has grown (B-1863), not read row by row per line."""
+    kept = settings.__dict__.get("_gl_index")
+    if kept is None or kept[0] is not settings.gl_map or kept[1] != len(settings.gl_map):
+        index: dict[tuple[str, str], GlMap] = {}
+        for m in settings.gl_map:
+            index.setdefault((_norm(m.gl_code), _norm(m.cost_center)), m)
+        kept = settings.__dict__["_gl_index"] = (settings.gl_map, len(settings.gl_map), index)
+    return kept[2]
+
+
 def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap | None:
     """The E1 account of an AP Coder GL code (+ cost center), or None when it is not mapped."""
     gl, cc = _norm(gl_code), _norm(cost_center)
     cc = "" if cc == UNASSIGNED else cc  # a cost center still to pick is not a business unit (B-1211)
     if not gl or gl == UNASSIGNED:  # a line still to code has no object account (B-830)
         return None
-    exact = next((m for m in settings.gl_map if _norm(m.gl_code) == gl and _norm(m.cost_center) == cc), None)
-    row = exact or next((m for m in settings.gl_map if _norm(m.gl_code) == gl and not _norm(m.cost_center)), None)
+    index = _gl_index(settings)
+    row = index.get((gl, cc)) or index.get((gl, ""))
     if row is None and not settings.use_default_rule:
         return None
     row = row or GlMap(gl_code)
@@ -478,6 +561,8 @@ class _Voucher:
     po_matched: bool = False
     # The GST/HST/QST on meals not claimable (D-90): in the expense lines, so E1 must not post it as recoverable.
     meals: int = 0
+    gl_moved: dt.date | None = None  # a G/L date in a closed period, moved to ``gl_day`` (D-182)
+    gl_day: dt.date | None = None
 
 
 def _place_of_supply(final: dict[str, Any]) -> str:
@@ -732,6 +817,12 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         add("no invoice date", "INVOICE_DATE_INVALID")
     elif invoice_date.year not in E1_YEARS:
         add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
+    else:  # the open period (D-182): today's for a G/L date of the export day (the batch's is checked as it goes)
+        day, v.gl_moved = gl_date_of(final, settings)
+        if why := period_problem(day, settings):
+            add(why, "JDE_PERIOD_CLOSED")
+        elif v.gl_moved:
+            v.gl_day = day
 
     v.currency = _norm(final.get("currency")) or settings.domestic_currency.upper()
     allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency)}
@@ -895,11 +986,38 @@ def _amount(cents: int, settings: JdeSettings, decimals: int) -> int | str:
     return jde_amount(Decimal(cents) / 100, settings.decimals == IMPLIED, decimals)
 
 
-def _keys(prefix: str, settings: JdeSettings, batch: int | str, inv_id: int) -> dict[str, Any]:
+def _code(*parts: Any) -> str:
+    """A short code of what makes a batch or an invoice that one and no other, in any data folder (D-182, R6)."""
+    return hashlib.blake2b("|".join(str(p or "") for p in parts).encode(), digest_size=4).hexdigest().upper()
+
+
+def batch_site(batch: Mapping[str, Any], invoices: Iterable[Mapping[str, Any]]) -> str:
+    """The code of export batch ``batch`` (its row) in VLEDBT: when it was made, its number and its invoices (their
+    ``invoice_site``), so another data folder's batch of that number, or the one a database put back from a backup
+    hands that number to again, has another (D-182)."""
+    return _code(batch.get("created_at"), batch.get("id"), *sorted(invoice_site(i) for i in invoices))
+
+
+def invoice_site(invoice: Mapping[str, Any]) -> str:
+    """The code of an invoice in VLEDTN: its file and when it was added (as a restore knows an invoice again, D-105):
+    the same each time it is sent or downloaded, another for another invoice under the same number (D-182)."""
+    return _code(invoice.get("file_sha256"), invoice.get("created_at"))
+
+
+def batch_number(settings: JdeSettings, batch: int | str, site: str = "") -> str:
+    """VLEDBT (15 characters): the prefix and AP Coder's batch number, then a dash and the batch's code
+    (``batch_site``), as many of its 4 characters as there is room for (none with a long prefix and number)."""
+    head = f"{settings.batch_prefix.strip()}{batch}"
+    room = min(4, 15 - len(head) - 1)
+    return f"{head}-{site[:room]}" if site and room >= 2 else head[:15]
+
+
+def _keys(prefix: str, settings: JdeSettings, batch: int | str, invoice: Mapping[str, Any], inv_id: int,
+          site: str = "") -> dict[str, Any]:  # fmt: skip
     return {
         f"{prefix}EDUS": settings.user.strip()[:10],
-        f"{prefix}EDBT": f"{settings.batch_prefix.strip()}{batch}"[:15],
-        f"{prefix}EDTN": f"APC{inv_id}"[:22],
+        f"{prefix}EDBT": batch_number(settings, batch, site),
+        f"{prefix}EDTN": f"APC{inv_id}-{invoice_site(invoice)}"[:22],
         f"{prefix}EDSP": "0",
         f"{prefix}EDTC": "A",
         f"{prefix}EDTR": "V",
@@ -935,17 +1053,18 @@ def _vouchers(invoices: list[dict[str, Any]], settings: JdeSettings,
 def voucher_rows(
     invoice: dict[str, Any], vendor_an8: str, settings: JdeSettings, *, batch: int | str = "",
     fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None, prepared: _Voucher | None = None,
+    site: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:  # fmt: skip
     """(F0411Z1 rows, F0911Z1 rows, match rows) of one approved invoice, as {column: value}. Check it with
     ``validate`` first: an invoice with problems gives incomplete rows. ``prepared``: its voucher already prepared
-    for ``vendor_an8`` (``_vouchers``), not prepared again."""
+    for ``vendor_an8`` (``_vouchers``), not prepared again. ``site``: the batch's code (``batch_site``) in VLEDBT."""
     from .exports import entry_lines
 
     v = prepared if prepared is not None else _prepare(invoice, settings, str(vendor_an8 or "").strip())
     final = v.final
-    keys = _keys("VL", settings, batch, v.inv_id)
+    keys = _keys("VL", settings, batch, invoice, v.inv_id, site)
     invoice_date = _date(final.get("invoice_date")) or (on or dt.date.today())
-    gl_date = (on or dt.date.today()) if settings.gl_date == GL_DATE_EXPORT else invoice_date
+    gl_date = gl_date_of(final, settings, on)[0]  # in the open period (D-182)
     due = sent_due(final, invoice)  # a credit note: its invoice date; a guessed one is not sent (B-924)
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
@@ -1018,7 +1137,7 @@ def voucher_rows(
         acct = account or GlMap(e.get("gl_code") or "")
         amount = _amount(e["cents"], settings, v.decimals)
         row = {
-            **_keys("VN", settings, batch, v.inv_id), "VNEDLN": n, "VNCO": settings.company_code,
+            **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": settings.company_code,
             "VNDGJ": julian(gl_date), "VNDCT": doc_type, "VNLT": "AA",
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
             "VNEXA": _text(e.get("description"), 30),
@@ -1275,7 +1394,8 @@ SETTINGS_URL = "/settings/jde"
 SAID_ELSEWHERE = frozenset({"MISSING_INVOICE_NUMBER", "INVOICE_DATE_INVALID", "GL_UNASSIGNED", "SUBTOTAL_MISMATCH",
                             "POSTING_UNBALANCED", "NO_LINE_ITEMS", "TAX_GL_UNMAPPED"})  # fmt: skip
 # Said on the review screen as the voucher check words them, after "JD Edwards: ", for the whole invoice.
-SAID_AS_IS = frozenset({"JDE_TAX_AREA", "JDE_MEALS_PO", "JDE_GL_PO", "JDE_GROSS_TAX", "JDE_UNBALANCED"})
+SAID_AS_IS = frozenset({"JDE_TAX_AREA", "JDE_MEALS_PO", "JDE_GL_PO", "JDE_GROSS_TAX", "JDE_UNBALANCED",
+                        "JDE_PERIOD_CLOSED"})  # fmt: skip
 
 
 def in_use(store: Any) -> bool:
@@ -1335,6 +1455,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, code, f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if v.gl_moved and v.gl_day:  # posted in the open period: the person sees it before approving (D-182)
+        out.append((WARNING, "JDE_GL_DATE_MOVED", f"JD Edwards: {moved_note(v.gl_day, v.gl_moved)}", None))
     no_code = terms_unmapped(output, settings)
     if no_code:  # a note: a blank VLPTC has E1 take the supplier's own terms, no reason to hold anything (B-896)
         out.append((INFO, "JDE_TERMS_NO_CODE", f"Payment terms {no_code} have no JD Edwards code: add it in "
@@ -1481,7 +1603,7 @@ def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
 def export_batch(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
-    prepared: list[tuple[str, _Voucher]] | None = None,
+    prepared: list[tuple[str, _Voucher]] | None = None, site: str = "",
 ) -> dict[str, bytes]:  # fmt: skip
     """{"F0411Z1.csv": …, "F0911Z1.csv": …[, "F0411Z1T.csv": …]} for these invoices (validated first)."""
     headers: list[dict[str, Any]] = []
@@ -1490,7 +1612,7 @@ def export_batch(
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup)
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
-        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v)
+        h, d, m = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on, prepared=v, site=site)
         headers += h
         dists += d
         matches += m
@@ -1506,12 +1628,12 @@ UNDO_TEXT = "in AP Coder, Exports → Past batches → Undo this batch, fix, and
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    no_undo: str = "",
+    no_undo: str = "", site: str = "",
 ) -> str:  # fmt: skip
     """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
     ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again); the invoices whose
     Pay from account has no VLGLBA mapped are listed too (``bank_notes``). ``no_undo``: why the batch can't be undone
-    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203)."""
+    (vouchers JD Edwards has, or may have), said instead of the undo (B-1203). ``site``: the batch's code (VLEDBT)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -1521,7 +1643,7 @@ def readme(
     def count(name: str) -> int:
         return len(list(csv.reader(io.StringIO(files[name].decode("utf-8"))))) - 1 if name in files else 0
 
-    edbt = f"{settings.batch_prefix.strip()}{batch}"[:15]
+    edbt = batch_number(settings, batch, site)
     money = ", ".join(f"{c} {t:,.2f}" for c, t in sorted(totals.items())) or "-"
     decimals = "implied decimals (5.50 is written 550)" if settings.decimals == IMPLIED else "with a decimal point"
     amounts = {
@@ -1562,7 +1684,9 @@ def readme(
         "4. Post the voucher batch (P0011 / R09801) as usual.",
         "",
         f"If the load fails: {no_undo or UNDO_TEXT}",
-        "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number.",
+        "Each voucher's transaction number (EDTN) is APC + the AP Coder invoice number, a dash and a code of the",
+        "invoice; the batch number ends in a code of the batch: two AP Coder data folders, or one put back from a",
+        "backup, never give two vouchers the same keys.",
         "",
         "To confirm with your JDE team before the first live load: "
         + "; ".join(UNCONFIRMED)
@@ -1596,21 +1720,24 @@ def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
-    left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False,
+    left_invoices: list[dict[str, Any]] = (), no_undo: str = "", check_now: bool = False, site: str = "",
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt. ``left_invoices``: the invoices of ``left_out``,
     for their vendor, number and date in DRY_RUN.txt (B-1197); ``no_undo``: why it can't be undone (``readme``);
-    ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all)."""
+    ``check_now``: ``to_check`` is what ``validate`` now finds in ``invoices`` (each voucher prepared once for all);
+    ``site``: the batch's code in VLEDBT (``batch_site``)."""
     vouchers = _vouchers(invoices, settings, vendor_lookup)
     if check_now:
         to_check = validate(invoices, settings, vendor_lookup, prepared=vouchers)
-    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
+    files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
+                         site=site)  # fmt: skip
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo))
-        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers)
+        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check, no_undo, site))
+        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on, prepared=vouchers,
+                         site=site)  # fmt: skip
         for h in report["held"]:
             if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
                 h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
@@ -1665,18 +1792,19 @@ def dry_run(
     on: dt.date | None = None,
     prepared: list[tuple[str, _Voucher]] | None = None,
     rows: Mapping[int, tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] | None = None,
+    site: str = "",
 ) -> dict[str, Any]:
     """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
     making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}.
     ``prepared``: the invoices' vouchers already prepared (``_vouchers``); ``rows``: {invoice: ``voucher_rows``}
-    already made with the same batch, rates and date."""
+    already made with the same batch, rates, date and ``site`` (the batch's code, ``batch_site``)."""
     blocking = settings_problems(settings)
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup)
     problems = validate(invoices, settings, vendor_lookup, prior, prepared=prepared)
     notes = bank_notes(invoices, settings)
     out: dict[str, Any] = {
-        "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
+        "batch": batch_number(settings, batch, site),
         "user": settings.user.strip(),
         "company": settings.company_code,
         "blocking": blocking,
@@ -1703,7 +1831,7 @@ def dry_run(
             continue
         made = (rows or {}).get(inv_id)
         headers, dists, matches = made or voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
-                                                       prepared=v)  # fmt: skip
+                                                       prepared=v, site=site)  # fmt: skip
         aa_col = "VNACR" if v.foreign else "VNAA"
         dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
         posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100
