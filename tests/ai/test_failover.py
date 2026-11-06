@@ -263,7 +263,7 @@ def test_a_page_read_on_a_hung_primary_waits_at_most_the_hang_limit_then_the_bac
     started = time.monotonic()
     with pytest.raises(page_reader.PageReaderError) as first:
         page_reader.transcribe(settings, b"page one", model=READER)
-    assert first.value.failed and first.value.temporary
+    assert first.value.failed and first.value.temporary and "no word from the model in 1 s" in str(first.value)
     text = page_reader.transcribe(settings, b"page two", model=READER)  # the second hang moves it
     took = time.monotonic() - started
     primary.release_hung()

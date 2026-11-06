@@ -691,11 +691,18 @@ def _client(settings: Settings, base: str = "") -> Any:
 
     llm = _reader_llm(settings, base)
     client = local_llm.build_local_client(llm)
+    timeout = _word_limit(settings, llm.base_url)
+    return client.with_options(timeout=openai.Timeout(timeout, connect=10.0), max_retries=0)
+
+
+def _word_limit(settings: Settings, base: str) -> float:
+    """The most a page read on ``base`` waits for its next word: AP_PAGE_READER_TIMEOUT_SECONDS, or HANG_SECONDS on a
+    primary with a backup, which reads the page instead of a hung primary (D-180)."""
     timeout = settings.page_reader.timeout_seconds
     breaker = reader_failover(settings)
-    if breaker is not None and breaker.role(llm.base_url) == local_llm.PRIMARY:
-        timeout = min(timeout, local_llm.HANG_SECONDS)  # its backup reads the page instead of a hung primary (D-180)
-    return client.with_options(timeout=openai.Timeout(timeout, connect=10.0), max_retries=0)
+    if breaker is not None and breaker.role(base) == local_llm.PRIMARY:
+        return min(timeout, local_llm.HANG_SECONDS)
+    return timeout
 
 
 def _failure(exc: Exception, settings: Settings, base: str = "") -> str:
@@ -706,7 +713,7 @@ def _failure(exc: Exception, settings: Settings, base: str = "") -> str:
     kinds = {kind.__name__ for kind in type(exc).__mro__}
     if isinstance(exc, (openai.APITimeoutError, TimeoutError)) or "TimeoutException" in kinds:
         return (
-            f"no word from the model in {settings.page_reader.timeout_seconds:.0f} s "
+            f"no word from the model in {_word_limit(settings, base or reader_base_url(settings)):.0f} s "
             "(AP_PAGE_READER_TIMEOUT_SECONDS allows longer)"
         )
     if isinstance(exc, (openai.APIConnectionError, ConnectionError)) or "TransportError" in kinds:
