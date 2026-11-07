@@ -356,8 +356,11 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 logins and four roles (`ap_coder/web/roles.py`), and no browser. It is not a Windows service: `python -m ap_coder
 service install` registers a **scheduled task** that starts at boot under its own account and runs
 `<data folder>\service\run.cmd`; that runs the service host (`ap_coder/ops/service.py:run_host`), which starts the
-dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. Updates are
-`python -m ap_coder server-update <bundle>` (`--back` to go back), not the launcher.
+dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. On a Mac it is
+a **LaunchDaemon** (`ap_coder/ops/service_macos.py:daemon`, D-186): launchd runs the same host from the `current` link
+beside the AP Coder folders, starts it again when it crashed or was killed, and leaves it stopped when it ended with 0
+(SIGTERM or the `stopped` file). Updates are `python -m ap_coder server-update <bundle>` (`--back` to go back), not
+the launcher.
 
   **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
   `server.json`'s `workers`, default `server.default_workers`: for the cores and the memory, D-153):
@@ -377,7 +380,8 @@ dashboard, starts it again when it stops, and writes what it says to `<data fold
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
   and their progress (`ephemeral` rows `job-running:<process>`, renewed each second), the queued imports' count, the
   hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in
-  memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`). Each
+  memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`: every
+  worker answers everyone else 503 meanwhile, `web/maintenance.py`, D-188). Each
   worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
@@ -515,7 +519,7 @@ can corrupt an open SQLite database).
 | (deleted) | files an older version left (`prune_stale`); `private/` and `.env` (moved to the data folder) | `upgrade` |
 | **Data folder** `ap_coder.db` (`-wal`, `-shm`) | the database (`AP_DB_PATH` overrides) | `Store` |
 | `invoices/`, `invoices/deleted/`, `invoices/from-<folder>/` | invoice files; deleted ones; files copied out of an older folder | dashboard, `upgrade.repoint_files` |
-| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept; `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
+| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept (on the server also one a week for 8 weeks and one a month for 12: `backup_files.kept_dailies`, D-187); `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
 | `backups/ap_coder-<stamp>.files.json` | each backup's list of files: each one's place in the data folder, size, time and SHA-256, and the database's size and SHA-256 | `backup_files.snapshot` |
 | `backups/files/<2>/<sha256>` | the files of every backup, each content kept once, named by its SHA-256; one no backup kept lists is removed | `backup_files.snapshot`, `backup_files.prune` |
 | `backups/set-aside-<stamp>/` | the files a restore found that were not there at that backup (moved here, never deleted) | `backup_files.restore_files` |
@@ -533,12 +537,13 @@ can corrupt an open SQLite database).
 | **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6), and your name (per user) | `paths.write_user_settings` |
 | **`~/.ap_coder/logs/launch.log`** | everything each start said, pip's lines and the dashboard's output; `launch.previous.log` past 1 MB | `launch.log` |
 | **Desktop** `AP Coder.lnk` / `AP Coder.command` | the shortcut (Windows / Mac) | `launch.ensure_shortcut` |
-| **Second backup folder** (Settings → Data & backups) | copies of the daily backups, newest 14 | `Store.copy_backup` |
+| **Second backup folder** (Settings → Data & backups) | copies of the daily backups, kept by the same rule | `Store.copy_backup` |
 | Next to an older install | `<folder>.removing-<date>` while it is deleted | `upgrade.remove_folder` |
 | **Server mode only:** `server.json` | the server's settings (port, address, certificate, host names, proxy) | `service install`, `server-update` |
 | `tls/` | the HTTPS certificate and its key, where IT puts them ([SERVER.md](SERVER.md)) | IT |
 | `.cache/pages/<2>/` | the review screen's page pictures, drawn once for all the web workers: named by the file's SHA-256, the page, the scale, the dpi, the size cap and the drawing's version; at most 1 GB, the oldest written removed first; none written while the disk has less than the backups' reserve free (D-160) | `web/document.py` `_kept_png` |
 | `service/run.cmd` (and the task's XML, `host.json`, `host.lock`, `stopped`) | what the scheduled task runs | `service install`, `server-update` |
+| `service/update.json`, `update.lock`, `update-check/` | while `server-update` runs: the step it is at (acted on at the next start or update if it was cut short), its lock, the copy of the database it updates first (D-188) | `server-update` (`ops/update_recovery.py`) |
 | `logs/service.log` | what the server said (rotating) | the service host |
 | `finance_hub/` | the finance hub feed's own record of what was sent (`state.db`) | `hub export`, the schedule |
 

@@ -42,6 +42,7 @@ import anyio.to_thread
 from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.store import Store
+from ap_coder.ops import health, system_log
 from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
 from ap_coder.web.app import CODE_FOLDER, create_app, os_user, own_work_running
 
@@ -321,6 +322,8 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
         return _serve_workers(host, port, store, certfile, keyfile, proxy, insecure_http, workers)
     app = create_app(store=store, address=host, insecure_http=insecure_http)
     app.state.proxy = proxy or None  # behind a proxy, a loopback address is not the console (pages/login.py)
+    app.state.certfile = certfile if https else None
+    health.watch_certificate(app.state.certfile)  # its end told to the system's log on the server (D-187)
     token = secrets.token_urlsafe(24)
     server = uvicorn.Server(server_config(app, host, port, certfile, keyfile, proxy))
     app.state.port, app.state.shutdown_token, app.state.server = port, token, server
@@ -398,7 +401,8 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     os.environ[WORKER_ENV] = json.dumps({"db": str(store.path), "address": host, "insecure_http": insecure_http,
                                          "proxy": proxy or "", "port": port, "token": token, "workers": workers,
                                          "secret": secrets.token_hex(32), "parent": os.getpid(),
-                                         "data": str(data)})  # fmt: skip
+                                         "data": str(data), "certfile": certfile or ""})  # fmt: skip
+    health.watch_certificate(certfile if certfile and keyfile else None)  # (the system's log, D-187)
     # A worker busy with a long report still answers the supervisor's "alive?" (a thread of its own), but give it
     # time: one taken for hung is ended and started again.
     config = server_config("ap_coder.web.server:worker_app", host, port, certfile, keyfile, proxy, factory=True,
@@ -546,7 +550,7 @@ def worker_app() -> Any:
     app = create_app(store=store, address=spec["address"], insecure_http=bool(spec["insecure_http"]),
                      background=False, processes=int(spec["workers"]),
                      secret=bytes.fromhex(spec["secret"]))  # fmt: skip
-    app.state.proxy = spec["proxy"] or None
+    app.state.proxy, app.state.certfile = spec["proxy"] or None, spec.get("certfile") or None
     app.state.port, app.state.shutdown_token = int(spec["port"]), spec["token"]
     app.state.stop_file = stop_file(Path(spec["data"]))
     threading.Thread(target=_stop_worker_when_asked, args=(Path(spec["data"]), spec["token"], int(spec["parent"])),
@@ -783,6 +787,8 @@ class BackgroundWork:
             delay = 5.0 if time.monotonic() - started > 600 else min(delay * 2, 60.0)
             print(f"AP Coder's {self.NAME} stopped (exit code {code}): started again in {delay:.0f} s",
                   file=sys.stderr, flush=True)  # fmt: skip
+            system_log.report(system_log.PROCESS_STOPPED, f"AP Coder's {self.NAME} stopped (exit code {code}): it is "
+                              "started again", key=self.NAME)  # fmt: skip
             self._halt.wait(delay)
 
     def stop(self) -> None:
@@ -947,6 +953,7 @@ def run_background(store: Store) -> int:
     from ap_coder.erp.hub.run import HubSchedule
 
     backup, hub = DailyBackup(store), HubSchedule(store)
+    health.beat(store)  # alive, said every 30 s in the database: /readyz reads it (D-187)
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
     log.info(
@@ -955,6 +962,7 @@ def run_background(store: Store) -> int:
     )
     try:
         while not halt.wait(30.0):
+            health.beat(store)
             backup.check()
             hub.check()
     except KeyboardInterrupt:

@@ -21,7 +21,7 @@ account and Help, nothing else. A Clerk and above open those routes too (every r
 given by email, or withdraw.
 
 ``OPEN`` routes answer anyone (the login page and its steps before a session, ``/healthz``, the styles and
-scripts); ``SIGNED_IN`` ones anyone
+scripts; ``/readyz`` and ``/shutdown`` check who asks themselves); ``SIGNED_IN`` ones anyone
 logged in, also while they must still choose a new password (logging out, changing it). A route not in ``RULES``
 needs an Admin: a route added without a rule is closed, and ``tests/web/test_roles.py`` fails until it gets one.
 Hiding a button a role can't use is only for the eye; this table is what is enforced.
@@ -59,6 +59,7 @@ RULES: dict[tuple[str, str], str] = {
     **_rules(
         OPEN,
         "GET /login", "HEAD /login", "POST /login", "GET /healthz",
+        "GET /readyz",  # checked by the route itself: the server's console, or a monitor server.json names (D-187)
         "GET /who", "POST /who",  # in server mode: /who sends to /login, and its POST is refused (pages/who.py)
         "POST /shutdown",  # checked by the route itself: from the server's own console, with the launcher's token
         # A login's steps after the password (D-146): no session yet, each checks the login half way is at its step.

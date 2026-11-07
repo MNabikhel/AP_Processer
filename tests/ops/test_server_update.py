@@ -74,7 +74,7 @@ class FakeServer(server_update.Server):
         return True
 
     def migrate(self, folder: Path, db: Path) -> bool:
-        self.calls.append("migrate")
+        self.calls.append("migrate copy" if "update-check" in db.parts else "migrate")
         Store(db).set_setting("marker", "changed by the new version")
         return True
 
@@ -119,30 +119,86 @@ def test_an_update_backs_up_switches_folders_and_keeps_the_previous_one(server, 
     fake = FakeServer()
     assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 0
     new = server["current"].parent / "APProcessor-0.4.0"
-    assert fake.calls == ["stop", "set up APProcessor-0.4.0", "migrate", "self-check", "start", "up APProcessor-0.4.0"]
+    # Prepared while the old version serves (a copy of the database updated first), then stopped (D-188).
+    assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy", "self-check", "stop", "migrate", "start",
+                          "up APProcessor-0.4.0"]  # fmt: skip
     assert (new / "README.md").read_text() == "AP Coder" and server["current"].is_dir()
+    assert not (server["data"] / "service" / "update-check").exists()  # the copy, removed
+    assert not (server["data"] / "service" / "update.json").exists()  # the marker, once recorded
     saved = service.read_config(server["data"])
     assert saved["folder"] == str(new) and saved["previous_folder"] == str(server["current"])
     backup = Path(saved["pre_update_backup"])
     assert backup.is_file() and backup.name.endswith("-before-update-0.4.0.db")
     assert saved["history"][-1]["result"] == "updated" and saved["history"][-1]["to"] == "0.4.0"
+    times = saved["history"][-1]["times"]  # the downtime, from the stop to the answer, and its parts
+    assert {"prepare_s", "check_migration_s", "self_check_s", "stop_s", "safety_copy_s", "migrate_s", "start_s",
+            "downtime_s"} <= set(times)  # fmt: skip
     assert str(new) in service.runner_path(server["data"]).read_text()
     assert paths.current_install()["folder"] == str(new)  # recorded as the laptop updater does
-    assert "server-update --back" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "server-update --back" in out and "Downtime:" in out and "kept serving" in out
 
 
-def test_a_failed_self_check_restores_the_backup_and_starts_the_old_version(server, capsys):
+def test_an_update_whose_record_cant_be_written_says_so_and_it_is_recorded_next_time(server, monkeypatch, capsys):
+    """server.json held open by another process (Windows) as the update, done and answering, wrote its record: a
+    traceback, the marker left, and no word of what had happened (B-1962). It says the new version runs and the record
+    is to come; the marker is kept, and the next server-update records it (so --back works)."""
+    from ap_coder.ops import update_recovery
+
+    real = server_update._record
+    held = PermissionError(13, "The process cannot access the file: another process uses it", "server.json")
+    monkeypatch.setattr(server_update, "_record", lambda *a, **k: (_ for _ in ()).throw(held))
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 1
+    out = capsys.readouterr().out
+    assert "AP Coder 0.4.0 runs" in out and "server-update again" in out and "record" in out
+    assert update_recovery.read(server["data"])["step"] == "start"
+    monkeypatch.setattr(server_update, "_record", real)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    saved = service.read_config(server["data"])
+    assert saved["previous_folder"] == str(server["current"]) and Path(saved["pre_update_backup"]).is_file()
+    assert not update_recovery.marker_path(server["data"]).exists()
+
+
+@pytest.mark.parametrize("task", ["installed before", "installed now", "none (a Mac)"])
+def test_the_folder_two_versions_back_is_offered_for_deletion_once_the_task_no_longer_starts_in_it(server, capsys,
+                                                                                                    task):  # fmt: skip
+    """A task an older ``service install`` registered starts in the folder it was installed from: deleted as the
+    second update said, Task Scheduler could no longer start it (error 267) (B-1961). Then the message says to
+    install the service again first; a task installed now starts in run.cmd's folder: delete it."""
+    from xml.sax.saxutils import escape
+
+    first = server["current"]
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=FakeServer()) == 0
+    xml = service.task_xml(service.settings(server["data"]), service.runner_path(server["data"]))
+    if task == "installed before":
+        xml = xml.replace(escape(str(service.runner_path(server["data"]).parent)), escape(str(first)))
+    if task != "none (a Mac)":
+        service.task_file(server["data"]).write_text(xml, encoding="utf-16")
+    capsys.readouterr()
+    assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"], server=FakeServer()) == 0
+    out = capsys.readouterr().out
+    assert f"{first} (two versions back) is no longer needed" in out
+    if task == "installed before":
+        assert "starts in it" in out and "service install again" in out and "delete it to free" not in out
+    else:
+        assert "delete it to free its space" in out and "starts in it" not in out
+
+
+def test_a_failed_self_check_stops_nothing_and_leaves_the_database_as_it_was(server, capsys):
+    """D-188: the self-check runs before the stop, the migration on a copy: a failure leaves the old version
+    serving on its own database, untouched."""
     fake = FakeServer(check_ok=False)
     assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
-    assert fake.calls[-2:] == ["start", "up APProcessor"]  # the old version, started again
-    assert "start" not in fake.calls[:-2]
-    assert _marker(server["db"]) == "as before the update"  # the migrated database put back
+    assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy", "self-check"]  # never stopped
+    assert _marker(server["db"]) == "as before the update"  # only the copy was migrated
     saved = service.read_config(server["data"])
     assert saved["folder"] == str(server["current"]) and "previous_folder" not in saved
-    assert saved["history"][-1]["result"].startswith("rolled back")
+    assert saved["history"][-1]["result"].startswith("not updated: The self-check failed")
     assert str(server["current"]) in service.runner_path(server["data"]).read_text()
+    assert not (server["data"] / "service" / "update.json").exists()
+    assert not list((server["data"] / "backups").glob("*before-update*"))  # no safety copy needed
     out = capsys.readouterr().out
-    assert "FAIL sample.pdf" in out and "went back to 0.3.0" in out
+    assert "FAIL sample.pdf" in out and "AP Coder 0.3.0 kept serving" in out
 
 
 def test_a_new_version_that_does_not_answer_is_rolled_back_too(server):
@@ -160,7 +216,7 @@ def test_a_rollback_whose_files_cannot_be_put_back_still_starts_the_old_version(
         raise PermissionError(13, "The process cannot access the file because it is being used by another process")
 
     monkeypatch.setattr(backup_files, "restore_files", locked)
-    fake = FakeServer(check_ok=False)
+    fake = FakeServer(up_ok=False)  # (since D-188 a failed self-check stops nothing: the new version not answering)
     assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
     assert fake.calls[-2:] == ["start", "up APProcessor"]  # the old version, started again
     assert _marker(server["db"]) == "as before the update"
@@ -382,7 +438,7 @@ def test_a_failed_update_puts_the_backup_back_with_the_current_accounts(server):
     uid = store.add_user("boss", GOOD, role="admin")
     token = store.start_session(uid)
     assert _install(_bundle(server["tmp"]), server["data"], server["db"],
-                                server=FakeServer(check_ok=False)) == 1  # fmt: skip
+                                server=FakeServer(up_ok=False)) == 1  # fmt: skip
     assert Store(server["db"]).session_user(token) is None and Store(server["db"]).find_user("boss")
 
 
@@ -420,7 +476,11 @@ class RaisingServer(FakeServer):
 
     def migrate(self, folder: Path, db: Path) -> bool:
         super().migrate(folder, db)
-        raise self.error
+        if self.calls[-1] == ("migrate copy" if self.on_copy else "migrate"):
+            raise self.error
+        return True
+
+    on_copy = False
 
 
 @pytest.mark.parametrize("error", [PermissionError(13, "Access is denied"), KeyboardInterrupt()])
@@ -434,18 +494,41 @@ def test_a_step_that_raises_still_puts_the_old_version_back_and_starts_it(server
     assert "went back to 0.3.0" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("error", [PermissionError(13, "Access is denied"), KeyboardInterrupt()])
+def test_a_step_that_raises_while_preparing_stops_nothing(server, error, capsys):
+    fake = RaisingServer(error)
+    fake.on_copy = True
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy"]  # never stopped
+    assert _marker(server["db"]) == "as before the update"
+    assert not (server["data"] / "service" / "update-check").exists()  # the half-migrated copy removed
+    saved = service.read_config(server["data"])
+    assert saved["folder"] == str(server["current"]) and saved["history"][-1]["result"].startswith("not updated")
+    assert "kept serving" in capsys.readouterr().out
+
+
 def test_a_backup_that_fails_starts_the_service_again_and_changes_nothing(server, monkeypatch, capsys):
-    def full(self, label="", actor=None):
+    def full(db, label):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(Store, "backup_now", full)
+    monkeypatch.setattr(server_update, "safety_copy", full)
     fake = FakeServer()
     assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
-    assert fake.calls == ["stop", "start", "up APProcessor"]  # nothing set up, the old version started again
+    # Prepared beforehand, then stopped: the backup failed, so the old version was started again.
+    assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy", "self-check", "stop", "start", "up APProcessor"]
     assert _marker(server["db"]) == "as before the update"
-    assert not (server["current"].parent / "APProcessor-0.4.0").exists()
     assert service.read_config(server["data"])["folder"] == str(server["current"])
     assert "No space left on device" in capsys.readouterr().out
+
+
+def test_no_room_for_a_copy_of_the_database_is_said_before_anything_is_done(server, monkeypatch, capsys):
+    from ap_coder.core.store import backups
+
+    monkeypatch.setattr(backups, "_room_refusal", lambda database, folder: "not enough free space for a backup")
+    fake = FakeServer()
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls == [] and not (server["current"].parent / "APProcessor-0.4.0").exists()
+    assert "not enough free space" in capsys.readouterr().out
 
 
 def test_back_says_the_work_lost_since_the_update_it_undoes_not_since_a_later_failed_one(server, capsys):
@@ -453,7 +536,7 @@ def test_back_says_the_work_lost_since_the_update_it_undoes_not_since_a_later_fa
     assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"],
                     server=FakeServer(check_ok=False)) == 1  # fmt: skip
     history = service.read_config(server["data"])["history"]
-    assert [h["result"][:7] for h in history] == ["updated", "rolled "]
+    assert [h["result"][:7] for h in history] == ["updated", "not upd"]
     history[0]["at"], history[1]["at"] = "2026-11-02T09:00:00", "2026-11-20T16:00:00"
     service.write_config(server["data"], history=history)
     capsys.readouterr()
@@ -523,3 +606,19 @@ def test_back_interrupted_once_the_backup_is_put_back_starts_the_restored_versio
     saved = service.read_config(server["data"])
     assert saved["folder"] == str(server["current"]) and not saved.get("previous_folder")
     assert "Back on AP Coder 0.3.0" in capsys.readouterr().out
+
+
+def test_a_safety_copy_cut_short_leaves_nothing_that_looks_like_a_backup(server, monkeypatch):
+    """B-1955: ``safety_copy`` copied straight into ``backups/ap_coder-<time>-<label>.db``: a copy cut short (a full
+    disk) left half a database there under a backup's name, listed and offered to restore. It is written under a
+    temporary name and renamed once complete, as ``backup_to`` does (B-453)."""
+
+    def full(source: Path, dest: Path) -> Path:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"SQLite format 3\x00 half")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server_update, "copy_database", full)
+    with pytest.raises(OSError):
+        server_update.safety_copy(server["db"], "before-going-back")
+    assert list((server["data"] / "backups").glob("ap_coder-*")) == []

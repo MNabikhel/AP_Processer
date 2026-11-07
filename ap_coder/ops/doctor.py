@@ -155,8 +155,16 @@ def run_checks(
         if not (server and area == "dashboard network"):
             add(area, status, detail)
     if server:
-        for area, status, detail in doctor_checks(private_dir()):
+        from .health import server_rows
+
+        for area, status, detail in [*doctor_checks(private_dir()), *server_rows(private_dir())]:
             add(area, status, detail)
+    from ..core.paths import default_db_path, env_path
+    from .safety import doctor_checks as place_checks
+
+    # The data folder on a network share (the server: FAIL, a laptop: WARN), and the server's database (D-188).
+    for area, status, detail in place_checks(private_dir(), env_path("AP_DB_PATH") or default_db_path(), server):
+        add(area, status, detail)
 
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
@@ -293,8 +301,8 @@ def run_checks(
 
 def store_checks(store: Any, server: bool) -> list[Check]:
     """What the database holds that the rest of the doctor can't see (B-1213): the accounts on the company server (none:
-    nobody can log in), the JD Edwards API (on, its password, the last test, the vouchers waiting) and the finance
-    hub feed (on, its folder, the last run)."""
+    nobody can log in), and its data folder's disk, newest backup and second backup folder (D-187); the JD Edwards API
+    (on, its password, the last test, the vouchers waiting) and the finance hub feed (on, its folder, the last run)."""
     from pathlib import Path
 
     from ..erp import jde_ais, jde_post
@@ -311,6 +319,9 @@ def store_checks(store: Any, server: bool) -> list[Check]:
         else:
             checks.append(Check("server accounts", FAIL, "no accounts: nobody can log in: python -m ap_coder users add "
                                 "--admin <name>"))  # fmt: skip
+        from .health import store_rows
+
+        checks += [Check(*row) for row in store_rows(store)]
     cfg = jde_ais.load(store)
     if not cfg.on:
         checks.append(Check("JD Edwards API", SKIP, "off: JD Edwards gets the batch files (Exports)"))
@@ -534,6 +545,21 @@ def format_checks(checks: list[Check]) -> str:
     warns = sum(c.status == WARN for c in checks)
     lines += ["", f"{fails} failure(s), {warns} warning(s)"]
     return "\n".join(lines)
+
+
+def as_json(checks: list[Check], source: str) -> str:
+    """``doctor --json``: the checks of the report (``for_this_build``), each {"area", "status", "detail"}, for IT's
+    tools; the same exit code (``exit_code``)."""
+    import json
+
+    from .. import __version__
+
+    shown = for_this_build(checks)
+    found = {"app": "ap-coder", "version": __version__, "reference_data_source": source,
+             "checks": [{"area": c.area, "status": c.status, "detail": c.detail} for c in shown],
+             "failures": sum(c.status == FAIL for c in shown),
+             "warnings": sum(c.status == WARN for c in shown)}  # fmt: skip
+    return json.dumps(found, indent=2)
 
 
 def exit_code(checks: list[Check]) -> int:

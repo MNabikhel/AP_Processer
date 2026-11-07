@@ -52,7 +52,7 @@ from ap_coder.web import security
 COOKIE = "ap_coder_person"
 MAX_NAME = 60  # characters kept of a name
 WHO_PATH = "/who"
-OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
+OPEN_PATHS = ("/healthz", "/readyz", WHO_PATH)  # answered to a browser that has not said who it is
 OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
 # Server mode (D-97): the session cookie, the login page and the page where a password is changed.
 SESSION_COOKIE = "__Host-ap_session"  # Secure (HTTPS): a browser takes it only from this host (D-135)
