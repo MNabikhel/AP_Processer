@@ -3191,3 +3191,82 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`, `tests/ops/test_safety.py`,
     `tests/ops/test_server_update_downtime.py`, `tests/web/test_maintenance.py`,
     `tests/offline/test_bundle_reproducible.py`)
+- **D-191** · **The longest functions split, and a limit on a function's length; one amount parser and one date
+  parser, each caller's rules as its parameters; tests that wait for what they need, a slow list from measured times,
+  shared test helpers, a time limit on every CI job and a load smoke job** (scale goal, phase 7, C4: clean and
+  maintainable).
+  - **Why:** the digest's cleanliness and test-health findings (docs/archive/scale-2026-11/DIGEST.md, sections 1 and
+    7): functions of 150 to 270 lines nobody could hold in mind; amounts and dates parsed in four places that a fix
+    had to find one by one; sleeps where a test waited for a thread (too short on a busy runner, too long on a quick
+    one); a slow list that had drifted; helpers copied into dozens of test files; CI jobs a hang could hold for six
+    hours.
+  - **Long functions:** split into parts named for what they do, their lines moved as they were. `core/audit.py`
+    `describe` 198 lines to 9 (ten parts, one subject each, tried in the chain's order); `web/app.py` `create_app`
+    241 to 30 (the lifespan, the state, the middleware, the pages, the status routes, the error pages);
+    `coding/line_tax.py` `_prefill` 165 to 56 (its docstring's steps 1-2, 3 and 4, and the codes written);
+    `coding/validation.py` `validate_coding` 161 to 62 (header, lines, totals, history); `erp/jde.py` `_prepare` 176
+    to 40 (header, tax area, tax amounts, the distribution and its entries; `_Voucher.add`); `ops/cli.py`
+    `build_parser` 186 to 49 and `ops/doctor.py` `run_checks` 184 to 33 (by their groups of commands and of checks).
+    `describe` was compared with the old one on 88,800 generated events, the parser by its whole tree of commands
+    and options. **The limit** (`tests/meta/test_function_length.py`): 120 lines, from the measured lengths (5,144
+    functions; 38 over 100, 19 over 120, 6 over 150 after the splits). The 19 over it are listed at their length and
+    may only shrink; one under the limit (or gone) comes off the list. `StoreCore._migrate` (220) is among them: C3
+    rewrites it, and its entry goes with it.
+  - **One amount parser, one date parser** (`core/parsing.py`; in core, since the imports use them and core imports
+    nothing of capture): `parse_amount(value, printed=, within=)` and `parse_date(text, printed=, within=,
+    day_first=)`: printed (a document's text, or OCR's) or typed (a spreadsheet's cell, a CSV); the first value in a
+    line or the whole text one value; how a day/month that reads both ways is read. The grammars were moved, not
+    rewritten: printed and typed text disagree on what some values mean ("1.234" is 1,234 on a French invoice and
+    1.234 in a cell; "250.00 DR" is a register's debit; "03/04/2026" is read in the document's order of dates and
+    refused in an import), so each keeps its own, and a field's amount is the readers' grammar with the whole text
+    one amount. The callers keep their names and say their rules: `normalize.parse_amount` and `parse_date`
+    (printed, within), `supplier.parse_amount` and `parse_date` (printed, a field, its learned order),
+    `safe.parse_amount` (typed), `csvio.parse_date` (typed, and why not: ambiguous or not a date); the English and
+    French month names are one table. **Proven:** on 20,000 generated amounts, 20,023 values (numbers, NaN, True,
+    texts) and 20,000 dates (numeric, ISO, wordy in eight languages, glued, OCR's slips, near misses), the parsers at
+    537708d and the new one agreed on all 260,046 readings, on Python 3.11, 3.12 and 3.13. The old parsers are gone:
+    `tests/core/test_parsing.py` keeps the digests of what they read, with round-trip properties of each grammar
+    and the rules that differ.
+  - **Tests:** `tests/conftest.py` `until(condition, seconds)`, one bounded wait for a thread or process (the
+    copies in test_failover.py and test_web_review_bulk.py go). The sleeps that waited for something to happen wait
+    for it now (120 `time.sleep` in tests/ to 109): another web worker seeing a job, three readers at once over two
+    rounds (test_server_scale), a thread asking for an answer finding the other process's hold (three in
+    test_kept_answers), the holder of the one chat slot at the server (test_failover), the background loops having
+    looked three times (test_page_worker, test_bulk). Those left let time pass on purpose: a lease, a hold or a
+    resend wait running out, a stand-in's latency, a check that nothing happens meanwhile, a subprocess's script.
+    **The slow list** from measured times (`--junitxml` of the default run: 562 s here, 5,081 tests): the 35 tests
+    over 2 s that weren't listed (108 s) join it, as 33 entries: the default run 496 s after (5,040 tests). The older
+    entries (over half a second) stay: timed again on this machine, shared with other agents' runs, they would have
+    measured the load.
+    **Shared helpers:** `tests/stores.py` holds the `store` fixtures files wrote again (the sample setup; a copy of
+    the demo; of the cost centers' demo; each where the dashboard keeps its database): a file imports the one it
+    starts from, and pytest takes a fixture imported into a test file as the file's own (24 copies go; 23 that differ
+    stay: another path, the page reader's test, accounts, an env var, the setup-then-demo template).
+    `tests/conftest.py` `demo_db` (6 go; 4 that are the cost centers' demo and test_offline.py's path stay);
+    `tests/webclient.py` `PAGE` (19 go; offline_flow.py's stays: standard library only) and `gt`, now with changes
+    (12 `_gt` go, imported as `_gt`; test_controls_watch.py's takes an invoice number). `tmp_path_retention_policy =
+    "failed"` was set already (with `faulthandler_timeout`).
+  - **CI:** a `timeout-minutes` on the seven jobs that had none (Tests 45, Lint 10, Browser tests 30, the Windows
+    installer and pilot launcher 15 each, the two offline bundles 25 each: about twice their time in a passing run),
+    and `tests/meta/test_ci_workflow.py` keeps one on every job (60 at most). **`load-smoke`:** ten people for a
+    minute on two web workers over 2,000 invoices `bench load` seeds itself, its gate failing the job (a 5xx, an
+    answer over 30 s or none, "database is locked", an invoice approved or exported twice, the summary off): 2
+    minutes here (seed 45 s; 313 requests, p95 178 ms). **The bundle built once a run and shared** was not done: the
+    jobs that build one want different bundles (Windows' Python 3.12 with the OCR models; the Mac's 3.14 for arm64;
+    `mac-pilot-update`'s `--no-current`, built as elsewhere on purpose; `--no-models` on each OS for the update
+    tests), and the one job building the same as `windows-offline-bundle` is `windows-server-update`, left as it is;
+    an artifact would also hold both back behind a build job.
+  - **Alternatives:** one grammar for printed and typed amounts with a switch for each difference (exact agreement
+    needed a dozen, `float()`'s own forms among them); the old parsers kept beside the new one as the test's oracle
+    (a second copy to keep); every test's `store` parameter renamed to a shared fixture's name (hundreds of lines for
+    nothing a reader gains); the bundle as an artifact (above).
+  - **Left:** the 18 functions over the limit besides `_migrate` (the benches' `main` 269, `simulate` 203 and
+    `_simulate` 167; the rule reader's `_read_line_items` 155 and `_read_fields` 151; `jde.voucher_rows` 148...); a
+    supplier template still reads dates in English and French only ("24. Januar 2014" is no field date: the
+    digest's divergence, kept as it was); the slow list's older entries timed again on a quiet machine.
+  - (`core/parsing.py`, `core/safe.py`, `core/csvio.py`, `core/audit.py`, `capture/normalize.py`,
+    `capture/supplier.py`, `capture/reader/line_items.py`, `web/app.py`, `coding/line_tax.py`,
+    `coding/validation.py`, `erp/jde.py`, `ops/cli.py`, `ops/doctor.py`, `.github/workflows/ci.yml`,
+    `scripts/check.py`, `pyproject.toml`; `tests/core/test_parsing.py`, `tests/core/parsing_inputs.py`,
+    `tests/meta/test_function_length.py`, `tests/meta/test_ci_workflow.py`, `tests/stores.py`, `tests/conftest.py`,
+    `tests/webclient.py`, `tests/slow_tests.txt` and the test files whose copies went)
