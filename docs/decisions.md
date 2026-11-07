@@ -3785,3 +3785,70 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/core/store/backups.py`, `core/store/backup_files.py`, `ops/server_update.py`, `ops/update_recovery.py`,
     `scripts/ci/server_update_downtime.py`, `docs/SERVER.md` section 11; `tests/core/test_backups.py`,
     `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`)
+- **D-197** · **A settle that grows with the answer's own work: ten times as long as it lasted, 15 minutes at most;
+  the Vendors page's workload and totals settle too** (scale goal, phase 8).
+  - **Why:** phase 8's load test, 100 simulated people on 300,000 invoices (4 web workers, 4 cores), gave pages p95
+    1.78 s, p99 6.76 s and actions p95 1.10 s over an hour (targets 1.5 s, 3 s, 1 s). In a web worker's profile 46% of
+    its CPU was `shared_answer` working answers out again: Spend's figures 27%, the Vendors page 20% (its workload, no
+    settle; its totals through `summary_memo`, none either), then Sales tax, Insights, month-end, Learning. D-164's
+    settle is a fixed number of seconds: Spend's figures took about 20 s at 300,000 against their 30 s, so with a
+    change every second some worker worked them out almost all the time, and its other requests waited behind its
+    GIL (server p95s: month-end 23 s, Spend 20 s, Vendors 8.4 s, Sales tax 7.8 s, Insights 6.3 s).
+  - **What:** each kept answer records how long its work lasted, and the settle it is held to is the longer of the
+    caller's `settle` and `SETTLE_SHARE` (10) times that (`core/store/reports.py` `settle_for`): 20 s of work is
+    taken for 200 s after a change, so working it out again costs about a tenth of a core at most, however big the
+    database. On a laptop's database the work takes milliseconds and nothing changes.
+    - `shared_answer`: the work is timed by `reports.wall`, the clock `made` is in, around `compute`, and travels with
+      the answer to the other processes: `report_answers.lasted` (REAL seconds, added by a migration step with no
+      version of its own, `_answer_work`), written by `keep_answer`, read by `kept_answer`. Both `holds` and `before`
+      (B-1834, B-1838: the answer before, shown while another works it out, never older than its settle and
+      `ANSWER_WAIT`) use the grown settle; one of another database (`summary_id`: a restore) or another format is
+      never taken, as before; the stamps, holds and waits (B-1807, B-1914, B-1919) are as they were.
+    - `summary_memo`: the same, by `monotonic` within its process (each kept answer of `_MEMO` holds its work).
+    - **The cap,** `SETTLE_MOST`: 15 minutes. A work made long once (a cold cache after a start, a clock moved
+      forward meanwhile) holds its answer that long after a change at most; the next work, shorter, sets its own.
+    - **Not known:** an answer kept before this (no `lasted`: the same AP Coder version before the change) settles
+      for the caller's settle alone; so does one whose clock went back during the work. An exact answer (no
+      `settle`) is never settled, whatever its work.
+  - **What settles,** only what a page shows and nothing a check, an approval, an export or a posting decides with:
+    once for every process (`shared_answer`), Spend's figures and currencies (30 s), month-end's received-not-invoiced
+    lines and invoices not in the ERP on its page (30 s; its CSV exact), Sales tax (30 s), Insights' figures and
+    operations (60 s), Learning's (60 s), the recurring vendors (60 s, the queue's late pill too) and, new, the Vendors
+    page's workload (`insights.vendor_workload`, Insights' 60 s); in each process (`summary_memo`), the rail's counts
+    (`status_counts(settled=True)`, 5 s) and, new, the Vendors page's counts, spend and dates by vendor
+    (`vendor_summaries(settled=True)`, `VENDORS_SETTLE` 60 s). Exact: the duplicate audit's pairs, month-end's CSV,
+    the vendor lists of Statements and the JD Edwards worksheet, a vendor's controls (`/vendors/save`), and every
+    other kept answer.
+  - **The Vendors page** only shows its workload and totals; a vendor's hold, numbers and notes are read afresh from
+    the vendor list at each visit. Two workers give the same page byte for byte when nothing changed since they worked
+    it out (the workload is one answer for every process; the totals are each worker's, so while changes come one
+    may be up to its settle behind the other). A vendor opened (`?open=`) that is not in the settled totals (its
+    first invoice came after them: a link from another worker's page) is looked up in the exact ones.
+  - **Measured** (a 60,000-invoice seed, `bench seed --invoices 60000`; one web worker, a TestClient asking one page a
+    second, Spend, Vendors and Insights in turn, while another process approved an invoice every second for 3
+    minutes; the first visit of each, cold, not counted; before: 2263422):
+
+    | one web worker, 3 minutes | before | after |
+    |---|---:|---:|
+    | its CPU | 52.8 s (29% of a core) | 15.4 s (8.6%) |
+    | Vendors page, p50 / p95 | 0.70 / 0.80 s | 0.056 / 0.19 s |
+    | its totals / workload worked out | 60 / 60 times (15.9 / 21.2 s) | 2 / 2 times (0.5 / 0.7 s) |
+    | Spend's figures worked out (1.4 s each) | 5 times | 5 times |
+    | with Spend's work made 20 s long, as at 300,000: CPU | 152 s in 186 s (82%) | 9.3 s in 180 s (5%) |
+    | ... Spend worked out, its p95; requests served | 6 times, 21.5 s; 166 of 180 | none, 0.16 s; 180 |
+
+    At 60,000 Spend's work (1.4 s) and Insights' (0.2-0.4 s) are under a tenth of their settle: they settle as
+    before. The 20 s row adds a CPU loop of 20 s to each of Spend's works (the probe's own, in both versions): its
+    answer of 21.4 s settles for 214 s, so the 3 minutes after the first never work it out again.
+  - **Alternatives:** a longer fixed settle for each (Spend 300 s: on a small database every change would show
+    minutes late for nothing); the big answers worked out by the background process on a timer (every period anyone
+    might ask, looked at or not); the work's CPU time (`thread_time`) rather than its wall time (under load the wall
+    time is longer, so the settle grows most when the workers are busiest, as it should); the work kept in the
+    answer's stamp or value instead of a column (the stamp is compared whole and read by SQL at a restore's clean-up,
+    and a value from before could not be told apart); the Vendors totals shared by every process (every vendor's row
+    through JSON in each worker; each keeps its own, as D-162).
+  - **Left:** the Vendors totals are each worker's own: 4 workers each work them out at most once a settle (0.24 s
+    at 60,000). An older AP Coder of the same version updating a kept answer (during an update, both running) leaves
+    the `lasted` of the one before.
+  - (`ap_coder/core/store/reports.py`, `core/store/summary.py`, `core/store/migrations.py`, `core/store/vendors.py`,
+    `erp/insights.py`, `web/pages/vendors.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`)

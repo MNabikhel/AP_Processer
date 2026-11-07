@@ -222,7 +222,7 @@ def vendors_page(
     view = view if view in VIEWS else "all"
     count = shown_count(rows, VENDORS_SHOWN)
     sort = sort if sort in SORTS else "spend"
-    vendors = store.vendor_summaries()
+    vendors = store.vendor_summaries(settled=True)  # (only shown: D-197)
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
     new = [v for v in vendors if (v["first_seen"] or "") >= month_ago]
     on_hold = [v for v in vendors if v["status"] == ON_HOLD or v.get("erp_hold")]  # here, or in JD Edwards
@@ -263,6 +263,8 @@ def vendors_page(
             master_error = str(exc)
 
     chosen_vendor = next((v for v in vendors if v["vendor_key"] == opened), None) if opened else None
+    if opened and chosen_vendor is None:  # (one whose first invoice came after the totals settled: read exactly)
+        chosen_vendor = next((v for v in store.vendor_summaries() if v["vendor_key"] == opened), None)
     found, late = recurring_rows(store) if vendors else ([], [])
     keep = {"view": view, "q": q, "sort": sort, **({"shown": count} if count > VENDORS_SHOWN else {})}
     return render(

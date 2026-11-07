@@ -347,7 +347,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
 
 # The Insights page's figures (``compute`` and ``operations``: 2 s at 100,000 invoices, at each visit before): under a
 # stream of changes (100 people approving) worked out again at most this often, once for every process: shown only
-# (D-166, B-1799).
+# (D-166, B-1799); the Vendors page's workload too (D-197). Longer for an answer whose work is long (``settle_for``).
 SETTLE_SECONDS = 60.0
 # Their format as they are kept for every process (``Store.shared_answer``): another when it changes, so what an older
 # AP Coder kept is worked out again.
@@ -593,9 +593,11 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     often AP had to correct the coding. Worst first; vendors without problems are left out. A rejected invoice is left
     out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
     correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
-    invoice or the audit trail changed (the summary's ``workload``, D-110), once for every process (D-194)."""
+    invoice or the audit trail changed (the summary's ``workload``, D-110), once for every process (D-194), and under
+    a stream of changes at most every ``SETTLE_SECONDS`` (or ten times its work): only shown, as Insights (D-197)."""
     found = store.shared_answer("vendor_workload", lambda: _vendor_workload(store, min_invoices),
-                                version=WORKLOAD_FORMAT, topic="workload", asked=min_invoices)  # fmt: skip
+                                version=WORKLOAD_FORMAT, topic="workload", asked=min_invoices,
+                                settle=SETTLE_SECONDS)  # fmt: skip
     return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 
 

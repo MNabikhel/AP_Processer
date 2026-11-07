@@ -311,6 +311,13 @@ def _register_search(store: Any, conn: sqlite3.Connection) -> None:
     build_register_search(conn)
 
 
+def _answer_work(store: Any, conn: sqlite3.Connection) -> None:
+    """A shared answer keeps how long its work lasted (``report_answers.lasted``, seconds): its settle grows with it
+    (D-197). One kept before has none, and settles for the caller's settle alone."""
+    if "lasted" not in dialect.columns(conn, "report_answers"):
+        dialect.add_column(conn, "report_answers", "lasted", "REAL")
+
+
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
     """A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
     amount), for what is left to expense on the review screen."""
@@ -438,6 +445,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _seen_files),
     (EVERY_TIME, _billing_by_vendor),
     (EVERY_TIME, _register_search),
+    (EVERY_TIME, _answer_work),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

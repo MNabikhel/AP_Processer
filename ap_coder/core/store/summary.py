@@ -50,6 +50,7 @@ from ._base import (
     VENDOR_LOGGED,
     _in_list,
 )
+from .reports import settle_for
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -378,7 +379,7 @@ def queue_logged(r: dict[str, Any] | None) -> Any:
 _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
                                       "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
-# ``summary_memo``: (database, name) -> (stamp, value, when it began: ``monotonic``), within its bytes (D-195)
+# ``summary_memo``: (database, name) -> (stamp, value, when it began: ``monotonic``, how long), within its bytes (D-195)
 _MEMO = Bounded("summary_memo", 112 * MB, size=lambda kept: size_of(kept[1]))
 _MEMO_LOCK = threading.Lock()
 # One ``summary_memo`` worked out at a time, by name and what is asked (its ``repr``'s hash: two asks hashed alike only
@@ -503,14 +504,14 @@ def _decoded(text: Any) -> Any:
     return json.loads(text) if text else None
 
 
-def _holds(hit: tuple[Any, Any, float], stamp: tuple[Any, ...], settle: float) -> bool:
+def _holds(hit: tuple[Any, Any, float, float], stamp: tuple[Any, ...], settle: float) -> bool:
     """Whether a kept answer (``_MEMO``) answers a question of ``stamp``: nothing it depends on changed, or, with
-    ``settle``, it was worked out less than ``settle`` seconds ago for the same question (``asked``, the stamp's last)
-    on the same database (``summary_id``, its first: a restore gives another)."""
-    kept = hit[0]
-    if kept == stamp:
-        return True
-    return settle > 0 and kept[0] == stamp[0] and kept[-1] == stamp[-1] and monotonic() - hit[2] < settle
+    ``settle``, its work began less than its settle ago (``settle_for``: longer for a long work, D-197) for the same
+    question (``asked``, the stamp's last) on the same database (``summary_id``, its first: a restore gives another)."""
+    kept, _, began, lasted = hit
+    if kept == stamp or settle <= 0:
+        return kept == stamp
+    return kept[0] == stamp[0] and kept[-1] == stamp[-1] and monotonic() - began < settle_for(settle, lasted)
 
 
 class SummaryMixin:
@@ -684,9 +685,9 @@ class SummaryMixin:
         (``changes/<kind>``, ``SUMMARY_TRIGGERS``); and ``asked``, what the answer is for (compared with ==: give a
         copy, and don't change it after). The latest of each ``name`` is kept, 64 at most.
         ``settle`` (seconds; for an answer a page only shows: a count, a report): once what it depends on changed, the
-        answer kept is taken still while it was worked out less than ``settle`` seconds ago, for the same question and
-        the same ``summary_id`` (never past a restore): under a stream of changes it is worked out again at most every
-        ``settle`` seconds, not at each change, and is at most that old (D-164).
+        answer kept is taken still while its work began less than ``settle`` ago (or ten times as long as it lasted,
+        ``settle_for``, D-197), for the same question and ``summary_id`` (never past a restore): under a stream of
+        changes it is worked out again at most that often, not at each change, and is at most that old (D-164).
         Inside a write under way (or a read transaction: ``conn.in_transaction``) it is worked out afresh, neither
         kept nor taken from what is kept, nor waiting for another page working it out: that write may yet be undone,
         and another page's work may need its lock. So is one that brought the summary up to date (the next keeps it).
@@ -731,7 +732,7 @@ class SummaryMixin:
             value = compute()
             with _MEMO_LOCK:
                 _MEMO.pop(key, None)  # (the oldest kept goes first)
-                _MEMO[key] = (stamp, value, at)
+                _MEMO[key] = (stamp, value, at, monotonic() - at)
                 while len(_MEMO) > 64:
                     _MEMO.pop(next(iter(_MEMO)))
             return value
@@ -741,8 +742,7 @@ class SummaryMixin:
 
     def summary_rows(self, where: str = "1", params: tuple[Any, ...] | list[Any] = (), columns: str = "*",
                      order: str = "id") -> list[dict[str, Any]]:  # fmt: skip
-        """Rows of ``invoice_summary`` (fresh: ``_summary_fresh``) as dicts; ``where`` and ``order``: the caller's
-        SQL."""
+        """Rows of ``invoice_summary`` (fresh: ``_summary_fresh``) as dicts; ``where``, ``order``: the caller's SQL."""
         with self._conn() as conn:
             self._summary_fresh(conn)
             return fetch_rows(conn, f"SELECT {columns} FROM {_tables(columns)} WHERE {where} ORDER BY {order}",

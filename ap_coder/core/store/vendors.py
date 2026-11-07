@@ -44,6 +44,7 @@ VENDOR_ROWS_MOST = 64 * MB
 _VENDOR_ROWS = Bounded("vendors' invoices", VENDOR_ROWS_MOST, size=lambda kept: size_of(kept[1]))
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
+VENDORS_SETTLE = 60.0  # seconds the Vendors page's counts and spend may be behind a change, as Insights (D-197)
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -736,9 +737,13 @@ class VendorsMixin:
             ).fetchone()
         return row is not None
 
-    def vendor_summaries(self) -> list[dict[str, Any]]:
-        """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
-        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)  # read again once an invoice changed
+    def vendor_summaries(self, settled: bool = False) -> list[dict[str, Any]]:
+        """One row per vendor seen on an invoice: counts, spend and dates (read again once an invoice changed), AI
+        accuracy and AP's settings. ``settled``: for the Vendors page, which only shows them, the counts, spend and
+        dates up to ``VENDORS_SETTLE`` seconds (or ten times their work) behind a change (D-197); the vendor list's
+        own fields are read afresh either way."""
+        settle = VENDORS_SETTLE if settled else 0.0
+        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals, settle=settle)
         rows = [dict(r) for r in totals]
         lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
         with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)

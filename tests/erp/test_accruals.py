@@ -914,7 +914,7 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
         found = shown(end, page)
         with sqlite3.connect(store.path) as conn:
             conn.execute("DELETE FROM report_answers")
-            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?)", kept)
+            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?, ?)", kept)
             conn.execute("DELETE FROM billing_facts")
             conn.executemany("INSERT INTO billing_facts VALUES (?, ?, ?)", facts)  # (as they were)
             conn.execute("DELETE FROM billing_vendors")
