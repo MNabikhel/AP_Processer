@@ -261,3 +261,27 @@ def test_the_invoices_whose_file_is_gone_are_remembered_within_a_bound(tmp_path,
         assert store.invoice_file(store.get_invoice(invoice_id)) is None
         assert len(_base._NOT_FOUND) <= 10
     assert store.invoice_file(store.get_invoice(invoice_id)) is None  # (looked for a moment ago: not again)
+
+
+def test_a_sessions_memo_holds_what_was_read_at_the_databases_latest_moment_within_its_bytes(tmp_path):
+    """B-2042: a session's memo (``Store._session_memo``: what a request reads twice, read once) kept every answer it
+    was ever given until the session ended, those of moments the database had left too: the queue checked again after
+    a change of settings (one session for the whole queue, a write after each batch) kept every vendor's invoices it
+    met, and the server's background process grew to 4.7 GB at 300,000 invoices (a long download the same). It holds
+    the answers of the database's latest moment only, within ``SESSION_MEMO_BYTES``."""
+    from ap_coder.core.store import _base
+
+    store = Store(tmp_path / "s.db")
+    with store.session():
+        held = _base._held_connections()[str(store.path)]
+        for n in range(30):
+            assert store._session_memo(("vendor", n), lambda n=n: [{"n": n, "rows": "x" * 200_000}])[0]["n"] == n
+            store.set_setting("marker", str(n))  # (a write: what was read before is of another moment)
+        assert len(held.memo) == 1
+        for n in range(200):  # (the database unchanged: each kept, the oldest let go past the bytes)
+            store._session_memo(("export", n), lambda: [{"rows": "y" * 1_000_000}])
+        assert (
+            len(held.memo) < 400 and sum(len(v[1][0]["rows"]) for v in held.memo.values()) <= _base.SESSION_MEMO_BYTES
+        )
+        again = store._session_memo(("export", 199), lambda: [{"rows": "read again"}])
+        assert again[0]["rows"] == "y" * 1_000_000  # (the latest is kept: read once)

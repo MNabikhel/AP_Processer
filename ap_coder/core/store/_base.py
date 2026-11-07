@@ -497,10 +497,15 @@ class _Held:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.depth = 0
-        self.memo: dict[tuple[Any, ...], tuple[tuple[int, int], Any]] = {}  # ``StoreCore._session_memo``
+        # ``StoreCore._session_memo``: what was read at one moment of the database (``moment``), within its bytes
+        self.memo = Bounded("a session's memo", SESSION_MEMO_BYTES, size=lambda kept: size_of(kept[1]))
+        self.moment: tuple[int, int] | None = None
 
 
 _sessions = threading.local()
+SESSION_MEMO_BYTES = (
+    32 * MB
+)  # one session's memo at most: the biggest vendor's invoices at 300,000 (24 MB) and more (B-2042)
 
 
 def _held_connections() -> dict[str, _Held]:
@@ -698,8 +703,11 @@ class StoreCore:
         if held is None:
             return compute()
         stamp = (held.conn.total_changes, dialect.data_version(held.conn))
+        if stamp != held.moment:  # (the database changed: nothing read before holds, so none of it is kept, B-2042)
+            held.memo.clear()
+            held.moment = stamp
         hit = held.memo.get(key)
-        if hit is None or hit[0] != stamp:
+        if hit is None:
             hit = held.memo[key] = (stamp, compute())
         return hit[1] if shared else [dict(r) for r in hit[1]]
 
