@@ -785,9 +785,11 @@ def test_a_laptop_works_no_default_view_out(tmp_path, ground_truth, clock, monke
         _stopped(workers)
 
 
-def _kept_warm(caplog, more: int = 2, ends: float = 10) -> None:
-    """Once the refresher looked ``more`` more times at the views it keeps warm (B-2052, B-2055): the second after the
-    call looks once the first one's are asked."""
+def _kept_warm(caplog, more: int = 3, ends: float = 10) -> None:
+    """Once the refresher looked ``more`` more times at the views it keeps warm (B-2052, B-2055). A look comes only
+    once the last one's views are asked, but the first after the call may have looked just before the test moved the
+    clock (it finds none due), and the second marks them due: the third comes after they are asked (Windows CI: the
+    second's view not yet worked out)."""
 
     def passes() -> int:
         return sum("views kept warm:" in r.getMessage() for r in caplog.records)
