@@ -2289,12 +2289,15 @@ def test_an_answers_work_time_is_its_own_work_not_the_wait_before_it(tmp_path):
     assert found[3] < 0.5, found[3]
 
 
-def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, ground_truth):
+def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, ground_truth, monkeypatch):
     """B-2044: the Vendors page's counts settled for 60 s whatever their work (D-197), so on a laptop, where the work
     takes milliseconds, a person's own change (an invoice rejected, a new vendor) was missing for a minute. They
-    settle by their own work alone: ten times its milliseconds."""
+    settle by their own work alone: ten times its milliseconds. (The process's clock is the test's, so a busy machine's
+    slow count can't keep the page within its settle.)"""
     from tests.conftest import SAMPLE_STEM, SAMPLES
 
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
     store = Store(tmp_path / "s.db")
     gt, pdf = ground_truth, SAMPLES / f"{SAMPLE_STEM}.pdf"
     first = store.add_invoice(
@@ -2304,7 +2307,7 @@ def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, 
     store.reject_invoice(first, "tester", "duplicate")
     store.add_invoice(pdf, {**gt, "invoice_number": "A-2", "vendor_name": "Brand New Supplier Ltd"},
                       {"requires_review": True, "adjusted_confidence": 0.5})  # fmt: skip
-    time.sleep(0.2)  # (more than ten times the work here)
+    clock[0] += 1  # (a second: more than ten times the work, which takes no time on this clock)
     shown = {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries(settled=True)}
     assert shown == {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries()}
     assert shown.get("Brand New Supplier Ltd") == 1

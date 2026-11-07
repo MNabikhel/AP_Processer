@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from ap_coder.core.store import Store, reports
+from ap_coder.core.store import Store, reports, summary
 from ap_coder.web import refresh
 from tests.conftest import ROOT
 from tests.core.test_kept_answers import Shared, _approved, _invoice, _plain, _Processes, _vendor_rows
@@ -533,10 +533,15 @@ def test_an_answers_arguments_that_are_not_json_never_fail_the_page(tmp_path, cl
     assert "dated" in caplog.text and not _wants(worker)
 
 
-def test_on_a_laptop_the_vendors_page_writes_nothing_to_show_its_totals(tmp_path, clock, store, ground_truth):
+def test_on_a_laptop_the_vendors_page_writes_nothing_to_show_its_totals(
+    tmp_path, clock, store, ground_truth, monkeypatch
+):
     """B-2048: D-198 put the Vendors page's settled totals on ``shared_answer`` on a laptop too, so after each change
     the page (which only reads) wrote the totals to the database and took and dropped a hold: three writes, a third
-    slower. On a laptop they are kept in the process as before (``summary_memo``); the company server shares them."""
+    slower. On a laptop they are kept in the process as before (``summary_memo``); the company server shares them.
+    The process's kept answers settle by their own clock (ten times their work, B-2044): moved with the test's, so a
+    slow first count (a busy machine) can't keep the page within its settle."""
+    monkeypatch.setattr(summary, "monotonic", lambda: clock[0])
     _invoice(store, tmp_path, ground_truth, "A-1", "Acme Supply")
     store.vendor_summaries(settled=True)
     _invoice(store, tmp_path, ground_truth, "A-2", "Acme Supply")
