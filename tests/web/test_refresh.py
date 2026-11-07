@@ -793,7 +793,7 @@ def test_a_laptop_works_no_default_view_out(tmp_path, ground_truth, clock, monke
 
 
 def _kept_warm(caplog, more: int = 2, ends: float = 10) -> None:
-    """Once the refresher looked ``more`` more times at the default views nobody asked yet (B-2051): the second after
+    """Once the refresher looked ``more`` more times at the default views nobody asked yet (B-2052): the second after
     the call looks once the first one's are asked."""
 
     def passes() -> int:
@@ -807,7 +807,7 @@ def _kept_warm(caplog, more: int = 2, ends: float = 10) -> None:
 def test_a_default_view_nobody_asked_is_kept_warm_until_it_is_asked_and_a_day_at_most(
     tmp_path, clock, monkeypatch, caplog
 ):
-    """B-2051: after a first start's one pass nothing worked a default view out again until someone asked it, so the
+    """B-2052: after a first start's one pass nothing worked a default view out again until someone asked it, so the
     first person more than ``STALE_MOST`` after it, anything changed meanwhile (the night's intake, JD Edwards' sync),
     worked it out in their web worker, as before D-200. One nobody asked since the start is asked again, while no want
     waits, once its answer is ``WARM_AGAIN`` old (looked at every ``WARM_LOOK``): a cheap take while it holds, worked
@@ -854,7 +854,7 @@ def test_a_default_view_nobody_asked_is_kept_warm_until_it_is_asked_and_a_day_at
 def test_a_first_start_overnight_the_morning_first_person_works_no_report_out(
     tmp_path, ground_truth, clock, monkeypatch, caplog
 ):
-    """B-2051, as it was found: the background process starts at night after a quiet day (an update, a reboot) and
+    """B-2052, as it was found: the background process starts at night after a quiet day (an update, a reboot) and
     works the default views out; an invoice comes in an hour later; the first person opens each page six hours later.
     Their web worker works none of the reports' answers out."""
     from ap_coder.web.pages import insights as insights_page
@@ -900,7 +900,7 @@ def test_a_first_start_overnight_the_morning_first_person_works_no_report_out(
 def test_after_a_restore_on_the_running_server_its_start_is_done_again_for_the_restored_database(
     tmp_path, clock, monkeypatch, caplog
 ):
-    """B-2052: the refresher did its start (the answers asked lately, or a first start's default views) once in its
+    """B-2053: the refresher did its start (the answers asked lately, or a first start's default views) once in its
     process's life, so a database restored while it ran (Settings → Data & backups → Restore) got neither until the
     background process started again. Its start is done again for each database it finds: after a restore, another
     ``summary_id``."""
@@ -925,7 +925,7 @@ def test_after_a_restore_on_the_running_server_its_start_is_done_again_for_the_r
 
 
 def test_a_want_left_waiting_long_ago_does_not_stop_a_first_start(tmp_path, clock, monkeypatch, caplog):
-    """B-2053: the refresher's start took any want still waiting for an answer asked lately (``want_again`` counted
+    """B-2054: the refresher's start took any want still waiting for an answer asked lately (``want_again`` counted
     every one), so one left waiting days ago (the server stopped before it was worked out) skipped a first start's
     default views. A first start is decided by what was asked within ``ASKED_WITHIN``; the want left is worked out
     as before, first."""

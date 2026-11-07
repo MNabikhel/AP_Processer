@@ -368,7 +368,7 @@ class ReportsMixin:
         """At the refresher's start: each answer of this database asked since ``since`` (``wall``) waits for it, so
         after a restart or an update it is worked out before anyone asks it; those of another database (before a
         restore) are forgotten. How many were asked since then (a want left waiting from before waits still, not
-        counted: B-2053)."""
+        counted: B-2054)."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             db = self._database_id(conn)
             conn.execute("DELETE FROM answer_wants WHERE db != ?", (db,))

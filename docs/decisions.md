@@ -4003,7 +4003,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     requests of those workers waited behind that work: p99 5.78 s and 7 requests over 30 s in the first 10 minutes
     (the hour after: p99 2.02 s, none over 30 s).
   - **What:** when the refresher's start finds nothing asked within `ASKED_WITHIN` (`want_again`: none asked since,
-    a want left waiting from before not counted, B-2053), it works out each settled answer's default view, what its
+    a want left waiting from before not counted, B-2054), it works out each settled answer's default view, what its
     page asks opened with nothing in its address, today (`web/refresh.py` `DEFAULTS`, beside `ANSWERS`), in this
     order: Month-end's three first, the biggest (the lines received and not invoiced, the invoices not in the ERP,
     the recurring vendors for its period end), then the recurring vendors for today (the queue's late pill, the
@@ -4015,14 +4015,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       out. One at a time, a want waiting taken before the next; one whose work, or its arguments', fails is logged
       and the others go on; the refresher stopped stops them after the one under way; logged once at the end ("the
       reports' default views worked out at a first start: N").
-    - **Kept warm until asked** (B-2051): after that pass, a default view nobody asked since the start (no
+    - **Kept warm until asked** (B-2052): after that pass, a default view nobody asked since the start (no
       `answer_wants` row of its name and question asked since: `Store.answer_seen`; its question is the one
       `reports.refreshing()` saw its caller ask) is asked again while no want waits, once its answer is `WARM_AGAIN`
       old (`STALE_MOST / 2`, 15 minutes), looked at every `WARM_LOOK` (60 s): a cheap take while it holds, worked out
       again once something changed, so one younger than `STALE_MOST` is there to show when the first person comes
       (the night's intake, JD Edwards' nightly sync); for `ASKED_WITHIN` after the start at most. One a page asked is
       left to D-198 (worked out again as it is asked); one that failed is not asked again before the next start.
-    - **Each database its start** (B-2052): the start (the answers asked lately, or a first start's default views) is
+    - **Each database its start** (B-2053): the start (the answers asked lately, or a first start's default views) is
       done for each database the refresher finds (`Store.database_id`, its `summary_id`): a restore on the running
       server (another `summary_id`, its wants of the database before forgotten) gets one once the restore is in.
     - The arguments are picked by the code the page runs, moved into functions both call: `web/pages/month_end.py`
