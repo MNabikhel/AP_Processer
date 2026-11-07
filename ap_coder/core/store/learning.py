@@ -117,8 +117,10 @@ def one_snapshot(conn: Any) -> Iterator[None]:
     conn.execute("BEGIN")
     try:
         yield
-    finally:
-        conn.commit()  # nothing written: it ends the read
+    except BaseException:
+        conn.rollback()  # a write inside, undone with the error as a transaction's is (B-1966)
+        raise
+    conn.commit()  # it ends the read
 
 
 def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], stamp: tuple[Any, ...],

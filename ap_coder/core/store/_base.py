@@ -503,9 +503,16 @@ class StoreCore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         unsaved = self._before_migrating()
         held = _held_connections().get(str(self.path))
-        # Inside this thread's transaction on the database, on a connection of its own: ``executescript`` commits the
-        # transaction under way first (B-1996). Nothing is due there (the caller's Store made it current): no lock.
-        with self._conn(own=held is not None and held.depth > 0) as conn:
+        if held is not None and held.depth > 0:
+            # Inside this thread's transaction on the database: ``executescript`` would commit it (B-1996), and the
+            # start-up's own writes (the summary's refresh) would wait for the write lock this thread holds (B-1965).
+            # The caller's Store has made it current: nothing to start up. One not current can't be brought up to
+            # date inside another write.
+            if database_schema(self.path) == SCHEMA_VERSION:
+                return
+            raise NestedWrite(f"The database {self.path} must be brought up to date first, so a Store of it can't be "
+                              "made inside another write.")  # fmt: skip
+        with self._conn() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             if unsaved:  # said on Settings → Data & backups (``backups.BACKUP_STATUS``)
@@ -705,10 +712,10 @@ class StoreCore:
         dialect.begin_write(conn)
 
     @contextmanager
-    def _conn(self, own: bool = False) -> Iterator[sqlite3.Connection]:
+    def _conn(self) -> Iterator[sqlite3.Connection]:
         """The connection a call works on: this thread's session's, if it holds one (the outermost block commits, or
-        rolls back), else one of its own (``own``: always), committed and closed at the end."""
-        held = None if own else _held_connections().get(str(self.path))
+        rolls back), else one of its own, committed and closed at the end."""
+        held = _held_connections().get(str(self.path))
         if held is not None and not self.path.exists():  # the file was deleted meanwhile: on with a fresh one
             _held_connections().pop(str(self.path), None)
             held.conn.close()

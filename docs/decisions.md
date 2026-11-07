@@ -3434,3 +3434,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
     `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
     `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)
+  - **After its review (B-1965, B-1966):** a Store() made inside this thread's write is not started up again when the
+    database is current (its start-up's summary refresh would wait for the lock the thread holds), and refused
+    (NestedWrite) when it isn't; the read snapshots roll back on an exception, so a write inside one is undone with it.
+    The `_conn(own=)` flag went with it.

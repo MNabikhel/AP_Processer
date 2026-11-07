@@ -301,3 +301,45 @@ def test_a_store_built_inside_a_transaction_does_not_wait_for_its_lock(store):
         store.set_setting("outer", "1")  # the write lock is held from here to the commit
         Store(store.path)
     assert time.monotonic() - started < 5  # (the busy timeout is 30 s)
+
+
+def test_a_store_built_inside_a_write_with_summary_work_left_never_waits_for_its_own_lock(tmp_path):
+    """B-1965: B-1996's fix made a Store() built inside this thread's write start up on a connection of its own,
+    "nothing due: no lock"; but with summary rows left to refresh (another connection's plain writes: the triggers
+    mark them, the bench's seed does it) its start-up waited 30 s for the very write lock this thread held, then
+    failed, undoing the caller's transaction. Inside a write, a database already up to date is not started up again."""
+    import sqlite3
+    import time
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    iid = store.add_invoice(tmp_path / "a.pdf", {"vendor_name": "Acme", "invoice_number": "1", "grand_total": 10,
+                                                 "line_items": []}, {})  # fmt: skip
+    plain = sqlite3.connect(store.path)
+    plain.execute("UPDATE invoices SET vendor_name = 'Acme Two' WHERE id = ?", (iid,))  # the triggers mark it
+    plain.commit()
+    plain.close()
+    started = time.monotonic()
+    with store.transaction():
+        store.set_setting("outer", "1")  # the write lock held from here to the commit
+        Store(store.path)
+    assert time.monotonic() - started < 5 and store.get_setting("outer") == "1"
+
+
+class _Undo(Exception):
+    pass
+
+
+@pytest.mark.parametrize("snapshot", ["summary_snapshot", "billing_moment"])
+def test_a_transaction_inside_a_read_snapshot_is_undone_by_an_exception(tmp_path, snapshot):
+    """B-1966: the read snapshots (``summary_snapshot``, ``learning.one_snapshot`` under ``billing_moment``) ended
+    with ``commit`` whatever happened: a ``Store.transaction()`` or a joined write (D-192) inside one kept its
+    writes when an exception left it, though a transaction promises all of it undone. An exception rolls back."""
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    with pytest.raises(_Undo), getattr(store, snapshot)(), store.transaction():
+        store.set_setting("written", "1")
+        raise _Undo
+    assert store.get_setting("written") == ""
+    with pytest.raises(_Undo), store.summary_snapshot():
+        store.add_user("probe", "correct horse battery staple", "clerk")  # begin_write: joins the read
+        raise _Undo
+    assert not any(u["username"] == "probe" for u in store.list_users())
