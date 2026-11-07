@@ -381,15 +381,26 @@ class ReportsMixin:
         with self._conn() as conn:  # type: ignore[attr-defined]
             return self._database_id(conn)
 
-    def answer_seen(self, name: str, key: str) -> tuple[float | None, float | None]:
-        """(when the work of the answer kept under ``name`` and ``key`` began, when it was last asked on this database:
-        ``wall``, None for neither), what the refresher keeps the default views nobody asked yet warm by (D-200)."""
+    def answer_made(self, name: str, key: str) -> float | None:
+        """When the work of the answer kept under ``name`` and ``key`` began (``wall``); None when none is kept."""
         with self._conn() as conn:  # type: ignore[attr-defined]
-            row = conn.execute("SELECT (SELECT made_at FROM report_answers WHERE name = ? AND asked = ?), (SELECT "
-                               "asked_at FROM answer_wants WHERE name = ? AND asked = ? AND db = COALESCE((SELECT "
-                               "value FROM settings WHERE key = 'summary_id'), ''))",
-                               (name, key, name, key)).fetchone()  # fmt: skip
-        return None if row[0] is None else float(row[0]), None if row[1] is None else float(row[1])
+            row = conn.execute("SELECT made_at FROM report_answers WHERE name = ? AND asked = ?",
+                               (name, key)).fetchone()  # fmt: skip
+        return None if row is None else float(row[0])
+
+    def asked_lately(self, since: float) -> list[dict[str, Any]]:
+        """The latest question asked of each answer on this database since ``since`` (``wall``): ``name``, ``asked``
+        (its key), ``args`` (what it is worked out from, JSON text) and ``made_at`` (when the work of the one kept
+        began; None: none kept), what the refresher keeps warm (D-200)."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute("SELECT w.name, w.asked, w.args, r.made_at FROM answer_wants w LEFT JOIN "
+                                "report_answers r ON r.name = w.name AND r.asked = w.asked WHERE w.asked_at >= ? AND "
+                                "w.db = COALESCE((SELECT value FROM settings WHERE key = 'summary_id'), '') ORDER BY "
+                                "w.name, w.asked_at DESC", (since,)).fetchall()  # fmt: skip
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            latest.setdefault(row["name"], dict(row))
+        return list(latest.values())
 
     def kept_answer(self, name: str, key: str, version: str) -> KeptAnswer | None:
         """(the stamp, the value, when its work began: ``time.time``, how long it lasted: None when an older AP Coder

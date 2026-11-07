@@ -619,11 +619,11 @@ def test_the_background_process_keeps_the_vendors_totals_it_works_out_again_for_
 
 
 def _first_start(store: Store, caplog, ends: float = 30) -> refresh.Refresher:
-    """The refresher started on ``store`` (the background process's), once it said its first start's default views
-    worked out (D-200)."""
+    """The refresher started on ``store`` (the background process's), once it said its start's default views worked
+    out (D-200)."""
     refresher = refresh.Refresher(lambda: store).start()
     ends = time.monotonic() + ends
-    while "default views worked out at a first start" not in caplog.text and time.monotonic() < ends:
+    while "default views worked out at the refresher's start" not in caplog.text and time.monotonic() < ends:
         time.sleep(0.05)
     return refresher
 
@@ -635,7 +635,7 @@ def _halted(refresher: refresh.Refresher) -> None:
 
 
 def test_every_answer_the_refresher_works_out_has_a_default_view_or_says_why_not():
-    """D-200: each settled answer (``refresh.ANSWERS``) is worked out at a first start as its page asks it opened with
+    """D-200: each settled answer (``refresh.ANSWERS``) is worked out at a start as its page asks it opened with
     nothing in its address (``DEFAULTS``), or is listed in ``NO_DEFAULT`` with why not (one only a person's question
     asks): a new answer can't be left out unseen. Month-end's come first: the biggest."""
     named, without = [name for name, _ in refresh.DEFAULTS], dict(refresh.NO_DEFAULT)
@@ -677,7 +677,7 @@ def test_at_a_first_start_each_pages_default_view_is_worked_out_before_anyone_as
     with caplog.at_level(logging.INFO, logger="ap_coder.web.refresh"):
         refresher = _first_start(background, caplog)
         _halted(refresher)
-    assert f"the reports' default views worked out at a first start: {len(refresh.DEFAULTS)}" in caplog.text
+    assert f"the reports' default views worked out at the refresher's start: {len(refresh.DEFAULTS)}" in caplog.text
     assert worked[0] == "received_not_invoiced" and set(worked) >= set(refresh.ANSWERS)
     with sqlite3.connect(store.path) as conn:
         kept = {(name, asked) for name, asked in conn.execute("SELECT name, asked FROM report_answers")
@@ -699,13 +699,15 @@ def test_at_a_first_start_each_pages_default_view_is_worked_out_before_anyone_as
     assert {name for name, _ in defaults} == {w["name"] for w in noted} == set(refresh.ANSWERS)
 
 
-def test_the_first_start_only_where_nothing_was_asked_lately_one_at_a_time_a_persons_want_first(
+def test_the_start_works_out_the_answers_asked_lately_then_the_default_views_one_at_a_time_a_persons_want_first(
     tmp_path, clock, monkeypatch, caplog
 ):
-    """D-200: the default views are worked out only when the refresher's start finds nothing asked within
-    ``ASKED_WITHIN`` (after a restart or an update in use, what was asked is worked out again instead, D-198); one at
-    a time, in their order, a want waiting taken before the next; one whose work (or its arguments') fails is logged
-    and the others go on; the refresher stopped stops them."""
+    """D-200: at its start the refresher works out again the answers asked lately (D-198), then each default view, in
+    their order, one at a time, a want waiting taken before the next (B-2057: a start that found asks worked none out);
+    one whose work (or its arguments') fails is logged and the others go on, and is not asked again; the refresher
+    stopped stops them."""
+    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02)
+    monkeypatch.setattr(refresh, "POLL", 0.02)
     store = Store(tmp_path / "ap.db")
     db, order, slow, go = _db(store), [], threading.Event(), threading.Event()
 
@@ -730,19 +732,7 @@ def test_the_first_start_only_where_nothing_was_asked_lately_one_at_a_time_a_per
                                               ("later", unreadable), ("later", lambda store: [dt.date(2026, 11, 7)]),
                                               ("later", lambda store: [3])))  # fmt: skip
     store.want_answer("asked", "k", ["lately"], db, wanted=False)
-    with caplog.at_level(logging.INFO, logger="ap_coder.web.refresh"):
-        refresher = refresh.Refresher(lambda: store).start()
-        try:
-            ends = time.monotonic() + 10
-            while not order and time.monotonic() < ends:
-                time.sleep(0.05)
-            time.sleep(3 * refresh.POLL)
-        finally:
-            _halted(refresher)
-        assert order == [("asked", ["lately"])] and "default views" not in caplog.text  # (asked lately: not a first)
-
-        order.clear()
-        clock[0] += refresh.ASKED_WITHIN + 1  # (nothing asked in the last day: a first start)
+    with caplog.at_level(logging.DEBUG, logger="ap_coder.web.refresh"):
         refresher = refresh.Refresher(lambda: store).start()
         try:
             assert slow.wait(10)
@@ -751,14 +741,17 @@ def test_the_first_start_only_where_nothing_was_asked_lately_one_at_a_time_a_per
             ends = time.monotonic() + 10
             while "default views worked out" not in caplog.text and time.monotonic() < ends:
                 time.sleep(0.05)
+            _kept_warm(caplog, more=3)
         finally:
             _halted(refresher)
-    assert order == [("slow", [1]), ("wanted", ["a person's"]), ("fails", [2]), ("later", [3])]
+    # (the latest asked of each asked again once kept warm: nothing kept of them, so no more)
+    assert order == [("asked", ["lately"]), ("slow", [1]), ("wanted", ["a person's"]), ("fails", [2]), ("later", [3]),
+                     ("asked", ["lately"]), ("wanted", ["a person's"])]  # fmt: skip
     found = [r.getMessage() for r in caplog.records if "default view" in r.getMessage()]
-    assert found == ["the fails answer's default view was not worked out at a first start",
-                     "the later answer's default view was not worked out at a first start",
-                     "the later answer's default view was not worked out at a first start",
-                     "the reports' default views worked out at a first start: 2"]  # fmt: skip
+    assert found == ["the fails answer's default view was not worked out ahead of its page",
+                     "the later answer's default view was not worked out ahead of its page",
+                     "the later answer's default view was not worked out ahead of its page",
+                     "the reports' default views worked out at the refresher's start: 2"]  # fmt: skip
 
     # Stopped meanwhile: the default under way finished, none after it.
     order.clear()
@@ -793,27 +786,26 @@ def test_a_laptop_works_no_default_view_out(tmp_path, ground_truth, clock, monke
 
 
 def _kept_warm(caplog, more: int = 2, ends: float = 10) -> None:
-    """Once the refresher looked ``more`` more times at the default views nobody asked yet (B-2052): the second after
-    the call looks once the first one's are asked."""
+    """Once the refresher looked ``more`` more times at the views it keeps warm (B-2052, B-2055): the second after the
+    call looks once the first one's are asked."""
 
     def passes() -> int:
-        return sum("nobody asked yet:" in r.getMessage() for r in caplog.records)
+        return sum("views kept warm:" in r.getMessage() for r in caplog.records)
 
     until, ends = passes() + more, time.monotonic() + ends
     while passes() < until and time.monotonic() < ends:
         time.sleep(0.02)
 
 
-def test_a_default_view_nobody_asked_is_kept_warm_until_it_is_asked_and_a_day_at_most(
-    tmp_path, clock, monkeypatch, caplog
-):
+def test_a_default_view_is_kept_warm_while_the_database_is_used(tmp_path, clock, monkeypatch, caplog):
     """B-2052: after a first start's one pass nothing worked a default view out again until someone asked it, so the
     first person more than ``STALE_MOST`` after it, anything changed meanwhile (the night's intake, JD Edwards' sync),
-    worked it out in their web worker, as before D-200. One nobody asked since the start is asked again, while no want
-    waits, once its answer is ``WARM_AGAIN`` old (looked at every ``WARM_LOOK``): a cheap take while it holds, worked
-    out again once something changed, so one younger than ``STALE_MOST`` is always there to show; once a page asked it
-    it is left to D-198 (worked out again as it is asked); a day after the start, no more."""
-    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02, raising=False)
+    worked it out in their web worker, as before D-200. A default view is asked again, while no want waits, once its
+    answer is ``WARM_AGAIN`` old (looked at every ``WARM_LOOK``): a cheap take while it holds, worked out again once
+    something changed, so one younger than ``STALE_MOST`` is always there to show; asked by a page too, it is one view
+    kept warm (B-2055); while anything was asked within ``ASKED_WITHIN``, or for that long after the start."""
+    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02)
+    monkeypatch.setattr(refresh, "POLL", 0.02)
     for name in ("a.db", "b.db"):
         store = _server(Store(tmp_path / name), monkeypatch)
         asked, again = _rows_answer(store), _rows_answer(store)
@@ -843,10 +835,14 @@ def test_a_default_view_nobody_asked_is_kept_warm_until_it_is_asked_and_a_day_at
                 clock[0] += refresh.WARM_AGAIN
                 _kept_warm(caplog)
                 assert again.worked == 3 and _vendor_rows(store) == asked() and asked.worked == 0
-                _plain(store, ADD, "c")  # (asked by a page since the start: left to D-198)
+                _plain(store, ADD, "c")  # (asked by a page too: one view kept warm)
                 clock[0] += refresh.WARM_AGAIN
+                _kept_warm(caplog)
+                assert again.worked == 4
+                clock[0] += refresh.ASKED_WITHIN + 1  # (nothing asked for a day: no more)
+                _plain(store, ADD, "d")
                 time.sleep(0.3)
-                assert again.worked == 3
+                assert again.worked == 4
             finally:
                 _halted(refresher)
 
@@ -861,7 +857,8 @@ def test_a_first_start_overnight_the_morning_first_person_works_no_report_out(
     from tests.webclient import client_for
 
     monkeypatch.setattr(insights_page, "MIN_APPROVALS", 1)
-    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02, raising=False)
+    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02)
+    monkeypatch.setattr(refresh, "POLL", 0.02)
     store = Store(tmp_path / "ap.db")
     for n in range(3):
         _approved(store, tmp_path, ground_truth, f"A-{n}")
@@ -916,19 +913,19 @@ def test_after_a_restore_on_the_running_server_its_start_is_done_again_for_the_r
             caplog.clear()
             store.restore_from(store.backup_now("before"))
             ends = time.monotonic() + 20
-            while "worked out at a first start" not in caplog.text and time.monotonic() < ends:
+            while "worked out at the refresher's start" not in caplog.text and time.monotonic() < ends:
                 time.sleep(0.05)
         finally:
             _halted(refresher)
     assert worked == [first, _db(store)] and _db(store) != first
-    assert "the reports' default views worked out at a first start: 1" in caplog.text
+    assert "the reports' default views worked out at the refresher's start: 1" in caplog.text
 
 
 def test_a_want_left_waiting_long_ago_does_not_stop_a_first_start(tmp_path, clock, monkeypatch, caplog):
     """B-2054: the refresher's start took any want still waiting for an answer asked lately (``want_again`` counted
     every one), so one left waiting days ago (the server stopped before it was worked out) skipped a first start's
-    default views. A first start is decided by what was asked within ``ASKED_WITHIN``; the want left is worked out
-    as before, first."""
+    default views. ``want_again`` counts what was asked within ``ASKED_WITHIN``; the want left is worked out as
+    before, first, then the default views (worked out at every start since B-2057)."""
     store = Store(tmp_path / "ap.db")
     order = []
     for name in ("left", "default"):
@@ -941,4 +938,125 @@ def test_a_want_left_waiting_long_ago_does_not_stop_a_first_start(tmp_path, cloc
         refresher = _first_start(store, caplog, ends=10)
         _halted(refresher)
     assert order == ["left", "default"]
-    assert "the reports' default views worked out at a first start: 1" in caplog.text
+    assert "the reports' default views worked out at the refresher's start: 1" in caplog.text
+
+
+def _where(store: Store, name: str, where: list, **stamp) -> Shared:
+    """A settled answer ``name`` of the vendors' rows (30 s), noting the thread of each work in ``where``."""
+
+    def rows():
+        where.append(threading.current_thread().name)
+        return _vendor_rows(store)
+
+    return Shared(store, name, rows, version="t-1", topic="", changes=("vendors",), settle=30, **stamp)
+
+
+def test_on_a_server_that_keeps_running_each_morning_the_reports_asked_and_the_default_views_are_warm(
+    tmp_path, clock, monkeypatch, caplog
+):
+    """B-2055: only a first start's default views nobody asked were kept warm, so on a server that keeps running (or
+    after a start that found asks) a report asked in the evening and changed in the night (JD Edwards' nightly sync,
+    the intake) was over ``STALE_MOST`` old at 08:00 and the first person's web worker worked it out; and a default
+    view asked with today's date (Spend, Insights' operations, the recurring vendors) is another question each day.
+    On every start and from then on, the latest question asked of each settled answer within ``ASKED_WITHIN``
+    (``answer_wants``, its arguments there) and each page's default view (asked anew: today's) are kept warm."""
+    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02)
+    monkeypatch.setattr(refresh, "POLL", 0.02)
+    path, where = tmp_path / "ap.db", []
+    web, background = _server(Store(path), monkeypatch), _server(Store(path), monkeypatch)
+    asked = _where(web, "asked", where, again=["Q1"])  # (a question of its own: no page's default view)
+
+    def day(store) -> str:
+        return str(int(clock[0] // 86400))
+
+    monkeypatch.setitem(refresh.ANSWERS, "asked", lambda s, args: _where(s, "asked", where, again=args)())
+    monkeypatch.setitem(refresh.ANSWERS, "dated", lambda s, args: _where(s, "dated", where, asked=args[0],
+                                                                         again=args)())  # fmt: skip
+    monkeypatch.setattr(refresh, "DEFAULTS", (("dated", lambda s: [day(s)]),))
+    process = _Processes(monkeypatch)
+    process("web worker")
+    assert asked() == [] and where == ["MainThread"]  # (day 1, 09:00: asked by a page)
+    clock[0] += 8 * 3600
+    asked()  # (17:00, the last ask of the day)
+    with caplog.at_level(logging.DEBUG, logger="ap_coder.web.refresh"):
+        process("background")
+        refresher = refresh.Refresher(lambda: background).start()  # (a start that finds asks: not a first start)
+        try:
+            _kept_warm(caplog)
+            clock[0] += 9 * 3600  # (02:00: the nightly sync changes the vendors)
+            _plain(web, ADD, "night")
+            _kept_warm(caplog)
+            clock[0] += 6 * 3600  # (08:00, day 2)
+            _kept_warm(caplog)
+        finally:
+            _halted(refresher)
+    process("web worker")
+    where.clear()
+    dated = _where(web, "dated", where, asked=day(web), again=[day(web)])
+    assert asked() == _vendor_rows(web) == dated() and where == []  # (the first person: nothing worked out here)
+
+
+def test_a_view_whose_answer_cant_be_kept_for_every_process_is_not_kept_warm(tmp_path, clock, monkeypatch, caplog):
+    """B-2056: a view whose answer can't be kept for every process (NaN in it, or over ``ANSWER_MOST_BYTES``) was due
+    at every look, nothing kept to age, and worked out again for nothing (31 times in half an hour of a change a
+    minute). Once its work keeps nothing it is no longer kept warm, a default view or a question asked."""
+    monkeypatch.setattr(refresh, "WARM_LOOK", 0.02)
+    monkeypatch.setattr(refresh, "POLL", 0.02)
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    worked = []
+
+    def nan(name):
+        def answer(s, args):
+            def work():
+                worked.append(name)
+                return [*_vendor_rows(s), [float("nan")]]
+
+            return s.shared_answer(name, work, version="t-1", topic="", changes=("vendors",), settle=30, again=[])
+
+        return answer
+
+    for name in ("view", "question"):
+        monkeypatch.setitem(refresh.ANSWERS, name, nan(name))
+    monkeypatch.setattr(refresh, "DEFAULTS", (("view", lambda s: []),))
+    process = _Processes(monkeypatch)
+    for asked in (False, True):  # (a first start's default view; then a question a page asked too)
+        if asked:
+            process("web worker")
+            refresh.ANSWERS["question"](store, [])  # (noted asked, nothing kept for every process)
+            clock[0] += 120
+        process(f"background {asked}")
+        worked.clear()
+        with caplog.at_level(logging.DEBUG, logger="ap_coder.web.refresh"):
+            refresher = refresh.Refresher(lambda: store).start()
+            try:
+                _kept_warm(caplog, more=3)
+                settled = list(worked)
+                for minute in range(10):  # (ten minutes of a change a minute)
+                    clock[0] += 61
+                    _plain(store, ADD, f"v{asked}{minute}")
+                    _kept_warm(caplog)
+            finally:
+                _halted(refresher)
+        assert worked == settled and worked.count("view") == 1 and worked.count("question") <= 2, worked
+
+
+def test_a_page_asked_a_moment_before_the_refreshers_start_does_not_skip_the_default_views(
+    tmp_path, clock, monkeypatch, caplog
+):
+    """B-2057: on a database never served, a web worker up a moment before the background process showed the queue
+    (its late pill, noted asked): the refresher's start found one answer asked lately and worked none of the default
+    views out. The default views are worked out at every start, after the answers asked lately."""
+    web = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    order = []
+    for name in ("queue_pill", "month_end", "spend"):
+        monkeypatch.setitem(refresh.ANSWERS, name, lambda s, args, name=name: order.append(name))
+    monkeypatch.setattr(refresh, "DEFAULTS", (("month_end", lambda s: []), ("spend", lambda s: []),
+                                              ("queue_pill", lambda s: [])))  # fmt: skip
+    pill = Shared(web, "queue_pill", lambda: _vendor_rows(web), version="t-1", topic="", changes=("vendors",),
+                  settle=30, again=[])  # fmt: skip
+    pill()  # (the first request after the start, noted asked: D-198's _asked)
+    clock[0] += 1
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.refresh"):
+        refresher = _first_start(Store(web.path), caplog, ends=10)
+        _halted(refresher)
+    assert order[:4] == ["queue_pill", "month_end", "spend", "queue_pill"]  # (the one asked lately first)
