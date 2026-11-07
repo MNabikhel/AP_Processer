@@ -210,9 +210,11 @@ class _Sums:
 
 def spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
     """``currencies(parts(store, start, end))``, kept until the invoices' summary changes (D-162), and under a stream
-    of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), once for every process (B-1797)."""
+    of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), once for every process (B-1797); on the
+    company server, by its background process (D-198)."""
     return list(store.shared_answer("spend_currencies", lambda: _spend_currencies(store, start, end),
-                                    version=FIGURES_FORMAT, asked=(start, end), settle=SETTLE_SECONDS))  # fmt: skip
+                                    version=FIGURES_FORMAT, asked=(start, end), settle=SETTLE_SECONDS,
+                                    again=[start.isoformat(), end.isoformat()]))  # fmt: skip
 
 
 def _spend_currencies(store: Store, start: dt.date, end: dt.date) -> list[str]:
@@ -233,11 +235,12 @@ def figures(store: Store, start: dt.date, end: dt.date, currency: str, category:
     (rounded to the cent), ``invoices``, ``months``, ``by_month`` (``by_month_and_category`` with ``category``) and
     ``by``: for each key of ``BY``, its ``total_by``. Kept until the invoices' summary changes (D-162), and under a
     stream of changes worked out again at most every ``SETTLE_SECONDS`` (D-166), for these dates, currency,
-    categories and rates, once for every process (B-1797): read it, don't change it."""
+    categories and rates, once for every process (B-1797), on the company server by its background process
+    (D-198): read it, don't change it."""
     asked = (start, end, currency, dict(category), None if rates is None else dict(rates))  # (copies)
     return store.shared_answer("spend_figures", lambda: read_figures(store, start, end, currency, category, rates),
-                               version=FIGURES_FORMAT, decode=_figures_of, asked=asked,
-                               settle=SETTLE_SECONDS)  # fmt: skip
+                               version=FIGURES_FORMAT, decode=_figures_of, asked=asked, settle=SETTLE_SECONDS,
+                               again=[start.isoformat(), end.isoformat(), *asked[2:]])  # fmt: skip
 
 
 def _figures_of(data: dict[str, Any]) -> dict[str, Any]:

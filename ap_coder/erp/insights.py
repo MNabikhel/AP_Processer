@@ -361,14 +361,14 @@ WORKLOAD_FORMAT = "workload-1"
 def shown(store: Store) -> dict[str, Any]:
     """``compute`` as the Insights page shows it: kept until the invoices' summary, the assumptions or whether the
     internet is allowed change, and once the invoices changed worked out again at most every ``SETTLE_SECONDS``
-    (D-166), once for every process (B-1799). Shared: read it, don't change it. The business case's download is
-    worked out afresh."""
+    (D-166), once for every process (B-1799), on the company server by its background process (D-198). Shared: read
+    it, don't change it. The business case's download is worked out afresh."""
     from ..ops.offline import internet_allowed
 
     a = Assumptions.load(store)
     return store.shared_answer("insights", lambda: compute(store, a), version=SHOWN_FORMAT, encode=_shown_data,
-                               decode=_shown_of, asked=(replace(a), internet_allowed()),
-                               settle=SETTLE_SECONDS)  # fmt: skip
+                               decode=_shown_of, asked=(replace(a), internet_allowed()), settle=SETTLE_SECONDS,
+                               again=[])  # fmt: skip
 
 
 def _shown_data(s: dict[str, Any]) -> dict[str, Any]:
@@ -384,11 +384,12 @@ def _shown_of(data: dict[str, Any]) -> dict[str, Any]:
 def shown_operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     """``operations`` as the Insights page shows it: kept until the invoices' summary, the vendor list (its payment
     terms) or the default terms change, and once the invoices or the vendors changed worked out again at most every
-    ``SETTLE_SECONDS`` (D-166), once for every process (B-1799). Shared: read it, don't change it."""
+    ``SETTLE_SECONDS`` (D-166), once for every process (B-1799), on the company server by its background process
+    (D-198). Shared: read it, don't change it."""
     today = today or dt.date.today()
     return store.shared_answer("insights_operations", lambda: operations(store, today), version=SHOWN_FORMAT,
                                decode=_operations_of, changes=("vendors",), asked=(today, store.default_terms_days()),
-                               settle=SETTLE_SECONDS)  # fmt: skip
+                               settle=SETTLE_SECONDS, again=[today.isoformat()])  # fmt: skip
 
 
 def _operations_of(data: dict[str, Any]) -> dict[str, Any]:
@@ -595,7 +596,8 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
     correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
     invoice or the audit trail changed (the summary's ``workload``, D-110), once for every process (D-194), and under
-    a stream of changes at most every ``SETTLE_SECONDS`` (or ten times its work): only shown, as Insights (D-197)."""
+    a stream of changes at most every ``SETTLE_SECONDS`` (or ten times its work): only shown, as Insights (D-197);
+    on the company server worked out again by its background process (D-198)."""
     found = store.shared_answer(
         "vendor_workload",
         lambda: _vendor_workload(store, min_invoices),
@@ -603,6 +605,7 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
         topic="workload",
         asked=min_invoices,
         settle=OWN_WORK,
+        again=[min_invoices],
     )  # fmt: skip  (ten times its work: B-2044)
     return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 

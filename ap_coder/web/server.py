@@ -948,9 +948,9 @@ def _peek_until_closed(fd: int, poll: float) -> bool:
 
 def run_background(store: Store) -> int:
     """The server's background process (D-111): the page reader and the AI reviewer, the Azure check, JD Edwards,
-    the review queue checked again after a change of settings (D-155), the daily backup and the finance hub's
-    schedule (looked at every 30 seconds, not at each page), until its input
-    closes. One per data folder (an OS lock): a second one waits for the first to end."""
+    the review queue checked again after a change of settings (D-155), the reports' settled answers worked out again
+    (D-198), the daily backup and the finance hub's schedule (looked at every 30 seconds, not at each page), until its
+    input closes. One per data folder (an OS lock): a second one waits for the first to end."""
     from ap_coder.web.app import DailyBackup, EnvSettings, start_background_work
 
     halt = threading.Event()
@@ -977,8 +977,8 @@ def run_background(store: Store) -> int:
     backup.start()  # the day's backup, on its own thread: the background work starts meanwhile (B-1553)
     workers = start_background_work(EnvSettings(), store)
     log.info(
-        "background work running: the page reader, the AI reviewer, the Azure check, JD Edwards and the review "
-        "queue's checks after a change of settings"
+        "background work running: the page reader, the AI reviewer, the Azure check, JD Edwards, the review "
+        "queue's checks after a change of settings and the reports' answers worked out again"
     )
     try:
         while not halt.wait(30.0):

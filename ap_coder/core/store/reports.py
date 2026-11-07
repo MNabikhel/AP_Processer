@@ -10,6 +10,11 @@
   back is data, never code); only an answer of this AP Coder's version and format (``version``), so one an older
   version wrote is worked out again; at most ``ANSWER_MOST_BYTES``; never one worked out in a write under way, which
   may yet be undone. What a process asks again it keeps in its memory, as ``summary_memo`` does.
+* **A settled answer worked out again by the background process** (``answer_wants``, D-198): on the company server
+  (``background_answers``), once a settled answer no longer holds, the request asking it takes the one kept (not
+  older than ``STALE_MOST``) at once and leaves a want; the background process's refresher (``web/refresh.py``, its
+  hold ``REFRESHER``) works the wants out, oldest first, one at a time (``next_want``, ``want_done``), and at its start
+  those asked in the last day (``want_again``), so no web worker's request works one out while it has one to show.
 * **Downloads made by the background process** (``report_jobs``, ``web/pages/downloads.py``): on the company server a
   long download (search to Excel, the Activity CSV, the duplicate audit) is not made by the web worker the person
   asked: it waits here, the background process makes it (``claim_download``, ``renew_download``), and the person's page
@@ -45,6 +50,10 @@ ANSWER_POLL = 0.25
 SETTLE_SHARE = 10  # a settled answer is taken after a change at least this many times as long as its work lasted ...
 SETTLE_MOST = 15 * 60.0  # ... but for that no longer than this (a work once slow, its cache cold: D-197)
 OWN_WORK = 0.001  # a settle of the answer's own work alone (ten times it): on a laptop's database, exact (B-2044)
+STALE_MOST = 2 * SETTLE_MOST  # a settled answer shown while the background process works it out again: never older
+REFRESHER = "answers/refresher"  # the lease the background process's refresher holds while it runs (D-198)
+ASKED_NOTE = 3600.0  # seconds between two notes in a process that an answer was asked (read at the refresher's start)
+WANT_TRIES = 3  # a want whose work failed this many times is dropped
 OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the answers' leases name it
 
 WAITING, RUNNING, MADE, FAILED = "waiting", "running", "done", "failed"
@@ -96,17 +105,44 @@ _KEPT = Bounded("shared answers", 32 * MB, size=lambda kept: size_of(kept[1]))
 _KEPT_LOCK = threading.Lock()
 wall = time.time  # an answer's age, the same clock in every process (tests set it)
 _WORKING: dict[tuple[str, str, str], threading.Lock] = {}  # one thread of this process works an answer out at a time
+_ASKED: dict[tuple[str, str, str], float] = {}  # when this process last noted each answer asked (D-198)
+_HERE = threading.local()  # ``on``: this thread is the refresher's, which works out what it asks (``refreshing``)
 KEPT_HERE = 32
 KeptAnswer = tuple[Any, Any, float, float | None]  # (its stamp, its value, when its work began, how long it lasted)
 
 
+@contextmanager
+def refreshing() -> Iterator[None]:
+    """Inside, on this thread: the background process's refresher (D-198), which works out the settled answers it asks
+    (``shared_answer``) instead of wanting them of itself."""
+    _HERE.on = True
+    try:
+        yield
+    finally:
+        _HERE.on = False
+
+
+def _keep_here(here: tuple[str, str, str], kept: KeptAnswer) -> None:
+    """``kept`` (its value decoded) kept in this process's memory, the latest used last: the oldest goes first."""
+    with _KEPT_LOCK:
+        _KEPT.pop(here, None)
+        _KEPT[here] = kept
+        while len(_KEPT) > KEPT_HERE:
+            _KEPT.pop(next(iter(_KEPT)))
+        if len(_WORKING) > 4 * KEPT_HERE:
+            for idle in [k for k, lock in _WORKING.items() if k != here and not lock.locked()]:
+                del _WORKING[idle]
+
+
 class ReportsMixin:
+    background_answers = False  # the company server's (D-198): its background process works settled answers out again
+
     # --- An answer worked out once for every process ---------------------------------------------------------------
 
     def shared_answer(self, name: str, compute: Callable[[], Any], *, version: str,
                       encode: Callable[[Any], Any] = lambda v: v, decode: Callable[[Any], Any] = lambda v: v,
                       topic: str = "all", changes: tuple[str, ...] = (), asked: Any = None,
-                      settle: float = 0.0) -> Any:  # fmt: skip
+                      settle: float = 0.0, again: Any = None) -> Any:  # fmt: skip
         """``compute()``, worked out once for every process of this database (D-169), and kept in this one: an answer
         holds while the stamp read now, before any work (the database's ``summary_id``; with ``topic``, the summary's
         generation of it, ``""``: none; the counts of ``changes``, ``changes/<kind>``), is the one it was worked out
@@ -120,13 +156,20 @@ class ReportsMixin:
         database's latest) is taken meanwhile (B-1834); with no such answer, or without ``settle``, it is waited for
         (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``, B-1914). ``encode``/``decode``:
         the value to JSON-ready data and back. In a write under way (or a read transaction) it is worked out afresh,
-        neither read nor kept. The value is shared: read it, don't change it."""
+        neither read nor kept. ``again`` (with ``settle``; D-198): what the background process works it out again
+        from (JSON-ready; its name one of ``web/refresh.py``'s ``ANSWERS``): on the company server
+        (``background_answers``), while its refresher runs, one that no longer holds is not worked out here but taken
+        as kept, up to ``STALE_MOST`` old, and asked of the refresher (``_meanwhile``). The value is shared: read it,
+        don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
         seen, writing = self._answer_stamp(topic, changes)
         if writing:
             return compute()
+        wanted = again is not None and bool(settle) and self.background_answers and not getattr(_HERE, "on", False)
+        if wanted:
+            self._asked(here, again, seen)
 
         def holds(found: KeptAnswer | None, later: bool = False) -> bool:
             if found is None:
@@ -147,6 +190,8 @@ class ReportsMixin:
             working = _WORKING.setdefault(here, threading.Lock())
         if holds(hit):
             return hit[1]  # type: ignore[index]
+        if wanted and (shown := self._meanwhile(here, version, decode, again, seen, began, hit, holds)):
+            return shown[0]
         if not before(hit):
             got = working.acquire(timeout=ANSWER_WAIT_MOST)  # (a thread here works it out: it is alive, B-1914)
         elif not (got := working.acquire(blocking=False)):
@@ -196,14 +241,7 @@ class ReportsMixin:
                     kept, encoded = (stamp, value, start, lasted), encode(value)
                     if self.keep_answer(name, key, version, stamp, encoded, start, lasted) is None:
                         unkept = lambda: self.keep_answer(name, key, version, stamp, encoded, start, lasted, wait=True)  # noqa: E731
-                with _KEPT_LOCK:
-                    _KEPT.pop(here, None)  # (the latest used last: the oldest goes first)
-                    _KEPT[here] = (kept[0], value, *kept[2:])
-                    while len(_KEPT) > KEPT_HERE:
-                        _KEPT.pop(next(iter(_KEPT)))
-                    if len(_WORKING) > 4 * KEPT_HERE:
-                        for idle in [k for k, lock in _WORKING.items() if k != here and not lock.locked()]:
-                            del _WORKING[idle]
+                _keep_here(here, (kept[0], value, *kept[2:]))
                 return value
             finally:
                 if mine:
@@ -211,6 +249,112 @@ class ReportsMixin:
         finally:
             if got:
                 working.release()
+
+    def _meanwhile(self, here: tuple[str, str, str], version: str, decode: Callable[[Any], Any], again: Any,
+                   seen: list[Any], began: float, hit: KeptAnswer | None,
+                   holds: Callable[[KeptAnswer | None, bool], bool]) -> tuple[Any] | None:  # fmt: skip
+        """(the answer to show,) while the background process works it out again (D-198): its refresher runs (its hold
+        renewed) and this answer, no longer holding, has one of this database whose work began less than
+        ``STALE_MOST`` ago: the latest of this process's (``hit``) and the database's, taken at once, and asked of the
+        refresher (one want, however many ask). None otherwise (no refresher, none to show, or the database's holds:
+        another worked it out meanwhile): taken or worked out as before."""
+        _, name, key = here
+        db = "" if seen[0] is None else str(seen[0])
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT (SELECT 1 FROM ephemeral WHERE kind = 'lease' AND token = ? AND expires_at "
+                               ">= ?), (SELECT wanted_at FROM answer_wants WHERE name = ? AND asked = ? AND db = ?)",
+                               (REFRESHER, time.time(), name, key, db)).fetchone()  # fmt: skip
+            if not row[0]:
+                return None
+            head = conn.execute("SELECT stamp, made_at, lasted FROM report_answers WHERE name = ? AND asked = ? AND "
+                                "version = ?", (name, key, _version(version))).fetchone()  # fmt: skip
+        try:
+            found = None if head is None else (json.loads(head[0]), None, float(head[1]),
+                                               None if head[2] is None else float(head[2]))  # fmt: skip
+        except (TypeError, ValueError):
+            found = None
+        if holds(found, True):
+            return None
+
+        def shown(kept: KeptAnswer | None) -> bool:
+            return kept is not None and kept[0][:1] == seen[:1] and 0 <= began - kept[2] < STALE_MOST
+
+        if shown(found) and not (shown(hit) and hit[2] >= found[2]):  # type: ignore[index]  (the database's: newer)
+            kept = self.kept_answer(name, key, version)
+            if kept is None or kept[2] != found[2]:  # type: ignore[index]  (another kept since the look above)
+                return None
+            hit = (kept[0], decode(kept[1]), *kept[2:])
+            _keep_here(here, hit)
+        elif not shown(hit):
+            return None
+        if row[1] is None:
+            self._briefly_or(lambda: self.want_answer(name, key, again, db), None)
+        return (hit[1],)  # type: ignore[index]
+
+    def _asked(self, here: tuple[str, str, str], again: Any, seen: list[Any]) -> None:
+        """An answer the refresher works out again asked (D-198): noted in the database (``answer_wants.asked_at``) at
+        most every ``ASKED_NOTE`` in this process, so the refresher's start works out again those asked lately."""
+        now = wall()
+        with _KEPT_LOCK:
+            last = _ASKED.get(here)
+            if last is not None and 0 <= now - last < ASKED_NOTE:
+                return
+            _ASKED.pop(here, None)
+            _ASKED[here] = now
+            while len(_ASKED) > 4 * KEPT_HERE:
+                _ASKED.pop(next(iter(_ASKED)))
+        db = "" if seen[0] is None else str(seen[0])
+        self._briefly_or(lambda: self.want_answer(here[1], here[2], again, db, wanted=False), None)
+
+    # --- The settled answers the background process works out again (D-198) ---------------------------------------
+
+    def want_answer(self, name: str, key: str, again: Any, db: str, wanted: bool = True) -> None:
+        """Answer ``name`` for ``key`` (``asked_key``) asked now on database ``db`` (its ``summary_id``), with what the
+        refresher works it out from (``again``, JSON-ready); ``wanted``: waiting for it, once however many ask it (the
+        first want's place in line kept). The latest ``ANSWERS_KEPT`` asked of each name are kept."""
+        now = wall()
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "INSERT INTO answer_wants (name, asked, args, db, asked_at, wanted_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(name, asked) DO UPDATE SET args = excluded.args, db = excluded.db, "
+                "asked_at = excluded.asked_at, wanted_at = COALESCE(answer_wants.wanted_at, excluded.wanted_at)",
+                (name, key, json.dumps(again, separators=(",", ":")), db, now, now if wanted else None),
+            )
+            conn.execute("DELETE FROM answer_wants WHERE name = ? AND asked NOT IN (SELECT asked FROM answer_wants "
+                         "WHERE name = ? ORDER BY asked_at DESC LIMIT ?)", (name, name, ANSWERS_KEPT))  # fmt: skip
+
+    def next_want(self) -> dict[str, Any] | None:
+        """The answer waiting longest for the refresher on this database: ``name``, ``asked`` (its key), ``args`` (JSON
+        text) and ``tries``; None when none waits."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT name, asked, args, tries FROM answer_wants WHERE wanted_at IS NOT NULL AND "
+                               "db = COALESCE((SELECT value FROM settings WHERE key = 'summary_id'), '') ORDER BY "
+                               "wanted_at, asked_at DESC LIMIT 1").fetchone()  # fmt: skip
+        return None if row is None else dict(row)
+
+    def want_done(self, name: str, key: str, failed: bool = False) -> None:
+        """The want of ``name`` for ``key`` worked out: no longer waiting (its row kept, for the refresher's next
+        start); ``failed``: waiting again after the others, and dropped, row and all, after ``WANT_TRIES``."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            if not failed:
+                conn.execute("UPDATE answer_wants SET wanted_at = NULL, tries = 0 WHERE name = ? AND asked = ?",
+                             (name, key))  # fmt: skip
+                return
+            conn.execute("UPDATE answer_wants SET tries = tries + 1, wanted_at = ? WHERE name = ? AND asked = ?",
+                         (wall(), name, key))  # fmt: skip
+            conn.execute("DELETE FROM answer_wants WHERE name = ? AND asked = ? AND tries >= ?",
+                         (name, key, WANT_TRIES))  # fmt: skip
+
+    def want_again(self, since: float) -> int:
+        """At the refresher's start: each answer of this database asked since ``since`` (``wall``) waits for it, so
+        after a restart or an update it is worked out before anyone asks it; those of another database (before a
+        restore) are forgotten. How many wait."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            db = self._database_id(conn)
+            conn.execute("DELETE FROM answer_wants WHERE db != ?", (db,))
+            conn.execute("UPDATE answer_wants SET wanted_at = ? WHERE db = ? AND asked_at >= ? AND wanted_at IS NULL",
+                         (wall(), db, since))  # fmt: skip
+            return int(conn.execute("SELECT COUNT(*) FROM answer_wants WHERE wanted_at IS NOT NULL").fetchone()[0])
 
     def kept_answer(self, name: str, key: str, version: str) -> KeptAnswer | None:
         """(the stamp, the value, when its work began: ``time.time``, how long it lasted: None when an older AP Coder
@@ -443,8 +587,8 @@ class ReportsMixin:
 
     def sweep_downloads(self, keep: float, kept_each: int) -> list[str]:
         """Forget the jobs finished over ``keep`` seconds ago, those past each person's latest ``kept_each`` made,
-        and every job and kept answer of another database (before a restore): the files of those that were made, to
-        be removed."""
+        and every job, kept answer and want (D-198) of another database (before a restore): the files of those that
+        were made, to be removed."""
         now = time.time()
         with self._conn() as conn:  # type: ignore[attr-defined]
             db = self._database_id(conn)
@@ -457,6 +601,7 @@ class ReportsMixin:
             conn.execute("DELETE FROM report_jobs WHERE id IN (SELECT value FROM json_each(?))",
                          (json.dumps([r["id"] for r in gone]),))  # fmt: skip
             conn.execute("DELETE FROM report_answers WHERE json_extract(stamp, '$[0]') IS NOT ?", (db,))
+            conn.execute("DELETE FROM answer_wants WHERE db != ?", (db,))
         return [r["file"] for r in gone if r["file"]]
 
     def download_files(self) -> set[str]:

@@ -90,7 +90,8 @@ def shown(store: Store, first: dt.date, last: dt.date, show: str, count: int, se
     their totals and counts, the first ``count`` claims of the list ``show`` picks, the first ``self_count``
     self-assessments. Worked out once for every process (D-169) and under a stream of approvals at most every
     ``SETTLE_SECONDS`` (D-164), for these dates and rows and what they are worked out with (``taxreturn.setup_key``:
-    a change of the tax setup shows at once). Shared: read it, don't change it."""
+    a change of the tax setup shows at once); on the company server by its background process (D-198). Shared: read
+    it, don't change it."""
 
     def work() -> dict[str, Any]:
         report = taxreturn.build(store, first, last)
@@ -108,7 +109,8 @@ def shown(store: Store, first: dt.date, last: dt.date, show: str, count: int, se
 
     asked = (first, last, show, count, self_count, taxreturn.setup_key(store))
     return store.shared_answer("sales_tax", work, version=SHOWN_FORMAT, encode=_data, decode=_of, asked=asked,
-                               settle=SETTLE_SECONDS)  # fmt: skip
+                               settle=SETTLE_SECONDS, again=[first.isoformat(), last.isoformat(), show, count,
+                                                             self_count])  # fmt: skip
 
 
 _ROWS = {"shown": taxreturn.Claim, "self_shown": taxreturn.SelfAssessment}  # kept as lists of their fields
