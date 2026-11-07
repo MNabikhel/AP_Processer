@@ -99,7 +99,7 @@ class Refresher:
                 if held.is_set() and not store.restoring():
                     if not started:  # (those asked lately: after a restart or an update, worked out first)
                         waiting = store.want_again(reports.wall() - ASKED_WITHIN)
-                        log.info("%d answers asked lately waiting to be worked out again", waiting)
+                        log.info("the reports' answers asked lately, waiting to be worked out again: %d", waiting)
                         started = True
                     want = store.next_want()
             except Exception:  # noqa: BLE001 - a busy database: looked at again

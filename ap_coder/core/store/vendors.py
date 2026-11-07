@@ -746,7 +746,7 @@ class VendorsMixin:
         process, on the company server worked out again by its background process (D-198); the vendor list's own
         fields are read afresh either way."""
         if settled:
-            totals, spend = self.shared_answer("vendor_totals", self._vendor_totals, version=TOTALS_FORMAT,  # type: ignore[attr-defined]
+            totals, spend = self.shared_answer("vendor_totals", self._vendor_totals, version=TOTALS_FORMAT,
                                                decode=tuple, settle=VENDORS_SETTLE, again=[])  # fmt: skip
         else:
             totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)
