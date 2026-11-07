@@ -98,8 +98,9 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
     if full is None:
         return None
     invoices = store.po_invoices(p["po_key"])
-    billed = po_mod.billed_by_line(full, invoices)
-    billed_amount = po_mod.billed_by_line(full, invoices, amounts=True)
+    matched: dict[Any, int | None] = {}
+    billed = po_mod.billed_by_line(full, invoices, matched=matched)
+    billed_amount = po_mod.billed_by_line(full, invoices, amounts=True, matched=matched)
     lines = []
     for li in full["lines"]:
         coding = " · ".join(x for x in (li["gl_code"], li["cost_center"]) if x)

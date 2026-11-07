@@ -189,13 +189,29 @@ def _amount_over(m: LineMatch) -> float | None:
     return None
 
 
-def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> list[int | None]:
+def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]],
+                    matched: dict[Any, int | None] | None = None) -> list[int | None]:  # fmt: skip
     """The PO line_number each invoice line bills, by position (None: matches nothing). Each invoice line takes
     the PO line it most resembles (a matching unit price counts in favour); several invoice lines may bill the
     same PO line. By position, so an invoice that repeats a line number (page 2 starting again at 1) still pairs
-    every line."""
-    return [_po_line(li.get("description", ""), po_lines, lambda _, pl, li=li: _same_price(
-        float(li.get("unit_price") or 0), float(pl.get("unit_price") or 0))) for li in invoice_lines]  # fmt: skip
+    every line. ``matched`` keeps each (description, unit price)'s PO line across calls for the same ``po_lines``:
+    the invoices billing a PO repeat its lines (a PO billed by thousands of invoices, D-199)."""
+    out = []
+    for li in invoice_lines:
+        description, price = li.get("description", ""), li.get("unit_price")
+        key = (description, price) if matched is not None else None
+        try:
+            if key is not None and key in matched:  # type: ignore[operator]
+                out.append(matched[key])  # type: ignore[index]
+                continue
+        except TypeError:  # (a description or price that can't be a key: worked out each time)
+            key = None
+        found = _po_line(description, po_lines, lambda _, pl, price=price: _same_price(
+            float(price or 0), float(pl.get("unit_price") or 0)))  # fmt: skip
+        if key is not None:
+            matched[key] = found  # type: ignore[index]
+        out.append(found)
+    return out
 
 
 def _po_line(description: Any, po_lines: list[dict[str, Any]], same_price: Callable[[int, dict], bool]) -> int | None:
@@ -309,8 +325,9 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     others = [o for o in live if o["id"] != exclude_invoice_id]
     result.other_invoices = others
     result.billed_before = sum(float(o["coding"].get("subtotal") or 0) for o in others)
-    billed_before = billed_by_line(po, others)
-    billed_before_amount = billed_by_line(po, others, amounts=True)
+    matched: dict[Any, int | None] = {}
+    billed_before = billed_by_line(po, others, matched=matched)
+    billed_before_amount = billed_by_line(po, others, amounts=True, matched=matched)
 
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
@@ -497,16 +514,19 @@ def billed_quantity(li: dict[str, Any]) -> float:
 
 
 def billed_by_line(
-    po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False
-) -> dict[int, float]:
+    po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False,
+    matched: dict[Any, int | None] | None = None,
+) -> dict[int, float]:  # fmt: skip
     """Quantity (or with ``amounts``, net amount) billed so far on each PO line by ``invoices``
-    (``Store.po_invoices`` rows); credits subtract unless ``positive_only``."""
+    (``Store.po_invoices`` rows); credits subtract unless ``positive_only``. ``matched``: each line's PO line kept
+    (``po_lines_billed``), to give again to another call for the same PO."""
     billed: dict[int, float] = {}
+    matched = {} if matched is None else matched
     for inv in invoices:
         lines = inv["coding"].get("line_items") or []
         if positive_only:
             lines = [li for li in lines if billed_quantity(li) > 0]
-        for li, po_line in zip(lines, po_lines_billed(lines, po["lines"]), strict=True):
+        for li, po_line in zip(lines, po_lines_billed(lines, po["lines"], matched), strict=True):
             if po_line is not None:
                 value = float(li.get("amount") or 0) if amounts else billed_quantity(li)
                 billed[po_line] = billed.get(po_line, 0.0) + value

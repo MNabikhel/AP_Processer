@@ -3961,3 +3961,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `erp/spend.py`, `erp/insights.py`, `erp/recurring.py`, `erp/accruals.py`, `web/pages/sales_tax.py`,
     `web/pages/learning.py`, `web/refresh.py`, `web/app.py`, `web/server.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
     `tests/web/test_refresh.py`, `tests/core/test_kept_answers.py`, `tests/web/test_downloads.py`)
+- **D-199** · **A PO's invoices read for what its match uses, each billed line matched once** (scale goal, targets 1
+  and 2).
+  - **Why:** the hour of 100 people on 300,000 invoices after D-198 met every target, but its 4 requests over 30 s
+    were all on invoices of the biggest vendor (23,174 invoices), on its PO billed by 3,381 of them: each open and
+    check matches the invoice against its PO (`coding/po.match_invoice`), which read every other invoice on the PO
+    with its whole coding (`Store.po_invoices`: 6-7 KB of JSON each, 1.5 s) and matched each of their lines to the
+    PO's lines twice (0.25 s): 1.75 s for one person, 4-15 s at the server under load when several people had that
+    vendor's invoices open (`po_invoices` 10.9% of a worker's CPU at 30 minutes).
+  - **What:** `po_invoices` has SQLite read out each invoice's `subtotal`, `invoice_date` and `line_items`
+    (`purchasing.PO_CODING`; `coding` holds only those), the rest of the coding not decoded, as month-end's
+    `billing_codings` does (D-177); a coding that is not an object of valid JSON is read by Python as before (failing
+    as it did). `po_lines_billed(..., matched=)` keeps each (description, unit price)'s PO line for the calls of one
+    PO (the match's quantities and amounts, the PO page's), so a line repeated across the PO's invoices is matched
+    once. For the 3,381-invoice PO: `po_invoices` 1.49 → 0.19 s, the billed lines 0.25 → 0.11 s (15,820 distinct
+    lines in the seed; a real standing PO repeats more).
+  - **Same:** what the match and the PO page read: the invoices, their subtotals, dates and statuses, what each PO
+    line was billed (quantities and amounts, with and without credits), against the whole codings decoded
+    (`tests/coding/test_po.py`, 80 invoices of random lines, prices as numbers, text and none, credits, codings of
+    AP Coder's and approved, `''`, `null`, not JSON).
+  - **Alternatives:** the PO's billed lines kept by invoice in each process and refreshed from the vendors' change log
+    (D-174; 0.3 s → near 0, but an invoice joins or leaves a PO by its coding, under any vendor: a log of its own to
+    get right), or kept in the database for every process as month-end's (D-194); left until measured to need it.
+  - (`ap_coder/core/store/purchasing.py`, `coding/po.py`, `web/pages/purchase_orders.py`; `tests/coding/test_po.py`)
