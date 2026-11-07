@@ -3,7 +3,7 @@
 One line per bug: `B-NNN · what broke · severity · the test that keeps it fixed`. A suspicion that didn't reproduce is
 an `N-NN` line. B-01 to B-1441 and the N- notes (to 29 October 2026): [archive/bugs-2026-10.md](archive/bugs-2026-10.md);
 look one up with `grep -n "B-1234 " docs/archive/bugs-*.md`. Numbers never used (not lost): B-1448 to B-1459,
-B-1462 to B-1473, B-1480, B-1481, B-1726 to B-1729, B-1742 to B-1757, B-1783 to B-1789, B-1791 to B-1796, B-1819 to B-1831, B-1845 to B-1849, B-1879, B-1892, B-1905, B-1920 to B-1924, B-1945 to B-1954, B-1967 to B-1974, B-1976 to B-1994, B-2005 to B-2014, B-2028 to B-2034.
+B-1462 to B-1473, B-1480, B-1481, B-1726 to B-1729, B-1742 to B-1757, B-1783 to B-1789, B-1791 to B-1796, B-1819 to B-1831, B-1845 to B-1849, B-1879, B-1892, B-1905, B-1920 to B-1924, B-1945 to B-1954, B-1967 to B-1974, B-1976 to B-1994, B-2005 to B-2024, B-2028 to B-2034.
 
 How to add one: the test first (it fails), then the fix, then a line at the end of this file, numbered after the
 last B- line (`grep -o "B-[0-9]*" docs/BUGS.md | tail -1`).

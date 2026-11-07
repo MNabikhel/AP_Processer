@@ -398,6 +398,8 @@ def test_received_not_invoiced_works_out_again_only_the_pos_whose_billing_change
         read = sorted(decoded)
         accruals._PARTS.clear()
         _plain(store, "DELETE FROM report_answers")  # (nothing kept for any process either)
+        _plain(store, "DELETE FROM billing_facts")
+        _plain(store, "DELETE FROM billing_vendors")
         assert found == accruals._received_not_invoiced(store, end)  # what working every PO out afresh gives
         return [(a.reference, a.amount) for a in found], read
 
@@ -458,6 +460,8 @@ def test_received_not_invoiced_are_of_one_moment_though_another_worker_approves_
     assert before == [("PO-2 line 1", 5.0)]
     with sqlite3.connect(store.path) as conn:
         conn.execute("DELETE FROM report_answers")  # (nothing kept: every invoice read again)
+        conn.execute("DELETE FROM billing_facts")
+        conn.execute("DELETE FROM billing_vendors")
     accruals._PARTS.clear()
     real = Store.billing_codings
 
@@ -476,15 +480,16 @@ def test_received_not_invoiced_are_of_one_moment_though_another_worker_approves_
     assert received() == [("PO-1 line 1", 8.0)]  # (and after the approval)
 
 
-def test_after_one_invoice_of_a_big_vendor_changes_another_process_decodes_that_invoice_alone(tmp_path, monkeypatch):
+def test_after_one_invoice_of_a_big_vendor_changes_another_process_decodes_and_writes_that_invoice_alone(
+    tmp_path, monkeypatch
+):
     """D-177: any change to one invoice of a vendor had month-end decode again every invoice billing its POs (those
     on no PO: 23,000 for the biggest vendor at 300,000 invoices), in whichever process worked it out. What month-end
-    reads of each is kept for every process by vendor: another process, with nothing of its own kept, decodes only the
-    invoice changed; the vendor's row is written again once enough were decoded since (``BILLING_REWRITE``)."""
-    from ap_coder.core.store import purchasing
+    reads of each is kept for every process: another process, with nothing of its own kept, decodes only the invoice
+    changed. D-194: kept by invoice, so only that invoice's row is written again, not the vendor's (7 MB at 300,000
+    invoices, written again once a sixteenth of it was decoded since, each read decoding those again until then)."""
     from tests.core.test_kept_answers import _plain, _po_line, _Processes
 
-    monkeypatch.setattr(purchasing, "BILLING_REWRITE", 4)
     process = _Processes(monkeypatch)
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0}])
@@ -496,24 +501,185 @@ def test_after_one_invoice_of_a_big_vendor_changes_another_process_decodes_that_
     decoded: list[int] = []
     real = Store.billing_codings
     monkeypatch.setattr(Store, "billing_codings", lambda self, ids: decoded.extend(ids) or real(self, ids))
+    written: list[int] = []
+    keep = Store._keep_billing
+    monkeypatch.setattr(Store, "_keep_billing",
+                        lambda self, *kept: written.extend(n for n, _ in kept[3]) or keep(self, *kept))  # fmt: skip
 
     def received(name: str) -> list[tuple]:
         process(name)
-        decoded.clear()
+        decoded.clear(), written.clear()
         return [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, end)]
 
     def billing_two(invoice: int) -> None:
         _plain(store, "UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].quantity', 2) WHERE id = ?",
                invoice)  # fmt: skip
 
-    assert received("worker 1") == [("PO-1 line 1", 976.0)] and sorted(decoded) == bills  # (488 left at 2.00)
-    for n, invoice in enumerate(bills[: purchasing.BILLING_REWRITE]):
+    assert received("worker 1") == [("PO-1 line 1", 976.0)] and sorted(decoded) == sorted(written) == bills
+    for n, invoice in enumerate(bills):
         billing_two(invoice)
         assert received(f"worker {n + 2}") == [("PO-1 line 1", 976.0 - 2 * (n + 1))]
-        assert decoded == bills[: n + 1]  # (those changed since the vendor's row was written: one, then two, ...)
-    billing_two(bills[-1])  # (its row written again with the last of them)
-    assert received("one more worker") == [("PO-1 line 1", 976.0 - 2 * (purchasing.BILLING_REWRITE + 1))]
-    assert decoded == [bills[-1]]
+        assert decoded == written == [invoice]  # (that one alone, each time)
+    assert received("one more worker") == [("PO-1 line 1", 952.0)] and decoded == written == []
+
+
+def test_a_vendors_lines_read_by_a_slower_process_are_not_written_once_another_wrote_them(tmp_path, monkeypatch):
+    """D-194: each invoice's row is kept under its vendor's stamp, which says what all of the vendor's rows are as of,
+    so a process writes its rows only while the stamp is still the one it read with them (in one write). A slower
+    process whose read began before a change writes none once another wrote the vendor's rows as they are since: else
+    its lines of the invoice changed, written over the other's, would be taken as they are now by a third process
+    whose own rows, of another invoice changed later, were written after them under a later stamp."""
+    from tests.core.test_kept_answers import _plain, _po_line, _Processes
+
+    process = _Processes(monkeypatch)
+    slow, other, later, third = (Store(tmp_path / "ap.db") for _ in range(4))
+    other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0}])
+    end = dt.date(2026, 10, 31)
+    line = {"line_number": 1, "description": "Bolts size 1", "quantity": 1, "unit_price": 2.0, "amount": 2.0}
+    doc = {"vendor_name": "Acme Supply", "po_number": "", "invoice_date": "2026-10-03", "currency": "CAD",
+           "line_items": [line], "subtotal": 2.0, "grand_total": 2.1}  # fmt: skip
+    bills = [other.add_invoice(tmp_path / f"{n}.pdf", {**doc, "invoice_number": f"A-{n}"}, {}) for n in range(3)]
+    late: dict[int, tuple] = {}
+    keep = Store._keep_billing
+    monkeypatch.setattr(Store, "_keep_billing", lambda self, *kept: late.update({id(self): kept}) if self in (
+        slow, later) else keep(self, *kept))  # fmt: skip
+
+    def received(store: Store, name: str) -> list[tuple]:
+        process(name)
+        return [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, end)]
+
+    def billing_two(invoice: int) -> None:
+        _plain(other, "UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].quantity', 2) WHERE id = ?",
+               invoice)  # fmt: skip
+
+    assert received(slow, "slow worker") == [("PO-1 line 1", 994.0)]  # (its rows not written yet)
+    billing_two(bills[1])
+    assert received(other, "worker 2") == [("PO-1 line 1", 992.0)]  # (its rows written)
+    billing_two(bills[2])
+    assert received(later, "worker 3") == [("PO-1 line 1", 990.0)]  # (its row of the last one not written yet)
+    keep(slow, *late[id(slow)])  # the slow worker's rows, read before both changes, then the later worker's
+    keep(later, *late[id(later)])
+    _plain(third, "DELETE FROM report_answers")  # (no PO's accruals kept: each worked out from the rows)
+    assert received(third, "worker 4") == [("PO-1 line 1", 990.0)]
+
+
+def _two_vendors_billing(tmp_path, monkeypatch, second: str) -> tuple:
+    """Acme Supply's received PO-1 and ``second``'s received PO-2 (the same lines), two Stores, a worker each time
+    with nothing of its own kept, and what working the received lines out afresh gives (nothing kept anywhere)."""
+    from tests.core.test_kept_answers import _plain, _po_line, _Processes
+
+    process, fresh = _Processes(monkeypatch), iter(range(1000))
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0},
+                                  {**_po_line(1, 500.0), "quantity": 500.0, "po_number": "PO-2",
+                                   "vendor_name": second}])  # fmt: skip
+    end = dt.date(2026, 10, 31)
+
+    def received(afresh: bool = False) -> list[tuple]:
+        process(f"worker {next(fresh)}")
+        _plain(store, "DELETE FROM report_answers")  # (no PO's accruals kept: each worked out from the rows)
+        with sqlite3.connect(store.path) as conn:
+            kept = [conn.execute(f"SELECT * FROM {table}").fetchall() for table in ("billing_facts", "billing_vendors")]
+        if afresh:  # (nothing kept anywhere, then the rows kept put back as they were)
+            _plain(store, "DELETE FROM billing_facts")
+            _plain(store, "DELETE FROM billing_vendors")
+        found = [(a.reference, a.amount) for a in accruals._received_not_invoiced(store, end)]
+        if afresh:
+            with sqlite3.connect(store.path) as conn:
+                conn.execute("DELETE FROM billing_facts")
+                conn.execute("DELETE FROM billing_vendors")
+                conn.executemany("INSERT INTO billing_facts VALUES (?, ?, ?)", kept[0])
+                conn.executemany("INSERT INTO billing_vendors VALUES (?, ?, ?, ?)", kept[1])
+        return found
+
+    def bill(vendor: str, number: str, quantity: float, po: str = "") -> int:
+        line = {"line_number": 1, "description": "Bolts size 1", "quantity": quantity, "unit_price": 2.0,
+                "amount": 2.0 * quantity}  # fmt: skip
+        doc = {"vendor_name": vendor, "invoice_number": number, "po_number": po, "invoice_date": "2026-10-03",
+               "currency": "CAD", "line_items": [line], "subtotal": 2.0 * quantity,
+               "grand_total": 2.1 * quantity}  # fmt: skip
+        return other.add_invoice(tmp_path / f"{number}.pdf", doc, {})
+
+    return store, other, received, bill, lambda sql, *args: _plain(store, sql, *args)
+
+
+def test_a_vendors_row_of_an_invoice_moved_to_another_vendor_is_never_taken_for_it(tmp_path, monkeypatch):
+    """D-194: an invoice's row is kept under the vendor it had when it was read, until that vendor's next write takes
+    it away: an invoice moved to another vendor, whose row there is newer, is never read from its old vendor's."""
+    from ap_coder.coding.po import po_key
+    from ap_coder.core.memory import vendor_key
+
+    store, other, received, bill, plain = _two_vendors_billing(tmp_path, monkeypatch, "Zeta Parts")
+    moved, acme, _ = bill("Zeta Parts", "Z-1", 1.0), bill("Acme Supply", "A-1", 1.0), bill("Zeta Parts", "Z-2", 1.0)
+    assert received() == received(afresh=True)  # (Zeta's row of it kept)
+    other.set_po_status(po_key("PO-2"), "closed")  # (Zeta billing no PO received: its rows not read)
+    plain("UPDATE invoices SET vendor_name = 'Acme Supply', vendor_key = ?, ai_output = json_set(ai_output, "
+          "'$.vendor_name', 'Acme Supply', '$.line_items[0].quantity', 3) WHERE id = ?", vendor_key("Acme Supply"),
+          moved)  # fmt: skip
+    assert received() == received(afresh=True)  # (Acme's row of it kept, Zeta's left as it was)
+    other.set_po_status(po_key("PO-2"), "open")
+    plain("UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].quantity', 2) WHERE id = ?", acme)
+    assert received() == received(afresh=True) == [("PO-1 line 1", 990.0), ("PO-2 line 1", 998.0)]
+
+
+def test_a_vendors_rows_are_all_read_again_once_its_stamp_no_longer_holds(tmp_path, monkeypatch):
+    """D-194: once a vendor's stamp no longer holds (here an older AP Coder's change, counted and logged nowhere,
+    B-1811), none of its rows is kept: one of an invoice not billing a received PO then, changed unseen, is not
+    taken once it bills one again unchanged."""
+    import re
+
+    from ap_coder.core.store.summary import SUMMARY_TRIGGERS
+    from tests.core.test_kept_answers import _po_line
+    from tests.core.test_vendor_changes import _LOGGING
+
+    store, other, received, bill, plain = _two_vendors_billing(tmp_path, monkeypatch, "Acme Supply")
+    unseen, _ = bill("Acme Supply", "A-2", 1.0, po="PO-2"), bill("Acme Supply", "A-1", 1.0)
+    assert received() == received(afresh=True)  # (both rows kept)
+    other.import_purchase_orders([{**_po_line(1, None), "quantity": 500.0, "po_number": "PO-2"}])  # (not received)
+    triggers = {name: SUMMARY_TRIGGERS[name] for name in _LOGGING}
+    for name, sql in triggers.items():  # an older AP Coder's triggers, counting only
+        plain(f"DROP TRIGGER {name}")
+        plain(re.sub(r"; INSERT INTO vendor_changes .*? - \d+", "", sql))
+    plain("UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items[0].quantity', 5) WHERE id = ?", unseen)
+    for name, sql in triggers.items():
+        plain(f"DROP TRIGGER {name}")
+        plain(sql)
+    assert received() == received(afresh=True)  # (Acme's stamp no longer holds: its rows read again, A-2's not)
+    other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0, "po_number": "PO-2"}])  # (received)
+    assert received() == received(afresh=True) == [("PO-1 line 1", 998.0), ("PO-2 line 1", 988.0)]
+
+
+def test_a_vendors_rows_kept_by_another_version_or_on_another_database_are_never_taken(tmp_path, monkeypatch):
+    """D-194: a vendor's rows are taken only under the database (``summary_id``: another after a restore) and the AP
+    Coder version and format (``BILLING_FORMAT``) they were kept by, even when none of its invoices changed since:
+    another version may read another thing of a coding."""
+    from ap_coder.core.store import purchasing
+
+    store, other, received, bill, plain = _two_vendors_billing(tmp_path, monkeypatch, "Zeta Parts")
+    bill("Acme Supply", "A-1", 1.0)
+    expected = [("PO-1 line 1", 998.0), ("PO-2 line 1", 1000.0)]
+    assert received() == expected  # (Acme's row kept)
+    planted = "UPDATE billing_facts SET facts = json_replace(facts, '$[1][0][2]', 7)"  # (7 billed, not 1)
+    plain(planted)
+    assert received() == [("PO-1 line 1", 986.0), ("PO-2 line 1", 1000.0)]  # (taken: nothing changed since)
+    plain(planted)
+    monkeypatch.setattr(purchasing, "BILLING_FORMAT", "billing-3")  # (another format)
+    assert received() == received(afresh=True) == expected
+    plain(planted)
+    plain("UPDATE settings SET value = 'another' WHERE key = 'summary_id'")  # (another database: restored)
+    assert received() == received(afresh=True) == expected
+
+
+def test_each_vendors_billing_row_an_older_ap_coder_kept_goes_at_the_next_start(tmp_path):
+    """D-194: the vendors' rows of billing lines D-177 kept among the shared answers (``billing/<key>``: the biggest
+    7 MB at 300,000 invoices), read by no one since, go at the next start; the other answers stay."""
+    store = Store(tmp_path / "ap.db")
+    for name in ("billing/acme supply", "billing/zeta parts", "received_parts", "billing", "billings"):
+        assert store.keep_answer(name, "", "billing-1", [1], [[1, "2026-10-03", []]])
+    Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        assert [r[0] for r in conn.execute("SELECT name FROM report_answers ORDER BY name")] == [
+            "billing", "billings", "received_parts"]  # fmt: skip
 
 
 def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_po_or_the_setup_does(
@@ -696,8 +862,8 @@ def _month_change(rng, writer: Store, tmp_path, n: int, backup, keep: int) -> st
 def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_any_changes_in_two_processes(
     tmp_path, monkeypatch, seed, keep
 ):
-    """D-177: what month-end reads of each invoice billing a received PO is kept for every process by vendor and
-    brought up to date from the vendors' change log. Random changes by two workers and plain SQL (an invoice added,
+    """D-177: what month-end reads of each invoice billing a received PO is kept for every process (by invoice, D-194)
+    and brought up to date from the vendors' change log. Random changes by two workers and plain SQL (an invoice added,
     approved with other lines, its lines, date or coding's date changed, moved to another vendor, to none or to another
     PO, deleted, exported and its batch undone, parked, rejected and reopened; the POs imported again; an older AP
     Coder's change, logged nowhere; a write undone; a restore), each worker asking at either period end between them,
@@ -708,7 +874,7 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
     import itertools
     import random
 
-    from ap_coder.core.store import purchasing, reports
+    from ap_coder.core.store import reports
     from ap_coder.core.store import summary as summary_module
     from tests.core.test_kept_answers import _Processes
     from tests.core.test_vendor_changes import _short_log
@@ -717,7 +883,6 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
     clock = itertools.count(1_000_000, 100)  # (never settled: each page as it is now, its counts too)
     monkeypatch.setattr(reports, "wall", lambda: float(next(clock)))
     monkeypatch.setattr(summary_module, "monotonic", lambda: float(next(clock)))
-    monkeypatch.setattr(purchasing, "BILLING_REWRITE", 3)  # (a vendor's row written again, or read as it is, often)
     rng, process = random.Random(seed), _Processes(monkeypatch)
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     other.import_purchase_orders(_orders(rng))
@@ -740,12 +905,20 @@ def test_month_ends_page_and_csv_are_what_working_them_out_afresh_gives_after_an
     def afresh(end: dt.date, page: bool) -> tuple[bytes, str]:
         with sqlite3.connect(store.path) as conn:
             kept = conn.execute("SELECT * FROM report_answers").fetchall()
+            facts = conn.execute("SELECT * FROM billing_facts").fetchall()
+            stamps = conn.execute("SELECT * FROM billing_vendors").fetchall()
             conn.execute("DELETE FROM report_answers")
+            conn.execute("DELETE FROM billing_facts")
+            conn.execute("DELETE FROM billing_vendors")
         process(f"afresh {next(fresh)}")
         found = shown(end, page)
         with sqlite3.connect(store.path) as conn:
             conn.execute("DELETE FROM report_answers")
             conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?)", kept)
+            conn.execute("DELETE FROM billing_facts")
+            conn.executemany("INSERT INTO billing_facts VALUES (?, ?, ?)", facts)  # (as they were)
+            conn.execute("DELETE FROM billing_vendors")
+            conn.executemany("INSERT INTO billing_vendors VALUES (?, ?, ?, ?)", stamps)
         return found
 
     done, asked, read = [], 0, 0
