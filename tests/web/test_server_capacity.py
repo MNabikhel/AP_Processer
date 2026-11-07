@@ -71,12 +71,13 @@ def test_a_server_worker_runs_a_few_requests_at_once_and_a_laptop_keeps_anyios_d
 def test_the_servers_processes_keep_two_malloc_arenas_on_linux(monkeypatch):
     """Each thread of a web worker could make a malloc arena of its own, which kept what a request's peak freed there:
     on 60,000 invoices a worker held 714 MB, 536 MB with two (D-195). The server limits this process (``mallopt``) and
-    those it starts (``MALLOC_ARENA_MAX``); one set already is left as it is, and other systems are not touched."""
+    those it starts (``MALLOC_ARENA_MAX``); one set already is left as it is, and other systems are not touched:
+    glibc's arenas only (Windows and macOS have their own allocators, musl no ``mallopt``)."""
     import ctypes
 
     asked = []
     monkeypatch.setattr(ctypes, "CDLL", lambda name: SimpleNamespace(mallopt=lambda *a: asked.append(a)))
-    monkeypatch.delenv(server.ARENAS_ENV, raising=False)
+    monkeypatch.setenv(server.ARENAS_ENV, "")  # (as if not set; put back as it was after the test)
     monkeypatch.setattr(server.sys, "platform", "linux")
     server.fewer_malloc_arenas()
     assert os.environ[server.ARENAS_ENV] == "2" and asked == [(-8, 2)]  # M_ARENA_MAX
@@ -84,9 +85,14 @@ def test_the_servers_processes_keep_two_malloc_arenas_on_linux(monkeypatch):
     server.fewer_malloc_arenas()
     assert os.environ[server.ARENAS_ENV] == "4" and len(asked) == 1
     monkeypatch.delenv(server.ARENAS_ENV)
-    monkeypatch.setattr(server.sys, "platform", "darwin")
+    for system in ("darwin", "win32"):
+        monkeypatch.setattr(server.sys, "platform", system)
+        server.fewer_malloc_arenas()
+        assert server.ARENAS_ENV not in os.environ and len(asked) == 1
+    monkeypatch.setattr(server.sys, "platform", "linux")
+    monkeypatch.setattr(ctypes, "CDLL", lambda name: SimpleNamespace())  # a libc without mallopt (musl)
     server.fewer_malloc_arenas()
-    assert server.ARENAS_ENV not in os.environ and len(asked) == 1
+    assert os.environ[server.ARENAS_ENV] == "2" and len(asked) == 1
 
 
 def test_server_json_gives_the_workers_their_threads(tmp_path, monkeypatch):
