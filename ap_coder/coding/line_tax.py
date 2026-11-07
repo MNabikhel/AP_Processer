@@ -675,6 +675,9 @@ def _with_note(line: Any, note: str) -> Any:
     return line.model_copy(update={"reasoning_justification": reason})
 
 
+_Codes = list[tuple[list[str], str] | None]  # each line's taxes and status, None while not worked out
+
+
 def _prefill(
     lines: Sequence[Any],
     tax_lines: Sequence[Any],
@@ -725,6 +728,19 @@ def _prefill(
     printed = list(printed or [""] * n) + [""] * max(0, n - len(printed or []))
     keep = {k for k in keep if 0 <= k < n}
     charged = charged_types(tax_lines)
+    codes, how = _kept_or_printed(items, printed, legend, keep, charged)
+    learned_exempt, disputed = _learned_codes(learned, keep, charged, codes, how, collects)
+    check: set[int] = set(disputed)
+    unallocated, ambiguous = _solved_codes(items, tax_lines, charged, codes, how, check, rate_for)
+    _write_codes(items, tax_lines, charged, codes, how, keep, learned_exempt, check, collects_now)
+    return Prefill(items, how, check, unallocated, ambiguous)
+
+
+def _kept_or_printed(items: list[Any], printed: list[str], legend: dict[str, Meaning] | None, keep: set[int],
+                     charged: list[str]) -> tuple[_Codes, list[str]]:  # fmt: skip
+    """``_prefill``'s 1 and 2: each line's code kept (a clerk's choice) or printed beside it, and how it got it
+    ("kept", "printed"; None and "" for the others)."""
+    n = len(items)
     how = [""] * n
     codes: list[tuple[list[str], str] | None] = [None] * n
     for k in range(n):
@@ -736,6 +752,15 @@ def _prefill(
         read = read_flags(cell, legend, charged) if cell else None
         if read is not None:
             codes[k], how[k] = read, "printed"
+    return codes, how
+
+
+def _learned_codes(learned: Sequence[str] | None, keep: set[int], charged: list[str], codes: _Codes, how: list[str],
+                   collects: Callable[[str], bool]) -> tuple[dict[int, list[str]], set[int]]:  # fmt: skip
+    """``_prefill``'s 3: the codes of the vendor's history for the lines nothing printed says (``codes`` and
+    ``how`` filled in), the exemptions each takes, and the lines where the history and the rule on a tax the
+    vendor does not collect disagree."""
+    n = len(codes)
     # What AP approved on the vendor's similar lines, for the lines nothing printed says (D-70).
     learned_exempt: dict[int, list[str]] = {}
     disputed: set[int] = set()
@@ -758,7 +783,16 @@ def _prefill(
             learned_exempt[k] = exempt
         elif how[k] == "printed" and codes[k] == (taxes, status):
             learned_exempt[k] = exempt  # printed "G": the PST not charged is exempt, as AP approved it
-    check: set[int] = set(disputed)
+    return learned_exempt, disputed
+
+
+def _solved_codes(items: list[Any], tax_lines: Sequence[Any], charged: list[str], codes: _Codes,
+                 how: list[str], check: set[int], rate_for: Callable[[str, str], float | None] | None,
+                 ) -> tuple[set[str], set[int]]:  # fmt: skip
+    """``_prefill``'s 4: the lines left, given the taxes that make each tax charged add up (``codes``, ``how``
+    and the lines to ``check`` filled in); the taxes no set of them could carry, and the lines the amounts could
+    not decide between."""
+    n = len(items)
     amounts = [float(_get(li, "amount") or 0) for li in items]
     descriptions = [str(_get(li, "description") or "") for li in items]
     free = [k for k in range(n) if codes[k] is None]
@@ -803,6 +837,15 @@ def _prefill(
     for k in free:
         codes[k] = (ordered(assigned[k]), "")
         how[k] = ("solver" if solved_any else "all") if charged else "none"
+    return unallocated, ambiguous
+
+
+def _write_codes(items: list[Any], tax_lines: Sequence[Any], charged: list[str], codes: _Codes,
+                how: list[str], keep: set[int], learned_exempt: dict[int, list[str]], check: set[int],
+                collects_now: Callable[[str], bool]) -> None:  # fmt: skip
+    """Each line's taxes, status and exemptions written into ``items`` (with the notes a person reads), from its
+    code and how it got it."""
+    n = len(items)
     canadian = [t for t in charged if t in CANADIAN_TAX_TYPES]
     pst_name = tax_name(
         "PST", next((str(_get(t, "province") or "") for t in tax_lines if _get(t, "tax_type") == "PST"), "")
@@ -839,7 +882,6 @@ def _prefill(
             items[k] = items[k].model_copy(update=update)
         if k in check:
             items[k] = _with_note(items[k], GUESS_NOTE)
-    return Prefill(items, how, check, unallocated, ambiguous)
 
 
 def can_explain(amounts: Sequence[float], tax: float, rate: float) -> bool | None:

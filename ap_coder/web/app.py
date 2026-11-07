@@ -315,6 +315,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
 
         store.session_idle, store.session_absolute = session_limits(paths.private_dir())
     settings_factory: Callable[[], Settings] = (lambda: settings) if settings is not None else EnvSettings()
+    lifespan = _lifespan(store, settings_factory, server=server, background=background, start_reader=start_reader)
+    app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    _set_state(app, store, settings_factory, server=server, processes=processes, insecure_http=insecure_http,
+               secret=secret)  # fmt: skip
+    _add_middleware(app, store, address=address, server=server, background=background,
+                    insecure_http=insecure_http)  # fmt: skip
+    _add_pages(app)
+    _add_status_routes(app, address=address, server=server)
+    _add_error_pages(app)
+    return app
+
+
+def _lifespan(store: Store, settings_factory: Callable[[], Settings], *, server: bool, background: bool,
+              start_reader: bool) -> Callable[[FastAPI], contextlib.AbstractAsyncContextManager[None]]:  # fmt: skip
+    """What the dashboard does as it starts (its background work) and as it stops (the work waited for)."""
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -366,7 +381,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         while app.state.processes > 1 and own_work_running(app.state):
             await anyio.sleep(0.2)
 
-    app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    return lifespan
+
+
+def _set_state(app: FastAPI, store: Store, settings_factory: Callable[[], Settings], *, server: bool, processes: int,
+               insecure_http: bool, secret: bytes | None) -> None:  # fmt: skip
+    """What the pages and the background work find on ``app.state``."""
     app.state.store = store
     app.state.settings_factory = settings_factory
     app.state.processes = max(1, int(processes))  # web workers serving this database (D-111)
@@ -392,10 +412,15 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     from ap_coder.erp.hub.run import HubSchedule
 
     app.state.hub_schedule = HubSchedule(store)  # the finance hub feed, off until an Admin turns it on (D-103)
+    app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
+
+
+def _add_middleware(app: FastAPI, store: Store, *, address: str, server: bool, background: bool,
+                    insecure_http: bool) -> None:  # fmt: skip
+    """The checks every request goes through, the last added running first."""
     if background:  # after the security checks: only for pages served (else the background process does it)
         app.add_middleware(BackupCheck, backup=app.state.daily_backup, also=(app.state.hub_schedule,))
     app.add_middleware(FriendlyErrors)  # an error no page expected is drawn as a page, with the menu
-    app.state.server_mode = server  # accounts and roles (web/identity.py, web/roles.py)
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address, server=server)
     app.add_middleware(core.StoreContext, store=store)  # messages and uploads kept in this database (D-99)
     app.add_middleware(StaticFromMemory)  # after the Host check, before the session (D-161)
@@ -410,6 +435,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.add_middleware(SecurityHeaders, server=server, hsts=server and not insecure_http)
     if server:  # every request in logs/access.log, and each download in the audit trail (D-109)
         app.add_middleware(AccessLog, folder=store.path.parent / "logs", store=store, shared=app.state.processes > 1)
+
+
+def _add_pages(app: FastAPI) -> None:
+    """The static files, every page's routes, and the home page."""
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")
@@ -428,6 +457,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         me = identity.person()
         return RedirectResponse("/manager" if me and me.role == MANAGER else PAGES[0].path, status_code=307)
 
+
+def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
+    """/healthz, /readyz, /shutdown and /jobs/{name}: what the launcher, monitors and pages ask of the server."""
     build = paths.build_stamp(CODE_FOLDER)["commit"]  # the code this server runs (the launcher compares it)
     network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER  # shared on the office network
 
@@ -507,6 +539,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             snapshot = {key: value for key, value in snapshot.items() if key == "state" or key in only.split(",")}
         return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
+
+def _add_error_pages(app: FastAPI) -> None:
+    """Errors drawn as a page (or JSON for a script), in plain words."""
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> Any:
         wants_page = request.method == "GET" and "text/html" in request.headers.get("accept", "")
@@ -534,5 +570,3 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         if "SQLite" not in str(exc):
             raise exc
         return await http_error(request, StarletteHTTPException(404, "Nothing in AP Coder has that number."))
-
-    return app

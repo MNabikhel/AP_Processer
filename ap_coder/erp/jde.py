@@ -566,6 +566,11 @@ class _Voucher:
     gl_moved: dt.date | None = None  # a G/L date in a closed period, moved to ``gl_day`` (D-182)
     gl_day: dt.date | None = None
 
+    def add(self, problem: str, code: str = "JDE_VOUCHER", line: int | None = None) -> None:
+        """A problem that holds the voucher back, with its check code and the invoice line it is on."""
+        self.problems.append(problem)
+        self.codes.append((code, line))
+
 
 def _place_of_supply(final: dict[str, Any]) -> str:
     for key in ("ship_to_province", PLACE_OF_SUPPLY, "supplier_province"):  # printed, worked out, the vendor's
@@ -795,11 +800,48 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
+    add = v.add
+    po = _check_header(v, final, settings, an8)
+    charged = _check_tax_area(v, final, settings)
+    on_gl = settings.tax_on_gl
+    recoverable = _tax_amounts(v, final, inv, settings, charged)
 
-    def add(problem: str, code: str = "JDE_VOUCHER", line: int | None = None) -> None:
-        v.problems.append(problem)
-        v.codes.append((code, line))
+    # Meals (D-90): half the tax on a meals line is not claimable, and is in its expense line, not E1's to post.
+    dist = _distribution(final)
+    meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
+    if v.recoverable_types and meals:
+        v.meals = meals
+        v.recoverable -= meals
+        v.stam -= meals
+    v.po_matched = bool(settings.po_matched and po)
+    if meals and v.po_matched:  # no G/L lines of ours: E1 distributes from the receipts (B-865)
+        add(MEALS_PO, "JDE_MEALS_PO")
+    elif meals and settings.amount_mode == AMOUNT_GROSS:  # E1 works out the tax and claims all of it (B-866)
+        add(MEALS_GROSS, "JDE_MEALS_GROSS")
+    if on_gl and v.po_matched and charged:  # no G/L lines of ours, and no tax E1 would post either (D-93)
+        add(GL_PO, "JDE_GL_PO")
+    if settings.amount_mode == AMOUNT_GROSS and charged and not meals:
+        for problem in _gross_problems(v, final):  # E1 would work the tax out other than charged (B-921)
+            add(problem, "JDE_GROSS_TAX")
+    if v.po_matched:
+        items = final.get("line_items") or []
+        lines = sum(_units(li.get("amount")) for li in items)
+        if not items:
+            add("PO-matched voucher without invoice lines to match", "JDE_UNBALANCED")
+        elif abs(lines - _units(final.get("subtotal"))) > len(items):
+            add(
+                f"the lines add up to {lines / 100:,.2f}, not the subtotal {float(final.get('subtotal') or 0):,.2f}",
+                "SUBTOTAL_MISMATCH",
+            )
+        return v
 
+    _check_distribution(v, final, settings, dist, recoverable)
+    return v
+
+
+def _check_header(v: _Voucher, final: dict[str, Any], settings: JdeSettings, an8: str) -> str:
+    """The supplier number, invoice number, PO number, dates and currency; the PO number."""
+    add = v.add
     if not an8:
         add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards", "JDE_NO_AN8")
     elif not an8.isdigit() or len(an8) > 8:
@@ -832,7 +874,12 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         add(f"currency {v.currency} is not set up for JD Edwards (Settings → JD Edwards → currencies)", "JDE_CURRENCY")
     v.foreign = v.currency != _norm(settings.domestic_currency)
     v.decimals = NO_DECIMAL_CURRENCIES.get(v.currency, 2)
+    return po
 
+
+def _check_tax_area(v: _Voucher, final: dict[str, Any], settings: JdeSettings) -> list[dict[str, Any]]:
+    """The tax area and explanation code (``v``'s), and the Canadian tax lines charged."""
+    add = v.add
     # Tax area and explanation code from the province of supply.
     # With the tax coded to G/L accounts (D-93) there is no tax area: none of these is asked.
     charged, v.province, v.tax_area, v.tax_code = _tax_area_code(final, settings)
@@ -849,7 +896,15 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
         add(f"no JDE tax area for {v.province} (Settings → JD Edwards → tax areas)", "JDE_TAX_AREA")
     elif v.tax_code == settings.self_assessed_code.strip().upper() and pst_owed(final) == SOME_OWED:
         add(PST_MIX, "JDE_TAX_AREA")
+    return charged
 
+
+def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settings: JdeSettings,
+                 charged: list[dict[str, Any]]) -> list[dict[str, Any]]:  # fmt: skip
+    """The gross, the due date, the tax and its taxable amount, and the recoverable tax (``v``'s); the
+    recoverable tax lines."""
+    add = v.add
+    on_gl = settings.tax_on_gl
     # In the currency's own units: whole yen are sent as whole yen, so the voucher balances as E1 reads it.
     v.gross = _units(final.get("grand_total"), v.decimals)
     due = sent_due(final, inv)
@@ -867,36 +922,13 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     v.charged, v.recoverable_types = charged, recovers
     recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
     v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
+    return recoverable
 
-    # Meals (D-90): half the tax on a meals line is not claimable, and is in its expense line, not E1's to post.
-    dist = _distribution(final)
-    meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
-    if v.recoverable_types and meals:
-        v.meals = meals
-        v.recoverable -= meals
-        v.stam -= meals
-    v.po_matched = bool(settings.po_matched and po)
-    if meals and v.po_matched:  # no G/L lines of ours: E1 distributes from the receipts (B-865)
-        add(MEALS_PO, "JDE_MEALS_PO")
-    elif meals and settings.amount_mode == AMOUNT_GROSS:  # E1 works out the tax and claims all of it (B-866)
-        add(MEALS_GROSS, "JDE_MEALS_GROSS")
-    if on_gl and v.po_matched and charged:  # no G/L lines of ours, and no tax E1 would post either (D-93)
-        add(GL_PO, "JDE_GL_PO")
-    if settings.amount_mode == AMOUNT_GROSS and charged and not meals:
-        for problem in _gross_problems(v, final):  # E1 would work the tax out other than charged (B-921)
-            add(problem, "JDE_GROSS_TAX")
-    if v.po_matched:
-        items = final.get("line_items") or []
-        lines = sum(_units(li.get("amount")) for li in items)
-        if not items:
-            add("PO-matched voucher without invoice lines to match", "JDE_UNBALANCED")
-        elif abs(lines - _units(final.get("subtotal"))) > len(items):
-            add(
-                f"the lines add up to {lines / 100:,.2f}, not the subtotal {float(final.get('subtotal') or 0):,.2f}",
-                "SUBTOTAL_MISMATCH",
-            )
-        return v
 
+def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSettings, dist: list[dict[str, Any]],
+                        recoverable: list[dict[str, Any]]) -> None:  # fmt: skip
+    """The G/L distribution's entries (``v.entries``), and that they balance the gross less the recoverable tax."""
+    add = v.add
     if not dist:
         add("no GL distribution to post", "NO_LINE_ITEMS")
     total = sum(_units(e.get("amount")) for e in dist)
@@ -906,6 +938,32 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             f"the GL distribution adds up to {total / 100:,.2f}, not the invoice total {v.gross / 100:,.2f}",
             "POSTING_UNBALANCED",
         )
+    _distribution_entries(v, settings, dist)
+    expected = v.gross - v.recoverable
+    kept = sum(e["cents"] for e in v.entries)
+    kept_cents = sum(_units(e.get("amount")) for e in v.entries)
+    if v.decimals < 2 and v.entries and kept != expected:
+        # Whole units (yen): a distribution spread in cents (coded before tax was spread in whole units) balances
+        # in cents, but its lines each rounded to the yen can be a yen or two off: the largest line takes it.
+        if kept_cents == gross_cents - sum(_units(t.get("tax_amount")) for t in recoverable):
+            biggest = max(range(len(v.entries)), key=lambda i: abs(v.entries[i]["cents"]))
+            v.entries[biggest]["cents"] += expected - kept
+            kept = expected
+    # A line with no GL account, or a province of supply not read, is said by its own finding and holds the voucher
+    # back by itself: the imbalance it causes is no Tax setup problem to send the clerk to (B-812).
+    said = {code for code, _ in v.codes} & {"GL_UNASSIGNED", "JDE_TAX_AREA", "TAX_GL_UNMAPPED"}
+    if dist and total == gross_cents and kept != expected and not said:
+        add(
+            f"unbalanced: the distribution is {kept / 100:,.2f} but gross {v.gross / 100:,.2f} minus recoverable "
+            f"tax {v.recoverable / 100:,.2f} (code {v.tax_code or 'blank'}) is {expected / 100:,.2f}: check the Tax "
+            "setup against the JDE tax explanation code",
+            "JDE_UNBALANCED",
+        )
+
+
+def _distribution_entries(v: _Voucher, settings: JdeSettings, dist: list[dict[str, Any]]) -> None:
+    """Each G/L line with its JD Edwards account (``v.entries``), or the problem that holds it back."""
+    add = v.add
     for e in dist:
         if _is_recoverable_entry(e) and v.recoverable_types:
             continue  # E1 posts recoverable tax itself (tax AAIs); with code E (or the tax on G/L) it is ours to post
@@ -947,27 +1005,6 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
                 e.get("line_number"),
             )
         v.entries.append({**e, "cents": _units(e.get("amount"), v.decimals), "account": account})
-    expected = v.gross - v.recoverable
-    kept = sum(e["cents"] for e in v.entries)
-    kept_cents = sum(_units(e.get("amount")) for e in v.entries)
-    if v.decimals < 2 and v.entries and kept != expected:
-        # Whole units (yen): a distribution spread in cents (coded before tax was spread in whole units) balances
-        # in cents, but its lines each rounded to the yen can be a yen or two off: the largest line takes it.
-        if kept_cents == gross_cents - sum(_units(t.get("tax_amount")) for t in recoverable):
-            biggest = max(range(len(v.entries)), key=lambda i: abs(v.entries[i]["cents"]))
-            v.entries[biggest]["cents"] += expected - kept
-            kept = expected
-    # A line with no GL account, or a province of supply not read, is said by its own finding and holds the voucher
-    # back by itself: the imbalance it causes is no Tax setup problem to send the clerk to (B-812).
-    said = {code for code, _ in v.codes} & {"GL_UNASSIGNED", "JDE_TAX_AREA", "TAX_GL_UNMAPPED"}
-    if dist and total == gross_cents and kept != expected and not said:
-        add(
-            f"unbalanced: the distribution is {kept / 100:,.2f} but gross {v.gross / 100:,.2f} minus recoverable "
-            f"tax {v.recoverable / 100:,.2f} (code {v.tax_code or 'blank'}) is {expected / 100:,.2f}: check the Tax "
-            "setup against the JDE tax explanation code",
-            "JDE_UNBALANCED",
-        )
-    return v
 
 
 def sent_tax(invoice: dict[str, Any], settings: JdeSettings, an8: str = "") -> float | None:
