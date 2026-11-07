@@ -510,6 +510,27 @@ class VendorsMixin:
         with self._conn() as conn:
             return [tuple(r) for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE in_master = 1")]
 
+    def master_vendors_of(self, keys: set[str], ids: set[str]) -> dict[str, dict[str, Any]]:
+        """The vendor master's vendors of these keys or ERP IDs, by key: what the JD Edwards sync reports changed."""
+        sql = (
+            "SELECT vendor_key, display_name, erp_id, expected_gst, terms, status, qst_number, pst_number, province, "
+            "erp_bank, erp_hold FROM vendors WHERE in_master = 1 AND {} IN (SELECT value FROM json_each(?))"
+        )
+        found: dict[str, dict[str, Any]] = {}
+        with self._conn() as conn:
+            for column, values in (("vendor_key", keys), ("erp_id", ids)):
+                for r in conn.execute(sql.format(column), (json.dumps(sorted(values)),)):
+                    found[r["vendor_key"]] = dict(r)
+        return found
+
+    def set_erp_bank_and_hold(self, values: dict[str, tuple[str, str]]) -> None:
+        """{ERP ID: (the bank account JDE pays on, JDE's hold code)} on the vendor master's vendors of those IDs (kept
+        apart from AP's own hold, D-105): only where either changed."""
+        with self._conn() as conn:
+            conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
+                             "(erp_bank != ?1 OR erp_hold != ?2)",
+                             [(bank, hold, erp_id) for erp_id, (bank, hold) in values.items()])  # fmt: skip
+
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
         invoice whose vendor name differs but whose GST/HST number matches still gets its ID. Kept in each process

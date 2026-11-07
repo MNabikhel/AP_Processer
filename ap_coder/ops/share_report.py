@@ -92,8 +92,7 @@ def build_share_report(
     lines = ["## AP Coder run summary (redacted)", ""]
     every = len(metas)
     if found and latest is not None and len(found) == latest:  # perhaps more in the database: say how many
-        with store._conn() as conn:  # type: ignore[union-attr]
-            every = int(conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0])
+        every = store.invoice_count()  # type: ignore[union-attr]
     shown = f"the latest {len(metas)} of {every}" if every > len(metas) else f"{len(metas)}"
     lines.append(f"- invoices: {shown} (ok {len(ok)}, failed {len(failed)})")
     if failed:
@@ -236,19 +235,15 @@ def _accuracy_section(
 def _metas_from_store(store: Store, latest: int | None = None) -> list[tuple[int, dict[str, Any]]]:
     """(invoice id, what the report reads of it) of every invoice, or of the ``latest`` ones, oldest first, in one
     query."""
-    with store._conn() as conn:
-        newest = "" if latest is None else "WHERE id IN (SELECT id FROM invoices ORDER BY id DESC LIMIT ?) "
-        sql = f"SELECT id, source_path, status, error, meta, validation FROM invoices {newest}ORDER BY id"
-        rows = conn.execute(sql, () if latest is None else (latest,))
-        found = []
-        for row in rows:
-            meta = json.loads(row["meta"]) if row["meta"] else {}
-            meta["source"] = row["source_path"]
-            meta["status"] = "failed" if row["status"] == FAILED else "ok"
-            meta["error"] = row["error"]
-            if row["validation"]:
-                meta["validation"] = json.loads(row["validation"])
-            found.append((row["id"], meta))
+    found = []
+    for row in store.run_summary_rows(latest):
+        meta = json.loads(row["meta"]) if row["meta"] else {}
+        meta["source"] = row["source_path"]
+        meta["status"] = "failed" if row["status"] == FAILED else "ok"
+        meta["error"] = row["error"]
+        if row["validation"]:
+            meta["validation"] = json.loads(row["validation"])
+        found.append((row["id"], meta))
     return found
 
 

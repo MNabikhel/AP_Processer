@@ -3191,3 +3191,54 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`, `tests/ops/test_safety.py`,
     `tests/ops/test_server_update_downtime.py`, `tests/web/test_maintenance.py`,
     `tests/offline/test_bundle_reproducible.py`)
+- **D-189** · **No SQL runs outside `ap_coder/core/store`: each statement is a Store method or, for a database file a
+  Store must not open, a module function of the store; a meta test keeps it so** (scale goal, phase 7, C1).
+  - **Why:** the move to PostgreSQL needs every statement in one place. 55 lines in 6 files ran SQL outside the store
+    (`erp/jde_post.py` 15, `erp/jde_sync.py` 12, `erp/hub/run.py` 9, `erp/hub/landing.py` 7, `ops/server_update.py`
+    8, `ops/share_report.py` 4), most through `store._conn()`.
+  - **What moved where:**
+    - JD Edwards posting (`erp/jde_post.py`) → `core/store/postings.py` `PostingsMixin`, a new part of `Store`:
+      `jde_postings`, `jde_posting`, `keep_jde_postings` (the copy in the ledger file), `put_jde_posting`,
+      `claim_jde_posting`, `jde_documents`, `jde_not_posted`, `jde_locked`, `undo_jde_batch`, `forget_jde_batch`,
+      `jde_downloads`, `jde_waiting`, `set_jde_voucher` (the invoice's `meta.jde_voucher`). The rows' statuses
+      (`CHECKED` … `UNKNOWN`, `IN_FLIGHT`, `SENDABLE`, `FILE_DOWNLOADED`) are kept with the table and imported by
+      `jde_post`, which keeps the state machine, its clock (`_now`, `_stamp`: passed in, so the tests' patches still
+      hold) and `_put` / `_claim` (thin, called by the tests).
+    - JD Edwards sync (`erp/jde_sync.py`) → `vendors.py` `master_vendors_of` and `set_erp_bank_and_hold`;
+      `purchasing.py` `po_keys_written_since` and `open_po_numbers`; its `with store._conn():` (and `with
+      store.session(), store._conn():`) holding several calls → `Store.transaction()`, a new part `transaction.py`
+      (`session()` then `_conn()`: inside a session, as the sync always is, exactly what it replaces).
+    - Finance hub (`erp/hub/run.py`, `landing.py`) → `core/store/hub.py`: `HubState` (its own `finance_hub/state.db`)
+      and `write_gateway_database` with `GATEWAY_VIEWS` (the gateway's copy; it reads the hub's table list from
+      `erp/hub/tables.py` when called, since `erp/hub` imports this part). `landing.gateway_database` keeps the
+      temporary folder and its name (a test breaks it there).
+    - server-update (`ops/server_update.py`) → module functions of `core/store/backups.py` that open the file
+      themselves, read-only where it was, never a Store (it would migrate a newer version's database, the copy being
+      migrated, a safety copy): `copy_database`, `one_file` (no write-ahead log), `accounts_in`,
+      `carry_accounts_into`, `setting_in`. `server_update` imports them by name (`server_update.copy_database` is what
+      its tests break).
+    - The redacted run summary (`ops/share_report.py`, which opens a Store) → `learning.py` `invoice_count` and
+      `run_summary_rows`.
+  - **Transactions kept, never split or merged:** each `with store._conn():` around several calls is one
+    `with store.transaction():` around the same calls: the sync's page (its rows, the progress setting and the lease,
+    last: lost, all of it undone), B-1918's 250 vouchers at a time each with the lease, the POs closed 500 at a time,
+    the part's progress and state at its end. Each moved statement runs in the transaction it ran in: one method per
+    former `with` block, joining the caller's transaction where it did (the vendor reads inside the sync's page);
+    the undo's check stays inside `undo_export_batch`'s `BEGIN IMMEDIATE` (`undo_jde_batch` passes it as the guard);
+    `HubState` is one transaction a run, committed only by a run that worked; the accounts carried over a restored
+    backup, one transaction. One difference no one sees: `put_jde_posting`'s new row takes the `updated_at` its
+    update writes (two readings of the clock a moment apart before).
+  - **The rule** (`tests/meta/test_sql_in_store.py`, by the syntax tree: comments and strings don't count): no
+    `.execute(`, `.executemany(`, `.executescript(` or `.cursor(` call, no `sqlite3.connect` and no `._conn` in
+    `ap_coder/` outside `core/store`, but its allowlist: the benchmark's tools, which work below the store on purpose
+    (`bench/seed.py` writes 300,000 invoices straight in SQLite; `load.py`'s audit and `volume.py`'s statement tracer
+    and row counts read the database they measure; `day.py`'s probe reads it read-only while the server runs;
+    `coding.py` backdates a replayed day's feedback), each with its reason. The list only shrinks: a listed file
+    with no SQL left fails the test. On 537708d it fails (the 55 lines); after, it passes.
+  - **Left:** SQL text written outside the store and run by its generic readers (`summary_query`, `summary_fetch`,
+    `summary_rows`, `search_rows`): `erp/insights.py`, `spend.py`, `controls.py`, `accruals.py`, `directory.py`,
+    `search.py`, `dupaudit.py`, `jde.py` and `web/pages/process.py`. The statements run in the store, but their text
+    (whole queries, or WHERE clauses) is not in it yet: the next step for the move (the rule checks what runs).
+  - (`core/store/{postings,transaction,hub,backups,vendors,purchasing,learning,__init__}.py`, `erp/jde_post.py`,
+    `erp/jde_sync.py`, `erp/hub/run.py`, `erp/hub/landing.py`, `ops/server_update.py`, `ops/share_report.py`;
+    `tests/meta/test_sql_in_store.py`)
