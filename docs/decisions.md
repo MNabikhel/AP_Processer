@@ -3947,12 +3947,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     ask noted in the database (a write at every page: once an hour a process instead); a function for each answer
     from its arguments beside its caller (two places to keep its format, stamp and settle the same: `ANSWERS` calls
     the caller).
-  - **Left:** the refresher shares the background process's one running thread with the bulk approvals, the
-    downloads and the queue's re-check: while many answers wait (the start after an update at 300,000), those are
-    slower meanwhile. An answer asked with today's date (Insights' operations, the recurring vendors) is worked out
-    by the first request of a new day, and at a start yesterday's are worked out again for nothing (`ANSWERS_KEPT`
-    of a name at most). A database never served still works each answer out once, at its first ask. The background
-    process's memory at 300,000 and the hour's p99 are to be measured again with it.
+  - **Left:** the refresher shares the background process's one running thread with the bulk approvals, the downloads
+    and the queue's re-check: while many answers wait (the start after an update at 300,000), those are slower
+    meanwhile. An answer asked with today's date (Insights' operations, the recurring vendors, and Spend's default view,
+    which ends today) is worked out by the first request of a new day, and at a start yesterday's are worked out again
+    for nothing (`ANSWERS_KEPT` of a name at most). A database never served still works each answer out once, at its
+    first ask. The background process's memory at 300,000 and the hour's p99 are to be measured again with it.
+  - **After its review (B-2046 to B-2048):** a worker shows its own copy only when it is the one the database keeps
+    (an answer too big to keep for every process, or holding NaN, is worked out where it is asked, as before); an
+    answer asked with arguments JSON can't hold is worked out where it is asked, said in the log (it failed the page
+    on the server); a laptop's Vendors page keeps its settled totals in the process as before, writing nothing.
   - (`ap_coder/core/store/reports.py`, `core/store/_base.py`, `core/store/backups.py`, `core/store/vendors.py`,
     `erp/spend.py`, `erp/insights.py`, `erp/recurring.py`, `erp/accruals.py`, `web/pages/sales_tax.py`,
     `web/pages/learning.py`, `web/refresh.py`, `web/app.py`, `web/server.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;

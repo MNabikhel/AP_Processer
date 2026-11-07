@@ -72,6 +72,17 @@ def _version(version: str) -> str:
     return f"{__version__}/{version}"
 
 
+def _args_text(name: str, again: Any) -> str | None:
+    """What the refresher works answer ``name`` out again from (``again``) as a want keeps it, JSON; None, said in the
+    log, when JSON can't hold it: that answer is then worked out where it is asked, as before D-198 (B-2047)."""
+    try:
+        return json.dumps(again, separators=(",", ":"))
+    except (TypeError, ValueError):
+        _log.warning("The answer %s is worked out where it is asked: what it is asked with is not JSON, so the "
+                     "background process can't be asked it", name)  # fmt: skip
+        return None
+
+
 def asked_key(asked: Any) -> str:
     """What an answer is for, as its row is found by: a digest of its ``repr`` (the same in every process)."""
     return hashlib.blake2b(repr(asked).encode("utf-8"), digest_size=16).hexdigest()
@@ -259,6 +270,8 @@ class ReportsMixin:
         refresher (one want, however many ask). None otherwise (no refresher, none to show, or the database's holds:
         another worked it out meanwhile): taken or worked out as before."""
         _, name, key = here
+        if _args_text(name, again) is None:  # (worked out here: the refresher couldn't be asked it, B-2047)
+            return None
         db = "" if seen[0] is None else str(seen[0])
         with self._conn() as conn:  # type: ignore[attr-defined]
             row = conn.execute("SELECT (SELECT 1 FROM ephemeral WHERE kind = 'lease' AND token = ? AND expires_at "
@@ -285,8 +298,8 @@ class ReportsMixin:
                 return None
             hit = (kept[0], decode(kept[1]), *kept[2:])
             _keep_here(here, hit)
-        elif not shown(hit):
-            return None
+        elif not (shown(hit) and found is not None and hit[2] == found[2]):  # type: ignore[index]
+            return None  # (its own only as the database keeps it: one it couldn't keep is worked out here, B-2046)
         if row[1] is None:
             self._briefly_or(lambda: self.want_answer(name, key, again, db), None)
         return (hit[1],)  # type: ignore[index]
@@ -312,13 +325,15 @@ class ReportsMixin:
         """Answer ``name`` for ``key`` (``asked_key``) asked now on database ``db`` (its ``summary_id``), with what the
         refresher works it out from (``again``, JSON-ready); ``wanted``: waiting for it, once however many ask it (the
         first want's place in line kept). The latest ``ANSWERS_KEPT`` asked of each name are kept."""
-        now = wall()
+        now, args = wall(), _args_text(name, again)
+        if args is None:
+            return
         with self._conn() as conn:  # type: ignore[attr-defined]
             conn.execute(
                 "INSERT INTO answer_wants (name, asked, args, db, asked_at, wanted_at) VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(name, asked) DO UPDATE SET args = excluded.args, db = excluded.db, "
                 "asked_at = excluded.asked_at, wanted_at = COALESCE(answer_wants.wanted_at, excluded.wanted_at)",
-                (name, key, json.dumps(again, separators=(",", ":")), db, now, now if wanted else None),
+                (name, key, args, db, now, now if wanted else None),
             )
             conn.execute("DELETE FROM answer_wants WHERE name = ? AND asked NOT IN (SELECT asked FROM answer_wants "
                          "WHERE name = ? ORDER BY asked_at DESC LIMIT ?)", (name, name, ANSWERS_KEPT))  # fmt: skip

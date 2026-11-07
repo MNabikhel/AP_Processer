@@ -491,3 +491,56 @@ def test_an_answer_asked_is_noted_at_most_every_hour_a_process_for_the_refresher
         asked()
     assert writes == ["rows", "rows"]
     assert json.loads(_wants(store)[0]["args"]) == []
+
+
+def test_an_answer_that_could_not_be_kept_for_every_process_is_worked_out_where_it_is_asked(
+    tmp_path, clock, monkeypatch
+):
+    """B-2046: an answer too big to keep for every process (``ANSWER_MOST_BYTES``; or holding NaN) was shown from the
+    worker's own memory for up to ``STALE_MOST`` while the refresher worked it out again and again in vain (it could
+    not keep it either). A worker shows its own only when it is the one the database keeps; else it works it out, as
+    before D-198."""
+    monkeypatch.setattr(reports, "ANSWER_MOST_BYTES", 10)
+    process = _Processes(monkeypatch)
+    worker, background = _server(Store(tmp_path / "ap.db"), monkeypatch), Store(tmp_path / "ap.db")
+    asked = _rows_answer(worker)
+    _plain(worker, ADD, "acme")
+    process("worker 1")
+    assert len(asked()) == 1 and asked.worked == 1  # (more than 10 bytes: not kept for every process)
+    assert background.take_lease(reports.REFRESHER, "the background process", 600)
+    _plain(worker, ADD, "zeta")
+    clock[0] += 31
+    assert asked() == _vendor_rows(worker) and len(_vendor_rows(worker)) == 2 and asked.worked == 2  # (not its own)
+    assert not [w for w in _wants(worker) if w["wanted_at"] is not None]
+
+
+def test_an_answers_arguments_that_are_not_json_never_fail_the_page(tmp_path, clock, monkeypatch, caplog):
+    """B-2047: on the company server a want's arguments were written with ``json.dumps`` where only a database error
+    was caught: an answer asked with arguments JSON can't hold (a date) failed its page with a 500, and only on the
+    server (a laptop writes no want). Such an answer is worked out where it is asked, as before, and said in the
+    log."""
+    process = _Processes(monkeypatch)
+    worker, background = _server(Store(tmp_path / "ap.db"), monkeypatch), Store(tmp_path / "ap.db")
+    asked = Shared(worker, "dated", lambda: _vendor_rows(worker), version="t-1", topic="", changes=("vendors",),
+                   settle=30, again=[dt.date(2026, 11, 7)])  # fmt: skip
+    process("worker 1")
+    assert asked() == []
+    assert background.take_lease(reports.REFRESHER, "the background process", 600)
+    _plain(worker, ADD, "acme")
+    clock[0] += 31
+    with caplog.at_level(logging.WARNING):
+        assert asked() == _vendor_rows(worker) != [] and asked.worked == 2
+    assert "dated" in caplog.text and not _wants(worker)
+
+
+def test_on_a_laptop_the_vendors_page_writes_nothing_to_show_its_totals(tmp_path, clock, store, ground_truth):
+    """B-2048: D-198 put the Vendors page's settled totals on ``shared_answer`` on a laptop too, so after each change
+    the page (which only reads) wrote the totals to the database and took and dropped a hold: three writes, a third
+    slower. On a laptop they are kept in the process as before (``summary_memo``); the company server shares them."""
+    _invoice(store, tmp_path, ground_truth, "A-1", "Acme Supply")
+    store.vendor_summaries(settled=True)
+    _invoice(store, tmp_path, ground_truth, "A-2", "Acme Supply")
+    clock[0] += 31
+    assert [v["invoices"] for v in store.vendor_summaries(settled=True)] == [2]
+    with sqlite3.connect(store.path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM report_answers WHERE name = 'vendor_totals'").fetchone()[0] == 0

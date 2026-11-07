@@ -2217,7 +2217,8 @@ def test_the_vendors_pages_totals_settle_but_every_other_reader_of_them_is_exact
     Spend's at 300,000 invoices, worked out again at every change) only show: once an invoice changed, the page takes
     the totals kept for ten times their work (B-2044: no floor, so a laptop's are exact). The Statements page, the JD
     Edwards worksheet and a vendor's controls read them exactly, and a vendor opened that came in after the page's
-    totals opens. The page's are one answer for every process (D-198), the exact ones each process's own."""
+    totals opens. On a laptop one memo in the process (B-2048); on the company server the page's are one answer for
+    every process (D-198: tests/web/test_refresh.py), the exact ones each process's own."""
     from ap_coder.core.store import reports
     from tests.webclient import client_for
 
@@ -2250,14 +2251,10 @@ def test_the_vendors_pages_totals_settle_but_every_other_reader_of_them_is_exact
     assert "Beta Parts" in opened and 'id="vendor"' in opened
     exact = store.vendor_summaries()
     assert sorted(v["invoices"] for v in exact) == [1, 2]
-    clock[0] = 1000 + settle + 10  # (past the first totals' settle)
+    clock[0] = 1000 + settle + 10  # (past the first totals' settle; the exact ones' work began at 1059)
     _invoice(store, tmp_path, ground_truth, "B-2", "Beta Parts")
-    again = store.vendor_summaries(settled=True)
-    assert again == store.vendor_summaries() != exact  # (worked out again, B-2 in it)
-    _invoice(store, tmp_path, ground_truth, "C-1", "Cobalt Tools")
-    clock[0] = 1000 + 2 * settle + 9
-    assert store.vendor_summaries(settled=True) == again  # (settled again, from its own work)
-    clock[0] += 1
+    assert store.vendor_summaries(settled=True) == exact  # (a laptop's: the exact read is the one kept, B-2048)
+    clock[0] += settle
     assert store.vendor_summaries(settled=True) == store.vendor_summaries()
 
 

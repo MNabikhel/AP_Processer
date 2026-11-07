@@ -745,11 +745,12 @@ class VendorsMixin:
         dates up to ``VENDORS_SETTLE`` seconds (or ten times their work) behind a change (D-197), one answer for every
         process, on the company server worked out again by its background process (D-198); the vendor list's own
         fields are read afresh either way."""
-        if settled:
+        if settled and self.background_answers:
             totals, spend = self.shared_answer("vendor_totals", self._vendor_totals, version=TOTALS_FORMAT,
                                                decode=tuple, settle=VENDORS_SETTLE, again=[])  # fmt: skip
-        else:
-            totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)
+        else:  # (a laptop's, settled too, kept in the process: written nowhere, B-2048)
+            totals, spend = self.summary_memo("vendor_totals", self._vendor_totals,
+                                              settle=VENDORS_SETTLE if settled else 0.0)  # fmt: skip
         rows = [dict(r) for r in totals]
         lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
         with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)
