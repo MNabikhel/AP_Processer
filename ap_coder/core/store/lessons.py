@@ -11,8 +11,8 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ...coding.po import po_key
 from ..audit import diff_coding
+from ..keys import mask_account, po_key
 from ..memory import vendor_key
 from ._base import (
     _STALE,
@@ -195,7 +195,6 @@ class LessonsMixin:
         A guess of the AI changed or a blank filled in is no correction (the lessons and the accuracy leave them out);
         an approval withdrawn (the invoice reopened) or a line forgotten is not listed."""
         from ...coding.line_tax import code_label
-        from ...coding.vendors import mask_account
 
         with self._conn() as conn:
             fields = conn.execute(

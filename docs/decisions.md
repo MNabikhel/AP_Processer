@@ -3292,3 +3292,65 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `reports.py`, `bulk_jobs.py`; `scripts/old_schemas.py`, `scripts/sql_inventory.py`, `scripts/probes/migrate.py`,
     `scripts/same_behaviour.py`; `tests/core/test_migrations.py`, `tests/core/test_dialect.py`,
     `tests/meta/test_dialect.py`, `tests/fixtures/old_schemas/`; docs/POSTGRES.md)
+- **D-192** · **Store transactions nest, and `core` is the base layer: a write joins the transaction under way, the
+  few that must commit on their own refuse in words; what the store keeps and compares by moves down into core, the
+  rest of core's imports from above are listed with why** (scale goal, phase 7, C2; B-1995, B-1996).
+  - **Why:** 29 writes began with a bare `BEGIN IMMEDIATE` and failed inside `Store.transaction()` or another write
+    with SQLite's "cannot start a transaction within a transaction" (the digest's R4): an approval's 25 to 30
+    commits could never become one. A `Store()` built inside a transaction committed it (R3). And `core` imported
+    the layers above it 76 times (53 file and module pairs), so the base layer could not be read, tested or moved to
+    another database apart from them.
+  - **Nesting:** 21 sites take the lock with `dialect.begin_write` (BEGIN IMMEDIATE, or join the transaction under
+    way): `add_user`, `set_role`, `deactivate_user`, `activate_user`, `change_password` (the new password),
+    `reset_password`, `unlock_username`, `unlock_address`, `authenticator_secret`, `update_after_check`,
+    `_recheck_duplicates`, `replace_proposal`, `create_export_batch`, `add_rules_applied`, `answer_manager_request`,
+    `delete_invoice` (`keep_approved`), `final_approve`, `save_supplier_profile` (a snapshot), `forget_if_withdrawn`,
+    `queue_imports`, `finish_import`. Called alone, each is what it was (`begin_write` is BEGIN IMMEDIATE when no
+    transaction is open, which a bare one needed); inside one, it is kept with its commit and undone with its
+    rollback. 8 keep their own, through `StoreCore._begin_alone` (`NestedWrite`, a RuntimeError in words, inside any
+    transaction or write, before anything is done): the four queues' claims (`next_page_read`, `next_verification`,
+    `next_azure_check`, `claim_import`: committed before the work starts, their heartbeat on another thread's
+    connection must find them, and the write lock is never held through minutes of reading) and a login's tries
+    (`authenticate` twice, `check_code`, `change_password`'s current password typed wrong: kept whatever comes next,
+    D-101; a rollback would undo the count of the pause). `StoreCore.__init__` inside a transaction under way makes
+    its schema on a connection of its own (`_conn(own=True)`): `executescript` commits first; nothing is due there
+    (the caller's Store made it current), so it takes no lock. `tests/meta/test_nested_writes.py`: no bare `BEGIN
+    IMMEDIATE` outside `dialect.py` (by the syntax tree, docstrings and comments left out; it finds the 29 on
+    f468b0f), and `ALONE` lists the 8 with why (the list only shrinks).
+  - **core below the rest:** moved down, under the names they had (their modules import them back, the same objects):
+    `core/keys.py`, new (`po_key`; `norm_invoice_number`, `norm_tax_number`, `same_tax_number`, `BUSINESS_NUMBER`,
+    `master_vendor_id`, `mask_account`, `IN_ERP`/`ADDED_HERE` from `coding/vendors.py`; `rules._plain` as `plain`;
+    `search_keys`, `register_keys`, `_raw` as `raw_number` from `erp/search.py`; `supplier_key`; `line_pattern` and
+    `LINE_GL`/`LINE_CC`/`LINE_FIELDS` from `ai/lessons.py`); `core/tax_setup.py`, new (the tax setup and the rate
+    table: `TaxRate`, `TaxRateTable`, `TaxTreatment`, `TaxSetup`, `load_tax_mapping`, `rates_path`, and the names of
+    the taxes, treatments and provinces the schema uses, from `coding/tax.py`, which keeps the checks); `core/memory.py`
+    (`HISTORY`, `AUTONOMOUS_REVIEWER`); `core/paths.py` (`page_worker._pid_alive` as `pid_alive`); the bank accounts'
+    columns into the part that writes them (`accounts.BANK_COLUMNS`, `banks.COLUMNS` imports it). 21 pairs and 34
+    statements gone: `core/schema.py` and `core/reference_data.py` no longer import `coding` at load. The one test
+    that patched `coding.tax.rates_path` to steer the store patches `core.tax_setup.rates_path`, where the store
+    asks now. `tests/meta/test_core_imports.py`: `KEPT`, 32 pairs (file, module) with why; a new one fails, one no
+    longer made must come off.
+  - **What stays, and why:** business rules the store runs inside its own transactions, where a move would split
+    them from the layer that owns them: the summary's facts (D-110: `bulk`, `taxreturn`, `accruals`, `insights`,
+    `spend`), the tax vote an approval learns and schema 17's step (`line_tax`), the due date (`terms`), the
+    duplicates checked again (`validation`), a supplier's autonomy and its template replayed (`capture.supplier`,
+    `capture.workflow`), month-end's billed lines (`po.positive_lines`), the coding rules read back (`rules.Rule`), a
+    guess's mark (`offline_coder.guessed`); a migration step (`old_readings`, D-89); the service's facts the backups
+    need (`ops`: server mode and server.json, the business time zone, IT's allowed folders, the system log); words of
+    the layers above (`audit`: C4 changes it in parallel, so only its import lines were touched; `lessons`'
+    `code_label`); the demo's files read with the imports' parsers (`samples`); the hub's table definitions (D-189);
+    an invoice stored before `tax_exempt` (`schema`, D-64).
+  - **Alternatives:** a registry the upper layers fill at import (the summary or an approval worked out without it
+    when nothing imported them first: wrong rows kept); every claim joining too (the heartbeat on another connection
+    would not see it); the kept ones left bare and listed (SQLite's error again); skipping the schema in a nested
+    `Store()` (a table with no version of its own, `bulk_jobs`, would be missed on an older database).
+  - **Left:** the 32 pairs (a design change each: facts handed to the store, or the summary as a plug-in). A write
+    called inside a read-only snapshot (`summary_snapshot`, `one_snapshot`) joins its deferred transaction: it takes
+    the write lock at its first write, and fails with SQLite's "database is locked" when another process wrote since
+    the snapshot began (it failed every time before).
+  - (`ap_coder/core/store/{_base,users,lessons,purchasing,managers,invoices,page_queue,capture,imports,summary,
+    transaction,accounts,backups,folder,learning,migrations,register,samples,vendors,__init__}.py`, `core/keys.py`,
+    `core/tax_setup.py`, `core/memory.py`, `core/paths.py`, `core/schema.py`, `core/reference_data.py`, `core/audit.py`
+    (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
+    `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
+    `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)

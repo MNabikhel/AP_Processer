@@ -12,8 +12,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..coding.tax import TaxSetup, TaxTreatment, load_tax_mapping
 from .csvio import read_csv_rows
+from .tax_setup import TaxRateTable, TaxSetup, TaxTreatment, load_tax_mapping
 
 UNASSIGNED = "UNASSIGNED"
 
@@ -239,8 +239,6 @@ def load_reference_data(
     tax_mapping: str | Path | None = None,
     policy_notes: str | Path | None = None,
 ) -> ReferenceData:
-    from ..coding.tax import TaxRateTable
-
     notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8-sig")) if policy_notes else []
     treatments: dict[str, TaxTreatment] = load_tax_mapping(tax_mapping) if tax_mapping else {}
     return ReferenceData(

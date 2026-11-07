@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..paths import pid_alive
 from . import backup_files
 from ._base import (
     _NOT_FOUND,
@@ -78,9 +79,7 @@ def restore_under_way(db: Path) -> dict | None:
         pid = int(found.get("pid") or 0)
     except (TypeError, ValueError):
         return None
-    from ap_coder.ai.page_worker import _pid_alive
-
-    return {**found, "pid": pid} if pid == os.getpid() or _pid_alive(pid) else None
+    return {**found, "pid": pid} if pid == os.getpid() or pid_alive(pid) else None
 
 
 def clear_left_restore(db: Path) -> str:
@@ -285,14 +284,12 @@ class BackupsMixin:
     def backup_in_progress(self) -> str:
         """When the backup being made now started ("" when none is), in this process or another (the server's
         background process makes the daily one while a web worker draws the page)."""
-        from ap_coder.ai.page_worker import _pid_alive
-
         for marker in self.backup_dir().glob(".making-*"):
             try:
                 pid, started = int(marker.name.split("-")[1]), marker.read_text(encoding="utf-8").strip()
             except (OSError, ValueError, IndexError):
                 continue
-            if pid == os.getpid() or _pid_alive(pid):
+            if pid == os.getpid() or pid_alive(pid):
                 return started
             with contextlib.suppress(OSError):
                 marker.unlink()  # left by a process that ended while making it

@@ -21,6 +21,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..keys import register_keys
+
 # A file whose content AP Coder has (``seen_files`` as ``f``): an invoice was made from it, or it is in line.
 _KNOWN = ("EXISTS (SELECT 1 FROM invoices AS i WHERE i.file_sha256 = f.sha256 UNION ALL SELECT 1 FROM invoices AS i "
           "WHERE i.original_sha256 = f.sha256 UNION ALL SELECT 1 FROM import_files AS q WHERE q.status IN ('waiting', "
@@ -155,8 +157,6 @@ def add_register_keys(conn: Any, columns: Any) -> None:
     a register made before them: looked for whatever the version (``columns``: the table's, empty when it has none)."""
     if not columns or "plain_name" in columns:
         return
-    from ...erp.search import register_keys
-
     conn.execute("ALTER TABLE erp_invoices ADD COLUMN plain_name TEXT NOT NULL DEFAULT ''")
     conn.execute("ALTER TABLE erp_invoices ADD COLUMN raw_number TEXT NOT NULL DEFAULT ''")
     rows = conn.execute("SELECT rowid, vendor_name, invoice_number FROM erp_invoices").fetchall()

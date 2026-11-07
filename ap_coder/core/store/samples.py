@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ...coding.po import po_key
+from ..keys import po_key
 from ..memory import vendor_key
 
 if TYPE_CHECKING:

@@ -9,8 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...coding.po import CLOSED, OPEN, po_key, positive_lines
+from ...coding.po import CLOSED, OPEN, positive_lines
 from ...coding.rules import Rule
+from ..keys import po_key
 from ..memory import vendor_key
 from ._base import (
     _ACTIVE_IN,

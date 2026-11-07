@@ -9,6 +9,8 @@ import sqlite3
 import zlib
 from typing import Any
 
+from ..keys import master_vendor_id, supplier_key
+from ..memory import AUTONOMOUS_REVIEWER
 from ._base import (
     _AZURE_IN_LINE,
     APPROVED,
@@ -103,9 +105,6 @@ class CaptureMixin:
 
     def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
         """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
-        from ...capture.supplier import supplier_key
-        from ...coding.vendors import master_vendor_id
-
         vendor_name = self._aliased(vendor_name, gst_number) or vendor_name  # a name AP corrected (D-119)
         return supplier_key(vendor_name, gst_number, master_vendor_id(self.vendor_ids(), vendor_name, gst_number))
 
@@ -462,8 +461,6 @@ class CaptureMixin:
         """The touchless numbers over the last ``days`` days: invoices processed, approved without a person,
         audited (a touchless candidate picked for a person to check) and how many of those a person corrected, and
         touchless invoices reopened (a person found something wrong after the fact)."""
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
-
         since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
         with self._conn() as conn:
             processed = conn.execute(
