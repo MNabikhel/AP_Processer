@@ -13,6 +13,7 @@ fixes) and at the final code, 963a7cc (D-199 and B-2049 too).
 | 100k, 10 min (the s100k database, served before) | 14,300 | 70 ms / 276 ms / 484 ms | 159 ms | 0 | 0 | 0 |
 | 300k, 10 min, first start of the database | 15,413 | 129 ms / 1.17 s / 5.78 s | 660 ms | 7 | 0 | 0 |
 | **300k, the hour after it** | **74,167** | **102 ms / 653 ms / 2.02 s** | **389 ms** | **0** | **0** | **0** |
+| 300k, 10 min, 200 people (the stretch), after the hour | 39,611 | 360 ms / 5.30 s / 30.08 s | 9.82 s | 147 | 0 | 0 |
 
 **Every target is met over the hour at 300,000 invoices and in the 100,000 run.** The server's logs: 0 'database is
 locked', 0 5xx, 0 tracebacks; approved, finally approved or exported twice: none; the summary equal to a
@@ -29,6 +30,11 @@ recomputation for every invoice the runs touched.
   answer is worked out a first time. Month-end's lines by invoice are built once (D-194; four asks at 17:18:24, the
   first worked out and the others waited for it: 12-50 s), Spend 15.8 s, Sales tax 9-11 s, Learning 6-12 s, each
   once. A database served before starts with its answers; a database's first start on this version pays it once.
+- **The stretch, 200 people** (`--users 200`, the rest as above): not met here. 200 people on 4 cores is 50 a core,
+  four times what 400 people put on each of the next stage's 32 vCPUs (100 here is twice). The cores were full: the
+  web workers 0.51-0.53 cores each, the background process 0.70, the capture processes 0.44 each (3.6 of 4), and the
+  wait grew from the seventh minute (the worst 10 s at p95: 11-31 s). 0 5xx, 0 'database is locked', nothing approved,
+  finally approved or exported twice, the summary equal to a recomputation.
 - **Where the CPU went at 30 minutes:** the busiest web worker: the check 22.5%, the queue 20%, the invoice page
   16%, search 15%; the background process: the kept answers worked out again 51%, the search downloads 32%.
 
