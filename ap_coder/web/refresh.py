@@ -14,6 +14,7 @@ background process: each is worked out where it is asked, as before.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import logging
@@ -107,21 +108,22 @@ class Refresher:
             if want is None:
                 self._halt.wait(POLL)
                 continue
-            refresh(store, want)
+            try:
+                refresh(store, want)
+            except Exception:  # noqa: BLE001 - its want not dropped (a busy database): taken again at the next look
+                log.info("the %s answer's want was not dropped", want["name"], exc_info=True)
         beat.join(RENEW + 1)
 
     def _hold(self, held: threading.Event) -> None:
         """Take and renew the hold every RENEW while running (``held`` while it is this process's), then let go."""
-        while True:
+        while not self._halt.is_set():
             try:
-                store = self.store_factory()
-                if self._halt.is_set():
-                    store.drop_lease(reports.REFRESHER, reports.OWNER)
-                    return
-                if store.take_lease(reports.REFRESHER, reports.OWNER, LEASE):
+                if self.store_factory().take_lease(reports.REFRESHER, reports.OWNER, LEASE):
                     held.set()
                 else:
                     held.clear()
             except Exception:  # noqa: BLE001 - a busy database: renewed at the next
                 logging.getLogger(__name__).debug("the answers' hold not renewed", exc_info=True)
             self._halt.wait(RENEW)
+        with contextlib.suppress(Exception):  # (else it runs out within LEASE)
+            self.store_factory().drop_lease(reports.REFRESHER, reports.OWNER)

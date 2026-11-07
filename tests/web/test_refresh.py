@@ -321,6 +321,33 @@ def test_the_refresher_works_out_one_answer_at_a_time_and_at_its_start_those_ask
     assert not refresher.thread.is_alive() and not store._lease_held(reports.REFRESHER)
 
 
+def test_a_database_too_busy_to_drop_a_want_stops_nothing_the_want_is_taken_again(tmp_path, clock, monkeypatch):
+    """The database busy just as a want worked out is dropped (another writer, longer than the wait): the refresher
+    goes on, and takes the want again at its next look (its answer held then: nothing worked out twice)."""
+    store = Store(tmp_path / "ap.db")
+    worked, real = [], store.want_done
+    monkeypatch.setitem(refresh.ANSWERS, "rows", lambda store, args: worked.append(1))
+    busy = [True]
+
+    def want_done(*args, **kwargs):
+        if busy[0]:
+            busy[0] = False
+            raise sqlite3.OperationalError("database is locked")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "want_done", want_done)
+    store.want_answer("rows", "k", [], _db(store))
+    refresher = refresh.Refresher(lambda: store).start()
+    try:
+        ends = time.monotonic() + 10
+        while store.next_want() is not None and time.monotonic() < ends:
+            time.sleep(0.05)
+        assert store.next_want() is None and worked == [1, 1] and refresher.thread.is_alive()
+    finally:
+        refresher.stop()
+        refresher.thread.join(10)
+
+
 def _ask_every_answer(store: Store, today: dt.date) -> None:
     """Each answer ``refresh.ANSWERS`` works out again, asked as its page asks it."""
     from ap_coder.erp import accruals, insights, recurring, spend

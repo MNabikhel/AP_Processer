@@ -374,7 +374,8 @@ the launcher.
   `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
   laptop's start; the queue page shows the earlier checks meanwhile and says so), the long downloads (search to
   Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs: `web/pages/downloads.py`, D-169; the jobs in
-  `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the daily
+  `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the reports' settled
+  answers worked out again (`ap_coder/web/refresh.py:Refresher`, D-198: below), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
   `<data>/.ap_coder_background.lock` (one per data folder). It stops when
   its input closes (the server stopping or ending). The workers share what they know through the database: jobs
@@ -488,7 +489,15 @@ the launcher.
   page's workload and totals settle by their own work alone, exact on a laptop). One process works an answer out while the others wait for it, and take it even when
   something changed meanwhile (it was worked out after they asked, B-1802); of those a page only shows, the others
   take the answer before meanwhile instead (this database's latest, D-179). One an older AP Coder wrote, over 16 MB,
-  or worked out in a write under way is not kept for the others.
+  or worked out in a write under way is not kept for the others. On the company server a settled answer is never
+  worked out again by a web worker that has one to show (D-198): once it no longer holds, the request takes the one
+  kept (this database's, its format, up to `STALE_MOST`, 30 minutes, old) and leaves a want in `answer_wants`
+  (`ap_coder/core/store/reports.py:ReportsMixin._meanwhile`); the background process's refresher (its `ephemeral`
+  lease "answers/refresher", which the askers count on) works the wants out one at a time, oldest first, through
+  `ap_coder/web/refresh.py:ANSWERS` (each answer's own caller, so its format, stamp and settle), and at its start
+  those asked in the last day. A request with nothing to show (the first ask, another format after an update) works
+  it out, or waits for the refresher's work under way, as before; so does one past the cap or with the refresher
+  down. A laptop works each out in the request, as before.
 
   **The invoices folder listed once for every process** (D-176): Import invoices on the server shows the folder's
   latest listing, kept in `folder_listings` (`core/store/folder.py`): a pick-up's (the Process button, a scheduled
