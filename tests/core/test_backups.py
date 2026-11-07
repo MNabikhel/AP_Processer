@@ -1035,3 +1035,165 @@ def test_a_backup_made_from_the_servers_console_keeps_the_second_folders_history
     assert store.get_setting("backup_copy_status").startswith("ok")
     assert {p.name for p in share.glob("ap_coder-*.db") if DAILY.fullmatch(p.stem)} == server_keeps
     assert len(server_keeps) > 2 * backup_files.LAPTOP_RETENTION.daily
+
+
+# --- server-update's safety copy, made ahead while AP Coder serves (D-196) ----------------------------------------
+
+
+def _same_content(a: Path, b: Path) -> bool:
+    dumps = []
+    for path in (a, b):
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            dumps.append(list(conn.iterdump()))
+        finally:
+            conn.close()
+    return dumps[0] == dumps[1]
+
+
+def _busy(data: Path) -> bool:
+    """Another thread (as another process would) finds the backups' lock held."""
+    import threading
+
+    from ap_coder.core.store import backup_files
+
+    found = []
+
+    def take() -> None:
+        try:
+            with backup_files.exclusive(data):
+                found.append(False)
+        except backup_files.Busy:
+            found.append(True)
+
+    other = threading.Thread(target=take)
+    other.start()
+    other.join(10)
+    return found == [True]
+
+
+def test_a_copy_made_ahead_holds_what_is_written_until_it_is_finished(tmp_path):
+    """D-196: the safety copy is begun while the old version serves. While it is held the database file is not written
+    at all, whatever is written meanwhile and whoever tries to checkpoint it (it all stays in the write-ahead log);
+    finished, the copy is the database as it is then, one file; the backups' lock is held from start to close."""
+    from ap_coder.core.store.backups import CopyAhead, setting_in
+
+    db, part = tmp_path / "ap_coder.db", tmp_path / "backups" / "ap_coder-x-before-update-0.4.0.db.part"
+    store = Store(db)
+    store.set_setting("marker", "as it was copied")
+    ahead = CopyAhead(db, part)
+    assert ahead.start() == ""
+    held_still = db.read_bytes()
+    worker = sqlite3.connect(db, timeout=0.2)  # another process of AP Coder, writing on
+    worker.execute("PRAGMA wal_autocheckpoint=10")
+    for n in range(300):  # (about 300 pages: every commit past 10 tries a checkpoint)
+        with worker:
+            worker.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (f"row {n}", "x" * 4000))
+    assert worker.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()[1] > 0  # (it ran: nothing written into the file)
+    assert worker.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 1  # busy: the file is held
+    worker.close()
+    store.set_setting("marker", "written while it was copied")
+    assert db.read_bytes() == held_still
+    assert _busy(tmp_path)  # no backup or restore meanwhile (another process's, a web worker's)
+    assert ahead.finish()
+    assert sorted(p.name for p in part.parent.iterdir() if p.name.startswith(part.name)) == [part.name]  # one file
+    done = part.rename(part.with_suffix(""))  # (as server-update names it, then lets go)
+    ahead.close()
+    assert setting_in(done, "marker") == "written while it was copied" and _same_content(done, db)
+    assert not _busy(tmp_path)  # the lock let go
+
+
+@pytest.mark.parametrize("why", ["a reader on an older state", "not in WAL mode"])
+def test_a_database_that_cant_be_held_still_is_not_copied_ahead(tmp_path, monkeypatch, why):
+    """A reader that keeps part of the log from the file (a long report), longer than it waits: the copy is not begun
+    (said why), nothing is left, and the lock is let go: server-update then copies it whole once stopped."""
+    from ap_coder.core.store import backups
+
+    db, part = tmp_path / "ap_coder.db", tmp_path / "backups" / "x.db.part"
+    if why == "not in WAL mode":
+        with sqlite3.connect(db) as conn:
+            conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    else:
+        store = Store(db)
+        reader = sqlite3.connect(db, isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM settings").fetchone()
+        store.set_setting("marker", "after the reader began")
+    monkeypatch.setattr(backups, "HOLD_WAIT", 0.3)
+    ahead = backups.CopyAhead(db, part)
+    said = ahead.start()
+    assert said and ("WAL" in said if why == "not in WAL mode" else "never still" in said)
+    assert ahead.held is None and not [p for p in part.parent.glob("*") if p.name != ".lock"]
+    assert not _busy(tmp_path)
+
+
+def test_a_copy_made_ahead_whose_file_was_written_after_all_is_not_finished(tmp_path):
+    """Should the file be written while it is held (it can't: but a copy made of a file that changed would be a
+    damaged backup), ``finish`` says so: the copy is removed and the database is copied whole, the lock still held."""
+    from ap_coder.core.store.backups import CopyAhead
+
+    db, part = tmp_path / "ap_coder.db", tmp_path / "backups" / "x.db.part"
+    Store(db).set_setting("marker", "x")
+    ahead = CopyAhead(db, part)
+    assert ahead.start() == ""
+    os.utime(db, ns=(time.time_ns(), time.time_ns() + 10**9))
+    assert not ahead.finish() and not part.exists()
+    assert _busy(tmp_path)  # (the whole copy is made under the same lock)
+    ahead.close()
+    assert not _busy(tmp_path)
+
+
+def test_a_copy_made_ahead_never_reads_sqlites_lock_byte_page(tmp_path, monkeypatch):
+    """In a database over 1 GiB the page from byte 2**30 holds no data, and on Windows bytes of it are locked by
+    every process that opens the database (a read of them fails): the copy writes it as zeros, never reads it."""
+    from ap_coder.core.store import backups
+
+    page, pages = 4096, 12
+    source, dest = tmp_path / "db", tmp_path / "copy"
+    source.write_bytes(os.urandom(page * pages))
+    monkeypatch.setattr(backups, "LOCK_PAGE", 5 * page)
+    monkeypatch.setattr(backups, "CHUNK", 3 * page)
+    read = []
+    real_open = open
+
+    class Watched:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.f.close()
+
+        def seek(self, n):
+            self.f.seek(n)
+
+        def read(self, n):
+            read.append((self.f.tell(), self.f.tell() + n))
+            return self.f.read(n)
+
+    monkeypatch.setattr(backups, "open", lambda p, m: Watched(real_open(p, m)) if m == "rb" else real_open(p, m),
+                        raising=False)  # fmt: skip
+    backups._copy_as_is(source, dest, page * pages, page)
+    want = source.read_bytes()
+    assert dest.read_bytes() == want[: 5 * page] + bytes(page) + want[6 * page :]
+    assert not [r for r in read if r[0] < 6 * page and r[1] > 5 * page]
+
+
+def test_a_list_made_without_the_databases_sha256_is_checked_by_its_size_until_it_is_read_in(tmp_path):
+    """server-update's safety copy lists its files with the service stopped, and reads the database's SHA-256 once it
+    serves again (D-196): meanwhile the deep check compares the size (never "damaged" for want of it)."""
+    from ap_coder.core.store import backup_files
+
+    store = Store(tmp_path / "ap.db")
+    made = store.backup_to(store.backup_dir() / "ap_coder-20261107-120000-before-update-0.4.0.db")
+    backup_files.snapshot(made, store.path.parent, hashed=False)
+    assert backup_files.read_list(made)["database_sha256"] == ""
+    assert backup_files.check(made, deep=True).complete
+    backup_files.hash_database(made)
+    assert backup_files.read_list(made)["database_sha256"] == backup_files._sha_size(made)[0]
+    with open(made, "r+b") as f:  # damaged since, the size the same
+        f.seek(200)
+        f.write(b"\xff")
+    assert backup_files.check(made, deep=True).database_damaged

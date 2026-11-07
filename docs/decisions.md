@@ -3434,3 +3434,70 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
     `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
     `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)
+- **D-196** · **server-update's safety copy is made while the old version serves and brought up to date once it is
+  stopped, with only what was written since: the downtime no longer grows with the database** (scale goal, phase 8,
+  E4; B-2035).
+  - **Why:** on GitHub's Windows runner (`windows-server-update`, 20,000 invoices, 662 MB) the update was down 38.8 s,
+    33.5 s of it the safety copy, a whole copy made with the service stopped (D-188): about 50 s per GB there, so a
+    year's 10 GB (25,000 invoices a month at 34 MB per 1,000) would be down about 8 minutes, past the 5 of target 5.
+  - **Made ahead** (`core/store/backups.py` `CopyAhead`, from `server_update.copy_ahead`, step 6, after the
+    self-check, the marker still at `prepare`): with the backups' lock held (`backup_files.exclusive`: no backup or
+    restore meanwhile), the write lock is taken for a moment (`BEGIN IMMEDIATE`), a `wal_checkpoint(PASSIVE)` that
+    wrote the whole log into the file is waited for (tried again every 0.2 s for `HOLD_WAIT`, 60 s), and a read
+    transaction begun then. While it lasts SQLite writes nothing into the database file: a checkpoint stops at the
+    oldest reader's snapshot (sqlite.org/wal.html: it "must stop when it reaches a page in the WAL that is past the
+    end mark of any current reader"; in wal.c a backfill needs the exclusive `WAL_READ_LOCK(0)` this reader holds), and
+    this reader's snapshot is the file itself, so what the old version writes stays in the log. The file is then
+    copied as it is, flushed to the disk; SQLite's lock-byte page (from byte 2**30, in a database over 1 GiB) is
+    written as zeros and never read: it holds no data, and on Windows bytes of it are locked by whoever opens the
+    database, so a read of them fails. The data folder's files are listed and the new ones kept then too
+    (`backup_files.snapshot(..., database=db)`: the invoices' files named by the live database, since even a
+    read-only open of the copy would make its `-wal` and `-shm`). The cost: while the copy is made (a minute per GB
+    on a slow disk) the log grows by what the old version writes, never written into the file before the stop (tens
+    of MB in minutes of a busy day; the room check keeps `BACKUP_RESERVE`, 512 MB, to spare), and no backup or restore
+    runs (the daily one waits for its next check).
+  - **Brought up to date** (`safety_copy(db, label, ahead)`, step `safety-copy`, the service stopped): the file's size
+    and time checked as they were, its `-wal` copied beside the copy, the hold let go, and the copy opened: SQLite's
+    own recovery reads that log, `wal_checkpoint(TRUNCATE)` writes it in, `journal_mode=DELETE` makes it one file. A
+    database file and its log are what SQLite reads as the database, so the copy is the database as it was the
+    moment the service stopped (a frame cut short at the log's end is dropped by the recovery, as after a crash). Then
+    renamed, the backups folder flushed off Windows (`_flush_folder`: the copy is on the disk before the migration),
+    the files listed again (only what changed since step 6 is read), and the database's SHA-256 written in the list
+    once the new version answers (`backup_files.hash_database`; until then `check(deep=True)` compares the size). Its
+    time is what was written while the copy was made, not the database's size.
+  - **D-188's guarantee and the power cuts:** unchanged, and no step is new. The safety copy is whole and on the disk
+    before the migration, as before. A cut while the copy is made ahead is `prepare` (rule `old`: the old version
+    serves on its own database, only ever read; what is left in backups, the copy, its `-wal`/`-shm`, its list, is
+    removed by `_drop_cut_copy`); while it is brought up to date, `safety-copy` (`old`: the same); in the migration,
+    `migrate` (`back`: the copy put back holds what the old version did while it was made ahead). Each is cut for real
+    (a `BaseException` inside the copy, inside the bringing up to date, in the migration) and dealt with by
+    server-update and by the service's start, the old version's last work kept each time
+    (`tests/ops/test_update_recovery.py::test_an_update_cut_short_in_its_safety_copy_made_ahead_loses_nothing`). The
+    file is held still while another connection writes 300 pages and checkpoints, PASSIVE and TRUNCATE
+    (`tests/core/test_backups.py::test_a_copy_made_ahead_holds_what_is_written_until_it_is_finished`, which fails
+    without the read transaction), and the safety copy has what was done between the copy and the stop, after an
+    update, a rollback and `--back` (`tests/ops/test_server_update.py`).
+  - **When it can't be held still** (a report that reads in one transaction for over a minute, a database not in WAL
+    mode) the update says so and makes the copy whole once stopped, D-188's way; also when the file's size or time
+    changed meanwhile after all (never a copy of a file that moved). A copy ahead that fails (a full disk) stops
+    nothing: "not updated".
+  - **Measured** (Linux, 4 cores, `server_update_downtime.py local`, before → after; 20,000 invoices, 669 MB, on the
+    disk; 120,000 invoices, 2.45 GB, made by duplicating a seed's invoices, events and feedback, in RAM since the
+    shared disk was short of room): 669 MB down 11.9 s → 7.3 s, the safety copy 6.2 s → 2.4 s (7.0 s ahead, while
+    serving); 2.45 GB down 15.9 s → 6.0 s, the safety copy 10.4 s → 1.9 s (8.3 s ahead). What is left at the stop is
+    the data folder's files listed again, about 1.8 s per 20,000 invoice files there (`_elsewhere` now resolves each
+    invoice's path once, not once per folder with the folders again each time: 2.1 → 1.75 s; same result). The
+    Windows job records `copy_ahead_s` too.
+  - **Alternatives:** the old database file kept as the safety copy (a rename is instant) and a copy of it migrated
+    (that copy is the same whole copy in the downtime); SQLite's backup API while serving, then again once stopped
+    (it copies every page each time, or starts again when the database changes); a snapshot held at the stop and
+    copied while the new version serves (less downtime still, but until that copy is made a power cut leaves no way
+    back unless nothing opens the database first, and a rollback has no copy to put back); `VACUUM INTO` (a whole
+    copy); SQLite's session extension (not in Python's sqlite3); no copy when the schema is unchanged (the new
+    version still writes, and `--back` would have no database of the stop); a hard link (one file: the new version's
+    checkpoints write into it); comparing pages after the stop (reads the whole database).
+  - **Left:** the files listed at the stop are one walk with two stats a file (more on Windows); `--back`'s own safety
+    copy is still whole (the update's downtime is the target); the Windows job's number with this is its next run's.
+  - (`ap_coder/core/store/backups.py`, `core/store/backup_files.py`, `ops/server_update.py`, `ops/update_recovery.py`,
+    `scripts/ci/server_update_downtime.py`, `docs/SERVER.md` section 11; `tests/core/test_backups.py`,
+    `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`)

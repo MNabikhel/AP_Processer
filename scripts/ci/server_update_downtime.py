@@ -1,7 +1,8 @@
 """server-update's downtime on a big database (D-188): from the service stopped to the new version answering, which
 must stay under 5 minutes. server-update prepares the new version while the old one serves (unzip, set up, a copy
-of the database updated, the self-check), so the downtime is the stop, the safety copy, the database's update and
-the start; it records each in server.json (``history[-1]["times"]``).
+of the database updated, the self-check, the safety copy made ahead: D-196), so the downtime is the stop, the safety
+copy brought up to date (what was written since), the database's update and the start; it records each in
+server.json (``history[-1]["times"]``).
 
 On Windows (CI's job "server-update under 5 minutes"), from a checkout, with the offline bundle built once:
 
@@ -44,8 +45,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LIMIT = 300.0  # seconds: the downtime allowed (D-188)
 PORT = 8541
 PARTS = [("prepare_s", "prepared, the old version serving"), ("check_migration_s", "  of it: a copy of the database "
-         "updated"), ("self_check_s", "  of it: the self-check"), ("stop_s", "stopping the service"),
-         ("safety_copy_s", "the safety copy"), ("migrate_s", "the database updated"),
+         "updated"), ("self_check_s", "  of it: the self-check"), ("copy_ahead_s", "  of it: the safety copy, ahead"),
+         ("stop_s", "stopping the service"), ("safety_copy_s", "the safety copy (what changed since)"),
+         ("migrate_s", "the database updated"),
          ("start_s", "starting, until it answers"), ("downtime_s", "DOWNTIME (stopped to answering)")]  # fmt: skip
 
 

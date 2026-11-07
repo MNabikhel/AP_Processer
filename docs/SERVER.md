@@ -647,22 +647,31 @@ version running keeps serving staff:
 3. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
 4. updates a copy of the database with the new version (in `D:\APCoderData\service\update-check`, removed after),
    which proves the update works on your data and says how long it takes;
-5. runs the self-check (the sample invoices read right).
+5. runs the self-check (the sample invoices read right);
+6. copies the database for the backup of step 8, as it is, and keeps the invoice files that are new (staff work on:
+   what they write meanwhile waits in the database's write-ahead log, `ap_coder.db-wal`, until step 8).
 
 Then the switch, the only time staff see AP Coder closed:
 
-6. stops the service;
-7. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
-8. updates the database (the new version opens it once);
-9. starts the service from the new folder, and waits for it to answer. The backup is then copied to the second
-   backup folder, when one is set.
+7. stops the service;
+8. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`: the
+   copy of step 6 with what was written since added, so it is the database as it was the moment the service
+   stopped;
+9. updates the database (the new version opens it once);
+10. starts the service from the new folder, and waits for it to answer. The backup's SHA-256 is then written in its
+    list, and the backup copied to the second backup folder, when one is set.
 
 It prints how long the service was down (from the stop to the new version answering) and each step's time, and
-keeps them in `server.json`'s `history` (`times`, in seconds). A year's database takes a few minutes for step 7 and
-the start; CI checks that with a database of 20,000 invoices it stays under 5 minutes on Windows (11 s on a Linux
-test computer, D-188). If step 2, 3, 4 or 5 fails, nothing was stopped or changed: the old version kept serving, and it says
-why. If step 6, 7, 8 or 9 fails, it puts the database backup back, switches the service back to the old folder and
-starts it again, and says why. Either way the new folder is kept to look at; delete it when done.
+keeps them in `server.json`'s `history` (`times`, in seconds). The downtime no longer grows with the database: the
+whole copy is made in step 6, while staff work (about a minute per GB on a slow disk), and step 8 adds only what
+was written during it. What step 8 still does for every invoice is to look at its file again (about 2 seconds per
+20,000 files on a Linux test computer). Measured there (D-196): with 20,000 invoices (669 MB) down 7 s, and with
+120,000 (2.45 GB) down 6 s, where it was 12 s and 16 s with the copy made in step 8. CI checks that with 20,000
+invoices it stays under 5 minutes on Windows. If the database can't be copied in step 6 (a report that reads for over a
+minute keeps it from being still), it says so and copies it whole in step 8, as before. If step 2 to 6 fails,
+nothing was stopped or changed: the old version kept serving, and it says why. If step 7, 8, 9 or 10 fails, it puts
+the database backup back, switches the service back to the old folder and starts it again, and says why. Either way
+the new folder is kept to look at; delete it when done.
 
 **If the power goes off (or the window is closed) during an update**, where it was is in
 `D:\APCoderData\service\update.json` at each step. The service's next start (the server booting, or the scheduled
@@ -670,8 +679,9 @@ task's 5-minute retry) and the next `server-update` act on it before anything el
 leaves to `server-update` what only an administrator may do: below), and say what they did in `logs\service.log` or
 on screen:
 
-- cut short while it prepared, stopped the service or made the backup: the old version starts as it was (its
-  database was not touched); a backup cut short is removed;
+- cut short while it prepared (the copy of step 6 too), stopped the service or made the backup: the old version
+  starts as it was (its database was only read: what staff did meanwhile is in it); a backup cut short is removed,
+  with all SQLite left beside it;
 - cut short while the new version updated the database: the backup made a moment before (the service already
   stopped, so nothing was done since) is put back, and the old version starts;
 - cut short at or after the switch: the update is finished and the new version starts (`server-update --back` goes

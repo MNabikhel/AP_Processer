@@ -10,11 +10,12 @@ free is one left behind.
 
 What is done with it, decided per step (:data:`RULES`):
 
-* ``prepare`` (unzip, set up, a copy of the database updated, the self-check), ``stop`` and ``safety-copy``: the old
-  version still has its own database, untouched: it just starts. The new folder is left (the next ``server-update``
-  unzips beside it; delete it when done) and a safety copy cut short is removed.
-* ``migrate``: the new version may have updated part of the database: the safety copy (made with the service stopped,
-  so nothing was done since) is put back and the old version starts.
+* ``prepare`` (unzip, set up, a copy of the database updated, the self-check, the safety copy made ahead: D-196),
+  ``stop`` and ``safety-copy`` (that copy brought up to date): the old version still has its own database, untouched
+  (the copy only reads it): it just starts. The new folder is left (the next ``server-update`` unzips beside it;
+  delete it when done) and a safety copy cut short is removed, with all SQLite left beside it.
+* ``migrate``: the new version may have updated part of the database: the safety copy (brought up to date with the
+  service stopped, so nothing was done since) is put back and the old version starts.
 * ``switch``: the database is updated and the new folder checked; the switch is finished (the new version starts).
   The service host finishes it only when it runs the new folder already (run.cmd was rewritten), else it goes back.
 * ``start``: the switch was made: the new version starts (``server-update --back`` goes back if it turns out wrong;
@@ -188,10 +189,12 @@ def _safety(state: dict, db: Path) -> Path | None:
 
 
 def _drop_cut_copy(state: dict, db: Path) -> None:
-    """A safety copy cut short (``.part``): never left looking like a backup."""
+    """A safety copy cut short (``.part``, and SQLite's ``-journal``, ``-wal``, ``-shm`` beside it, B-2035; one made
+    ahead, D-196, its list of files too): never left looking like a backup, nor left at all."""
     label = str(state.get("label") or "")
     if label:
-        for part in (db.parent / "backups").glob(f"ap_coder-*-{label}.db.part"):
+        backups = db.parent / "backups"
+        for part in [*backups.glob(f"ap_coder-*-{label}.db.part*"), *backups.glob(f"ap_coder-*-{label}.db.files.json")]:
             part.unlink(missing_ok=True)
 
 
