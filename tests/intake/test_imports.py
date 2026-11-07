@@ -15,20 +15,14 @@ from types import SimpleNamespace
 import pytest
 
 from ap_coder.core.config import Settings
-from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store import Store
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake import imports
 from ap_coder.intake.imports import NO_ROOM, Reader, noted, pick_up
 from tests.conftest import SAMPLES
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 
 PDFS = sorted(p.name for p in SAMPLES.glob("*.pdf"))[:4]
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def _settings() -> Settings:

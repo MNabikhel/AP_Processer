@@ -1,17 +1,11 @@
 """Duplicates against the ERP's invoice register."""
 
-import json
-
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import registers
-from tests.conftest import SAMPLE_STEM, SAMPLES
-
-
-def _gt(**changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), **changes}
+from tests.webclient import gt as _gt
 
 
 def _codes(store, doc):

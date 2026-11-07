@@ -101,13 +101,6 @@ def test_the_server_grace_is_at_most_30_seconds():
 # --- Several web workers share what they know through the database ----------------------------------------------
 
 
-@pytest.fixture
-def store(tmp_path):
-    from ap_coder.core.store import Store
-
-    return Store(tmp_path / "private" / "ap_coder.db")
-
-
 def _workers(store, n: int = 2):
     """``n`` web workers' apps on one database, as the server's processes are (one key, no background work)."""
     import secrets

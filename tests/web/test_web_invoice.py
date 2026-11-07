@@ -22,20 +22,15 @@ from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 from tests.browser import browser_on, wait_until
-from tests.conftest import chromium_path, copy_database
-
-PAGE = {"X-AP-Coder": "1"}
+from tests.conftest import chromium_path
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
 
 @pytest.fixture(scope="module")
 def demo_db(cost_centers_demo_template):
     """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
     return cost_centers_demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture(autouse=True)

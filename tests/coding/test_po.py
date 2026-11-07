@@ -1,7 +1,6 @@
 """Purchase orders: import, matching (2- and 3-way) and the checks on invoices that quote a PO."""
 
 import copy
-import json
 import sqlite3
 
 import pytest
@@ -21,14 +20,10 @@ from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_purchase_orders
 from ap_coder.ops.demo import load_demo, remove_demo
-from tests.conftest import SAMPLES
+from tests.webclient import gt as _gt
 
 NW = "northwind_ON_HST_NW-2026-0912"
 CN = "northwind_ON_HST_CN-2026-0047"
-
-
-def _gt(stem):
-    return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
 
 
 @pytest.fixture

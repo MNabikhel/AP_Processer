@@ -16,16 +16,11 @@ from ap_coder.core.store import PARKED, REVIEW
 from ap_coder.core.store.managers import CONFIRMED, SENT_BACK, WAITING
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
-from tests.conftest import copy_database
+from tests.stores import cost_centers_demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import form_of
 from tests.webclient import PAGE, client_for, enrol, web_settings
 
 GOOD = "correct horse battery"
-
-
-@pytest.fixture
-def store(cost_centers_demo_template, tmp_path):
-    return copy_database(cost_centers_demo_template, tmp_path / "private" / "ap_coder.db")
 
 
 def _coded_form(store, iid, center="CC-200"):

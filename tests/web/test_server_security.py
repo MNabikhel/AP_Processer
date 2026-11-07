@@ -13,10 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core.audit import describe
-from ap_coder.core.store import Store, load_sample_setup, users
+from ap_coder.core.store import Store, users
 from ap_coder.core.store.users import LOCKED, LoginRefused
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
@@ -34,13 +35,6 @@ def clock(monkeypatch):
     found = Clock()
     monkeypatch.setattr(users, "_clock", found)
     return found
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def account(store: Store, username: str, role: str = "clerk", password: str = GOOD) -> int:

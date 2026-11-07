@@ -2,7 +2,6 @@
 
 import copy
 import datetime as dt
-import json
 
 import pytest
 
@@ -18,15 +17,11 @@ from ap_coder.coding.tax import (
 )
 from ap_coder.coding.validation import validate_coding
 from ap_coder.core.schema import InvoiceCoding
-from tests.conftest import SAMPLES
+from tests.webclient import gt as _gt
 
 QC = "laurentides_QC_TPS_TVQ_SIL-4471"
 BC = "pacific_BC_GST_PST_PO-77120"
 ON = "northwind_ON_HST_NW-2026-0912"
-
-
-def _gt(name):
-    return json.loads((SAMPLES / "ground_truth" / f"{name}.json").read_text())
 
 
 def _codes(coding_dict, reference):

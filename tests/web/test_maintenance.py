@@ -9,21 +9,15 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store import Store
 from ap_coder.core.store.backups import clear_left_restore, restore_marker, restore_under_way
 from ap_coder.web.app import create_app
 from ap_coder.web.maintenance import MESSAGE
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.web.test_server_web import account, log_in
 from tests.webclient import PAGE, web_settings
 
 HTML = {"accept": "text/html,application/xhtml+xml"}
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def worker(store: Store, server: bool = True) -> TestClient:

@@ -9,25 +9,18 @@ import sqlite3
 import threading
 import time
 
-import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.coding import bulk
-from ap_coder.core.store import APPROVED, REVIEW, Store, bulk_jobs, load_sample_setup
+from ap_coder.core.store import APPROVED, REVIEW, Store, bulk_jobs
 from ap_coder.web import jobs
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import review
 from tests.conftest import until
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, client_for, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def _clean(store: Store, n: int) -> list[int]:
