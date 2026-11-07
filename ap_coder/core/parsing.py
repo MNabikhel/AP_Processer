@@ -299,7 +299,7 @@ def _typed_amount(value: Any) -> float | None:
 
 # ---------------------------------------------------------------- dates printed (the readers' grammar)
 
-MONTHS = {
+_ENGLISH_AND_FRENCH = {
     "jan": 1, "january": 1, "janv": 1, "janvier": 1,
     "feb": 2, "february": 2, "fev": 2, "fevr": 2, "fevrier": 2,
     "mar": 3, "march": 3, "mars": 3,
@@ -313,6 +313,7 @@ MONTHS = {
     "nov": 11, "november": 11, "novembre": 11,
     "dec": 12, "december": 12, "decembre": 12,
 }  # fmt: skip
+MONTHS = dict(_ENGLISH_AND_FRENCH)
 # The months as German, Dutch, Spanish, Italian and Portuguese invoices print them ("24. Januar 2014", "29 maart
 # 2014", "10 de febrero de 2022"), accents off. Not their short forms that are English words ("set", "out", "ago").
 MONTHS.update({
@@ -529,13 +530,7 @@ def infer_day_first(text: str) -> bool | None:
 
 # ---------------------------------------------------------------- a date printed as a field's whole text
 
-_FIELD_MONTHS = {
-    "jan": 1, "janv": 1, "january": 1, "janvier": 1, "feb": 2, "fev": 2, "fevr": 2, "february": 2, "fevrier": 2,
-    "mar": 3, "march": 3, "mars": 3, "apr": 4, "avr": 4, "april": 4, "avril": 4, "may": 5, "mai": 5,
-    "jun": 6, "june": 6, "juin": 6, "jul": 7, "july": 7, "juil": 7, "juillet": 7, "aug": 8, "august": 8, "aou": 8,
-    "aout": 8, "sep": 9, "sept": 9, "september": 9, "septembre": 9, "oct": 10, "october": 10, "octobre": 10,
-    "nov": 11, "november": 11, "novembre": 11, "dec": 12, "december": 12, "decembre": 12,
-}  # fmt: skip
+_FIELD_MONTHS = _ENGLISH_AND_FRENCH  # a field's date: English and French month names only, as before D-191
 
 
 def _iso(y: int, m: int, d: int) -> str | None:
