@@ -21,6 +21,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .dialect import begin_write
 from .learning import one_snapshot
 from .summary import BIT, fetch_rows
 
@@ -615,8 +616,7 @@ class PurchasingMixin:
         first in the same write transaction (``BEGIN IMMEDIATE``) and may refuse with ValueError: the JD Edwards
         vouchers' check that none of the batch's is, or may be, in JDE (D-105)."""
         with self._conn() as conn:
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             if guard is not None:
                 guard(conn)
             claimed = conn.execute(

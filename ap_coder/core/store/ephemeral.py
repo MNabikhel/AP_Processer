@@ -7,9 +7,11 @@ from __future__ import annotations
 import secrets
 import time
 
+from .dialect import NOW_SECONDS
+
 _COLUMNS = "(kind, token, value, created_at, expires_at)"
 # The database's clock (B-1770) in seconds since 1970, as ``time.time()`` the other rows keep theirs.
-_DB_NOW = "((julianday('now') - 2440587.5) * 86400.0)"
+_DB_NOW = NOW_SECONDS
 _OPEN = "kind >= 'open:' AND kind < 'open;'"  # every invoice's "open:<id>" rows, off the primary key
 
 
@@ -169,6 +171,7 @@ class EphemeralMixin:
         for r in rows:
             found.setdefault(int(r["kind"][5:]), {})[r["token"]] = bytes(r["value"]).decode("utf-8", "replace")
         return found
+
     # --- A heartbeat: a process says it is alive, the others read how long ago (D-187) ------------------------------
     # One row "heartbeat" under the process's name (the server's background process: ``ops/health.py``), its time the
     # last beat; kept a day (older, it is as good as none).

@@ -32,6 +32,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from typing import Any
 
+from .dialect import begin_write
+
 ANSWER_MOST_BYTES = 16 * 1024 * 1024  # an answer bigger than this as JSON is not kept for the other processes
 ANSWERS_KEPT = 8  # of each name (a report asked for a few period ends), the latest made kept
 ANSWER_LEASE = 10.0  # seconds a process working an answer out holds it for the others, renewed while it works: one
@@ -312,8 +314,7 @@ class ReportsMixin:
         ``most`` waiting or being made already. ``name``: the file's name as it is downloaded."""
         text = json.dumps(params, sort_keys=True, separators=(",", ":"))
         with self._conn() as conn:  # type: ignore[attr-defined]
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")  # one asker at a time: never two jobs of the same
+            begin_write(conn)  # one asker at a time: never two jobs of the same
             db = self._database_id(conn)
             row = conn.execute(f"SELECT id FROM report_jobs WHERE owner = ? AND kind = ? AND params = ? AND db = ? AND "
                                f"state IN {_OPEN}", (owner, kind, text, db)).fetchone()  # fmt: skip
@@ -354,8 +355,7 @@ class ReportsMixin:
             if conn.execute("SELECT 1 FROM report_jobs WHERE state = ? OR (state = ? AND renewed_at < ?) LIMIT 1",
                             (WAITING, RUNNING, now - stale)).fetchone() is None:  # fmt: skip
                 return None  # (looked at twice a second while none waits: never the write lock for nothing)
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             db = self._database_id(conn)
             while True:
                 row = conn.execute(
