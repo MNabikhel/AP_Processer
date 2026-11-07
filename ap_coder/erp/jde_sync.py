@@ -22,7 +22,8 @@ so the checks and the learning work the same; and the live "already in JD Edward
   RECENT_DAYS, so one voided this month leaves the register by the next morning; one voided before, at the week's
   whole read. Most or all of what a read would close or remove at once is refused, as a wrong answer (D-105).
 * **Every page, as it comes, however many**: each page is written in a transaction of its own (500 rows: a few tens
-  of milliseconds of the write lock, never long enough to hold up an approval) with where the read is
+  of milliseconds of the write lock, never long enough to hold up an approval; each write begun once the lock has
+  been free about as long as the last held it, B-2051) with where the read is
   (``PROGRESS_KEY``): a sync interrupted (JDE down at page 300, the computer restarted) goes on from that page the
   next time. Nothing a read would close or remove goes before its last page: a half-read register is never short of
   a voucher. One sync at a time, on every computer of the company server (``LEASE``).
@@ -42,6 +43,8 @@ import math
 import os
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,10 +77,16 @@ SCOPE = {"gl_accounts": ("company",), "business_units": ("company",), "purchase_
          "vouchers": ("voucher_days",)}  # what a part reads: changed, it is read whole  # fmt: skip
 LEASE, LEASE_SECONDS = "jde_sync", 900.0  # one sync at a time; renewed at each page, let go at the end
 KEPT = 50  # names kept in each list of a part's report (its counts count them all)
-WRITE_ROWS = 500  # POs closed in one transaction
+WRITE_ROWS = 500  # POs closed, vouchers removed, in one transaction
 # Vouchers written in one transaction (B-1918): a page can be 1,000 rows or more (the orchestration's page_size),
 # and a whole read writing over the register held the write lock 0.4-0.5 s a page on a slow disk.
 VOUCHERS_A_WRITE = 250
+# Each of a part's writes begins once the write lock has been free about as long as the last one held it, this many
+# seconds at least and at most (B-2051; a page coming from JDE meanwhile counts): another writer waiting (an approval)
+# retries after 1, 2, 5, 10 ms... then every 100 ms (SQLite's busy timeout), and between writes back to back (a page's
+# vouchers a few hundred at a time, the removals) the lock was free too briefly for its retries: up to 0.7 s.
+PACE_MIN, PACE_MAX = 0.002, 0.05
+_clock, _sleep = time.perf_counter, time.sleep  # (a test's own)
 MASS_CLOSE_SHARE = 0.5  # an answer that would close more than this share of the open synced POs, or all, is refused
 SUPPLIER_COLUMNS = {k: k for k in ("vendor_name", "erp_id", "gst", "qst", "pst", "terms", "province")}
 # Each part's report, besides what all have ("read", "mode", "added", "changed").
@@ -127,6 +136,29 @@ def _save_state(store: Any, **changes: Any) -> None:
 
 
 @dataclass
+class _Pace:
+    """A part's writes one after another, never back to back (B-2051): when the last ended and how long it held the
+    write lock."""
+
+    ended: float = -math.inf
+    held: float = 0.0
+
+    @contextmanager
+    def write(self, store: Any) -> Iterator[None]:
+        """A transaction (``store.transaction``), begun once the lock has been free long enough (PACE_MIN, PACE_MAX)."""
+        rest = min(max(self.held, PACE_MIN), PACE_MAX) - (_clock() - self.ended)
+        if rest > 0:
+            _sleep(rest)
+        began = _clock()
+        try:
+            with store.transaction():
+                yield
+        finally:
+            self.ended = _clock()
+            self.held = self.ended - began
+
+
+@dataclass
 class _Run:
     """A part's read under way: its plan (``_plan``, kept as the progress), who for, and what its pages share."""
 
@@ -136,6 +168,7 @@ class _Run:
     allow_mass_close: bool = False
     date_format: str = "%Y-%m-%d"  # the mapping's, of the dates sent and read
     cache: dict[str, Any] = field(default_factory=dict)
+    pace: _Pace = field(default_factory=_Pace)  # its writes
 
     @property
     def report(self) -> dict[str, Any]:
@@ -433,7 +466,7 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
         seen |= set(gone)  # still known as synced, so a later sync can close them
     else:
         for start in range(0, len(gone), WRITE_ROWS):
-            with store.transaction():
+            with run.pace.write(store):
                 for key in gone[start : start + WRITE_ROWS]:
                     store.set_po_status(key, po_mod.CLOSED, actor=run.actor)
         _note(run.report, "closed", [open_synced[k] for k in gone])
@@ -455,7 +488,9 @@ def _remove_vouchers(store: Any, run: _Run, read: dict[str, Any]) -> None:
         )
         log.warning("JD Edwards voucher sync: %s", run.report["refused_remove"])
         return
-    store.remove_jde_vouchers(gone, read["seen"])
+    for start in range(0, len(gone), WRITE_ROWS):
+        with run.pace.write(store):
+            store.remove_jde_vouchers(gone[start : start + WRITE_ROWS], read["seen"])
     run.report["removed"] = run.report.get("removed", 0) + len(gone)
 
 
@@ -570,12 +605,12 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
                 read["longest"] = max(read.get("longest", 0), len(page))
                 if part == "vouchers":  # a long page a few hundred at a time, each with the lease (B-1918)
                     while len(rows) > VOUCHERS_A_WRITE:
-                        with store.transaction():
+                        with run.pace.write(store):
                             WRITE[part](store, rows[:VOUCHERS_A_WRITE], run, read)
                             _hold(store, lease)
                         rows = rows[VOUCHERS_A_WRITE:]
                 # the page (its last part), where the read is and the lease: one short transaction
-                with store.transaction():
+                with run.pace.write(store):
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])

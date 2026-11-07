@@ -2531,6 +2531,15 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     in `date_format`; undated vouchers swept by the whole read; a read's first day left alone; a PO's lines its open
     ones; a read complete only on an empty or shorter page; the lease checked each page, `MAX(seen)`; a bill's
     copies its vouchers; a connection unused 30 seconds not used again; `PageRepeated` for the live check.
+  - **Amended (B-2051):** each of a part's writes begins once the write lock has been free about as long as the
+    last one held it (`_Pace`: `PACE_MIN` 2 ms to `PACE_MAX` 50 ms; the time a page takes to come from JDE counts, so
+    the pause falls between a page's vouchers a few hundred at a time and between the removals, 500 at a time, not
+    after a page). Back to back, the lock was free 3 to 8 ms between two writes, and a waiting approval's retries
+    (SQLite's busy timeout: after 1, 2, 5, 10 ms... then every 100 ms) missed those moments again and again: the
+    longest wait at the company's size, each run's over its four syncs, 0.33, 0.18, 0.18, 0.18 and 0.53 s (one more
+    run 0.63 s; CI 0.53 to 0.73 s), now 0.034 to 0.036 s in five runs; the first sync 35 to 38 s → 58 to 63 s, the
+    week's whole read 19 to 22 s → 29 to 35 s (the stand-in answers at once: about 38 ms a page of 1,000 vouchers,
+    beside JDE's own time to answer one), the next night's 4 s the same.
   - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
     purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
     `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,

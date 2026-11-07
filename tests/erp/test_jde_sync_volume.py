@@ -174,6 +174,7 @@ def test_the_sync_at_the_companys_size(folder, monkeypatch):
     print(found)
     for run in ("first", "next_night", "full_resumed"):
         assert found[run]["register_right"], (run, found)
+    for run in ("first", "next_night", "full_interrupted", "full_resumed"):  # (B-2051: the interrupted one's too)
         assert found[run]["longest_write_wait"] < 0.5, (run, found)
     night = found["next_night"]
     assert night["read"]["suppliers"] == 50 and night["removed"] == 30
