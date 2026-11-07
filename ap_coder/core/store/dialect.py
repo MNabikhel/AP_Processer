@@ -10,8 +10,6 @@ import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
-NAME = "sqlite"
-
 # A bound value's placeholder (PostgreSQL's drivers: ``%s``; or one translation of every ``?`` where the connection
 # is made). The queries write ``?`` themselves: the port changes them where the driver is wrapped.
 PARAM = "?"
@@ -82,12 +80,6 @@ NOW_DAYS = "julianday('now')"
 # Now on the database's clock in seconds since 1970, as ``time.time()`` keeps them. PostgreSQL: ``EXTRACT(EPOCH FROM
 # statement_timestamp())``.
 NOW_SECONDS = f"(({NOW_DAYS} - 2440587.5) * 86400.0)"
-
-
-def strftime(fmt: str, value: str) -> str:
-    """The date or time text ``value`` written as ``fmt`` (``'%Y-%m'``, ``'%Y-%W'``...). PostgreSQL: ``to_char(value::
-    timestamp, 'YYYY-MM')`` (its own letters: each format is translated once)."""
-    return f"strftime('{fmt}', {value})"
 
 
 # --- Text -----------------------------------------------------------------------------------------------------------
