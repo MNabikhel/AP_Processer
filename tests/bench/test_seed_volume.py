@@ -281,3 +281,45 @@ def test_a_seed_on_a_file_system_out_of_links_for_a_template_copies_it_and_goes_
     files = [p for p in (data / "invoices").iterdir() if p.suffix == ".pdf"]
     assert len(files) >= 60 and all(p.stat().st_size > 0 for p in files)
     assert max(made.values()) <= 3
+
+
+# The full scans of big tables the hot pages (the queue, an invoice, the search, Import invoices, the vendor list)
+# run, each with why it is not a scan of what grows with the invoices at every request (target 2 of the scale goal:
+# no full scans on hot paths, guarded by tests). A new one fails the test; one gone must leave the list too.
+HOT_PAGES = ("/review", "/review/{invoice_id:int}", "/search", "/process", "/review/vendors.json")
+HOT_SCANS = {
+    ("feedback", "/review/{invoice_id:int}", "table"): "the learning memory's stamp and its read: kept by the process "
+    "until a lesson is added, FEEDBACK_READ lessons at most (D-173, D-195)",
+    ("vendors", "/review/{invoice_id:int}", "table"): "the vendor list and the master's numbers: kept by the process "
+    "until a vendor changes (D-159, D-174)",
+    ("vendors", "/review", "table"): "the vendors' terms: kept until a vendor changes (D-165)",
+    (
+        "invoice_summary",
+        "/review",
+        "table",
+    ): "the regular vendors' dates for the queue's late pill: worked out once for "
+    "every process, settled 60 s (D-175, B-1803)",
+    ("vendors", "/process", "table"): "the master's vendors with an ERP id: kept until a vendor changes",
+    ("vendors", "/review/vendors.json", "table"): "whether the master has a vendor at all (LIMIT 1)",
+    ("gl_accounts", "/review", "index"): "the chart of accounts (a few thousand rows): the reference data, kept",
+    ("gl_accounts", "/review/{invoice_id:int}", "index"): "the chart of accounts: the reference data, kept",
+    ("gl_accounts", "/process", "index"): "the chart of accounts: the reference data, kept",
+    ("invoice_summary", "/review/{invoice_id:int}", "index"): "the counts by status (the rail), off a covering index, "
+    "settled 5 s (D-164)",
+    ("invoice_summary", "/process", "index"): "the invoices received, off a covering index: kept until one comes in",
+    ("invoice_summary", "/search", "index"): "the directory's rows off covering indexes, paged in SQL (D-157)",
+}
+
+
+def test_the_hot_pages_scan_no_big_table_but_those_listed_with_why(seeded, tmp_path):
+    import shutil
+
+    data = shutil.copytree(seeded, tmp_path / "data")  # (its own, the answers kept for every process let go: each
+    with sqlite3.connect(data / "ap_coder.db") as conn:  # page's first look is the one measured, whatever ran before)
+        conn.execute("DELETE FROM report_answers")
+    report = volume.run(data, tmp_path / "volume", roles=("admin", "clerk"), repeat=1, big=100, only=HOT_PAGES)
+    route_of = {r["address"]: r["route"] for r in report["results"]}
+    found = {(s["table"], route_of.get(a, a), "table" if s["how"] == "table" else "index")
+             for s in report["scans"] for a in s["routes"]}  # fmt: skip
+    assert not found - set(HOT_SCANS), f"a hot page scans a big table: {sorted(found - set(HOT_SCANS))}"
+    assert not set(HOT_SCANS) - found, f"no longer scanned, take it off HOT_SCANS: {sorted(set(HOT_SCANS) - found)}"
