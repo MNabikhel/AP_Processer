@@ -2539,6 +2539,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     held by chance). Leaving the lock free between the writes (pausing as long as each held it) was tried: 0.034 s
     at most on Linux, but on Windows, where each write holds longer, the volume run took 1,957 s for 785 s and still
     waited 1.4 s, so it was taken out. Left: an approval during the nightly sync can wait about a second, rarely.
+    Committing the sync's writes without waiting for the disk (`synchronous` NORMAL on its connection) was tried
+    too, under the app's own FULL: a writer's p99 wait beside the sync 54-80 → 14-24 ms, but each approval's own
+    commit then writes the sync's log out (+1-2 ms at the median) and takes the disk's stalls itself: 2.36 s once,
+    against at most 0.63 s for approvals without it. It was not kept.
   - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
     purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
     `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,
