@@ -32,6 +32,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from typing import Any
 
+from ..caches import MB, Bounded, size_of
 from .dialect import begin_write
 
 ANSWER_MOST_BYTES = 16 * 1024 * 1024  # an answer bigger than this as JSON is not kept for the other processes
@@ -41,6 +42,9 @@ ANSWER_RENEW = 3.0  # that stopped (killed, B-1807) is passed over within ANSWER
 ANSWER_WAIT = 30.0  # seconds another process asking the same waits for that answer before working it out itself
 ANSWER_WAIT_MOST = 180.0  # ... and while the one working it out still renews its hold, at most this long (B-1914)
 ANSWER_POLL = 0.25
+SETTLE_SHARE = 10  # a settled answer is taken after a change at least this many times as long as its work lasted ...
+SETTLE_MOST = 15 * 60.0  # ... but for that no longer than this (a work once slow, its cache cold: D-197)
+OWN_WORK = 0.001  # a settle of the answer's own work alone (ten times it): on a laptop's database, exact (B-2044)
 OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the answers' leases name it
 
 WAITING, RUNNING, MADE, FAILED = "waiting", "running", "done", "failed"
@@ -75,13 +79,25 @@ def _later(kept: list[Any], seen: list[Any]) -> bool:
         return False
 
 
+def settle_for(settle: float, lasted: float | None) -> float:
+    """How long after a change an answer whose work lasted ``lasted`` seconds is taken still (D-197): ``settle``, or
+    ``SETTLE_SHARE`` times its work when that is longer (at most ``SETTLE_MOST``), so that working it out again costs
+    at most about a tenth of a core, however big the database. Without ``settle`` (an exact answer) none; ``settle``
+    when the work is not known (an answer an older AP Coder kept) or a clock went back meanwhile."""
+    if not settle:
+        return settle
+    return max(settle, min(SETTLE_MOST, SETTLE_SHARE * (lasted or 0.0)))
+
+
 # What this process keeps of the shared answers, before reading them from the database again: (database, name, what
-# for) -> (the stamp, the value, when its work began: ``time.time``), the latest used last, KEPT_HERE at most.
-_KEPT: dict[tuple[str, str, str], tuple[list[Any], Any, float]] = {}
+# for) -> (the stamp, the value, when its work began: ``time.time``, how long it lasted), the latest used last,
+# KEPT_HERE at most and within their bytes (D-195).
+_KEPT = Bounded("shared answers", 32 * MB, size=lambda kept: size_of(kept[1]))
 _KEPT_LOCK = threading.Lock()
 wall = time.time  # an answer's age, the same clock in every process (tests set it)
 _WORKING: dict[tuple[str, str, str], threading.Lock] = {}  # one thread of this process works an answer out at a time
 KEPT_HERE = 32
+KeptAnswer = tuple[Any, Any, float, float | None]  # (its stamp, its value, when its work began, how long it lasted)
 
 
 class ReportsMixin:
@@ -98,12 +114,13 @@ class ReportsMixin:
         format: another, or another AP Coder's, is worked out again). One kept by another process under a later stamp
         holds too: its work began after this ask did (it was being worked out while this one waited, B-1802).
         ``settle`` (an answer a page only shows, D-164): once what it depends on changed, one whose work began less
-        than that many seconds ago on the same database is taken still, in whichever process it was made, so it is
-        never older than that but by the time another takes to work it out: while another thread or process works it
-        out, the answer before (this database's latest) is taken meanwhile (B-1834); with no such answer, or without
-        ``settle``, it is waited for (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``,
-        B-1914). ``encode``/``decode``: the value to JSON-ready data and back. In a write under way (or a read
-        transaction) it is worked out afresh, neither read nor kept. The value is shared: read it, don't change it."""
+        than its settle ago on the same database (``settle``, or ten times its work when longer: ``settle_for``,
+        D-197) is taken still, in whichever process it was made, so it is never older than that but by the time
+        another takes to work it out: while another thread or process works it out, the answer before (this
+        database's latest) is taken meanwhile (B-1834); with no such answer, or without ``settle``, it is waited for
+        (``ANSWER_WAIT``, and while its hold is renewed up to ``ANSWER_WAIT_MOST``, B-1914). ``encode``/``decode``:
+        the value to JSON-ready data and back. In a write under way (or a read transaction) it is worked out afresh,
+        neither read nor kept. The value is shared: read it, don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         began = wall()
@@ -111,19 +128,19 @@ class ReportsMixin:
         if writing:
             return compute()
 
-        def holds(found: tuple[Any, Any, float] | None, later: bool = False) -> bool:
+        def holds(found: KeptAnswer | None, later: bool = False) -> bool:
             if found is None:
                 return False
-            kept, _, made = found
+            kept, _, made, lasted = found
             if kept == seen or (later and _later(kept, seen)):
                 return True
-            return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle)
+            return bool(settle and kept[:1] == seen[:1] and 0 <= began - made < settle_for(settle, lasted))
 
-        def before(found: tuple[Any, Any, float] | None) -> bool:
+        def before(found: KeptAnswer | None) -> bool:
             """Whether ``found`` may be shown while another works the answer out again: settled, of this database, its
-            work begun less than the settle and the longest wait ago (B-1838: never older than that)."""
+            work begun less than its settle and the longest wait ago (B-1838: never older than that)."""
             return bool(settle and found is not None and found[0][:1] == seen[:1]
-                        and 0 <= began - found[2] < settle + ANSWER_WAIT)  # fmt: skip
+                        and 0 <= began - found[2] < settle_for(settle, found[3]) + ANSWER_WAIT)  # fmt: skip
 
         with _KEPT_LOCK:
             hit = _KEPT.get(here)
@@ -172,15 +189,16 @@ class ReportsMixin:
                     stamp, start = seen, began
                     if not taken:  # (after waiting for another process: worked out from what the database holds now)
                         start, (stamp, _) = wall(), self._answer_stamp(topic, changes)
+                    working_from = wall()  # (the work alone: not the wait before it, B-2043)
                     with self._holding(lease, owner) if taken else nullcontext():
                         value = compute()
-                    kept = (stamp, value, start)
-                    encoded = encode(value)
-                    if self.keep_answer(name, key, version, stamp, encoded, start) is None:
-                        unkept = lambda: self.keep_answer(name, key, version, stamp, encoded, start, wait=True)  # noqa: E731
+                    lasted = wall() - working_from
+                    kept, encoded = (stamp, value, start, lasted), encode(value)
+                    if self.keep_answer(name, key, version, stamp, encoded, start, lasted) is None:
+                        unkept = lambda: self.keep_answer(name, key, version, stamp, encoded, start, lasted, wait=True)  # noqa: E731
                 with _KEPT_LOCK:
                     _KEPT.pop(here, None)  # (the latest used last: the oldest goes first)
-                    _KEPT[here] = (kept[0], value, kept[2])
+                    _KEPT[here] = (kept[0], value, *kept[2:])
                     while len(_KEPT) > KEPT_HERE:
                         _KEPT.pop(next(iter(_KEPT)))
                     if len(_WORKING) > 4 * KEPT_HERE:
@@ -194,27 +212,29 @@ class ReportsMixin:
             if got:
                 working.release()
 
-    def kept_answer(self, name: str, key: str, version: str) -> tuple[Any, Any, float] | None:
-        """(the stamp, the value, when it was made: ``time.time``) of the answer kept under ``name`` and ``key``
-        (``asked_key``) by this ``version``; None when there is none, or another version's (or one that can't be
-        read as JSON) is."""
+    def kept_answer(self, name: str, key: str, version: str) -> KeptAnswer | None:
+        """(the stamp, the value, when its work began: ``time.time``, how long it lasted: None when an older AP Coder
+        kept it) of the answer kept under ``name`` and ``key`` (``asked_key``) by this ``version``; None when there
+        is none, or another version's (or one that can't be read as JSON) is."""
         with self._conn() as conn:  # type: ignore[attr-defined]
-            row = conn.execute("SELECT version, stamp, value, made_at FROM report_answers WHERE name = ? AND asked = ?",
-                               (name, key)).fetchone()  # fmt: skip
+            row = conn.execute("SELECT version, stamp, value, made_at, lasted FROM report_answers WHERE name = ? AND "
+                               "asked = ?", (name, key)).fetchone()  # fmt: skip
         if row is None or row["version"] != _version(version):
             return None
         try:
-            return json.loads(row["stamp"]), json.loads(row["value"]), float(row["made_at"])
+            lasted = None if row["lasted"] is None else float(row["lasted"])
+            return json.loads(row["stamp"]), json.loads(row["value"]), float(row["made_at"]), lasted
         except (ValueError, TypeError):
             return None
 
-    def keep_answer(self, name: str, key: str, version: str, stamp: Any, value: Any, made: float | None = None, *,
-                    wait: bool = False) -> bool | None:  # fmt: skip
+    def keep_answer(self, name: str, key: str, version: str, stamp: Any, value: Any, made: float | None = None,
+                    lasted: float | None = None, *, wait: bool = False) -> bool | None:  # fmt: skip
         """Keep ``value`` (JSON-ready) under ``name`` and ``key`` for the other processes, worked out under ``stamp``
-        from ``made`` (``time.time``, default now); False when it is not kept: bigger than ``ANSWER_MOST_BYTES``, or
-        not JSON (it is then worked out again, nothing else changes); None when the database was busy or full just
-        now (waiting at most a moment for another writer; ``wait``: as long as any write does). The oldest past
-        ``ANSWERS_KEPT`` of the name go."""
+        from ``made`` (``time.time``, default now) in ``lasted`` seconds (its settle grows with them, ``settle_for``;
+        None: not known); False when it is not kept: bigger than ``ANSWER_MOST_BYTES``, or not JSON (it is then
+        worked out again, nothing else changes); None when the database was busy or full just now (waiting at most a
+        moment for another writer; ``wait``: as long as any write does). The oldest past ``ANSWERS_KEPT`` of the name
+        go."""
         try:
             text = json.dumps(value, separators=(",", ":"), allow_nan=False)
             stamped = json.dumps(stamp, separators=(",", ":"))
@@ -227,10 +247,11 @@ class ReportsMixin:
         def write() -> bool:
             with self._conn() as conn:  # type: ignore[attr-defined]
                 conn.execute(
-                    "INSERT INTO report_answers (name, asked, version, stamp, value, made_at) VALUES "
-                    "(?, ?, ?, ?, ?, ?) ON CONFLICT(name, asked) DO UPDATE SET version = excluded.version, "
-                    "stamp = excluded.stamp, value = excluded.value, made_at = excluded.made_at",
-                    (name, key, _version(version), stamped, text, wall() if made is None else made),
+                    "INSERT INTO report_answers (name, asked, version, stamp, value, made_at, lasted) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name, asked) DO UPDATE SET version = excluded.version, "
+                    "stamp = excluded.stamp, value = excluded.value, made_at = excluded.made_at, "
+                    "lasted = excluded.lasted",
+                    (name, key, _version(version), stamped, text, wall() if made is None else made, lasted),
                 )
                 conn.execute("DELETE FROM report_answers WHERE name = ? AND asked NOT IN (SELECT asked FROM "
                              "report_answers WHERE name = ? ORDER BY made_at DESC LIMIT ?)",

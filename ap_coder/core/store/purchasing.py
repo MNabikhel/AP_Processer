@@ -13,6 +13,7 @@ from ...coding.po import CLOSED, OPEN, positive_lines
 from ...coding.rules import Rule
 from ..keys import po_key
 from ..memory import vendor_key
+from . import dialect
 from ._base import (
     _ACTIVE_IN,
     ACTIVE_STATUSES,
@@ -24,6 +25,7 @@ from ._base import (
 )
 from .dialect import begin_write
 from .learning import one_snapshot
+from .reports import _version
 from .summary import BIT, fetch_rows
 
 BILLING_BATCH = 500  # the codings ``billing_codings`` reads at a time
@@ -38,25 +40,29 @@ SELECT json_group_array(CASE WHEN ok THEN json_array(id, json_extract(doc, '$.in
                              ELSE json_array(id, NULL, doc) END) FROM read
 """
 # What month-end reads of each invoice billing a received PO (``billing_lines``), kept for every process in the
-# database by the invoice's vendor (``report_answers``: a row a vendor, BILLING_ANSWER and its key; about 300 bytes an
-# invoice) and brought up to date from the vendors' change log (``vendor_changes``, D-174) as ``vendor_invoices`` is:
-# after a change only the invoices changed since are decoded again, not every invoice of the vendor (23,000 at 300,000
-# invoices, D-177). Its stamp: (the database's ``summary_id``, the last change of the log it is as of, the vendor's
-# count of changes then, B-1811). Written again once BILLING_REWRITE of its invoices, and a BILLING_REWRITE_SHARE of
-# them, were decoded since (until then each read decodes those again: a vendor of 23,000 is 7 MB to write).
-BILLING_ANSWER = "billing/"
-BILLING_FORMAT = "billing-1"
-BILLING_REWRITE = 32
-BILLING_REWRITE_SHARE = 1 / 16
+# database by invoice (``billing_facts``: [date, lines], about 600 bytes, by its vendor) under its vendor's stamp
+# (``billing_vendors``: the database's ``summary_id`` (another after a restore), this AP Coder's version and
+# BILLING_FORMAT as ``kept``; the last change of the vendors' change log its rows are as of, ``logged``; the vendor's
+# count of changes then, ``counted``, B-1811) and brought up to date from the log (``vendor_changes``, D-174): after a
+# change only the invoices changed since are decoded again, not every invoice of the vendor (23,000 at 300,000
+# invoices, D-177), and only their rows are written, with the vendor's stamp, not a row of every invoice of the vendor
+# (7 MB, D-194).
+BILLING_FORMAT = "billing-2"
+# The rows of each of these vendors (a JSON list), each vendor's together: (vendor, id, [date, lines] as JSON, all
+# decoded at once).
+_KEPT_FACTS = f"SELECT vendor_key, id, facts FROM billing_facts WHERE {dialect.in_list('vendor_key')}"
+_STAMP = "SELECT kept, logged, counted FROM billing_vendors WHERE vendor_key = ?"
 
 
 @dataclass
 class BillingMoment:
     """What ``billing_moment`` yields: whether its reads are inside a write under way (which may yet be undone:
-    nothing read in it is kept), and each vendor's billing lines to keep once the read is over (``billing_lines``)."""
+    nothing read in it is kept), and the invoices' billing lines to keep once the read is over (``billing_lines``)."""
 
     writing: bool
-    keep: list[tuple[str, list[Any], list[Any]]] = field(default_factory=list)  # (vendor, stamp, value)
+    # (vendor, its stamp as read, its stamp now, its invoices decoded: [(id, what was read)], the ids whose rows go:
+    # None, all)
+    keep: list[tuple[str, Any, tuple[str, int, int], list[tuple[int, Any]], Any]] = field(default_factory=list)
 
 
 def _billing(coding: Any) -> Any:
@@ -79,8 +85,8 @@ def _plain(value: Any) -> bool:
 
 def _keepable(facts: Any) -> bool:
     """Whether what ``_billing`` read of an invoice is kept for every process: read so, and each value plain JSON (a
-    coding Python reads and SQLite doesn't may carry a NaN), so that its vendor's row is always written, and read
-    back as it was."""
+    coding Python reads and SQLite doesn't may carry a NaN), so that its row is always written, and read back as it
+    was."""
     return isinstance(facts, tuple) and _plain(facts[0]) and all(
         _plain(description) and math.isfinite(price) and math.isfinite(quantity)
         for description, price, quantity in facts[1])  # fmt: skip
@@ -203,8 +209,31 @@ class PurchasingMixin:
                     conn.commit()  # (the summary's own update: done before the read, not held through it)
                 with one_snapshot(conn):
                     yield moment
-            for vendor, stamp, value in moment.keep:  # (the database too busy just now: kept at a later read)
-                self.keep_answer(BILLING_ANSWER + vendor, "", BILLING_FORMAT, stamp, value)
+            for keep in moment.keep:  # (the database too busy just now: kept at a later read)
+                self._briefly_or(lambda keep=keep: self._keep_billing(*keep), None)  # type: ignore[attr-defined]
+
+    def _keep_billing(self, vendor: str, was: Any, now: tuple[str, int, int], rows: list[tuple[int, Any]],
+                      gone: Any) -> None:  # fmt: skip
+        """A vendor's billing lines as ``billing_lines`` read them under its stamp ``was`` (as it was read, None: none)
+        kept with its stamp ``now``: the rows of ``gone`` removed (the invoices changed since: None, all of its rows),
+        ``rows`` written (an invoice's older row replaced; made JSON here, a vendor at a time). Only while its stamp is
+        still the one read (in one write): once another process kept its rows since, theirs are as new, and these are
+        not written."""
+        with self._conn() as conn:
+            begin_write(conn)
+            found = conn.execute(_STAMP, (vendor,)).fetchone()
+            if (tuple(found) if found else None) != was:
+                return
+            if gone is None:
+                conn.execute("DELETE FROM billing_facts WHERE vendor_key = ?", (vendor,))
+            elif gone:
+                conn.execute(f"DELETE FROM billing_facts WHERE vendor_key = ? AND {_in_list('id')}",
+                             (vendor, json.dumps(sorted(gone))))  # fmt: skip
+            conn.executemany(dialect.upsert("billing_facts", ("vendor_key", "id", "facts"), ("vendor_key", "id")),
+                             [(vendor, n, json.dumps(facts, separators=(",", ":"), allow_nan=False))
+                              for n, facts in rows])  # fmt: skip
+            conn.execute(dialect.upsert("billing_vendors", ("vendor_key", "kept", "logged", "counted"),
+                                        ("vendor_key",)), (vendor, *now))  # fmt: skip
 
     def billing_rows(self, po_keys: list[str], vendor_keys: list[str]
                      ) -> tuple[list[tuple[Any, ...]], dict[str, Any], Any]:  # fmt: skip
@@ -231,11 +260,11 @@ class PurchasingMixin:
     def billing_lines(self, rows: list[tuple[Any, ...]], moment: BillingMoment) -> dict[int, Any]:
         """{id: what month-end reads of its coding (``_billing``: its invoice date and its lines billing a positive
         quantity)} of each of ``rows`` (``billing_rows``') still there, inside ``moment`` (``billing_moment``). Kept
-        for every process by vendor (BILLING_ANSWER) and brought up to date from the vendors' change log, read in the
-        same moment: only the invoices changed since are decoded again (``billing_codings``, D-177); all of a vendor's
-        once the log no longer holds every change since, its count of changes moved by more than the log says
-        (B-1811), or on another database (``summary_id``: a restore). An invoice with no vendor, whose changes no log
-        follows, is decoded each time. In a write under way each is decoded, and nothing kept is read or kept."""
+        for every process by invoice (``billing_facts``, D-194) and brought up to date from the vendors' change log,
+        read in the same moment: only the invoices changed since are decoded again (``billing_codings``, D-177), and
+        kept with their vendor's stamp; all of a vendor's once its stamp no longer holds (``_kept_billing``). An
+        invoice with no vendor, whose changes no log follows, is decoded each time. In a write under way each is
+        decoded, and nothing kept is read or kept."""
         by_vendor: dict[str, list[int]] = {}
         loose: list[int] = []
         for r in rows:
@@ -243,8 +272,8 @@ class PurchasingMixin:
                 loose.append(r[0])
             else:
                 by_vendor.setdefault(r[3], []).append(r[0])
-        held: dict[str, tuple[list[Any], list[Any]]] = {}
-        logged: dict[str, list[tuple[int, int]]] = {}
+        read: dict[int, Any] = {}
+        held: dict[str, tuple[Any, Any]] = {}
         with self._conn() as conn:
             summary_id, first, last = conn.execute(
                 "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM vendor_changes), "
@@ -253,47 +282,63 @@ class PurchasingMixin:
                 "SELECT substr(key, 16), COALESCE(CAST(value AS INTEGER), 0) FROM settings WHERE key IN (SELECT "
                 "'changes/vendor/' || value FROM json_each(?))", (json.dumps(sorted(by_vendor)),),
             ).fetchall())  # fmt: skip
-            for vendor in by_vendor if not moment.writing else ():
-                found = self.kept_answer(BILLING_ANSWER + vendor, "", BILLING_FORMAT)
-                if found is not None:
-                    held[vendor] = (found[0], found[1])
-            if held:  # (what changed since the oldest kept, of these vendors only)
-                for seq, vendor, invoice_id in conn.execute(
-                    "SELECT seq, vendor_key, invoice_id FROM vendor_changes WHERE seq > ? AND vendor_key IN (SELECT "
-                    "value FROM json_each(?))", (min(stamp[1] for stamp, _ in held.values()), json.dumps(sorted(held))),
-                ):  # fmt: skip
-                    logged.setdefault(vendor, []).append((seq, invoice_id))
-        read: dict[int, Any] = {}
-        kept: dict[str, dict[int, Any]] = {}  # each vendor's, as it is to be kept
-        current: set[str] = set()  # the vendors whose row kept the log brings up to date
-        todo = list(loose)
-        for vendor, ids in by_vendor.items():
-            facts = kept[vendor] = {}
-            if vendor in held:
-                (was, since, count), value = held[vendor]
-                changes = [invoice_id for seq, invoice_id in logged.get(vendor, ()) if seq > since]
-                # Every change since logged: the log still holds them all, and the vendor's count of changes (which
-                # an older AP Coder's triggers keep too, writing no log) moved by as many (B-1811).
-                if was == summary_id and since >= (first or 1) - 1 and counts.get(vendor, 0) - count == len(changes):
-                    current.add(vendor)
-                    changed = set(changes)
-                    facts.update((n, (date, lines)) for n, date, lines in value if n not in changed)
-            for n in ids:
-                if n in facts:
-                    read[n] = facts[n]
-                else:
-                    todo.append(n)
-        vendors, decoded = {r[0]: r[3] for r in rows}, dict.fromkeys(by_vendor, 0)
+            kept = f"{summary_id}/{_version(BILLING_FORMAT)}"
+            if by_vendor and not moment.writing:
+                held = self._kept_billing(conn, by_vendor, counts, first, kept, read)
+        todo = loose + [n for ids in by_vendor.values() for n in ids if n not in read]
+        vendors, decoded = {r[0]: r[3] for r in rows}, {}
         for n, coding in self.billing_codings(todo):
             read[n] = _billing(coding)
             if vendors[n] is not None and _keepable(read[n]):
-                kept[vendors[n]][n] = read[n]
-                decoded[vendors[n]] += 1
-        for vendor, facts in kept.items() if not moment.writing else ():
-            if vendor not in current or decoded[vendor] >= max(BILLING_REWRITE, len(facts) * BILLING_REWRITE_SHARE):
-                moment.keep.append((vendor, [summary_id, last or 0, counts.get(vendor, 0)],
-                                    [[n, *facts[n]] for n in sorted(facts)]))  # fmt: skip
+                decoded.setdefault(vendors[n], []).append((n, read[n]))
+        for vendor in by_vendor if not moment.writing else ():
+            was, gone = held.get(vendor, (None, None))
+            if vendor in decoded or gone != set():  # (anything to write: its stamp held, nothing changed since)
+                moment.keep.append((vendor, was, (kept, last or 0, counts.get(vendor, 0)), decoded.get(vendor, []),
+                                    gone))  # fmt: skip
         return read
+
+    @staticmethod
+    def _kept_billing(conn: Any, by_vendor: dict[str, list[int]], counts: dict[str, int], first: int | None,
+                      kept: str, read: dict[int, Any]) -> dict[str, tuple[Any, Any]]:  # fmt: skip
+        """{vendor: (its stamp as read, the invoices changed since it, whose rows are not taken: None, every one)} of
+        each of ``by_vendor`` ({vendor: the ids of its invoices}), and ``read`` filled with the rows taken: those of
+        a vendor whose stamp holds, under it still and not changed since. It holds when kept by this database and
+        version (``kept``) and its vendor's count of changes (``counts``) is the one it was kept with (nothing changed
+        since), or else when the vendors' change log, read in the same moment, still holds every change since
+        (``first``: its first) and the count moved by as many as the log says (an older AP Coder's triggers count,
+        writing no log: B-1811); the invoices it names are the ones changed."""
+        stamps = {r[0]: tuple(r[1:]) for r in conn.execute(
+            f"SELECT vendor_key, kept, logged, counted FROM billing_vendors WHERE {_in_list('vendor_key')}",
+            (json.dumps(sorted(by_vendor)),))}  # fmt: skip
+        oldest = (first or 1) - 1  # (a stamp older: a change since may be gone from the log)
+        moved = {v: s[1] for v, s in stamps.items() if s[0] == kept and counts.get(v, 0) != s[2] and s[1] >= oldest}
+        changed: dict[str, set[int]] = {v: set() for v in moved}
+        logged = dict.fromkeys(moved, 0)
+        if moved:
+            for seq, vendor, invoice_id in conn.execute(
+                "SELECT seq, vendor_key, invoice_id FROM vendor_changes WHERE seq > ? AND vendor_key IN (SELECT value "
+                "FROM json_each(?))", (min(moved.values()), json.dumps(sorted(moved))),
+            ):  # fmt: skip
+                if seq > moved[vendor]:
+                    changed[vendor].add(invoice_id)
+                    logged[vendor] += 1
+        held: dict[str, tuple[Any, Any]] = {}
+        for vendor in by_vendor:
+            stamp = stamps.get(vendor)
+            if stamp is not None and stamp[0] == kept and counts.get(vendor, 0) == stamp[2]:
+                held[vendor] = (stamp, set())
+            elif vendor in moved and counts.get(vendor, 0) - stamp[2] == logged[vendor]:  # type: ignore[index]
+                held[vendor] = (stamp, changed[vendor])
+            else:
+                held[vendor] = (stamp, None)
+        holding = sorted(v for v, (_, gone) in held.items() if gone is not None)
+        wanted = {n: v for v in holding for n in by_vendor[v]}  # (a row of an invoice under another vendor since: not)
+        found = conn.execute(_KEPT_FACTS, (json.dumps(holding),)).fetchall() if holding else []
+        found = [r for r in found if wanted.get(r[1]) == r[0] and r[1] not in held[r[0]][1]]
+        read.update(zip([r[1] for r in found], map(tuple, json.loads(f"[{','.join(r[2] for r in found)}]")),
+                        strict=True))  # fmt: skip
+        return held
 
     def billing_codings(self, ids: list[int]) -> Iterator[tuple[int, dict[str, Any]]]:
         """(id, what billing a PO reads of its coding: its invoice date and lines, read out by SQLite, the rest of it

@@ -27,7 +27,7 @@ from . import dialect
 from ._base import SCHEMA_VERSION, _due, _forget_learning
 from .folder import add_register_keys, fill_seen_files
 from .old_readings import reading_as_d89
-from .register import add_jde_register
+from .register import add_jde_register, build_register_search
 from .users import add_columns
 
 Step = Callable[[Any, sqlite3.Connection], None]  # (the store, its connection)
@@ -295,6 +295,29 @@ def _register_by_number(store: Any, conn: sqlite3.Connection) -> None:
     conn.execute(_REGISTER_BY_NUMBER)
 
 
+def _billing_by_vendor(store: Any, conn: sqlite3.Connection) -> None:
+    """Month-end's billing lines kept by vendor among the shared answers (``report_answers``, ``billing/<key>``,
+    D-177), kept by invoice since (``billing_facts``, D-194): the vendors' rows, read by no one now, removed (about
+    63 MB at 300,000 invoices). Looked for first: a start with nothing to do takes no lock (B-1996)."""
+    vendors = "FROM report_answers WHERE name >= 'billing/' AND name < 'billing0'"
+    if conn.execute(f"SELECT 1 {vendors} LIMIT 1").fetchone():
+        conn.execute(f"DELETE {vendors}")
+
+
+def _register_search(store: Any, conn: sqlite3.Connection) -> None:
+    """The quick search's index of the ERP register (FTS5, ``register_search``), built again when it is not in step
+    with the register: made first, or left behind by a write that did not keep it (D-194). After every step that
+    writes the register."""
+    build_register_search(conn)
+
+
+def _answer_work(store: Any, conn: sqlite3.Connection) -> None:
+    """A shared answer keeps how long its work lasted (``report_answers.lasted``, seconds): its settle grows with it
+    (D-197). One kept before has none, and settles for the caller's settle alone."""
+    if "lasted" not in dialect.columns(conn, "report_answers"):
+        dialect.add_column(conn, "report_answers", "lasted", "REAL")
+
+
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
     """A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
     amount), for what is left to expense on the review screen."""
@@ -420,6 +443,9 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _feedback_tax_codes),
     (EVERY_TIME, _reading_as_d89),
     (EVERY_TIME, _seen_files),
+    (EVERY_TIME, _billing_by_vendor),
+    (EVERY_TIME, _register_search),
+    (EVERY_TIME, _answer_work),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

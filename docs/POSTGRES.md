@@ -24,7 +24,8 @@ count). They are of `ap_coder/` on 7 November 2026, after the seam went in.
     already joined (bulk approval's jobs, the report jobs, the export batch's undo, a review screen's draft).
   - `columns`, `add_column`, `table_names`, `busy_timeout`, `set_busy_timeout`, `data_version`, `settle`: the
     `PRAGMA`s and `sqlite_master`, used by the migrations, `database_schema`, `briefly`, the session's memo and every
-    connection's opening.
+    connection's opening; `page_size`, `journal_mode`, `checkpoint`: the database file's own, for server-update's
+    copy of it made ahead (D-196), which a PostgreSQL server replaces with its own backup (`pg_basebackup`).
   - `upsert`, `insert_or_replace`, `insert_or_ignore`, `update_or_ignore`, `json_get`, `json_valid`, `like`,
     `nocase`, `group_concat`, `ROWID`, `PARAM`: the rest of the vocabulary, used by the migrations and the vendor
     keys' recount, and there for new code.
@@ -54,44 +55,45 @@ without its `{...}` (a helper used by fifty queries counts once, where it is wri
 
 | Construct | Uses (outside `core/store`) | Where (the most) | PostgreSQL | The seam (`dialect`) |
 |---|---|---|---|---|
-| `?` placeholders | 1564 (239) | core/store/invoices.py 156, core/store/capture.py 146, core/store/users.py 129, bench/seed.py 119, 38 more files | `%s` (psycopg); one translation where the connection is wrapped | `PARAM` |
-| `?1` numbered placeholders (among those above) | 16 (5) | core/store/vendors.py 5, erp/jde_sync.py 5, core/store/register.py 4, core/store/learning.py 2 | `%(name)s`, or the value bound again | - |
-| `INSERT OR IGNORE` | 13 (5) | core/store/summary.py 4, bench/seed.py 3, core/store/folder.py 2, bench/load.py 1, 3 more files | `INSERT ... ON CONFLICT DO NOTHING` (unique keys only: a NULL in a NOT NULL column fails there) | `insert_or_ignore` |
+| `?` placeholders | 1576 (179) | core/store/invoices.py 156, core/store/capture.py 146, core/store/users.py 129, bench/seed.py 119, 34 more files | `%s` (psycopg); one translation where the connection is wrapped | `PARAM` |
+| `?1` numbered placeholders (among those above) | 16 (0) | core/store/vendors.py 10, core/store/register.py 4, core/store/learning.py 2 | `%(name)s`, or the value bound again | - |
+| `INSERT OR IGNORE` | 13 (4) | core/store/summary.py 4, bench/seed.py 3, core/store/folder.py 2, bench/load.py 1, 3 more files | `INSERT ... ON CONFLICT DO NOTHING` (unique keys only: a NULL in a NOT NULL column fails there) | `insert_or_ignore` |
 | `INSERT OR REPLACE` | 5 (0) | core/store/capture.py 1, core/store/dialect.py 1, core/store/ephemeral.py 1, core/store/lessons.py 1, 1 more files | an upsert of every column (the row is kept, not deleted and inserted) | `insert_or_replace` |
 | `UPDATE OR IGNORE` | 1 (0) | core/store/dialect.py 1 | none: `WHERE NOT EXISTS` the row it would collide with, or a savepoint | `update_or_ignore` |
-| `ON CONFLICT ... DO` (an upsert) | 41 (2) | core/store/summary.py 6, core/store/accounts.py 4, core/store/capture.py 4, core/store/register.py 4, 14 more files | the same (portable) | `upsert` |
-| `json_each` (lists bound as one value) | 44 (18) | core/store/purchasing.py 6, erp/jde_post.py 5, bench/load.py 3, core/store/imports.py 3, 17 more files | `jsonb_array_elements_text(%s::jsonb)` or `= ANY(%s)` | `in_list` (`_base._in_list`) |
-| `json_extract` | 42 (10) | core/store/summary.py 9, erp/controls.py 6, core/store/folder.py 5, core/store/capture.py 4, 11 more files | `(x)::jsonb #>> '{key}'` | `json_get` |
-| `json_valid` | 16 (4) | core/store/summary.py 3, core/store/lessons.py 2, core/store/postings.py 2, erp/controls.py 2, 7 more files | `pg_input_is_valid(x, 'jsonb')` (16 and newer) | `json_valid` |
-| other JSON (`json_set`, `json_object`, `json_group_array`, `json_array`) | 30 (12) | erp/controls.py 10, core/store/summary.py 8, core/store/purchasing.py 4, core/store/invoices.py 1, 7 more files | `jsonb_set`, `jsonb_build_object`, `jsonb_agg`, `jsonb_build_array` | - |
+| `ON CONFLICT ... DO` (an upsert) | 42 (0) | core/store/summary.py 6, core/store/register.py 5, core/store/accounts.py 4, core/store/capture.py 4, 14 more files | the same (portable) | `upsert` |
+| `json_each` (lists bound as one value) | 44 (11) | core/store/purchasing.py 7, core/store/postings.py 5, core/store/vendors.py 4, bench/load.py 3, 16 more files | `jsonb_array_elements_text(%s::jsonb)` or `= ANY(%s)` | `in_list` (`_base._in_list`) |
+| `json_extract` | 42 (7) | core/store/summary.py 9, erp/controls.py 6, core/store/folder.py 5, core/store/capture.py 4, 10 more files | `(x)::jsonb #>> '{key}'` | `json_get` |
+| `json_valid` | 16 (3) | core/store/postings.py 3, core/store/summary.py 3, core/store/lessons.py 2, erp/controls.py 2, 6 more files | `pg_input_is_valid(x, 'jsonb')` (16 and newer) | `json_valid` |
+| other JSON (`json_set`, `json_object`, `json_group_array`, `json_array`) | 32 (11) | erp/controls.py 10, core/store/summary.py 7, core/store/purchasing.py 4, core/store/review_queue.py 3, 7 more files | `jsonb_set`, `jsonb_build_object`, `jsonb_agg`, `jsonb_build_array` | - |
 | `julianday('now')` (the database's clock) | 8 (0) | core/store/imports.py 4, core/store/lessons.py 2, core/store/page_queue.py 2 | `EXTRACT(EPOCH FROM statement_timestamp())` | `NOW_DAYS`, `NOW_SECONDS` |
 | other date functions (`julianday`, `date`, `datetime`, `unixepoch`, `strftime`) | 0 (0) | - | `::date`, `::timestamp`, `EXTRACT`, `to_char` | - |
 | `group_concat` | 7 (0) | core/store/accounts.py 6, core/store/summary.py 1 | `string_agg(x::text, sep)` | `group_concat` |
-| `LIKE` (A to Z without case in SQLite) | 16 (3) | core/store/ephemeral.py 4, core/store/users.py 2, bench/seed.py 1, core/store/accounts.py 1, 8 more files | `ILIKE` (PostgreSQL's LIKE minds the case) | `like` |
+| `LIKE` (A to Z without case in SQLite) | 16 (2) | core/store/ephemeral.py 4, core/store/users.py 2, bench/seed.py 1, core/store/accounts.py 1, 8 more files | `ILIKE` (PostgreSQL's LIKE minds the case) | `like` |
 | `GLOB` | 3 (1) | core/store/register.py 2, erp/controls.py 1 | `LIKE` or `~` (a regular expression) | - |
 | `COLLATE NOCASE` | 2 (0) | core/store/capture.py 1, core/store/suppliers.py 1 | `lower(x)` or a case-insensitive collation | `nocase` |
 | `rowid` | 21 (1) | core/store/lessons.py 8, core/store/vendors.py 4, core/store/summary.py 3, core/store/folder.py 2, 3 more files | none that lasts: a key column of its own (`GENERATED ... AS IDENTITY`) | `ROWID` |
 | `AUTOINCREMENT` | 18 (0) | core/store/_base.py 17, core/store/migrations.py 1 | `GENERATED ALWAYS AS IDENTITY` | - |
-| `BEGIN IMMEDIATE` (the write lock) | 30 (0) | core/store/users.py 13, core/store/lessons.py 4, core/store/capture.py 3, core/store/imports.py 3, 5 more files | the transaction psycopg opens, and `pg_advisory_xact_lock` or `SELECT ... FOR UPDATE` | `begin_write` |
+| `BEGIN IMMEDIATE` (the write lock) | 1 (0) | core/store/dialect.py 1 | the transaction psycopg opens, and `pg_advisory_xact_lock` or `SELECT ... FOR UPDATE` | `begin_write` |
 | `PRAGMA table_info` | 10 (1) | core/store/postings.py 3, core/store/users.py 3, bench/seed.py 1, core/store/backups.py 1, 2 more files | `information_schema.columns` | `columns`, `add_column` |
-| other `PRAGMA`s | 15 (7) | bench/seed.py 5, core/store/dialect.py 4, core/store/users.py 3, core/store/backups.py 1, 2 more files | `SET` (`lock_timeout`...), or none needed | `settle`, `busy_timeout`, `set_busy_timeout`, `data_version` |
+| other `PRAGMA`s | 19 (5) | core/store/dialect.py 8, bench/seed.py 5, core/store/users.py 3, core/store/backups.py 2, 1 more files | `SET` (`lock_timeout`...), or none needed | `settle`, `busy_timeout`, `set_busy_timeout`, `data_version` |
 | `sqlite_master` | 12 (2) | core/store/backups.py 3, core/store/summary.py 3, core/store/users.py 2, bench/seed.py 1, 3 more files | `information_schema.tables`, `pg_indexes` | `table_names` |
 | triggers | 19 (0) | core/store/summary.py 19 | the same in PL/pgSQL (`CREATE FUNCTION ... RETURNS trigger`) | - |
-| full-text index (FTS5) | 6 (1) | core/store/summary.py 5, erp/search.py 1 | `pg_trgm` or `tsvector` | - |
+| full-text index (FTS5) | 8 (1) | core/store/summary.py 5, core/store/register.py 2, erp/search.py 1 | `pg_trgm` or `tsvector` | - |
 | `ap_fold` (the store's own SQL function) | 2 (2) | erp/directory.py 2 | `lower(unaccent(x))` (the `unaccent` extension) | - |
-| SQLite's other functions (`printf`, `typeof`, `hex`, `char`, `instr`, `ifnull`, `iif`, `total`) | 17 (3) | core/store/accounts.py 6, core/store/summary.py 5, core/store/capture.py 2, erp/insights.py 2, 2 more files | `format`, `pg_typeof`, `encode(x, 'hex')`, `chr`, `strpos`, `COALESCE`, `CASE`, `COALESCE(SUM(x), 0)` | - |
-| `executescript` | 4 (1) | core/store/_base.py 2, core/store/backups.py 1, erp/hub/run.py 1 | `execute` of each statement | - |
+| SQLite's other functions (`printf`, `typeof`, `hex`, `char`, `instr`, `ifnull`, `iif`, `total`) | 18 (4) | core/store/accounts.py 6, core/store/summary.py 5, core/store/capture.py 2, erp/insights.py 2, 2 more files | `format`, `pg_typeof`, `encode(x, 'hex')`, `chr`, `strpos`, `COALESCE`, `CASE`, `COALESCE(SUM(x), 0)` | - |
+| `executescript` | 4 (0) | core/store/_base.py 2, core/store/backups.py 1, core/store/hub.py 1 | `execute` of each statement | - |
 | `lastrowid` | 8 (0) | core/store/users.py 2, core/store/bulk_jobs.py 1, core/store/imports.py 1, core/store/invoices.py 1, 3 more files | `INSERT ... RETURNING id` | - |
 | `total_changes` | 1 (0) | core/store/_base.py 1 | none: a counter of the session's own writes | - |
-| `in_transaction` | 11 (0) | core/store/learning.py 4, core/store/summary.py 3, core/store/dialect.py 1, core/store/purchasing.py 1, 2 more files | `conn.info.transaction_status` | `begin_write` |
+| `in_transaction` | 14 (0) | core/store/learning.py 4, core/store/summary.py 3, core/store/_base.py 1, core/store/backups.py 1, 5 more files | `conn.info.transaction_status` | `begin_write` |
 | `create_function` (a Python SQL function) | 1 (0) | core/store/_base.py 1 | an SQL function in the database | - |
-| `backup` (the database copied whole) | 3 (1) | core/store/backups.py 2, ops/server_update.py 1 | `pg_dump` / `pg_basebackup` | - |
-| `sqlite3` in the code (its `connect`, `Row`, errors; type hints left out) | 70 (33) | core/store/backups.py 12, bench/seed.py 7, core/store/summary.py 7, ops/server_update.py 7, 17 more files | psycopg's `connect`, `rows.dict_row`, `errors.*` | - |
+| `backup` (the database copied whole) | 3 (0) | core/store/backups.py 3 | `pg_dump` / `pg_basebackup` | - |
+| `sqlite3` in the code (its `connect`, `Row`, errors; type hints left out) | 74 (24) | core/store/backups.py 23, bench/seed.py 7, core/store/summary.py 7, core/store/_base.py 6, 16 more files | psycopg's `connect`, `rows.dict_row`, `errors.*` | - |
 
-Headline: about 1,560 `?` placeholders (one translation where the connection is made, not a rewrite), and some 340
-uses of SQLite's own SQL to rewrite or to check: the JSON functions (about 130, the most work), the write lock (30),
-the summary's triggers (19) and full-text index, `rowid` (21), the conflict forms (19), the `PRAGMA`s and
-`sqlite_master` (37). About 80% of it is in `core/store`.
+Headline (counted again at phase 8's end): about 1,580 `?` placeholders (one translation where the connection is made,
+not a rewrite), and some 390 uses of SQLite's own SQL to rewrite or to check: the JSON functions (about 130, the most
+work), the write lock (one place now, `begin_write`), the summary's triggers (19) and the two full-text indexes,
+`rowid`, the conflict forms, the `PRAGMA`s and `sqlite_master` (41, the file's own for server-update's copy among them).
+About 86% of it is in `core/store` (the counts outside it are in brackets above).
 
 ## What behaves differently (not found by a pattern)
 

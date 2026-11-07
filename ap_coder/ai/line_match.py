@@ -54,7 +54,7 @@ def _singular(word: str) -> str:
     return word[:-1] if len(word) >= 5 and word.endswith("s") and not word.endswith("ss") else word
 
 
-@lru_cache(maxsize=131072)
+@lru_cache(maxsize=65536)  # (a description's words, 0.6 KB: the memory's 50,000 lessons and more, D-195)
 def keys(text: str) -> frozenset[str]:
     """The words of a line description that say what was bought: "Nitrile Gloves, box of 100 - LG" -> {"nitrile",
     "glove"}. Codes with letters and digits ("cat6", "kk74031") are kept; plain numbers are not."""
@@ -80,7 +80,7 @@ def _skeleton_of(short: str, long: str) -> bool:
     return all(c in it for c in short)
 
 
-@lru_cache(maxsize=262144)
+@lru_cache(maxsize=131072)  # (0.25 KB a pair: 34 MB at most, D-195)
 def word_match(a: str, b: str) -> float:
     """How far two words are the same word: 1.0 the same; less for a shortened word, or a word spelt nearly the
     same; 0.0 otherwise. A word with digits (a code) only matches itself."""

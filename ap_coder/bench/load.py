@@ -2,7 +2,7 @@
 
     python -m ap_coder.bench load --users 10 --duration 60 --workers 2 [--ramp 10] [--think 10] [--out bench_load]
         [--data DIR [--users-file FILE]] [--seed-invoices 2000] [--model-url URL] [--host ADDRESS] [--keep-alive 5]
-        [--baseline FILE [--max-regression 1.5]] [--quick]
+        [--baseline FILE [--max-regression 1.5]] [--sample-every 2] [--max-slope MB] [--quick]
 
 What it runs:
 - **The server under test**: the real ``python -m ap_coder serve --server --insecure-http --workers W`` (with its
@@ -37,10 +37,12 @@ What it measures: for every route (ids taken out), the count, p50/p95/p99/max (a
 its time, at least ``--timeout``), the status codes, refusals (4xx), the requests over 30 seconds, errors (5xx, no
 answer, cut off: still under way when the run stopped its people); the server's own milliseconds from its access
 logs; throughput over time; each server process's CPU and memory over time (``/proc``, or psutil when it is
-installed); "database is locked", tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay
-well under one core for the figures to be the server's). After the run, with the server stopped: no invoice approved
-or exported twice, one approval event per approved invoice, the invoices' summary equal to a recomputation, no login
-paused and no upload refused for these honest people.
+installed; every ``--sample-every`` seconds), with how fast its memory grew (MB a 10 minutes over the run and over its
+second half: ``rss_slope``; ``--max-slope`` fails a run whose process grew faster, D-195); "database is locked",
+tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay well under one core for the
+figures to be the server's). After the run, with the server stopped: no invoice approved or exported twice, one
+approval event per approved invoice, the invoices' summary equal to a recomputation, no login paused and no upload
+refused for these honest people.
 
 Output: ``OUT/report.json`` and ``OUT/report.md``, plus the server's output (``server.log``). The exit code is 1 when
 anything failed (an error, a correctness check) or, with ``--baseline`` (an earlier ``report.json``), when a route's
@@ -120,6 +122,8 @@ UNDOING = ("reopened", "sent_back")  # events that take an approval back (the ne
 AUDITED = ("approved", "final_approved", "exported", *UNDOING)
 ACTED = {"park": "parked", "reject": "rejected"}
 SUMMARY_SAMPLE = 2000  # invoices the run didn't touch, worked out again too (the touched ones always are)
+SAMPLE_EVERY = 2.0  # seconds between two looks at each server process's CPU and memory (--sample-every)
+SLOPE_SECONDS = 600.0  # a process's memory slope is said in MB per this long (``rss_slope``)
 
 
 class StepFailed(Exception):
@@ -536,12 +540,28 @@ class Sampler(threading.Thread):
             cpu = pts[-1][1] - pts[0][1]
             timeline = [(t, round((c - pc) / max(t - pt, 1e-9), 2), r)
                         for (pt, pc, _), (t, c, r) in zip(pts, pts[1:], strict=False)]  # fmt: skip
+            half = (pts[0][0] + pts[-1][0]) / 2
             out.append({"process": label, "pid": pid, "cpu_seconds": round(cpu, 1),
                         "mean_cores": round(cpu / span, 2) if len(pts) > 1 else None,
                         "peak_cores": max((c for _, c, _ in timeline), default=None),
                         "rss_mb_first": pts[0][2], "rss_mb_last": pts[-1][2],
-                        "rss_mb_peak": max(r for _, _, r in pts), "timeline": timeline})  # fmt: skip
+                        "rss_mb_peak": max(r for _, _, r in pts), "rss_slope": rss_slope(pts),
+                        "rss_slope_late": rss_slope([p for p in pts if p[0] >= half]),
+                        "timeline": timeline})  # fmt: skip
         return out
+
+
+def rss_slope(points: list[tuple[float, float, float]]) -> float | None:
+    """How fast a process's resident memory grew over ``points`` (seconds into the run, CPU seconds, RSS MB): the
+    least-squares line's slope, in MB per ``SLOPE_SECONDS`` (10 minutes); None for fewer than three points or less
+    than a minute of them. A memory flat for an hour has a slope near 0 over the run's second half: its caches fill
+    in the first minutes, up to their bounds (D-195)."""
+    if len(points) < 3 or points[-1][0] - points[0][0] < 60:
+        return None
+    n = len(points)
+    mean_t, mean_rss = sum(p[0] for p in points) / n, sum(p[2] for p in points) / n
+    spread = sum((p[0] - mean_t) ** 2 for p in points)
+    return round(sum((p[0] - mean_t) * (p[2] - mean_rss) for p in points) / spread * SLOPE_SECONDS, 1)
 
 
 # --- What a page holds: its forms (as FormData sends them), its static files, its links -------------------------------
@@ -1715,6 +1735,18 @@ def gate(report: dict[str, Any], baseline: dict[str, Any] | None, factor: float)
         problems.append(f"{report['counts']['logins refused']} logins refused")
     if report["counts"].get(NOT_MADE):
         problems.append(f"{NOT_MADE}: {report['counts'][NOT_MADE]}")
+    most = (report.get("config") or {}).get("max_slope")
+    # (a process with too few samples, a worker started afresh late, is left out; none left: the run was too short,
+    # which passed unjudged, B-2038)
+    found = report.get("processes") or []
+    judged = [p for p in found if p["process"] != "model" and p.get("rss_slope_late") is not None]
+    if most is not None and not judged:
+        problems.append("the memory slope can't be judged: the run's second half has under a minute of samples "
+                        "(--max-slope wants a run of 2 minutes or more)")  # fmt: skip
+    for p in judged if most is not None else []:
+        if p["rss_slope_late"] > most:
+            problems.append(f"{p['process']}'s memory grew {p['rss_slope_late']:.1f} MB a 10 minutes over the run's "
+                            f"second half (more than {most:g})")  # fmt: skip
     for route, base in ((baseline or {}).get("routes") or {}).items():
         now = report["routes"].get(route)
         if not now or now["n"] < MIN_COUNT or base.get("n", 0) < MIN_COUNT or not base.get("p95"):
@@ -1723,6 +1755,10 @@ def gate(report: dict[str, Any], baseline: dict[str, Any] | None, factor: float)
             problems.append(f"{route}: p95 {now['p95']:.3f} s, baseline {base['p95']:.3f} s "
                             f"({now['p95'] / base['p95']:.1f}x)")  # fmt: skip
     return problems
+
+
+def _mb(value: float | None) -> str:
+    return "-" if value is None else f"{value:+.1f}"
 
 
 def _s(value: float | None) -> str:
@@ -1771,11 +1807,12 @@ def markdown(report: dict[str, Any]) -> str:
         own = (server.get(route) or {}).get("p95")
         out.append(f"| {route} | {e['count']} | {_s(e['p50'])} | {_s(e['p95'])} | {_s(e['p99'])} | {_s(e['max'])} | "
                    f"{_s(own)} | {statuses} | {e['refused']} | {errors} |")  # fmt: skip
-    out += ["", "## Server processes", "", "| process | CPU s | mean cores | peak cores | RSS MB first → last (peak) |",
-            "|---|---:|---:|---:|---|"]  # fmt: skip
+    out += ["", "## Server processes", "", "| process | CPU s | mean cores | peak cores | RSS MB first → last (peak) | "
+            "RSS MB a 10 min: whole run, second half |", "|---|---:|---:|---:|---|---|"]  # fmt: skip
     for p in report.get("processes") or []:
         out.append(f"| {p['process']} | {p['cpu_seconds']} | {p['mean_cores']} | {p['peak_cores']} | "
-                   f"{p['rss_mb_first']} → {p['rss_mb_last']} ({p['rss_mb_peak']}) |")  # fmt: skip
+                   f"{p['rss_mb_first']} → {p['rss_mb_last']} ({p['rss_mb_peak']}) | "
+                   f"{_mb(p.get('rss_slope'))}, {_mb(p.get('rss_slope_late'))} |")  # fmt: skip
     out += [
         "",
         "## Over time (a row a minute)",
@@ -1837,6 +1874,12 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--out", default="bench_load", help="output folder (default bench_load)")
     p.add_argument("--baseline", default=None, help="an earlier report.json: fail on a route's p95 over it")
     p.add_argument("--max-regression", type=float, default=1.5, help="with --baseline: the p95 ratio that fails")
+    p.add_argument("--sample-every", type=float, default=SAMPLE_EVERY,
+                   help="seconds between two looks at each server process's CPU and memory (default 2; 10 for an "
+                        "hour's run)")  # fmt: skip
+    p.add_argument("--max-slope", type=float, default=None,
+                   help="fail when a server process's memory grew more than this many MB a 10 minutes over the "
+                        "run's second half (its slope is always reported)")  # fmt: skip
     p.add_argument("--quick", action="store_true", help="a small run to check a change (3 people, 20 s, ~1 min)")
     p.set_defaults(load_defaults={key: p.get_default(key) for key in QUICK})
     return p
@@ -1847,8 +1890,8 @@ def main_load(a: argparse.Namespace) -> int:
         for key, value in QUICK.items():
             if getattr(a, key) == a.load_defaults[key]:
                 setattr(a, key, value)
-    if a.users < 1 or a.duration <= 0 or a.workers < 1:
-        print("--users, --duration and --workers must be positive", file=sys.stderr)
+    if a.users < 1 or a.duration <= 0 or a.workers < 1 or a.sample_every <= 0:
+        print("--users, --duration, --workers and --sample-every must be positive", file=sys.stderr)
         return 2
     try:
         report = run_load(a)
@@ -1900,7 +1943,7 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
         run = Run(f"http://{host}:{port}", host, a.users, a.duration, min(a.ramp, a.duration), a.think, a.timeout,
                   a.seed, keep_alive=a.keep_alive)  # fmt: skip
         started = dt.datetime.now().isoformat(timespec="seconds")
-        sampler = Sampler(roots, time.monotonic())
+        sampler = Sampler(roots, time.monotonic(), a.sample_every)
         sampler.start()
         cpu0, wall0 = time.process_time(), time.monotonic()
         loop_cpu = asyncio.run(_timed(run, people))
@@ -1914,7 +1957,8 @@ def run_load(a: argparse.Namespace) -> dict[str, Any]:
                "data": str(data) if not seeded_here else "a folder seeded for the run", "invoices": invoices,
                "seed_invoices": a.seed_invoices if seeded_here else None, "model": which, "host": host,
                "timeout": a.timeout, "seed": a.seed, "started_in": server.started_in, "stopped_in": server.stopped_in,
-               "stop_how": server.stop_how, "jde": run.jde, "keep_alive": a.keep_alive}  # fmt: skip
+               "stop_how": server.stop_how, "jde": run.jde, "keep_alive": a.keep_alive,
+               "sample_every": a.sample_every, "max_slope": a.max_slope}  # fmt: skip
         report = build_report(run, cfg, {"started": started, "harness": harness, "logs": logs, "audit": checked,
                                          "processes": sampler.summary()})  # fmt: skip
         baseline = json.loads(Path(a.baseline).read_text(encoding="utf-8")) if a.baseline else None

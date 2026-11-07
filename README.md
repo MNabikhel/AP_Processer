@@ -124,7 +124,7 @@ pip install -e ".[ocr,dev]"
 python -m ap_coder serve                              # the dashboard: http://127.0.0.1:8501
 python -m ap_coder doctor --online                    # the setup check, as a report
 python scripts/check.py                               # lint and the tests of what you changed
-python -m pytest -q                                   # the default tests (the whole suite: -m "", as CI runs it)
+python -m pytest -q                                   # the default tests, ~7 min (the whole suite: -m "", ~28 min)
 ```
 
 The code is in `ap_coder/`: `core` (the database and settings), `capture` (reading a document), `ai` (the pipeline

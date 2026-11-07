@@ -102,6 +102,11 @@ def test_search_finds_an_invoice_and_says_where_it_is(client, busy):
     assert f'href="/review/{pending["id"]}"' in text
 
 
+def test_search_with_a_nul_in_it_answers_the_page(client, busy):
+    """B-2040: a NUL in the search box (pasted) gave a 500."""
+    assert client.get("/search", params={"q": "gra\x00nite"}).status_code == 200
+
+
 def test_search_downloads_the_stamped_pdf_only_when_fully_approved(client, busy):
     approved = busy.list_invoices(APPROVED)[0]
     data = attachment(client.get(f"/search/{approved['id']}/approved.pdf"), "approved.pdf", "application/pdf")

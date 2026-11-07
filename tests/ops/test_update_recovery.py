@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -198,6 +199,24 @@ def test_an_update_cut_short_at_each_step_is_dealt_with_at_the_services_next_sta
         assert not service.stop_flag(server["data"]).exists()  # the update's own stop, undone
     log = service.log_path(server["data"]).read_text(encoding="utf-8")
     assert "was cut short" in log and "Done:" in log
+
+
+@pytest.mark.parametrize("by", ["server-update", "the host"])
+def test_a_safety_copy_cut_short_leaves_none_of_its_files_once_dealt_with(server, monkeypatch, by):
+    """B-2035: a power cut while the safety copy was written leaves SQLite's files beside its ``.part`` (its
+    ``-journal``; a copy made ahead, D-196, its ``-wal`` and ``-shm`` too). Dealing with the cut removed the ``.part``
+    only: the rest stayed in the backups folder for good."""
+    state = _cut(server, monkeypatch, "safety-copy")
+    part = server["data"] / "backups" / f"ap_coder-20261107-101500-{state['label']}.db.part"
+    left = [part, *(part.with_name(part.name + s) for s in ("-journal", "-wal", "-shm"))]
+    for path in left:  # (as the power cut left them)
+        path.write_bytes(b"SQLite format 3\x00 cut short")
+    if by == "server-update":
+        assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=Service(server["data"])) == 0
+    else:
+        assert update_recovery.recover_at_start(server["data"], server["db"], Path(state["from_folder"])) is None
+    assert [p.name for p in left if p.exists()] == []
+    assert _marker(server["db"]) == OLD_DB and _runs(server) == "APProcessor"
 
 
 def test_the_host_starts_the_dashboard_once_it_dealt_with_an_update_cut_short(server, monkeypatch):
@@ -434,3 +453,92 @@ def test_roots_sudo_gives_the_marker_and_the_lock_to_the_service_folders_owner(s
     monkeypatch.setattr(service_macos, "is_root", lambda: False)  # the host itself, or a laptop: nothing handed
     update_recovery.write(server["data"], {"step": "stop"})
     assert handed == []
+
+
+# --- The safety copy made ahead (D-196): the power off while it is made, brought up to date, or after it --------------
+
+LATE = "written while it was copied ahead"
+
+
+class LastWork(Service):
+    """The old version serving on while the safety copy is made ahead, its last work done just before it stops."""
+
+    def stop(self) -> bool:
+        if "stop" not in self.calls:
+            Store(self.data / "ap_coder.db").set_setting("marker", LATE)
+        return super().stop()
+
+
+def _cut_in_the_copy(server, monkeypatch, where: str) -> dict:
+    """The power off inside the safety copy made ahead: ``copy`` (half the file copied, the old version writing on),
+    ``catch-up`` (the log copied beside it once stopped), or after it (``migrate``). What a power cut leaves on the
+    disk stays (nothing removes it); the hold on the database and the backups' lock go with the process."""
+    from ap_coder.core.store import backups
+
+    monkeypatch.setattr(backups.CopyAhead, "_remove_part", lambda self: None)
+    if where == "copy":
+
+        def half(source: BinaryIO, dest: Path, size: int, page: int) -> None:
+            dest.write_bytes(source.read()[: size // 2])
+            Store(server["db"]).set_setting("marker", LATE)  # (the old version, serving on)
+            raise PowerCut
+
+        monkeypatch.setattr(backups, "_copy_as_is", half)
+    elif where == "catch-up":
+        real = backups.CopyAhead._let_go
+
+        def cut(self) -> None:
+            real(self)
+            if backups._beside(self.part, "-wal").exists():
+                monkeypatch.setattr(backups.CopyAhead, "_let_go", real)
+                raise PowerCut
+
+        monkeypatch.setattr(backups.CopyAhead, "_let_go", cut)
+    with pytest.raises(PowerCut):
+        _install(_bundle(server["tmp"]), server["data"], server["db"],
+                 server=LastWork(server["data"], cut_in="migrate" if where == "migrate" else ""))  # fmt: skip
+    monkeypatch.setattr(backups.CopyAhead, "_remove_part", REAL["remove"])  # (as the computer started again runs it)
+    monkeypatch.setattr(backups, "_copy_as_is", REAL["copy"])
+    state = update_recovery.read(server["data"])
+    assert state["step"] == {"copy": "prepare", "catch-up": "safety-copy", "migrate": "migrate"}[where]
+    return state
+
+
+def _real() -> dict:
+    from ap_coder.core.store import backups
+
+    return {"remove": backups.CopyAhead._remove_part, "copy": backups._copy_as_is}
+
+
+REAL = _real()
+
+
+@pytest.mark.parametrize("by", ["server-update", "the host"])
+@pytest.mark.parametrize("where", ["copy", "catch-up", "migrate"])
+def test_an_update_cut_short_in_its_safety_copy_made_ahead_loses_nothing(server, monkeypatch, where, by):
+    """Cut while the copy was made ahead (the old version serving) or brought up to date (stopped): the old version
+    starts on its own database, its last work there, and nothing of the copy is left. Cut while the new version
+    migrated: the safety copy is put back, and it is the database as it was the moment the service stopped, the old
+    version's last work in it (D-188's promise, kept by D-196)."""
+    state = _cut_in_the_copy(server, monkeypatch, where)
+    backups = server["data"] / "backups"
+    if where != "migrate":  # (all a power cut may leave of the copy made ahead)
+        name = backups / f"ap_coder-20261107-101500-{state['label']}.db"
+        for path in [name.with_name(name.name + s) for s in (".part", ".part-wal", ".part-shm", ".files.json")]:
+            path.write_bytes(b"left by the power cut")
+    fake = Service(server["data"])
+    if by == "server-update":
+        assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 0
+        assert fake.calls == ([] if where == "copy" else ["stop", "start", "up APProcessor"])
+    else:
+        assert update_recovery.recover_at_start(server["data"], server["db"], Path(state["from_folder"])) is None
+        assert where == "copy" or not service.stop_flag(server["data"]).exists()
+    assert _marker(server["db"]) == LATE and _runs(server) == "APProcessor"
+    assert [p.name for p in backups.iterdir() if ".db." in p.name] == []
+    if where == "migrate":  # put back: its list has the SHA-256 the old version's check wants (B-2037)
+        from ap_coder.core.store import backup_files
+
+        (safety,) = backups.glob(f"ap_coder-*-{state['label']}.db")
+        assert backup_files.read_list(safety)["database_sha256"] == backup_files._sha_size(safety)[0]
+    assert not update_recovery.marker_path(server["data"]).exists()
+    assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"], server=Service(server["data"])) == 0

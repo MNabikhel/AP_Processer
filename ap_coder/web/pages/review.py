@@ -140,12 +140,15 @@ def _to_fix(facts: dict[str, Any], cost_centers: bool) -> tuple[str, int, int]:
     approval leaves for a person: a warning, or one that always goes to a person, ``bulk.needs_a_person``, B-1027)
     of one invoice, from what the queue reads of it (``bulk.queue_checks``: its findings by today's checks, and what
     its lines need, worked out in the invoices' summary, D-155)."""
-    found = facts.get("found") or []
-    errors = sum(1 for i in found if i["severity"] == "error")
-    # the lines to code are said in "Pick a GL account…", never counted again as warnings (B-1530)
-    others = sum(1 for i in found if needs_a_person(i["severity"], i["code"])
-                 and not (i["severity"] == "warning" and i["code"] in TO_PICK_CODES))  # fmt: skip
-    return facts.get("q_pick_cc" if cost_centers else "q_pick") or "", errors, others - errors
+    errors = others = 0  # (in one pass: 2,700 invoices of a dozen findings each, at each visit of the queue)
+    for i in facts.get("found") or []:
+        severity, code = i["severity"], i["code"]
+        if severity == "error":
+            errors += 1
+        # the lines to code are said in "Pick a GL account…", never counted again as warnings (B-1530)
+        elif needs_a_person(severity, code) and not (severity == "warning" and code in TO_PICK_CODES):
+            others += 1
+    return facts.get("q_pick_cc" if cost_centers else "q_pick") or "", errors, others
 
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
@@ -166,6 +169,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     paying = any(a["active"] for a in accounts)  # the review screen's Pay from rule (B-685): its Approve, its Ready
     pay = {i["id"]: _pay(checks.get(i["id"]) or {}, i) for i in pending} if paying else {}
     last = store.last_pay_froms(sorted({p[3] for p in pay.values()})) if paying else {}  # each vendor's last one
+    blocks: dict[tuple[str, bool, str, str], str] = {}  # what stops each Pay from asked, worked out once a call
     out = {}
     for inv in pending:
         to_pick, errors, warned = _to_fix(checks.get(inv["id"]) or {}, cost_centers)
@@ -173,9 +177,12 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
         bank = ""
         if paying:
             code, approved, currency, key = pay[inv["id"]]
-            choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
-                                          last.get(key, ""))  # fmt: skip
-            bank = banks.blocking(choice, accounts)
+            asked = (code, approved, currency, last.get(key, ""))
+            if asked not in blocks:
+                choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
+                                              asked[3])  # fmt: skip
+                blocks[asked] = banks.blocking(choice, accounts)
+            bank = blocks[asked]
         why = [
             to_pick,
             bank,
@@ -193,11 +200,23 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
 
 def _pay(facts: dict[str, Any], inv: dict[str, Any]) -> tuple[str, bool, str, str]:
     """(its Pay from account, approved before or not, its currency, its vendor's key) of a queue invoice, as its
-    review screen opens with them (``bulk.queue_facts``)."""
-    if facts.get("q_pay"):
-        code, approved, currency, key = json.loads(facts["q_pay"])
-        return code, approved, currency, key
+    review screen opens with them (``bulk.queue_facts``): each text decoded once (``_PAYS``)."""
+    text = facts.get("q_pay")
+    if text:
+        pay = _PAYS.get(text)
+        if pay is None:
+            if len(_PAYS) >= PAYS_KEPT:
+                _PAYS.clear()
+            code, approved, currency, key = json.loads(text)
+            pay = _PAYS[text] = (code, approved, currency, key)
+        return pay
     return "", False, "CAD", vendor_key(inv.get("vendor_name") or "")
+
+
+# Each Pay from text of the queue's facts (``q_pay``), decoded: the queue reads 2,700 at each visit, most of them read
+# at the last. Past PAYS_KEPT texts they are all let go.
+_PAYS: dict[str, tuple[str, bool, str, str]] = {}
+PAYS_KEPT = 16_384
 
 
 def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, str]:

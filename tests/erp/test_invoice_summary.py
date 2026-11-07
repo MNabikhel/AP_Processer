@@ -360,6 +360,122 @@ def test_the_erp_registers_search_keys_are_made_for_an_older_database(year):
     assert any(h.source == "ERP" for h in before)
 
 
+_REGISTER_NAMES = ["Granite Logistics", "Granite Supply Co", "Café Livraison Ltée", "3M Canada", "Straße Erp Supplies",
+                   "O'Brien & Sons", "Aurora Electric 2", "Northwind IT Solutions", "LP Fuels"]  # fmt: skip
+
+
+def _register_in_step(store: Store) -> bool:
+    with sqlite3.connect(store.path) as conn:
+        found = conn.execute(
+            "SELECT (SELECT value FROM settings WHERE key = 'register_search_step') = COALESCE("
+            "(SELECT value FROM settings WHERE key = 'changes/register'), '0')"
+        ).fetchone()
+    return bool(found[0])
+
+
+def _register_change(rng, store: Store, monkeypatch, seen, kind: str = "") -> bool | None:
+    """One random write to ``store``'s ERP register; whether it keeps the search's index as it was (in step when it
+    was), False: it leaves it behind, None: it makes it again (a start)."""
+    from ap_coder.core.memory import vendor_key
+
+    def bill() -> dict:
+        number = rng.choice(["H00{:05d}", "INV-{:04d}", "{:07d}", "NW-ERP-{:04d}", "N°{:04d}", "CN-2026-{:04d}"])
+        return {"vendor_name": rng.choice(_REGISTER_NAMES), "invoice_number": number.format(rng.randrange(1, 3000)),
+                "total": rng.choice([1, -1]) * round(rng.uniform(1, 20000), 2),
+                "invoice_date": "2026-10-01"}  # fmt: skip
+
+    kind = kind or rng.choice(["file", "file", "vouchers", "vouchers", "gone", "clear", "sql", "huge", "older",
+                               "no fts", "start"])  # fmt: skip
+    if kind == "file":
+        store.import_erp_register([bill() for _ in range(rng.randrange(1, 40))], replace_all=rng.random() < 0.2)
+    elif kind == "vouchers":  # new, seen again, or moved to another bill (its supplier renamed, its gross corrected)
+        store.import_jde_vouchers([{**bill(), "key": f"1-PV-{rng.randrange(60)}", "an8": "4001"}
+                                   for _ in range(rng.randrange(1, 30))], seen=next(seen))  # fmt: skip
+    elif kind == "gone":  # vouchers JD Edwards no longer lists, and their bills with their last
+        with sqlite3.connect(store.path) as conn:
+            keys = [r[0] for r in conn.execute("SELECT erp_key FROM erp_vouchers")]
+        store.remove_jde_vouchers(rng.sample(keys, min(len(keys), rng.randrange(1, 10))), next(seen))
+    elif kind == "clear":
+        store.clear_erp_register()
+    elif kind in ("sql", "huge", "older"):  # an older AP Coder's write, or plain SQL: the index left as it was
+        with sqlite3.connect(store.path) as conn:
+            row = bill()
+            plain, raw = search.register_keys(row["vendor_name"], row["invoice_number"])
+            insert = ("INSERT OR IGNORE INTO erp_invoices (rowid, vendor_key, number_key, total, vendor_name, "
+                      "invoice_number, imported_at, plain_name, raw_number) VALUES (?, ?, ?, ?, ?, ?, '2026', ?, "
+                      "?)")  # fmt: skip
+            values = (vendor_key(row["vendor_name"]), search.norm_invoice_number(row["invoice_number"]), row["total"],
+                      row["vendor_name"], row["invoice_number"], plain, raw)  # fmt: skip
+            if kind == "huge":  # (SQLite's largest rowid taken: a row added later gets one at random)
+                conn.execute(insert, (2**63 - 1, *values))
+            elif kind == "older":  # (a database, or a backup restored, of an AP Coder before the index)
+                conn.execute("DROP TABLE IF EXISTS register_search")
+                conn.execute("DELETE FROM settings WHERE key = 'register_search_step'")
+            else:
+                conn.execute(insert, (None, *values))
+                conn.execute("DELETE FROM erp_invoices WHERE rowid IN (SELECT rowid FROM erp_invoices ORDER BY "
+                             "random() LIMIT 1)")  # fmt: skip
+                conn.execute("UPDATE erp_invoices SET plain_name = 'granite ' || plain_name WHERE rowid IN (SELECT "
+                             "rowid FROM erp_invoices ORDER BY random() LIMIT 1)")  # fmt: skip
+            wrote = kind == "older" or conn.total_changes > 0  # (none: a row there already, a register empty)
+        return not wrote
+    elif kind == "no fts":  # a computer whose SQLite has no FTS5 writes the register (and reads it itself)
+        with monkeypatch.context() as patched:
+            patched.setitem(summary_module._FTS, "ok", False)
+            store.import_erp_register([bill() for _ in range(3)])
+            assert [h.row for h in search.find(store, "granite", 500)] == [
+                h.row for h in ref.search_find(store, "granite", 500)]  # fmt: skip
+        return False
+    else:
+        Store(store.path)
+        return None
+    return True
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4])
+def test_the_quick_searchs_register_hits_are_scoring_every_row_whatever_writes_the_register(year, monkeypatch, seed):
+    """D-194: the quick search reads the ERP register's rows holding a word through the register's FTS5 index
+    (``register_search``), kept by the register's own writes, not each row of the register (600,000 at 300,000
+    invoices). Random writes (a file imported, added to the register or in its place; JD Edwards' vouchers new, seen
+    again, moved to another bill, gone with their bill; the register cleared; an older AP Coder's rows or plain SQL,
+    a computer whose SQLite has no FTS5, SQLite's largest rowid taken, a database of an AP Coder before the index:
+    each leaves it behind; a start, which makes it again), and after each the hits of many searches are those scoring
+    every row of the register and the summary gives (``ref.search_find``), in the same order, and the directory's ERP
+    hits too; the index is in step whenever the writes since a start kept it."""
+    import itertools
+    import random
+
+    rng, seen = random.Random(seed), itertools.count(1)
+    _erp_register(year)
+    queries = [*MORE_QUERIES, "granite", "gran", "granite supply", "supply co", "livraison", "cafe", "o'brien",
+               "brien sons", "aurora 2", "electric", "lp", "fuels", "h0001", "h00012", "inv-0042", "0042", "cn-2026",
+               "2026", "-1", "nw-erp-0012", "erp 0012", "3m canada", "zzz"]  # fmt: skip
+    in_step, used = _register_in_step(year), 0
+    assert in_step
+    for step in range(25):
+        with sqlite3.connect(year.path) as conn:
+            top = conn.execute("SELECT MAX(rowid) FROM erp_invoices").fetchone()[0]
+        kept = _register_change(rng, year, monkeypatch, seen, "file" if step == 0 else "start" if not in_step and
+                                rng.random() < 0.5 else "")  # fmt: skip
+        now = _register_in_step(year)
+        if kept is None:  # (a start: made again)
+            assert now
+        elif kept is False:
+            assert not now
+        elif top != 2**63 - 1:  # (else a row it added may be below the others: left behind, if it added one)
+            assert now == in_step
+        in_step = now
+        used += in_step
+        for q in [*queries, *rng.sample([r["invoice_number"] for r in year.erp_register()] or ["x"], 1)]:
+            new = [(h.score, h.source, h.row.get("id"), h.row) for h in search.find(year, q, 500)]
+            old = [(h.score, h.source, h.row.get("id"), h.row) for h in ref.search_find(year, q, 500)]
+            assert new == old, q
+        query = directory.Query.from_params({"q": "granite", "erp": "100"})
+        old_erp = [(h.score, h.row) for h in ref.search_find(year, "granite", 500) if h.source == "ERP"]
+        assert [(h.score, h.row) for h in directory.run(year, query).erp] == old_erp[: query.erp_shown]
+    assert used  # (the index read, not only the register)
+
+
 def test_the_directory_filters_and_sorts_as_it_did(year):
     old_rows = ref.OLD_ROWS_SQL
     for params in ({}, {"f_gl": "6*"}, {"f_gl": "!6*"}, {"f_po": "*"}, {"f_tax": ">100"}, {"sort": "gl", "dir": "asc"},

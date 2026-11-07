@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ...coding.terms import DEFAULT_TERMS_DAYS, payment
+from ..caches import MB, Bounded, size_of
 from ..keys import norm_invoice_number
 from ..memory import pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
@@ -41,7 +42,9 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of the company
 # server, and the downloads its background process makes, reports.py, D-169); past_lines came later in 27 (by
 # _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178),
-# and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185)
+# and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185), and
+# billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
+# purchasing.py, D-194)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -67,6 +70,7 @@ _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
 # Invoice files found where they were recorded, and when: an invoice read is not checked again for this long.
 _FOUND: dict[str, float] = {}
+LOOKED_KEPT = 50_000  # of each (the files found, those not): past it they are all let go (B-2026)
 
 BRIEF_WAIT_MS = 200  # how long a page's bookkeeping (``Store.briefly``) may wait for another writer
 
@@ -75,17 +79,18 @@ BRIEF_WAIT_MS = 200  # how long a page's bookkeeping (``Store.briefly``) may wai
 _RESTORING: set[str] = set()
 _RESTORING_LOCK = threading.Lock()
 
-# The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
-_FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+# The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``). These
+# caches of the learning are kept within their bytes too, the ones used longest ago going first (D-195).
+_FEEDBACK = Bounded("learning memory", 96 * MB, size=lambda kept: size_of(kept[1]))
 _FEEDBACK_LOCK = threading.Lock()
 # The learning memory's part of ``Store.metrics`` as last counted, per database: (its stamp, the counts).
 _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 # What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
 # latest used last (``Store.vendor_lessons``).
-_VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
+_VENDOR_LESSONS = Bounded("vendors' lessons", 8 * MB, size=lambda kept: size_of(kept[1]))
 # A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows), the
 # latest used last, ``memory.PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` lessons at most (``Store.learning_rows``).
-_PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+_PAST_MEMORY = Bounded("vendors' older lessons", 80 * MB, size=lambda kept: size_of(kept[1]))
 # The same lessons by line (``memory.PastLines``), per (database, vendor key): (their stamp, the lines, the lessons they
 # were carried on by since the database's copy, ``past_lines``), the latest used last (``Store._past_lines``, D-178).
 _PAST_LINES: dict[tuple[str, str], tuple[tuple[Any, ...], Any, int]] = {}
@@ -125,6 +130,12 @@ VENDOR_CHANGES = ("CREATE TABLE IF NOT EXISTS vendor_changes (seq INTEGER PRIMAR
 VENDOR_LOGGED = ("INSERT INTO vendor_changes (vendor_key, invoice_id) SELECT {0}.vendor_key, {0}.id WHERE "
                  "{0}.vendor_key IS NOT NULL{1}; DELETE FROM vendor_changes WHERE seq <= (SELECT MAX(seq) FROM "
                  f"vendor_changes) - {VENDOR_CHANGES_KEPT}")  # fmt: skip
+# The review queue's invoices changed, in the order they were (D-193): each one whose row in the queue's lists or whose
+# facts in review changed, logged by the summary as it works it out (``summary._summarize``, in the same transaction):
+# a process keeping the queue's lists and facts (``review_queue.py``) reads again only those. The latest
+# QUEUE_CHANGES_KEPT are kept. Made with the vendors' log (``summary.make_triggers``).
+QUEUE_CHANGES_KEPT = 20_000
+QUEUE_CHANGES = "CREATE TABLE IF NOT EXISTS queue_changes (seq INTEGER PRIMARY KEY, id INTEGER NOT NULL)"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -288,6 +299,10 @@ CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEG
 CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
     stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
 CREATE TABLE IF NOT EXISTS past_lines (vendor_key TEXT PRIMARY KEY, stamp TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS billing_facts (vendor_key TEXT NOT NULL, id INTEGER NOT NULL, facts TEXT NOT NULL,
+    PRIMARY KEY (vendor_key, id));
+CREATE TABLE IF NOT EXISTS billing_vendors (vendor_key TEXT PRIMARY KEY, kept TEXT NOT NULL, logged INTEGER NOT NULL,
+    counted INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, kind TEXT NOT NULL,
     params TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
@@ -482,10 +497,14 @@ class _Held:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.depth = 0
-        self.memo: dict[tuple[Any, ...], tuple[tuple[int, int], Any]] = {}  # ``StoreCore._session_memo``
+        # ``StoreCore._session_memo``: what was read at one moment of the database (``moment``), within its bytes
+        self.memo = Bounded("a session's memo", SESSION_MEMO_BYTES, size=lambda kept: size_of(kept[1]))
+        self.moment: tuple[int, int] | None = None
 
 
 _sessions = threading.local()
+# One session's memo at most: a vendor's invoices up to about 70,000 (300,000 invoices' biggest: 24 MB; B-2042)
+SESSION_MEMO_BYTES = 64 * MB
 
 
 def _held_connections() -> dict[str, _Held]:
@@ -683,8 +702,11 @@ class StoreCore:
         if held is None:
             return compute()
         stamp = (held.conn.total_changes, dialect.data_version(held.conn))
+        if stamp != held.moment:  # (the database changed: nothing read before holds, so none of it is kept, B-2042)
+            held.memo.clear()
+            held.moment = stamp
         hit = held.memo.get(key)
-        if hit is None or hit[0] != stamp:
+        if hit is None:
             hit = held.memo[key] = (stamp, compute())
         return hit[1] if shared else [dict(r) for r in hit[1]]
 

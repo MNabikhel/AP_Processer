@@ -32,7 +32,7 @@ BACKUP_FAILED, DISK_FULL, PROCESS_STOPPED, CERTIFICATE, MODEL_BACKUP = 101, 102,
 SOCKET = "/var/run/syslog" if sys.platform == "darwin" else "/dev/log"
 
 log = logging.getLogger(__name__)
-_told: dict[str, float] = {}  # what was told, and when (time.monotonic)
+_told: dict[str, float] = {}  # what was told in the last hour (EVERY), and when (time.monotonic)
 _lock = threading.Lock()
 
 
@@ -48,6 +48,8 @@ def report(kind: int, message: str, *, warning: bool = False, key: str = "") -> 
         last = _told.get(key)
         if last is not None and now - last < EVERY:
             return False
+        for old in [k for k, at in _told.items() if now - at >= EVERY]:  # told again anyway: forgotten (B-2027)
+            del _told[old]
         _told[key] = now
     try:
         _send(kind, text, warning)

@@ -15,10 +15,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from ..paths import pid_alive
-from . import backup_files
+from . import backup_files, dialect
 from ._base import (
     _NOT_FOUND,
     _RESTORING,
@@ -30,6 +30,7 @@ from ._base import (
     _store_class,
 )
 from .backup_files import Retention
+from .migrations import _answer_work
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import carry_accounts, saved_accounts
@@ -218,6 +219,157 @@ def setting_in(db: Path, key: str) -> str | None:
     except sqlite3.Error:
         return None
     return row[0] if row else None
+
+
+# --- server-update's safety copy, made while AP Coder serves and brought up to date once it is stopped (D-196) --------
+
+# In a database over 1 GiB, SQLite's lock-byte page starts at this byte: it never holds data, and on Windows bytes of
+# it are locked by whoever opens the database (a read of them fails), so it is never read.
+LOCK_PAGE = 1 << 30
+HOLD_WAIT = 60.0  # seconds to find a moment when the whole write-ahead log is in the database file
+CHUNK = 1 << 20
+
+
+def _beside(path: Path, suffix: str) -> Path:
+    return path.with_name(path.name + suffix)
+
+
+class CopyAhead:
+    """A copy of the database file ``db`` as ``part``, made while AP Coder works on it and brought up to date in a
+    moment once it has stopped: server-update's safety copy, whose downtime then no longer grows with the database
+    (D-196). ``start`` takes the backups' lock (``backup_files.exclusive``) and holds the file still: a read
+    transaction begun once the whole write-ahead log is in the file, no writer meanwhile (the write lock held for that
+    moment). While it lasts SQLite writes nothing into the file (a checkpoint stops at the oldest reader's snapshot,
+    and this one's is the file itself): what is written stays in the log. The file is then copied as it is.
+    ``finish``, once nothing writes: the log copied beside the copy and applied to it by SQLite's own recovery, the
+    copy made one file. ``close``: the hold and the lock let go, what is left of an unfinished copy removed."""
+
+    def __init__(self, db: Path, part: Path) -> None:
+        self.db, self.part = db, part
+        self.held: sqlite3.Connection | None = None
+        # The database file, opened once for the copy and closed only once the hold is let go: on Linux and macOS
+        # closing any handle on a file lets go of every lock this process holds on it, the hold's own (B-2036).
+        self._file: BinaryIO | None = None
+        self.seen: tuple[int, int] = (0, 0)
+        self.caught_up = False  # (``finish`` brought it up to date: else the database was copied whole)
+        self._lock = contextlib.ExitStack()
+
+    def start(self) -> str:
+        """Nothing ("") once the file is held and copied; else why it can't be held still (nothing done: the caller
+        copies it whole once AP Coder is stopped). Raises OSError when the copy can't be made (a full disk), and
+        ``backup_files.Busy`` while another backup or a restore runs."""
+        try:
+            self._lock.enter_context(backup_files.exclusive(self.db.parent))
+            self.held, why = _hold_still(self.db, HOLD_WAIT)
+            if self.held is None:
+                self.close()
+                return why
+            page = dialect.page_size(self.held)
+            found = self.db.stat()
+            self.seen = (found.st_size, found.st_mtime_ns)
+            self._remove_part()
+            self.part.parent.mkdir(parents=True, exist_ok=True)
+            self._file = open(self.db, "rb")  # noqa: SIM115 - closed by _let_go, after the hold (above)
+            _copy_as_is(self._file, self.part, found.st_size, page)
+        except BaseException:
+            self.close()
+            raise
+        return ""
+
+    def finish(self) -> bool:
+        """The copy brought up to date with what was written since ``start``, one file on the disk (``part``). False
+        when it can't be (the hold was lost, or the file was written meanwhile after all): the copy is removed and the
+        database is to be copied whole, the backups' lock still held."""
+        found = self.db.stat()
+        if self.held is None or not self.held.in_transaction or (found.st_size, found.st_mtime_ns) != self.seen:
+            self._let_go()
+            self._remove_part()
+            return False
+        log = _beside(self.db, "-wal")
+        if log.exists():
+            shutil.copyfile(log, _beside(self.part, "-wal"))
+        self._let_go()
+        conn = sqlite3.connect(self.part)
+        try:
+            dialect.checkpoint(conn, "TRUNCATE")  # (SQLite's recovery reads the log as it opens)
+            dialect.journal_mode(conn, "delete")
+        finally:
+            conn.close()
+        self.caught_up = True
+        return True
+
+    def close(self) -> None:
+        self._let_go()
+        self._remove_part()
+        self._lock.close()
+
+    def _let_go(self) -> None:
+        if self.held is not None:
+            self.held.close()
+            self.held = None
+        if self._file is not None:  # (after the hold: B-2036)
+            self._file.close()
+            self._file = None
+
+    def _remove_part(self) -> None:
+        """The copy not finished, SQLite's files beside it, and the list of files made with it (server-update's)."""
+        for leftover in (self.part, *(_beside(self.part, s) for s in ("-wal", "-shm", "-journal"))):
+            leftover.unlink(missing_ok=True)
+        backup_files.list_path(self.part).unlink(missing_ok=True)
+
+
+def _hold_still(db: Path, wait: float) -> tuple[sqlite3.Connection | None, str]:
+    """A read transaction on ``db`` begun once its whole write-ahead log is in the file (``CopyAhead``), and ""; or
+    None and why there is none: not in WAL mode, or no such moment in ``wait`` seconds (a long write, or readers that
+    kept the log from being all written into the file)."""
+    held = sqlite3.connect(db, timeout=30, isolation_level=None)
+    writer = sqlite3.connect(db, timeout=5, isolation_level=None)
+    try:
+        if dialect.journal_mode(held) != "wal":
+            held.close()
+            return None, "the database is not in WAL mode"
+        deadline = time.monotonic() + wait
+        while True:
+            with contextlib.suppress(sqlite3.OperationalError):  # (a write under way for 5 s: tried again)
+                dialect.begin_write(writer)  # nothing is added to the log meanwhile
+                try:
+                    busy, logged, written = dialect.checkpoint(held)
+                    if busy == 0 and logged == written >= 0:  # the whole log is in the file
+                        held.execute("BEGIN")
+                        dialect.table_names(held)  # (a read: its snapshot, the file as it is now)
+                        return held, ""
+                finally:
+                    writer.execute("ROLLBACK")
+            if time.monotonic() > deadline:
+                held.close()
+                return None, f"it was never still for a moment in {wait:g} s"
+            time.sleep(0.2)
+    except BaseException:
+        held.close()
+        raise
+    finally:
+        writer.close()
+
+
+def _copy_as_is(src: BinaryIO, dest: Path, size: int, page: int) -> None:
+    """The first ``size`` bytes of the open file ``src`` (left open: B-2036) into the new file ``dest``, flushed to
+    the disk; SQLite's lock-byte page (``LOCK_PAGE``, ``page`` bytes) written as zeros, never read."""
+    src.seek(0)
+    with open(dest, "xb") as out:
+        done = 0
+        while done < size:
+            if done == LOCK_PAGE:
+                out.write(bytes(page))
+                done += page
+                src.seek(done)
+                continue
+            block = src.read(min(CHUNK, size - done, LOCK_PAGE - done if done < LOCK_PAGE else CHUNK))
+            if not block:
+                raise OSError(f"{Path(src.name).name} ends at {done:,} bytes, not {size:,}")
+            out.write(block)
+            done += len(block)
+        out.flush()
+        os.fsync(out.fileno())
 
 
 class BackupsMixin:
@@ -506,6 +658,10 @@ class BackupsMixin:
         conn = sqlite3.connect(path)
         try:
             make_triggers(conn, missing=False, counts=True)
+            if "report_answers" in dialect.table_names(
+                conn
+            ):  # (the kept answers read as this version reads them: B-2045)
+                _answer_work(None, conn)
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
                 conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE "
                              "SET value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip

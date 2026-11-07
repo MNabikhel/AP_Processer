@@ -431,16 +431,18 @@ the launcher.
   database before the work (the database's `summary_id`, a summary topic's generation, an event count, a count of
   changes the triggers keep in `settings` as `changes/<kind>`, and what was asked). A change by any process, or by
   plain SQL, moves the stamp, and the next request works the answer out again; nothing is kept from inside a write
-  under way. The latest answer of each name is kept, 64 at most. Kept so (sizes at 100,000 invoices):
+  under way. The latest answer of each name is kept, 64 at most and within 112 MB (D-195). Kept so (sizes at
+  100,000 invoices):
   * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
     about 7 MB each), the vendors on hold (`held_vendors`; `changes/vendors`) and their approved numbers
     (`approved_numbers`; each one's own `changes/vendor/<key>`, D-174);
-  * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
-    laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
-    with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
-    invoice page's Previous and Next read in a view of the queue's own; the `listed` topic, which a check's
-    confidence doesn't move: the confidences are read with the queue's order at each ask, off an index, D-167; about
-    3 MB each). In the queue's own order Previous and Next read its ids alone, off that index (D-179);
+  * the review queue's facts (`Store.queue_facts`, what `bulk.queue_checks` reads of each invoice in review, from 50
+    invoices asked; the findings in them decoded once for every invoice with the same, `bulk._FOUND`, D-165) and its
+    lists' rows (`list_invoices` of review, parked, pending, which the invoice page's Previous and Next read in a
+    view of the queue's own), kept by invoice and brought up to date from the summary's log of the queue's changes
+    (`queue_changes`, `core/store/review_queue.py`, D-193): after a check, an approval or a park only the invoices
+    changed are read again, and the lists' order (their ids alone) off an index in the same moment. In the queue's own
+    order Previous and Next read its ids alone, off that index (D-179);
   * the vendors' payment terms the queue's rows are due by (`changes/vendors`, 2.7 MB), and the vendors whose
     regular invoice is late (the summary's `dates`, settled for 60 s after a change: the queue only shows them,
     D-164, D-165);
@@ -481,7 +483,9 @@ the launcher.
   process with none of them kept takes them from there while the stamp holds (0.01 s for the audit and 0.8 s for
   month-end's page in a second worker, at 100,000 invoices, instead of 6-7 s and 5-6 s in each one; Spend's 3 ms
   instead of 0.47 s at 20,000). Those a page only shows settle as before (D-164), by when their work began in
-  whichever process did it. One process works an answer out while the others wait for it, and take it even when
+  whichever process did it, and for ten times as long as that work lasted when longer, 15 minutes at most
+  (`ap_coder/core/store/reports.py:settle_for`, D-197: Spend's 20 s at 300,000 invoices settle for 200 s; the Vendors
+  page's workload and totals settle by their own work alone, exact on a laptop). One process works an answer out while the others wait for it, and take it even when
   something changed meanwhile (it was worked out after they asked, B-1802); of those a page only shows, the others
   take the answer before meanwhile instead (this database's latest, D-179). One an older AP Coder wrote, over 16 MB,
   or worked out in a write under way is not kept for the others.
@@ -497,11 +501,20 @@ the launcher.
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
   `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its
-  own: the vendors asked most recently, at most 50,000 rows and 4,096 vendors, about 50 MB, one vendor up to half the
+  own: the vendors asked most recently, at most 50,000 rows and 4,096 vendors, within 64 MB, one vendor up to half the
   rows, a bigger one read once a page; kept on the database's `summary_id`, and brought up to date from the vendors'
   change log the triggers keep, `vendor_changes`: only the invoices changed since are read again, D-174; the check
   reads them read-only, not a copy). The page pictures are not kept in a server worker's memory: they are drawn once
   into the data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
+
+  **Each cache within its bytes** (D-195): every cache a process keeps between requests is listed in
+  `ap_coder/core/caches.py:CACHES` with the bytes it holds at most, a web worker's within `WORKER_CACHES_MOST`
+  (1,050 MB, 0.7 of `WORKER_MB`'s 1,500 MB, with room for the requests under way); those whose entries grow with the
+  database are a `Bounded` (each entry sized as it is kept, `size_of`; the ones used longest ago go first), and
+  `tests/meta/test_caches.py` finds a new one not listed. On Linux the server's processes keep two malloc arenas
+  (`ap_coder/web/server.py:fewer_malloc_arenas`: `mallopt`, and `MALLOC_ARENA_MAX` for the processes it starts;
+  one IT set is left): by default each thread could make its own and keep what a request's peak freed there.
+  Windows and macOS have their own allocators, and nothing is set there.
 
 ## 9. The data folder and everything AP Coder writes
 

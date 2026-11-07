@@ -120,6 +120,109 @@ def test_the_quick_searchs_erp_hits_read_each_vendor_name_once_not_each_register
         assert hits and [h.score for h in hits] == [search._score(h.row, words, numbers) for h in hits]
 
 
+def test_the_quick_search_reads_the_register_rows_holding_its_words_through_the_registers_index(tmp_path, monkeypatch):
+    """D-194: the quick search read every row of the ERP register for a word (600,000 at 300,000 invoices: 5% of the
+    web workers' CPU). It reads only those its words are in, through the register's FTS5 index kept by the register's
+    writes, when every part of the search can be looked up there (a word or number of three characters or more, not
+    an amount); otherwise, or once a write left the index behind, it reads the register as before."""
+    import sqlite3
+
+    from ap_coder.core.store import register, summary
+
+    if not summary.fts_available():
+        return
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics" if n % 3 else "LP Fuels",
+                                "invoice_number": f"H00{n:04d}", "invoice_date": "2026-09-01", "total": 100.0 + n}
+                               for n in range(30)])  # fmt: skip
+    plans: list[str] = []
+    real = register.fetch_rows
+
+    def read(conn, sql, params):
+        plans.append(" ".join(r[3] for r in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params)))
+        return real(conn, sql, params)
+
+    monkeypatch.setattr(register, "fetch_rows", read)
+    looked_up = "SEARCH erp_invoices USING INTEGER PRIMARY KEY"
+    for query, through in (("granite", True), ("granite h000013", True), ("h000012", True), ("fuels lp", True),
+                           ("lp", False), ("0012", False), ("granite 113", True), ("112", False)):  # fmt: skip
+        plans.clear()
+        hits = search.erp_hits(store, *search.parts(query))
+        assert hits and len(plans) == 1 and (looked_up in plans[0]) == through, query
+        assert ("SCAN erp_invoices" in plans[0]) != through, query
+    with sqlite3.connect(store.path) as conn:  # (an older AP Coder's row: the index left behind)
+        conn.execute("INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, "
+                     "imported_at, plain_name, raw_number) VALUES ('granite x', '9', 1, 'Granite X', '9', '2026', "
+                     "'granite x', '9')")  # fmt: skip
+    plans.clear()
+    assert len(search.erp_hits(store, ["granite"], [])) == 21 and "SCAN erp_invoices" in plans[0]
+    Store(store.path)  # (a start: built again)
+    plans.clear()
+    assert len(search.erp_hits(store, ["granite"], [])) == 21 and looked_up in plans[0]
+
+
+def test_a_register_row_given_a_rowid_at_random_is_still_found(tmp_path):
+    """D-194: the register's index takes the rows a write added as those above the largest rowid before it; once
+    SQLite's largest rowid is taken (plain SQL), SQLite gives a row added one at random, perhaps below: that write
+    leaves the index behind, and the search reads the register itself, until a start builds the index again."""
+    import sqlite3
+
+    from ap_coder.core.store import register, summary
+
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("INSERT INTO erp_invoices (rowid, vendor_key, number_key, total, vendor_name, invoice_number, "
+                     "imported_at, plain_name, raw_number) VALUES (?, 'zeta parts', '9', 1, 'Zeta Parts', '9', '2026', "
+                     "'zeta parts', '9')", (2**63 - 1,))  # fmt: skip
+    Store(store.path)  # (a start: the index built again, the largest rowid in it)
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": f"G-{n}", "total": 10.0 + n}
+                               for n in range(2, 6)])  # fmt: skip
+    assert sorted(h.row["invoice_number"] for h in search.erp_hits(store, ["granite"], [])) == [
+        "G-1", "G-2", "G-3", "G-4", "G-5"]  # fmt: skip
+    with store._conn() as conn:
+        assert not register.search_in_step(conn) or not summary.fts_available()
+    Store(store.path)
+    with store._conn() as conn:
+        assert register.search_in_step(conn) == summary.fts_available()
+    assert len(search.erp_hits(store, ["granite"], [])) == 5
+
+
+def test_register_rows_at_rowid_zero_or_below_are_in_the_index_built_at_start(tmp_path):
+    """B-2039: the index built again at a start took the register's rows above rowid 0 only, and said it was in step:
+    a row plain SQL put at rowid 0 or below was never found by the quick search again, though the register has it."""
+    import sqlite3
+
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    with sqlite3.connect(store.path) as conn:
+        for rowid, name in ((0, "zeta parts"), (-5, "zeta tools")):
+            conn.execute("INSERT INTO erp_invoices (rowid, vendor_key, number_key, total, vendor_name, invoice_number, "
+                         "imported_at, plain_name, raw_number) VALUES (?, ?, '9', 1, ?, '9', '2026', ?, '9')",
+                         (rowid, name, name.title(), name))  # fmt: skip
+    Store(store.path)  # (a start: the index built again)
+    assert sorted(h.row["vendor_name"] for h in search.erp_hits(store, ["zeta"], [])) == ["Zeta Parts", "Zeta Tools"]
+
+
+def test_a_search_with_a_nul_in_it_finds_nothing_and_never_fails(tmp_path):
+    """B-2040: a NUL in a search ended FTS5's MATCH text early ("unterminated string"): the quick search failed (a
+    500 on the Search page) where the exact match finds nothing."""
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    assert search.erp_hits(store, ["gra\x00nite"], []) == []
+    assert search.find(store, "gra\x00nite") == []
+    assert [h.row["invoice_number"] for h in search.find(store, "G-1\x00")] == ["G-1"]  # (a number: the NUL dropped)
+
+
+def test_a_search_of_many_words_is_one_condition_sqlite_can_read(tmp_path):
+    """B-2041: each word of a search added two conditions to the register's, all at one level: from 499 words the
+    expression was deeper than SQLite reads ("Expression tree is too large"). Each word's is one, as the summary's."""
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    assert search.erp_hits(store, [f"word{n:04d}" for n in range(990)], []) == []
+    assert len(search.erp_hits(store, ["granite", "logistics"] * 300, [])) == 1
+
+
 def test_who_acts_next_on_an_invoice_in_each_state():
     """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
     from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW

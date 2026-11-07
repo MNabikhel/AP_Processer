@@ -3438,3 +3438,426 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     database is current (its start-up's summary refresh would wait for the lock the thread holds), and refused
     (NestedWrite) when it isn't; the read snapshots roll back on an exception, so a write inside one is undone with it.
     The `_conn(own=)` flag went with it.
+- **D-193** · **The review queue's lists and facts kept by invoice and brought up to date from the summary's log of
+  the queue's changes; the Approved tab read off an index; the queue's reasons work each Pay from choice out once**
+  (scale goal, phase 8, E1; changes how D-159 and D-167 keep the queue's lists and checks).
+  - **Why:** with 100 people on 300,000 invoices, `/review` was 25% of the busiest web workers' CPU
+    (`docs/archive/scale-2026-11/phase3c-load-100-people.md`). In its samples: the lists' rows read whole again
+    (`list_invoices`' kept answer, 15% of the page) and their confidences and order read as rows at every ask (10%),
+    the queue's checks worked out whole again (12%) and copied twice for each caller (5%), `attention` (19%), the
+    Approved tab sorting a year of approvals (7%). Each check, approval or park moved the `listed` and `queue` topics
+    (D-159), so every worker read the queue's 2,700 invoices again at its next `/review`. (The phase's list also named
+    `summary_rows`: in that profile it is the Vendors page's workload, Insights, Sales tax and the quick search, not
+    the queue.)
+  - **A log the summary writes** (`queue_changes (seq INTEGER PRIMARY KEY, id)`, `_base.QUEUE_CHANGES`): each
+    invoice whose queue row changed (`summary.queue_logged`: its row in the lists, `LISTED_COLUMNS` with the
+    confidence a check writes; its facts in review, the `queue` topic, one the summary could not work out at each
+    change; or its coming into the queues or leaving them), written by `_summarize` in the same transaction as the
+    change. Every change of an invoice is worked into the summary there (plain SQL too: `summary_dirty`, worked out by
+    the next read), so the log holds them all. The latest `QUEUE_CHANGES_KEPT` (20,000) are kept, pruned in the same
+    write; the log never empties. `summary_logged` counts the refreshes that kept it, beside `summary_generation/all`.
+    - Not triggers: a trigger on `invoices` or the summary can't tell whether the queue's row changed (the summary
+      deletes and inserts each row), and a trigger of a new name makes every older version refuse this version's
+      backups (D-159's check). Not `shared_answer` (D-169): every other process would still decode the whole answer,
+      2,700 rows, after each change.
+  - **The read** (`core/store/review_queue.py`, `_kept`): in one read transaction, one statement reads the database's
+    `summary_id`, the refreshes made without the log (the generation less `summary_logged`: an older AP Coder on the
+    same database, B-1811's case), the log's first and last change, and the invoices logged since the one kept. Only
+    those are read again; all, when the database is another (a restore, a summary built again), the log no longer
+    holds every change since, or an older AP Coder worked the summary out meanwhile. The caller's reads inside are of
+    the same moment. Inside a write under way, or a read transaction, it is read afresh and not kept (D-159's rule).
+    - **The lists** (`queue_listed`, through `list_invoices`): the rows of the three queues kept as one; each ask reads
+      the ids of the asked lists in the queue's order off `summary_queue_order` (`json_group_array`: 0.8 ms, the
+      confidences as rows 3.9 ms) and gives copies of the rows. A check's confidence is in the log: D-167 kept it out of
+      the `listed` topic because a check comes between nearly every two asks; logged, a check reads one row again.
+    - **The facts** (`Store.queue_facts`): what the queue reads of every invoice in review. `bulk.queue_checks` takes
+      those it is asked (from `KEEP_FROM` as before) and works their findings out at each call (`_today`, decoded once
+      in `_FOUND`); each caller gets one copy, not two.
+    - The topics `listed` and `queue` move as before: an older AP Coder reading the same database follows them.
+  - **The queue's reasons** (`review.attention`): the findings counted in one pass (`_to_fix`); each Pay from asked
+    (the account, approved before, the currency, the vendor's last one) checked once a call (`opening_choice`,
+    `blocking`, pure); each Pay from text decoded once (`_PAYS`, 16,384 texts, then all let go).
+  - **The Approved tab** (`recently_approved`): read off the index `summary_recent`, in its order, not sorted out of
+    every approval at each visit.
+  - **No schema version:** a table and an index, made at every start where missing (`make_triggers` makes the log with
+    the vendors' log, so a backup's copy being restored gets it before another worker writes there, D-174;
+    `SUMMARY_SCHEMA` the index); an older AP Coder leaves both alone. `queue_rows`, `stale_checks` and
+    `recently_approved` moved from `summary.py` into `review_queue.py` (996 lines left).
+  - **Measured** (the bench's seed of 30,000 invoices, 2,491 in review from 968 vendors, 116 parked, 93 waiting for a
+    second approval, two bank accounts in use; one request's CPU by `time.process_time`, medians of 12, the two codes
+    in turn on the same database, the write made by another process before each request; d417b98 before;
+    `e1/probe.py` in the session's scratchpad):
+
+    | request | alone | after a check | after a park | after an approval |
+    |---|---:|---:|---:|---:|
+    | `GET /review` | 52-66 → 45 ms | 54-70 → 48-51 ms | 106-156 → 48-51 ms | 111-155 → 44-56 ms |
+    | `GET /review?tab=approved` | 93 → 40 ms | | 136 → 41-44 ms | |
+    | `GET /review/{id}` | | 34-36 → 32-37 ms | 32-36 → 31-34 ms | |
+    | `POST /review/{id}/check` (noise) | 23 → 21 ms | 20 → 22 ms | 20 → 22 ms | |
+
+    - On one connection after a park: `list_invoices` 30 → 2.4 ms, `queue_checks` 30 → 6.5 ms (the checks stamp is
+      2 ms of it), `attention` 23 → 13 ms; the Approved tab's rows 40 → 2.4 ms (27,000 approved).
+    - The writes: a check's confidence 3.75 → 4.04 ms (the log's row), a park and its unpark 8.1 → 8.2 ms, 3,000
+      invoices worked into the summary 1.53 → 1.40 s (each one's topic keys made once, not once a topic).
+    - At 300,000 the queue's size sets these (about 2,700 in review), not the database's, but for the Approved tab's
+      sort (ten times the approvals: about 0.4 s a visit before). By the phase 3 part 3 profile's samples, the queue's
+      25% of the busiest workers' CPU comes to about 12%: what is left is `attention`, the order read, the copies,
+      the template and the 50 rows.
+  - **Proven the same:** random writes by two workers (each its own rows kept), plain SQL and an older AP Coder (an
+    invoice added, checked, parked, approved, rejected, reopened, deleted, exported; its findings, coding, vendor or
+    status changed; the settings its checks are made against, the vendor master, a bank account; a write undone, a
+    restore), with a log of 4 changes and of 20,000: every list, the queue's checks (of the queue, part of it, every
+    invoice) and every reason equal a fresh computation (`tests/core/test_queue_changes.py`). Seven mutations (the
+    confidence not logged, pruning not seen, a row gone left kept, the older AP Coder or a restore not seen, kept
+    inside a write, no log in a backup's copy) each fail it. `scripts/same_behaviour.py --ref d417b98`: approve,
+    pipeline and tax the same; migrate differs by the table, its index and the count alone (22 databases, compared
+    with them set aside). The queue's pages byte for byte: a worker of each code side by side on the seed, 9 views of
+    the queue, Previous and Next and bulk approval's candidates drawn after each of 120 writes by a third process: 1,220
+    files, none differs (the ages "3 minutes ago" masked: the two read the clock a moment apart; `e1/identity.py`).
+    The base code passes the same property test, adapted to its kept answers: none was wrong, only worked out again.
+  - **Not done:** the findings counted at each visit (5 ms: the queue's 30,000 findings); the checks stamp (2 ms: the
+    GL accounts and cost centers joined and hashed at each ask, `accounts.py`); `last_pay_froms` (2.5 ms, a seek a
+    vendor: an approved invoice's change is not in the queue's log); the template and the 50 rows' codings.
+  - (`core/store/{review_queue,summary,_base,invoices,__init__}.py`, `coding/bulk.py`, `web/pages/review.py`,
+    `docs/HOW_IT_RUNS.md`; `tests/core/test_queue_changes.py`, `tests/core/test_kept_answers.py`)
+- **D-194** · **Month-end's billing lines kept by invoice, not by vendor; the quick search reads the ERP register
+  through an FTS5 index the register's writes keep; the Vendors page's workload worked out once for every process**
+  (scale goal, phase 8, E2; changes D-177; every output the same).
+  - **Why (phase 3 part 3's profile at 300,000 invoices, 100 people):** month-end's vendors' rows 15% of the web
+    workers' CPU (`billing_lines` 10.3%, `keep_answer` 4.9%: each vendor's billing lines one row of `report_answers`,
+    read whole and written whole again, the biggest 7 MB, once a sixteenth of it was decoded since, each read
+    decoding those again until then); the quick search 4.6% (`erp_hits`: SQLite's `instr` over each of the
+    register's 600,000 rows for a word); the Vendors page's workload 4.2% (worked out by each web worker itself).
+  - **Month-end, by invoice:** `billing_facts` (a vendor's invoice and what month-end reads of it, [date, lines] as
+    JSON) under the vendor's stamp in `billing_vendors` (`kept`: the database's `summary_id`, this AP Coder's version
+    and `BILLING_FORMAT`; `logged`: the last change of the vendors' change log its rows are as of; `counted`: the
+    vendor's count of changes then), both made by `_SCHEMA` at every start (no version of their own, as `past_lines`).
+    `billing_lines` reads the stamps, the counts and the log in the same moment as the invoices (B-1812): a stamp
+    holds when kept by this database and version and the count has not moved, or when the log still holds every
+    change since and the count moved by as many as the log names (B-1811); each row of its invoices is then taken
+    but those the log names, else none is. After the read a vendor's rows are written in one write, only while its
+    stamp is still the one read (a slower process never writes over a later one): the invoices changed since removed
+    (every one when the stamp did not hold), those decoded written (JSON made then, a vendor at a time), the stamp
+    moved on. A change rewrites its own invoice's row and the vendor's stamp, not the vendor's row; nothing waits for
+    a sixteenth (`BILLING_REWRITE` gone). The rows D-177 kept (`report_answers` `billing/<key>`, about 63 MB at
+    300,000) go at the next start, looked for first (a start with none takes no lock: B-1996's test found the plain
+    delete waiting 30 s for it).
+  - **The quick search, through the register's index:** `register_search`, FTS5's trigram index of each register row's
+    `plain_name` and `raw_number` by its rowid, where `summary.fts_available()` (as the invoices' summary's since
+    D-110). FTS5 is part of SQLite, no dependency: CPython's own builds have it (Windows: `PCbuild/sqlite3.vcxproj`
+    defines `SQLITE_ENABLE_FTS5`, with SQLite 3.38 or newer since Python 3.11.0; macOS's installer too; the trigram
+    tokenizer is SQLite 3.34+), and so do the Pythons here (3.11, 3.12, 3.13 on SQLite 3.45.1 and 3.53.1); a Python
+    without it reads the register as before. Kept by the register's own writes, in their transaction (a file imported,
+    added or in place of the register; cleared; JD Edwards' vouchers, B-1918's chunks, and the sweep): the rows added
+    are those above the largest rowid before the write (SQLite gives a new row the largest plus one), a bill removed
+    leaves the index, a register cleared makes it again. In step while the setting `register_search_step` is the
+    register's count of changes (`changes/register`, which every version's triggers keep): a write that did not keep it
+    (an older AP Coder, plain SQL, a computer without FTS5, SQLite's largest rowid taken) leaves it behind, and the
+    search reads the register itself until the next start builds it again (a step at every start, after those that write
+    the register). `erp_hits` gives the store the same condition twice: as before, and narrowed by MATCH for each word
+    and each number whose every way to match is a text of 3 characters or more (not an amount), the exact `instr` kept
+    after it; `erp_register_rows` reads the second while the index is in step, checked in the same moment. The same rows
+    in the same order (`ORDER BY rowid`), each scored as before (`_score`).
+  - **The Vendors page's workload:** `vendor_workload` through `shared_answer` (topic `workload`, `WORKLOAD_FORMAT`),
+    as D-175 did for Spend: worked out by the first process asking after a change, taken by the others; each caller
+    gets its own copy of each row.
+  - **Measured** (a seed of 30,000 invoices and 60,000 register rows, `bench seed --history 0.1`; process CPU):
+    - Month-end after each of 1,200 changes to the biggest vendor's invoices (each another one) by another process,
+      the vendor made as big as 300,000's (17,889 billing invoices): `billing_lines` median 127.8 → 108.6 ms (mean
+      132.7 → 112.4), received-not-invoiced 0.405 → 0.387 s; its writes: the 7 MB row (92 ms, the write lock held
+      through it) every 1,118 decodes → at most 0.5 ms a change. The 1,200 answers the same, digest for digest. At the
+      seed's own size (2,333 billing invoices) the same within the noise (0.215 → 0.230 s, `billing_lines` 13.3 →
+      14.6 ms): reading a vendor's rows costs what its whole row did (95 ms of JSON for 17,889 invoices); what this
+      saves grows with the vendor: the writes and the re-decoding (at 300,000 up to 1,118 codings a read).
+    - The register's SQL alone, at 600,000 rows (the seed's x10): median 73.6 → 25.2 ms over 72 searches (2 slower:
+      words in a fifth of the rows, "contractors" 93 → 138 ms); `erp_hits` median 193 → 113 ms, a vendor's word 226 →
+      169 ms, a number or a rare word about 100 → 5 ms; at 60,000 rows 19.5 → 15.8 ms. 77 searches' hits the same.
+      The index: 3.5 s to build at 600,000 rows (once, the first start), about 119 MB (80 the index, 31 its copy of
+      the texts, 7 the sizes). The register's writes it adds to, at 600,000 rows: a JD Edwards page of 250 new
+      vouchers 8.7 → 9.7 ms, the same page seen again 7.8 → 7.6 ms, a file of 1,000 rows 20.9 → 21.9 ms.
+    - The Vendors page after a change, two workers: the first 0.31 s (works the workload out), the second 0.289 →
+      0.148 s; the workload's own work 0.11 s at 30,000 invoices; the pages byte for byte, in either code (the
+      rail's counts taken as they are).
+  - **What is left:** month-end still reads all of a changed vendor's rows at each work-out (the JSON); a common
+    word's hits (a vendor word in 100,000 register rows: 0.9 s) are each still read and scored in Python: counting
+    and paging them in SQL is the next step.
+  - **Alternatives:** triggers on `erp_invoices` keeping the index (whoever writes; but a backup carrying triggers
+    not the summary's is refused, so an older AP Coder could not restore a newer backup, and a computer without FTS5
+    could not write the register at all); a words table (a word is matched anywhere in a name: trigrams anyway);
+    FTS5 with external content (31 MB less, but out of step it fails its deletes) or contentless with deletes (SQLite
+    3.43+: not on every Python AP Coder supports); month-end's rows held in each process (95 MB each at 300,000,
+    D-177); one write for every vendor's rows after a read (the write lock held through the biggest's).
+  - **After its review (B-2039 to B-2041):** the index made again (a start, a clear) takes every row, rowid 0 and
+    below too; a search text with a NUL in it is matched exactly (FTS5 reads its MATCH text up to a NUL: the Search
+    page failed); each word's condition on the register is one level, as on the summary (from 499 words SQLite's
+    depth limit). The review's probes found month-end's kept rows equal to a fresh computation over 2,350 random
+    changes in two Pythons and with two processes, and the indexed search equal to the exact one over 1,375 searches
+    (non-ASCII letters, ligatures, accents, FTS5's own characters).
+  - (`ap_coder/core/store/{purchasing,register,migrations,_base}.py`, `erp/search.py`, `erp/insights.py`;
+    `tests/erp/test_accruals.py`, `tests/erp/test_invoice_summary.py`, `tests/erp/test_search.py`,
+    `tests/core/test_kept_answers.py`)
+- **D-195** · **What fills a web worker, each per-process cache within its bytes (1 GB for a web worker in all), two
+  malloc arenas, and a memory slope for an hour's run** (scale goal, phase 8, E3; B-2025 to B-2027).
+  - **Why:** target 1 includes "memory flat for an hour" with 100 people on 300,000 invoices, and each web worker
+    reached 1.65-1.77 GB at 300,000 against `WORKER_MB` 1,500. Most caches were bounded by entries (64 answers, 32
+    vendors, 131,072 descriptions) whatever an entry held, a few by nothing at all, and nothing said what a worker
+    holds in all.
+  - **Measured** (a 60,000-invoice seed, `bench seed --invoices 60000`; one worker in a process of its own, driven by
+    `bench load`'s people, 20 for 180 s, its background work in another; then each cache walked object by object,
+    `sys.getsizeof` over what the gc says it refers to, each object counted once, in the order below; the lru caches
+    by `tracemalloc`, filled with a big company's lines):
+
+    | what a web worker keeps | at 60,000, measured | at 300,000, projected | its bound now |
+    |---|---:|---:|---|
+    | the learning memory (`_base._FEEDBACK`) | 66.6 MB | 67 MB | `Bounded` 96 MB |
+    | the GL suggestions' index (`suggest._MEMORY`) | 9.5 MB | 10 (54 *) MB | 104 MB, 2 KB a lesson |
+    | the examples' patterns (`memory._AGGREGATED`) | 18.9 → 9.5 MB | 19 (24 *) MB | 28 MB, 512 B a lesson |
+    | vendors' older lessons (`_base._PAST_MEMORY`) | 0.04 MB | 78 MB | `Bounded` 80 MB |
+    | their extended indexes (`suggest._PAST`) | 17.1 MB | 48 MB | PAST_BYTES_KEPT |
+    | their lines' patterns (`suggest._OLDER`) | 0.7 MB | 12 MB | PAST_ROWS_KEPT |
+    | older lessons by line (`_base._PAST_LINES`) | 0.1 MB | 64 MB | PAST_LINES_BYTES |
+    | vendors' lessons (`_base._VENDOR_LESSONS`) | 0.2 MB | 2 MB | `Bounded` 8 MB |
+    | the pages' answers (`summary._MEMO`) | 36.9-43.5 MB | 60 MB | `Bounded` 112 MB |
+    | the reports' answers (`reports._KEPT`) | 2.8 MB | 15 MB | `Bounded` 32 MB |
+    | vendors' invoices (`vendors._VENDOR_ROWS`) | 8.9-14.3 MB | 53 MB | `Bounded` 64 MB |
+    | JD Edwards' live check (`jde_sync._CACHE`) | (not set up) | grew all day | `Bounded` 32 MB (B-2025) |
+    | invoices whose file is gone (`_base._NOT_FOUND`) | none | grew for ever | 50,000: 24 MB (B-2026) |
+    | 29 pure functions' caches (`lru_cache`) | 18 MB ** | 400 * MB at the old sizes | maxsize: 249 MB |
+    | the rest (reference data, findings texts, accruals...) | 6 MB | 20 MB | 62 MB |
+    | **in all** | **about 180 MB** | **450 (750 *) MB** | **1,017 MB** |
+
+    \* with a big company's vocabulary: every lesson's description its own (the seed has 41). At 60,000: the learning
+    memory is 50,000 lessons and Learning's 2,000; the extended indexes 32 vendors', older lessons 6 and 51 vendors';
+    the pages' answers 16 (the vendor list 15.6 MB, master numbers 6.7, vendor ids 6.3, the queue's checks 4.4 and
+    lists 3.1, vendor totals 2.9, terms 2.7); vendors' invoices 51-53 vendors'. \*\* the walk can't see an
+    `lru_cache`'s answers: its entries at the size measured of one (the walk: 170.5 MB in all before, 172.9 after).
+    The worker's RSS 714 → 695 MB.
+    - **The rest of the RSS** is not the caches': of 714 MB, 76 MB are the libraries, 321 MB pymalloc's arenas (242 MB
+      of objects in them, 45 MB free blocks), and about 250 MB glibc's: each thread could make a malloc arena of its
+      own (8 a core), each keeping what a request's peak freed there; `malloc_trim` gave back only 34 MB.
+  - **Each cache within its bytes** (`core/caches.py`):
+    - `size_of`: what a value holds, about: `sys.getsizeof` of it and of what it refers to (by the gc: a dict's keys
+      too, a mapping proxy's dict), each object once; a container of more than 32 items by 32 of them spread over it,
+      the first paying for what they share. 20,000 rows in about a millisecond (the whole walk: 0.3 s), within 5%;
+      values shared by many items make it count more (the queue's checks: 14.7 for 4.4 MB), rarely less.
+    - `Bounded`: a cache's dict that sizes each entry as it is kept (`size_of`, or the owner's), lets go of the ones
+      used longest ago (kept or read with `get`) while over its bytes, the latest always (alone when bigger), and
+      keeps the owner's own bounds and locks. On `summary_memo`'s answers (112 MB), the reports' (32), the learning
+      memory (96), vendors' older lessons (80) and lessons (8), vendors' invoices (64), JD Edwards' live check (32).
+    - `RowsCache(most, row_bytes)`: the memory's index and patterns keep the latest always and another only while
+      both fit, counted a lesson at a time (2 KB and 512 B, measured with every description its own): `size_of` on an
+      index takes 100 ms, an approval's update of it 8.
+    - The pure functions' caches, sized by their bytes: the descriptions' words 131,072 → 65,536 (`keys`,
+      `_token_set_short`: the memory holds 50,000 lessons at most), word pairs 262,144 → 131,072, PO description
+      pairs 65,536 → 32,768, printed spans 65,536 → 16,384, the suppliers' counts 65,536 → 16,384. A miss costs
+      microseconds (a description's words, a pair compared), the answers are the same.
+    - `CACHES`: every per-process cache, "module:name", with the bytes it holds at most and how; 1,017 MB for a web
+      worker (not a laptop's page pictures, kept on disk on the server, nor a scan's), within `WORKER_CACHES_MOST`
+      (1 GB; 1,050 MB with D-193's two, below) and so within `WORKER_MB` with room for the requests under way.
+    - `tests/meta/test_caches.py`: what a module keeps at its top level (an empty dict, set or list it fills, a
+      container or cache made by a call, an `lru_cache`) is in `CACHES` or in its `STATE` (locks, threads, flags: what
+      bounds them); a `Bounded` or `RowsCache` declared with its own bytes; the web worker's sum within 1 GB.
+      `tests/core/test_caches.py`: each `Bounded` filled with 300,000 invoices' answers (8,000 rows, 6 MB each) to twice
+      its bytes, `summary_memo` and `shared_answer` through their own code (the answer used kept), each pure
+      function's cache full of a big company's lines, the index and patterns of 10,000 such lessons.
+  - **Two malloc arenas** (`web/server.py fewer_malloc_arenas`): in server mode on Linux the server's process
+    (`mallopt`) and those it starts (`MALLOC_ARENA_MAX`: the workers, the background and capture processes) keep two;
+    one set by IT is left. The same probe on the code before the bounds: 714 → 536 MB, pages p50/p95 0.098/0.80 →
+    0.095/0.75 s. glibc's alone: on Windows and macOS nothing is set or called (`sys.platform`), and their workers
+    keep what they kept. Windows' C runtime allocates from the one heap of the process, with no arena a thread, and
+    macOS's malloc gives its free pages back by itself; there pymalloc's own arenas (the same on all three) and the
+    caches' bounds are what count. A Linux without glibc (musl: no `mallopt`) is left as it is too.
+  - **Measured after:** the probe's worker 695 MB (the bounds don't bind at 60,000: its caches 172.9 MB). `bench load
+    --users 20 --duration 180 --workers 1` (one process, its background work in it): 972 → 606 MB (peak 991 → 606),
+    pages p50 151 → 118 ms, p95 0.85 → 1.15 s, actions p95 565 → 439 ms (one run each, the machine shared: the
+    routes' p95 move both ways).
+  - **An hour's flatness:** `bench load --sample-every 10` samples each server process's RSS every 10 s, and the report
+    says its slope (MB a 10 minutes, least squares) over the run and over its second half (`rss_slope`), once its
+    caches have filled; `--max-slope MB` fails a run over it. 15 minutes on the 60,000 seed (`--users 20 --duration
+    900 --ramp 30 --workers 2 --sample-every 10`), twice with all of this (RSS MB first → last (peak); MB a 10
+    minutes over the run, **over its second half**):
+
+    | process | first run | its slope | second run | its slope |
+    |---|---|---|---|---|
+    | web worker 1 | 250 → 561 (610) | +92.8, **+17.6** | 132 → 556 (556) | +93.3, **+25.0** |
+    | web worker 2 | 132 → 537 (537) | +92.8, **+9.7** | 171 → 570 (570) | +93.9, **+16.9** |
+    | the background process | 118 → 148 (154) | +9.5, **-3.8** | 120 → 148 (148) | +9.9, **+4.7** |
+    | the two capture processes | 134 → 318, 134 → 315 | **+1.9, +1.3** | 134 → 317, 134 → 315 | **+1.2, +2.1** |
+
+    The workers are at about 500 MB after 2 minutes, then grow 30 to 60 MB in the 13 that follow, more and more
+    slowly (the second run's worker 2: 1.9 MB in its last 5 minutes): at 60,000 the caches are far from their bounds,
+    still filling with each vendor asked for. At +25 MB a 10 minutes an hour adds 150 MB, within `WORKER_MB`; phase
+    8's hour at 300,000 says whether the second half is flat once they are full. Pages p50 93 and 80 ms, p95 535 and
+    683 ms, actions p95 106 and 191 ms, no 5xx. The second run, started 6 minutes after the machine restarted, while
+    another agent's tests filled the shared cores, had 5 requests over 30 s in its first minute (the server's own 8 to
+    45 s, as each worker first built its caches); two 180 s runs straight after, the database warm and then let go
+    from the disk's cache, had none (the worst 10 s's p95 443 ms and 1.40 s).
+  - **Alternatives:** one shared budget for all caches (one bigger answer evicting another cache's; harder to reason
+    about); bounding by entries alone (what an entry holds grows with the database); measuring each value whole (0.3
+    s for 20,000 rows); `malloc_trim` after requests (34 MB at the end of the run: the arenas' memory is fragmented,
+    not free at their top); `PYTHONMALLOC=malloc` (not tried: pymalloc's arenas held what is alive).
+  - **Left:** the requests' own peaks (4 threads, about 110 MB each at 100,000, D-153; more at 300,000) are what
+    remains of 1.65-1.77 GB: the queue's lists and month-end's rows (phase 8's other items) shrink them. Not measured
+    at 300,000 here (the 300,000 seed is another run's). The lru caches are bounded by entries of a measured size,
+    not by their bytes (an lru_cache can't be sized from Python). A few caches live in objects, not modules
+    (`app.state._needs`, 4,096 entries; a session's memo, one request): not in `CACHES`.
+  - (`ap_coder/core/caches.py`, `core/memory.py`, `core/store/{_base,summary,reports,learning,vendors,invoices}.py`,
+    `ai/{suggest,line_match}.py`, `coding/po.py`, `capture/supplier.py`, `erp/jde_sync.py`, `ops/system_log.py`,
+    `web/server.py`, `bench/load.py`; `tests/core/test_caches.py`, `tests/meta/test_caches.py`,
+    `tests/erp/test_jde_sync.py`, `tests/ops/test_system_log.py`, `tests/web/test_server_capacity.py`,
+    `tests/bench/test_bench_load.py`, `tests/core/test_kept_answers.py`)
+  - **With D-193 (merged beside it):** the review queue's two caches are listed too: its lists and facts kept by
+    invoice (`review_queue._KEPT`, 16 MB: two databases', about 1.1 KB an invoice in the queue, 5.4 MB for the
+    100,000-invoice seed's 3,036 listed and 2,122 in review; `KEPT_MOST` 16 -> 4, a company server has one) and the
+    Pay from texts decoded (`review._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
+    is 1,050 MB, 0.7 of `WORKER_MB` (the test's limit).
+- **D-196** · **server-update's safety copy is made while the old version serves and brought up to date once it is
+  stopped, with only what was written since: the downtime no longer grows with the database** (scale goal, phase 8,
+  E4; B-2035).
+  - **Why:** on GitHub's Windows runner (`windows-server-update`, 20,000 invoices, 662 MB) the update was down 38.8 s,
+    33.5 s of it the safety copy, a whole copy made with the service stopped (D-188): about 50 s per GB there, so a
+    year's 10 GB (25,000 invoices a month at 34 MB per 1,000) would be down about 8 minutes, past the 5 of target 5.
+  - **Made ahead** (`core/store/backups.py` `CopyAhead`, from `server_update.copy_ahead`, step 6, after the
+    self-check, the marker still at `prepare`): with the backups' lock held (`backup_files.exclusive`: no backup or
+    restore meanwhile), the write lock is taken for a moment (`BEGIN IMMEDIATE`), a `wal_checkpoint(PASSIVE)` that
+    wrote the whole log into the file is waited for (tried again every 0.2 s for `HOLD_WAIT`, 60 s), and a read
+    transaction begun then. While it lasts SQLite writes nothing into the database file: a checkpoint stops at the
+    oldest reader's snapshot (sqlite.org/wal.html: it "must stop when it reaches a page in the WAL that is past the
+    end mark of any current reader"; in wal.c a backfill needs the exclusive `WAL_READ_LOCK(0)` this reader holds), and
+    this reader's snapshot is the file itself, so what the old version writes stays in the log. The file is then
+    copied as it is, flushed to the disk; SQLite's lock-byte page (from byte 2**30, in a database over 1 GiB) is
+    written as zeros and never read: it holds no data, and on Windows bytes of it are locked by whoever opens the
+    database, so a read of them fails. The data folder's files are listed and the new ones kept then too
+    (`backup_files.snapshot(..., database=db)`: the invoices' files named by the live database, since even a
+    read-only open of the copy would make its `-wal` and `-shm`). The cost: while the copy is made (a minute per GB
+    on a slow disk) the log grows by what the old version writes, never written into the file before the stop (tens
+    of MB in minutes of a busy day; the room check keeps `BACKUP_RESERVE`, 512 MB, to spare), and no backup or restore
+    runs (the daily one waits for its next check).
+  - **Brought up to date** (`safety_copy(db, label, ahead)`, step `safety-copy`, the service stopped): the file's size
+    and time checked as they were, its `-wal` copied beside the copy, the hold let go, and the copy opened: SQLite's
+    own recovery reads that log, `wal_checkpoint(TRUNCATE)` writes it in, `journal_mode=DELETE` makes it one file. A
+    database file and its log are what SQLite reads as the database, so the copy is the database as it was the
+    moment the service stopped (a frame cut short at the log's end is dropped by the recovery, as after a crash). Then
+    renamed, the backups folder flushed off Windows (`_flush_folder`: the copy is on the disk before the migration),
+    the files listed again (only what changed since step 6 is read), and the database's SHA-256 written in the list
+    once the new version answers (`backup_files.hash_database`; until then `check(deep=True)` compares the size). Its
+    time is what was written while the copy was made, not the database's size.
+  - **D-188's guarantee and the power cuts:** unchanged, and no step is new. The safety copy is whole and on the disk
+    before the migration, as before. A cut while the copy is made ahead is `prepare` (rule `old`: the old version
+    serves on its own database, only ever read; what is left in backups, the copy, its `-wal`/`-shm`, its list, is
+    removed by `_drop_cut_copy`); while it is brought up to date, `safety-copy` (`old`: the same); in the migration,
+    `migrate` (`back`: the copy put back holds what the old version did while it was made ahead). Each is cut for real
+    (a `BaseException` inside the copy, inside the bringing up to date, in the migration) and dealt with by
+    server-update and by the service's start, the old version's last work kept each time
+    (`tests/ops/test_update_recovery.py::test_an_update_cut_short_in_its_safety_copy_made_ahead_loses_nothing`). The
+    file is held still while another connection writes 300 pages and checkpoints, PASSIVE and TRUNCATE
+    (`tests/core/test_backups.py::test_a_copy_made_ahead_holds_what_is_written_until_it_is_finished`, which fails
+    without the read transaction), and the safety copy has what was done between the copy and the stop, after an
+    update, a rollback and `--back` (`tests/ops/test_server_update.py`).
+  - **When it can't be held still** (a report that reads in one transaction for over a minute, a database not in WAL
+    mode) the update says so and makes the copy whole once stopped, D-188's way; also when the file's size or time
+    changed meanwhile after all (never a copy of a file that moved). A copy ahead that fails (a full disk) stops
+    nothing: "not updated".
+  - **Measured** (Linux, 4 cores, `server_update_downtime.py local`, before → after; 20,000 invoices, 669 MB, on the
+    disk; 120,000 invoices, 2.45 GB, made by duplicating a seed's invoices, events and feedback, in RAM since the
+    shared disk was short of room): 669 MB down 11.9 s → 5.9 s, the safety copy 6.2 s → 2.0 s (6.2 s ahead, while
+    serving); 2.45 GB down 15.9 s → 6.0 s, the safety copy 10.4 s → 1.9 s (8.3 s ahead). What is left at the stop is
+    the data folder's files listed again, about 1.8 s per 20,000 invoice files there (`_elsewhere` now resolves each
+    invoice's path once, not once per folder with the folders again each time: 2.1 → 1.75 s; same result). The
+    Windows job records `copy_ahead_s` too.
+  - **Alternatives:** the old database file kept as the safety copy (a rename is instant) and a copy of it migrated
+    (that copy is the same whole copy in the downtime); SQLite's backup API while serving, then again once stopped
+    (it copies every page each time, or starts again when the database changes); a snapshot held at the stop and
+    copied while the new version serves (less downtime still, but until that copy is made a power cut leaves no way
+    back unless nothing opens the database first, and a rollback has no copy to put back); `VACUUM INTO` (a whole
+    copy); SQLite's session extension (not in Python's sqlite3); no copy when the schema is unchanged (the new
+    version still writes, and `--back` would have no database of the stop); a hard link (one file: the new version's
+    checkpoints write into it); comparing pages after the stop (reads the whole database).
+  - **After its review (B-2036, B-2037):** the copy reads the database through one handle, opened after the hold and
+    closed only after it: on Linux and macOS closing any handle on a file lets go of every lock the process holds on
+    it (POSIX), the hold's own too, so another process could write the log into the file held still, and with
+    SQLite 3.45 (Ubuntu 24.04's) the old version's last connection then deleted a log with its last writes in it,
+    lost from the database and the safety copy (40 of 41 rows in the review's probe). A copy that can't be brought up
+    to date (made whole at the stop) is said. An update that goes back, and the recovery that puts the copy back, read
+    in its SHA-256: the old version's `backup check` took a list without one for a damaged copy.
+  - **Left:** the files listed at the stop are one walk with two stats a file (more on Windows); `--back`'s own safety
+    copy is still whole (the update's downtime is the target); the Windows job's number with this is its next run's.
+  - (`ap_coder/core/store/backups.py`, `core/store/backup_files.py`, `ops/server_update.py`, `ops/update_recovery.py`,
+    `scripts/ci/server_update_downtime.py`, `docs/SERVER.md` section 11; `tests/core/test_backups.py`,
+    `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`)
+- **D-197** · **A settle that grows with the answer's own work: ten times as long as it lasted, 15 minutes at most;
+  the Vendors page's workload and totals settle too** (scale goal, phase 8).
+  - **Why:** phase 8's load test, 100 simulated people on 300,000 invoices (4 web workers, 4 cores), gave pages p95
+    1.78 s, p99 6.76 s and actions p95 1.10 s over an hour (targets 1.5 s, 3 s, 1 s). In a web worker's profile 46% of
+    its CPU was `shared_answer` working answers out again: Spend's figures 27%, the Vendors page 20% (its workload, no
+    settle; its totals through `summary_memo`, none either), then Sales tax, Insights, month-end, Learning. D-164's
+    settle is a fixed number of seconds: Spend's figures took about 20 s at 300,000 against their 30 s, so with a
+    change every second some worker worked them out almost all the time, and its other requests waited behind its
+    GIL (server p95s: month-end 23 s, Spend 20 s, Vendors 8.4 s, Sales tax 7.8 s, Insights 6.3 s).
+  - **What:** each kept answer records how long its work lasted, and the settle it is held to is the longer of the
+    caller's `settle` and `SETTLE_SHARE` (10) times that (`core/store/reports.py` `settle_for`): 20 s of work is
+    taken for 200 s after a change, so working it out again costs about a tenth of a core at most, however big the
+    database. On a laptop's database the work takes milliseconds and nothing changes.
+    - `shared_answer`: the work is timed by `reports.wall`, the clock `made` is in, around `compute`, and travels with
+      the answer to the other processes: `report_answers.lasted` (REAL seconds, added by a migration step with no
+      version of its own, `_answer_work`), written by `keep_answer`, read by `kept_answer`. Both `holds` and `before`
+      (B-1834, B-1838: the answer before, shown while another works it out, never older than its settle and
+      `ANSWER_WAIT`) use the grown settle; one of another database (`summary_id`: a restore) or another format is
+      never taken, as before; the stamps, holds and waits (B-1807, B-1914, B-1919) are as they were.
+    - `summary_memo`: the same, by `monotonic` within its process (each kept answer of `_MEMO` holds its work).
+    - **The cap,** `SETTLE_MOST`: 15 minutes. A work made long once (a cold cache after a start, a clock moved
+      forward meanwhile) holds its answer that long after a change at most; the next work, shorter, sets its own.
+    - **Not known:** an answer kept before this (no `lasted`: the same AP Coder version before the change) settles
+      for the caller's settle alone; so does one whose clock went back during the work. An exact answer (no
+      `settle`) is never settled, whatever its work.
+  - **What settles,** only what a page shows and nothing a check, an approval, an export or a posting decides with:
+    once for every process (`shared_answer`), Spend's figures and currencies (30 s), month-end's received-not-invoiced
+    lines and invoices not in the ERP on its page (30 s; its CSV exact), Sales tax (30 s), Insights' figures and
+    operations (60 s), Learning's (60 s), the recurring vendors (60 s, the queue's late pill too) and, new, the Vendors
+    page's workload (`insights.vendor_workload`, by its own work alone: `OWN_WORK`, B-2044); in each process
+    (`summary_memo`), the rail's counts (`status_counts(settled=True)`, 5 s) and, new, the Vendors page's counts,
+    spend and dates by vendor (`vendor_summaries(settled=True)`, `VENDORS_SETTLE` = `OWN_WORK`: ten times their work,
+    no floor, so a laptop's are exact). Exact: the duplicate audit's pairs, month-end's CSV,
+    the vendor lists of Statements and the JD Edwards worksheet, a vendor's controls (`/vendors/save`), and every
+    other kept answer.
+  - **The Vendors page** only shows its workload and totals; a vendor's hold, numbers and notes are read afresh from
+    the vendor list at each visit. Two workers give the same page byte for byte when nothing changed since they worked
+    it out (the workload is one answer for every process; the totals are each worker's, so while changes come one
+    may be up to its settle behind the other). A vendor opened (`?open=`) that is not in the settled totals (its
+    first invoice came after them: a link from another worker's page) is looked up in the exact ones.
+  - **Measured** (a 60,000-invoice seed, `bench seed --invoices 60000`; one web worker, a TestClient asking one page a
+    second, Spend, Vendors and Insights in turn, while another process approved an invoice every second for 3
+    minutes; the first visit of each, cold, not counted; before: 2263422):
+
+    | one web worker, 3 minutes | before | after |
+    |---|---:|---:|
+    | its CPU | 52.8 s (29% of a core) | 15.4 s (8.6%) |
+    | Vendors page, p50 / p95 | 0.70 / 0.80 s | 0.056 / 0.19 s |
+    | its totals / workload worked out | 60 / 60 times (15.9 / 21.2 s) | 2 / 2 times (0.5 / 0.7 s) |
+    | Spend's figures worked out (1.4 s each) | 5 times | 5 times |
+    | with Spend's work made 20 s long, as at 300,000: CPU | 152 s in 186 s (82%) | 9.3 s in 180 s (5%) |
+    | ... Spend worked out, its p95; requests served | 6 times, 21.5 s; 166 of 180 | none, 0.16 s; 180 |
+
+    At 60,000 Spend's work (1.4 s) and Insights' (0.2-0.4 s) are under a tenth of their settle: they settle as
+    before. The 20 s row adds a CPU loop of 20 s to each of Spend's works (the probe's own, in both versions): its
+    answer of 21.4 s settles for 214 s, so the 3 minutes after the first never work it out again.
+  - **Alternatives:** a longer fixed settle for each (Spend 300 s: on a small database every change would show
+    minutes late for nothing); the big answers worked out by the background process on a timer (every period anyone
+    might ask, looked at or not); the work's CPU time (`thread_time`) rather than its wall time (under load the wall
+    time is longer, so the settle grows most when the workers are busiest, as it should); the work kept in the
+    answer's stamp or value instead of a column (the stamp is compared whole and read by SQL at a restore's clean-up,
+    and a value from before could not be told apart); the Vendors totals shared by every process (every vendor's row
+    through JSON in each worker; each keeps its own, as D-162).
+  - **After its review (B-2043 to B-2045):** an answer's work time is its work alone (not the wait for another's
+    work before it); the Vendors page settles by its own work only (it was exact before: a laptop's person saw their
+    own change a minute late); a restore's copy gets `report_answers.lasted` before it goes in (a page asked while an
+    older backup was restored failed). A session's memo (B-2042) holds 64 MB, so a vendor of up to about 70,000
+    invoices is read once in a check (300,000 invoices' biggest: 23,000).
+  - **Left:** the Vendors totals are each worker's own: 4 workers each work them out at most once a settle (0.24 s
+    at 60,000). An older AP Coder of the same version updating a kept answer (during an update, both running) leaves
+    the `lasted` of the one before. Month-end's page shows three parts each settled by its own work (lines received
+    and not invoiced, invoices not in the ERP, the recurring vendors): at 300,000 invoices one may be a few minutes
+    behind another, so an invoice that moved between two parts meanwhile shows in both or neither for that long (it
+    was a minute at most before); its CSV, what is booked, is worked out exactly.
+  - (`ap_coder/core/store/reports.py`, `core/store/summary.py`, `core/store/migrations.py`, `core/store/vendors.py`,
+    `erp/insights.py`, `web/pages/vendors.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`)

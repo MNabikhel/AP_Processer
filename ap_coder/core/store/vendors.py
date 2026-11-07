@@ -10,10 +10,10 @@ import json
 import re
 import sqlite3
 import threading
-from collections import OrderedDict
 from types import MappingProxyType
 from typing import Any
 
+from ..caches import MB, Bounded, size_of
 from ..keys import ADDED_HERE, BUSINESS_NUMBER, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
@@ -26,6 +26,7 @@ from ._base import (
 )
 from .capture import capture_lookup
 from .learning import one_snapshot
+from .reports import OWN_WORK
 from .summary import fetch_rows
 
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
@@ -35,13 +36,16 @@ _DOC = "COALESCE(NULLIF(NULLIF(final_output, 'null'), '{}'), NULLIF(ai_output, '
 # Each vendor's invoices (``vendor_invoices``), kept in this process for the vendors asked most recently (D-160): at
 # most VENDOR_ROWS_KEPT rows in all (about 1 KB a row: 50 MB), one vendor up to half of them (a year's biggest vendor
 # has about 23,000), and VENDOR_KEYS_KEPT vendors (each name typed on the review screen is asked for, most with no
-# invoices), the rows held counted as they are kept and dropped. Each with its stamp: (the database's ``summary_id``,
-# the last change of the vendors' change log the rows hold, D-174, and the vendor's count of changes then, B-1811).
+# invoices), the rows held counted as they are kept and dropped, and within VENDOR_ROWS_MOST bytes (D-195). Each with
+# its stamp: (the database's ``summary_id``, the last change of the vendors' change log the rows hold, D-174, and the
+# vendor's count of changes then, B-1811).
 VENDOR_ROWS_KEPT = 50_000
 VENDOR_KEYS_KEPT = 4_096
-_VENDOR_ROWS: OrderedDict[tuple[str, str], tuple[tuple[Any, int, int], list[Any]]] = OrderedDict()
+VENDOR_ROWS_MOST = 64 * MB
+_VENDOR_ROWS = Bounded("vendors' invoices", VENDOR_ROWS_MOST, size=lambda kept: size_of(kept[1]))
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
+VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a change by ten times their work (B-2044)
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -53,8 +57,8 @@ def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: l
         _VENDOR_ROWS_HELD -= len(before[1]) if before else 0
         if len(rows) > VENDOR_ROWS_KEPT // 2:
             return
-        _VENDOR_ROWS[key] = (stamp, rows)
-        _VENDOR_ROWS_HELD += len(rows)
+        _VENDOR_ROWS[key] = (stamp, rows)  # (the ones used longest ago go past VENDOR_ROWS_MOST)
+        _VENDOR_ROWS_HELD = sum(len(kept[1]) for kept in _VENDOR_ROWS.values())
         while _VENDOR_ROWS_HELD > VENDOR_ROWS_KEPT or len(_VENDOR_ROWS) > VENDOR_KEYS_KEPT:
             _, (_, dropped) = _VENDOR_ROWS.popitem(last=False)
             _VENDOR_ROWS_HELD -= len(dropped)
@@ -734,9 +738,13 @@ class VendorsMixin:
             ).fetchone()
         return row is not None
 
-    def vendor_summaries(self) -> list[dict[str, Any]]:
-        """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
-        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)  # read again once an invoice changed
+    def vendor_summaries(self, settled: bool = False) -> list[dict[str, Any]]:
+        """One row per vendor seen on an invoice: counts, spend and dates (read again once an invoice changed), AI
+        accuracy and AP's settings. ``settled``: for the Vendors page, which only shows them, the counts, spend and
+        dates up to ``VENDORS_SETTLE`` seconds (or ten times their work) behind a change (D-197); the vendor list's
+        own fields are read afresh either way."""
+        settle = VENDORS_SETTLE if settled else 0.0
+        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals, settle=settle)
         rows = [dict(r) for r in totals]
         lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
         with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)

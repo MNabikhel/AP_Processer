@@ -40,6 +40,19 @@ def test_a_message_is_told_once_an_hour_and_only_on_the_server(monkeypatch, no_s
                              (101, "another reason", False), (101, "the backup failed", True)]  # fmt: skip
 
 
+def test_what_was_told_is_forgotten_once_an_hour_old(monkeypatch, no_system_log, server_on):
+    """B-2027: each process remembered every message it had told, to tell it once an hour, for its whole life: the
+    company server's processes, running for months, kept one more for each new message (a process's exit code, a
+    file's name). One told more than ``EVERY`` ago is told again anyway: it goes as another is told (D-195)."""
+    clock = [1000.0]
+    monkeypatch.setattr(system_log.time, "monotonic", lambda: clock[0])
+    for n in range(120):
+        assert system_log.report(system_log.PROCESS_STOPPED, f"a capture process stopped (exit code {n})") is True
+        clock[0] += 120  # one every two minutes: 30 an hour
+    assert len(system_log._told) <= 31 and len(no_system_log) == 120
+    assert system_log.report(system_log.PROCESS_STOPPED, "a capture process stopped (exit code 119)") is False
+
+
 def test_a_system_log_that_refuses_never_stops_ap_coder(monkeypatch, server_on):
     def broken(kind, text, warning):
         raise OSError("the event log is full")

@@ -337,3 +337,36 @@ def test_a_search_export_whose_job_failed_or_whose_file_is_gone_fails_the_gate(m
     assert report["counts"] == {"search exports still being made when left": 1} and load.gate(report, None, 1.5) == []
     report = asyncio.run(export(server("done", 200)))
     assert report["counts"] == {"search exports downloaded": 1} and load.gate(report, None, 1.5) == []
+
+
+def test_each_server_processs_memory_slope_is_reported_and_a_limit_on_it_fails_the_run():
+    """Phase 8's hour-long run is judged on how fast each worker's memory grows once its caches are full (D-195): the
+    slope of its RSS (MB a 10 minutes, least squares), over the run and over its second half. A worker that fills its
+    caches in the first minutes and then stays flat has a second-half slope of 0; one that keeps growing doesn't, and
+    ``--max-slope`` fails the run then."""
+    sampler = load.Sampler({}, 0.0, every=10.0)
+    flat = [(t, t / 100, 300.0 + min(t, 600) / 2) for t in range(0, 3610, 10)]  # +300 MB in 10 minutes, then flat
+    growing = [(t, t / 100, 300.0 + t / 60) for t in range(0, 3610, 10)]  # 10 MB a 10 minutes, all along
+    sampler.series = {11: {"label": "worker", "points": flat}, 12: {"label": "worker", "points": growing},
+                      13: {"label": "model", "points": [(0, 0, 20.0), (30, 0, 25.0)]}}  # fmt: skip
+    one, two, model = sampler.summary()
+    assert one["process"] == "worker 1" and one["rss_slope"] > 20 and one["rss_slope_late"] == 0.0
+    assert two["rss_slope"] == two["rss_slope_late"] == 10.0
+    assert model["rss_slope"] is None  # under a minute of samples: no slope
+    assert load.rss_slope([(0, 0, 100.0), (60, 0, 101.0)]) is None  # two points: none either
+    report = {"routes": {}, "counts": {}, "audit": {}, "logs": {}, "processes": [one, two, model],
+              "requests": {"errors_5xx": 0, "no_answer": 0, "cut_off": 0, "over_30s": 0}}  # fmt: skip
+    assert load.gate(report, None, 1.5) == []  # reported, not judged, without --max-slope
+    report["config"] = {"max_slope": 5.0}
+    assert load.gate(report, None, 1.5) == ["worker 2's memory grew 10.0 MB a 10 minutes over the run's second half "
+                                            "(more than 5)"]  # fmt: skip
+    short = {**one, "rss_slope": 40.0, "rss_slope_late": None}  # (a 90 s run: no second half to judge, B-2038)
+    report["processes"] = [short, model]
+    said = "the memory slope can't be judged: the run's second half has under a minute of samples"
+    assert load.gate(report, None, 1.5) == [f"{said} (--max-slope wants a run of 2 minutes or more)"]
+    report["processes"] = [one, short, model]  # (a worker started afresh late, beside one judged: as before)
+    assert load.gate(report, None, 1.5) == []
+    cfg = {"users": 3, "duration": 3600.0, "workers": 2, "ramp": 0.0, "think": 1.0, "invoices": 10, "data": "a folder",
+           "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
+    text = load.markdown(load.build_report(_run(), cfg, {"started": "2026-11-07T09:00:00", "processes": [one, two]}))
+    assert "| worker 2 |" in text and "| +10.0, +10.0 |" in text and "RSS MB a 10 min: whole run, second half" in text

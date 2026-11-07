@@ -22,6 +22,7 @@ from typing import Any
 from ..coding.terms import parse_terms, payment
 from ..core.memory import vendor_key
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, _in_list
+from ..core.store.reports import OWN_WORK
 from ..core.store.summary import _code_rows, computed
 from ..core.store.summary import broken as summary_broken
 from ..core.store.summary import whole as summary_whole
@@ -347,11 +348,14 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
 
 # The Insights page's figures (``compute`` and ``operations``: 2 s at 100,000 invoices, at each visit before): under a
 # stream of changes (100 people approving) worked out again at most this often, once for every process: shown only
-# (D-166, B-1799).
+# (D-166, B-1799); the Vendors page's workload too (D-197). Longer for an answer whose work is long (``settle_for``).
 SETTLE_SECONDS = 60.0
 # Their format as they are kept for every process (``Store.shared_answer``): another when it changes, so what an older
 # AP Coder kept is worked out again.
 SHOWN_FORMAT = "insights-1"
+# The Vendors page's workload (``vendor_workload``: 0.11 s at 30,000 invoices, in each web worker after each change
+# before) as it is kept for every process, the same way (D-194).
+WORKLOAD_FORMAT = "workload-1"
 
 
 def shown(store: Store) -> dict[str, Any]:
@@ -590,9 +594,16 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     often AP had to correct the coding. Worst first; vendors without problems are left out. A rejected invoice is left
     out, and an approved one counts what was still open when it was approved: a finding the reviewer cleared by
     correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
-    invoice or the audit trail changed (``summary_memo``, D-110)."""
-    found = store.summary_memo(f"vendor_workload/{min_invoices}", lambda: _vendor_workload(store, min_invoices),
-                               "workload")  # fmt: skip
+    invoice or the audit trail changed (the summary's ``workload``, D-110), once for every process (D-194), and under
+    a stream of changes at most every ``SETTLE_SECONDS`` (or ten times its work): only shown, as Insights (D-197)."""
+    found = store.shared_answer(
+        "vendor_workload",
+        lambda: _vendor_workload(store, min_invoices),
+        version=WORKLOAD_FORMAT,
+        topic="workload",
+        asked=min_invoices,
+        settle=OWN_WORK,
+    )  # fmt: skip  (ten times its work: B-2044)
     return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 
 

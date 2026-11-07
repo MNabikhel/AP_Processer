@@ -6,6 +6,7 @@ that is undone; a restore; the answers kept on them (D-162)."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sqlite3
 import threading
 import time
@@ -428,7 +429,7 @@ def test_vendors_asked_with_no_invoices_are_not_kept_for_ever(tmp_path, ground_t
     all, counted as they are kept; one vendor of more rows than half that is not kept."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_KEYS_KEPT", 50)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 4)
@@ -458,7 +459,7 @@ def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_
     other half left to the others."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
     store = Store(tmp_path / "ap.db")
@@ -481,7 +482,7 @@ def test_a_vendor_grown_past_half_the_rows_kept_is_no_longer_kept(tmp_path, monk
     when it is next read."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
     store = Store(tmp_path / "ap.db")
@@ -687,10 +688,12 @@ def test_a_lines_suggestions_follow_the_lessons_and_the_gl_accounts_changed_else
 def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_what_is_asked(
     tmp_path, ground_truth, monkeypatch
 ):
-    """``bulk.queue_checks``, kept on the summary's ``queue`` topic, the checks stamp, laptop or server and the
-    invoices asked: a finding stored by plain SQL, an invoice parked through another Store, a change of settings
-    (their checks then made against others: counted) are in the next answer; fewer than ``KEEP_FROM`` invoices are
-    worked out each time; each caller gets rows and lists of its own, the findings in them read-only."""
+    """``bulk.queue_checks``: from ``KEEP_FROM`` invoices asked, their facts are taken from the whole queue's, kept in
+    each process and followed by the summary's log of the queue's changes (D-193): a finding stored by plain SQL, an
+    invoice parked through another Store are in the next answer, only that invoice's facts read again; a change of
+    settings (their checks then made against others: counted), the laptop's re-check, the invoices asked in another
+    order or others read none; fewer than ``KEEP_FROM`` invoices are read each time; each caller gets rows and lists
+    of its own, the findings in them read-only."""
     from ap_coder.coding import bulk
 
     store = Store(tmp_path / "ap.db")
@@ -700,9 +703,9 @@ def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_w
     for name in ("Q-1", "Q-2", "Q-3"):
         (tmp_path / f"{name}.pdf").write_bytes(name.encode())
         ids.append(store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked))
-    worked = []
-    real = bulk._queue_checks
-    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    read = []
+    real = Store.queue_rows
+    monkeypatch.setattr(Store, "queue_rows", lambda self, some: read.append(some) or real(self, some))
     monkeypatch.setattr(bulk, "KEEP_FROM", 3)
 
     def asked(which=tuple(ids), recheck=False):
@@ -710,30 +713,30 @@ def test_the_queues_checks_follow_a_change_made_elsewhere_the_checks_stamp_and_w
 
     first = asked()
     assert sorted(first[0]) == ids and first[1] == 0 and all(c["found"] == [] for c in first[0].values())
-    assert asked() == first and len(worked) == 1  # kept
+    assert asked() == first and read == [None]  # kept: the whole queue read once
     first[0][ids[0]]["found"].append({"severity": "error", "code": "CHANGED_BY_THE_CALLER"})
     first[0][ids[0]]["q_pick"] = "changed by the caller"
-    assert asked()[0][ids[0]] == {**first[0][ids[0]], "found": [], "q_pick": ""} and len(worked) == 1  # copies
+    assert asked()[0][ids[0]] == {**first[0][ids[0]], "found": [], "q_pick": ""} and read == [None]  # copies
     found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
                      (found, ids[0]))  # fmt: skip
     mismatch = asked()[0][ids[0]]["found"]
-    assert mismatch == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    assert mismatch == [{"severity": "error", "code": "TOTAL_MISMATCH"}] and read == [None, [ids[0]]]
     with pytest.raises(TypeError):
         mismatch[0]["code"] = "CHANGED_BY_THE_CALLER"
     other.park_invoice(ids[1], "Jordan Lee", "waiting for the buyer")
-    assert sorted(asked()[0]) == [ids[0], ids[2]] and len(worked) == 3
+    assert sorted(asked()[0]) == [ids[0], ids[2]] and read[2:] == [[ids[1]]]
     with sqlite3.connect(store.path) as conn:  # a change of settings: their checks were made against others
         conn.execute("INSERT INTO settings (key, value) VALUES ('default_terms_days', '45')")
-    assert asked()[1] == 2 and len(worked) == 4
-    assert asked(recheck=True)[1] == 2 and len(worked) == 5  # the laptop's (no GL accounts: nothing checked again)
-    assert asked(recheck=True)[1] == 2 and asked()[1] == 2 and len(worked) == 6
-    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]] and len(worked) == 6  # in another order
-    assert sorted(asked([*ids, 999])[0]) == [ids[0], ids[2]] and len(worked) == 7  # asked otherwise (B-1731)
+    assert asked()[1] == 2
+    assert asked(recheck=True)[1] == 2  # the laptop's (no GL accounts: nothing checked again)
+    assert asked(recheck=True)[1] == 2 and asked()[1] == 2
+    assert sorted(asked([ids[2], ids[0], ids[1]])[0]) == [ids[0], ids[2]]  # in another order
+    assert sorted(asked([*ids, 999])[0]) == [ids[0], ids[2]] and len(read) == 3  # asked otherwise (B-1731)
     asked(ids[:2])
     asked(ids[:2])
-    assert len(worked) == 9  # fewer than KEEP_FROM: worked out each time
+    assert read[3:] == [ids[:2], ids[:2]]  # fewer than KEEP_FROM: read each time
     key = summary_module.TOPICS["queue"]  # one the summary could not work out: each change to it counts
     row = {"status": "review", "broken": summary_module.BIT["queue"], **dict.fromkeys(summary_module.QUEUE_READ[1:])}
     assert key(row) != key(row) and key({**row, "broken": 0}) == key({**row, "broken": 0})
@@ -745,8 +748,9 @@ def test_the_queues_checks_are_kept_when_a_check_only_moves_an_invoice_in_the_qu
     """B-1731: each check of a review screen writes the confidence it worked out, which moves the invoice in the
     queue's order, and the queue asked its checks of the invoices in that order: kept for the invoices asked in their
     order, they were worked out again after nearly every check (93 ms at 100,000 invoices), though they are the same
-    for the same invoices in any order. Asked in another order they are kept; another invoice asked, or a finding
-    changed, works them out again."""
+    for the same invoices in any order. Asked in another order they are the same; after a check only its invoice's
+    facts are read again (the queue's log, D-193), after a finding changed only that one's; another invoice asked
+    reads none."""
     from ap_coder.coding import bulk
     from ap_coder.core.store import REVIEW
 
@@ -757,9 +761,9 @@ def test_the_queues_checks_are_kept_when_a_check_only_moves_an_invoice_in_the_qu
         (tmp_path / f"{name}.pdf").write_bytes(name.encode())
         added = store.add_invoice(tmp_path / f"{name}.pdf", {**ground_truth, "invoice_number": name}, checked)
         store.refresh_confidence(added, 0.9, False)
-    worked = []
-    real = bulk._queue_checks
-    monkeypatch.setattr(bulk, "_queue_checks", lambda *a: worked.append(1) or real(*a))
+    read = []
+    real = Store.queue_rows
+    monkeypatch.setattr(Store, "queue_rows", lambda self, some: read.append(some) or real(self, some))
     monkeypatch.setattr(bulk, "KEEP_FROM", 3)
 
     def asked(ids=None):
@@ -769,13 +773,13 @@ def test_the_queues_checks_are_kept_when_a_check_only_moves_an_invoice_in_the_qu
     order = [i["id"] for i in store.list_invoices(REVIEW)]
     other.refresh_confidence(order[-1], 0.12, False)  # a check on its screen: first in the queue now
     assert [i["id"] for i in store.list_invoices(REVIEW)] == [order[-1], *order[:-1]]
-    assert asked() == first and asked(order[::-1]) == first and len(worked) == 1
+    assert asked() == first and asked(order[::-1]) == first and read == [None, [order[-1]]]
     found = '[{"severity": "error", "code": "TOTAL_MISMATCH", "message": "Totals differ"}]'
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET validation = json_set(validation, '$.issues', json(?)) WHERE id = ?",
                      (found, order[0]))  # fmt: skip
-    assert asked()[0][order[0]]["found"] == [{"severity": "error", "code": "TOTAL_MISMATCH"}] and len(worked) == 2
-    assert sorted(asked([*order, 999])[0]) == sorted(order) and len(worked) == 3  # another invoice asked
+    assert asked()[0][order[0]]["found"] == [{"severity": "error", "code": "TOTAL_MISMATCH"}]
+    assert sorted(asked([*order, 999])[0]) == sorted(order) and read[2:] == [[order[0]]]  # another invoice asked
 
 
 def test_the_queues_late_regular_invoices_follow_a_new_invoice_once_they_settled(tmp_path, ground_truth, monkeypatch):
@@ -936,10 +940,10 @@ def test_the_queues_lists_keep_their_rows_when_a_check_only_writes_a_confidence_
     tmp_path, ground_truth, monkeypatch
 ):
     """B-1737: each check writes the confidence it worked out, and the queue's lists were read again in full after
-    every one (48 ms at 100,000 invoices, on ``/review`` and each invoice page's Previous and Next). The rows are kept
-    without their confidence, which is read apart with the queue's order at each ask: a check reads no row again, and
-    the lists, their order and confidences are what reading them afresh gives. An invoice listed or gone between the
-    two reads (another worker's change) has them read afresh."""
+    every one (48 ms at 100,000 invoices, on ``/review`` and each invoice page's Previous and Next). The rows of the
+    three lists are kept by invoice and followed by the summary's log of the queue's changes (D-193): a check reads its
+    invoice's row again, nothing else; the lists, their order and confidences are what reading them afresh gives. They
+    are read with the log and the queue's order in one moment: another worker's park meanwhile is in the next ask."""
     from ap_coder.core.store import PARKED, PENDING, REVIEW
 
     store = Store(tmp_path / "ap.db")
@@ -947,42 +951,42 @@ def test_the_queues_lists_keep_their_rows_when_a_check_only_writes_a_confidence_
     a, b, c, d = (_invoice(store, tmp_path, ground_truth, name) for name in ("K-1", "K-2", "K-3", "K-4"))
     other.park_invoice(d, "Jordan Lee", "waiting for the buyer")
     rows_read = []
-    real = Store.summary_fetch
-    monkeypatch.setattr(Store, "summary_fetch", lambda self, sql, *a: (rows_read.append(1) if "file_name" in sql
-                                                                        else None) or real(self, sql, *a))  # fmt: skip
+    real = Store._listed
+    monkeypatch.setattr(Store, "_listed", lambda self, ids: rows_read.append(ids and sorted(ids)) or real(self, ids))
 
     def fresh(*statuses):
         listed, marks = ", ".join(summary_module.LISTED_COLUMNS), ", ".join("?" * len(statuses))
-        return real(store, f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
-                           "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
+        return store.summary_fetch(f"SELECT {listed} FROM invoice_summary WHERE status IN ({marks}) ORDER BY "
+                                   "requires_review DESC, adjusted_confidence ASC, id ASC", statuses)  # fmt: skip
 
     def same(*statuses):
         listed = store.list_invoices(statuses=statuses)
         assert listed == fresh(*statuses) and [list(r) for r in listed] == [list(r) for r in fresh(*statuses)]
         return [r["id"] for r in listed]
 
-    assert same(REVIEW, PARKED, PENDING) == [a, b, c, d] and same(REVIEW) == [a, b, c] and len(rows_read) == 2
+    assert same(REVIEW, PARKED, PENDING) == [a, b, c, d] and same(REVIEW) == [a, b, c] and rows_read == [None]
     other.refresh_confidence(c, 0.12, False)  # a check on its screen
     with other._conn() as conn:
         conn.execute("UPDATE invoices SET adjusted_confidence = 0.5, requires_review = 0 WHERE id = ?", (a,))
-    assert same(REVIEW, PARKED, PENDING) == [b, d, c, a] and same(REVIEW) == [b, c, a] and len(rows_read) == 2
+    assert same(REVIEW, PARKED, PENDING) == [b, d, c, a] and same(REVIEW) == [b, c, a] and rows_read[1:] == [[a, c]]
     with sqlite3.connect(store.path) as conn:  # by plain SQL: worked into the summary by the next read
         conn.execute("UPDATE invoices SET adjusted_confidence = 0.3, requires_review = 0 WHERE id = ?", (b,))
-    assert same(REVIEW) == [c, b, a] and same(REVIEW, PARKED, PENDING) == [d, c, b, a]
-    with other._conn() as conn:  # anything else listed changed: read again
+    assert same(REVIEW) == [c, b, a] and same(REVIEW, PARKED, PENDING) == [d, c, b, a] and rows_read[2:] == [[b]]
+    with other._conn() as conn:  # anything else listed changed: its row read again
         conn.execute("UPDATE invoices SET invoice_number = 'K-9' WHERE id = ?", (b,))
     rows_read.clear()
     assert same(REVIEW) == [c, b, a] and store.list_invoices(REVIEW)[1]["invoice_number"] == "K-9"
-    assert len(rows_read) == 1
-    kept = store.summary_memo
+    assert rows_read == [[b]]
 
-    def parked_meanwhile(*args, **kw):  # another worker parks one between the two reads
-        answer = kept(*args, **kw)
-        other.park_invoice(a, "Jordan Lee", "")
-        return answer
+    def parked_meanwhile(self, ids):  # another worker parks one just after the log was read
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE invoices SET status = 'parked' WHERE id = ?", (a,))
+        return real(self, ids)
 
-    monkeypatch.setattr(store, "summary_memo", parked_meanwhile)
-    assert [r["id"] for r in store.list_invoices(REVIEW)] == [c, b]
+    with other._conn() as conn:
+        conn.execute("UPDATE invoices SET invoice_number = 'K-8' WHERE id = ?", (b,))
+    monkeypatch.setattr(Store, "_listed", parked_meanwhile)
+    assert [r["id"] for r in store.list_invoices(REVIEW)] == [c, b, a]  # (as of that moment)
     monkeypatch.undo()
     assert same(REVIEW) == [c, b] and same(PARKED) == [d, a]
 
@@ -1487,7 +1491,7 @@ def test_month_ends_received_pos_worked_out_in_one_process_are_taken_by_the_othe
         found = received(f"afresh {len(decoded)}")  # (nothing kept anywhere: worked out whole)
         with sqlite3.connect(store.path) as conn:
             conn.execute("DELETE FROM report_answers")
-            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?)", kept)
+            conn.executemany("INSERT INTO report_answers VALUES (?, ?, ?, ?, ?, ?, ?)", kept)
         return found
 
     first = received("worker 1")
@@ -1743,6 +1747,58 @@ def test_insights_figures_are_worked_out_once_for_every_process_and_follow_anoth
     assert shown("worker 1") == after == afresh() and worked == {"compute": 4, "operations": 4}  # (worker 2's)
 
 
+def test_the_vendors_workload_is_worked_out_once_for_every_process_and_follows_another_ones_change(
+    tmp_path, monkeypatch
+):
+    """D-194: the Vendors page's workload (``insights.vendor_workload``, worked out again after each change: 4% of the
+    web workers' CPU at 300,000 invoices) was kept by each web worker for itself. It is worked out once for every
+    process, what working it out afresh gives (its codes a list each), and again after any change to an invoice,
+    whoever made it, once settled (D-197: only shown, for ten times its work, B-2044); each caller gets its own copy
+    to change."""
+    from ap_coder.core.store import reports
+    from ap_coder.erp import insights
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    worked: list[int] = []
+    real = insights._vendor_workload
+    work = 6.0  # (its work's seconds on this clock: settled for ten times that)
+
+    def timed(*a):
+        worked.append(1)
+        clock[0] += work
+        return real(*a)
+
+    monkeypatch.setattr(insights, "_vendor_workload", timed)
+    settle = reports.SETTLE_SHARE * work
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def bill(name: str, vendor: str = "Acme Supply") -> None:
+        other.add_invoice(tmp_path / f"{name}.pdf", {"vendor_name": vendor, "invoice_number": name, "grand_total": 10.0,
+                                                     "currency": "CAD"},
+                          {"issues": [{"code": "TOTAL_MISMATCH", "severity": "error"}]})  # fmt: skip
+
+    def shown(name: str) -> list:
+        process(name)
+        return insights.vendor_workload(store)
+
+    bill("A-1"), bill("A-2")
+    before = shown("worker 1")
+    assert [(v["vendor_name"], v["with_problems"], v["top_codes"]) for v in before] == [
+        ("Acme Supply", 2, ["TOTAL_MISMATCH"])] and len(worked) == 1  # fmt: skip
+    assert shown("worker 2") == before == real(store, 2) and len(worked) == 1  # (worker 1's)
+    bill("Z-1", "Zeta Parts"), bill("Z-2", "Zeta Parts"), bill("Z-3", "Zeta Parts")
+    clock[0] = 1000 + settle - 1  # (its work began at 1000)
+    assert shown("worker 2") == before and len(worked) == 1  # (settled)
+    clock[0] = 1000 + settle
+    after = shown("worker 2")
+    assert [v["vendor_name"] for v in after] == ["Zeta Parts", "Acme Supply"] and len(worked) == 2
+    after[0]["top_codes"].append("changed by its caller")
+    after[1]["invoices"] = 0
+    assert shown("worker 1") == shown("worker 2") == real(store, 2) != after and len(worked) == 2  # (worker 2's)
+
+
 def test_the_recurring_vendors_work_keeps_no_copy_of_every_invoice_in_the_worker(tmp_path, ground_truth):
     """B-1803: the recurring vendors are one answer for every process (D-175), so the rows they are worked out from
     (vendor, date and total of every invoice in review or approved: about 140 MB at 300,000) are read for the work
@@ -1969,3 +2025,284 @@ def test_an_answer_kept_just_as_its_maker_lets_go_is_taken_never_worked_out_agai
 
     monkeypatch.setattr(store, "kept_answer", look)
     assert second() == ["first"] and second.worked == 0
+
+
+# --- A settle that grows with the answer's own work (D-197) ---------------------------------------------------------
+
+
+def test_a_settle_grows_with_the_answers_work_up_to_its_cap_and_never_for_an_exact_answer():
+    """D-197: an answer a page only shows is taken after a change for its settle, or ``SETTLE_SHARE`` times as long as
+    its work took when that is longer, never past ``SETTLE_MOST`` for it (a work slow once, its cache cold); an exact
+    answer is never settled; one whose work is not known (kept by an older AP Coder) or a clock set back meanwhile has
+    the plain settle."""
+    from ap_coder.core.store.reports import SETTLE_MOST, SETTLE_SHARE, settle_for
+
+    assert (SETTLE_SHARE, SETTLE_MOST) == (10, 900.0)
+    assert settle_for(30, 0.05) == settle_for(30, None) == settle_for(30, -40) == 30  # (a small database: as before)
+    assert settle_for(30, 20) == 200 and settle_for(5, 2.5) == 25
+    assert settle_for(30, 3600) == SETTLE_MOST and settle_for(1200, 3600) == 1200
+    assert settle_for(0, 20) == settle_for(0.0, 3600) == settle_for(0, None) == 0
+
+
+def test_a_shared_answer_whose_work_was_long_settles_for_ten_times_it_in_every_process_but_never_past_a_restore(
+    tmp_path, monkeypatch
+):
+    """D-197: Spend's figures took 20 s at 300,000 invoices against their 30 s settle, so under a stream of changes some
+    web worker worked them out almost all the time, and its other requests waited behind it. The work an answer took
+    is kept with it (``report_answers``, for the other processes); after a change it is taken for ten times that, in
+    the process that made it and in another one; past that it is worked out again; asked exactly, at once; after a
+    restore (another ``summary_id``), never, however recent."""
+    from ap_coder.core.store import reports
+
+    clock, worked = [1000.0], []
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def slow() -> list[str]:
+        worked.append(clock[0])
+        clock[0] += 20  # (its work takes 20 s)
+        return [r[1] for r in _vendor_rows(store)]
+
+    def ask(where: Store = store, settle: float = 30):
+        return where.shared_answer("rows", slow, version="t-1", topic="", changes=("vendors",), settle=settle)
+
+    def add(name: str) -> None:
+        _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, ?, ?)", name, name, NOW)
+
+    process("worker 1")
+    assert ask() == [] and worked == [1000]
+    assert other.kept_answer("rows", reports.asked_key(None), "t-1")[2:] == (1000.0, 20.0)  # (began, its work)
+    add("acme")
+    clock[0] = 1199
+    assert ask() == [] and len(worked) == 1  # its own, 199 s after its work began: past the plain 30 s
+    process("worker 2")
+    assert ask(other) == [] and len(worked) == 1  # worker 1's, from the database
+    clock[0] = 1200
+    assert ask(other) == ["acme"] and worked == [1000, 1200]  # 200 s: worked out again
+    process("worker 1")
+    assert ask() == ["acme"] and len(worked) == 2  # (worker 2's: worker 1's own past its settle)
+    add("beta")
+    assert ask(settle=0) == ["acme", "beta"] and len(worked) == 3  # exact: at once
+    backup = store.backup_now("manual")
+    add("gamma")
+    assert ask(settle=0) == ["acme", "beta", "gamma"] and len(worked) == 4
+    store.restore_from(backup)
+    clock[0] += 5
+    for name in ("worker 2", "worker 1"):  # (each with an answer of before the restore, 5 s old)
+        process(name)
+        assert ask() == ["acme", "beta"] and len(worked) == 5, name
+
+
+def test_an_answer_kept_without_its_work_by_an_older_ap_coder_settles_for_the_plain_settle(tmp_path, monkeypatch):
+    """D-197: a row of ``report_answers`` written before the work was kept with it (``lasted`` empty: an AP Coder of
+    the same version before this change) is taken, and settles for the caller's ``settle`` alone."""
+    from ap_coder.core.store import reports
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+    settled = Shared(store, "rows", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",),
+                     settle=30)  # fmt: skip
+    stamp = json.dumps(store._answer_stamp("", ("vendors",))[0])
+    _plain(store, "INSERT INTO report_answers (name, asked, version, stamp, value, made_at) VALUES ('rows', ?, ?, ?, "
+                  "'[]', 990.0)", reports.asked_key(None), reports._version("t-1"), stamp)  # fmt: skip
+    assert store.kept_answer("rows", reports.asked_key(None), "t-1")[2:] == (990.0, None)
+    process("worker 1")
+    assert settled() == [] and settled.worked == 0  # (taken as it is)
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
+    clock[0] = 1019
+    process("worker 2")
+    assert settled() == [] and settled.worked == 0  # 29 s after its work began
+    clock[0] = 1020
+    process("worker 3")
+    assert settled() == _vendor_rows(store) != [] and settled.worked == 1  # 30 s: worked out again
+
+
+def test_the_answer_before_shown_while_another_works_it_out_again_is_bound_by_its_grown_settle_and_the_wait(
+    tmp_path, monkeypatch
+):
+    """D-197 with B-1834 and B-1838: while another process works a settled answer out again, the one before is shown
+    only while its work began less than its settle (grown with its work: 200 s for 20 s) and ANSWER_WAIT ago; an
+    older one, or one of another database, is waited for."""
+    from ap_coder.core.store import reports
+
+    clock = [1000.0]
+    monkeypatch.setattr(reports, "wall", lambda: clock[0])
+    process = _Processes(monkeypatch)
+    store = Store(tmp_path / "ap.db")
+
+    def slow() -> list[list]:
+        clock[0] += 20
+        return _vendor_rows(store)
+
+    settled = Shared(store, "rows", slow, version="t-1", topic="", changes=("vendors",), settle=30)
+    process("worker 1")
+    before = settled()
+    assert before == [] and settled.worked == 1
+    lease = f"answer/rows/{reports.asked_key(None)}"
+    bound = 1000 + 200 + reports.ANSWER_WAIT  # (its work began at 1000 and took 20 s)
+    for n, (at, shown, restored) in enumerate(((bound - 1, True, False), (bound, False, False), (1100, False, True))):
+        process(f"worker {n + 2}")
+        _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'V', ?)", f"v{n}", NOW)
+        if restored:  # (what is kept is of the database before a restore: another summary_id)
+            _plain(store, "UPDATE settings SET value = 'restored' WHERE key = 'summary_id'")
+        clock[0] = at
+        assert store.take_lease(lease, "another process", 60)  # (it works the answer out again)
+        found, waiting = [], _waiting(store, monkeypatch)
+        asking = threading.Thread(target=lambda found=found: found.append(settled()))
+        asking.start()
+        if shown:
+            asking.join(10)
+            assert found == [before] and settled.worked == 1, at  # at once, not waited for
+        else:
+            assert waiting.wait(10), at
+            assert not found, at  # (waiting)
+            store.keep_answer("rows", reports.asked_key(None), "t-1", store._answer_stamp("", ("vendors",))[0],
+                              ["theirs"], clock[0], 20.0)  # fmt: skip
+            asking.join(10)
+            assert found == [["theirs"]] and settled.worked == 1, at
+        store.drop_lease(lease, "another process")
+        before = found[0]
+        _plain(store, "UPDATE report_answers SET made_at = 1000.0, lasted = 20.0")  # (each turn: the same age)
+
+
+def test_an_answer_a_process_keeps_for_itself_settles_for_ten_times_its_work_capped_and_never_past_a_restore(
+    tmp_path, monkeypatch
+):
+    """D-197 for ``summary_memo``: once what it depends on changed, a settled answer is taken for its settle or ten
+    times as long as its work took, at most ``SETTLE_MOST`` (a work once slow does not hold a stale answer for
+    hours); an exact one follows every change whatever its work; a restore's new ``summary_id`` is never settled."""
+    from ap_coder.core.store import reports
+
+    clock, work = [1000.0], [20.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    store = Store(tmp_path / "ap.db")
+
+    def keys() -> list[str]:
+        clock[0] += work[0]
+        with store._conn() as conn:
+            return [r[0] for r in conn.execute("SELECT vendor_key FROM vendors ORDER BY rowid")]
+
+    settled = Kept(store, "vendors", keys, topic="", changes="vendors", settle=5)
+    exact = Kept(store, "exact", keys, topic="", changes="vendors")
+
+    def add(n: int) -> None:
+        _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'V', ?)", f"v{n}", NOW)
+
+    assert settled() == [] and exact() == [] and settled.worked == exact.worked == 1  # (began at 1000)
+    add(1)
+    clock[0] = 1199
+    assert settled() == [] and settled.worked == 1  # 199 s: settled for 200
+    assert exact() == ["v1"] and exact.worked == 2  # (exact: at once)
+    clock[0] = 1200
+    work[0] = 100.0  # (a cold cache: 1,000 s, held for 900)
+    assert settled() == ["v1"] and settled.worked == 2  # 200 s: worked out again, from 1200
+    add(2)
+    clock[0] = 1200 + reports.SETTLE_MOST - 1
+    assert settled() == ["v1"] and settled.worked == 2
+    clock[0] = 1200 + reports.SETTLE_MOST
+    work[0] = 20.0
+    assert settled() == ["v1", "v2"] and settled.worked == 3  # 15 minutes: worked out again, from 2100
+    backup = store.backup_now("manual")
+    add(3)
+    store.restore_from(backup)
+    clock[0] += 5
+    assert settled() == ["v1", "v2"] and settled.worked == 4  # (another summary_id: not the one 5 s old)
+
+
+def test_the_vendors_pages_totals_settle_but_every_other_reader_of_them_is_exact(tmp_path, ground_truth, monkeypatch):
+    """D-197: the Vendors page's counts and spend by vendor (``_vendor_totals``, 20% of a web worker's CPU with
+    Spend's at 300,000 invoices, worked out again at every change) only show: once an invoice changed, the page takes
+    the totals kept for ten times their work (B-2044: no floor, so a laptop's are exact). The Statements page, the JD
+    Edwards worksheet and a vendor's controls read them exactly, and a vendor opened that came in after the page's
+    totals opens."""
+    from ap_coder.core.store import reports
+    from tests.webclient import client_for
+
+    clock = [1000.0]
+    monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    work = 6.0  # (the totals' work on this clock: settled for ten times that)
+    real = Store._vendor_totals
+
+    def timed(self):
+        clock[0] += work
+        return real(self)
+
+    monkeypatch.setattr(Store, "_vendor_totals", timed)
+    settle = reports.SETTLE_SHARE * work
+    store = Store(tmp_path / "ap.db")
+    _invoice(store, tmp_path, ground_truth, "A-1", "Acme Supply")
+    shown = store.vendor_summaries(settled=True)
+    assert [v["invoices"] for v in shown] == [1]
+    _invoice(store, tmp_path, ground_truth, "A-2", "Acme Supply")
+    _invoice(store, tmp_path, ground_truth, "B-1", "Beta Parts")
+    clock[0] = 1000 + settle - 1
+    assert store.vendor_summaries(settled=True) == shown  # (settled)
+    client = client_for(store)
+    page = client.get("/vendors").text
+    assert "Acme Supply" in page and "Beta Parts" not in page
+    with sqlite3.connect(store.path) as conn:
+        (beta,) = conn.execute("SELECT vendor_key FROM invoices WHERE vendor_name = 'Beta Parts'").fetchone()
+    opened = client.get("/vendors", params={"open": beta}).text
+    assert "Beta Parts" in opened and 'id="vendor"' in opened
+    exact = store.vendor_summaries()
+    assert sorted(v["invoices"] for v in exact) == [1, 2]
+    clock[0] = 1000 + settle + 10  # (past the first totals' settle; the exact ones' work began at 1059)
+    _invoice(store, tmp_path, ground_truth, "B-2", "Beta Parts")
+    assert store.vendor_summaries(settled=True) == exact  # (the exact read is the one kept: settled from it)
+    clock[0] += settle
+    assert store.vendor_summaries(settled=True) == store.vendor_summaries()
+
+
+def test_an_answers_work_time_is_its_own_work_not_the_wait_before_it(tmp_path):
+    """B-2043: the time an answer's work lasted (D-197) was counted from the ask, so a wait for another thread's work
+    that failed counted too, and the next answer settled ten times that wait."""
+    from ap_coder.core.store import reports
+
+    store = Store(tmp_path / "s.db")
+    calls = []
+
+    def compute() -> dict:
+        calls.append(threading.current_thread().name)
+        if len(calls) == 1:
+            time.sleep(1.5)
+            raise RuntimeError("the first work fails")
+        return {"n": 1}
+
+    def ask() -> None:
+        try:
+            store.shared_answer("probe", compute, version="p-1", topic="", settle=5.0)
+        except RuntimeError:
+            pass
+
+    first = threading.Thread(target=ask, name="first")
+    first.start()
+    time.sleep(0.2)
+    ask()  # (waits for the first's work, which fails, then works it out itself)
+    first.join()
+    assert calls == ["first", "MainThread"]
+    found = store.kept_answer("probe", reports.asked_key(None), "p-1")
+    assert found[3] < 0.5, found[3]
+
+
+def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, ground_truth):
+    """B-2044: the Vendors page's counts settled for 60 s whatever their work (D-197), so on a laptop, where the work
+    takes milliseconds, a person's own change (an invoice rejected, a new vendor) was missing for a minute. They
+    settle by their own work alone: ten times its milliseconds."""
+    from tests.conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "s.db")
+    gt, pdf = ground_truth, SAMPLES / f"{SAMPLE_STEM}.pdf"
+    first = store.add_invoice(
+        pdf, {**gt, "invoice_number": "A-1"}, {"requires_review": True, "adjusted_confidence": 0.5}
+    )
+    assert [v["to_review"] for v in store.vendor_summaries(settled=True)] == [1]
+    store.reject_invoice(first, "tester", "duplicate")
+    store.add_invoice(pdf, {**gt, "invoice_number": "A-2", "vendor_name": "Brand New Supplier Ltd"},
+                      {"requires_review": True, "adjusted_confidence": 0.5})  # fmt: skip
+    time.sleep(0.2)  # (more than ten times the work here)
+    shown = {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries(settled=True)}
+    assert shown == {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries()}
+    assert shown.get("Brand New Supplier Ltd") == 1

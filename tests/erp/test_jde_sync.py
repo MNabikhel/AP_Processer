@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from ap_coder.coding.vendors import vendor_findings
+from ap_coder.core import caches
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_ais, jde_sync
@@ -229,6 +230,28 @@ def test_jde_not_reached_the_live_check_looks_its_address_up_again(store, monkey
         assert [c for _, c, _ in jde_sync.live_findings(store, _coding())] == ["JDE_NOT_REACHED"]
         jde_sync._DOWN.clear()  # DOWN_SECONDS later: JDE is asked again
     assert used == ["10.0.0.1", "10.0.0.2"]
+
+
+def test_the_live_checks_answers_are_let_go_once_too_old_and_within_their_bytes(store, ais, monkeypatch):
+    """B-2025: each web worker kept every answer JD Edwards gave the live check, one for each supplier asked (each
+    supplier's vouchers of the window, up to 40 pages of 500) and one for each invoice number of a supplier without an
+    AN8, for the life of the process: an answer older than ``CACHE_SECONDS`` was asked again but never let go. A
+    worker checking invoices all day kept growing (D-195). The old ones go as a new one is kept, and they are kept
+    within their bytes too, the ones used longest ago going first."""
+    connect(store, ais)  # no supplier sync: no AN8, each invoice number is an answer of its own
+    monkeypatch.setattr(jde_sync, "CACHE_SECONDS", 0)  # every answer too old as soon as it is kept
+    for i in range(30):
+        jde_sync.live_findings(store, _coding(invoice_number=f"Z-{i}"))
+    assert len(jde_sync._CACHE) == 1  # the latest (30 were kept)
+    monkeypatch.setattr(jde_sync, "CACHE_SECONDS", 300.0)
+    one = caches.size_of(next(iter(jde_sync._CACHE.values())))
+    monkeypatch.setattr(jde_sync._CACHE, "most", 3 * one)
+    for i in range(30, 40):
+        jde_sync.live_findings(store, _coding(invoice_number=f"Z-{i}"))
+    assert len(jde_sync._CACHE) == 3 and jde_sync._CACHE.held <= 3 * one
+    asked = len(ais.orchestration_calls("vouchers"))
+    jde_sync.live_findings(store, _coding(invoice_number="Z-39"))
+    assert len(ais.orchestration_calls("vouchers")) == asked  # the latest kept, still answering
 
 
 def test_the_live_check_is_off_with_step_1(store, ais):

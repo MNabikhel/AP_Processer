@@ -10,11 +10,12 @@ free is one left behind.
 
 What is done with it, decided per step (:data:`RULES`):
 
-* ``prepare`` (unzip, set up, a copy of the database updated, the self-check), ``stop`` and ``safety-copy``: the old
-  version still has its own database, untouched: it just starts. The new folder is left (the next ``server-update``
-  unzips beside it; delete it when done) and a safety copy cut short is removed.
-* ``migrate``: the new version may have updated part of the database: the safety copy (made with the service stopped,
-  so nothing was done since) is put back and the old version starts.
+* ``prepare`` (unzip, set up, a copy of the database updated, the self-check, the safety copy made ahead: D-196),
+  ``stop`` and ``safety-copy`` (that copy brought up to date): the old version still has its own database, untouched
+  (the copy only reads it): it just starts. The new folder is left (the next ``server-update`` unzips beside it;
+  delete it when done) and a safety copy cut short is removed, with all SQLite left beside it.
+* ``migrate``: the new version may have updated part of the database: the safety copy (brought up to date with the
+  service stopped, so nothing was done since) is put back and the old version starts.
 * ``switch``: the database is updated and the new folder checked; the switch is finished (the new version starts).
   The service host finishes it only when it runs the new folder already (run.cmd was rewritten), else it goes back.
 * ``start``: the switch was made: the new version starts (``server-update --back`` goes back if it turns out wrong;
@@ -188,10 +189,12 @@ def _safety(state: dict, db: Path) -> Path | None:
 
 
 def _drop_cut_copy(state: dict, db: Path) -> None:
-    """A safety copy cut short (``.part``): never left looking like a backup."""
+    """A safety copy cut short (``.part``, and SQLite's ``-journal``, ``-wal``, ``-shm`` beside it, B-2035; one made
+    ahead, D-196, its list of files too): never left looking like a backup, nor left at all."""
     label = str(state.get("label") or "")
     if label:
-        for part in (db.parent / "backups").glob(f"ap_coder-*-{label}.db.part"):
+        backups = db.parent / "backups"
+        for part in [*backups.glob(f"ap_coder-*-{label}.db.part*"), *backups.glob(f"ap_coder-*-{label}.db.files.json")]:
             part.unlink(missing_ok=True)
 
 
@@ -213,6 +216,7 @@ def apply(state: dict, chosen: str, data: Path, db: Path, say: Say, switch: bool
     be told: the folders are gone) and what was done, in words. run.cmd (the Mac's link) and server.json are
     switched to it; only server.json when ``switch`` is False (the service host runs that folder already). Once the
     safety copy is put back the marker says so, and it is never put back again (``rule``)."""
+    from ..core.store import backup_files
     from . import server_update, service
 
     old, new = Path(str(state.get("from_folder") or ".")), Path(str(state.get("to_folder") or "."))
@@ -227,6 +231,8 @@ def apply(state: dict, chosen: str, data: Path, db: Path, say: Say, switch: bool
     elif chosen == BACK and safety is not None:
         files = server_update.put_back(safety, db)
         write(data, {**state, "put_back": safety.name})  # (a step below that fails is tried again: this is not)
+        with contextlib.suppress(OSError):  # (listed without its SHA-256, which the old version's check wants: B-2037)
+            backup_files.hash_database(safety)
         say(f"The database is back as it was before the update ({safety.name}); the user accounts are kept as they "
             f"are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
     _drop_cut_copy(state, db)

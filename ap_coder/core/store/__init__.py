@@ -23,13 +23,14 @@ Store on it, D-189), ``learning`` (the feedback memory, metrics), ``ephemeral`` 
 while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97), ``hub`` (what the finance
 hub feed reads, D-103, and its own SQLite files: what it sent, the gateway's copy, D-189), ``postings`` (the JD
 Edwards postings: the table's reads and writes, D-189, and their ledger kept across a restore, D-105), ``summary``
-(the invoices' summary the lists, the search and the reports read, D-110), ``managers`` (a manager confirming an
-invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the pages that list them,
-D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports`` (the import queue: the
-files waiting to be read, D-168), ``reports`` (the big answers worked out once for every process of the company
-server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as jobs, D-185),
-``transaction`` (several calls kept in one transaction by a caller, D-189). A test that patches a module-level name
-(``_now``, ``json``...) patches it in the part that uses it.
+(the invoices' summary the lists, the search and the reports read, D-110), ``review_queue`` (the review queue's
+lists and facts, kept in each process and followed by the summary's log of the queue's changes, D-193), ``managers``
+(a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
+pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
+(the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every process
+of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as
+jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189). A test that patches a
+module-level name (``_now``, ``json``...) patches it in the part that uses it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
 tools excepted), so moving to another database changes this folder only.
@@ -127,6 +128,7 @@ from .postings import PostingsMixin
 from .purchasing import PurchasingMixin
 from .register import RegisterMixin
 from .reports import ReportsMixin
+from .review_queue import ReviewQueueMixin
 from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
 from .transaction import TransactionMixin
@@ -137,6 +139,7 @@ from .vendors import VendorsMixin
 class Store(
     SummaryMixin,  # first: its ``_migrate`` and ``_conn`` keep the summary in step with StoreCore's (D-110)
     StoreCore,
+    ReviewQueueMixin,
     AccountsMixin,
     InvoicesMixin,
     RegisterMixin,
