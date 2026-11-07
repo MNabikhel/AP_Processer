@@ -7,6 +7,8 @@ import datetime as dt
 import io
 from pathlib import Path
 
+from . import parsing
+
 _DELIMITERS = ",;\t|"
 
 
@@ -58,19 +60,11 @@ def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
 
 
 def parse_date(text: str, where: str = "") -> dt.date:
-    """A date as written in a CSV: 2026-01-31, 2026/01/31, or 31/01/2026 / 01/31/2026 when unambiguous."""
+    """A date as written in a CSV: 2026-01-31, 2026/01/31, or 31/01/2026 / 01/31/2026 when unambiguous
+    (``core.parsing``'s rules for typed dates)."""
     text = (text or "").strip()
-    try:
-        return dt.date.fromisoformat(text)
-    except ValueError:
-        pass
-    found = set()
-    for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%m-%d-%Y"):
-        try:
-            found.add(dt.datetime.strptime(text, fmt).date())
-        except ValueError:
-            continue
-    if len(found) == 1:
-        return found.pop()
-    problem = "is ambiguous (day/month?)" if found else "is not a date"
+    found = parsing.parse_date(text)
+    if found is not None:
+        return found
+    problem = "is ambiguous (day/month?)" if parsing.parse_date(text, day_first=True) else "is not a date"
     raise ValueError(f"{where}: {text!r} {problem}; write dates as YYYY-MM-DD")
