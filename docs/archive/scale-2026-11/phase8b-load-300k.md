@@ -3,9 +3,36 @@
 4 cores, Python 3.12 with both OCR models, the bench's stand-in model server (1-4 s an answer, 2 at once).
 `python -m ap_coder.bench load --users 100 --ramp 60 --think 10 --workers 4 --data <300k database> --sample-every 10`
 (30 for the hour), `--duration 600`, then `--duration 3600` on the same database. The database made afresh by `bench
-seed --invoices 300000` at the code measured (8e3915a: D-198 and its review fixes), nothing else running.
+seed --invoices 300000` at the code measured, nothing else running. Measured twice: at 8e3915a (D-198 and its review
+fixes) and at the final code, 963a7cc (D-199 and B-2049 too).
 
-## The runs
+## At the final code (963a7cc)
+
+| run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | 5xx | 'database is locked' |
+|---|---:|---|---:|---:|---:|---:|
+| 100k, 10 min (the s100k database, served before) | 14,300 | 70 ms / 276 ms / 484 ms | 159 ms | 0 | 0 | 0 |
+| 300k, 10 min, first start of the database | 15,413 | 129 ms / 1.17 s / 5.78 s | 660 ms | 7 | 0 | 0 |
+| **300k, the hour after it** | **74,167** | **102 ms / 653 ms / 2.02 s** | **389 ms** | **0** | **0** | **0** |
+
+**Every target is met over the hour at 300,000 invoices and in the 100,000 run.** The server's logs: 0 'database is
+locked', 0 5xx, 0 tracebacks; approved, finally approved or exported twice: none; the summary equal to a
+recomputation for every invoice the runs touched.
+
+- **The hour:** no minute's worst 10 s over 2.18 s at p95 (minute 2). The server took 5 s or more on 16 of 74,174
+  requests, 13 of them opens and checks of the biggest vendor's invoices on its standing PO (3,414 invoices): under
+  load the PO match shares the worker with the other requests (`po_invoices` 5.1% of the busiest worker's CPU, was
+  10.9% before D-199). The stack dumps of every web worker every 2 s from +90 to +600 s show each one's event loop
+  waiting in `select` and the requests in its threads: no stall, the requests sharing the one running thread.
+- **Memory over the hour:** web workers 712-735 MB at the end (737 at most), growing −4.3 to +9.7 MB a 10 minutes in
+  the second half; the background process 300 → 525 MB (+1.4 in the second half); the capture processes 321 MB, flat.
+- **The first 10 minutes of a database never served:** p95 1.17 s, but p99 5.78 s and 7 over 30 s: every kept
+  answer is worked out a first time. Month-end's lines by invoice are built once (D-194; four asks at 17:18:24, the
+  first worked out and the others waited for it: 12-50 s), Spend 15.8 s, Sales tax 9-11 s, Learning 6-12 s, each
+  once. A database served before starts with its answers; a database's first start on this version pays it once.
+- **Where the CPU went at 30 minutes:** the busiest web worker: the check 22.5%, the queue 20%, the invoice page
+  16%, search 15%; the background process: the kept answers worked out again 51%, the search downloads 32%.
+
+## The first measurement (8e3915a)
 
 | run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | 5xx | 'database is locked' |
 |---|---:|---|---:|---:|---:|---:|
@@ -23,7 +50,7 @@ out (D-198: the background process works out only an answer that has been asked 
 first month-end, Exports, Vendors and Spend pages (p99 25-39 s), each once. A database served before (a restart, an
 update) starts with its answers and the refresher works out again those asked in the last day.
 
-## What changed the hour's p99 (5.50 → 2.52 s)
+## What changed the hour's p99 (5.50 → 2.52 s, 8e3915a)
 
 D-198: a settled answer whose time is up (Spend, Month-end, Vendors' totals, Insights, Sales tax, Learning's coding
 accuracy, the recurring vendors) is worked out again by the background process; the request takes the last one at
@@ -56,10 +83,10 @@ Each one matched the invoice against its PO, which read every other invoice on t
 and matched their lines twice (0.25 s). `po_invoices` was 10.9% of the busiest web worker's CPU at 30 minutes. D-199
 (963a7cc, after these runs) reads out only the subtotal, date and lines, and matches each (description, unit price)
 once: 1.75 → 0.3 s for that PO, with the same results. The wait itself (up to 40 s before a worker took the
-request, longer than the work in the logs) is not explained by these logs; the run at the final code takes a stack
-dump of every web worker every 2 s through its first ten minutes.
+request, longer than the work in the logs) is not explained by these logs. At the final code (above) the hour had no
+request over 30 s, and the stack dumps of its first ten minutes show no stall.
 
-## Memory over the hour
+## Memory over the hour (8e3915a)
 
 | process | RSS MB first → last (peak) | MB a 10 minutes: whole run, second half |
 |---|---|---|
@@ -75,7 +102,7 @@ second half, slower and slower; the background process, which now works out the 
 bench's own table said the workers ended at 0.0 MB with falling slopes: its last sample, taken as the run stopped,
 found them ended but not yet waited for. B-2049 fixed the bench; the figures above leave that sample out.)
 
-## Where the CPU went (py-spy at 30 minutes)
+## Where the CPU went (py-spy at 30 minutes, 8e3915a)
 
 - **The busiest web worker:** the queue 22%, the invoice page 22% (of which the PO match's `po_invoices` 11%:
   D-199), the check 22%, search 8.5%, the Import invoices listing 4.8%; the report pages under 1% each.
