@@ -596,7 +596,8 @@ def _two_vendors_billing(tmp_path, monkeypatch, second: str) -> tuple:
         line = {"line_number": 1, "description": "Bolts size 1", "quantity": quantity, "unit_price": 2.0,
                 "amount": 2.0 * quantity}  # fmt: skip
         doc = {"vendor_name": vendor, "invoice_number": number, "po_number": po, "invoice_date": "2026-10-03",
-               "currency": "CAD", "line_items": [line], "subtotal": 2.0 * quantity, "grand_total": 2.1 * quantity}
+               "currency": "CAD", "line_items": [line], "subtotal": 2.0 * quantity,
+               "grand_total": 2.1 * quantity}  # fmt: skip
         return other.add_invoice(tmp_path / f"{number}.pdf", doc, {})
 
     return store, other, received, bill, lambda sql, *args: _plain(store, sql, *args)
@@ -646,6 +647,39 @@ def test_a_vendors_rows_are_all_read_again_once_its_stamp_no_longer_holds(tmp_pa
     assert received() == received(afresh=True)  # (Acme's stamp no longer holds: its rows read again, A-2's not)
     other.import_purchase_orders([{**_po_line(1, 500.0), "quantity": 500.0, "po_number": "PO-2"}])  # (received)
     assert received() == received(afresh=True) == [("PO-1 line 1", 998.0), ("PO-2 line 1", 988.0)]
+
+
+def test_a_vendors_rows_kept_by_another_version_or_on_another_database_are_never_taken(tmp_path, monkeypatch):
+    """D-194: a vendor's rows are taken only under the database (``summary_id``: another after a restore) and the AP
+    Coder version and format (``BILLING_FORMAT``) they were kept by, even when none of its invoices changed since:
+    another version may read another thing of a coding."""
+    from ap_coder.core.store import purchasing
+
+    store, other, received, bill, plain = _two_vendors_billing(tmp_path, monkeypatch, "Zeta Parts")
+    bill("Acme Supply", "A-1", 1.0)
+    expected = [("PO-1 line 1", 998.0), ("PO-2 line 1", 1000.0)]
+    assert received() == expected  # (Acme's row kept)
+    planted = "UPDATE billing_facts SET facts = json_replace(facts, '$[1][0][2]', 7)"  # (7 billed, not 1)
+    plain(planted)
+    assert received() == [("PO-1 line 1", 986.0), ("PO-2 line 1", 1000.0)]  # (taken: nothing changed since)
+    plain(planted)
+    monkeypatch.setattr(purchasing, "BILLING_FORMAT", "billing-3")  # (another format)
+    assert received() == received(afresh=True) == expected
+    plain(planted)
+    plain("UPDATE settings SET value = 'another' WHERE key = 'summary_id'")  # (another database: restored)
+    assert received() == received(afresh=True) == expected
+
+
+def test_each_vendors_billing_row_an_older_ap_coder_kept_goes_at_the_next_start(tmp_path):
+    """D-194: the vendors' rows of billing lines D-177 kept among the shared answers (``billing/<key>``: the biggest
+    7 MB at 300,000 invoices), read by no one since, go at the next start; the other answers stay."""
+    store = Store(tmp_path / "ap.db")
+    for name in ("billing/acme supply", "billing/zeta parts", "received_parts", "billing", "billings"):
+        assert store.keep_answer(name, "", "billing-1", [1], [[1, "2026-10-03", []]])
+    Store(store.path)
+    with sqlite3.connect(store.path) as conn:
+        assert [r[0] for r in conn.execute("SELECT name FROM report_answers ORDER BY name")] == [
+            "billing", "billings", "received_parts"]  # fmt: skip
 
 
 def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_po_or_the_setup_does(

@@ -151,14 +151,20 @@ def parts(query: str) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(words)), list(dict.fromkeys(numbers))
 
 
-def _contains(column: str, text: str, fts: bool) -> tuple[str, list[Any]]:
+_SUMMARY_INDEX = ("id", "invoice_search")  # (the rows' key, their FTS5 index): the invoices' summary's (D-110)
+_REGISTER_INDEX = ("rowid", "register_search")  # the ERP register's (D-194)
+
+
+def _contains(column: str, text: str, fts: bool, index: tuple[str, str] = _SUMMARY_INDEX) -> tuple[str, list[Any]]:
     """The summary's ``column`` (``plain_name`` or ``raw_number``) contains ``text``, as Python's ``in`` says it:
-    narrowed first by the FTS5 trigram index when there is one and ``text`` is three characters or more (D-110)."""
+    narrowed first by the FTS5 trigram index when there is one and ``text`` is three characters or more (D-110).
+    ``index``: another table's rows and index (the ERP register's, D-194)."""
     exact = f"instr({column}, ?) > 0"
     if not fts or len(text) < 3:
         return exact, [text]
+    key, table = index
     phrase = '"' + text.replace('"', '""') + '"'
-    return f"id IN (SELECT rowid FROM invoice_search WHERE invoice_search MATCH ?) AND {exact}", [
+    return f"{key} IN (SELECT rowid FROM {table} WHERE {table} MATCH ?) AND {exact}", [
         f"{column} : {phrase}", text]  # fmt: skip
 
 
@@ -210,24 +216,30 @@ def condition(words: list[str], numbers: list[str], fts: bool) -> tuple[str, lis
     return " AND ".join(where), params
 
 
-def _in_register(words: list[str], numbers: list[str]) -> tuple[str, list[Any]]:
+def _in_register(words: list[str], numbers: list[str], fts: bool = False) -> tuple[str, list[Any]]:
     """The ERP register's rows ``_score`` may match (every one it matches among them), as a SQL condition over its
     vendor name and invoice number as the quick search compares them (``plain_name``, ``raw_number``): a number
-    normalised is always a part of its letters and digits ("INV-0042": "42" in "inv0042")."""
+    normalised is always a part of its letters and digits ("INV-0042": "42" in "inv0042"). ``fts``: each word, and
+    each number whose every way to match is a text of three characters or more (not an amount), narrowed first by
+    the register's FTS5 index (``register_search``, D-194); the others as they are."""
     if not words and not numbers:
         return "0", []
     where, params = [], []
     for w in words:
-        where.append("instr(plain_name, ?) > 0")
-        params.append(w)
+        sql, values = _contains("plain_name", w, fts, _REGISTER_INDEX)
+        where.append(sql)
+        params += values
     for token in numbers:
         number, amount, raw, plain = norm_invoice_number(token), parse_amount(token), _raw(token), _plain(token)
-        either = [("instr(raw_number, ?) > 0", [text]) for text in dict.fromkeys(
-            t for t in (number, raw if len(raw) >= 3 else "") if t)]  # fmt: skip
+        texts = list(dict.fromkeys(t for t in (number, raw if len(raw) >= 3 else "") if t))
+        named = bool(plain) and " " not in plain  # (one of the name's words: a vendor name with a digit in it)
+        narrowed = fts and amount is None and all(len(t) >= 3 for t in [*texts, *([plain] if named else [])])
+        either = [_contains("raw_number", text, narrowed, _REGISTER_INDEX) for text in texts]
         if amount is not None:
             either.append(_amount("total", amount))
-        if plain and " " not in plain:
-            either.append(("instr(' ' || plain_name || ' ', ?) > 0", [f" {plain} "]))
+        if named:
+            sql, values = _contains("plain_name", plain, narrowed, _REGISTER_INDEX)
+            either.append((f"{sql} AND instr(' ' || plain_name || ' ', ?) > 0", [*values, f" {plain} "]))
         if not either:
             return "0", []
         where.append("(" + " OR ".join(f"({sql})" for sql, _ in either) + ")")
@@ -250,9 +262,10 @@ def erp_hits(store: Store, words: list[str], numbers: list[str]) -> list[Hit]:
     invoice's own row there is the same bill: shown once, as the AP Coder invoice. Its own row: the same number and
     amount (with its sign: a credit is another document), and the same vendor."""
     where, params = _in_register(words, numbers)
+    indexed = _in_register(words, numbers, fts=True)  # (read instead while the register's index is in step, D-194)
     scored = []
     names: dict[str, str] = {}  # each vendor's name as ``_score`` compares it, worked out once (B-1801)
-    for r in store.erp_register_rows(where, params):
+    for r in store.erp_register_rows(where, params, indexed if indexed != (where, params) else None):
         row = {"vendor_name": r["vendor_name"], "invoice_number": r["invoice_number"], "grand_total": r["total"],
                "invoice_date": r["invoice_date"], "po_key": ""}  # fmt: skip
         vendor = r["vendor_name"] or ""

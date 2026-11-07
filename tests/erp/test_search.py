@@ -120,6 +120,47 @@ def test_the_quick_searchs_erp_hits_read_each_vendor_name_once_not_each_register
         assert hits and [h.score for h in hits] == [search._score(h.row, words, numbers) for h in hits]
 
 
+def test_the_quick_search_reads_the_register_rows_holding_its_words_through_the_registers_index(tmp_path, monkeypatch):
+    """D-194: the quick search read every row of the ERP register for a word (600,000 at 300,000 invoices: 5% of the
+    web workers' CPU). It reads only those its words are in, through the register's FTS5 index kept by the register's
+    writes, when every part of the search can be looked up there (a word or number of three characters or more, not
+    an amount); otherwise, or once a write left the index behind, it reads the register as before."""
+    import sqlite3
+
+    from ap_coder.core.store import register, summary
+
+    if not summary.fts_available():
+        return
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics" if n % 3 else "LP Fuels",
+                                "invoice_number": f"H00{n:04d}", "invoice_date": "2026-09-01", "total": 100.0 + n}
+                               for n in range(30)])  # fmt: skip
+    plans: list[str] = []
+    real = register.fetch_rows
+
+    def read(conn, sql, params):
+        plans.append(" ".join(r[3] for r in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params)))
+        return real(conn, sql, params)
+
+    monkeypatch.setattr(register, "fetch_rows", read)
+    looked_up = "SEARCH erp_invoices USING INTEGER PRIMARY KEY"
+    for query, through in (("granite", True), ("granite h000013", True), ("h000012", True), ("fuels lp", True),
+                           ("lp", False), ("0012", False), ("granite 113", True), ("112", False)):  # fmt: skip
+        plans.clear()
+        hits = search.erp_hits(store, *search.parts(query))
+        assert hits and len(plans) == 1 and (looked_up in plans[0]) == through, query
+        assert ("SCAN erp_invoices" in plans[0]) != through, query
+    with sqlite3.connect(store.path) as conn:  # (an older AP Coder's row: the index left behind)
+        conn.execute("INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, "
+                     "imported_at, plain_name, raw_number) VALUES ('granite x', '9', 1, 'Granite X', '9', '2026', "
+                     "'granite x', '9')")  # fmt: skip
+    plans.clear()
+    assert len(search.erp_hits(store, ["granite"], [])) == 21 and "SCAN erp_invoices" in plans[0]
+    Store(store.path)  # (a start: built again)
+    plans.clear()
+    assert len(search.erp_hits(store, ["granite"], [])) == 21 and looked_up in plans[0]
+
+
 def test_who_acts_next_on_an_invoice_in_each_state():
     """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
     from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW

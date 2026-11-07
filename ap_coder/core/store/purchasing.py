@@ -13,6 +13,7 @@ from ...coding.po import CLOSED, OPEN, positive_lines
 from ...coding.rules import Rule
 from ..keys import po_key
 from ..memory import vendor_key
+from . import dialect
 from ._base import (
     _ACTIVE_IN,
     ACTIVE_STATUSES,
@@ -22,7 +23,6 @@ from ._base import (
     _in_list,
     _now,
 )
-from . import dialect
 from .dialect import begin_write
 from .learning import one_snapshot
 from .reports import _version
@@ -334,7 +334,8 @@ class PurchasingMixin:
         wanted = {n: v for v in holding for n in by_vendor[v]}  # (a row of an invoice under another vendor since: not)
         found = conn.execute(_KEPT_FACTS, (json.dumps(holding),)).fetchall() if holding else []
         found = [r for r in found if wanted.get(r[1]) == r[0] and r[1] not in held[r[0]][1]]
-        read.update(zip([r[1] for r in found], map(tuple, json.loads(f"[{','.join(r[2] for r in found)}]"))))
+        read.update(zip([r[1] for r in found], map(tuple, json.loads(f"[{','.join(r[2] for r in found)}]")),
+                        strict=True))  # fmt: skip
         return held
 
     def billing_codings(self, ids: list[int]) -> Iterator[tuple[int, dict[str, Any]]]:

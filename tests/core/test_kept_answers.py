@@ -1743,6 +1743,43 @@ def test_insights_figures_are_worked_out_once_for_every_process_and_follow_anoth
     assert shown("worker 1") == after == afresh() and worked == {"compute": 4, "operations": 4}  # (worker 2's)
 
 
+def test_the_vendors_workload_is_worked_out_once_for_every_process_and_follows_another_ones_change(
+    tmp_path, monkeypatch
+):
+    """D-194: the Vendors page's workload (``insights.vendor_workload``, worked out again after each change: 4% of the
+    web workers' CPU at 300,000 invoices) was kept by each web worker for itself. It is worked out once for every
+    process, what working it out afresh gives (its codes a list each), and again after any change to an invoice,
+    whoever made it; each caller gets its own copy to change."""
+    from ap_coder.erp import insights
+
+    worked: list[int] = []
+    real = insights._vendor_workload
+    monkeypatch.setattr(insights, "_vendor_workload", lambda *a: worked.append(1) or real(*a))
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+
+    def bill(name: str, vendor: str = "Acme Supply") -> None:
+        other.add_invoice(tmp_path / f"{name}.pdf", {"vendor_name": vendor, "invoice_number": name, "grand_total": 10.0,
+                                                     "currency": "CAD"},
+                          {"issues": [{"code": "TOTAL_MISMATCH", "severity": "error"}]})  # fmt: skip
+
+    def shown(name: str) -> list:
+        process(name)
+        return insights.vendor_workload(store)
+
+    bill("A-1"), bill("A-2")
+    before = shown("worker 1")
+    assert [(v["vendor_name"], v["with_problems"], v["top_codes"]) for v in before] == [
+        ("Acme Supply", 2, ["TOTAL_MISMATCH"])] and len(worked) == 1  # fmt: skip
+    assert shown("worker 2") == before == real(store, 2) and len(worked) == 1  # (worker 1's)
+    bill("Z-1", "Zeta Parts"), bill("Z-2", "Zeta Parts"), bill("Z-3", "Zeta Parts")
+    after = shown("worker 2")
+    assert [v["vendor_name"] for v in after] == ["Zeta Parts", "Acme Supply"] and len(worked) == 2
+    after[0]["top_codes"].append("changed by its caller")
+    after[1]["invoices"] = 0
+    assert shown("worker 1") == shown("worker 2") == real(store, 2) != after and len(worked) == 2  # (worker 2's)
+
+
 def test_the_recurring_vendors_work_keeps_no_copy_of_every_invoice_in_the_worker(tmp_path, ground_truth):
     """B-1803: the recurring vendors are one answer for every process (D-175), so the rows they are worked out from
     (vendor, date and total of every invoice in review or approved: about 140 MB at 300,000) are read for the work
