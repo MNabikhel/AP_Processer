@@ -2531,6 +2531,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     in `date_format`; undated vouchers swept by the whole read; a read's first day left alone; a PO's lines its open
     ones; a read complete only on an empty or shorter page; the lease checked each page, `MAX(seen)`; a bill's
     copies its vouchers; a connection unused 30 seconds not used again; `PageRepeated` for the live check.
+  - **Amended** (7 Nov 2026, phase 8 part 2): another writer beside the sync (an approval during the nightly read)
+    waits as long as the sync's write under way, and longer when SQLite's busy timeout, retrying after 1, 2, 5, 10
+    ms... then every 100 ms, misses the moments between its short writes (each 7-40 ms here): its single longest
+    wait swings run to run (0.1-1.4 s here and on CI) while its p99 stays 0.02-0.08 s. The volume test asserts the
+    p99 under 0.5 s and the longest under 3 s in each of the four syncs (it asserted the longest under 0.5 s, which
+    held by chance). Leaving the lock free between the writes (pausing as long as each held it) was tried: 0.034 s
+    at most on Linux, but on Windows, where each write holds longer, the volume run took 1,957 s for 785 s and still
+    waited 1.4 s, so it was taken out. Left: an approval during the nightly sync can wait about a second, rarely.
   - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
     purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
     `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,
