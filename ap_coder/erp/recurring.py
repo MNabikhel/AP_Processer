@@ -106,11 +106,12 @@ def detected(store: Any, today: dt.date | None = None, settle: float = SETTLE_SE
     """``detect`` of the store's invoices (``vendor_invoice_dates``), worked out again only once an invoice's vendor,
     date or total changed (the summary's "dates", D-110), and under a stream of changes at most every ``settle``
     seconds (D-166), once for every process (``Store.shared_answer``, B-1798): the queue, Vendors and the Month-end
-    page show it on every visit, nothing decides with it (Month-end's CSV asks it with none). Shared: don't change
-    it."""
+    page show it on every visit, nothing decides with it (Month-end's CSV asks it with none); on the company server
+    worked out again by its background process (D-198). Shared: don't change it."""
     today = today or dt.date.today()
     return store.shared_answer("recurring", lambda: detect(store.vendor_invoice_dates(), today), version=FORMAT,
-                               encode=_data, decode=_of, topic="dates", asked=today, settle=settle)  # fmt: skip
+                               encode=_data, decode=_of, topic="dates", asked=today, settle=settle,
+                               again=[today.isoformat(), settle])  # fmt: skip
 
 
 # The recurring vendors as they are kept for every process: each its fields in ``Recurring``'s order, the dates as

@@ -354,9 +354,10 @@ Every number here was measured, with the machine, the command and the date. Esti
       that work in the same worker make the slowest 1%. The way out is to have the background process work those
       answers out (a function for each by name, from what was asked), the page always taking the last one, and once
       at a start: about a day of work with its review and re-measure, left for after this goal (the goal's "don't
-      stall" rule: target 1 had five rounds since phase 3).
+      stall" rule: target 1 had five rounds since phase 3). Since done as D-198 (its hour at 300,000 to be run).
     - **The first minutes after a first start on a big database** (and after an update that changes what the reports
       keep) work every report out once: on 100,000 invoices six requests took over 30 s in the first 90 s. The same
-      background work, at a start, answers it.
+      background work, at a start, answers it (D-198: those asked in the last day; a database never served still
+      works each out once, at its first ask).
     - **200 people (the stretch):** not run; the real server's figures (32 vCPUs) are estimates until stage 2.
   - **Merged:** PR #103 (32 of 32 CI jobs green on the first run; the Windows update's downtime 16.0 s, was 38.8 s).

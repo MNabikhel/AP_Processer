@@ -234,11 +234,29 @@ def _settled(store: Store, name: str, compute: Callable[[], Any], decode: Callab
     """``compute()`` as the Coding accuracy tab shows it: worked out once for every process (D-169) on any change of
     the invoices or the lessons, and under a stream of approvals at most every ``SETTLE_SECONDS`` (D-164); a lesson
     forgotten or taught here (``SETTLES_AFTER``) is another question, worked out at once, as is one of ``also`` (what
-    else it is worked out from that no count of changes follows). Shared: read it, don't change it."""
+    else it is worked out from that no count of changes follows); on the company server by its background process
+    (``SETTLED``, D-198). Shared: read it, don't change it."""
     asked = (store.count_events(actions=SETTLES_AFTER), also) if also is not None else store.count_events(
         actions=SETTLES_AFTER)  # fmt: skip
     return store.shared_answer(name, compute, version=SETTLED_FORMAT, decode=decode, changes=("lessons", "situations"),
-                               asked=asked, settle=SETTLE_SECONDS)  # fmt: skip
+                               asked=asked, settle=SETTLE_SECONDS, again=[])  # fmt: skip
+
+
+def _corrections(store: Store) -> list[dict[str, Any]]:
+    corrected = store.line_texts_stamp()  # (the line descriptions corrected: no count follows them, B-1839)
+    return _settled(store, "learning_corrections", lambda: store.corrections(limit=CORRECTIONS_SHOWN), also=corrected)
+
+
+def _metrics(store: Store) -> dict[str, Any]:
+    return _settled(store, "learning_metrics", store.metrics)
+
+
+def _approvals(store: Store) -> tuple[int, int, int]:
+    return _settled(store, "learning_approvals", lambda: insights.approval_counts(store), tuple)
+
+
+# The tab's settled answers by name, as the background process works them out again (web/refresh.py, D-198).
+SETTLED = {"learning_corrections": _corrections, "learning_metrics": _metrics, "learning_approvals": _approvals}
 
 
 def corrections_context(store: Store) -> dict[str, Any]:
@@ -249,9 +267,7 @@ def corrections_context(store: Store) -> dict[str, Any]:
 
     reference = reference_or_none(store)
     rows = []
-    corrected = store.line_texts_stamp()  # (the line descriptions corrected: no count follows them, B-1839)
-    for c in _settled(store, "learning_corrections", lambda: store.corrections(limit=CORRECTIONS_SHOWN),
-                      also=corrected):  # fmt: skip
+    for c in _corrections(store):
         field, pattern = c["field"], c["pattern"]
         if field == lessons.LINE_GL:
             what = f"GL account of lines like “{pattern}”"
@@ -285,13 +301,12 @@ def corrections_context(store: Store) -> dict[str, Any]:
 def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, Any]:
     """The Coding accuracy tab but its corrections: the tiles, the chart by week, the recent lessons, the vendors, the
     most common corrections and the memory list (``mem_q``: its search). Its figures settle (``_settled``)."""
-    m = _settled(store, "learning_metrics", store.metrics)
+    m = _metrics(store)
     if not m["lines_reviewed"]:
         return {"metrics": None}
     measured = m["line_accuracy"] is not None  # none: AP coded every line, the AI proposed none (no model, B-1298)
     accuracy = m["line_accuracy"] or 0.0
-    # as Insights counts them (D-39), by SQLite (D-156)
-    clean, total, filled = _settled(store, "learning_approvals", lambda: insights.approval_counts(store), tuple)
+    clean, total, filled = _approvals(store)  # as Insights counts them (D-39), by SQLite (D-156)
     weekly = []
     for w in m["weekly"]:
         lines = w["accepted"] + w["corrected"]

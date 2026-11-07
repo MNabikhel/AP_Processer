@@ -405,33 +405,43 @@ def build(store: Store, period_end: dt.date, undated: list[Accrual] | None = Non
     out again at most every that many seconds (``SETTLE_SECONDS``, D-166); a change of the POs, the tax setup, JD
     Edwards' G/L date or the batches made after the period end is another question, worked out at once. The CSV, which
     is booked from, is never settled. Shared: read them, don't change them."""
-    # Each PO's lines worked out again only once its billing changed (``_received_not_invoiced``). Both answers are
-    # worked out once for every process of the company server (D-169).
-    pos = store.get_setting("changes/purchase_orders")
-    received = store.shared_answer("received_not_invoiced", lambda: _received_not_invoiced(store, period_end),
-                                   version=ACCRUALS_FORMAT, encode=_data, decode=_of, asked=(period_end, pos),
-                                   settle=settle)  # fmt: skip
+    received = received_not_invoiced(store, period_end, settle)
+    found, no_date = not_in_erp(store, period_end, settle)
+    if undated is not None:
+        undated.extend(no_date)
+    expected = _expected_recurring(store, period_end, received, left_out, settle)
+    return received + found + expected
 
-    def not_in_erp() -> tuple[list[Accrual], list[Accrual]]:
+
+def received_not_invoiced(store: Store, period_end: dt.date, settle: float = 0.0) -> list[Accrual]:
+    """``build``'s received, not invoiced PO lines at ``period_end``: each PO's worked out again only once its billing
+    changed (``_received_not_invoiced``), the answer once for every process of the company server (D-169), and when
+    settled worked out again there by its background process (D-198)."""
+    pos = store.get_setting("changes/purchase_orders")
+    return store.shared_answer("received_not_invoiced", lambda: _received_not_invoiced(store, period_end),
+                               version=ACCRUALS_FORMAT, encode=_data, decode=_of, asked=(period_end, pos),
+                               settle=settle, again=[period_end.isoformat(), settle])  # fmt: skip
+
+
+def not_in_erp(store: Store, period_end: dt.date, settle: float = 0.0) -> tuple[list[Accrual], list[Accrual]]:
+    """``build``'s invoices not in the ERP yet at ``period_end``, and those of them with no invoice date (0.9 s at
+    100,000 invoices, at every visit before): once for every process (D-169), and when settled worked out again on the
+    company server by its background process (D-198)."""
+
+    def work() -> tuple[list[Accrual], list[Accrual]]:
         no_date: list[Accrual] = []
         return _not_in_erp(store, period_end, no_date), no_date
 
-    # The invoices not in the ERP yet: 0.9 s at 100,000 invoices, at every visit before.
     cutoff = late_after(store, period_end.isoformat())
     late = [r["id"] for r in store.summary_fetch(_LATE_BATCHES, (cutoff,))]
     from . import jde_post
 
     # (and the exported invoices whose JD Edwards voucher is not posted yet: their postings change no invoice, B-1862)
     unposted = sorted(jde_post.not_posted(store).items())
-    found, no_date = store.shared_answer("not_in_erp", not_in_erp, version=ACCRUALS_FORMAT,
-                                         encode=lambda v: [_data(v[0]), _data(v[1])],
-                                         decode=lambda v: (_of(v[0]), _of(v[1])),
-                                         asked=(period_end, cutoff, late, store.tax_treatments(), unposted),
-                                         settle=settle)  # fmt: skip
-    if undated is not None:
-        undated.extend(no_date)
-    expected = _expected_recurring(store, period_end, received, left_out, settle)
-    return received + found + expected
+    return store.shared_answer("not_in_erp", work, version=ACCRUALS_FORMAT,
+                               encode=lambda v: [_data(v[0]), _data(v[1])], decode=lambda v: (_of(v[0]), _of(v[1])),
+                               asked=(period_end, cutoff, late, store.tax_treatments(), unposted), settle=settle,
+                               again=[period_end.isoformat(), settle])  # fmt: skip
 
 
 def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, dict[str, float]]]]:

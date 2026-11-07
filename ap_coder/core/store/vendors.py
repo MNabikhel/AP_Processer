@@ -46,6 +46,7 @@ _VENDOR_ROWS = Bounded("vendors' invoices", VENDOR_ROWS_MOST, size=lambda kept: 
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
 VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a change by ten times their work (B-2044)
+TOTALS_FORMAT = "vendor-totals-1"  # their format as kept for every process (``shared_answer``, D-198)
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -741,10 +742,14 @@ class VendorsMixin:
     def vendor_summaries(self, settled: bool = False) -> list[dict[str, Any]]:
         """One row per vendor seen on an invoice: counts, spend and dates (read again once an invoice changed), AI
         accuracy and AP's settings. ``settled``: for the Vendors page, which only shows them, the counts, spend and
-        dates up to ``VENDORS_SETTLE`` seconds (or ten times their work) behind a change (D-197); the vendor list's
-        own fields are read afresh either way."""
-        settle = VENDORS_SETTLE if settled else 0.0
-        totals, spend = self.summary_memo("vendor_totals", self._vendor_totals, settle=settle)
+        dates up to ``VENDORS_SETTLE`` seconds (or ten times their work) behind a change (D-197), one answer for every
+        process, on the company server worked out again by its background process (D-198); the vendor list's own
+        fields are read afresh either way."""
+        if settled:
+            totals, spend = self.shared_answer("vendor_totals", self._vendor_totals, version=TOTALS_FORMAT,
+                                               decode=tuple, settle=VENDORS_SETTLE, again=[])  # fmt: skip
+        else:
+            totals, spend = self.summary_memo("vendor_totals", self._vendor_totals)
         rows = [dict(r) for r in totals]
         lessons = self.summary_memo("vendor_lessons", self._vendor_lessons, topic="", changes="lessons")  # (D-162)
         with self._conn() as conn:  # of the vendor list, only these vendors' rows (not all the vendor master's)
