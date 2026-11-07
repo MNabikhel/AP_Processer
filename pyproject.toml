@@ -60,7 +60,7 @@ tmp_path_retention_policy = "failed"
 # A test stuck for 5 minutes prints every thread's stack, so a hang names itself in the CI log.
 faulthandler_timeout = 300
 markers = [
-    "slow: a browser, or over half a second (tests/conftest.py, tests/slow_tests.txt); run with -m \"\"",
+    "slow: a browser, or measured slow (tests/conftest.py, tests/slow_tests.txt); run with -m \"\"",
     "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/launcher/test_update_from_old_versions.py)",
 ]
 
