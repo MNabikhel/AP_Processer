@@ -435,12 +435,13 @@ the launcher.
   * the vendor master's ERP IDs and its GST/HST numbers (`vendor_ids`, `master_by_tax_number`; `changes/vendors`,
     about 7 MB each), the vendors on hold (`held_vendors`; `changes/vendors`) and their approved numbers
     (`approved_numbers`; each one's own `changes/vendor/<key>`, D-174);
-  * the review queue's checks (`bulk.queue_checks`, from 50 invoices; the summary's `queue` topic, the checks stamp,
-    laptop or server, the invoices asked in any order; 6.8 MB, the findings in them decoded once for every invoice
-    with the same, `bulk._FOUND`, D-165) and its lists (`list_invoices` of review, parked, pending, which the
-    invoice page's Previous and Next read in a view of the queue's own; the `listed` topic, which a check's
-    confidence doesn't move: the confidences are read with the queue's order at each ask, off an index, D-167; about
-    3 MB each). In the queue's own order Previous and Next read its ids alone, off that index (D-179);
+  * the review queue's facts (`Store.queue_facts`, what `bulk.queue_checks` reads of each invoice in review, from 50
+    invoices asked; the findings in them decoded once for every invoice with the same, `bulk._FOUND`, D-165) and its
+    lists' rows (`list_invoices` of review, parked, pending, which the invoice page's Previous and Next read in a
+    view of the queue's own), kept by invoice and brought up to date from the summary's log of the queue's changes
+    (`queue_changes`, `core/store/review_queue.py`, D-193): after a check, an approval or a park only the invoices
+    changed are read again, and the lists' order (their ids alone) off an index in the same moment. In the queue's own
+    order Previous and Next read its ids alone, off that index (D-179);
   * the vendors' payment terms the queue's rows are due by (`changes/vendors`, 2.7 MB), and the vendors whose
     regular invoice is late (the summary's `dates`, settled for 60 s after a change: the queue only shows them,
     D-164, D-165);

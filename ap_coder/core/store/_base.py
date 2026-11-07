@@ -125,6 +125,12 @@ VENDOR_CHANGES = ("CREATE TABLE IF NOT EXISTS vendor_changes (seq INTEGER PRIMAR
 VENDOR_LOGGED = ("INSERT INTO vendor_changes (vendor_key, invoice_id) SELECT {0}.vendor_key, {0}.id WHERE "
                  "{0}.vendor_key IS NOT NULL{1}; DELETE FROM vendor_changes WHERE seq <= (SELECT MAX(seq) FROM "
                  f"vendor_changes) - {VENDOR_CHANGES_KEPT}")  # fmt: skip
+# The review queue's invoices changed, in the order they were (D-193): each one whose row in the queue's lists or whose
+# facts in review changed, logged by the summary as it works it out (``summary._summarize``, in the same transaction):
+# a process keeping the queue's lists and facts (``review_queue.py``) reads again only those. The latest
+# QUEUE_CHANGES_KEPT are kept. Made with the vendors' log (``summary.make_triggers``).
+QUEUE_CHANGES_KEPT = 20_000
+QUEUE_CHANGES = "CREATE TABLE IF NOT EXISTS queue_changes (seq INTEGER PRIMARY KEY, id INTEGER NOT NULL)"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
