@@ -51,8 +51,8 @@ ap_coder = ["BUILD", "assets/*", "static/*", "capture/calibration.json", "web/te
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The default run leaves out the slow tests (tests/slow_tests.txt, and every browser test) to stay at a few minutes;
-# `python -m pytest -m ""` runs everything, as CI does.
+# The default run leaves out the slow tests (tests/slow_tests.txt, and every browser test): about 7 minutes;
+# `python -m pytest -m ""` runs everything, as CI does: about 28 minutes (docs/REFERENCE.md).
 addopts = ["-m", "not slow"]
 # Keep only a failed test's temporary folder, of the last run alone: a default run otherwise leaves hundreds of MB.
 tmp_path_retention_count = 1

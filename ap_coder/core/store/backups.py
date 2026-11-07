@@ -264,7 +264,7 @@ class CopyAhead:
             if self.held is None:
                 self.close()
                 return why
-            page = int(self.held.execute("PRAGMA page_size").fetchone()[0])
+            page = dialect.page_size(self.held)
             found = self.db.stat()
             self.seen = (found.st_size, found.st_mtime_ns)
             self._remove_part()
@@ -291,8 +291,8 @@ class CopyAhead:
         self._let_go()
         conn = sqlite3.connect(self.part)
         try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # (SQLite's recovery reads the log as it opens)
-            conn.execute("PRAGMA journal_mode=DELETE")
+            dialect.checkpoint(conn, "TRUNCATE")  # (SQLite's recovery reads the log as it opens)
+            dialect.journal_mode(conn, "delete")
         finally:
             conn.close()
         self.caught_up = True
@@ -325,7 +325,7 @@ def _hold_still(db: Path, wait: float) -> tuple[sqlite3.Connection | None, str]:
     held = sqlite3.connect(db, timeout=30, isolation_level=None)
     writer = sqlite3.connect(db, timeout=5, isolation_level=None)
     try:
-        if str(held.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+        if dialect.journal_mode(held) != "wal":
             held.close()
             return None, "the database is not in WAL mode"
         deadline = time.monotonic() + wait
@@ -333,10 +333,10 @@ def _hold_still(db: Path, wait: float) -> tuple[sqlite3.Connection | None, str]:
             with contextlib.suppress(sqlite3.OperationalError):  # (a write under way for 5 s: tried again)
                 dialect.begin_write(writer)  # nothing is added to the log meanwhile
                 try:
-                    busy, logged, written = held.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+                    busy, logged, written = dialect.checkpoint(held)
                     if busy == 0 and logged == written >= 0:  # the whole log is in the file
                         held.execute("BEGIN")
-                        held.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()  # its snapshot: the file
+                        dialect.table_names(held)  # (a read: its snapshot, the file as it is now)
                         return held, ""
                 finally:
                     writer.execute("ROLLBACK")

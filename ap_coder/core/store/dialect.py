@@ -144,6 +144,29 @@ def data_version(conn: Any) -> int:
     return int(conn.execute("PRAGMA data_version").fetchone()[0])
 
 
+def page_size(conn: Any) -> int:
+    """The database file's page size in bytes (``PRAGMA page_size``): server-update's copy of the file made ahead
+    (D-196). PostgreSQL: none (a copy of the server's files is ``pg_basebackup``'s)."""
+    return int(conn.execute("PRAGMA page_size").fetchone()[0])
+
+
+def journal_mode(conn: Any, mode: str = "") -> str:
+    """The database's journal (``PRAGMA journal_mode``: ``wal``, ``delete``...), set to ``mode`` first when given (a
+    copy made one file again: ``delete``). PostgreSQL: none (its write-ahead log is the server's)."""
+    if mode and mode.lower() not in {"wal", "delete", "truncate", "persist", "memory", "off"}:
+        raise ValueError(f"no such journal mode: {mode}")
+    return str(conn.execute(f"PRAGMA journal_mode={mode}" if mode else "PRAGMA journal_mode").fetchone()[0]).lower()
+
+
+def checkpoint(conn: Any, mode: str = "PASSIVE") -> tuple[int, int, int]:
+    """The write-ahead log written into the database file as far as readers allow (``PRAGMA wal_checkpoint``): (1 when
+    a reader or writer stopped it short, the log's pages, those written). PostgreSQL: ``CHECKPOINT`` (the server's)."""
+    if mode.upper() not in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}:
+        raise ValueError(f"no such checkpoint: {mode}")
+    busy, logged, written = conn.execute(f"PRAGMA wal_checkpoint({mode.upper()})").fetchone()
+    return int(busy), int(logged), int(written)
+
+
 def table_names(conn: Any) -> set[str]:
     """The database's tables (``sqlite_master``). PostgreSQL: ``SELECT table_name FROM information_schema.tables
     WHERE table_schema = current_schema()``."""

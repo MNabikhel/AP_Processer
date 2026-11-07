@@ -511,8 +511,11 @@ private/             git-ignored: default data folder when the installer is not 
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
-Check a change with `python scripts/check.py`. `pytest` runs all but the slow tests, `pytest -m ""` runs everything
-(as CI does); lint with `ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts`.
+Check a change with `python scripts/check.py` (ruff on the changed files, then their tests: a minute or two).
+`pytest` runs all but the slow tests: about 5,200 tests in about 7 minutes. `pytest -m ""` runs everything, the
+browser tests included, as CI does: about 6,000 tests in about 28 minutes. Both serially, on a 4-core machine
+(November 2026); CI splits the whole suite across its machines. Lint with `ruff check ap_coder tests scripts && ruff
+format --check ap_coder tests scripts`.
 
 ## Phase 2 hooks (beyond the pilot)
 
