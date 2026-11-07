@@ -169,6 +169,7 @@ class EphemeralMixin:
         for r in rows:
             found.setdefault(int(r["kind"][5:]), {})[r["token"]] = bytes(r["value"]).decode("utf-8", "replace")
         return found
+
     # --- A heartbeat: a process says it is alive, the others read how long ago (D-187) ------------------------------
     # One row "heartbeat" under the process's name (the server's background process: ``ops/health.py``), its time the
     # last beat; kept a day (older, it is as good as none).
