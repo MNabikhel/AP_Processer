@@ -61,13 +61,20 @@ def tile_text(n: int, by_currency: dict[str, float], rates: dict[str, float]) ->
     return f"{money(by_currency.get(main, 0))} {main}", ui.plural(n, "line") + (f" · plus {others}" if others else "")
 
 
+def asked(end: str = "") -> tuple[dt.date, float]:
+    """What the page asks ``accruals.build`` for from its address: the period end (without one,
+    ``accruals.default_period_end``) and the settle of what it only shows (D-166). Its default view, worked out at
+    the company server's first start, is asked with this too (``web/refresh.py`` ``DEFAULTS``, D-200)."""
+    return address_day(end, accruals.default_period_end()), accruals.SETTLE_SECONDS
+
+
 @router.get("/month-end", response_class=HTMLResponse)
 def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     store = get_store(request)
-    period_end = address_day(end, accruals.default_period_end())
+    period_end, settle = asked(end)
     no_date: list[accruals.Accrual] = []  # the invoices with no date: read with the accruals, not again
     left_out: list[accruals.Accrual] = []  # expected recurring invoices whose received PO lines are accrued instead
-    items = accruals.build(store, period_end, no_date, left_out, settle=accruals.SETTLE_SECONDS)  # (D-166)
+    items = accruals.build(store, period_end, no_date, left_out, settle=settle)  # (D-166)
     rates = store.fx_rates()
     tiles = []
     for source, (n, by_currency) in accruals.summary(items).items():

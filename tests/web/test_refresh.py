@@ -616,3 +616,176 @@ def test_the_background_process_keeps_the_vendors_totals_it_works_out_again_for_
         assert [v["invoices"] for v in worker.vendor_summaries(settled=True)] == [2] and worked == []
     finally:
         _stopped(workers)
+
+
+def _first_start(store: Store, caplog, ends: float = 30) -> refresh.Refresher:
+    """The refresher started on ``store`` (the background process's), once it said its first start's default views
+    worked out (D-200)."""
+    refresher = refresh.Refresher(lambda: store).start()
+    ends = time.monotonic() + ends
+    while "default views worked out at a first start" not in caplog.text and time.monotonic() < ends:
+        time.sleep(0.05)
+    return refresher
+
+
+def _halted(refresher: refresh.Refresher) -> None:
+    refresher.stop()
+    refresher.thread.join(30)
+    assert not refresher.thread.is_alive()
+
+
+def test_every_answer_the_refresher_works_out_has_a_default_view_or_says_why_not():
+    """D-200: each settled answer (``refresh.ANSWERS``) is worked out at a first start as its page asks it opened with
+    nothing in its address (``DEFAULTS``), or is listed in ``NO_DEFAULT`` with why not (one only a person's question
+    asks): a new answer can't be left out unseen. Month-end's come first: the biggest."""
+    named, without = [name for name, _ in refresh.DEFAULTS], dict(refresh.NO_DEFAULT)
+    assert set(named) | set(without) == set(refresh.ANSWERS) and len(without) == len(refresh.NO_DEFAULT)
+    assert not set(named) & set(without) and all(why.strip() for why in without.values())
+    assert named[:3] == ["received_not_invoiced", "not_in_erp", "recurring"]
+
+
+def test_at_a_first_start_each_pages_default_view_is_worked_out_before_anyone_asks_it(
+    tmp_path, ground_truth, clock, monkeypatch, caplog
+):
+    """D-200: on a database never served (nothing asked in the last day), the refresher's start works out each page's
+    default view (``DEFAULTS``), month-end's first, kept for every process; then each page opened with nothing in its
+    address (the queue, Month-end, Spend, Sales tax, Insights, Vendors, Learning), by a web worker with nothing in its
+    memory, takes the kept answers and works none out. What the pages ask (noted for the refresher's next start) is
+    what was worked out: the same answers, questions and arguments."""
+    from ap_coder.web.pages import insights as insights_page
+    from tests.webclient import client_for
+
+    monkeypatch.setattr(insights_page, "MIN_APPROVALS", 1)  # (Insights' operations shown too)
+    store = Store(tmp_path / "ap.db")
+    for n in range(3):
+        _approved(store, tmp_path, ground_truth, f"A-{n}")
+    _invoice(store, tmp_path, ground_truth, "Q-1")
+    client = client_for(store)
+    worked, real = [], Store.shared_answer
+
+    def counted(self, name, compute, **kwargs):
+        def work():
+            worked.append(name)
+            return compute()
+
+        return real(self, name, work, **kwargs)
+
+    monkeypatch.setattr(Store, "shared_answer", counted)
+    process = _Processes(monkeypatch)
+    process("background")
+    background = _server(Store(store.path), monkeypatch)
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.refresh"):
+        refresher = _first_start(background, caplog)
+        _halted(refresher)
+    assert f"the reports' default views worked out at a first start: {len(refresh.DEFAULTS)}" in caplog.text
+    assert worked[0] == "received_not_invoiced" and set(worked) >= set(refresh.ANSWERS)
+    with sqlite3.connect(store.path) as conn:
+        kept = {(name, asked) for name, asked in conn.execute("SELECT name, asked FROM report_answers")
+                if name in refresh.ANSWERS}  # fmt: skip
+    assert _wants(store) == []  # (its own asks noted nowhere: nobody asked)
+
+    process("web worker")
+    monkeypatch.setattr(store, "background_answers", True)
+    worked.clear()
+    for page in ("/review", "/month-end", "/spend", "/sales-tax", "/insights", "/vendors", "/learning"):
+        assert client.get(page).status_code == 200, page
+    assert not set(worked) & set(refresh.ANSWERS), worked
+    noted = _wants(store)
+    assert {(w["name"], w["asked"]) for w in noted} == kept
+    with reports.refreshing():  # (its arguments as the warm-up gives them: worked out nowhere, all kept)
+        defaults = {(name, json.dumps(default(store), separators=(",", ":"))) for name, default in refresh.DEFAULTS}
+    assert {(w["name"], w["args"]) for w in noted} <= defaults
+    assert {name for name, _ in defaults} == {w["name"] for w in noted} == set(refresh.ANSWERS)
+
+
+def test_the_first_start_only_where_nothing_was_asked_lately_one_at_a_time_a_persons_want_first(
+    tmp_path, clock, monkeypatch, caplog
+):
+    """D-200: the default views are worked out only when the refresher's start finds nothing asked within
+    ``ASKED_WITHIN`` (after a restart or an update in use, what was asked is worked out again instead, D-198); one at
+    a time, in their order, a want waiting taken before the next; one whose work (or its arguments') fails is logged
+    and the others go on; the refresher stopped stops them."""
+    store = Store(tmp_path / "ap.db")
+    db, order, slow, go = _db(store), [], threading.Event(), threading.Event()
+
+    def work(name):
+        def run(store, args):
+            order.append((name, args))
+            if name == "slow":
+                slow.set()
+                assert go.wait(10)
+            if name == "fails":
+                raise ValueError("no such page")
+
+        return run
+
+    for name in ("asked", "slow", "fails", "later", "wanted"):
+        monkeypatch.setitem(refresh.ANSWERS, name, work(name))
+
+    def unreadable(store):
+        raise ValueError("no default")
+
+    monkeypatch.setattr(refresh, "DEFAULTS", (("slow", lambda store: [1]), ("fails", lambda store: [2]),
+                                              ("later", unreadable), ("later", lambda store: [dt.date(2026, 11, 7)]),
+                                              ("later", lambda store: [3])))  # fmt: skip
+    store.want_answer("asked", "k", ["lately"], db, wanted=False)
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.refresh"):
+        refresher = refresh.Refresher(lambda: store).start()
+        try:
+            ends = time.monotonic() + 10
+            while not order and time.monotonic() < ends:
+                time.sleep(0.05)
+            time.sleep(3 * refresh.POLL)
+        finally:
+            _halted(refresher)
+        assert order == [("asked", ["lately"])] and "default views" not in caplog.text  # (asked lately: not a first)
+
+        order.clear()
+        clock[0] += refresh.ASKED_WITHIN + 1  # (nothing asked in the last day: a first start)
+        refresher = refresh.Refresher(lambda: store).start()
+        try:
+            assert slow.wait(10)
+            store.want_answer("wanted", "w", ["a person's"], db)
+            go.set()
+            ends = time.monotonic() + 10
+            while "default views worked out" not in caplog.text and time.monotonic() < ends:
+                time.sleep(0.05)
+        finally:
+            _halted(refresher)
+    assert order == [("slow", [1]), ("wanted", ["a person's"]), ("fails", [2]), ("later", [3])]
+    found = [r.getMessage() for r in caplog.records if "default view" in r.getMessage()]
+    assert found == ["the fails answer's default view was not worked out at a first start",
+                     "the later answer's default view was not worked out at a first start",
+                     "the later answer's default view was not worked out at a first start",
+                     "the reports' default views worked out at a first start: 2"]  # fmt: skip
+
+    # Stopped meanwhile: the default under way finished, none after it.
+    order.clear()
+    slow.clear()
+    go.clear()
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM answer_wants")
+    refresher = refresh.Refresher(lambda: store).start()
+    try:
+        assert slow.wait(10)
+        refresher.stop()
+    finally:
+        go.set()
+        _halted(refresher)
+    assert order == [("slow", [1])]
+
+
+def test_a_laptop_works_no_default_view_out(tmp_path, ground_truth, clock, monkeypatch):
+    """D-200: a laptop has no background process, so no refresher and no first start's default views: each report is
+    worked out where it is asked, as before."""
+    store = Store(tmp_path / "ap.db")
+    _approved(store, tmp_path, ground_truth, "A-1")
+    _, workers = _background_work(store, monkeypatch, server=False)
+    try:
+        assert not any(isinstance(w, refresh.Refresher) for w in workers) and store.background_answers is False
+        time.sleep(3 * refresh.POLL)
+        assert not any(t.name == "ap-coder-answers" for t in threading.enumerate())
+        with sqlite3.connect(store.path) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM report_answers").fetchone()[0] == 0
+    finally:
+        _stopped(workers)

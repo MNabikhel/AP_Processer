@@ -356,6 +356,7 @@ SHOWN_FORMAT = "insights-1"
 # The Vendors page's workload (``vendor_workload``: 0.11 s at 30,000 invoices, in each web worker after each change
 # before) as it is kept for every process, the same way (D-194).
 WORKLOAD_FORMAT = "workload-1"
+WORKLOAD_MIN_INVOICES = 2  # the Vendors page's (and its default view's at the server's first start, D-200)
 
 
 def shown(store: Store) -> dict[str, Any]:
@@ -589,7 +590,7 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
     return "\n".join(parts)
 
 
-def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]:
+def vendor_workload(store: Store, min_invoices: int = WORKLOAD_MIN_INVOICES) -> list[dict[str, Any]]:
     """Vendors whose invoices make work: how often an invoice arrived with a problem only the vendor can fix
     (amounts that don't add up, no GST/HST number, PO issues...: the checks *Ask the vendor* covers), and how
     often AP had to correct the coding. Worst first; vendors without problems are left out. A rejected invoice is left
