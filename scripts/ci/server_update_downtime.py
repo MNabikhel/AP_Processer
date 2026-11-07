@@ -146,8 +146,9 @@ def windows(args: argparse.Namespace) -> int:
     timed("Set up as the server (its launcher, offline)", [sys.executable, "-E", "-s", folder / "scripts" / "launch.py",
           "--no-start", "--yes"], cwd=folder, env=env)  # fmt: skip
     python = folder / ".venv" / "Scripts" / "python.exe"
+    # (--replace: the launcher's first run has just made an empty database in the data folder)
     timed(f"A data folder of {args.invoices:,} invoices", [python, "-m", "ap_coder.bench", "seed", "--out", data,
-          "--invoices", args.invoices], cwd=folder, env=env)  # fmt: skip
+          "--invoices", args.invoices, "--replace"], cwd=folder, env=env)  # fmt: skip
     timed("The service installed and started", [python, "-m", "ap_coder", "service", "install", "--account", "SYSTEM",
           "--insecure-http", "--host", "127.0.0.1", "--port", PORT, "--workers", "2"], cwd=folder, env=env)  # fmt: skip
     print(f"=== It answers after {wait_until_up(PORT, 300):.1f} s", flush=True)
