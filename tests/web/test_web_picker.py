@@ -19,9 +19,9 @@ from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from tests.browser import browser_on, wait_until
-from tests.conftest import copy_database
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
 
 
@@ -29,11 +29,6 @@ LAPTOP = {"width": 1366, "height": 768}
 def demo_db(cost_centers_demo_template):
     """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
     return cost_centers_demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store):

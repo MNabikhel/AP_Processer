@@ -8,11 +8,12 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store import Store
 from ap_coder.web import files
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import learning, settings_jde
 from tests.conftest import SAMPLE_STEM, SAMPLES
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, client_for, follow, gt, post, web_settings
 
 # French-Canadian Excel saves a CSV with semicolons; a header cell may hold a comma.
@@ -20,13 +21,6 @@ SEMICOLON_HISTORY = (
     "Fournisseur;Description;Compte GL;Montant (avant taxes, $)\nAcme;Gants;6100;12,50\nBeta;Papier;6200;3,00\n"
 )
 SEMICOLON_GL_MAP = "GL code;Cost center;BU;Object;Note (internal, keep)\n6100;;100;6100;x\n6200;;200;6200;y\n"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def _colleague(app, name: str = "Ana") -> TestClient:

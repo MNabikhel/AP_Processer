@@ -13,7 +13,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.core.store.summary import summary_facts
-from tests.conftest import copy_database
+from tests.conftest import copy_database, until
 
 QUEUE = ("q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
 
@@ -182,11 +182,11 @@ def test_without_gl_accounts_the_background_writes_nothing(store, monkeypatch):
     """Nothing is checked without GL accounts (the stored checks stand): the background's look takes no lease, a write
     every few seconds for nothing."""
     _held(store)
-    leases = []
-    monkeypatch.setattr(store, "list_accounts", lambda table: [])
+    leases, looked = [], []
+    monkeypatch.setattr(store, "list_accounts", lambda table: looked.append(table) or [])
     monkeypatch.setattr(store, "take_lease", lambda *a: leases.append(a) or True)
     work = bulk.QueueRecheck(lambda: Settings(), lambda: store, every=0.02).start()
-    time.sleep(0.3)
+    assert until(lambda: len(looked) >= 3)  # it looked three times, finding no GL accounts each time
     work.stop()
     work.thread.join(30)
     assert leases == [] and store.stale_checks(store.checks_stamp())

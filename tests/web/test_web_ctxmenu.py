@@ -18,10 +18,10 @@ from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 from tests.browser import browser_on
-from tests.conftest import copy_database
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import check, form_of
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
 SHOTS = None  # set by the screenshot test: where the pictures of each menu go
 
@@ -29,17 +29,6 @@ SHOTS = None  # set by the screenshot test: where the pictures of each menu go
 def _cascade(store) -> int:
     """The demo's Cascade Cloudworks invoice (once the queue's first; the queue's order is D-89's since)."""
     return next(i["id"] for i in store.list_invoices(REVIEW) if i["vendor_name"].startswith("Cascade"))
-
-
-@pytest.fixture(scope="module")
-def demo_db(demo_template):
-    """The demo invoices, made once a run (tests/conftest.py)."""
-    return demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store):

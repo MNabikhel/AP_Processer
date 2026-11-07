@@ -117,6 +117,44 @@ def validate_coding(
         add(severity, code, message, line)
 
     # --- Header -----------------------------------------------------------
+    _header_issues(coding, add)
+    # --- Line items -------------------------------------------------------
+    _line_issues(coding, reference, add)
+    # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
+    checks = _totals_checks(coding, reference, add)
+    # --- Canadian sales tax ------------------------------------------------------
+    known = set(reference.chart_of_accounts.codes)
+    for f in check_taxes(coding, reference.tax, known):
+        add(f.severity, f.code, f.message, f.line_number)
+    checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
+
+    # --- Reviewer history -------------------------------------------------------------
+    _history_issues(history, add, checks)
+
+    # --- Cross-checks against Document Intelligence ---------------------------
+    if extraction is not None:
+        _cross_check(coding, extraction, add, checks)
+
+    model_conf = coding.confidence_score
+    reading, coded, adjusted, requires_review = score(
+        model_conf, coding_confidence(coding, reference), [(i.severity, i.code) for i in issues], review_threshold
+    )
+
+    return ValidationReport(
+        source=extraction.source if extraction else "",
+        model_confidence=model_conf,
+        adjusted_confidence=adjusted,
+        review_threshold=review_threshold,
+        requires_review=requires_review,
+        reading_confidence=reading,
+        coding_confidence=coded,
+        issues=issues,
+        checks=checks,
+    )
+
+
+def _header_issues(coding: InvoiceCoding, add: Any) -> None:
+    """The vendor, invoice number, currency and lines an invoice must have."""
     if not coding.vendor_name.strip():
         add(ERROR, "MISSING_VENDOR", "No vendor name: type it from the page")
     if not coding.invoice_number.strip():
@@ -126,7 +164,9 @@ def validate_coding(
     if not coding.line_items:
         add(ERROR, "NO_LINE_ITEMS", "No line items were read: add a line for what the invoice charges")
 
-    # --- Line items -------------------------------------------------------
+
+def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:
+    """Each line's numbering, arithmetic, GL account and cost center."""
     numbers = [li.line_number for li in coding.line_items]
     if sorted(numbers) != list(range(1, len(numbers) + 1)):  # the parts of a split line sit under it (B-1188)
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
@@ -175,7 +215,9 @@ def validate_coding(
                 li.line_number,
             )
 
-    # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
+
+def _totals_checks(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> dict[str, Any]:
+    """The lines, subtotal, tax, total and GL posting reconciled; the figures compared (the report's checks)."""
     line_sum = add_up(li.amount for li in coding.line_items)
     computed_total = half_up(coding.subtotal + coding.tax_total)
     checks: dict[str, Any] = {
@@ -210,13 +252,11 @@ def validate_coding(
             f"the GL posting adds up to {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
             f"({off_text(posting_total, coding.grand_total)}): correct a line amount or a tax line",
         )
-    # --- Canadian sales tax ------------------------------------------------------
-    known = set(reference.chart_of_accounts.codes)
-    for f in check_taxes(coding, reference.tax, known):
-        add(f.severity, f.code, f.message, f.line_number)
-    checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
+    return checks
 
-    # --- Reviewer history -------------------------------------------------------------
+
+def _history_issues(history: list[dict[str, Any]] | None, add: Any, checks: dict[str, Any]) -> None:
+    """Lines coded otherwise than reviewers coded the vendor's similar lines (``memory.compare_with_history``)."""
     if history:
         checks["history"] = history
         for h in history:
@@ -229,27 +269,6 @@ def validate_coding(
                     h["line_number"],
                 )
         checks["history_matches"] = sum(1 for h in history if h["status"] == "match")
-
-    # --- Cross-checks against Document Intelligence ---------------------------
-    if extraction is not None:
-        _cross_check(coding, extraction, add, checks)
-
-    model_conf = coding.confidence_score
-    reading, coded, adjusted, requires_review = score(
-        model_conf, coding_confidence(coding, reference), [(i.severity, i.code) for i in issues], review_threshold
-    )
-
-    return ValidationReport(
-        source=extraction.source if extraction else "",
-        model_confidence=model_conf,
-        adjusted_confidence=adjusted,
-        review_threshold=review_threshold,
-        requires_review=requires_review,
-        reading_confidence=reading,
-        coding_confidence=coded,
-        issues=issues,
-        checks=checks,
-    )
 
 
 def score(

@@ -17,8 +17,8 @@ from ap_coder.web.app import create_app
 from ap_coder.web.pages import PAGES
 from ap_coder.web.pages import exports as exports_page
 from tests.browser import browser_on
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 CORE = ["Review queue", "Import invoices", "Invoice directory", "Exports", "GL accounts & tax", "Settings", "Help"]
 MORE = ["Manager confirmations", "Month-end", "Sales tax", "Vendor statements", "Vendors", "Purchase orders",
         "Learning & accuracy", "Spend", "Insights", "Activity"]  # fmt: skip
@@ -32,12 +32,6 @@ def _settings() -> Settings:
 @pytest.fixture
 def client(store):
     return TestClient(create_app(_settings(), store, start_reader=False), base_url="http://localhost")
-
-
-@pytest.fixture(scope="module")
-def demo_db(demo_template):
-    """The demo invoices, made once a run (tests/conftest.py)."""
-    return demo_template
 
 
 @pytest.fixture

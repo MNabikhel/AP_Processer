@@ -1,18 +1,12 @@
 """Regression tests for defects found in the store, matching and reconciliation modules."""
 
-import json
-
 import pytest
 
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, REJECTED, Store
-from tests.conftest import SAMPLE_STEM, SAMPLES
-
-
-def _gt():
-    return json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+from tests.webclient import gt as _gt
 
 
 def test_an_approved_and_exported_invoice_cannot_be_rejected_from_a_stale_screen(tmp_path):

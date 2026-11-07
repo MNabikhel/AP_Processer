@@ -14,7 +14,7 @@ from tests.web.test_web_ctxmenu import _item, _menu, _review, _taxable
 from tests.web.test_web_invoice import check, form_of
 
 # The review screen of the demo invoices, in a browser too: the fixtures of the right-click menus' tests.
-demo_db, store, client, browser, me = ctxmenu.demo_db, ctxmenu.store, ctxmenu.client, ctxmenu.browser, ctxmenu.me
+store, client, browser, me = ctxmenu.demo_store, ctxmenu.client, ctxmenu.browser, ctxmenu.me  # (demo_db: conftest.py)
 
 RED_RIVER = "Red River"
 

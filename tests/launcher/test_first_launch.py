@@ -325,12 +325,6 @@ def fresh(tmp_path):
     return Store(tmp_path / "private" / "ap_coder.db")
 
 
-@pytest.fixture
-def demo_db(demo_template):
-    """The demo invoices, made once a run (tests/conftest.py)."""
-    return demo_template
-
-
 # --- Reporting a problem, without a command line ---------------------------------------------------------------
 
 

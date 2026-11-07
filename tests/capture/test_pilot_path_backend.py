@@ -14,6 +14,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
 from tests.pdfs import text_pdf as _pdf
+from tests.webclient import PAGE
 
 
 def _web(store: Store) -> TestClient:
@@ -56,9 +57,6 @@ def test_a_part_backup_left_by_a_crash_is_removed_when_backups_run(tmp_path):
     os.utime(old, (two_days_ago, two_days_ago))
     store.backup_now("manual")
     assert not old.exists() and recent.exists()  # a copy still being written (another process) is left alone
-
-
-PAGE = {"X-AP-Coder": "1"}
 
 
 def _form(store: Store, invoice_id: int) -> dict:

@@ -129,6 +129,27 @@ def run_checks(
         checks.append(Check(area, status, detail))
 
     # --- Runtime -------------------------------------------------------------
+    _runtime_checks(add)
+    # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
+    _offline_checks(add)
+    # --- Configuration ----------------------------------------------------------
+    provider = _configuration_checks(settings, add, llm_checks)
+    # --- Reference data -----------------------------------------------------------
+    reference = _reference_checks(settings, load_reference, add, bundled)
+
+    # --- Live connectivity ------------------------------------------------------------
+    if not online:
+        add("DI connectivity", SKIP, "run with --online to test")
+        add("AOAI connectivity", SKIP, "run with --online to test")
+        if provider == "local":
+            add("local dry run", SKIP, "run with --online to ask the local model for two lines' accounts")
+        return checks
+    _live_checks(settings, provider, reference, add)
+    return checks
+
+
+def _runtime_checks(add: Callable[[str, str, str], None]) -> None:
+    """This build of AP Coder, the Python and the packages it needs."""
     add("AP Coder", PASS, ap_coder_build())
     add(*_python_check(sys.version_info))
     for pkg in _PACKAGES:
@@ -144,7 +165,9 @@ def run_checks(
         v or f"not installed (iPhone photos, HEIC, can't be read): {_INSTALL_FIX}",
     )
 
-    # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
+
+def _offline_checks(add: Callable[[str, str, str], None]) -> None:
+    """The OCR models, the data folder and what the dashboard listens on (the company server's own setup)."""
     from ..core.paths import private_dir
     from .offline import offline_checks
     from .service import doctor_checks, is_server_here
@@ -166,7 +189,9 @@ def run_checks(
     for area, status, detail in place_checks(private_dir(), env_path("AP_DB_PATH") or default_db_path(), server):
         add(area, status, detail)
 
-    # --- Configuration ----------------------------------------------------------
+
+def _configuration_checks(settings: Settings, add: Callable[[str, str, str], None], llm_checks: bool) -> str:
+    """Azure (off in the offline build), the AI model and the engine's settings; the model's provider."""
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
     if di.endpoint and internet_allowed():
         add("DI endpoint", PASS, "set")
@@ -204,8 +229,13 @@ def run_checks(
         PASS,
         f"vision={eng.vision}, constrain_codes={eng.constrain_codes}, review_threshold={eng.review_threshold}",
     )
+    return provider
 
-    # --- Reference data -----------------------------------------------------------
+
+def _reference_checks(settings: Settings, load_reference: Callable[[], ReferenceData],
+                      add: Callable[[str, str, str], None], bundled: bool) -> ReferenceData | None:  # fmt: skip
+    """The GL accounts, cost centers, tax set-up, policy notes and the prompt they make; the reference data."""
+    eng = settings.engine
     reference: ReferenceData | None = None
     try:
         reference = load_reference()
@@ -262,14 +292,13 @@ def run_checks(
             f"~{prompt_tokens:,} tokens of instructions + reference data per invoice "
             "(cached after the first call in a batch)",
         )
+    return reference
 
-    # --- Live connectivity ------------------------------------------------------------
-    if not online:
-        add("DI connectivity", SKIP, "run with --online to test")
-        add("AOAI connectivity", SKIP, "run with --online to test")
-        if provider == "local":
-            add("local dry run", SKIP, "run with --online to ask the local model for two lines' accounts")
-        return checks
+
+def _live_checks(settings: Settings, provider: str, reference: ReferenceData | None,
+                 add: Callable[[str, str, str], None]) -> None:  # fmt: skip
+    """``--online``: Azure (only with the internet allowed) and a dry run of the model on two lines."""
+    di, oai = settings.document_intelligence, settings.openai
 
     if di.endpoint and not internet_allowed():  # the offline build: Azure is never called
         add("DI connectivity", SKIP, "not tested: the internet isn't allowed, so invoices are read on this computer")
@@ -296,7 +325,6 @@ def run_checks(
         add(*_aoai_dry_run(settings, reference))
     else:
         add("AOAI connectivity", SKIP, "endpoint or reference data missing")
-    return checks
 
 
 def store_checks(store: Any, server: bool) -> list[Check]:

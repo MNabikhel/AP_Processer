@@ -1,7 +1,6 @@
 """Parking invoices that wait for information, and notes for the team."""
 
 import datetime as dt
-import json
 
 import pytest
 
@@ -10,10 +9,7 @@ from ap_coder.core.store import PARKED, REVIEW, Store, load_sample_setup
 from ap_coder.erp import accruals
 from tests.conftest import SAMPLE_STEM, SAMPLES
 from tests.webclient import client_for, follow, post
-
-
-def _gt(**changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), **changes}
+from tests.webclient import gt as _gt
 
 
 def test_park_and_unpark(tmp_path):

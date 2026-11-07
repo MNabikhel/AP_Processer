@@ -17,6 +17,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python }}${{ matrix.shard && format(', part {0}', matrix.shard) || '' }}${{ matrix.tier == 'fast' && ', fast tier' || '' }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45  # the slowest cell about 20 minutes in a passing run: a hang ends here, not after 6 hours
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +54,7 @@ jobs:
     # ruff gives the same answer on every OS and Python, so it runs once (it ran in each of the 8 test cells).
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # under a minute in a passing run: a hang ends here, not after 6 hours
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -77,6 +79,7 @@ jobs:
     # computer). They skip elsewhere; here AP_REQUIRE_BROWSER=1 makes them fail if no browser is found.
     name: Browser tests (Chromium)
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # about 13 minutes in a passing run: a hang ends here, not after 6 hours
     env:
       AP_ALLOW_INTERNET: "1"  # installs Playwright and its Chromium from the internet; the tests themselves stay local
     steps:
@@ -94,10 +97,33 @@ jobs:
           AP_REQUIRE_BROWSER: "1"
         run: python -m pytest -q -m "" -k "in_a_browser" tests/ --durations=15
 
+  load-smoke:
+    # D-191: ten people for a minute on two web workers over a data folder of 2,000 seeded invoices, the benches'
+    # stand-in model answering (python -m ap_coder.bench load). Its gate fails the job on a 5xx, an answer over 30 s
+    # or none, "database is locked" in the server's logs, an invoice approved or exported twice, or the summary
+    # differing from a recomputation (ap_coder/bench/load.py, gate).
+    name: Load smoke (10 people, 2 workers, 2,000 invoices)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  # about 4 minutes (2 for the seed and the minute's load on a busy 4-core machine)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Ten people for a minute, and the gate
+        run: python -m ap_coder.bench load --users 10 --duration 60 --workers 2 --seed-invoices 2000 --out "$RUNNER_TEMP/load"
+      - name: The report
+        if: always()
+        run: cat "$RUNNER_TEMP/load/report.md" || true
+
   windows-installer:
     # The installer (APProcessor.bat --installer) on a clean Windows machine, then a second run.
     name: Installer on Windows
     runs-on: windows-latest
+    timeout-minutes: 15  # about 3 minutes in a passing run: a hang ends here, not after 6 hours
     env:
       AP_NO_PAUSE: "1"
       AP_ALLOW_INTERNET: "1"  # this job installs from PyPI and fetches the OCR models (the offline default would not)
@@ -174,6 +200,7 @@ jobs:
     # only opens the running one; a later double-click reuses everything and starts within a minute.
     name: Pilot launcher on Windows (APProcessor.bat)
     runs-on: windows-latest
+    timeout-minutes: 15  # about 3 minutes in a passing run: a hang ends here, not after 6 hours
     env:
       AP_NO_PAUSE: "1"
       AP_ALLOW_INTERNET: "1"  # set up online, from PyPI (no wheelhouse here); the offline bundle job runs without it
@@ -407,6 +434,7 @@ jobs:
     # cut off (every proxy points at a closed port), then read the sample invoices.
     name: Offline bundle on Windows (no internet)
     runs-on: windows-latest
+    timeout-minutes: 25  # about 6 minutes in a passing run: a hang ends here, not after 6 hours
     env:
       AP_NO_PAUSE: "1"
       BROWSER: none
@@ -575,6 +603,7 @@ jobs:
     # cut off (every proxy points at a closed port, as in the Windows job), then read the sample invoices.
     name: Offline bundle on macOS (no internet)
     runs-on: macos-latest
+    timeout-minutes: 25  # about 6 minutes in a passing run: a hang ends here, not after 6 hours
     env:
       AP_NO_PAUSE: "1"
       BROWSER: none

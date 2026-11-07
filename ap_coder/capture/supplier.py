@@ -29,15 +29,15 @@ import datetime as dt
 import hashlib
 import math
 import re
-import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
 
+from ..core import parsing
 from ..core.memory import vendor_key
-from . import normalize
+from ..core.parsing import SPACED_THOUSANDS, _fold, date_candidates
 from .confidence import wilson_lower  # one Wilson lower bound for the bar and the calibration
 from .normalize import normalize_value as shared_value
 from .normalize import terms_kind
@@ -84,12 +84,7 @@ _LABEL_WORDS = {
     "montant", "balance", "solde", "no", "number", "numero", "ref", "reference", "currency", "devise", "bn",
     "registration", "payer", "pay",
 }  # fmt: skip
-_CURRENCY_WORDS = {"cad", "usd", "eur", "gbp", "ca", "us", "cdn", "dr", "cr"}
 _RATE = re.compile(r"[(@]*\d*(?:[.,]\d+)?\s*%\)?:?|@")  # "5%", "(13%)", "%)", "5%:", "@"
-# An amount whose thousands are set off by a space ("11 211,29", "$ 1 118.33 CR"): one value, not its last group.
-_SPACED_THOUSANDS = re.compile(
-    r"[-(]?(?:\$\s?)?\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?:\s?\$)?(?:\s?(?:cr|dr)\.?)?\)?", re.I
-)
 
 
 def _now() -> str:
@@ -115,99 +110,21 @@ def supplier_key(vendor_name: str | None, gst_number: str | None = None, vendor_
 # --- Normalizing: how a template reads what is printed (``normalize`` gives the comparison keys) --------------
 
 
-def _fold(text: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(text or ""))
-    return "".join(c for c in text if not unicodedata.combining(c)).lower()
-
-
 def _compact(text: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", _fold(text))
 
 
 def parse_amount(text: Any) -> float | None:
-    """ "1,234.56", "1 234,56 $", "(12.00)", "$-113.00", "12.00 CR", "0.125" -> float, read as the reader reads it
-    (``normalize.parse_amount``); None if the text is not one amount (an id, a date, a word)."""
-    if isinstance(text, (int, float)) and not isinstance(text, bool):
-        return float(text)
-    s = str(text or "").strip()
-    if not s or not re.search(r"\d", s):
-        return None
-    if any(w not in _CURRENCY_WORDS for w in re.findall(r"[a-z]+", _fold(s))):
-        return None  # letters other than a currency code or CR: an id, not an amount
-    found = normalize.find_amounts(s)
-    # "1 234 $", "CAD 1 234": one amount, which find_amounts splits (a quantity and a price)
-    spaced = _SPACED_THOUSANDS.fullmatch(" ".join(re.sub(r"^[a-z]+\.?|[a-z]+\.?$", "", _fold(s)).split()))
-    if not spaced and (len(found) != 1 or re.search(r"\d", s[: found[0][1]] + s[found[0][2] :])):
-        return None  # two numbers ("1,23,4.00", a date) or digits beside the amount
-    value = normalize.parse_amount(s)
-    if value and value > 0 and re.match(r"\s*(?:cr(?![a-z])|[-−–])", _fold(s)):
-        return -value  # a credit written first ("CR 12.00", "- 12.00"), which normalize's parser leaves positive
-    return value
-
-
-_MONTHS = {
-    "jan": 1, "janv": 1, "january": 1, "janvier": 1, "feb": 2, "fev": 2, "fevr": 2, "february": 2, "fevrier": 2,
-    "mar": 3, "march": 3, "mars": 3, "apr": 4, "avr": 4, "april": 4, "avril": 4, "may": 5, "mai": 5,
-    "jun": 6, "june": 6, "juin": 6, "jul": 7, "july": 7, "juil": 7, "juillet": 7, "aug": 8, "august": 8, "aou": 8,
-    "aout": 8, "sep": 9, "sept": 9, "september": 9, "septembre": 9, "oct": 10, "october": 10, "octobre": 10,
-    "nov": 11, "november": 11, "novembre": 11, "dec": 12, "december": 12, "decembre": 12,
-}  # fmt: skip
-
-
-def _iso(y: int, m: int, d: int) -> str | None:
-    if y < 100:
-        y += 2000
-    try:
-        return dt.date(y, m, d).isoformat()
-    except ValueError:
-        return None
-
-
-def date_candidates(text: Any) -> list[tuple[str, str]]:
-    """Every reading of a printed date as (ISO date, order) with order "ymd", "dmy", "mdy" or "text"."""
-    s = _fold(text).strip()
-    m = re.fullmatch(r"(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})", s)
-    if m:
-        iso = _iso(int(m[1]), int(m[2]), int(m[3]))
-        return [(iso, "ymd")] if iso else []
-    m = re.fullmatch(r"(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})", s)
-    if m:
-        a, b, y = int(m[1]), int(m[2]), int(m[3])
-        out = [(iso, order) for iso, order in ((_iso(y, b, a), "dmy"), (_iso(y, a, b), "mdy")) if iso]
-        return out[:1] if a == b else out
-    words = re.findall(r"[a-z]+|\d+", s)
-    if len(words) > 6:
-        return []
-    month = next((_MONTHS[w] for w in words if w in _MONTHS), None)
-    numbers = [w for w in words if w.isdigit()]
-    others = [
-        w for w in words if not w.isdigit() and w not in _MONTHS and w not in {"er", "st", "nd", "rd", "th", "le"}
-    ]
-    if month is None or others or len(numbers) != 2:
-        return []
-    # Printed in a date's order: month day year, day month year, or year month day. Not the end of one date and the
-    # start of the next printed beside it ("10, 2025 October", "2025 March 15,").
-    at = {w: i for i, w in enumerate(words)}
-    month_at = next(i for i, w in enumerate(words) if w in _MONTHS)
-    if len(numbers[0]) == 4 and (at[numbers[0]] > month_at or s.endswith(",")):
-        return []
-    if len(numbers[-1]) == 4 and at[numbers[-1]] < month_at:
-        return []
-    year = next((int(n) for n in numbers if len(n) == 4), None)
-    day = next((int(n) for n in numbers if len(n) <= 2), None)
-    if year is None and words[-1] == numbers[-1] and len(numbers[-1]) == 2 and len(numbers[0]) <= 2:
-        day, year = int(numbers[0]), int(numbers[-1])  # "15OCT26", "Oct-15-26": a two-digit year last
-    iso = _iso(year, month, day) if year and day else None
-    return [(iso, "text")] if iso else []
+    """ "1,234.56", "1 234,56 $", "(12.00)", "$-113.00", "12.00 CR", "0.125" -> float, read as the reader reads it;
+    None if the text is not one amount (an id, a date, a word): ``core.parsing``'s rules for a printed field."""
+    return parsing.parse_amount(text, printed=True)
 
 
 def parse_date(text: Any, order: str | None = None) -> str | None:
     """A printed date as YYYY-MM-DD. A numeric day/month that could be either is read in ``order``
     ("dmy" or "mdy", e.g. learned for the supplier), else day first."""
-    found = date_candidates(text)
-    if not found:
-        return None
-    return next((iso for iso, o in found if o == order), found[0][0])
+    found = parsing.parse_date(text, printed=True, day_first=order != "mdy")
+    return found.isoformat() if found else None
 
 
 def norm_id(text: Any) -> str:
@@ -1148,7 +1065,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), method)
         # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06". An amount over a
         # thousand on a supplier's invoices learned under one ("11 211,29" where "211,29" was) is whole first.
-        whole = name in AMOUNT_FIELDS and bool(_SPACED_THOUSANDS.fullmatch(" ".join(raw.split())))
+        whole = name in AMOUNT_FIELDS and bool(SPACED_THOUSANDS.fullmatch(" ".join(raw.split())))
         rank = (whole, variant.shape.fit(raw), shape, len(words), reading.score)
         found.append((reading, {id(w) for w in words}, rank))
 

@@ -14,8 +14,7 @@ from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Sto
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.review import confidence_pct, filter_queue, sort_queue
 from tests.conftest import fill_from
-
-PAGE = {"X-AP-Coder": "1"}
+from tests.webclient import PAGE
 
 
 @pytest.fixture

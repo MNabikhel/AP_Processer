@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 KEY = "acme"
 
 

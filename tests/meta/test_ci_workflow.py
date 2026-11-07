@@ -81,6 +81,14 @@ def test_the_retired_run_check_catches_what_it_should():
 
 
 @needs_ci
+def test_every_ci_job_has_a_time_limit():
+    """A job without ``timeout-minutes`` that hangs (a test waiting for good, a server that never answers) holds its
+    runner for GitHub's 6 hours (D-191): each has a limit of about twice its time in a passing run."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    assert {name for name, job in jobs.items() if not 0 < int(job.get("timeout-minutes") or 0) <= 60} == set()
+
+
+@needs_ci
 def test_ci_runs_the_browser_tests_and_never_lets_them_skip():
     """The tests that open the dashboard in Chromium skip on a computer without it, and CI had none: they passed by
     never running. A CI job installs Chromium and runs them with AP_REQUIRE_BROWSER=1, where a missing browser fails."""

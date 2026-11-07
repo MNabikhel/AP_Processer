@@ -23,8 +23,8 @@ from ap_coder.erp import statements as stm
 from ap_coder.web import core, files
 from ap_coder.web.pages import exports as export_page
 from tests.conftest import fill_from
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 FINANCE_PAGES = [
     "/search",
     "/search?q=northwind",

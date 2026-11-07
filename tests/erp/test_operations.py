@@ -7,10 +7,7 @@ import sqlite3
 from ap_coder.core.store import Store
 from ap_coder.erp.insights import operations
 from tests.conftest import SAMPLE_STEM, SAMPLES
-
-
-def _gt(**changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), **changes}
+from tests.webclient import gt as _gt
 
 
 def test_operations(tmp_path):
@@ -57,11 +54,9 @@ def test_operations_on_an_empty_database(tmp_path):
 
 
 def test_vendors_that_make_work(tmp_path):
-    import json
 
     from ap_coder.core.store import Store
     from ap_coder.erp.insights import vendor_workload
-    from tests.conftest import SAMPLE_STEM, SAMPLES
 
     store = Store(tmp_path / "w.db")
     gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
@@ -81,11 +76,9 @@ def test_vendors_that_make_work(tmp_path):
 
 
 def test_duplicates_stopped_in_the_business_case(tmp_path):
-    import json
 
     from ap_coder.core.store import Store
     from ap_coder.erp.insights import compute, report_html
-    from tests.conftest import SAMPLE_STEM, SAMPLES
 
     store = Store(tmp_path / "d.db")
     gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())

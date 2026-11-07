@@ -11,8 +11,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW
 from ap_coder.web.app import create_app
 from tests.conftest import fill_from
-
-PAGE = {"X-AP-Coder": "1"}
+from tests.webclient import PAGE
 
 
 @pytest.fixture(autouse=True)
