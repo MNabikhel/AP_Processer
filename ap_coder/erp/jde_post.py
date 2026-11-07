@@ -51,26 +51,30 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 from ..coding.vendors import norm_invoice_number, voucher_hold
 from ..core.safe import parse_amount
 from ..core.store import postings as ledger
+from ..core.store.postings import (  # the rows' statuses, kept with the table (core/store/postings.py, D-189)
+    CHECKED,
+    FAILED,
+    FILE_DOWNLOADED,
+    POSTED,
+    QUEUED,
+    REFUSED,
+    SENDING,
+    UNKNOWN,
+)
 from . import jde, jde_ais
 
-CHECKED, REFUSED, QUEUED, SENDING, POSTED, FAILED, UNKNOWN = (
-    "checked", "refused", "queued", "sending", "posted", "failed", "unknown",
-)  # fmt: skip
 LABELS = {CHECKED: "Dry run passed", REFUSED: "Refused in the dry run", QUEUED: "Waiting: JD Edwards not reached",
           SENDING: "Being sent", POSTED: "Posted", FAILED: "Refused by JD Edwards",
           UNKNOWN: "Sent, answer not received: being checked"}  # fmt: skip
 TONES = {CHECKED: "ok", REFUSED: "err", QUEUED: "warn", SENDING: "warn", POSTED: "ok", FAILED: "err", UNKNOWN: "warn"}
 HELD_BACK = "Not sent: dry run again"  # *checked* after its go-ahead, held back by its run (``status_rows``)
-IN_FLIGHT = (QUEUED, SENDING, UNKNOWN)  # approved and not finished: the queue
 LOCKED = ledger.LOCKED  # by status; any row with ``maybe_sent`` too (``ledger.LOCKED_SQL``)
-LOCKED_SQL = ledger.LOCKED_SQL
-SENDABLE = (CHECKED, QUEUED, UNKNOWN, SENDING)  # claimed only with maybe_sent = 0: never sent while JDE may have it
 DRY_RUN_OVER = (CHECKED, REFUSED, FAILED)  # what a dry run may write over (and only with maybe_sent = 0)
 RETRY_MINUTES = (5, 15, 60)  # the queue's waits after each try that did not reach JDE (then hourly)
 # A row *sending* longer than this, and than a send can take (``_live_seconds``), was left by a stop: looked up by its
@@ -82,7 +86,6 @@ LOOK_AFTER = 30.0  # seconds after a lost answer before the run looks the vouche
 PERIOD_REFUSED = re.compile(r"\bPBCO\b|closed (fiscal )?(period|year)|period (is )?closed|before (the )?cut[- ]?off|"
                             r"prior (fiscal )?(period|year)", re.IGNORECASE)  # fmt: skip
 YES, NO = ("1", "Y", "YES", "TRUE"), ("0", "N", "NO", "FALSE")
-FILE_DOWNLOADED = "jde_file_downloaded"  # the event of a download of a batch's JD Edwards ZIP (D-134)
 
 
 class Locked(ValueError):
@@ -195,41 +198,11 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
     return out, problems, invoices, made
 
 
-# --- The postings table ----------------------------------------------------------------------------------------------
-
-
-@contextlib.contextmanager
-def _conn(store: Any) -> Iterator[Any]:
-    with store._conn() as conn:
-        ledger.ensure(conn)
-        yield conn
+# --- The postings table (its statements: core/store/postings.py, ``PostingsMixin``) ----------------------------------
 
 
 def postings(store: Any, batch: int | None = None, statuses: tuple[str, ...] = ()) -> list[dict[str, Any]]:
-    sql, args = "SELECT * FROM jde_postings WHERE 1 = 1", []
-    if batch is not None:
-        sql += " AND batch = ?"
-        args.append(batch)
-    if statuses:
-        sql += " AND status IN (SELECT value FROM json_each(?))"
-        args.append(json.dumps(list(statuses)))
-    with _conn(store) as conn:
-        return [dict(r) for r in conn.execute(sql + " ORDER BY batch, invoice_id", args)]
-
-
-def _row(store: Any, key: str) -> dict[str, Any] | None:
-    with _conn(store) as conn:
-        found = conn.execute("SELECT * FROM jde_postings WHERE idem_key = ?", (key,)).fetchone()
-    return dict(found) if found else None
-
-
-def _keep(store: Any, keys: list[str]) -> None:
-    """The rows as they now are, in the ledger outside the database (``core/store/postings.py``)."""
-    if not keys:
-        return
-    with _conn(store) as conn:
-        rows = ledger.rows_with_ident(conn, "p.idem_key IN (SELECT value FROM json_each(?))", (json.dumps(keys),))
-    ledger.append(store.path, rows)
+    return store.jde_postings(batch, statuses)
 
 
 def _put(store: Any, key: str, invoice_id: int, batch: int, *, only_from: tuple[str, ...] | None = None,
@@ -237,52 +210,20 @@ def _put(store: Any, key: str, invoice_id: int, batch: int, *, only_from: tuple[
     """Write the row's values. A new row only for a batch not undone. ``only_from``: only over a row in one of these
     statuses that JDE can't hold (maybe_sent 0); ``rev``: only if the row is still that version. Whether it changed."""
     values["updated_at"] = _now()
-    with _conn(store) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO jde_postings (idem_key, invoice_id, batch, status, updated_at) SELECT ?, ?, ?, ?, ? "
-            "WHERE NOT EXISTS (SELECT 1 FROM export_batches WHERE id = ? AND undone_at IS NOT NULL)",
-            (key, invoice_id, batch, values.get("status", CHECKED), _now(), batch),
-        )
-        sets = ", ".join(f"{k} = ?" for k in values)
-        where, args = "idem_key = ?", [key]
-        if only_from is not None:
-            where += " AND status IN (SELECT value FROM json_each(?)) AND maybe_sent = 0"
-            args.append(json.dumps(list(only_from)))
-        if rev is not None:
-            where += " AND rev = ?"
-            args.append(rev)
-        changed = conn.execute(f"UPDATE jde_postings SET {sets}, rev = rev + 1 WHERE {where}",
-                               (*values.values(), *args)).rowcount  # fmt: skip
-    if changed:
-        _keep(store, [key])
-    return bool(changed)
+    return store.put_jde_posting(key, invoice_id, batch, values, status=values.get("status", CHECKED),
+                                 only_from=only_from, rev=rev)  # fmt: skip
 
 
 def _claim(store: Any, row: dict[str, Any], attempts: int) -> dict[str, Any] | None:
     """Compare-and-set before a send: *sending* only if the row is the version read, sendable, JDE can't hold it, its
     batch is not undone and its ZIP was not downloaded since the go-ahead (D-134: the file holds it); the row as
     claimed, or None (someone else has it, the batch was undone or its file downloaded)."""
-    with _conn(store) as conn:
-        changed = conn.execute(
-            "UPDATE jde_postings SET status = ?, sending_at = ?, lost_at = NULL, maybe_sent = 1, attempts = ?, "
-            "next_try = NULL, rev = rev + 1, updated_at = ? WHERE idem_key = ? AND rev = ? AND maybe_sent = 0 AND "
-            "verify = 0 AND status IN (SELECT value FROM json_each(?)) AND batch NOT IN "
-            "(SELECT id FROM export_batches WHERE undone_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM events e "
-            "WHERE e.action = ? AND json_extract(e.detail, '$.batch') = jde_postings.batch AND "
-            "e.created_at > COALESCE(jde_postings.approved_at, ''))",
-            (SENDING, _stamp(), attempts, _now(), row["idem_key"], row["rev"], json.dumps(SENDABLE), FILE_DOWNLOADED),
-        ).rowcount
-    if changed != 1:
-        return None
-    _keep(store, [row["idem_key"]])
-    return _row(store, row["idem_key"])
+    return store.claim_jde_posting(row, attempts, sending_at=_stamp(), now=_now())
 
 
 def documents_of(store: Any, invoice_id: int | None) -> list[str]:
     """JDE's voucher numbers AP Coder posted for this invoice (the live duplicate check leaves them out)."""
-    with _conn(store) as conn:
-        return [r[0] for r in conn.execute("SELECT document FROM jde_postings WHERE invoice_id = ? AND status = ? "
-                                           "AND document != ''", (invoice_id, POSTED))]  # fmt: skip
+    return store.jde_documents(invoice_id)
 
 
 def not_posted(store: Any) -> dict[int, str]:
@@ -291,22 +232,12 @@ def not_posted(store: Any) -> dict[int, str]:
     for a new dry run, or refused, by JDE or by a dry run since (B-1885), unless the batch's files were downloaded
     since: then loaded from them, as any batch (``file_downloaded`` takes their go-ahead off, B-1882). Month end
     takes them as not in the ERP (R4, B-1862)."""
-    with _conn(store) as conn:
-        found = conn.execute(
-            "SELECT p.invoice_id, p.status FROM jde_postings p JOIN invoices i ON i.id = p.invoice_id AND "
-            "i.export_batch = p.batch WHERE p.status IN (?, ?, ?) OR (p.status IN (?, ?) AND p.approved_at IS NOT "
-            "NULL) OR (p.status = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.action = ? AND "
-            "json_extract(e.detail, '$.batch') = p.batch AND e.created_at >= p.updated_at)) ORDER BY p.invoice_id",
-            (QUEUED, SENDING, UNKNOWN, CHECKED, REFUSED, FAILED, FILE_DOWNLOADED),
-        ).fetchall()
-    return {int(r[0]): r[1] for r in found}
+    return store.jde_not_posted()
 
 
 def locked(store: Any, batch: int) -> list[dict[str, Any]]:
-    """The batch's rows JDE has, or may have (``LOCKED_SQL``)."""
-    with _conn(store) as conn:
-        return [dict(r) for r in conn.execute(f"SELECT * FROM jde_postings WHERE batch = ? AND {LOCKED_SQL} "
-                                              "ORDER BY invoice_id", (batch,))]  # fmt: skip
+    """The batch's rows JDE has, or may have (``ledger.LOCKED_SQL``)."""
+    return store.jde_locked(batch)
 
 
 def left_out_of_files(store: Any, batch: int) -> dict[int, list[str]]:
@@ -376,26 +307,14 @@ def undo_batch(store: Any, batch: int, actor: str | None = None) -> int:
     """Undo the batch (``Store.undo_export_batch``) in one write transaction with the check that none of its vouchers
     is, or may be, in JDE: Locked (a ValueError) when one is; ValueError when it was undone already. Its dry runs and
     queued vouchers are dropped."""
-
-    def guard(conn: Any) -> None:
-        ledger.ensure(conn)
-        found = [r[0] for r in conn.execute(f"SELECT status FROM jde_postings WHERE batch = ? AND {LOCKED_SQL}",
-                                            (batch,))]  # fmt: skip
-        if found:
-            raise Locked(_locked_message(batch, found))
-
-    count = store.undo_export_batch(batch, actor=actor, guard=guard)
+    count = store.undo_jde_batch(batch, actor, lambda found: Locked(_locked_message(batch, found)))
     forget_batch(store, batch)
     return count
 
 
 def forget_batch(store: Any, batch: int) -> None:
     """The batch was undone: its dry runs and queued vouchers are dropped (never a row JDE may hold)."""
-    with _conn(store) as conn:
-        keys = [r[0] for r in conn.execute(f"SELECT idem_key FROM jde_postings WHERE batch = ? AND NOT {LOCKED_SQL}",
-                                           (batch,))]  # fmt: skip
-        conn.execute(f"DELETE FROM jde_postings WHERE batch = ? AND NOT {LOCKED_SQL}", (batch,))
-    ledger.append(store.path, [{"idem_key": k, "deleted": True, "updated_at": _now()} for k in keys])
+    store.forget_jde_batch(batch, _now())
 
 
 # --- The batch's ZIP downloaded (D-134) -------------------------------------------------------------------------------
@@ -420,11 +339,7 @@ def file_downloaded(store: Any, batch: int, actor: str | None) -> None:
 
 def downloads(store: Any, batch: int) -> list[dict[str, str]]:
     """Each download of the batch's JD Edwards ZIP, newest first: {"actor", "at"}."""
-    with _conn(store) as conn:
-        found = conn.execute("SELECT actor, created_at FROM events WHERE action = ? AND "
-                             "json_extract(detail, '$.batch') = ? ORDER BY id DESC",
-                             (FILE_DOWNLOADED, int(batch))).fetchall()  # fmt: skip
-    return [{"actor": r[0] or "", "at": r[1] or ""} for r in found]
+    return store.jde_downloads(batch)
 
 
 def downloaded_message(batch: int, found: list[dict[str, str]]) -> str:
@@ -471,12 +386,7 @@ def waiting(store: Any, due_only: bool = False) -> list[dict[str, Any]]:
     """The queue: approved and not finished, without the rows being sent right now; with the vouchers of a go-ahead
     whose run is over without sending them (cut short: AP Coder stopped, ``_run_over``)."""
     live = _live_seconds(store)
-    with _conn(store) as conn:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM jde_postings WHERE status IN (SELECT value FROM json_each(?)) OR (status = ? AND "
-            "approved_at IS NOT NULL AND maybe_sent = 0 AND next_try <= ?) ORDER BY batch, invoice_id",
-            (json.dumps(IN_FLIGHT), CHECKED, _now()))]  # fmt: skip
-    found = [p for p in rows if not _fresh_sending(p, live)]
+    found = [p for p in store.jde_waiting(_now()) if not _fresh_sending(p, live)]
     if due_only:
         now = _now()
         found = [p for p in found if not p.get("next_try") or p["next_try"] <= now]
@@ -619,9 +529,7 @@ def _record(store: Any, row: dict[str, Any], answer: dict[str, Any], actor: str 
     # On the invoice too, as the finance hub feed reads it (meta["jde_voucher"]).
     voucher = {"document": str(answer.get("document") or ""), "doc_type": str(answer.get("doc_type") or ""),
                "company": str(answer.get("company") or ""), "posted_at": _now()}  # fmt: skip
-    with _conn(store) as conn:
-        conn.execute("UPDATE invoices SET meta = json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
-                     "'$.jde_voucher', json(?)) WHERE id = ?", (json.dumps(voucher), row["invoice_id"]))  # fmt: skip
+    store.set_jde_voucher(row["invoice_id"], voucher)
     store.log_event("jde_voucher_posted", invoice_id=row["invoice_id"], actor=actor, detail={
         "batch": row["batch"], "voucher": f"{answer.get('document')} {answer.get('doc_type')}".strip(),
         "key": row["idem_key"]})  # fmt: skip
@@ -700,7 +608,7 @@ def _lookup(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: s
         return row["status"], None
     if not _put(store, row["idem_key"], row["invoice_id"], row["batch"], rev=row["rev"], maybe_sent=0, verify=0):
         return None, None  # changed meanwhile (another queue run, an undo): left to it
-    return None, _row(store, row["idem_key"])
+    return None, store.jde_posting(row["idem_key"])
 
 
 def _look(store: Any, client: jde_ais.AisClient, row: dict[str, Any], actor: str | None,
@@ -790,7 +698,7 @@ def _answered(store: Any, client: jde_ais.AisClient, row: dict[str, Any], answer
     _put(store, key, inv, batch, status=UNKNOWN, error=f"{said}: being checked", next_try=_later(row["attempts"]),
          lost_at=_stamp())  # fmt: skip
     if result in ("created", "exists"):
-        current = _row(store, key)
+        current = store.jde_posting(key)
         if current is not None:
             with contextlib.suppress(jde_ais.AisError):
                 found = _status(client, key)
@@ -839,7 +747,7 @@ def post(store: Any, batch: int, actor: str | None = None, client: jde_ais.AisCl
     for row, payload in ready:
         if _put(store, row["idem_key"], row["invoice_id"], batch, rev=row["rev"], approved_at=_now(),
                 approved_by=actor, next_try=over):  # fmt: skip
-            approved.append((_row(store, row["idem_key"]) or row, payload))
+            approved.append((store.jde_posting(row["idem_key"]) or row, payload))
     # the vouchers whose G/L date the dry run moved into the open period, confirmed by this go-ahead (D-182)
     moved = [row["invoice_id"] for row, payload in approved if payload["_moved"]]
     store.log_event("jde_api_approved", actor=actor, detail={"batch": batch, "vouchers": len(approved), **word,
@@ -991,7 +899,7 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
         status, exc = _deliver(store, client, row, payload, actor)
         run.after(row, exc, sent=True)
         if status == FAILED and payload is not None:
-            run.refusal(_row(store, row["idem_key"]), payload)
+            run.refusal(store.jde_posting(row["idem_key"]), payload)
         if status == "skipped":
             changed(row)
         else:
@@ -1023,7 +931,7 @@ def _run(store: Any, ready: list[tuple[dict[str, Any], dict[str, Any] | None]], 
         for key, at in list(run.late.items()):  # looked up, and sent again only once JDE could have finished it
             if run.over() or time.monotonic() - at < LOOK_AFTER:
                 continue
-            row = _row(store, key)
+            row = store.jde_posting(key)
             if row is None or row["status"] != UNKNOWN:
                 continue
             status, cleared, exc = _look(store, client, row, actor, run)

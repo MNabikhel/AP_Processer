@@ -14,23 +14,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
-from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.core.store import Store
 from ap_coder.ops import offline
 from ap_coder.web import access, core, files, identity
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import learning
 from tests.conftest import SAMPLES, chromium_path
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, enrol, post, sign_in
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 OTHER = "northwind_ON_HST_NW-2026-0912"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def settings() -> Settings:

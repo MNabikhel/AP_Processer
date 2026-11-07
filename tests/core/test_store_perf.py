@@ -254,11 +254,12 @@ def test_the_reference_data_is_built_again_only_when_it_changes(tmp_path, monkey
     import shutil
 
     from ap_coder.coding import tax
+    from ap_coder.core import tax_setup
     from ap_coder.core.store import load_sample_setup
 
     rates = tmp_path / "rates.csv"
     shutil.copy(tax.DEFAULT_RATES_PATH, rates)
-    monkeypatch.setattr(tax, "rates_path", lambda: rates)
+    monkeypatch.setattr(tax_setup, "rates_path", lambda: rates)  # (the store's rate table: core/tax_setup.py, D-192)
     loads: list[object] = []
     real = tax.TaxRateTable.load.__func__
     monkeypatch.setattr(tax.TaxRateTable, "load", classmethod(lambda cls, path=None: loads.append(path) or real(

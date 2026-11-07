@@ -15,6 +15,7 @@ import json
 import sqlite3
 from typing import Any
 
+from ..keys import register_keys
 from ..memory import vendor_key
 from ._base import _in_list, _norm_number, _now
 from .summary import fetch_rows
@@ -69,8 +70,6 @@ class RegisterMixin:
         for key, r in keyed:
             dates.setdefault(key, set()).add(r.get("invoice_date") or "")
         copies = {key: len(found - {""}) or 1 for key, found in dates.items()}
-        from ...erp.search import register_keys
-
         with self._conn() as conn:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
@@ -165,8 +164,6 @@ class RegisterMixin:
                 vouchers[key] = (name, number, round(float(r["total"]), 2), r)
         if not vouchers:
             return 0
-        from ...erp.search import register_keys
-
         bills = {v[:3]: v[3] for v in vouchers.values()}  # (named by its last voucher)
         with self._conn() as conn:
             before = {r[0]: tuple(r[1:]) for r in conn.execute(

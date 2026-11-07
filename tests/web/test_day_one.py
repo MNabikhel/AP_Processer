@@ -18,9 +18,8 @@ from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
-from tests.conftest import copy_database
-
-PAGE = {"X-AP-Coder": "1"}
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
 # Every page module imported now, before `me` patches web/core.py: a module imported while it is patched would keep
 # the patched `reviewer` it imports by name, for the tests of the files that run after this one.
@@ -32,11 +31,6 @@ for _module in [*MORE_MODULES, *(p.module for p in PAGES if p.module)]:
 def demo_db(cost_centers_demo_template):
     """The demo invoices and the sample cost centers (the demo has none: D-53), made once a run (tests/conftest.py)."""
     return cost_centers_demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture(autouse=True)

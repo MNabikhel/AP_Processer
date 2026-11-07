@@ -15,16 +15,11 @@ from fastapi.testclient import TestClient
 from ap_coder.core.store import APPROVED, REVIEW, Store
 from ap_coder.web.app import create_app
 from tests.browser import browser_on, wait_until
-from tests.conftest import copy_database
+from tests.stores import cost_centers_demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import clean_invoice, flash_text, form_of
 from tests.webclient import PAGE, client_for, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
-
-
-@pytest.fixture
-def store(cost_centers_demo_template, tmp_path):
-    return copy_database(cost_centers_demo_template, tmp_path / "private" / "ap_coder.db")
 
 
 @pytest.fixture

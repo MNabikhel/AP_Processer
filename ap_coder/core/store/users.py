@@ -51,6 +51,7 @@ from typing import Any
 
 from .. import authenticator
 from ._base import _now
+from .dialect import begin_write
 
 READONLY, CLERK, APPROVER, ADMIN = "readonly", "clerk", "approver", "admin"
 MANAGER = "manager"  # confirms the cost allocation of the invoices sent to them, nothing else (D-138)
@@ -356,7 +357,7 @@ class UsersMixin:
             raise ValueError(problem)
         hashed = hash_password(password)
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             if conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
                 raise ValueError(f"There is already an account {name}.")
             cur = conn.execute(
@@ -403,7 +404,7 @@ class UsersMixin:
         if role not in ROLES:
             raise ValueError(f"There is no role {role!r}: choose one of {', '.join(ROLE_LABELS.values())}.")
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = self._account(conn, user_id)
             if row["role"] == role:
                 return
@@ -427,7 +428,7 @@ class UsersMixin:
     def deactivate_user(self, user_id: int, *, actor: str = "") -> None:
         """The account can no longer log in, and its sessions end; the last active Admin stays (``LAST_ADMIN``)."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = self._account(conn, user_id)
             if not row["active"]:
                 return
@@ -439,7 +440,7 @@ class UsersMixin:
 
     def activate_user(self, user_id: int, *, actor: str = "") -> None:
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = self._account(conn, user_id)
             if row["active"]:
                 return
@@ -459,7 +460,8 @@ class UsersMixin:
         if not verify_password(current, row["pw_hash"]):
             now, ip = _clock(), str(ip or "")[:64]
             with self._conn() as conn:
-                conn.execute("BEGIN IMMEDIATE")
+                # Its own: the try is kept whatever comes next, never undone with a caller's rollback (D-101).
+                self._begin_alone(conn, "change_password")
                 last_ok = conn.execute("SELECT MAX(at) FROM login_attempts WHERE username = ? AND ip = ? AND ok = 1",
                                        (row["username"], ip)).fetchone()[0]  # fmt: skip
                 since = max(now - FAILURE_WINDOW, last_ok or 0)
@@ -486,7 +488,7 @@ class UsersMixin:
         hashed = hash_password(new)
         fresh = ""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             conn.execute("UPDATE users SET pw_hash = ?, must_change = 0 WHERE id = ?", (hashed, row["id"]))
             kept = conn.execute(
                 "SELECT ip, user_agent FROM sessions WHERE user_id = ? AND token_hash = ?",
@@ -518,7 +520,7 @@ class UsersMixin:
             raise ValueError(problem)
         hashed = hash_password(chosen)
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             conn.execute("UPDATE users SET pw_hash = ?, must_change = 1 WHERE id = ?", (hashed, row["id"]))
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
             self._end_pending(conn, row["id"])
@@ -616,7 +618,7 @@ class UsersMixin:
         if not name:
             return False
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             if ip == ANYWHERE:
                 lifted = self._account_paused_until(conn, name, _clock()) > _clock()
                 if lifted:
@@ -637,7 +639,7 @@ class UsersMixin:
         if not ip:
             return False
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             lifted = self._lift_address(conn, ip)
             if lifted:
                 self._log(conn, "address_unlocked", None, actor or None, {"unpaused": ip})
@@ -752,7 +754,9 @@ class UsersMixin:
         are ever checked (D-101)."""
         name, ip, now = fold_username(username)[:200], str(ip or "")[:64], _clock()
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # Its own: the try is recorded, and committed, before its password is checked (D-101), and kept whatever
+            # comes next (never undone with a caller's rollback); the outcome below likewise.
+            self._begin_alone(conn, "authenticate")
             row = conn.execute("SELECT * FROM users WHERE username = ?", (name,)).fetchone()
             key = name if row is not None else UNKNOWN + token_hash(name)[:32]  # the text typed is not kept
             if self._locked(conn, key, ip, now, console):
@@ -764,7 +768,7 @@ class UsersMixin:
                 self._log(conn, "login_failed", None, None, {"username": name, "why": "temporary password expired"})
             raise LoginRefused(TEMPORARY_EXPIRED)
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            self._begin_alone(conn, "authenticate")  # its own: a refusal's events are kept when LoginRefused is raised
             if row is not None and row["active"] and matches:
                 conn.execute("DELETE FROM login_attempts WHERE id = ?", (attempt,))
                 fresh = conn.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = ?", (row["id"],)).fetchone()
@@ -784,7 +788,7 @@ class UsersMixin:
         if key is None:
             raise ValueError(KEY_MISSING)
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = self._account(conn, user_id)
             if row["totp_on"]:
                 raise ValueError(ALREADY_SET_UP)
@@ -806,7 +810,9 @@ class UsersMixin:
         key = authenticator.load_key(self.path.parent)
         now, ip = _clock(), str(ip or "")[:64]
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # Its own: the code's try is kept, committed, whatever comes next (a wrong code counts toward the pause, as
+            # a wrong password does, D-146): never undone with a caller's rollback when LoginRefused is raised.
+            self._begin_alone(conn, "check_code")
             row = self._account(conn, user_id)
             name = row["username"]
             if self._locked(conn, name, ip, now, console):

@@ -1,7 +1,6 @@
 """Regression tests for the bugs found in the overnight review of the new features."""
 
 import datetime as dt
-import json
 import math
 import sqlite3
 
@@ -18,11 +17,7 @@ from ap_coder.core.store import Store, load_sample_purchase_orders, load_sample_
 from ap_coder.erp import accruals, controls
 from ap_coder.erp import statements as stm
 from ap_coder.ops.cli import new_files
-from tests.conftest import SAMPLE_STEM, SAMPLES
-
-
-def _gt(stem=SAMPLE_STEM, **changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+from tests.webclient import gt as _gt
 
 
 @pytest.mark.parametrize(

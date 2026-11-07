@@ -3192,3 +3192,249 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`, `tests/ops/test_safety.py`,
     `tests/ops/test_server_update_downtime.py`, `tests/web/test_maintenance.py`,
     `tests/offline/test_bundle_reproducible.py`)
+- **D-189** · **No SQL runs outside `ap_coder/core/store`: each statement is a Store method or, for a database file a
+  Store must not open, a module function of the store; a meta test keeps it so** (scale goal, phase 7, C1).
+  - **Why:** the move to PostgreSQL needs every statement in one place. 55 lines in 6 files ran SQL outside the store
+    (`erp/jde_post.py` 15, `erp/jde_sync.py` 12, `erp/hub/run.py` 9, `erp/hub/landing.py` 7, `ops/server_update.py`
+    8, `ops/share_report.py` 4), most through `store._conn()`.
+  - **What moved where:**
+    - JD Edwards posting (`erp/jde_post.py`) → `core/store/postings.py` `PostingsMixin`, a new part of `Store`:
+      `jde_postings`, `jde_posting`, `keep_jde_postings` (the copy in the ledger file), `put_jde_posting`,
+      `claim_jde_posting`, `jde_documents`, `jde_not_posted`, `jde_locked`, `undo_jde_batch`, `forget_jde_batch`,
+      `jde_downloads`, `jde_waiting`, `set_jde_voucher` (the invoice's `meta.jde_voucher`). The rows' statuses
+      (`CHECKED` … `UNKNOWN`, `IN_FLIGHT`, `SENDABLE`, `FILE_DOWNLOADED`) are kept with the table and imported by
+      `jde_post`, which keeps the state machine, its clock (`_now`, `_stamp`: passed in, so the tests' patches still
+      hold) and `_put` / `_claim` (thin, called by the tests).
+    - JD Edwards sync (`erp/jde_sync.py`) → `vendors.py` `master_vendors_of` and `set_erp_bank_and_hold`;
+      `purchasing.py` `po_keys_written_since` and `open_po_numbers`; its `with store._conn():` (and `with
+      store.session(), store._conn():`) holding several calls → `Store.transaction()`, a new part `transaction.py`
+      (`session()` then `_conn()`: inside a session, as the sync always is, exactly what it replaces).
+    - Finance hub (`erp/hub/run.py`, `landing.py`) → `core/store/hub.py`: `HubState` (its own `finance_hub/state.db`)
+      and `write_gateway_database` with `GATEWAY_VIEWS` (the gateway's copy; it reads the hub's table list from
+      `erp/hub/tables.py` when called, since `erp/hub` imports this part). `landing.gateway_database` keeps the
+      temporary folder and its name (a test breaks it there).
+    - server-update (`ops/server_update.py`) → module functions of `core/store/backups.py` that open the file
+      themselves, read-only where it was, never a Store (it would migrate a newer version's database, the copy being
+      migrated, a safety copy): `copy_database`, `one_file` (no write-ahead log), `accounts_in`,
+      `carry_accounts_into`, `setting_in`. `server_update` imports them by name (`server_update.copy_database` is what
+      its tests break).
+    - The redacted run summary (`ops/share_report.py`, which opens a Store) → `learning.py` `invoice_count` and
+      `run_summary_rows`.
+  - **Transactions kept, never split or merged:** each `with store._conn():` around several calls is one
+    `with store.transaction():` around the same calls: the sync's page (its rows, the progress setting and the lease,
+    last: lost, all of it undone), B-1918's 250 vouchers at a time each with the lease, the POs closed 500 at a time,
+    the part's progress and state at its end. Each moved statement runs in the transaction it ran in: one method per
+    former `with` block, joining the caller's transaction where it did (the vendor reads inside the sync's page);
+    the undo's check stays inside `undo_export_batch`'s `BEGIN IMMEDIATE` (`undo_jde_batch` passes it as the guard);
+    `HubState` is one transaction a run, committed only by a run that worked; the accounts carried over a restored
+    backup, one transaction. One difference no one sees: `put_jde_posting`'s new row takes the `updated_at` its
+    update writes (two readings of the clock a moment apart before).
+  - **The rule** (`tests/meta/test_sql_in_store.py`, by the syntax tree: comments and strings don't count): no
+    `.execute(`, `.executemany(`, `.executescript(` or `.cursor(` call, no `sqlite3.connect` and no `._conn` in
+    `ap_coder/` outside `core/store`, but its allowlist: the benchmark's tools, which work below the store on purpose
+    (`bench/seed.py` writes 300,000 invoices straight in SQLite; `load.py`'s audit and `volume.py`'s statement tracer
+    and row counts read the database they measure; `day.py`'s probe reads it read-only while the server runs;
+    `coding.py` backdates a replayed day's feedback), each with its reason. The list only shrinks: a listed file
+    with no SQL left fails the test. On 537708d it fails (the 55 lines); after, it passes.
+  - **Left:** SQL text written outside the store and run by its generic readers (`summary_query`, `summary_fetch`,
+    `summary_rows`, `search_rows`): `erp/insights.py`, `spend.py`, `controls.py`, `accruals.py`, `directory.py`,
+    `search.py`, `dupaudit.py`, `jde.py` and `web/pages/process.py`. The statements run in the store, but their text
+    (whole queries, or WHERE clauses) is not in it yet: the next step for the move (the rule checks what runs).
+  - (`core/store/{postings,transaction,hub,backups,vendors,purchasing,learning,__init__}.py`, `erp/jde_post.py`,
+    `erp/jde_sync.py`, `erp/hub/run.py`, `erp/hub/landing.py`, `ops/server_update.py`, `ops/share_report.py`;
+    `tests/meta/test_sql_in_store.py`)
+- **D-190** · **A PostgreSQL seam: the store's migrations as numbered steps, SQLite's own SQL behind names, and the
+  database each release made brought up to date and compared with a new one** (scale goal, phase 7, C3; B-1975).
+  - **Why:** a move off SQLite (for high availability) had no map. `_migrate` was one 200-line run of version tests
+    and column looks; the SQLite-only constructs were spread over 40 files, uncounted; the migrations were tested on
+    faked old schemas only (the real ones reached schema 15, and columns came at 19 without a version of their own).
+  - **The steps** (`core/store/migrations.py`): `STEPS`, `(number, step)` in the order `_migrate` ran them. A
+    numbered step runs on a database older than its number (`MIGRATIONS = {2: _v2_vendor_keys, ..., 26:
+    _v26_indexes}`); a step numbered `EVERY_TIME` runs whatever the version, where it ran before (`_po_key_index`
+    right after 4, seventeen more after 26). `_migrate` is the loop. The same statements in the same order: the new
+    `migrate` probe of `same_behaviour.py` (22 old databases seeded with invoices, lessons, vendors, POs, ERP bills,
+    profiles, snapshots and events) gives the same schema, in SQLite's own order, and the same rows as 537708d, but
+    for B-1975's index. Its constants moved with it (`_INDEXES_*`, `_SNAPSHOTS_SCHEMA`, `FEEDBACK_CLEANUP`);
+    `_fill_tax_codes` and `_recompute_vendor_keys` stay on StoreCore. `_base.py` went from 997 lines to 740.
+  - **Migrated equals fresh** (`tests/core/test_migrations.py`): `scripts/old_schemas.py` runs each release's own
+    code (`git archive` of its commit, or its code unpacked: PR #3 to #8 are older than this clone's history) to
+    make a new database, kept as SQL in `tests/fixtures/old_schemas/` (22 files, one per distinct database: PR #1's
+    schema 2 to PR #99's 27, the pilot's and hand-over's tags among them, and 20 to 26, which no release had). Each is
+    opened by this version and compared, by name, with a new database: each table's columns (type, NOT NULL,
+    default, key), foreign keys and AUTOINCREMENT, each index's columns, uniqueness and WHERE, each trigger and view.
+    One difference is left, listed with why it does no harm (`KNOWN`: the AI reviewer's queue's columns in another
+    order); one put right must come off the list. The check found B-1975.
+  - **The dialect** (`core/store/dialect.py`): SQLite only, each name saying PostgreSQL's form: `PARAM`, `in_list`,
+    `json_get`, `json_valid`, `upsert`, `insert_or_replace`, `insert_or_ignore`, `update_or_ignore`, `NOW_DAYS`,
+    `NOW_SECONDS`, `group_concat`, `like`, `nocase`, `ROWID`, `settle`, `begin_write`, `busy_timeout`,
+    `set_busy_timeout`, `data_version`, `table_names`, `columns`, `add_column`. The shared helpers use them, so each
+    has one place: `_in_list`, `_STALE`, `ephemeral._DB_NOW`, `database_schema`, `briefly`, `_session_memo`, `_open`,
+    the store's opening, the migrations and the vendor keys' recount; `begin_write` at the seven sites that already
+    joined a transaction under way (the same behaviour). No other query was rewritten. Not converted: the 29 sites
+    with a bare `BEGIN IMMEDIATE`, which fail inside a transaction (the digest's R4); through `begin_write` they would
+    join it, a change of behaviour left to the nested-transactions item. `strftime` was dropped from the plan's
+    list: the SQL uses none.
+  - **The inventory** (`scripts/sql_inventory.py`, docs/POSTGRES.md): each construct counted in the text of the
+    string literals that read as SQL (the syntax tree, docstrings left out) and the driver's in the code (calls,
+    attributes): about 1,560 placeholders and some 340 uses of SQLite's own SQL, 80% in `core/store`, the JSON
+    functions the most (about 130). The port planned at about 17 days, 19 with the clean-ups before it.
+  - **The guard** (`tests/meta/test_dialect.py`): for the 15 constructs the dialect covers, the uses outside
+    `dialect.py` may not rise above today's (`ALLOWED`). A total per construct, not per file: SQL moved between files
+    (phase 7's SQL out of `erp/` and `ops/`) doesn't trip it; a fall doesn't fail it (the numbers are lowered by hand),
+    so work in parallel isn't stopped by it. The whole-code scan takes about a second: in the slow list, run by CI.
+  - **Alternatives:** a dict of numbered steps alone (the steps that run whatever the version would have moved,
+    and the order of the schema's rows with them); the every-time steps made numbered ones (a database at 27 lacking
+    a column would no longer get it); a dialect object handed round with the connection (nothing to choose between
+    yet); old schemas written from each commit's `_SCHEMA` (not what the release made: its `_migrate` added columns);
+    a per-file or exact allowance (every move or removal a failure).
+  - **Left:** the 29 bare `BEGIN IMMEDIATE`; the parts' own `julianday('now')` (8) and the other counted constructs;
+    the port itself (POSTGRES.md's plan).
+  - (`ap_coder/core/store/migrations.py`, `dialect.py`, `_base.py`, `ephemeral.py`, `purchasing.py`, `invoices.py`,
+    `reports.py`, `bulk_jobs.py`; `scripts/old_schemas.py`, `scripts/sql_inventory.py`, `scripts/probes/migrate.py`,
+    `scripts/same_behaviour.py`; `tests/core/test_migrations.py`, `tests/core/test_dialect.py`,
+    `tests/meta/test_dialect.py`, `tests/fixtures/old_schemas/`; docs/POSTGRES.md)
+- **D-191** · **The longest functions split, and a limit on a function's length; one amount parser and one date
+  parser, each caller's rules as its parameters; tests that wait for what they need, a slow list from measured times,
+  shared test helpers, a time limit on every CI job and a load smoke job** (scale goal, phase 7, C4: clean and
+  maintainable).
+  - **Why:** the digest's cleanliness and test-health findings (docs/archive/scale-2026-11/DIGEST.md, sections 1 and
+    7): functions of 150 to 270 lines nobody could hold in mind; amounts and dates parsed in four places that a fix
+    had to find one by one; sleeps where a test waited for a thread (too short on a busy runner, too long on a quick
+    one); a slow list that had drifted; helpers copied into dozens of test files; CI jobs a hang could hold for six
+    hours.
+  - **Long functions:** split into parts named for what they do, their lines moved as they were. `core/audit.py`
+    `describe` 198 lines to 9 (ten parts, one subject each, tried in the chain's order); `web/app.py` `create_app`
+    241 to 30 (the lifespan, the state, the middleware, the pages, the status routes, the error pages);
+    `coding/line_tax.py` `_prefill` 165 to 56 (its docstring's steps 1-2, 3 and 4, and the codes written);
+    `coding/validation.py` `validate_coding` 161 to 62 (header, lines, totals, history); `erp/jde.py` `_prepare` 176
+    to 40 (header, tax area, tax amounts, the distribution and its entries; `_Voucher.add`); `ops/cli.py`
+    `build_parser` 186 to 49 and `ops/doctor.py` `run_checks` 184 to 33 (by their groups of commands and of checks).
+    `describe` was compared with the old one on 88,800 generated events, the parser by its whole tree of commands
+    and options. **The limit** (`tests/meta/test_function_length.py`): 120 lines, from the measured lengths (5,144
+    functions; 38 over 100, 19 over 120, 6 over 150 after the splits). The 19 over it are listed at their length and
+    may only shrink; one under the limit (or gone) comes off the list. `StoreCore._migrate` (220) is among them: C3
+    rewrites it, and its entry goes with it.
+  - **One amount parser, one date parser** (`core/parsing.py`; in core, since the imports use them and core imports
+    nothing of capture): `parse_amount(value, printed=, within=)` and `parse_date(text, printed=, within=,
+    day_first=)`: printed (a document's text, or OCR's) or typed (a spreadsheet's cell, a CSV); the first value in a
+    line or the whole text one value; how a day/month that reads both ways is read. The grammars were moved, not
+    rewritten: printed and typed text disagree on what some values mean ("1.234" is 1,234 on a French invoice and
+    1.234 in a cell; "250.00 DR" is a register's debit; "03/04/2026" is read in the document's order of dates and
+    refused in an import), so each keeps its own, and a field's amount is the readers' grammar with the whole text
+    one amount. The callers keep their names and say their rules: `normalize.parse_amount` and `parse_date`
+    (printed, within), `supplier.parse_amount` and `parse_date` (printed, a field, its learned order),
+    `safe.parse_amount` (typed), `csvio.parse_date` (typed, and why not: ambiguous or not a date); the English and
+    French month names are one table. **Proven:** on 20,000 generated amounts, 20,023 values (numbers, NaN, True,
+    texts) and 20,000 dates (numeric, ISO, wordy in eight languages, glued, OCR's slips, near misses), the parsers at
+    537708d and the new one agreed on all 260,046 readings, on Python 3.11, 3.12 and 3.13. The old parsers are gone:
+    `tests/core/test_parsing.py` keeps the digests of what they read, with round-trip properties of each grammar
+    and the rules that differ.
+  - **Tests:** `tests/conftest.py` `until(condition, seconds)`, one bounded wait for a thread or process (the
+    copies in test_failover.py and test_web_review_bulk.py go). The sleeps that waited for something to happen wait
+    for it now (120 `time.sleep` in tests/ to 109): another web worker seeing a job, three readers at once over two
+    rounds (test_server_scale), a thread asking for an answer finding the other process's hold (three in
+    test_kept_answers), the holder of the one chat slot at the server (test_failover), the background loops having
+    looked three times (test_page_worker, test_bulk). Those left let time pass on purpose: a lease, a hold or a
+    resend wait running out, a stand-in's latency, a check that nothing happens meanwhile, a subprocess's script.
+    **The slow list** from measured times (`--junitxml` of the default run: 562 s here, 5,081 tests): the 35 tests
+    over 2 s that weren't listed (108 s) join it, as 33 entries: the default run 496 s after (5,040 tests). The older
+    entries (over half a second) stay: timed again on this machine, shared with other agents' runs, they would have
+    measured the load.
+    **Shared helpers:** `tests/stores.py` holds the `store` fixtures files wrote again (the sample setup; a copy of
+    the demo; of the cost centers' demo; each where the dashboard keeps its database): a file imports the one it
+    starts from, and pytest takes a fixture imported into a test file as the file's own (24 copies go; 23 that differ
+    stay: another path, the page reader's test, accounts, an env var, the setup-then-demo template).
+    `tests/conftest.py` `demo_db` (6 go; 4 that are the cost centers' demo and test_offline.py's path stay);
+    `tests/webclient.py` `PAGE` (19 go; offline_flow.py's stays: standard library only) and `gt`, now with changes
+    (12 `_gt` go, imported as `_gt`; test_controls_watch.py's takes an invoice number). `tmp_path_retention_policy =
+    "failed"` was set already (with `faulthandler_timeout`).
+  - **CI:** a `timeout-minutes` on the seven jobs that had none (Tests 45, Lint 10, Browser tests 30, the Windows
+    installer and pilot launcher 15 each, the two offline bundles 25 each: about twice their time in a passing run),
+    and `tests/meta/test_ci_workflow.py` keeps one on every job (60 at most). **`load-smoke`:** ten people for a
+    minute on two web workers over 2,000 invoices `bench load` seeds itself, its gate failing the job (a 5xx, an
+    answer over 30 s or none, "database is locked", an invoice approved or exported twice, the summary off): 2
+    minutes here (seed 45 s; 313 requests, p95 178 ms). **The bundle built once a run and shared** was not done: the
+    jobs that build one want different bundles (Windows' Python 3.12 with the OCR models; the Mac's 3.14 for arm64;
+    `mac-pilot-update`'s `--no-current`, built as elsewhere on purpose; `--no-models` on each OS for the update
+    tests), and the one job building the same as `windows-offline-bundle` is `windows-server-update`, left as it is;
+    an artifact would also hold both back behind a build job.
+  - **Alternatives:** one grammar for printed and typed amounts with a switch for each difference (exact agreement
+    needed a dozen, `float()`'s own forms among them); the old parsers kept beside the new one as the test's oracle
+    (a second copy to keep); every test's `store` parameter renamed to a shared fixture's name (hundreds of lines for
+    nothing a reader gains); the bundle as an artifact (above).
+  - **Left:** the 18 functions over the limit besides `_migrate` (the benches' `main` 269, `simulate` 203 and
+    `_simulate` 167; the rule reader's `_read_line_items` 155 and `_read_fields` 151; `jde.voucher_rows` 148...); a
+    supplier template still reads dates in English and French only ("24. Januar 2014" is no field date: the
+    digest's divergence, kept as it was); the slow list's older entries timed again on a quiet machine.
+  - (`core/parsing.py`, `core/safe.py`, `core/csvio.py`, `core/audit.py`, `capture/normalize.py`,
+    `capture/supplier.py`, `capture/reader/line_items.py`, `web/app.py`, `coding/line_tax.py`,
+    `coding/validation.py`, `erp/jde.py`, `ops/cli.py`, `ops/doctor.py`, `.github/workflows/ci.yml`,
+    `scripts/check.py`, `pyproject.toml`; `tests/core/test_parsing.py`, `tests/core/parsing_inputs.py`,
+    `tests/meta/test_function_length.py`, `tests/meta/test_ci_workflow.py`, `tests/stores.py`, `tests/conftest.py`,
+    `tests/webclient.py`, `tests/slow_tests.txt` and the test files whose copies went)
+- **D-192** · **Store transactions nest, and `core` is the base layer: a write joins the transaction under way, the
+  few that must commit on their own refuse in words; what the store keeps and compares by moves down into core, the
+  rest of core's imports from above are listed with why** (scale goal, phase 7, C2; B-1995, B-1996).
+  - **Why:** 29 writes began with a bare `BEGIN IMMEDIATE` and failed inside `Store.transaction()` or another write
+    with SQLite's "cannot start a transaction within a transaction" (the digest's R4): an approval's 25 to 30
+    commits could never become one. A `Store()` built inside a transaction committed it (R3). And `core` imported
+    the layers above it 76 times (53 file and module pairs), so the base layer could not be read, tested or moved to
+    another database apart from them.
+  - **Nesting:** 21 sites take the lock with `dialect.begin_write` (BEGIN IMMEDIATE, or join the transaction under
+    way): `add_user`, `set_role`, `deactivate_user`, `activate_user`, `change_password` (the new password),
+    `reset_password`, `unlock_username`, `unlock_address`, `authenticator_secret`, `update_after_check`,
+    `_recheck_duplicates`, `replace_proposal`, `create_export_batch`, `add_rules_applied`, `answer_manager_request`,
+    `delete_invoice` (`keep_approved`), `final_approve`, `save_supplier_profile` (a snapshot), `forget_if_withdrawn`,
+    `queue_imports`, `finish_import`. Called alone, each is what it was (`begin_write` is BEGIN IMMEDIATE when no
+    transaction is open, which a bare one needed); inside one, it is kept with its commit and undone with its
+    rollback. 8 keep their own, through `StoreCore._begin_alone` (`NestedWrite`, a RuntimeError in words, inside any
+    transaction or write, before anything is done): the four queues' claims (`next_page_read`, `next_verification`,
+    `next_azure_check`, `claim_import`: committed before the work starts, their heartbeat on another thread's
+    connection must find them, and the write lock is never held through minutes of reading) and a login's tries
+    (`authenticate` twice, `check_code`, `change_password`'s current password typed wrong: kept whatever comes next,
+    D-101; a rollback would undo the count of the pause). `StoreCore.__init__` inside a transaction under way makes
+    its schema on a connection of its own (`_conn(own=True)`): `executescript` commits first; nothing is due there
+    (the caller's Store made it current), so it takes no lock. `tests/meta/test_nested_writes.py`: no bare `BEGIN
+    IMMEDIATE` outside `dialect.py` (by the syntax tree, docstrings and comments left out; it finds the 29 on
+    f468b0f), and `ALONE` lists the 8 with why (the list only shrinks).
+  - **core below the rest:** moved down, under the names they had (their modules import them back, the same objects):
+    `core/keys.py`, new (`po_key`; `norm_invoice_number`, `norm_tax_number`, `same_tax_number`, `BUSINESS_NUMBER`,
+    `master_vendor_id`, `mask_account`, `IN_ERP`/`ADDED_HERE` from `coding/vendors.py`; `rules._plain` as `plain`;
+    `search_keys`, `register_keys`, `_raw` as `raw_number` from `erp/search.py`; `supplier_key`; `line_pattern` and
+    `LINE_GL`/`LINE_CC`/`LINE_FIELDS` from `ai/lessons.py`); `core/tax_setup.py`, new (the tax setup and the rate
+    table: `TaxRate`, `TaxRateTable`, `TaxTreatment`, `TaxSetup`, `load_tax_mapping`, `rates_path`, and the names of
+    the taxes, treatments and provinces the schema uses, from `coding/tax.py`, which keeps the checks); `core/memory.py`
+    (`HISTORY`, `AUTONOMOUS_REVIEWER`); `core/paths.py` (`page_worker._pid_alive` as `pid_alive`); the bank accounts'
+    columns into the part that writes them (`accounts.BANK_COLUMNS`, `banks.COLUMNS` imports it). 21 pairs and 34
+    statements gone: `core/schema.py` and `core/reference_data.py` no longer import `coding` at load. The one test
+    that patched `coding.tax.rates_path` to steer the store patches `core.tax_setup.rates_path`, where the store
+    asks now. `tests/meta/test_core_imports.py`: `KEPT`, 32 pairs (file, module) with why; a new one fails, one no
+    longer made must come off.
+  - **What stays, and why:** business rules the store runs inside its own transactions, where a move would split
+    them from the layer that owns them: the summary's facts (D-110: `bulk`, `taxreturn`, `accruals`, `insights`,
+    `spend`), the tax vote an approval learns and schema 17's step (`line_tax`), the due date (`terms`), the
+    duplicates checked again (`validation`), a supplier's autonomy and its template replayed (`capture.supplier`,
+    `capture.workflow`), month-end's billed lines (`po.positive_lines`), the coding rules read back (`rules.Rule`), a
+    guess's mark (`offline_coder.guessed`); a migration step (`old_readings`, D-89); the service's facts the backups
+    need (`ops`: server mode and server.json, the business time zone, IT's allowed folders, the system log); words of
+    the layers above (`audit`: C4 changes it in parallel, so only its import lines were touched; `lessons`'
+    `code_label`); the demo's files read with the imports' parsers (`samples`); the hub's table definitions (D-189);
+    an invoice stored before `tax_exempt` (`schema`, D-64).
+  - **Alternatives:** a registry the upper layers fill at import (the summary or an approval worked out without it
+    when nothing imported them first: wrong rows kept); every claim joining too (the heartbeat on another connection
+    would not see it); the kept ones left bare and listed (SQLite's error again); skipping the schema in a nested
+    `Store()` (a table with no version of its own, `bulk_jobs`, would be missed on an older database).
+  - **Left:** the 32 pairs (a design change each: facts handed to the store, or the summary as a plug-in). A write
+    called inside a read-only snapshot (`summary_snapshot`, `one_snapshot`) joins its deferred transaction: it takes
+    the write lock at its first write, and fails with SQLite's "database is locked" when another process wrote since
+    the snapshot began (it failed every time before).
+  - (`ap_coder/core/store/{_base,users,lessons,purchasing,managers,invoices,page_queue,capture,imports,summary,
+    transaction,accounts,backups,folder,learning,migrations,register,samples,vendors,__init__}.py`, `core/keys.py`,
+    `core/tax_setup.py`, `core/memory.py`, `core/paths.py`, `core/schema.py`, `core/reference_data.py`, `core/audit.py`
+    (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
+    `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
+    `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)
+  - **After its review (B-1965, B-1966):** a Store() made inside this thread's write is not started up again when the
+    database is current (its start-up's summary refresh would wait for the lock the thread holds), and refused
+    (NestedWrite) when it isn't; the read snapshots roll back on an exception, so a write inside one is undone with it.
+    The `_conn(own=)` flag went with it.

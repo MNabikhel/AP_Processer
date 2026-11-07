@@ -12,18 +12,12 @@ Entry points: ``apply`` (an invoice's lines), ``rule_for``, ``describe`` and ``s
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.keys import plain as _plain
 from ..core.memory import vendor_key
 from ..core.schema import InvoiceCoding
-
-
-def _plain(text: str) -> str:
-    """Lower case, no accents, single spaces: "Café  Livraison" -> "cafe livraison"."""
-    decomposed = unicodedata.normalize("NFKD", text or "")
-    return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).lower().split())
 
 
 def _has_words(name: str, wanted: str) -> bool:

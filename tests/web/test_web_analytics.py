@@ -26,8 +26,8 @@ from ap_coder.web.app import create_app
 from ap_coder.web.pages.activity import controls_period, filter_events
 from ap_coder.web.pages.learning import read_sheets
 from tests.conftest import SAMPLE_STEM, SAMPLES, fill_from
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 SVG = "{http://www.w3.org/2000/svg}"
 PAGES = ("/learning", "/learning?tab=suppliers", "/learning?tab=readers", "/spend", "/insights", "/activity")
 

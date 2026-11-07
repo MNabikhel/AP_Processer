@@ -14,6 +14,7 @@ from collections import OrderedDict
 from types import MappingProxyType
 from typing import Any
 
+from ..keys import ADDED_HERE, BUSINESS_NUMBER, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
     _ACTIVE_IN,
@@ -99,8 +100,6 @@ def _newest_first(row: Any) -> int:
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
     """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
     GST/HST number (B-930). Without both numbers it reads as the same supplier set up twice: merged, as before."""
-    from ...coding.vendors import same_tax_number
-
     a, b = str(first.get("erp_id") or "").strip(), str(row.get("erp_id") or "").strip()
     if not a or not b or a == b:
         return False
@@ -163,8 +162,6 @@ class VendorsMixin:
         {"vendor_name", "gst_number", "printed", "confirmed": approvals that said so since it was last approved
         otherwise}. None when AP never corrected this name, when its last approval kept it as read, or when the invoice
         shows a GST/HST number that is not that vendor's."""
-        from ...coding.vendors import same_tax_number
-
         key = vendor_key(name or "")
         if not key:
             return None
@@ -222,8 +219,6 @@ class VendorsMixin:
         master keeps a second one under "<name> #<ERP ID>", B-930), the one with the invoice's GST/HST number, else
         its ERP ID, else the one under the name itself (B-1021). None when no vendor goes by this name. One vendor by
         the name (the usual case): that vendor, whatever number the invoice shows (the checks then say it differs)."""
-        from ...coding.vendors import norm_tax_number, same_tax_number
-
         key = vendor_key(name or "")
         if not key:
             return None
@@ -292,8 +287,6 @@ class VendorsMixin:
             )  # fmt: skip
             changed = {k: v for k, v in values.items() if before.get(k, "active" if k == "status" else "") != v}
             if changed:
-                from ...coding.vendors import ADDED_HERE
-
                 # A vendor's note is in a check's words only while it is on hold, or added from the review screen
                 # (VENDOR_ON_HOLD, VENDOR_ADDED_HERE): another one's changes no check (D-155).
                 said = status == "on_hold" or before.get("erp_hold") or before.get("in_master") == ADDED_HERE
@@ -510,6 +503,27 @@ class VendorsMixin:
         with self._conn() as conn:
             return [tuple(r) for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE in_master = 1")]
 
+    def master_vendors_of(self, keys: set[str], ids: set[str]) -> dict[str, dict[str, Any]]:
+        """The vendor master's vendors of these keys or ERP IDs, by key: what the JD Edwards sync reports changed."""
+        sql = (
+            "SELECT vendor_key, display_name, erp_id, expected_gst, terms, status, qst_number, pst_number, province, "
+            "erp_bank, erp_hold FROM vendors WHERE in_master = 1 AND {} IN (SELECT value FROM json_each(?))"
+        )
+        found: dict[str, dict[str, Any]] = {}
+        with self._conn() as conn:
+            for column, values in (("vendor_key", keys), ("erp_id", ids)):
+                for r in conn.execute(sql.format(column), (json.dumps(sorted(values)),)):
+                    found[r["vendor_key"]] = dict(r)
+        return found
+
+    def set_erp_bank_and_hold(self, values: dict[str, tuple[str, str]]) -> None:
+        """{ERP ID: (the bank account JDE pays on, JDE's hold code)} on the vendor master's vendors of those IDs (kept
+        apart from AP's own hold, D-105): only where either changed."""
+        with self._conn() as conn:
+            conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
+                             "(erp_bank != ?1 OR erp_hold != ?2)",
+                             [(bank, hold, erp_id) for erp_id, (bank, hold) in values.items()])  # fmt: skip
+
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
         invoice whose vendor name differs but whose GST/HST number matches still gets its ID. Kept in each process
@@ -518,8 +532,6 @@ class VendorsMixin:
         return self.summary_memo("vendor_ids", self._vendor_ids, topic="", changes="vendors")
 
     def _vendor_ids(self) -> dict[str, str]:
-        from ...coding.vendors import norm_tax_number
-
         with self._conn() as conn:
             rows = conn.execute("SELECT vendor_key, erp_id, expected_gst FROM vendors WHERE erp_id != ''").fetchall()
         ids = {r[0]: r[1] for r in rows}
@@ -535,13 +547,11 @@ class VendorsMixin:
         """The vendor master's vendors whose GST/HST number is the registration ``number`` is (``same_tax_number``),
         in the list's order: for an invoice not found by name. Only those vendors are read, found by the master's
         numbers kept in each process until the vendor list changes (``changes/vendors``, D-159)."""
-        from ...coding.vendors import _BUSINESS_NUMBER, norm_tax_number, same_tax_number
-
         text = norm_tax_number(number)
         if not text:
             return []
         exact, business = self.summary_memo("master_numbers", self._master_numbers, topic="", changes="vendors")
-        found = {*exact.get(text, ()), *(business.get(text[:9], ()) if _BUSINESS_NUMBER.fullmatch(text) else ())}
+        found = {*exact.get(text, ()), *(business.get(text[:9], ()) if BUSINESS_NUMBER.fullmatch(text) else ())}
         if not found:
             return []
         with self._conn() as conn:
@@ -555,8 +565,6 @@ class VendorsMixin:
         """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:
         the rowids of those whose number is it, with or without its RT suffix}): every vendor ``same_tax_number``
         could match is in one of them."""
-        from ...coding.vendors import _BUSINESS_NUMBER, norm_tax_number
-
         with self._conn() as conn:
             rows = conn.execute("SELECT rowid, expected_gst FROM vendors WHERE in_master = 1 AND expected_gst != ''")
             exact: dict[str, list[int]] = {}
@@ -565,7 +573,7 @@ class VendorsMixin:
                 text = norm_tax_number(gst)
                 if text:
                     exact.setdefault(text, []).append(rowid)
-                    if _BUSINESS_NUMBER.fullmatch(text):
+                    if BUSINESS_NUMBER.fullmatch(text):
                         business.setdefault(text[:9], []).append(rowid)
         return exact, business
 

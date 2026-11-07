@@ -22,8 +22,8 @@ from ap_coder.core.store import APPROVED, REVIEW, Store
 from ap_coder.web.app import create_app
 from tests.conftest import SAMPLES
 from tests.web.test_web_invoice import form_of
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 DEMO_DAY = SAMPLES / "demo_day"
 CORRECTED = {"HP 26X toner": "6000", "Dell 27": "6010", "Copy paper": "6000"}  # what AP codes on PO-77120
 LIVE = os.environ.get("AP_DEMO_DAY_URL", "")  # a running AP Coder; its database is AP_DEMO_DAY_DB

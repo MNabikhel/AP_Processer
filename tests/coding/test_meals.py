@@ -17,15 +17,12 @@ from ap_coder.core.reference_data import load_reference_data
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import exports, jde
-from tests.conftest import DATA, SAMPLES
+from tests.conftest import DATA
+from tests.webclient import gt as _gt
 
 ON, QC, BC = "northwind_ON_HST_NW-2026-0912", "montroyal_QC_TPS_TVQ_ACMR-2026-1187", "pacific_BC_GST_PST_PO-77120"
 MEALS = "6320"
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
-
-
-def _gt(stem):
-    return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
 
 
 def _setup(meals=(MEALS,)):

@@ -9,8 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...coding.po import CLOSED, OPEN, po_key, positive_lines
+from ...coding.po import CLOSED, OPEN, positive_lines
 from ...coding.rules import Rule
+from ..keys import po_key
 from ..memory import vendor_key
 from ._base import (
     _ACTIVE_IN,
@@ -21,6 +22,7 @@ from ._base import (
     _in_list,
     _now,
 )
+from .dialect import begin_write
 from .learning import one_snapshot
 from .summary import BIT, fetch_rows
 
@@ -406,6 +408,18 @@ class PurchasingMixin:
             number = conn.execute("SELECT po_number FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
             self._log(conn, "po_status", actor=actor, detail={"po": number[0] if number else key, "status": status})
 
+    def po_keys_written_since(self, stamp: str) -> set[str]:
+        """The POs written (imported, changed) since ``stamp``: what a JD Edwards read wrote before it stopped."""
+        with self._conn() as conn:
+            return {r[0] for r in conn.execute("SELECT po_key FROM purchase_orders WHERE updated_at >= ?", (stamp,))}
+
+    def open_po_numbers(self, keys: list[str]) -> dict[str, str]:
+        """{key: PO number} of those of these POs that are open, by key."""
+        with self._conn() as conn:
+            return {r[0]: r[1] for r in conn.execute(
+                "SELECT po_key, po_number FROM purchase_orders WHERE status = ? AND po_key IN (SELECT value FROM "
+                "json_each(?)) ORDER BY po_key", (OPEN, json.dumps(keys)))}  # fmt: skip
+
     def delete_purchase_orders(self, keys: list[str], actor: str | None = None) -> int:
         with self._conn() as conn:
             listed = (json.dumps(list(keys)),)
@@ -444,7 +458,7 @@ class PurchasingMixin:
         at once never put the same invoice in two batches: the write lock is taken before the invoices are
         read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
+            begin_write(conn)  # the write lock from the read to the marks
             # The ids as one JSON list: one '?' however many are ticked (SQLite takes only so many bound variables).
             eligible = conn.execute(
                 "SELECT id, grand_total, currency FROM invoices WHERE id IN (SELECT value FROM json_each(?)) "
@@ -527,7 +541,7 @@ class PurchasingMixin:
         the AI's accuracy is measured on its own answer for them."""
         with self._conn() as conn:
             # The write lock from the read to the write: a background check's notes saved in between are kept (B-658).
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return
@@ -615,8 +629,7 @@ class PurchasingMixin:
         first in the same write transaction (``BEGIN IMMEDIATE``) and may refuse with ValueError: the JD Edwards
         vouchers' check that none of the batch's is, or may be, in JDE (D-105)."""
         with self._conn() as conn:
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             if guard is not None:
                 guard(conn)
             claimed = conn.execute(

@@ -18,12 +18,12 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from tests.conftest import SAMPLES
+from tests.webclient import PAGE
 
 STEM = "northwind_ON_HST_NW-2026-0912"
 ENDPOINT = "https://ap-test.cognitiveservices.azure.com/"
 HOST = "ap-test.cognitiveservices.azure.com"
 KEY = "S3cretKeyForTests0123456789abcdWXYZ"
-PAGE = {"X-AP-Coder": "1"}
 
 
 def _settings():

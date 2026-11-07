@@ -1,7 +1,8 @@
 """The store's foundation (D-69): the schema (``_SCHEMA``, ``SCHEMA_VERSION``), the migrations of an older database
-(``StoreCore._migrate``), the connections (``StoreCore._conn``, ``StoreCore.session``) and the helpers the other parts
-share: the statuses and queues' names, ``_now``, ``_in_list``, ``fold_text`` (the SQL function ``ap_fold``), and what
-an approval counts as coded, kept or guessed (``suggestion_kept``, ``line_guessed``)."""
+(``StoreCore._migrate``, its steps in ``migrations``, D-190), the connections (``StoreCore._conn``,
+``StoreCore.session``) and the helpers the other parts share: the statuses and queues' names, ``_now``, ``_in_list``,
+``fold_text`` (the SQL function ``ap_fold``), and what an approval counts as coded, kept or guessed
+(``suggestion_kept``, ``line_guessed``). What is SQLite's own in them is named in ``dialect``."""
 
 from __future__ import annotations
 
@@ -17,13 +18,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS, payment
-from ...coding.vendors import norm_invoice_number
-from ..memory import CODED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
+from ..keys import norm_invoice_number
+from ..memory import pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
 from ..reference_data import UNASSIGNED
-from .folder import add_register_keys, fill_seen_files
+from . import dialect
 from .fx import _FX_RATE, APPROVAL_CONTROLS, parse_fx_rates, tiny_fx_rates, unread_fx_text  # noqa: F401  (re-exported)
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
@@ -42,44 +42,6 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # server, and the downloads its background process makes, reports.py, D-169); past_lines came later in 27 (by
 # _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178),
 # and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185)
-# Schema 20's indexes (B-1581), for: an export batch's invoices (undo, an empty batch, who may post it), an invoice's
-# coding memory (withdrawn at a reopen, rejection or delete), the events of a kind since a day (touchless figures,
-# the approval controls, who vouched for an account), an account's sessions, the expired one-off values, and a
-# vendor by its ERP number (the JD Edwards supplier sync).
-_INDEXES_20 = (
-    "CREATE INDEX IF NOT EXISTS invoices_export_batch ON invoices (export_batch)",
-    "CREATE INDEX IF NOT EXISTS feedback_invoice ON feedback (invoice_id)",
-    "CREATE INDEX IF NOT EXISTS events_action_at ON events (action, created_at)",
-    "CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)",
-    "CREATE INDEX IF NOT EXISTS ephemeral_expires ON ephemeral (expires_at)",
-    "CREATE INDEX IF NOT EXISTS vendors_erp_id ON vendors (erp_id)",
-)
-# Schema 24's indexes (D-156): the events of a period counted (Activity's last 7 days, the controls report) and the
-# people the events are by (Activity's Person filter, an event by one person), each read off the index alone, not the
-# events table (400,000 events at 100,000 invoices); the ERP register's invoices of some numbers (the JD Edwards
-# duplicate check of a batch), not the whole register (200,000 rows).
-_INDEXES_24 = (
-    "CREATE INDEX IF NOT EXISTS events_created ON events (created_at, action)",
-    "CREATE INDEX IF NOT EXISTS events_actor ON events (actor)",
-    "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)",
-)
-# Schema 25's index (B-1714): a lesson's corrections, and the ones agreeing with it, counted off the index alone
-# (``lessons._LESSON``: the review screen's "Learned" hints), not every approval that saw its situation (220,000 for
-# the biggest vendor at 100,000 invoices). It replaces the index by situation alone, a part of it.
-_INDEXES_25 = (
-    "DROP INDEX IF EXISTS lesson_approvals_situation",
-    "CREATE INDEX IF NOT EXISTS lesson_approvals_counted ON lesson_approvals (situation, corrected, value)",
-)
-# Schema 26's indexes (D-168): the import queue's files waiting or being read, and those of the same content (a file
-# is never read twice), off the index; a run's files and batches (the Process page's card).
-_INDEXES_26 = (
-    "CREATE INDEX IF NOT EXISTS import_files_status ON import_files (status, sha256)",
-    "CREATE INDEX IF NOT EXISTS import_files_batch ON import_files (batch, status)",
-    "CREATE INDEX IF NOT EXISTS import_batches_run ON import_batches (run)",
-)
-# The one-off clean-ups of the learning memory ``_migrate`` has run on a database (settings.feedback_cleanup): a new
-# clean-up added there changes it, so it runs once on every database.
-FEEDBACK_CLEANUP = "1"
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -96,7 +58,7 @@ CHECKS_STAMP_KEY = "checks_stamp"
 def _in_list(column: str) -> str:
     """``column IN`` a list bound as ONE parameter (a JSON array): a list of any length, where one ``?`` per item
     fails past the SQLite build's limit (999 on older builds, 32,766 on newer)."""
-    return f"{column} IN (SELECT value FROM json_each(?))"
+    return dialect.in_list(column)
 
 
 # An invoice file looked for and not found (``Store.invoice_file``) is looked for again after this long, not on every
@@ -150,14 +112,6 @@ KEEP_SNAPSHOTS = 5
 
 TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
 DEFAULT_TOUCHLESS_LIMIT = 5000.0
-
-# In the order of approval (``seq``), whatever the clock says (B-780).
-_SNAPSHOTS_SCHEMA = (
-    "CREATE TABLE IF NOT EXISTS template_snapshots (seq INTEGER PRIMARY KEY AUTOINCREMENT, "
-    "invoice_id INTEGER NOT NULL UNIQUE, supplier_key TEXT NOT NULL, before_json TEXT, after_json TEXT, "
-    "at TEXT NOT NULL)",
-    "CREATE INDEX IF NOT EXISTS template_snapshots_supplier ON template_snapshots (supplier_key, seq)",
-)
 
 # Each vendor's invoices changed, in the order they were (D-174): (the vendor, the invoice) logged by the triggers that
 # count each vendor's changes (``summary.SUMMARY_TRIGGERS``: an invoice of its added or deleted, or a column
@@ -363,7 +317,7 @@ STALE_READING_HOURS = 2
 # A read (or review) under way is stale once not renewed for READING_STALE_SECONDS on the database's clock (``renewed``:
 # julianday('now'), which a change of the clocks doesn't move, B-1770); a row renewed before it had one, by its local
 # time (``updated_at``). ``{t}``: the table's name and a dot, or nothing; asked with ``page_queue._stale()``.
-_STALE = "COALESCE({t}renewed < julianday('now') - ? / 86400.0, {t}updated_at < ?)"
+_STALE = f"COALESCE({{t}}renewed < {dialect.NOW_DAYS} - ? / 86400.0, {{t}}updated_at < ?)"
 _IN_LINE = f"(status = 'waiting' OR (status = 'reading' AND {_STALE.format(t='')}))"  # ? = page_queue._stale()
 
 # The Azure check's queue (``azure_checks.status``, ``ap_coder/ai/azure_check.py``): off unless AP turns it on in
@@ -492,6 +446,11 @@ class DatabaseTooNew(RuntimeError):
     """The database was made by a newer AP Coder: this (older) one never opens it, so it is never downgraded."""
 
 
+class NestedWrite(RuntimeError):
+    """A write that commits on its own (a queue's claim, a try at logging in: ``StoreCore._begin_alone``) was called
+    inside another transaction, which would hold its commit back or undo it with a rollback."""
+
+
 def database_schema(path: Path) -> int | None:
     """The ``schema_version`` a database file records (1 for one older than the setting; None for a missing or
     empty file, or one with no tables yet: a new database). Only reads."""
@@ -502,7 +461,7 @@ def database_schema(path: Path) -> int | None:
     except (OSError, sqlite3.Error):
         return None
     try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        tables = dialect.table_names(conn)
         if not tables:
             return None
         row = (
@@ -543,11 +502,21 @@ class StoreCore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         unsaved = self._before_migrating()
+        held = _held_connections().get(str(self.path))
+        if held is not None and held.depth > 0:
+            # Inside this thread's transaction on the database: ``executescript`` would commit it (B-1996), and the
+            # start-up's own writes (the summary's refresh) would wait for the write lock this thread holds (B-1965).
+            # The caller's Store has made it current: nothing to start up. One not current can't be brought up to
+            # date inside another write.
+            if database_schema(self.path) == SCHEMA_VERSION:
+                return
+            raise NestedWrite(f"The database {self.path} must be brought up to date first, so a Store of it can't be "
+                              "made inside another write.")  # fmt: skip
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             if unsaved:  # said on Settings → Data & backups (``backups.BACKUP_STATUS``)
-                conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('backup_status', ?)", (unsaved,))
+                conn.execute(dialect.insert_or_replace("settings", ("key", "value")), ("backup_status", unsaved))
 
     def _before_migrating(self) -> str:
         """An update's safety net, before the database is touched: a database made by a newer AP Coder is refused
@@ -570,225 +539,11 @@ class StoreCore:
         return backup_files.before_update(self, found)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        """Bring a database made by an older version up to date (recorded as settings.schema_version)."""
-        row = conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
-        version = int(row["value"]) if row else 1
-        if version < 2:  # vendor matching now ignores accents, "&"/"and" and more legal forms
-            for table in ("invoices", "feedback"):
-                rows = conn.execute(f"SELECT id, vendor_name FROM {table}").fetchall()
-                conn.executemany(
-                    f"UPDATE {table} SET vendor_key = ? WHERE id = ?",
-                    [(vendor_key(r["vendor_name"] or ""), r["id"]) for r in rows],
-                )
-        if version < 3:  # invoices remember the ERP export batch they went out in
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-            if "export_batch" not in columns:
-                conn.execute("ALTER TABLE invoices ADD COLUMN export_batch INTEGER")
-        if version < 4:  # invoices remember the purchase order they quote
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-            if "po_key" not in columns:
-                conn.execute("ALTER TABLE invoices ADD COLUMN po_key TEXT NOT NULL DEFAULT ''")
-            rows = conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall()
-            for r in rows:
-                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
-                if coding.get("po_number"):
-                    conn.execute("UPDATE invoices SET po_key = ? WHERE id = ?", (po_key(coding["po_number"]), r["id"]))
-        conn.execute("CREATE INDEX IF NOT EXISTS invoices_po ON invoices (po_key)")
-        if version < 5:  # invoices remember when they are due (printed, from the terms, or the default)
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-            if "due_date" not in columns:
-                conn.execute("ALTER TABLE invoices ADD COLUMN due_date TEXT")
-            for r in conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall():
-                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
-                if coding:
-                    conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (_due(coding), r["id"]))
-        if version < 6:  # second approval above the approval limit
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-            for column in ("second_reviewer", "second_reviewed_at"):
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
-        if version < 7:  # PO lines with an amount but no quantity (services, lump sums)
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
-            if "amount_only" not in columns:
-                conn.execute("ALTER TABLE po_lines ADD COLUMN amount_only INTEGER NOT NULL DEFAULT 0")
-        if version < 8:  # the vendor master imported from the ERP
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
-            for column, kind in (
-                ("erp_id", "TEXT NOT NULL DEFAULT ''"),
-                ("terms", "TEXT NOT NULL DEFAULT ''"),
-                ("default_gl", "TEXT NOT NULL DEFAULT ''"),
-                ("in_master", "INTEGER NOT NULL DEFAULT 0"),
-            ):
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} {kind}")
-        if version < 9:  # parked invoices: why, and when to follow up
-            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-            for column in ("parked_reason", "follow_up"):
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
-        if version < 12:  # approvals before this version kept the AI's currency, not the reviewer's
-            for r in conn.execute("SELECT id, final_output FROM invoices WHERE final_output IS NOT NULL").fetchall():
-                currency = str((json.loads(r["final_output"]) or {}).get("currency") or "").strip().upper()
-                if currency:
-                    conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
-        if version < 13:  # credit notes were given a due date like invoices
-            conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
-        if version < 20:  # the lookups that read a whole table, a year of invoices on the server (B-1581)
-            for sql in _INDEXES_20:
-                conn.execute(sql)
-        if version < 24:  # the events of a period and of a person, off an index (D-156)
-            for sql in _INDEXES_24:
-                conn.execute(sql)
-        if version < 25:  # a lesson's approvals counted off an index (B-1714)
-            for sql in _INDEXES_25:
-                conn.execute(sql)
-        if version < 26:  # the import queue (D-168): its tables are made by _SCHEMA, its indexes here
-            for sql in _INDEXES_26:
-                conn.execute(sql)
-        # The page reader's queue remembers who is reading an invoice, how many reads were cut off (added within
-        # schema 15) and when a read was renewed on the database's clock (B-1770): looked for whatever the version.
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
-        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0"),
-                             ("renewed", "REAL")):  # fmt: skip
-            if columns and column not in columns:
-                conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
-        # The AI reviewer's queue counts reviews the model server cut off before any answer, and remembers who is
-        # reviewing an invoice, like the page reader's (looked for likewise).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
-        for column, kind in (("tries", "INTEGER NOT NULL DEFAULT 0"), ("reader", "TEXT NOT NULL DEFAULT ''"),
-                             ("renewed", "REAL")):  # fmt: skip
-            if columns and column not in columns:
-                conn.execute(f"ALTER TABLE verifications ADD COLUMN {column} {kind}")
-        # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
-        # version, like the page reader's columns above).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
-        if columns and "suspended_at" not in columns:
-            conn.execute("ALTER TABLE supplier_profiles ADD COLUMN suspended_at TEXT")
-            # A vendor suspended by an older version: when, from the Activity log (else its last change), so the
-            # clean streak it had before still doesn't count.
-            conn.execute(
-                "UPDATE supplier_profiles SET suspended_at = COALESCE((SELECT MAX(e.created_at) FROM events e "
-                "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
-                "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
-            )
-        # The vendor list keeps each vendor's QST and PST numbers, province and the bank account JD Edwards pays it on
-        # (the JDE API's sync, D-104), to check what an invoice prints against the vendor (whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
-        for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):  # erp_hold: JDE's (D-105)
-            if columns and column not in columns:
-                conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        # Each cost center's manager, who confirms the cost allocation when AP asks (D-138), and in server mode the
-        # cost centers a Manager account answers for (looked for whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(cost_centers)")}
-        for column in ("manager_name", "manager_email"):
-            if columns and column not in columns:
-                conn.execute(f"ALTER TABLE cost_centers ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        from .users import add_columns
+        """Bring a database made by an older version up to date (recorded as settings.schema_version): the steps of
+        ``migrations.STEPS``, in order (D-190)."""
+        from .migrations import migrate  # (it imports this part: here, not at the top)
 
-        add_columns(conn)  # the accounts' columns added since (a Manager's cost centers, the authenticator app's)
-        # An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
-        # again is found (looked for whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
-        if "original_sha256" not in columns:
-            conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
-        # The lookups of every invoice processed and page drawn: the same file (find_by_hash), the same total under
-        # another vendor (duplicates_elsewhere), an invoice's newest event of a kind (latest_events) (B-730).
-        conn.execute("CREATE INDEX IF NOT EXISTS invoices_sha ON invoices (file_sha256)")
-        conn.execute("CREATE INDEX IF NOT EXISTS invoices_total ON invoices (grand_total)")
-        conn.execute("CREATE INDEX IF NOT EXISTS events_action ON events (action, invoice_id)")
-        # The ERP register counts a bill entered more than once in the ERP, for the duplicate audit (looked for
-        # whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
-        if columns and "copies" not in columns:
-            conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
-        add_register_keys(conn, columns)  # the ERP register's search keys (schema 22, D-157; whatever the version)
-        from .register import add_jde_register
-
-        add_jde_register(conn, columns)  # its supplier numbers and JD Edwards' vouchers (D-181, likewise)
-        # A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
-        # amount), for what is left to expense on the review screen (looked for whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
-        if "open_amount" not in columns:
-            conn.execute("ALTER TABLE po_lines ADD COLUMN open_amount REAL")
-        # Template snapshots go by the order of approval (``seq``), not by a time to the second (B-780): a table made
-        # before it (this version, unreleased) is rebuilt, its snapshots kept in the order they were taken.
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(template_snapshots)")}
-        if not columns:
-            for sql in _SNAPSHOTS_SCHEMA:
-                conn.execute(sql)
-        elif "seq" not in columns:
-            conn.execute("ALTER TABLE template_snapshots RENAME TO template_snapshots_old")
-            conn.execute("DROP INDEX IF EXISTS template_snapshots_supplier")
-            for sql in _SNAPSHOTS_SCHEMA:
-                conn.execute(sql)
-            conn.execute(
-                "INSERT INTO template_snapshots (invoice_id, supplier_key, before_json, after_json, at) "
-                "SELECT invoice_id, supplier_key, before_json, after_json, at FROM template_snapshots_old "
-                "ORDER BY at, rowid"
-            )
-            conn.execute("DROP TABLE template_snapshots_old")
-        # Vendor keys stored under older vendor-matching rules (e.g. before "Limitée" and "s.e.c." were ignored) are
-        # recomputed, so the vendor's invoices, lessons, master record and POs still match (looked for whatever the
-        # version: the rules are recorded on their own).
-        row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
-        if (row["value"] if row else "") != VENDOR_KEY_RULES:
-            self._recompute_vendor_keys(conn)
-            conn.execute("DELETE FROM past_lines")  # (the lessons by line, D-178: worked out again)
-            _forget_learning(self.path)
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (VENDOR_KEY_RULES,),
-            )
-        # One-off clean-ups of the learning memory, whatever the version: each scans the whole feedback table, so
-        # they run once per database (recorded as settings.feedback_cleanup, like vendor_key_rules), not on every
-        # Store() the background workers make (B-727).
-        row = conn.execute("SELECT value FROM settings WHERE key = 'feedback_cleanup'").fetchone()
-        if (row["value"] if row else "") != FEEDBACK_CLEANUP:
-            # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
-            # accuracy: withdrawn, as nothing is recorded for them any more.
-            from ...capture.workflow import AUTONOMOUS_REVIEWER
-
-            conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
-            # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
-            # reviewer's coding (B-650), recounted (the learning memory reads both alike).
-            conn.execute(
-                "UPDATE feedback SET outcome = ? WHERE outcome = ? AND suggested_gl IN ('', ?) "
-                "AND COALESCE(suggested_cc, '') IN ('', ?)",
-                (CODED, CORRECTED, UNASSIGNED, UNASSIGNED),
-            )
-            conn.execute("DELETE FROM past_lines")
-            _forget_learning(self.path)
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('feedback_cleanup', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (FEEDBACK_CLEANUP,),
-            )
-        # A GL account can be marked "Meals & entertainment (50% tax credit)" (D-90; looked for whatever the version).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(gl_accounts)")}
-        if columns and "meals" not in columns:
-            conn.execute("ALTER TABLE gl_accounts ADD COLUMN meals INTEGER NOT NULL DEFAULT 0")
-        # Each approved line remembers its tax code, learned from like its GL account (D-70): filled in from the
-        # approved invoices (looked for whatever the version, like the columns above).
-        # Who decided it and where the invoice was supplied (D-80) came later in schema 17: a database already at 17
-        # without them gets them, and every code filled again (a kept learned code or a guess is no vote).
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
-        missing = [c for c in ("final_tax_code", "tax_source", "tax_province", "tax_uncollected") if c not in columns]
-        for column in missing:
-            conn.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-        if missing:
-            self._fill_tax_codes(conn)
-        from .old_readings import reading_as_d89  # (it imports this part: here, not at the top)
-
-        reading_as_d89(conn)  # once per database
-        fill_seen_files(conn)  # what the pick-up read of the folder: each invoice's own file to start with (D-155)
-        if version < SCHEMA_VERSION:
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(SCHEMA_VERSION),),
-            )
+        migrate(self, conn)
 
     @staticmethod
     def _fill_tax_codes(conn: sqlite3.Connection) -> None:
@@ -799,8 +554,8 @@ class StoreCore:
 
         found = conn.execute("SELECT value FROM settings WHERE key = 'our_province'").fetchone()
         ours = str(found[0] if found else "").strip().upper()
-        bulk = {r[0] for r in conn.execute("SELECT invoice_id FROM events WHERE action = 'approved' AND "
-                                           "detail LIKE '%\"bulk\": true%'")}  # fmt: skip
+        bulk = {r[0] for r in conn.execute(f"SELECT invoice_id FROM events WHERE action = 'approved' AND "
+                                           f"{dialect.like('detail')}", ('%"bulk": true%',))}  # fmt: skip
         rows = conn.execute(
             "SELECT DISTINCT i.id, i.final_output, i.ai_output FROM invoices i JOIN feedback f ON f.invoice_id = i.id "
             "WHERE i.final_output IS NOT NULL"
@@ -845,17 +600,18 @@ class StoreCore:
         for table, name, ident in (
             ("invoices", "vendor_name", "id"), ("feedback", "vendor_name", "id"),
             ("purchase_orders", "vendor_name", "po_key"), ("vendors", "''", "vendor_key"),
-            ("erp_invoices", "vendor_name", "rowid"),
+            ("erp_invoices", "vendor_name", dialect.ROWID),
         ):  # fmt: skip
             for r in conn.execute(f"SELECT {ident} AS ident, {name} AS name, vendor_key FROM {table}").fetchall():
                 key = new_key(r["name"], r["vendor_key"])
                 if key == (r["vendor_key"] or ""):
                     continue
-                done = conn.execute(f"UPDATE OR IGNORE {table} SET vendor_key = ? WHERE {ident} = ?", (key, r["ident"]))
+                done = conn.execute(f"{dialect.update_or_ignore(table)} SET vendor_key = ? WHERE {ident} = ?",
+                                    (key, r["ident"]))  # fmt: skip
                 if table == "erp_invoices":  # its JD Edwards vouchers go with it (D-181)
                     conn.execute("UPDATE erp_vouchers SET vendor_key = ? WHERE vendor_key = ?", (key, r["vendor_key"]))
                 if not done.rowcount and table == "erp_invoices":  # the same ERP bill is already there under the key
-                    conn.execute("DELETE FROM erp_invoices WHERE rowid = ?", (r["ident"],))
+                    conn.execute(f"DELETE FROM erp_invoices WHERE {dialect.ROWID} = ?", (r["ident"],))
                 elif not done.rowcount and table == "vendors":  # the same vendor twice: one row, on hold if either is
                     _store_class()._merge_vendor_rows(conn, r["ident"], key)
         for r in conn.execute("SELECT id, situation, vendor_name, vendor_key FROM lessons").fetchall():
@@ -863,21 +619,23 @@ class StoreCore:
             _old, sep, rest = str(r["situation"] or "").partition("|")
             situation = f"{key}{sep}{rest}" if sep else r["situation"]
             if (key, situation) != (r["vendor_key"], r["situation"]):
-                done = conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
-                                    (key, situation, r["id"]))  # fmt: skip
+                done = conn.execute(f"{dialect.update_or_ignore('lessons')} SET vendor_key = ?, situation = ? WHERE "
+                                    "id = ?", (key, situation, r["id"]))  # fmt: skip
                 if not done.rowcount:  # the same situation of the same vendor twice: one lesson, counts added up
                     _store_class()._merge_lesson_rows(conn, r["id"], situation)
                 if situation != r["situation"]:  # each approval's part follows its lesson (B-158)
-                    conn.execute("UPDATE OR IGNORE lesson_approvals SET situation = ? WHERE situation = ?",
-                                 (situation, r["situation"]))  # fmt: skip
+                    conn.execute(f"{dialect.update_or_ignore('lesson_approvals')} SET situation = ? WHERE "
+                                 "situation = ?", (situation, r["situation"]))  # fmt: skip
                     conn.execute("DELETE FROM lesson_approvals WHERE situation = ?", (r["situation"],))
         for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key"),
                               ("template_snapshots", "supplier_key")):  # fmt: skip
-            rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
+            rows = conn.execute(f"SELECT {dialect.ROWID} AS rid, {column} AS k FROM {table} WHERE "
+                                f"{dialect.like(column)}", ("name:%",))  # fmt: skip
             for r in rows.fetchall():
                 key = "name:" + refresh_vendor_key(r["k"][5:])
                 if key != r["k"]:
-                    done = conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+                    done = conn.execute(f"{dialect.update_or_ignore(table)} SET {column} = ? WHERE "
+                                        f"{dialect.ROWID} = ?", (key, r["rid"]))  # fmt: skip
                     if not done.rowcount and table == "supplier_profiles":  # one profile, the strictest state kept
                         _store_class()._merge_supplier_profiles(conn, r["k"], key)
 
@@ -907,12 +665,12 @@ class StoreCore:
         BRIEF_WAIT_MS for another writer, else raise ``sqlite3.OperationalError`` and nothing of it is kept: the
         bookkeeping of a page, which never holds it up (as a session's use, users.py ``_briefly``)."""
         with self.session(), self._conn() as conn:
-            waits = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-            conn.execute(f"PRAGMA busy_timeout = {BRIEF_WAIT_MS}")
+            waits = dialect.busy_timeout(conn)
+            dialect.set_busy_timeout(conn, BRIEF_WAIT_MS)
             try:
                 yield
             finally:
-                conn.execute(f"PRAGMA busy_timeout = {int(waits)}")
+                dialect.set_busy_timeout(conn, waits)
 
     def _session_memo(
         self, key: tuple[Any, ...], compute: Callable[[], list[dict[str, Any]]], shared: bool = False
@@ -924,7 +682,7 @@ class StoreCore:
         held = _held_connections().get(str(self.path))
         if held is None:
             return compute()
-        stamp = (held.conn.total_changes, held.conn.execute("PRAGMA data_version").fetchone()[0])
+        stamp = (held.conn.total_changes, dialect.data_version(held.conn))
         hit = held.memo.get(key)
         if hit is None or hit[0] != stamp:
             hit = held.memo[key] = (stamp, compute())
@@ -936,15 +694,27 @@ class StoreCore:
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.create_function("ap_fold", 1, fold_text, deterministic=True)
-        conn.execute("PRAGMA journal_mode=WAL")
+        dialect.settle(conn)
         if fresh:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             conn.commit()  # the upgrade's changes left open would refuse the caller's own BEGIN IMMEDIATE
         return conn
 
+    def _begin_alone(self, conn: sqlite3.Connection, what: str) -> None:
+        """The write lock for a transaction that must commit on its own, at the end of the ``_conn`` block of the
+        method ``what`` (why: its comment, and ``tests/meta/test_nested_writes.py``): ``NestedWrite`` inside another
+        transaction, which every other write joins (``dialect.begin_write``)."""
+        held = _held_connections().get(str(self.path))
+        if conn.in_transaction or (held is not None and held.conn is conn and held.depth > 1):
+            raise NestedWrite(f"Store.{what} commits on its own, so it can't be called inside Store.transaction() or "
+                              "another write.")  # fmt: skip
+        dialect.begin_write(conn)
+
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
+        """The connection a call works on: this thread's session's, if it holds one (the outermost block commits, or
+        rolls back), else one of its own, committed and closed at the end."""
         held = _held_connections().get(str(self.path))
         if held is not None and not self.path.exists():  # the file was deleted meanwhile: on with a fresh one
             _held_connections().pop(str(self.path), None)

@@ -9,6 +9,8 @@ import sqlite3
 import zlib
 from typing import Any
 
+from ..keys import master_vendor_id, supplier_key
+from ..memory import AUTONOMOUS_REVIEWER
 from ._base import (
     _AZURE_IN_LINE,
     APPROVED,
@@ -26,6 +28,7 @@ from ._base import (
     _now,
     _stale_before,
 )
+from .dialect import begin_write
 
 
 def capture_value(stored: str | bytes) -> Any:
@@ -102,9 +105,6 @@ class CaptureMixin:
 
     def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
         """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
-        from ...capture.supplier import supplier_key
-        from ...coding.vendors import master_vendor_id
-
         vendor_name = self._aliased(vendor_name, gst_number) or vendor_name  # a name AP corrected (D-119)
         return supplier_key(vendor_name, gst_number, master_vendor_id(self.vendor_ids(), vendor_name, gst_number))
 
@@ -143,7 +143,7 @@ class CaptureMixin:
         with self._conn() as conn:
             before = None
             if snapshot:
-                conn.execute("BEGIN IMMEDIATE")  # checked and saved in one go: a withdrawal cannot slip in between
+                begin_write(conn)  # checked and saved in one go: a withdrawal cannot slip in between
                 status = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
                 if status is None or status["status"] not in (APPROVED, PENDING):
                     return False
@@ -263,7 +263,7 @@ class CaptureMixin:
         learned is taken back (``_forget_learning``), in the same transaction as the check (B-782). True when it
         was. A deleted invoice is left to ``delete_invoice``."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return False
@@ -461,8 +461,6 @@ class CaptureMixin:
         """The touchless numbers over the last ``days`` days: invoices processed, approved without a person,
         audited (a touchless candidate picked for a person to check) and how many of those a person corrected, and
         touchless invoices reopened (a person found something wrong after the fact)."""
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
-
         since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
         with self._conn() as conn:
             processed = conn.execute(
@@ -790,7 +788,9 @@ class CaptureMixin:
             else ""
         )
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # Its own: the claim commits before the check starts (Azure's minutes, outside any transaction): never the
+            # write lock held, and every other writer waiting, all that time.
+            self._begin_alone(conn, "next_azure_check")
             row = conn.execute(
                 f"SELECT invoice_id FROM azure_checks WHERE {_AZURE_IN_LINE}{later} "
                 "ORDER BY created_at, invoice_id LIMIT 1",

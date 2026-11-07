@@ -12,23 +12,17 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import PENDING, Store, load_sample_setup
+from ap_coder.core.store import PENDING, Store
 from ap_coder.ops import cli, doctor, offline, server_update, service
 from ap_coder.web import core
 from ap_coder.web.app import create_app
 from tests.conftest import SAMPLES
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, enrol, sign_in, web_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 GOOD = "correct horse battery"
 STEM = "harbourview_NS_HST_HPS-2026-0347"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def client_as(store: Store, role: str = "", name: str = "") -> TestClient:

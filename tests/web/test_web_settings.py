@@ -18,12 +18,12 @@ from ap_coder.ai.reading import ReaderLine, ReadingStatus
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.envfile import read_env
-from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import jde
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import settings as settings_page
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 MODEL = "ath-maas_ovisocr2"
 TABS = ["reading", "automation", "review", "jde", "data", "about", "hub"]
 
@@ -37,13 +37,6 @@ def env_file(tmp_path, monkeypatch):
     yield path
     os.environ.clear()
     os.environ.update(before)
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 @pytest.fixture

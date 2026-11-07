@@ -15,8 +15,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..coding.po import po_key
-from ..coding.rules import _plain
 from ..coding.vendors import norm_invoice_number
+from ..core.keys import plain as _plain
+from ..core.keys import raw_number as _raw
+from ..core.keys import register_keys, search_keys  # noqa: F401  (the names this module had)
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
@@ -85,26 +87,6 @@ def next_to_act(row: dict[str, Any]) -> str:
     if status == FAILED:
         return "AP: process it again or enter it by hand"
     return "AP Coder: reading it"
-
-
-def _raw(text: str) -> str:
-    """Letters and digits only, leading zeros kept: "CN-2026-0047" -> "cn20260047"."""
-    return re.sub(r"[^0-9a-z]", "", text.lower())
-
-
-def search_keys(row: dict[str, Any]) -> tuple[str, str, str]:
-    """(the vendor and file names, the invoice number as it compares, its letters and digits) of an invoice, as
-    ``_score`` reads them: what the invoices' summary keeps for the quick search (D-110)."""
-    number = row.get("invoice_number") or ""
-    return _plain(f"{row.get('vendor_name') or ''} {row.get('file_name') or ''}"), norm_invoice_number(number), \
-        _raw(number)  # fmt: skip
-
-
-def register_keys(vendor_name: str, invoice_number: str) -> tuple[str, str]:
-    """(the vendor name, the invoice number's letters and digits) of an ERP register row as ``_score`` reads them:
-    what the register keeps for the quick search (``plain_name``, ``raw_number``, D-157)."""
-    keys = search_keys({"vendor_name": vendor_name, "invoice_number": invoice_number})
-    return keys[0], keys[2]
 
 
 def _score(row: dict[str, Any], words: list[str], numbers: list[str], name: str | None = None) -> int:

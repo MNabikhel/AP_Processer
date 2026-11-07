@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..paths import pid_alive
 from . import backup_files
 from ._base import (
     _NOT_FOUND,
@@ -78,9 +79,7 @@ def restore_under_way(db: Path) -> dict | None:
         pid = int(found.get("pid") or 0)
     except (TypeError, ValueError):
         return None
-    from ap_coder.ai.page_worker import _pid_alive
-
-    return {**found, "pid": pid} if pid == os.getpid() or _pid_alive(pid) else None
+    return {**found, "pid": pid} if pid == os.getpid() or pid_alive(pid) else None
 
 
 def clear_left_restore(db: Path) -> str:
@@ -160,6 +159,67 @@ def _daily(path: Path) -> bool:
     return DAILY.fullmatch(path.stem) is not None
 
 
+# --- A database file copied or read without a Store opened on it (server-update's, D-100, D-189: a Store would
+# migrate it, and it may be a newer version's database, a copy being migrated or a safety copy) ---------------------
+
+
+def copy_database(source: Path, dest: Path) -> Path:
+    """A consistent copy of ``source`` into ``dest`` (a new file, or the database itself to put a backup back), with
+    SQLite's backup: no AP Coder code opens it, so nothing is migrated."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        target = sqlite3.connect(dest, timeout=30)
+        try:
+            src.backup(target)
+        finally:
+            target.close()
+    finally:
+        src.close()
+    return dest
+
+
+def one_file(path: Path) -> None:
+    """The database file ``path`` made one self-contained file (no write-ahead log beside it)."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        conn.close()
+
+
+def accounts_in(db: Path) -> dict:
+    """The user accounts and paused logins of the database file ``db`` (``users.saved_accounts``), read-only."""
+    conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    try:
+        return saved_accounts(conn)
+    finally:
+        conn.close()
+
+
+def carry_accounts_into(db: Path, saved: dict) -> None:
+    """``saved`` (``accounts_in``) put into the database file ``db`` (``users.carry_accounts``), in one transaction."""
+    conn = sqlite3.connect(db, timeout=30)
+    try:
+        with conn:
+            carry_accounts(conn, saved)
+    finally:
+        conn.close()
+
+
+def setting_in(db: Path, key: str) -> str | None:
+    """A setting of the database file ``db``, read-only: None when it has none or can't be read."""
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
 class BackupsMixin:
     # --- Backups -----------------------------------------------------------------------------------------
 
@@ -224,14 +284,12 @@ class BackupsMixin:
     def backup_in_progress(self) -> str:
         """When the backup being made now started ("" when none is), in this process or another (the server's
         background process makes the daily one while a web worker draws the page)."""
-        from ap_coder.ai.page_worker import _pid_alive
-
         for marker in self.backup_dir().glob(".making-*"):
             try:
                 pid, started = int(marker.name.split("-")[1]), marker.read_text(encoding="utf-8").strip()
             except (OSError, ValueError, IndexError):
                 continue
-            if pid == os.getpid() or _pid_alive(pid):
+            if pid == os.getpid() or pid_alive(pid):
                 return started
             with contextlib.suppress(OSError):
                 marker.unlink()  # left by a process that ended while making it

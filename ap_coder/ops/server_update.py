@@ -41,7 +41,6 @@ import datetime as dt
 import importlib.util
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -53,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core import paths
 from ..core.paths import PROJECT_DIR, private_dir
+from ..core.store.backups import accounts_in, carry_accounts_into, copy_database, one_file, setting_in
 from . import service
 from . import update_recovery as recovery
 from .offline import sha256 as file_sha256
@@ -173,23 +173,7 @@ def unzip(bundle: Path, top: str, dest: Path) -> None:
             _upgrade().rmtree(work)
 
 
-# --- The database: copies that never migrate --------------------------------------------------------------------------
-
-
-def copy_database(source: Path, dest: Path) -> Path:
-    """A consistent copy of ``source`` into ``dest`` (a new file, or the database itself to put a backup back), with
-    SQLite's backup: no AP Coder code opens it, so nothing is migrated."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    src = sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)
-    try:
-        target = sqlite3.connect(dest, timeout=30)
-        try:
-            src.backup(target)
-        finally:
-            target.close()
-    finally:
-        src.close()
-    return dest
+# --- The database: copies that never migrate (no Store opened on them: core/store/backups.py, ``copy_database``) ------
 
 
 def put_back(backup: Path, db: Path) -> FilesRestored:
@@ -200,23 +184,11 @@ def put_back(backup: Path, db: Path) -> FilesRestored:
     there now and was not then is moved aside): what was done with them is returned. Never while a backup or a
     restore runs (``backup_files.exclusive``: raises ``backup_files.Busy`` with nothing changed, B-1559)."""
     from ..core.store import backup_files
-    from ..core.store.users import carry_accounts, saved_accounts
 
     with backup_files.exclusive(db.parent):
-        saved: dict = {}
-        if db.exists():
-            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
-            try:
-                saved = saved_accounts(conn)
-            finally:
-                conn.close()
+        saved = accounts_in(db) if db.exists() else {}
         copy_database(backup, db)
-        conn = sqlite3.connect(db, timeout=30)
-        try:
-            with conn:
-                carry_accounts(conn, saved)
-        finally:
-            conn.close()
+        carry_accounts_into(db, saved)
         return backup_files.restore_files(backup, db.parent)
 
 
@@ -240,11 +212,7 @@ def safety_copy(db: Path, label: str) -> Path:
         part = dest.with_name(dest.name + ".part")  # renamed once complete: one cut short is no backup (B-1955)
         try:
             copy_database(db, part)
-            conn = sqlite3.connect(part)
-            try:
-                conn.execute("PRAGMA journal_mode=DELETE")  # one self-contained file
-            finally:
-                conn.close()
+            one_file(part)
             os.replace(part, dest)
         except BaseException:
             for leftover in (part, part.with_name(part.name + "-journal")):
@@ -329,15 +297,7 @@ class Server:
         can't open the updated database), once the service answers again: what was done ("" when none is set)."""
         from ..core.store import backup_files
 
-        try:
-            conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
-            try:
-                row = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
-            finally:
-                conn.close()
-        except sqlite3.Error:
-            row = None
-        if not row or not str(row[0] or "").strip():
+        if not str(setting_in(db, "backup_copy_dir") or "").strip():
             return ""
         code = ("import sys; from pathlib import Path; from ap_coder.core.store import Store; "
                 "Store(sys.argv[1]).copy_backup(Path(sys.argv[2]))")  # fmt: skip

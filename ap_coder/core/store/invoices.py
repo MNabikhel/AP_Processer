@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
-from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import changed_since, diff_coding
-from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
+from ..keys import po_key
+from ..memory import ACCEPTED, AUTONOMOUS_REVIEWER, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
@@ -44,6 +44,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .dialect import begin_write
 from .learning import forget_past_lines
 from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
@@ -399,7 +400,7 @@ class InvoicesMixin:
         and exported by someone else since a Delete button was shown for it (reopen it first)."""
         with self._conn() as conn:
             if keep_approved:
-                conn.execute("BEGIN IMMEDIATE")  # checked and deleted in one go: an approval cannot slip in between
+                begin_write(conn)  # checked and deleted in one go: an approval cannot slip in between
             row = conn.execute(
                 "SELECT file_name, vendor_name, vendor_key, invoice_number, status FROM invoices WHERE id = ?",
                 (invoice_id,),
@@ -451,8 +452,7 @@ class InvoicesMixin:
         own transaction: of two screens checking at once only the first writes. False: nothing was written."""
         with self._conn() as conn:
             if expect is not None:
-                if not conn.in_transaction:
-                    conn.execute("BEGIN IMMEDIATE")  # read and written in one go: no other writer in between
+                begin_write(conn)  # read and written in one go: no other writer in between
                 if not expect(self.invoice_draft(invoice_id, person)):
                     return False
             if draft is None:
@@ -622,8 +622,6 @@ class InvoicesMixin:
         errors and warnings still showing when the reviewer approved (kept in the audit trail). Only an invoice
         in the review queue can be approved. An approval by AP Coder on its own (``AUTONOMOUS_REVIEWER``)
         records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
-
         inv = self._approvable(invoice_id)
         ai = inv["ai_output"] or {"line_items": []}
         # The limit and rate in force since the invoice came in, the strictest of them (B-970), kept in the event; a
@@ -871,7 +869,7 @@ class InvoicesMixin:
             raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
                                   f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
+            begin_write(conn)  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
                 "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
             ).fetchone()[0]

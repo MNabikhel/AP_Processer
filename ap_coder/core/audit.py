@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..coding.vendors import mask_account
+from .keys import mask_account
 from .memory import pair_lines
 
 HEADER_LABELS = {
@@ -283,6 +283,15 @@ def describe(event: dict[str, Any]) -> str:
     """One readable sentence for an event (plain text; escape before putting it in HTML)."""
     d = event.get("detail") or {}
     action = event["action"]
+    for part in _DESCRIBERS:
+        text = part(action, d)
+        if text is not None:
+            return text
+    return ""
+
+
+def _reading_text(action: str, d: dict[str, Any]) -> str | None:
+    """Invoices read, and the mailbox's emails sorted. None for another action."""
     if action == "processed":
         flag = "needs attention" if d.get("requires_review") else "ready"
         conf = d.get("confidence")
@@ -299,6 +308,11 @@ def describe(event: dict[str, Any]) -> str:
         return f'"{d.get("subject", "")}" ({d.get("kind", "")})'
     if action == "email_attachment_to_queue":
         return f"{d.get('file', '')} moved to the invoices folder to be read"
+    return None
+
+
+def _review_text(action: str, d: dict[str, Any]) -> str | None:
+    """An invoice approved, rejected, deleted or exported. None for another action."""
     if action == "approved":
         over = approved_over(d)
         prefix = ("Approved over: " + "; ".join(f"{o['title']}" + (f" ({o['reason']})" if o["reason"] else "")
@@ -317,6 +331,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "export_undone":
         n = d.get("invoices", 0)
         return f"batch {d.get('batch', '')}: {n} invoice{'' if n == 1 else 's'} back in the ready-to-export list"
+    return None
+
+
+def _setup_text(action: str, d: dict[str, Any]) -> str | None:
+    """The lists and settings changed: accounts, tax set-up, lessons, vendors. None for another action."""
     if action == "accounts_imported":
         return f"{_table(d)}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
             " (replaced the list)" if d.get("replace_all") else ""
@@ -350,6 +369,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "vendors_deleted":
         names = [str(n) for n in d.get("vendors") or []]
         return f"{', '.join(names[:8])}{' …' if len(names) > 8 else ''}" or "(none)"
+    return None
+
+
+def _check_text(action: str, d: dict[str, Any]) -> str | None:
+    """The AI reviewer's and the Azure check's results, lessons explained, saved views. None for another action."""
     if action == "verified":
         rounds = f" in {d['rounds']} round(s)" if d.get("rounds") else ""
         return f"{d.get('status') or 'done'}{rounds}" + (
@@ -368,6 +392,12 @@ def describe(event: dict[str, Any]) -> str:
         return f"lesson {d.get('lesson', '?')}" + (" no longer used" if action == "lesson_retired" else " used again")
     if action in ("directory_preset_saved", "directory_preset_deleted"):
         return f'view "{d.get("name", "")}"'
+    return None
+
+
+def _queue_text(action: str, d: dict[str, Any]) -> str | None:
+    """An invoice parked, sent to a manager and answered, a note, a second approval, sent back; None for another
+    action."""
     if action == "parked":
         follow = f" · follow up {d['follow_up']}" if d.get("follow_up") else ""
         return f"waiting for: {d.get('reason') or 'no reason given'}{follow}"
@@ -395,6 +425,11 @@ def describe(event: dict[str, Any]) -> str:
         if "rejected" in d:  # a rejected invoice back in the queue: the rejection undone
             return f"rejection undone, back to the review queue · rejected for: {d['rejected'] or 'no reason given'}"
         return f"back to the review queue · reason: {d.get('reason') or 'none given'}{layout}"
+    return None
+
+
+def _import_text(action: str, d: dict[str, Any]) -> str | None:
+    """The ERP's register, past coding, vendors and POs imported. None for another action."""
     if action == "erp_register_imported":
         return (
             "cleared" if d.get("cleared") else f"{d.get('rows', 0)} row(s) read; {d.get('total', 0)} invoice(s) known"
@@ -412,6 +447,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "pos_deleted":
         pos = d.get("pos") or []
         return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
+    return None
+
+
+def _learning_text(action: str, d: dict[str, Any]) -> str | None:
+    """Touchless and a vendor's layout and autonomy; invoice files moved or found. None for another action."""
     if action in ("touchless_on", "touchless_off"):
         limit = d.get("limit")
         return (
@@ -430,6 +470,11 @@ def describe(event: dict[str, Any]) -> str:
         return f"{d.get('invoices', 0)} invoice(s) of {d.get('from', '?')} now point to the new place{copied}{left}"
     if action == "file_found":
         return f"{d.get('from', '?')} → {d.get('to', '?')}"
+    return None
+
+
+def _account_text(action: str, d: dict[str, Any]) -> str | None:
+    """Server mode's accounts: logins, passwords, roles (D-97). None for another action."""
     if action in _ACCOUNT_WORDS:
         from .store.users import CODE_WHY, ROLE_LABELS
 
@@ -451,6 +496,11 @@ def describe(event: dict[str, Any]) -> str:
             return f"logins as {d['username']} from {d.get('unpaused') or 'this server'} are no longer paused"
         return _ACCOUNT_WORDS[action].format(user=d.get("username") or "?", name=d.get("name") or "", by=by,
                                              address=d.get("unpaused") or "?", **roles)  # fmt: skip
+    return None
+
+
+def _jde_text(action: str, d: dict[str, Any]) -> str | None:
+    """The JD Edwards API: tests, syncs, batches and vouchers. None for another action."""
     if action == "jde_api_tested":
         return "connected" if d.get("ok") else f"not connected ({d.get('kind') or 'error'})"
     if action == "jde_synced":
@@ -472,11 +522,30 @@ def describe(event: dict[str, Any]) -> str:
     if action in ("jde_voucher_posted", "jde_voucher_refused"):
         voucher = f": voucher {d['voucher']}" if d.get("voucher") else ""
         return f"batch {d.get('batch', '')}{voucher}"
+    return None
+
+
+def _file_text(action: str, d: dict[str, Any]) -> str | None:
+    """A download on the server, a backup made or restored. None for another action."""
     if action == "downloaded":  # on the server (D-109)
         return f"{d.get('file', '?')} ({d.get('path', '')})"
     if action in ("backup_made", "backup_restored"):
         return "".join([str(d.get("file", "")), *(f" · {d[k]}" for k in ("files", "note") if d.get(k))])
-    return ""
+    return None
+
+
+_DESCRIBERS = (
+    _reading_text,
+    _review_text,
+    _setup_text,
+    _check_text,
+    _queue_text,
+    _import_text,
+    _learning_text,
+    _account_text,
+    _jde_text,
+    _file_text,
+)
 
 
 _ACCOUNT_WORDS = {  # server mode's accounts (D-97): who, in plain words

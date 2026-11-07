@@ -11,11 +11,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from ..keys import LINE_FIELDS, line_pattern
 from ..memory import (
     ACCEPTED,
     BULK,
     CODED,
     CORRECTED,
+    HISTORY,
     PAST_KEPT,
     PAST_LINES_BYTES,
     PAST_LINES_KEPT,
@@ -115,8 +117,10 @@ def one_snapshot(conn: Any) -> Iterator[None]:
     conn.execute("BEGIN")
     try:
         yield
-    finally:
-        conn.commit()  # nothing written: it ends the read
+    except BaseException:
+        conn.rollback()  # a write inside, undone with the error as a transaction's is (B-1966)
+        raise
+    conn.commit()  # it ends the read
 
 
 def _with_added(conn: Any, kept: tuple[tuple[Any, ...], list[dict[str, Any]]], stamp: tuple[Any, ...],
@@ -466,8 +470,6 @@ class LearningMixin:
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
         Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
-        from ...ai.history import HISTORY
-
         added = skipped = unknown = 0
         with self._conn() as conn:
             known_gls = {r[0] for r in conn.execute("SELECT code FROM gl_accounts")}
@@ -522,8 +524,6 @@ class LearningMixin:
         """Forget lines of the coding memory (Learning → Coding memory). What each line's approval taught the lessons
         for lines like it (its GL account and cost center lessons, ``lessons.LINE_FIELDS``) is withdrawn with it, once
         no line of that kind is left on that invoice (B-1422): a forgotten line is no hint and reaches no AI."""
-        from ...ai.lessons import LINE_FIELDS, line_pattern
-
         with self._conn() as conn:
             gone = conn.execute(
                 "SELECT invoice_id, description FROM feedback WHERE invoice_id IS NOT NULL AND id IN "
@@ -581,6 +581,18 @@ class LearningMixin:
             "by_vendor": [dict(r) for r in learned["by_vendor"]],
             "top_corrections": [dict(r) for r in learned["top_corrections"]],
         }
+
+    def invoice_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0])
+
+    def run_summary_rows(self, latest: int | None = None) -> list[dict[str, Any]]:
+        """What the redacted run summary (``ops/share_report.py``) reads of every invoice, or of the ``latest`` ones,
+        oldest first, in one query: its id, file, status, error, meta and validation (their JSON as stored)."""
+        newest = "" if latest is None else "WHERE id IN (SELECT id FROM invoices ORDER BY id DESC LIMIT ?) "
+        sql = f"SELECT id, source_path, status, error, meta, validation FROM invoices {newest}ORDER BY id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, () if latest is None else (latest,))]
 
     def line_metrics(self) -> dict[str, Any]:
         """``metrics()``'s counts of the lines AP reviewed (``lines_*``, ``line_accuracy``) alone: what the review queue

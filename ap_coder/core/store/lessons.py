@@ -11,8 +11,8 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ...coding.po import po_key
 from ..audit import diff_coding
+from ..keys import mask_account, po_key
 from ..memory import vendor_key
 from ._base import (
     _STALE,
@@ -34,6 +34,7 @@ from ._base import (
     _now,
     _same_row,
 )
+from .dialect import begin_write
 from .page_queue import _stale
 
 # The order the AI reviewer takes its queue in (D-171), as the page reader's (``page_queue``): a person's ask first (the
@@ -194,7 +195,6 @@ class LessonsMixin:
         A guess of the AI changed or a blank filled in is no correction (the lessons and the accuracy leave them out);
         an approval withdrawn (the invoice reopened) or a line forgotten is not listed."""
         from ...coding.line_tax import code_label
-        from ...coding.vendors import mask_account
 
         with self._conn() as conn:
             fields = conn.execute(
@@ -309,7 +309,9 @@ class LessonsMixin:
             else ""
         )
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # Its own: the claim commits before the review starts (minutes, outside any transaction), so its heartbeat
+            # (``renew_verification``, on another thread's connection) finds it and other writers don't wait for it.
+            self._begin_alone(conn, "next_verification")
             row = conn.execute(
                 f"SELECT verifications.invoice_id FROM verifications LEFT JOIN invoices i ON i.id = "
                 f"verifications.invoice_id WHERE {_VERIFY_IN_LINE}{later} ORDER BY {', '.join(_REVIEW_ORDER)} LIMIT 1",
@@ -453,7 +455,7 @@ class LessonsMixin:
         approved, rejected or deleted (False), nor on one that is no longer ``expect`` (``row_identity``: a backup
         was restored meanwhile)."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT status, validation, meta, file_sha256, created_at FROM invoices WHERE id = ?",
                                (invoice_id,)).fetchone()  # fmt: skip
             if row is None or row["status"] not in (REVIEW, PARKED) or not _same_row(row, expect):
@@ -484,7 +486,7 @@ class LessonsMixin:
 
         for other in self.find_duplicates(vendor_name, invoice_number, key=key):
             with self._conn() as conn:
-                conn.execute("BEGIN IMMEDIATE")
+                begin_write(conn)
                 row = conn.execute("SELECT status, validation, grand_total, adjusted_confidence FROM invoices "
                                    "WHERE id = ?", (other,)).fetchone()  # fmt: skip
                 if row is None or row["status"] not in (REVIEW, PARKED) or not row["validation"]:
@@ -535,7 +537,7 @@ class LessonsMixin:
         key = self.vendor_key_for(output.get("vendor_name", ""), output.get("gst_hst_registration_number"))
         due = _due(output, self.default_terms_days(), self.vendor_terms(key))
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between
+            begin_write(conn)  # checked and changed in one go: an approval cannot slip in between
             row = conn.execute(
                 "SELECT status, edits, final_output, reviewer, ai_output, meta, file_sha256, created_at FROM invoices "
                 "WHERE id = ?",

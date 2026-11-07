@@ -149,6 +149,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default=str(db_path), help=f"Dashboard database (default: {db_path})")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    _add_serve_commands(sub)
+
+    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
+    p.add_argument(
+        "--online",
+        action="store_true",
+        help="Also ask the local model in LM Studio for two lines' accounts (the dry run); Azure only with "
+        "AP_ALLOW_INTERNET=1 (costs about one invoice)",
+    )
+    p.add_argument("--json", action="store_true", help="The checks as JSON (area, status, detail), for IT's tools")
+    _add_reference_args(p)
+    _add_server_ops(sub)
+
+    _add_reading_commands(sub, out_dir, cache_dir)
+    _add_report_commands(sub, private, out_dir)
+
+    p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
+    p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
+
+    _add_users_command(sub)
+
+    from . import jde_cmd
+
+    jde_cmd.add_parser(sub)  # the JD Edwards API connection (D-104)
+
+    from . import backup_cmd
+
+    backup_cmd.add_parser(sub)  # the backups from the console (D-143)
+
+    _add_hub_command(sub)
+
+    p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
+    p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
+    _add_reference_args(p)
+    return parser
+
+
+def _add_serve_commands(sub: Any) -> None:
+    """``serve`` and ``dashboard``: the review dashboard, on this computer or as the company's server."""
     for name, text in (("serve", "Open the review dashboard in your browser (runs on this computer)"),
                        ("dashboard", "The same as serve")):  # fmt: skip
         p = sub.add_parser(name, help=text)
@@ -183,17 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
         p.add_argument("--capture-work", action="store_true", help=argparse.SUPPRESS)  # (its capture processes)
 
-    p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) the models")
-    p.add_argument(
-        "--online",
-        action="store_true",
-        help="Also ask the local model in LM Studio for two lines' accounts (the dry run); Azure only with "
-        "AP_ALLOW_INTERNET=1 (costs about one invoice)",
-    )
-    p.add_argument("--json", action="store_true", help="The checks as JSON (area, status, detail), for IT's tools")
-    _add_reference_args(p)
-    _add_server_ops(sub)
 
+def _add_reading_commands(sub: Any, out_dir: Path, cache_dir: Path) -> None:
+    """The commands that read invoices: ``process``, ``watch``, ``read-pages`` and ``extract``."""
     p = sub.add_parser("process", help="Extract + GL-code invoices (files or directories)")
     p.add_argument("inputs", nargs="+", help="PDF/TIFF/image invoices, or .md/.txt pre-extracted content")
     p.add_argument("-o", "--out", default=str(out_dir), help=f"Output directory (default: {out_dir})")
@@ -232,6 +263,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extraction-model", choices=["prebuilt-layout", "prebuilt-invoice"])
     p.add_argument("--cache-dir", default=str(cache_dir))
 
+
+def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
+    """The ground truth and the reports on accuracy: ``labels``, ``evaluate``, ``share-report``, ``export-training``
+    and ``pilot-score``."""
     p = sub.add_parser("labels", help="Create an Excel workbook for the AP team to correct (ground truth)")
     p.add_argument("--predictions", default=str(out_dir), help=f"Output folder of `process` ({out_dir})")
     p.add_argument("-o", "--out", default=str(private / "labels.xlsx"), help="Workbook path (.xlsx or .csv)")
@@ -274,9 +309,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep every voucher of the export (default: those dated like the invoices approved here)",
     )  # fmt: skip
 
-    p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
-    p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
+def _add_users_command(sub: Any) -> None:
+    """``users``: server mode's accounts (add, list, reset, reset-2fa, deactivate, activate, role)."""
     from ..core.store.users import ROLES
 
     p = sub.add_parser("users", help="Server mode: the people who log in (add, list, reset, reset-2fa, deactivate, "
@@ -302,25 +337,15 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("username")
     u.add_argument("role", choices=ROLES)
 
-    from . import jde_cmd
 
-    jde_cmd.add_parser(sub)  # the JD Edwards API connection (D-104)
-
-    from . import backup_cmd
-
-    backup_cmd.add_parser(sub)  # the backups from the console (D-143)
-
+def _add_hub_command(sub: Any) -> None:
+    """``hub``: the finance hub feed (export, status)."""
     p = sub.add_parser("hub", help="The finance hub feed (Microsoft Fabric): send what changed (docs/FINANCE_HUB.md)")
     hub = p.add_subparsers(dest="hub_command", required=True)
     h = hub.add_parser("export", help="Write the tables' changes to the finance hub's folder or OneLake")
     h.add_argument("--full", action="store_true", help="Every row again (a full rebuild), not only what changed")
     h.add_argument("--dry-run", action="store_true", help="Say what would be sent; write and send nothing")
     hub.add_parser("status", help="Whether the feed is on, where it goes and how the last run went")
-
-    p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
-    p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
-    _add_reference_args(p)
-    return parser
 
 
 def _add_server_ops(sub: Any) -> None:

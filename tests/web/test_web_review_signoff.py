@@ -16,7 +16,7 @@ from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, form_of
 from tests.webclient import client_for, web_settings
 
-demo_db, store, me, browser = screen.demo_db, screen.store, screen.me, screen.browser  # (client: tests/conftest.py)
+demo_db, store, me, browser = screen.demo_db, screen.demo_store, screen.me, screen.browser  # (client: conftest.py)
 
 
 def _id(store, vendor: str, status: str = REVIEW) -> int:

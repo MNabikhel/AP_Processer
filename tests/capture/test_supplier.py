@@ -765,11 +765,19 @@ def test_a_field_is_never_anchored_to_part_of_a_value_above_it():
 def test_learning_reads_each_printed_span_once(monkeypatch):
     """Learning tries every span of every row against every field: a span's date/amount parse is worked out once."""
     import ap_coder.capture.supplier as supplier
+    from ap_coder.core import parsing
 
     supplier._printed_dates.cache_clear()
     calls = []
-    real = supplier.date_candidates
-    monkeypatch.setattr(supplier, "date_candidates", lambda text: calls.append(text) or real(text))
+    real = parsing.date_candidates
+
+    def counted(text):
+        calls.append(text)
+        return real(text)
+
+    # (both names: supplier's own import of it, and the one its parse_date reaches through core.parsing, D-191)
+    monkeypatch.setattr(supplier, "date_candidates", counted)
+    monkeypatch.setattr(parsing, "date_candidates", counted)
     learn(None, _invoice(), CONFIRMED)
     first = len(calls)
     calls.clear()
