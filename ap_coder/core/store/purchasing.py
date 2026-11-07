@@ -60,8 +60,9 @@ class BillingMoment:
     nothing read in it is kept), and the invoices' billing lines to keep once the read is over (``billing_lines``)."""
 
     writing: bool
-    # (vendor, its stamp as read, its stamp now, its rows decoded: [(id, facts)], the ids whose rows go: None, all)
-    keep: list[tuple[str, Any, tuple[str, int, int], list[tuple[int, str]], Any]] = field(default_factory=list)
+    # (vendor, its stamp as read, its stamp now, its invoices decoded: [(id, what was read)], the ids whose rows go:
+    # None, all)
+    keep: list[tuple[str, Any, tuple[str, int, int], list[tuple[int, Any]], Any]] = field(default_factory=list)
 
 
 def _billing(coding: Any) -> Any:
@@ -211,12 +212,13 @@ class PurchasingMixin:
             for keep in moment.keep:  # (the database too busy just now: kept at a later read)
                 self._briefly_or(lambda keep=keep: self._keep_billing(*keep), None)  # type: ignore[attr-defined]
 
-    def _keep_billing(self, vendor: str, was: Any, now: tuple[str, int, int], rows: list[tuple[int, str]],
+    def _keep_billing(self, vendor: str, was: Any, now: tuple[str, int, int], rows: list[tuple[int, Any]],
                       gone: Any) -> None:  # fmt: skip
         """A vendor's billing lines as ``billing_lines`` read them under its stamp ``was`` (as it was read, None: none)
         kept with its stamp ``now``: the rows of ``gone`` removed (the invoices changed since: None, all of its rows),
-        ``rows`` written (an invoice's older row replaced). Only while its stamp is still the one read (in one write):
-        once another process kept its rows since, theirs are as new, and these are not written."""
+        ``rows`` written (an invoice's older row replaced; made JSON here, a vendor at a time). Only while its stamp is
+        still the one read (in one write): once another process kept its rows since, theirs are as new, and these are
+        not written."""
         with self._conn() as conn:
             begin_write(conn)
             found = conn.execute(_STAMP, (vendor,)).fetchone()
@@ -228,7 +230,8 @@ class PurchasingMixin:
                 conn.execute(f"DELETE FROM billing_facts WHERE vendor_key = ? AND {_in_list('id')}",
                              (vendor, json.dumps(sorted(gone))))  # fmt: skip
             conn.executemany(dialect.upsert("billing_facts", ("vendor_key", "id", "facts"), ("vendor_key", "id")),
-                             [(vendor, n, facts) for n, facts in rows])  # fmt: skip
+                             [(vendor, n, json.dumps(facts, separators=(",", ":"), allow_nan=False))
+                              for n, facts in rows])  # fmt: skip
             conn.execute(dialect.upsert("billing_vendors", ("vendor_key", "kept", "logged", "counted"),
                                         ("vendor_key",)), (vendor, *now))  # fmt: skip
 
@@ -287,8 +290,7 @@ class PurchasingMixin:
         for n, coding in self.billing_codings(todo):
             read[n] = _billing(coding)
             if vendors[n] is not None and _keepable(read[n]):
-                facts = json.dumps(read[n], separators=(",", ":"), allow_nan=False)
-                decoded.setdefault(vendors[n], []).append((n, facts))
+                decoded.setdefault(vendors[n], []).append((n, read[n]))
         for vendor in by_vendor if not moment.writing else ():
             was, gone = held.get(vendor, (None, None))
             if vendor in decoded or gone != set():  # (anything to write: its stamp held, nothing changed since)

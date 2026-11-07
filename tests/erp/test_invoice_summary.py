@@ -373,7 +373,7 @@ def _register_in_step(store: Store) -> bool:
     return bool(found[0])
 
 
-def _register_change(rng, store: Store, monkeypatch, seen) -> bool | None:
+def _register_change(rng, store: Store, monkeypatch, seen, kind: str = "") -> bool | None:
     """One random write to ``store``'s ERP register; whether it keeps the search's index as it was (in step when it
     was), False: it leaves it behind, None: it makes it again (a start)."""
     from ap_coder.core.memory import vendor_key
@@ -384,8 +384,8 @@ def _register_change(rng, store: Store, monkeypatch, seen) -> bool | None:
                 "total": rng.choice([1, -1]) * round(rng.uniform(1, 20000), 2),
                 "invoice_date": "2026-10-01"}  # fmt: skip
 
-    kind = rng.choice(["file", "file", "vouchers", "vouchers", "gone", "clear", "sql", "huge", "older", "no fts",
-                       "start"])  # fmt: skip
+    kind = kind or rng.choice(["file", "file", "vouchers", "vouchers", "gone", "clear", "sql", "huge", "older",
+                               "no fts", "start"])  # fmt: skip
     if kind == "file":
         store.import_erp_register([bill() for _ in range(rng.randrange(1, 40))], replace_all=rng.random() < 0.2)
     elif kind == "vouchers":  # new, seen again, or moved to another bill (its supplier renamed, its gross corrected)
@@ -417,7 +417,8 @@ def _register_change(rng, store: Store, monkeypatch, seen) -> bool | None:
                              "random() LIMIT 1)")  # fmt: skip
                 conn.execute("UPDATE erp_invoices SET plain_name = 'granite ' || plain_name WHERE rowid IN (SELECT "
                              "rowid FROM erp_invoices ORDER BY random() LIMIT 1)")  # fmt: skip
-        return False
+            wrote = kind == "older" or conn.total_changes > 0  # (none: a row there already, a register empty)
+        return not wrote
     elif kind == "no fts":  # a computer whose SQLite has no FTS5 writes the register (and reads it itself)
         with monkeypatch.context() as patched:
             patched.setitem(summary_module._FTS, "ok", False)
@@ -451,10 +452,11 @@ def test_the_quick_searchs_register_hits_are_scoring_every_row_whatever_writes_t
                "2026", "-1", "nw-erp-0012", "erp 0012", "3m canada", "zzz"]  # fmt: skip
     in_step, used = _register_in_step(year), 0
     assert in_step
-    for _ in range(25):
+    for step in range(25):
         with sqlite3.connect(year.path) as conn:
             top = conn.execute("SELECT MAX(rowid) FROM erp_invoices").fetchone()[0]
-        kept = _register_change(rng, year, monkeypatch, seen)
+        kept = _register_change(rng, year, monkeypatch, seen, "file" if step == 0 else "start" if not in_step and
+                                rng.random() < 0.5 else "")  # fmt: skip
         now = _register_in_step(year)
         if kept is None:  # (a start: made again)
             assert now

@@ -3434,3 +3434,73 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
     `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
     `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)
+- **D-194** · **Month-end's billing lines kept by invoice, not by vendor; the quick search reads the ERP register
+  through an FTS5 index the register's writes keep; the Vendors page's workload worked out once for every process**
+  (scale goal, phase 8, E2; changes D-177; every output the same).
+  - **Why (phase 3 part 3's profile at 300,000 invoices, 100 people):** month-end's vendors' rows 15% of the web
+    workers' CPU (`billing_lines` 10.3%, `keep_answer` 4.9%: each vendor's billing lines one row of `report_answers`,
+    read whole and written whole again, the biggest 7 MB, once a sixteenth of it was decoded since, each read
+    decoding those again until then); the quick search 4.6% (`erp_hits`: SQLite's `instr` over each of the
+    register's 600,000 rows for a word); the Vendors page's workload 4.2% (worked out by each web worker itself).
+  - **Month-end, by invoice:** `billing_facts` (a vendor's invoice and what month-end reads of it, [date, lines] as
+    JSON) under the vendor's stamp in `billing_vendors` (`kept`: the database's `summary_id`, this AP Coder's version
+    and `BILLING_FORMAT`; `logged`: the last change of the vendors' change log its rows are as of; `counted`: the
+    vendor's count of changes then), both made by `_SCHEMA` at every start (no version of their own, as `past_lines`).
+    `billing_lines` reads the stamps, the counts and the log in the same moment as the invoices (B-1812): a stamp
+    holds when kept by this database and version and the count has not moved, or when the log still holds every
+    change since and the count moved by as many as the log names (B-1811); each row of its invoices is then taken
+    but those the log names, else none is. After the read a vendor's rows are written in one write, only while its
+    stamp is still the one read (a slower process never writes over a later one): the invoices changed since removed
+    (every one when the stamp did not hold), those decoded written (JSON made then, a vendor at a time), the stamp
+    moved on. A change rewrites its own invoice's row and the vendor's stamp, not the vendor's row; nothing waits for
+    a sixteenth (`BILLING_REWRITE` gone). The rows D-177 kept (`report_answers` `billing/<key>`, about 63 MB at
+    300,000) go at the next start, looked for first (a start with none takes no lock: B-1996's test found the plain
+    delete waiting 30 s for it).
+  - **The quick search, through the register's index:** `register_search`, FTS5's trigram index of each register row's
+    `plain_name` and `raw_number` by its rowid, where `summary.fts_available()` (as the invoices' summary's since
+    D-110). FTS5 is part of SQLite, no dependency: CPython's own builds have it (Windows: `PCbuild/sqlite3.vcxproj`
+    defines `SQLITE_ENABLE_FTS5`, with SQLite 3.38 or newer since Python 3.11.0; macOS's installer too; the trigram
+    tokenizer is SQLite 3.34+), and so do the Pythons here (3.11, 3.12, 3.13 on SQLite 3.45.1 and 3.53.1); a Python
+    without it reads the register as before. Kept by the register's own writes, in their transaction (a file imported,
+    added or in place of the register; cleared; JD Edwards' vouchers, B-1918's chunks, and the sweep): the rows added
+    are those above the largest rowid before the write (SQLite gives a new row the largest plus one), a bill removed
+    leaves the index, a register cleared makes it again. In step while the setting `register_search_step` is the
+    register's count of changes (`changes/register`, which every version's triggers keep): a write that did not keep it
+    (an older AP Coder, plain SQL, a computer without FTS5, SQLite's largest rowid taken) leaves it behind, and the
+    search reads the register itself until the next start builds it again (a step at every start, after those that write
+    the register). `erp_hits` gives the store the same condition twice: as before, and narrowed by MATCH for each word
+    and each number whose every way to match is a text of 3 characters or more (not an amount), the exact `instr` kept
+    after it; `erp_register_rows` reads the second while the index is in step, checked in the same moment. The same rows
+    in the same order (`ORDER BY rowid`), each scored as before (`_score`).
+  - **The Vendors page's workload:** `vendor_workload` through `shared_answer` (topic `workload`, `WORKLOAD_FORMAT`),
+    as D-175 did for Spend: worked out by the first process asking after a change, taken by the others; each caller
+    gets its own copy of each row.
+  - **Measured** (a seed of 30,000 invoices and 60,000 register rows, `bench seed --history 0.1`; process CPU):
+    - Month-end after each of 1,200 changes to the biggest vendor's invoices (each another one) by another process,
+      the vendor made as big as 300,000's (17,889 billing invoices): `billing_lines` median 127.8 → 108.6 ms (mean
+      132.7 → 112.4), received-not-invoiced 0.405 → 0.387 s; its writes: the 7 MB row (92 ms, the write lock held
+      through it) every 1,118 decodes → at most 0.5 ms a change. The 1,200 answers the same, digest for digest. At the
+      seed's own size (2,333 billing invoices) the same within the noise (0.215 → 0.230 s, `billing_lines` 13.3 →
+      14.6 ms): reading a vendor's rows costs what its whole row did (95 ms of JSON for 17,889 invoices); what this
+      saves grows with the vendor: the writes and the re-decoding (at 300,000 up to 1,118 codings a read).
+    - The register's SQL alone, at 600,000 rows (the seed's x10): median 73.6 → 25.2 ms over 72 searches (2 slower:
+      words in a fifth of the rows, "contractors" 93 → 138 ms); `erp_hits` median 193 → 113 ms, a vendor's word 226 →
+      169 ms, a number or a rare word about 100 → 5 ms; at 60,000 rows 19.5 → 15.8 ms. 77 searches' hits the same.
+      The index: 3.5 s to build at 600,000 rows (once, the first start), about 119 MB (80 the index, 31 its copy of
+      the texts, 7 the sizes). The register's writes it adds to, at 600,000 rows: a JD Edwards page of 250 new
+      vouchers 8.7 → 9.7 ms, the same page seen again 7.8 → 7.6 ms, a file of 1,000 rows 20.9 → 21.9 ms.
+    - The Vendors page after a change, two workers: the first 0.31 s (works the workload out), the second 0.289 →
+      0.148 s; the workload's own work 0.11 s at 30,000 invoices; the pages byte for byte, in either code (the
+      rail's counts taken as they are).
+  - **What is left:** month-end still reads all of a changed vendor's rows at each work-out (the JSON); a common
+    word's hits (a vendor word in 100,000 register rows: 0.9 s) are each still read and scored in Python: counting
+    and paging them in SQL is the next step.
+  - **Alternatives:** triggers on `erp_invoices` keeping the index (whoever writes; but a backup carrying triggers
+    not the summary's is refused, so an older AP Coder could not restore a newer backup, and a computer without FTS5
+    could not write the register at all); a words table (a word is matched anywhere in a name: trigrams anyway);
+    FTS5 with external content (31 MB less, but out of step it fails its deletes) or contentless with deletes (SQLite
+    3.43+: not on every Python AP Coder supports); month-end's rows held in each process (95 MB each at 300,000,
+    D-177); one write for every vendor's rows after a read (the write lock held through the biggest's).
+  - (`ap_coder/core/store/{purchasing,register,migrations,_base}.py`, `erp/search.py`, `erp/insights.py`;
+    `tests/erp/test_accruals.py`, `tests/erp/test_invoice_summary.py`, `tests/erp/test_search.py`,
+    `tests/core/test_kept_answers.py`)

@@ -161,6 +161,33 @@ def test_the_quick_search_reads_the_register_rows_holding_its_words_through_the_
     assert len(search.erp_hits(store, ["granite"], [])) == 21 and looked_up in plans[0]
 
 
+def test_a_register_row_given_a_rowid_at_random_is_still_found(tmp_path):
+    """D-194: the register's index takes the rows a write added as those above the largest rowid before it; once
+    SQLite's largest rowid is taken (plain SQL), SQLite gives a row added one at random, perhaps below: that write
+    leaves the index behind, and the search reads the register itself, until a start builds the index again."""
+    import sqlite3
+
+    from ap_coder.core.store import register, summary
+
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("INSERT INTO erp_invoices (rowid, vendor_key, number_key, total, vendor_name, invoice_number, "
+                     "imported_at, plain_name, raw_number) VALUES (?, 'zeta parts', '9', 1, 'Zeta Parts', '9', '2026', "
+                     "'zeta parts', '9')", (2**63 - 1,))  # fmt: skip
+    Store(store.path)  # (a start: the index built again, the largest rowid in it)
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": f"G-{n}", "total": 10.0 + n}
+                               for n in range(2, 6)])  # fmt: skip
+    assert sorted(h.row["invoice_number"] for h in search.erp_hits(store, ["granite"], [])) == [
+        "G-1", "G-2", "G-3", "G-4", "G-5"]  # fmt: skip
+    with store._conn() as conn:
+        assert not register.search_in_step(conn) or not summary.fts_available()
+    Store(store.path)
+    with store._conn() as conn:
+        assert register.search_in_step(conn) == summary.fts_available()
+    assert len(search.erp_hits(store, ["granite"], [])) == 5
+
+
 def test_who_acts_next_on_an_invoice_in_each_state():
     """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
     from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW

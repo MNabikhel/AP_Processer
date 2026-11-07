@@ -352,8 +352,8 @@ SETTLE_SECONDS = 60.0
 # Their format as they are kept for every process (``Store.shared_answer``): another when it changes, so what an older
 # AP Coder kept is worked out again.
 SHOWN_FORMAT = "insights-1"
-# The Vendors page's workload (``vendor_workload``: 0.3 s at 30,000 invoices, in each web worker after each change
-# before) as it is kept for every process, the same way.
+# The Vendors page's workload (``vendor_workload``: 0.11 s at 30,000 invoices, in each web worker after each change
+# before) as it is kept for every process, the same way (D-194).
 WORKLOAD_FORMAT = "workload-1"
 
 
