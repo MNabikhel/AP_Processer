@@ -480,7 +480,8 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
     directory.py · search.py · spend.py · dupaudit.py
   intake/            pictures.py (pictures to PDF) · mailbox.py · msgfile.py · triage.py · inbox.py
   ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py · pilot_score.py ·
-                     service.py (server mode as a scheduled task) · server_update.py · jde_cmd.py
+                     service.py (server mode's service: its host, status) · service_windows.py (the
+                     scheduled task) · service_macos.py (the LaunchDaemon) · server_update.py · jde_cmd.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)

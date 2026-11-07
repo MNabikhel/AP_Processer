@@ -571,9 +571,9 @@ def make_way_for_venv(argv: list[str]) -> int | None:
     """Before .venv is made again: an older AP Coder still running (perhaps from that .venv) is stopped, as the second
     phase would stop it. Returns an exit code when this start must stop, else None."""
     ident = identity()
-    rest = parse(argv)[1]
+    args, rest = parse(argv)  # (--no-start: an AP Coder of another folder is left serving, B-1944)
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, load_state()), paths.private_dir(),
-                                      say, build=ident["code"])  # fmt: skip
+                                      say, build=ident["code"], here_only=args.no_start)  # fmt: skip
     if verdict == "other":
         return failed(someone_elses(port))
     if verdict == "blocked":
@@ -2245,8 +2245,9 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         return failed(blocker)
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
+    # (a set-up that starts nothing, --no-start, leaves an AP Coder of another folder serving: server-update, B-1944)
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say,
-                                      build=ident["code"])  # fmt: skip
+                                      build=ident["code"], here_only=args.no_start)  # fmt: skip
     if verdict == "other":  # another computer account's: never opened under their name, nor stopped under them
         return failed(someone_elses(port))
     if verdict == "open":

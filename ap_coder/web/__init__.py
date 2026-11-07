@@ -6,7 +6,8 @@ styles and scripts are all in this package.
 
 Layout
 ------
-* ``app.py``: ``create_app(settings=None, store=None)``, the middleware in order, /healthz, /shutdown, /jobs/<name>;
+* ``app.py``: ``create_app(settings=None, store=None)``, the middleware in order, /healthz, /readyz, /shutdown,
+  /jobs/<name>;
   ``EnvSettings`` (the .env read again when it changes).
 * ``server.py``: ``serve`` (uvicorn, the server file the launcher reads), the server's workers and background process.
 * ``core.py``: what pages share: ``render``, ``get_store`` / ``get_settings``, the rail, messages after an action

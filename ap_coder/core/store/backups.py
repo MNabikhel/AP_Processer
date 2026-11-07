@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import json
 import os
 import re
 import shutil
@@ -27,6 +28,7 @@ from ._base import (
     _now,
     _store_class,
 )
+from .backup_files import Retention
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import carry_accounts, saved_accounts
@@ -49,11 +51,66 @@ class Restored:
 
 BACKUP_HOURS_ENV = "AP_BACKUP_HOURS"  # when the daily backup may start ("1-5"); unset: any time (``backup_window``)
 MISSED_WINDOW_HOURS = 30  # a daily backup this old is made at once, whatever the hours: a day is never skipped
+RESTORE_HOURS = 2  # a restore marker older than this is not believed (a restore takes minutes, not hours)
+
+
+def restore_marker(db: Path) -> Path:
+    """``<database>.restoring``, beside the database (never in it: it is the file being replaced) while a restore
+    runs: {"pid", "started", "backup"}. The background workers wait, and on the company server every web worker
+    answers the others that AP Coder is being restored (``web/maintenance.py``, D-188)."""
+    return db.with_name(db.name + ".restoring")
+
+
+def restore_under_way(db: Path) -> dict | None:
+    """The restore into ``db`` under way, in this process or another ({"pid", "started", "backup"}), None when none
+    is: no marker, one older than RESTORE_HOURS, or one whose process ended (it crashed: ``clear_left_restore``)."""
+    marker = restore_marker(db)
+    try:
+        text = marker.read_text(encoding="utf-8")
+        fresh = time.time() - marker.stat().st_mtime < RESTORE_HOURS * 3600
+        found = json.loads(text or "0")
+    except (OSError, ValueError):
+        return None
+    found = {"pid": found} if isinstance(found, int) else found  # (the process's id alone, as written before D-188)
+    if not isinstance(found, dict) or not fresh:
+        return None
+    try:
+        pid = int(found.get("pid") or 0)
+    except (TypeError, ValueError):
+        return None
+    from ap_coder.ai.page_worker import _pid_alive
+
+    return {**found, "pid": pid} if pid == os.getpid() or _pid_alive(pid) else None
+
+
+def clear_left_restore(db: Path) -> str:
+    """A restore marker left by a restore that never ended (AP Coder stopped during it: a crash, a power cut),
+    removed as AP Coder starts: what to say in the log ("" when none was left). Kept while a restore still holds
+    the backups' lock (``backup_files.exclusive``): one from the console, run as the service starts."""
+    marker = restore_marker(db)
+    if not marker.exists():
+        return ""
+    try:
+        with backup_files.exclusive(db.parent):
+            try:
+                found = json.loads(marker.read_text(encoding="utf-8") or "0")
+            except (OSError, ValueError):
+                found = {}
+            marker.unlink(missing_ok=True)
+    except backup_files.Busy:
+        return ""
+    found = found if isinstance(found, dict) else {}
+    which = f" of {found['backup']}" if found.get("backup") else ""
+    when = f", started {str(found['started'])[:16].replace('T', ' ')}," if found.get("started") else ""
+    return (f"A restore{which}{when} did not finish: AP Coder stopped during it. The state before it was backed up "
+            "first (backups, ...-before-restore.db): check Settings → Data & backups, and restore again if needed. "
+            f"Its marker {marker.name} was removed.")  # fmt: skip
 
 
 def backup_window(text: str | None) -> tuple[int, int] | None:
-    """AP_BACKUP_HOURS as (start, end) hours of the server's clock: "1-5" from 1 to 5 in the morning, "22-4" across
-    midnight. None when it is unset or can't be read: the daily backup starts at any time, as before."""
+    """AP_BACKUP_HOURS as (start, end) hours of the business time zone (``_business_hour``; without one, of the
+    server's clock): "1-5" from 1 to 5 in the morning, "22-4" across midnight. None when it is unset or can't be
+    read: the daily backup starts at any time, as before."""
     found = re.fullmatch(r"\s*(\d{1,2})\s*-\s*(\d{1,2})\s*", text or "")
     if not found:
         return None
@@ -66,6 +123,15 @@ def backup_window(text: str | None) -> tuple[int, int] | None:
 def _in_window(hour: int, window: tuple[int, int]) -> bool:
     start, end = window
     return start <= hour < end if start < end else hour >= start or hour < end
+
+
+def _business_hour(now: dt.datetime) -> int:
+    """``now`` (the server's clock)'s hour in the business time zone, server.json's ``time_zone`` (D-187): a server
+    left on UTC still backs up in the night of the business. Its own hour without one (a laptop)."""
+    from ...ops.health import business_zone
+
+    zone = business_zone()
+    return now.astimezone(zone).hour if zone is not None else now.hour
 
 
 def _size(n: float) -> str:
@@ -137,10 +203,11 @@ class BackupsMixin:
         folder = self.backup_dir()
         return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
 
-    def backup_now(self, label: str = "", actor: str | None = None, keep: int = 14) -> Path:
+    def backup_now(self, label: str = "", actor: str | None = None, keep: Retention | None = None) -> Path:
         """The database and the files of the data folder (``backup_files``, D-143): a state that restores whole.
-        A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups).
-        ``keep``: the daily backups kept in the second backup folder (``copy_backup``). While it is made,
+        A backup that fails raises OSError and is recorded (``backup_status``, shown on Settings → Data & backups), and
+        on the server told to the system's log (D-187). ``keep``: the daily backups kept in the second backup folder
+        (``copy_backup``). While it is made,
         ``backups/.making-<pid>-...`` says so (``backup_in_progress``: the page shows it, B-1553). Never while another
         backup or a restore runs (``backup_files.exclusive``: raises ``backup_files.Busy``, B-1559)."""
         with backup_files.exclusive(self.path.parent):
@@ -170,7 +237,7 @@ class BackupsMixin:
                 marker.unlink()  # left by a process that ended while making it
         return ""
 
-    def _backup_now(self, label: str, actor: str | None, keep: int) -> Path:
+    def _backup_now(self, label: str, actor: str | None, keep: Retention | None) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = f"-{label}" if label else ""
         dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
@@ -198,6 +265,11 @@ class BackupsMixin:
         except OSError as exc:
             with contextlib.suppress(OSError, sqlite3.Error):
                 self.set_setting(BACKUP_STATUS, f"failed {_now()[:16]}: {exc}")
+            from ...ops import system_log
+
+            full = bool(short) or exc.errno in backup_files.NO_ROOM  # refused before it starts, or cut short by it
+            system_log.report(system_log.DISK_FULL if full else system_log.BACKUP_FAILED,
+                              f"AP Coder's backup {dest.name} was not made: {exc}", key="backup")  # fmt: skip
             raise
         with contextlib.suppress(OSError, sqlite3.Error):  # (a busy database: the backup is made all the same, B-1564)
             if self.get_setting(BACKUP_STATUS):
@@ -208,22 +280,21 @@ class BackupsMixin:
             self.copy_backup(made, keep=keep)
         return made
 
-    def copy_backup(self, made: Path, keep: int = 14) -> Path | None:
+    def copy_backup(self, made: Path, keep: Retention | None = None) -> Path | None:
         """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), with the files
-        it needs that are not there yet (``backup_files.copy_files``), keeping its newest ``keep`` daily copies and
-        the files they need. A copy that fails (folder offline) is recorded, never raised: the local backup is there
-        either way."""
+        it needs that are not there yet (``backup_files.copy_files``), keeping the daily copies ``keep`` says (by
+        default this mode's, ``backup_files.retention``) and the files they need. A copy that fails (folder offline)
+        is recorded (and on the server told to the system's log), never raised: the local backup is there either
+        way."""
         folder = self.get_setting("backup_copy_dir").strip()
         if not folder:
             return None
         from ...ops.service import folder_refusal
 
-        refused = folder_refusal(folder)  # a folder saved before IT's list, or brought back by a restore (D-109)
-        if refused:
-            self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {refused}")
-            backup_files.record_copy(made, False, _now()[:16], refused)
-            return None
         try:
+            refused = folder_refusal(folder)  # a folder saved before IT's list, or brought back by a restore (D-109)
+            if refused:
+                raise OSError(refused)
             target = Path(folder).expanduser()
             if not target.is_dir():
                 raise OSError(f"folder not found: {target}")
@@ -245,30 +316,36 @@ class BackupsMixin:
                 with contextlib.suppress(OSError):
                     part.unlink()
                 raise
-            backup_files.drop_old([p for p in target.glob("ap_coder-*.db") if _daily(p)], keep)
+            backup_files.drop_old([p for p in target.glob("ap_coder-*.db") if _daily(p)], keep, self.path.parent)
             backup_files.prune(target)
         except OSError as exc:
             self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
             backup_files.record_copy(made, False, _now()[:16], str(exc))
+            from ...ops import system_log
+
+            system_log.report(system_log.BACKUP_FAILED, f"AP Coder's backup {made.name} was not copied to the second "
+                              f"backup folder: {exc}", warning=True, key="backup copy")  # fmt: skip
             return None
         self.set_setting("backup_copy_status", f"ok {_now()[:16]}: {copied.name}")
         backup_files.record_copy(made, True, _now()[:16], str(target))
         return copied
 
-    def auto_backup(self, keep: int = 14, min_hours: float = 20, window: tuple[int, int] | None = None,
+    def auto_backup(self, keep: Retention | None = None, min_hours: float = 20, window: tuple[int, int] | None = None,
                     now: dt.datetime | None = None) -> Path | None:  # fmt: skip
-        """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies
-        (``backup_files.drop_old``). Only a complete backup (with its list of files) is the day's: one cut short is
-        made again at the next check (B-1557). None while another backup or a restore runs (B-1559). ``window``
-        (``backup_window``): it starts only in those hours, unless the last daily backup is ``MISSED_WINDOW_HOURS``
-        old or there is none (B-1671)."""
+        """Back up at most once a day (call it at start-up) and keep the daily copies ``keep`` says
+        (``backup_files.drop_old``; by default the newest 14, and on the company server also one a week for 8 weeks
+        and one a month for a year, D-187). Only a
+        complete backup (with its list of files) is the day's: one cut short is made again at the next check (B-1557).
+        None while another backup or a restore runs (B-1559). ``window`` (``backup_window``): it starts only in those
+        hours of the business time zone (server.json's ``time_zone``, else the server's clock), unless the last daily
+        backup is ``MISSED_WINDOW_HOURS`` old or there is none (B-1671)."""
         try:
             with backup_files.exclusive(self.path.parent):
                 return self._auto_backup(keep, min_hours, window, now or dt.datetime.now())
         except backup_files.Busy:
             return None
 
-    def _auto_backup(self, keep: int, min_hours: float, window: tuple[int, int] | None,
+    def _auto_backup(self, keep: Retention | None, min_hours: float, window: tuple[int, int] | None,
                      now: dt.datetime) -> Path | None:  # fmt: skip
         daily = [p for p in self.list_backups() if _daily(p) and backup_files.list_path(p).is_file()]
         newest: dt.timedelta | None = None
@@ -281,13 +358,13 @@ class BackupsMixin:
                 return None
             if age >= dt.timedelta(0) and (newest is None or age < newest):
                 newest = age
-        if window and not _in_window(now.hour, window) and newest is not None:
+        if window and not _in_window(_business_hour(now), window) and newest is not None:
             if newest < dt.timedelta(hours=MISSED_WINDOW_HOURS):
                 return None  # its hours come before a day is missed
         if not self.path.exists():
             return None
         made = self.backup_now(keep=keep)
-        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep)
+        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep, self.path.parent)
         backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
         return made
 
@@ -395,15 +472,8 @@ class BackupsMixin:
         with _RESTORING_LOCK:
             if str(self.path.resolve()) in _RESTORING:
                 return True
-        marker = self.path.with_name(self.path.name + ".restoring")
-        try:
-            pid = int(marker.read_text(encoding="utf-8").strip() or 0)
-            fresh = time.time() - marker.stat().st_mtime < 2 * 3600  # (a restore takes minutes, not hours)
-        except (OSError, ValueError):
-            return False
-        from ap_coder.ai.page_worker import _pid_alive
-
-        return fresh and pid != os.getpid() and _pid_alive(pid)
+        found = restore_under_way(self.path)
+        return found is not None and found["pid"] != os.getpid()
 
     def restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Path:
         """``restore_state``; the safety backup of the state replaced."""
@@ -418,12 +488,13 @@ class BackupsMixin:
 
     def _restore_state(self, backup: str | Path, *, keep_accounts: bool) -> Restored:
         key = str(self.path.resolve())
-        marker = self.path.with_name(self.path.name + ".restoring")
+        marker = restore_marker(self.path)
         with _RESTORING_LOCK:
             _RESTORING.add(key)
         try:
-            with contextlib.suppress(OSError):
-                marker.write_text(str(os.getpid()), encoding="utf-8")
+            with contextlib.suppress(OSError):  # (also what every web worker answers others meanwhile: D-188)
+                marker.write_text(json.dumps({"pid": os.getpid(), "started": _now(), "backup": Path(backup).name}),
+                                  encoding="utf-8")  # fmt: skip
             restored = self._restore_from(backup, keep_accounts=keep_accounts)
             # What was made from the replaced invoices goes with them: the company server's Spend workbook
             # (web/pages/spend.py, workbook_path).

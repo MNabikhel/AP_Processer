@@ -257,3 +257,20 @@ def test_a_command_line_with_accents_is_read_right_on_windows(running, monkeypat
     monkeypatch.setattr(running.subprocess, "run", fake_windows_powershell(line))
     assert running.command_line(1234) == line
     assert running.folder_in_command(running.command_line(1234)) == "C:\\Users\\José\\Données\\AP Coder 0.1"
+
+
+@pytest.mark.parametrize("theirs", ["another account's", "an older version's"])
+def test_a_set_up_that_starts_nothing_leaves_an_ap_coder_of_another_folder_serving(running, server, tmp_path, theirs):
+    """B-1944: server-update sets the new version's folder up (its launcher, ``--no-start``) while the old one still
+    serves (D-188), but the launcher made way for itself as a start does: the service's AP Coder, under its own
+    account, refused the set-up ("AP Coder is open in ...'s account"); under the same account, an older one would
+    have been stopped. A set-up that starts nothing looks only at what runs from its own folder."""
+    state, port, data = server
+    if theirs == "another account's":
+        state["health"] = {"user": "the-service-account"}
+    assert running.take_over(tmp_path / "new", "0.3.0", [], data, say=lambda m: None, here_only=True) == ("clear", None)
+    assert state["shutdowns"] == [] and running.listening(port)
+    # what runs from its own folder is dealt with as before (its files may be in use)
+    assert running.take_over(tmp_path / "B", "0.2.0", [], data, say=lambda m: None, here_only=True)[0] == (
+        "other" if theirs == "another account's" else "open"
+    )

@@ -170,6 +170,23 @@ class EphemeralMixin:
             found.setdefault(int(r["kind"][5:]), {})[r["token"]] = bytes(r["value"]).decode("utf-8", "replace")
         return found
 
+    # --- A heartbeat: a process says it is alive, the others read how long ago (D-187) ------------------------------
+    # One row "heartbeat" under the process's name (the server's background process: ``ops/health.py``), its time the
+    # last beat; kept a day (older, it is as good as none).
+
+    def beat(self, name: str) -> None:
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute(f"INSERT OR REPLACE INTO ephemeral {_COLUMNS} VALUES ('heartbeat', ?, ?, ?, ?)",
+                         (name, b"", now, now + 86400))  # fmt: skip
+
+    def heartbeat_age(self, name: str) -> float | None:
+        """Seconds since ``name``'s last heartbeat (None: none within a day)."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT created_at FROM ephemeral WHERE kind = 'heartbeat' AND token = ? AND "
+                               "expires_at >= ?", (name, time.time())).fetchone()  # fmt: skip
+        return max(0.0, time.time() - float(row[0])) if row else None
+
     # --- What each account uploaded in the last hour, on the server (D-109, kept here since D-111) -------------------
 
     def take_upload_allowance(self, account: str, size: int, window: float, most: int, most_bytes: int) -> bool:

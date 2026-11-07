@@ -2937,3 +2937,258 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `web/roles.py`, `web/static/js/{app,process,settings}.js`, one call of `invoice.js`, `review.html`,
     `review_bulk.html`; `tests/core/test_bulk_jobs.py`, `tests/web/test_web_review_bulk.py`,
     `tests/web/test_server_browser.py`, `tests/meta/test_code_rules.py`)
+- **D-186** · **The company server's service on a Mac: a LaunchDaemon that runs the service host from a `current`
+  link, started again by launchd only when it did not end on purpose; `ops/service.py` split by platform** (scale
+  goal, phase 6, O1: the pilot runs on a Mac mini, its models on a Mac Studio).
+  - **Why:** AP Coder's service knew only Windows' scheduled task (`service` refused anywhere else), so on the
+    pilot's Mac nothing started AP Coder at boot, brought it back after a crash, or kept it stopped once stopped.
+  - **What:** `service.py` keeps what both platforms share (the settings, the service host, the dashboard's own
+    stop, `status`, the doctor's lines) and hands install/start/stop/remove/status to this computer's backend:
+    `service_windows.py` (the task and run.cmd, moved as they were; their names still found in `service`, its
+    `__getattr__`) or `service_macos.py`. The daemon is `/Library/LaunchDaemons/<label>.plist` (`com.apcoder.server`
+    for the default task name; a name like a label as it is; any other made into one), written with `plistlib`,
+    root's and 0644: `UserName` the service's account (`_apcoder`; root refused unless `--allow-root`), `RunAtLoad`,
+    `KeepAlive {SuccessfulExit: false}`, `AbandonProcessGroup false` (launchd's default, written down: a killed
+    host's dashboard goes with it), `ThrottleInterval` 10, `ExitTimeOut` 60 (more than the host's 45 s for its
+    dashboard), `NumberOfFiles` 8192 (launchd's 256 is too few for the web workers), its output in
+    `<data>/logs/launchd.out.log` and `.err.log`. It runs `<the code folders' parent>/current/.venv/bin/python -m
+    ap_coder service run`, `current` a relative link to the version's folder. launchctl: `bootstrap system`,
+    `bootout system/<label>`, `kickstart -k`, `print` (its top level read), `enable` before a start.
+  - **The host's exit code is the contract with KeepAlive:** 0 only when stopped on purpose: the `stopped` file, or
+    SIGTERM / SIGINT (`StopSignals`, off Windows: the dashboard asked to stop, ended STOP_WAIT, 45 s, later if it
+    won't, then exit 0); "start me again", `service.again()`: `HOST_AGAIN` (75) off Windows, so launchd starts it
+    again 10 s later, 0 on Windows as before (its task comes back every 5 minutes), when another host holds the lock
+    or when the folder to run has changed (an update's recovery at the host's start, D-188, returns `again()`: the
+    host started by the `current` link's new target is the right one); a crash or a kill is started again. An update
+    cut short that only root can finish (the link to switch is root's, D-188) ends with 0 too: left stopped, its log
+    saying to run `sudo server-update`, never started again every 10 s (B-1956, B-1957).
+    `service stop` is the flag, `/shutdown`, then `bootout`: it stays stopped after a reboot (the host launchd starts
+    at load ends at once). `service start` bootstraps it, or `kickstart -k` when it is loaded.
+  - **server-update:** `switch_to` asks the backend (`service.switch_folder`): Windows rewrites run.cmd as before;
+    the Mac points `current` at the new folder by one rename (`os.symlink` to a temporary name, then `os.replace`)
+    while the service is stopped. `Server.installed` asks the backend too (the plist there). The plist never changes
+    with a version. Neither does Windows' task: it starts in run.cmd's folder (the data folder's `service`); it started
+    in the folder it was installed from, so once server-update's "two versions back" was deleted Task Scheduler could
+    not start it (error 267). A task an older version registered is still so until `service install` again:
+    server-update says so instead of "delete it" (it reads the task's XML `service install` saved), and SERVER.md
+    section 11 (B-1961).
+  - **Through a power cut:** what the service starts from is written whole or not at all (`service.write_whole`: a
+    temporary file, fsync, `os.replace`, the folder fsynced): server.json, run.cmd (written in place before, a cut
+    could leave it empty and no host would start to recover an update) and the plist; the `current` link's folder is
+    fsynced after its rename.
+  - **Root on a Mac:** sudo leaves the environment out, so the plist (root's) gives the other service commands the
+    data folder when `AP_PRIVATE_DIR` is not given, and `install` refuses with neither. A file root's sudo makes in
+    the data folder is root's (a Windows folder gives its rights to what is made in it): `install` and `start` hand
+    root's own folders and single-name files back to the daemon's account (`hand_back`: `os.fwalk`, `O_NOFOLLOW`,
+    `fchown` on the open file; only in a data folder that is the account's). `host_running` no longer makes
+    host.lock (made by root, the host could not take it). Every Mac service command but `install --dry-run` asks for
+    sudo.
+  - **`status --json`**, both platforms: installed, running, pid, started, version, folder, address, answering, the
+    `/healthz` answer, the dashboard's process, stopped on purpose, where the settings and log are, and the
+    backend's own (the task and its state; the label, plist, loaded, launchd's pid and last exit code).
+  - **Proof:** `tests/ops/test_service_macos.py` (the plist read back, launchctl's commands against a stand-in, the
+    refusals, the data folder found in the plist, the link switched under a reader 400 times, SIGTERM and SIGINT
+    sent to a real host and dashboard process (kind, stubborn, crashing), the exit codes, the hand-back never through
+    a link or a hard link, the CI script's flow against a stand-in Mac); `tests/ops/test_service.py` as it was, but
+    the second host's exit code checked on both platforms, and `status --json` on Windows. On GitHub's macOS runner
+    the CI job `macos-service` (`scripts/ci/macos_service.py`) does it for real: install, `kill -9` of the host
+    (launchd brings it back, the old dashboard gone), `service start` while it runs (`kickstart -k`, which signal it
+    sends is not documented: only the restart is checked), `launchctl bootout` of the running daemon (launchd's
+    SIGTERM, as at the Mac's shutdown: the host's log says so, its dashboard is gone, it stays stopped), `service stop`
+    (still stopped 60 s later), start, remove (the plist gone).
+  - **Not chosen:** a LaunchAgent (needs someone logged in); `KeepAlive true` (a deliberate exit 0 would be started
+    again, so every stop would need a bootout, and a reboot would start it); the plist rewritten at each update (a
+    reload each time); the link in the data folder (the service's account can write there, and could point it at
+    other code); `launchctl load/unload` (deprecated); a daemon library (a new dependency); `SMAppService` (an app
+    bundle, signed).
+  - **Left:** launchd's own end of a killed host's processes (SIGTERM to its group) is relied on, and measured by
+    the CI job only; LM Studio's daemon on the Mac Studio is a recipe for IT in SERVER.md, not code; `process_image`
+    is Windows' only, so on a Mac `service stop` leaves a dashboard that won't stop to launchd's bootout; `doctor`'s
+    and `users`' runs as root are not refused (SERVER.md runs them as the account).
+- **D-187** · **The company server's health for IT: `GET /readyz` for a monitor, `doctor --json`, failures in the
+  system's log, the certificate's end read from its PEM, daily backups kept 14 days, 8 weeks and 12 months, and a
+  business time zone** (scale phase 6, O2: 400 people, 25,000 invoices a month on one server).
+  - **Why:** IT had `/healthz`, which says the dashboard answers and nothing more: a background process stuck, a
+    disk filling, a certificate expiring, a model server on its backup were seen when staff called. Fourteen daily
+    backups are a fortnight: a mistake found at the month end could not be undone. A virtual machine left on UTC
+    started the 1-5 a.m. backup at 8 p.m. in Toronto, with people still at work.
+  - **`/readyz`** (`ops/health.py` `readiness`, the route in `web/app.py`): 200 when ready, 503 when not, a JSON body
+    of checks, each with its status, and the problems in words (docs/SERVER.md section 12 gives the shape). **503
+    only when AP Coder can't do its work**: the database unreadable, the data folder's disk under `BACKUP_RESERVE`
+    (nothing read, no backup), the certificate expired, the background process's heartbeat 2 minutes old, no
+    capture process. A backup failed or old, no second folder, a model server on its backup, the clock's zone: a
+    warning (200, `"status": "warn"`): a load balancer in front of the only server must not take it out for those;
+    they reach IT through the system's log and the body. **Cheap:** counts through the queues' status indexes (the
+    oldest waiting by its id or its index), a heartbeat row, the backups folder's listing, `disk_usage`, the
+    certificate file; each process keeps its answer 5 s (`Kept`: callers wait for one, then share it); the second
+    backup folder (a share gone can take a minute) is looked at on a thread of its own, waited 2 s, kept 60 s.
+    **Nothing secret or named:** no path, token, model server's address, person or vendor; a backup's failure gives
+    its time, not its reason (which may name an invoice's file).
+  - **Who it answers** (its rule in `web/roles.py` is `OPEN`: the route checks, as `/shutdown` does): on the server
+    its console (a loopback address with no `--proxy`, as `pages/login.py` `from_console`), and the monitors
+    server.json names: `monitor_token` (24 characters or more, sent as `X-AP-Coder-Monitor` or `Authorization:
+    Bearer`, compared in constant time) or `monitor_addresses` (addresses or networks, for a probe that can't send a
+    header). Others get a 403 that says how. Not chosen: the allowed hosts (`AP_ALLOWED_HOSTS` are the names staff
+    type, a Host header any client sets), a token in the query string (proxies log it), an Admin's session (a
+    monitor has no account nor an authenticator app), open to all (the rule asked for the console and the server's
+    settings). On a laptop as `/healthz`: this computer everything, another computer only `{"ready", "app"}`
+    (`identity.OPEN_PATHS`: no name asked first).
+  - **The heartbeat:** `Store.beat("background")`, an `ephemeral` row the background process renews every 30 s
+    (`server.run_background`), read with `heartbeat_age`. Not a lease: `take_lease` refuses a new owner until the
+    old one runs out, so a restarted process would look dead for that long. With one process (a laptop,
+    `--workers 1`) the work runs in the dashboard's own: nothing to check.
+  - **The certificate's end:** a DER walk of the PEM to the validity's notAfter (UTCTime and GeneralizedTime, the
+    version optional; the earliest of the file's certificates, the CA's included). Not chosen: `cryptography` (not a
+    dependency), `ssl._ssl._test_decode_cert` (private), a loopback handshake (`getpeercert()` gives a dict only when
+    it verified the certificate, which needs the company's CA; its binary form is the DER again). A warning from 30
+    days before (doctor, `/readyz`, an Admin's banner on every page, `core.admin_notice`), an error once expired
+    (the banner red, 503). The server's own process looks every 6 hours for the system's log (`watch_certificate`).
+  - **The system's log** (`ops/system_log.py`, server mode only): Windows' Application log through `eventcreate`
+    (part of Windows; source "AP Coder", which an administrator makes once: SERVER.md section 6; event numbers 101
+    backup, 102 full disk, 103 a process stopped, 104 certificate, 105 a model server's backup), syslog on macOS and
+    Linux (`SysLogHandler` on `/var/run/syslog`, `/dev/log`; nothing without one). The same kind and message (or
+    key) at most once an hour per process; it never raises. Told by: a backup failed or refused (`_backup_now`), a
+    copy to the second folder failed, the import queue paused on a full disk, the server's supervisor seeing a
+    background or capture process stop, a breaker moving its calls (`Failover.failed`), and `/readyz` finding a
+    failure. Not chosen: pywin32 (a dependency), PowerShell's `Write-EventLog` (gone from PowerShell 7).
+  - **Retention** (`backup_files.Retention`, `kept_dailies`): the newest 14 dailies, the newest 14 complete ones
+    (B-1558), and of the complete ones the newest of each of the last 8 ISO weeks and 12 months that have one (as
+    restic's `--keep-weekly`: a server off for months keeps its history, where calendar windows would drop it); the
+    newest complete one is never dropped; a labelled one is never among the dailies; the second folder the same
+    (`copy_backup`). On the company server only (`retention`): a laptop keeps its 14, as before (laptop mode
+    unchanged; a laptop's disk is small). About 32 copies of the database on the server's disk: SERVER.md says so.
+    The server is told as the doctor tells it (`service.is_server_here`: server mode, or server.json in the data
+    folder), so a `backup now` or a restore run from IT's console without AP_SERVER_MODE keeps the server's history
+    too (it pruned the second folder to 14, B-1960).
+  - **The second folder on the database's disk:** its `st_dev` against the data folder's (the volume serial number
+    on Windows, a share's own), a warning in doctor, `/readyz` and Settings → Data & backups; no second folder at
+    all, a warning too. On the server only: a laptop's OneDrive folder is on its own disk and synced away.
+  - **The business time zone:** server.json's `time_zone`, an IANA name, read with `zoneinfo`. Its database on
+    Windows is the `tzdata` package, which pandas requires there (`tzdata; sys_platform == "win32"`, and
+    python-dateutil): in the venv and in the offline bundle's wheelhouse (pip resolves it for each platform), so no
+    new dependency and no fallback; a name it can't find is said. The machine's clock is compared by its UTC offset
+    now and in mid-January and mid-July (Toronto and New York agree; Regina and Winnipeg don't). Only the daily
+    backup's hours follow it (`backups._business_hour`); "today" elsewhere is the machine's clock (the places are
+    listed in the phase's report): the server's time zone is set in Windows.
+  - (`ops/health.py`, `ops/system_log.py`, `ops/doctor.py` `as_json` `store_checks`, `ops/cli.py`, `web/app.py`,
+    `web/roles.py`, `web/identity.py`, `web/server.py`, `web/core.py`, `web/pages/settings.py`,
+    `core/store/{backups,backup_files,ephemeral,imports,page_queue}.py`, `ai/local_llm.py`, `intake/imports.py`;
+    `tests/ops/test_health.py`, `tests/ops/test_system_log.py`, `tests/web/test_readyz.py`,
+    `tests/core/test_backups.py`)
+- **D-188** · **server-update prepares while the old version serves and survives a power cut; a restore closes the
+  server to others; the server's data folder on its own disk with its database; the same bundle for the same
+  commit** (scale goal, phase 6, O3; B-1955).
+  - **Why:** the update stopped the service first, then unzipped, set up the new folder from its wheelhouse (minutes on
+    Windows), migrated, ran the self-check and started: 400 people closed out for all of it, and a migration that
+    failed was found with the service down. A power cut part way left the `stopped` file (the service stayed down after
+    the reboot) and maybe a half-migrated database, with nothing saying where it was. A restore let every other worker
+    draw pages from a database being replaced. SQLite's write-ahead log is damaged on SMB/NFS shares. A database file
+    deleted by mistake was replaced by an empty one at the next start, which the daily backups then copied for two
+    weeks. Two builds of one commit gave different ZIPs (file times, the build time in the manifest).
+  - **The update** (`ops/server_update.py`): unzip, set up, a copy of the database (SQLite's backup, consistent while
+    the old version writes) migrated by the new version in `service/update-check` (timed, removed after), and the
+    self-check, all before the stop, after a check of the disk's room for a copy (the new folder's launcher runs with
+    `--no-start`, which leaves the AP Coder of another folder serving, B-1944). Then stop, the safety copy, the real
+    migration, switch, start, healthy. The downtime (stop to healthy) and each step are printed and kept in
+    server.json's `history[-1]["times"]` (`prepare_s`, `check_migration_s`, `self_check_s`, `stop_s`,
+    `safety_copy_s`, `migrate_s`, `start_s`, `downtime_s`). A failure before the stop changes nothing ("not updated");
+    after it, as before (the backup put back, the old folder started). The new version's migration skips the Store's
+    own pre-migration copy (`MIGRATE`: `backup_files.before_update` made a no-op in that process): the safety copy was
+    made a moment before with the service stopped, and a second copy of a year's 7-9 GB would add minutes. The safety
+    copy is `safety_copy` (local; it was `backup_now`), and the second backup folder's copy is made after the service
+    answers, by the new version (`Server.second_copy`): a copy to a share is no longer in the downtime. `Server`'s
+    interface is kept (one method added); `switch_to` and the platform code are untouched.
+  - **The marker** (`ops/update_recovery.py`): `service/update.json` {from, to, from_folder, to_folder, database,
+    label, step, started, pid, safety_copy}, written whole at each step (a `.part` file, fsync, `os.replace`, the
+    folder fsynced off Windows), removed once the update is recorded. `service/update.lock` (`paths.try_lock`) is held
+    by server-update throughout, so a marker with a free lock is one left behind; a second server-update is refused.
+    The next `server-update` (or `--back`), and `service run` before it looks at the `stopped` file, act on it, by
+    step: `prepare`, `stop`, `safety-copy` → the old version starts (a cut copy's `.part` removed, the update's own
+    `stopped` file removed; nothing stopped or started after `prepare`); `migrate`, `going-back` → the safety copy put
+    back (`put_back`), the old version starts; `switch`, `start` → finished (the new version starts, recorded with
+    `previous_folder` and `pre_update_backup`, so `--back` works); server-update goes back when the new version does
+    not answer, and the service host goes back at `switch` when it still runs the old folder. A host whose folder is not
+    the one to run rewrites run.cmd and exits: the task's 5-minute trigger starts the right one (a Mac's host can't:
+    below). server-update acts on
+    a marker only when both folders are beside its own (the data folder is the service account's to write, D-109),
+    with the database it was given, a safety copy only from `backups`; it then stops ("run server-update again").
+    Each step is proven by a test that cuts the update there (a `BaseException`, so no rollback code runs) and then
+    recovers both ways (`tests/ops/test_update_recovery.py`).
+  - **The service host's part** (B-1956, B-1957, B-1958): it switches nothing when the rule's folder is the one it
+    runs (only server.json's `folder` is written), and asks before it acts whether it may switch at all
+    (`service.can_switch`: the folder it would write, not the platform). Once the safety copy is put back, the marker
+    says so (`put_back`): never put back twice, and only going back is left. On a Mac the host runs as `_apcoder`,
+    and the `current` link and its folder are root's, so by step:
+
+    | cut short at | the host runs (the link's) | it does |
+    |---|---|---|
+    | `prepare`, `stop`, `safety-copy` | the old folder (moved at the switch only) | the old version starts as it was |
+    | `migrate` | the old folder | the safety copy put back once; the old version starts |
+    | `switch` | the old folder / the new (moved before the cut) | put back once, old starts / finished, new starts |
+    | `start` | the new folder | finished: the new version starts |
+    | `going-back` | the old folder (moved back) / the new | put back once, old starts / **nothing changed**, exit 0 |
+
+    "Nothing changed": no put back under the new version, the marker kept, exit 0 (launchd leaves it stopped), the log
+    saying to run `sudo server-update`, which goes back. Windows' host there rewrites run.cmd and exits (`again()`):
+    its task starts the old folder. **Can't tell** (`update.lock` won't open: root's, made by a `sudo server-update`,
+    `--dry-run` too, before this, and no `service start` since to hand it back): nothing changed, said in the log, and
+    the host goes on as without a marker: at `prepare` the old version serves on (it was serving), after it the
+    update's own `stopped` file keeps it stopped (exit 0) for server-update. A put back the account may not make (a
+    backups folder root's sudo made: `PermissionError`): exit 0 too, not 75 every 10 s. Any other failure: `again()`
+    while the database may be half put back or the folder is wrong (tried again), else AP Coder starts and the rest
+    is done at the next start. `service install` makes `update.lock` the account's (`hand_over`), and a lock or a
+    marker root's sudo makes is the service folder owner's from the start (`_owned`: on the file just made with
+    `O_EXCL`, never through a link). server-update going back after its own recovery (the new version did not
+    answer) writes a `going-back` marker first. Proven on Linux with the host really run as another account (uid
+    65534, the code folders' parent root's), each step; the macOS CI job cuts one short at the safety copy for real.
+  - **server.json on Windows** (B-1962): Windows refuses a rename over a file another process has open without
+    delete sharing (as Python opens files; an antivirus): `write_whole` tries it again for 1.6 s in all
+    (`service.REPLACE_WAITS`); a monitor's `/readyz` reads server.json's monitor settings again only once the file
+    changes (its inode, time and size: `health.monitor_config`); and an update done and answering whose record still
+    can't be written says so, returns 1 and keeps its marker (step `start`), which the next server-update or service
+    start records (`previous_folder`, so `--back` works), never a traceback with nothing said.
+  - **A restore** (`core/store/backups.py`, `web/maintenance.py`): its marker `<database>.restoring` (beside the
+    database, never in it) is {pid, started, backup}; on the server an ASGI middleware outside the session answers
+    503 (a plain page that refreshes itself, JSON for fetches, `Retry-After: 60`) while it is there and its process
+    lives, on every web worker; `/healthz`, `/readyz`, static files and the restore's own request (under way before the
+    marker) still answer. One stat a request; the marker read on a thread. The marker goes on success and failure;
+    one a crash left is removed as `serve` starts, said in the log, unless a console restore still holds the backups'
+    lock (`clear_left_restore`). The laptop is unchanged (its background workers still wait, as before).
+  - **The data folder** (`ops/safety.py`, from `serve` and the doctor): a UNC path (both slashes, `\\?\UNC\`), a
+    mapped drive (`GetDriveTypeW` = DRIVE_REMOTE) or a mount of smbfs/afpfs/nfs/nfs4/cifs/smb3/webdav/davfs/sshfs
+    (`/proc/mounts`; the Mac's `mount` output) refuses the server's start; a laptop gets a warning, as for OneDrive.
+    9p is warned, never refused, on the server too (B-1963): it is WSL2's /mnt/c (the Windows disk of the same
+    computer) and a virtual machine's folder from its host, sometimes its root. SQLite's warning is about locks and
+    shared memory across computers; here every AP Coder process is in the one machine, whose kernel keeps them, so only
+    a program outside it (on the host, or WSL's Windows side) opening the same database would break them, and the
+    folder is slower. Refusing it stopped a pilot on WSL or such a machine from starting at all.
+    On the server, a missing database with signs it existed (backups, server-update's record, its `-wal`/`-shm`,
+    `authenticator.key`, `logs/access.log`, invoice files; not server.json alone, which `service install` writes
+    before the first start, nor the service log, written before the dashboard starts) refuses the start; `serve
+    --server --new-database` makes the new one on purpose (at once, so the service starts on it).
+  - **The bundle** (`scripts/build_offline_bundle.py`): every entry dated SOURCE_DATE_EPOCH, else the commit's time,
+    sorted by name, 0644/0755 and Unix-made; the manifest's `built` that time (UTC) and its files sorted by name. The
+    same bytes need the same wheels: pip resolves what PyPI has on the day (a constraints file would pin them), and a
+    stage's wheelhouse reused from an earlier build keeps its old wheels; text files are as the checkout has them
+    (CRLF on Windows). A smaller server-only bundle was not added: the flags give it (`--python <the server's>
+    --no-current`), the self-check needs the samples and the OCR models, and the wheels for one Python and one
+    platform are most of what is left.
+  - **Proven in CI:** one job, `windows-server-update` (windows-latest, 60 minutes): the bundle built once, set up as
+    the server on 20,000 seeded invoices, installed as the service (SYSTEM, plain HTTP), then `server-update --force`
+    with the same bundle, offline; over 300 s down fails (`scripts/ci/server_update_downtime.py`, its verdict tested on
+    Linux against what an update records). Measured here (Linux, 4 cores, the dashboard with 2 workers as a process,
+    `server_update_downtime.py local`, 20,000 invoices, a 669 MB database): prepared in 16.7 s (the copy migrated in
+    2.2 s, the self-check 13.9 s) while serving; down 11.4 s (stop 1.0, safety copy 6.7, migration 0.2, start 3.4).
+  - **Alternatives:** migrating in place with the old version still running (two versions on one database); a safety
+    copy before the stop (writes in between lost on a rollback); a marker in the database (the file being replaced or
+    migrated); the 503 from a flag in the database or each worker's memory (other processes can't see it); refusing
+    a share by `os.statvfs` (it can't tell a share).
+  - **Left:** `service.write_runner` writes run.cmd in place (not a `.part` renamed), so a power cut in that write
+    could leave it empty: O1 owns the platform code. `--back` writes no marker (a power cut during it leaves the
+    `stopped` file, as before).
+  - (`ops/server_update.py`, `ops/update_recovery.py`, `ops/service.py` `run_host` (3 lines), `ops/safety.py`,
+    `ops/cli.py`, `ops/doctor.py`, `core/store/backups.py`, `web/maintenance.py`, `web/app.py`,
+    `scripts/build_offline_bundle.py`, `scripts/ci/server_update_downtime.py`, `.github/workflows/ci.yml`;
+    `tests/ops/test_server_update.py`, `tests/ops/test_update_recovery.py`, `tests/ops/test_safety.py`,
+    `tests/ops/test_server_update_downtime.py`, `tests/web/test_maintenance.py`,
+    `tests/offline/test_bundle_reproducible.py`)

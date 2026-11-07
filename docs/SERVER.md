@@ -7,6 +7,9 @@ offline: AP Coder and LM Studio run on the server and connect to nothing on the 
 Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
+On a Mac (the pilot's Mac mini, with the models on a Mac Studio) AP Coder runs as a LaunchDaemon instead of a
+scheduled task: [section 14](#14-on-a-mac) says what is different there; the rest of this guide holds for it too.
+
 In this guide:
 
 - `C:\APCoder\APProcessor` is the AP Coder folder (the code), `D:\APCoderData` the data folder (the database,
@@ -21,7 +24,8 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 [3. HTTPS](#3-the-https-certificate) · [4. The name](#4-the-name-staff-type) · [5. Firewall](#5-the-firewall) ·
 [6. The service](#6-the-service) · [7. First admin](#7-the-first-admin) · [8. LM Studio](#8-lm-studio-on-the-same-server)
 · [9. Backups](#9-backups) · [10. Users and roles](#10-users-and-roles) · [11. Updating](#11-updating-and-going-back)
-· [12. Troubleshooting](#12-troubleshooting)
+· [12. Health and monitoring](#12-health-and-monitoring) · [13. Troubleshooting](#13-troubleshooting) ·
+[14. On a Mac](#14-on-a-mac)
 
 ## 1. What the server needs
 
@@ -101,7 +105,10 @@ Why these numbers:
    mkdir D:\APCoderData
    ```
 
-   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive.
+   This makes `C:\APCoder\APProcessor`. Unzip it on the server's own disk, not a network drive. The data folder too
+   must be on one of the server's own disks: AP Coder's database can be damaged on a network share (a `\\server\share`
+   path or a mapped drive letter), so the server refuses to start there and says why; `doctor` says it too (*data
+   folder place*). For a copy on a share, set the backups' second folder (step 9).
 
 3. **Tell AP Coder where its data is, and that this is the server**, for every account on the server (the service and
    IT's console):
@@ -213,7 +220,8 @@ LM Studio's port (1234) stays closed: only AP Coder, on the server itself, talks
 ## 6. The service
 
 AP Coder runs as a Windows *scheduled task* that starts when the server starts, under `APCoderService`, whether
-anyone is logged on or not. (Why a task and not a classic service, with nothing to download: docs/decisions.md D-100.)
+anyone is logged on or not. (Why a task and not a classic service, with nothing to download: docs/decisions.md D-100.
+On a Mac it is a LaunchDaemon: section 14.)
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder service install --certfile D:\APCoderData\tls\apcoder.pem --keyfile D:\APCoderData\tls\apcoder.key.pem --allowed-hosts apcoder.company.local
@@ -318,6 +326,20 @@ milliseconds (10 MB, then up to 9 older files); with several workers, one file p
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 
+**The system's log** (D-187): what goes wrong is also written to Windows' *Application* log (the Event Viewer, and
+whatever monitoring reads it), source `AP Coder`, one event number for each kind, so a rule can pick one: **101** a
+backup failed, or its copy to the second folder (a warning); **102** a full disk (a backup refused, or invoices no
+longer read); **103** the background process or a capture process stopped (or, as `/readyz` finds, gives no
+heartbeat); **104** the HTTPS certificate expires within 30 days (a warning) or has expired; **105** a model server's
+calls moved to its backup (a warning). The same message at most once an hour by each process. Windows lets only an
+administrator make a new source, so make it once, in an administrator Command Prompt:
+
+```bat
+eventcreate /L APPLICATION /T INFORMATION /SO "AP Coder" /ID 1 /D "AP Coder may write to this log."
+```
+
+Until then these lines are in AP Coder's own logs only. (On macOS and Linux they go to syslog as `ap-coder`.)
+
 **HTTPS**: TLS 1.2 and 1.3 only; on TLS 1.2 only ECDHE with AES-GCM or ChaCha20 (no AES-CBC, no SHA-1 ciphers).
 Browsers from the last ten years have them. Answers carry no `server:` header.
 
@@ -404,13 +426,17 @@ window, started at boot like AP Coder.
 ## 9. Backups
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs; the newest 14 are kept.
+  runs. Kept (D-187): the newest 14 daily ones, then the newest of each of the last 8 weeks and of each of the last
+  12 months that have one, so a mistake found at the month end or the year end can still be undone; a backup with a
+  label (yours, an update's, a restore's) is always kept, and the newest complete one is never deleted.
   - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
-    during the working day. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
+    during the working day. The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
+    server's clock. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
     during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
   - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
     to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
-  - Plan the disk for 14 daily copies of the database, plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
+  - Plan the disk for about 32 copies of the database (14 days, 8 weeks and 12 months, which overlap), plus the
+    invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
   *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
   made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
   restorable whole (D-143):
@@ -436,8 +462,9 @@ window, started at boot like AP Coder.
 - **A copy elsewhere**: an Admin sets *Settings* → *Data & backups* → *Also copy each backup to* a network share, for
   example `\\fileserver\Backups\APCoder` (the `backup_copy_dir` setting; one of the allowed folders above). Each daily
   backup and each update's backup is then copied there too, with the files it needs that the share does not have yet
-  (the same layout: the newest 14 daily ones kept), and the page says, for each backup, whether its copy was made or
-  why it failed. That folder alone restores the server on a new computer. The service's account must be able to write
+  (the same layout, and the same ones kept: 14 days, 8 weeks, 12 months), and the page says, for each backup, whether
+  its copy was made or why it failed. Choose a share on another server: a folder on the database's own disk does not
+  survive that disk's failure, and *Settings*, `doctor` and `/readyz` say so. That folder alone restores the server on a new computer. The service's account must be able to write
   there: a domain account (step 2), with *Modify* on that share folder.
 - **What each backup holds**: *Settings* → *Data & backups* lists every backup with when it was made, its invoices and
   files and their size, whether its second copy was made, and whether every file is there (*Complete*, or how many are
@@ -451,6 +478,13 @@ window, started at boot like AP Coder.
   undone. A file missing or damaged in the backup is taken from the second copy when it has it, else the page says
   which. The user accounts (passwords, roles, who is turned off) and paused logins stay as they are now, not as in the
   backup, and everyone is logged out, the Admin too. `server-update --back` and an update that fails do the same.
+  While the restore runs (a minute or two; longer for a year's database), everyone else's pages and requests, on
+  every web worker, get *AP Coder is being restored from a backup; back in a minute or two* (a 503 answer, which
+  tries again by itself), never a page drawn from a database being replaced; `/healthz` still answers, and the Admin's
+  own page waits for the restore. A marker beside the database (`ap_coder.db.restoring`) says a restore runs; it goes
+  when the restore ends, whether it worked or not. One left by a restore cut short (the server stopped during it) is
+  removed when AP Coder next starts, with a line in `logs\service.log` saying so: then check *Settings* → *Data &
+  backups*, and restore again if needed (the state before the restore was backed up first).
 - **Restoring from the console** (the same rules): `service stop`, then, in the AP Coder folder:
 
   ```bat
@@ -458,9 +492,15 @@ window, started at boot like AP Coder.
   .venv\Scripts\python.exe -m ap_coder backup restore ap_coder-20261201-090000.db
   ```
 
-  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't).
-  `backup now` makes a backup. Copying a `.db` over `D:\APCoderData\ap_coder.db` by hand brings back neither the
-  files nor the accounts as they are now: use the command.
+  then `service start`. It refuses while AP Coder runs on the data folder, and asks first (`--yes` doesn't); a service
+  started meanwhile answers *being restored* until it ends. `backup now` makes a backup. Copying a `.db` over
+  `D:\APCoderData\ap_coder.db` by hand brings back neither the files nor the accounts as they are now: use the command.
+- **A database that is gone**: when `D:\APCoderData\ap_coder.db` is missing but the data folder shows there was one
+  (its backups, an update's record in `server.json`, the sign-in codes' key, the access log, invoice files), the
+  server does not start with a new, empty database in its place: `logs\service.log` says so. Restore the newest
+  backup (`backup list`, then `backup restore <name>`, as above), or put the file back. To begin again with an empty
+  database on purpose, run `.venv\Scripts\python.exe -m ap_coder serve --server --new-database` once (it makes the
+  database; stop it with Ctrl+C), then `service start`.
 - **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone,
   **before making the first Admin (step 7)**:
   `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then
@@ -598,20 +638,57 @@ Without `--sha256` it refuses. `--no-hash-check` installs without the check: it 
 yourself on this server. (`certutil -hashfile <zip> SHA256` shows a file's SHA-256 too.)
 
 The first line shows the steps with the folders and files, and changes nothing (on a server where the service isn't
-installed yet, it says there is no service to stop or start). The second does them, in order:
+installed yet, it says there is no service to stop or start). The second does them, in order. First, while the
+version running keeps serving staff:
 
 1. checks the bundle: its SHA-256 is the one given, one AP Coder folder, every file it lists, nothing damaged, and
-   newer than the one running;
-2. stops the service (staff see AP Coder as closed for a few minutes: pick a quiet time);
-3. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
-4. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
-5. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
-6. updates the database (the new version opens it once);
-7. runs the self-check (the sample invoices read right);
-8. starts the service from the new folder, and waits for it to answer.
+   newer than the one running (and that the disk has room for a copy of the database);
+2. unzips the bundle next to the current folder: `C:\APCoder\APProcessor-0.5.0`;
+3. sets that folder up from its own `wheelhouse` (offline; its launcher's window shows it);
+4. updates a copy of the database with the new version (in `D:\APCoderData\service\update-check`, removed after),
+   which proves the update works on your data and says how long it takes;
+5. runs the self-check (the sample invoices read right).
 
-If step 5, 6, 7 or 8 fails, it puts the database backup back, switches the service back to the old folder and starts
-it again, and says why. The new folder is kept to look at; delete it when done.
+Then the switch, the only time staff see AP Coder closed:
+
+6. stops the service;
+7. backs up the database and the files (section 9): `backups\ap_coder-<date>-<time>-before-update-0.5.0.db`;
+8. updates the database (the new version opens it once);
+9. starts the service from the new folder, and waits for it to answer. The backup is then copied to the second
+   backup folder, when one is set.
+
+It prints how long the service was down (from the stop to the new version answering) and each step's time, and
+keeps them in `server.json`'s `history` (`times`, in seconds). A year's database takes a few minutes for step 7 and
+the start; CI checks that with a database of 20,000 invoices it stays under 5 minutes on Windows (11 s on a Linux
+test computer, D-188). If step 2, 3, 4 or 5 fails, nothing was stopped or changed: the old version kept serving, and it says
+why. If step 6, 7, 8 or 9 fails, it puts the database backup back, switches the service back to the old folder and
+starts it again, and says why. Either way the new folder is kept to look at; delete it when done.
+
+**If the power goes off (or the window is closed) during an update**, where it was is in
+`D:\APCoderData\service\update.json` at each step. The service's next start (the server booting, or the scheduled
+task's 5-minute retry) and the next `server-update` act on it before anything else (on a Mac, the service's start
+leaves to `server-update` what only an administrator may do: below), and say what they did in `logs\service.log` or
+on screen:
+
+- cut short while it prepared, stopped the service or made the backup: the old version starts as it was (its
+  database was not touched); a backup cut short is removed;
+- cut short while the new version updated the database: the backup made a moment before (the service already
+  stopped, so nothing was done since) is put back, and the old version starts;
+- cut short at or after the switch: the update is finished and the new version starts (`server-update --back` goes
+  back if it turns out wrong). `server-update` goes back instead when the new version does not answer; the service
+  goes back when it still runs the old folder (run.cmd not rewritten yet);
+- cut short while it went back: going back is finished.
+
+The database is put back once: the marker then says so, and a start that fails after it never puts it back again.
+`server-update` then stops there: run it again to update. While one `server-update` runs, another (and the service's
+retry) leaves it alone (`service\update.lock`).
+
+On a Mac the service's start does all of this too, but for what only an administrator may do: the service runs as
+`_apcoder`, and `/Library/APCoder/current` is root's. So when an update was cut short while it went back with the link
+still on the new folder, the service changes nothing (no backup put back), stays stopped, and `logs/service.log` says
+so: run `apc server-update` (section 14) again, which goes back and starts it. The same when the service can't tell an
+update cut short from one running (it can't open `service/update.lock`, made by an older `sudo server-update`): it
+serves on if the update had not stopped it yet, and else stays stopped until `apc server-update`.
 
 **Going back** after an update that went through, when the new version turns out wrong:
 
@@ -634,10 +711,77 @@ version's own, not planted ones). `server-update --back` is the way back, since 
 before the update. To restore one of the newer backups, update again and restore it from the newer version.
 
 Two folders are kept: the current one and the previous one. After the next update, the message names the folder two
-versions back, which you can delete. What was done, when, is in `D:\APCoderData\server.json` (`history`), and the
-installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.
+versions back, which you can delete. A service installed by an earlier AP Coder than this guide's has its scheduled
+task start in the folder it was installed from: once that folder is deleted, Task Scheduler can't start the task (its
+*History*: error 267, `0x8007010B`, "the directory name is invalid"). Run `service install` once more from the
+current folder (with the `--account`, `--task-name` and `--folder` it was given; Windows asks for the account's
+password), before you delete it: the task then starts in `D:\APCoderData\service`, which no update changes. The
+update's message says so when the task it finds is such a one.
 
-## 12. Troubleshooting
+What was done, when, is in `D:\APCoderData\server.json` (`history`), and the installs in the administrator's
+`%USERPROFILE%\.ap_coder\settings.json`, as on a laptop.
+
+## 12. Health and monitoring
+
+**`GET /readyz`** (D-187) is for your monitoring (PRTG, Zabbix, SCOM, Nagios...) or a load balancer: **200** when
+AP Coder is ready, **503** when it can't do its work, and a JSON body saying what was checked. Not ready means one of:
+the database can't be read; the data folder's disk has less than 512 MB free (no invoice is read, no backup made); the
+HTTPS certificate has expired; the background process gave no heartbeat for 2 minutes (it says it is alive every 30
+seconds); none of the capture processes runs. Everything else is a warning (still 200, `"status": "warn"`): the
+certificate expires within 30 days; the last backup failed, or the newest is over 36 hours old, or there is none; the
+next backup won't fit on its disk; no second backup folder, or one that can't be reached or is on the database's disk;
+fewer capture processes than started; a model server's calls on its backup; the server's clock in another time zone
+than the business's. The body holds no password, token, path, person's or vendor's name:
+
+```json
+{"ready": true, "status": "warn", "app": "ap-coder", "version": "0.3.0", "server": true,
+ "checked_at": "2026-11-06T09:00:05-05:00",
+ "problems": [{"check": "certificate", "status": "warn", "text": "The server's HTTPS certificate expires on ..."}],
+ "database": {"status": "ok"},
+ "data_disk": {"free_bytes": 412000000000, "total_bytes": 999000000000, "reserve_bytes": 536870912, "status": "ok"},
+ "backups_disk": {"same_disk_as_data": true, "free_bytes": 412000000000, "needed_bytes": 9100000000, "status": "ok"},
+ "backup": {"newest": "2026-11-06T02:00:41-05:00", "age_hours": 7.0, "last_failed": null, "being_made": false,
+            "status": "ok"},
+ "second_backup_folder": {"set": true, "reachable": true, "free_bytes": 2000000000000, "same_disk_as_data": false,
+                          "status": "ok"},
+ "certificate": {"days_left": 21, "expires": "2026-11-27T23:59:59+00:00", "status": "warn"},
+ "time_zone": {"business": "America/Toronto", "machine": "Eastern Standard Time (UTC-05:00)", "status": "ok"},
+ "background": {"heartbeat_age_seconds": 12.4, "status": "ok"},
+ "capture": {"alive": 6, "started": 6, "status": "ok"},
+ "imports": {"waiting": 40, "reading": 6, "oldest_wait_seconds": 95},
+ "page_reader": {"waiting": 310, "reading": 1, "oldest_wait_seconds": 5400},
+ "model_servers": {"status": "ok", "model_server": {"on": "primary", "since": null, "moves": 0}}}
+```
+
+Each process works it out at most every 5 seconds (several monitors every 10 seconds cost nothing), and the second
+backup folder (a share that is gone can take a minute to say so) is waited for 2 seconds at most.
+
+**Who it answers**: the server's own console (`https://localhost:8501/readyz` on the server, not through a proxy), and
+the monitors you name in `D:\APCoderData\server.json`; anyone else gets a 403. Add either or both (then `service
+stop` and `service start`, or wait: it is read at each request):
+
+- `"monitor_token": "<at least 24 characters>"`, which the monitor sends as the header `X-AP-Coder-Monitor: <token>`
+  (or `Authorization: Bearer <token>`). Make one with `.venv\Scripts\python.exe -c "import secrets;
+  print(secrets.token_urlsafe(32))"`, and keep it as private as a password.
+- `"monitor_addresses": ["10.1.2.30", "10.1.5.0/24"]`: a monitor or load balancer at one of these addresses (or in
+  one of these networks) is answered without a token, for a probe that can't send a header.
+
+The Host check still applies: the monitor opens AP Coder by one of its names or by the server's IP address.
+
+**`doctor --json`**: the same checks as `doctor`, as JSON (`{"checks": [{"area", "status", "detail"}], "failures",
+"warnings"}`), with the same exit code (1 when one failed). On the server `doctor` also says when the certificate
+expires, the time zone, the data folder's disk, the newest backup and the second backup folder.
+
+**The business time zone**: add `"time_zone": "America/Toronto"` (its IANA name: `America/Vancouver`,
+`America/Edmonton`, `America/Winnipeg`, `America/Halifax`...) to `server.json`. `doctor` and `/readyz` then warn
+when the server's clock keeps another time (a virtual machine left on UTC makes "today", the day's counts, the due
+dates and the backup hours wrong), and the daily backup's hours (`AP_BACKUP_HOURS`) are the business's. AP Coder
+does not change the clock: set the server's time zone in Windows (*Settings* → *Time & language* → *Date & time*).
+
+**The certificate**: from 30 days before it expires, an Admin sees a banner on every page, `doctor` and `/readyz`
+warn, and the system's log says so (step 6); once expired, the banner says so in red and `/readyz` answers 503.
+
+## 13. Troubleshooting
 
 | What you see | What to do |
 |---|---|
@@ -645,6 +789,7 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | The browser warns about the certificate | The certificate doesn't name `apcoder.company.local`, has expired, or lacks the CA's intermediate certificates (step 3: add `ca-chain.pem` after it). |
 | "not one of the server's names" (a 400 error) | The name typed is not one of the allowed names: `service install --allowed-hosts apcoder.company.local,apcoder` (each name staff use; it restarts AP Coder), or add it to `AP_ALLOWED_HOSTS` and restart. |
 | AP Coder doesn't start: "Port 8501 is in use by another program" | On the server AP Coder keeps the port staff were given, and never moves to another. Find the other program (`netstat -ano \| findstr :8501`) and stop it, or install with another `--port` and tell staff the new address. |
+| The task doesn't start; Task Scheduler's *History* says error 267 (`0x8007010B`, "the directory name is invalid") | It was installed by an older AP Coder to start in a folder since deleted (section 11): `service install` again from the folder `service status` names. |
 | The task doesn't start; Task Scheduler's *History* says "logon failure" | The account's password changed: `service install` again (it asks for it). Or the account lacks *Log on as a batch job*: `secpol.msc` → *Local Policies* → *User Rights Assignment* → add `APCoderService`. |
 | `service status` says "Service host: not running", and stopped on purpose | Someone ran `service stop`: `service start`. |
 | The log repeats "The dashboard stopped (exit code 1)" | The lines before it say why: often the port in use (another program on 8501: `netstat -ano \| findstr :8501`), or a certificate file it can't read (the account's rights on `D:\APCoderData\tls`). |
@@ -656,17 +801,244 @@ installs in the administrator's `%USERPROFILE%\.ap_coder\settings.json`, as on a
 | "Your temporary password has expired" | An Admin resets it again (*Users* → *Reset password*). |
 | `server-update` says the bundle is not newer | It is the version running, or older. To go back to the previous version: `server-update --back`. |
 | `server-update --back` says "Nothing to go back to" | No update was made with `server-update` since the last `--back`. To install an older version, ask for its bundle and the backup made before the update. |
+| `server-update` says "The update from ... was cut short" | An update stopped part way (a power cut, the window closed): it dealt with it (section 11 says how) and stopped there. Run `server-update` again to update. |
+| The log says "The data folder ... is on a network share" (or a network path, a network drive) | Move the data folder to one of the server's own disks (step 2), set `AP_PRIVATE_DIR` to it, and `service install` again; copy the backups to the share instead (step 9). |
+| The log says "The database ... is missing, but this data folder had one" | Restore the newest backup (section 9, *A database that is gone*), or put the file back. A new, empty database only on purpose: `serve --server --new-database`. |
+| Staff see "AP Coder is being restored from a backup" | An Admin restores a backup (section 9): it ends by itself. |
 | Someone forgot their password, or is locked out | An Admin: *Users* → *Reset password*; or on the console `users reset <username>`. A lockout ends by itself after 15 minutes. |
 | "That code doesn't match" every time | The phone's clock: set it to set the time automatically. The server's: `w32tm /query /status`, then `w32tm /resync`. Still wrong: *Users* → *Reset authenticator* (a new temporary password too), and they set the app up again. |
 | A new phone, or a lost one | An Admin: *Users* → *Reset authenticator* (it resets the password too: give them the temporary password shown). The last Admin: `users reset-2fa <username>` on the console, which prints it. |
 | "AP Coder can't check your authenticator codes on this server: its key file ... is missing, damaged or not the one your app was set up with" | `authenticator.key` was deleted or changed in the data folder. Put it back from a copy of the data folder if you have one; otherwise reset each person's authenticator (*Users* → *Reset authenticator*; the last Admin with `users reset-2fa`): they set their apps up again. |
 | Pages are slow when many people work at once | `service status`, then Task Manager: when every core is busy, the server needs more cores (step 1); when they are not, `service install --workers N` with N up to the cores. The log names a worker started again after it stopped. |
 | Invoices wait long for OvisOCR2 | Set the model server to answer several requests together and raise `--llm-parallel` (step 8, point 6). |
+| Your monitor gets 503 from `/readyz` | Its `problems` say which check failed and what to do (section 12). A 403: the monitor is not named in `server.json` (`monitor_token` or `monitor_addresses`). |
 | Anything else | `.venv\Scripts\python.exe -m ap_coder doctor`, and the log. *Help* → *Report a problem* makes a report without invoice data. |
 
 **What `doctor` checks on the server** (when `AP_SERVER_MODE=1`, or `server.json` is in the data folder), besides
 what it checks on a laptop: *dashboard network* (the address and port the server listens on, and the address staff
 open), *server HTTPS certificate* and *private key* (set, there, and readable by the account you run it as; run it
 as `APCoderService` to check the service's own rights), *server names* (the allowed names, a warning when none is set)
-and, on Windows, *server service* (the scheduled task: installed, its state, the account, and whether it was stopped
-on purpose).
+and *server service* (on Windows the scheduled task, on a Mac the LaunchDaemon: installed, its state, the account,
+and whether it was stopped on purpose); and (D-187) *server HTTPS certificate expiry*, *server time zone*, *data
+folder disk*, *backups* (the newest, and whether the last one failed) and *second backup folder* (set, reachable,
+on another disk).
+
+## 14. On a Mac
+
+The pilot runs AP Coder on a Mac mini, and its AI models on a Mac Studio beside it. On a Mac, AP Coder's service is a
+*LaunchDaemon*: launchd, the part of macOS that runs its services, starts it at boot under its own account, whether
+anyone is logged in or not. Everything else in this guide holds, with the Mac's paths: the certificate (step 3), the name staff
+type (step 4), the first admin (step 7), backups (step 9), users (step 10), updates (step 11). Why a LaunchDaemon, and
+how it was chosen: docs/decisions.md, D-186.
+
+In this section `/Library/APCoder/APProcessor` is the AP Coder folder, `/Library/APCoder/current` a link to the
+AP Coder folder that runs (the service runs that link; `server-update` points it at a new version), `/Library/APCoderData`
+the data folder and `_apcoder` the account AP Coder runs as. Commands run in Terminal, as an administrator, with
+`sudo`. sudo leaves the environment out, so the data folder is given on each command line; once the service is
+installed, these two save the typing (put them in your `~/.zshrc` to keep them):
+
+```sh
+# The service and updates, as root:
+apc() { sudo AP_PRIVATE_DIR=/Library/APCoderData AP_SERVER_MODE=1 /Library/APCoder/current/.venv/bin/python -m ap_coder "$@"; }
+# Everything else that opens the data folder (users, backup, doctor), as the service's account:
+apcu() { sudo -u _apcoder AP_PRIVATE_DIR=/Library/APCoderData AP_SERVER_MODE=1 /Library/APCoder/current/.venv/bin/python -m ap_coder "$@"; }
+```
+
+Then `apc service status`, `apcu users add --admin jsmith`, `apcu doctor`. A file made with sudo is root's, and the
+service's account could not change it: `apcu` makes it the account's from the start. What root makes in the data
+folder anyway (`server-update`'s backups and restores) is handed back to the account at each `service install` and
+`service start`: only root's own files and folders, never what a link there points at.
+
+### The Mac itself
+
+- **Never asleep, and back after a power cut**: *System Settings* → *Energy*: *Prevent automatic sleeping when the
+  display is off*, *Wake for network access*, *Start up automatically after a power failure* on (or `sudo pmset -a
+  sleep 0 disksleep 0 womp 1 autorestart 1`). Put the Mac mini, and the Mac Studio, on a UPS.
+- **FileVault** (its disk encrypted): a Mac with FileVault on waits at its unlock screen after every restart, a power
+  cut included, until someone types a password; until then nothing of AP Coder runs (nor LM Studio). IT decides:
+  FileVault on, with someone who unlocks the Mac after an unplanned restart, and `sudo fdesetup authrestart` for the
+  planned ones (it restarts once without the unlock screen: use it for macOS updates too); or FileVault off, on a Mac
+  in a locked room (the invoices are then not encrypted on its disk). `fdesetup status` says which.
+- **macOS updates**: turn off the automatic install of macOS updates (*General* → *Software Update* → *Automatic
+  updates*), so the Mac restarts when you choose, at a quiet time.
+- **A fixed address** on the company network (a DHCP reservation), and the DNS alias staff type (step 4).
+
+### The service's account
+
+A hidden account used for nothing else, with no password and no shell (it can't log in):
+
+```sh
+sudo dscl . -create /Groups/_apcoder PrimaryGroupID 450
+sudo dscl . -create /Users/_apcoder UniqueID 450
+sudo dscl . -create /Users/_apcoder PrimaryGroupID 450
+sudo dscl . -create /Users/_apcoder UserShell /usr/bin/false
+sudo dscl . -create /Users/_apcoder NFSHomeDirectory /var/empty
+sudo dscl . -create /Users/_apcoder RealName "AP Coder service"
+sudo dscl . -create /Users/_apcoder IsHidden 1
+```
+
+450 is a number no other account or group has here: `dscl . -list /Users UniqueID` and `dscl . -list /Groups
+PrimaryGroupID` show those in use (below 500 keeps it off the login window). AP Coder refuses to run as root unless
+`--allow-root` is given, for a first test only: as root, every invoice and email it reads would be handled with all
+of the Mac's rights.
+
+### Install from the offline bundle
+
+The Mac's bundle (`scripts/build_offline_bundle.py --platform macosx_14_0_arm64`), copied in with its SHA-256
+(`shasum -a 256 <zip>` shows a file's):
+
+```sh
+sudo mkdir -p /Library/APCoder /Library/APCoderData
+sudo ditto -x -k ~/Downloads/APProcessor-offline-0.4.0-20261101.zip /Library/APCoder
+sudo chown _apcoder:_apcoder /Library/APCoderData
+sudo chmod 750 /Library/APCoderData
+cd /Library/APCoder/APProcessor
+sudo AP_SERVER_MODE=1 AP_PRIVATE_DIR=/Library/APCoderData ./APProcessor.command --no-start --yes
+```
+
+This makes `/Library/APCoder/APProcessor` and sets it up from its `wheelhouse` (offline, a few minutes, ending with
+the self-check). The code folder stays root's: only administrators can change it, and the service's account reads and
+runs it (whoever can change the code can read every invoice). The data folder is the account's, nobody else's (the
+administrators reach it with sudo). Keep both on the Mac's own disk.
+
+### The service
+
+From the AP Coder folder, the first time:
+
+```sh
+cd /Library/APCoder/APProcessor
+sudo AP_PRIVATE_DIR=/Library/APCoderData .venv/bin/python -m ap_coder service install --certfile /Library/APCoderData/tls/apcoder.pem --keyfile /Library/APCoderData/tls/apcoder.key.pem --allowed-hosts apcoder.company.local
+```
+
+`service install` saves the settings in `/Library/APCoderData/server.json`, makes the data folder's `service` and
+`logs` folders the account's, points `/Library/APCoder/current` at this folder, writes the LaunchDaemon
+`/Library/LaunchDaemons/com.apcoder.server.plist` (root's, as launchd wants it) and loads it: launchd starts AP Coder
+at once, and at every boot, as `_apcoder`. Add `--dry-run` to see the plist and the commands first, changing nothing.
+The options are those of step 6, but: `--account` (default `_apcoder`; `root` only with `--allow-root`), and
+`--task-name`, which names the LaunchDaemon (the default, `AP Coder`, gives `com.apcoder.server`; a name like
+`com.example.apcoder` is used as it is). There is no password to give. The data folder is kept in the LaunchDaemon,
+so the other service commands find it even when sudo left `AP_PRIVATE_DIR` out.
+
+| To | Run |
+|---|---|
+| See whether it runs, its version and folder | `apc service status` (`--json` for a monitoring script: installed, running, the process, version, folder, address and the dashboard's answer) |
+| Stop it (it stays stopped, also after a restart of the Mac) | `apc service stop` |
+| Start it again (when it runs, it is restarted) | `apc service start` |
+| Change a setting (port, certificate, names) | `apc service install` with the new options (the others are kept, except `--account`, `--task-name` and `--folder`: give them again unless they are the defaults) |
+| Remove it (the data, settings, logs and the `current` link are kept) | `apc service remove` |
+
+How it runs: launchd starts `/Library/APCoder/current/.venv/bin/python -m ap_coder service run`, the service host of
+step 6, which starts the dashboard and starts it again if it stops. The LaunchDaemon's `KeepAlive` is
+`SuccessfulExit: false`: launchd starts the host again when it crashed or was ended (at most every 10 seconds), and
+leaves it stopped when it ended on purpose. A host that was killed takes its dashboard with it (launchd ends the
+processes it started) and is back within seconds. `service stop` leaves a `stopped` file in the data folder's
+`service` folder, asks the dashboard to stop, and unloads the LaunchDaemon (`launchctl bootout`): launchd asks the host
+to stop (SIGTERM), which stops its dashboard (the requests under way get 25 seconds; it is ended after 45 at most) and
+ends with exit code 0. At the next boot launchd loads it again, and the host, seeing `stopped`, ends at once: the
+service stays stopped until `service start`, which removes the file and loads it (`launchctl bootstrap`), or restarts
+it when it runs (`launchctl kickstart -k`).
+
+**Logs**: `/Library/APCoderData/logs/service.log`, `access.log` and `background.log`, as in step 6; and
+`logs/launchd.out.log` and `launchd.err.log`, what Python said before the host's own log was open (a Python that
+won't start, a folder it can't write). launchd's own view of it: `sudo launchctl print system/com.apcoder.server`
+(its state, process and last exit code).
+
+**The firewall**: when the Mac's firewall is on (*System Settings* → *Network* → *Firewall*), allow incoming
+connections to Python in its *Options*. Staff reach AP Coder on the port given (8501).
+
+**Updating** (section 11), from the folder that runs:
+
+```sh
+apc server-update ~/Downloads/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits> --dry-run
+apc server-update ~/Downloads/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits>
+```
+
+It does the steps of section 11 with the LaunchDaemon: it stops it, unzips the bundle beside the current folder
+(`/Library/APCoder/APProcessor-0.5.0`), and once the new folder is set up and checked, points `/Library/APCoder/current`
+at it in one step (a new link renamed over the old one, while the service is stopped) and starts the service again. The
+LaunchDaemon itself never changes. `apc server-update --back` points the link back. Leave the `current` link to
+`server-update`; never change it while the service runs. An update cut short (a power cut) is dealt with at the Mac's
+next start as section 11 says, except what only root can do (the link): then the service stays stopped and its log
+says to run `apc server-update` again.
+
+Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
+the same data. Use `service stop` and `service start`.
+
+### LM Studio on the Mac Studio (a recipe for IT)
+
+AP Coder neither starts nor watches LM Studio: on the Mac Studio (and on the Mac mini, when it is the backup model
+machine) IT runs it as a LaunchDaemon of its own. LM Studio installs per account and keeps its models in that
+account's `~/.lmstudio/models`, so it runs as a standard account made for it, here `lmstudio` (with its own home
+folder). Install LM Studio as that account (copied in: nothing is downloaded), open it once to set the models up
+(step 8, point 2), and turn off its own *run the LLM server on login*.
+
+1. **The start script**, `/Library/APCoder/lm-studio-start.sh` (the model's exact name is the one `lms ls` shows):
+
+   ```sh
+   #!/bin/sh
+   # LM Studio's server at boot, for AP Coder (docs/SERVER.md, section 14).
+   LMS="$HOME/.lmstudio/bin/lms"
+   "$LMS" daemon up
+   "$LMS" server start --port 1234 --bind 10.0.0.20
+   "$LMS" load gemma-4-12b-it-qat --context-length 16384 --gpu max --yes
+   ```
+
+   `--bind`: the Mac Studio's own address on the company network, so the Mac mini reaches it (`127.0.0.1` when AP
+   Coder runs on the same Mac). Anything else on the network can reach that port too: let the Mac's firewall, or the
+   network, allow only the Mac mini.
+
+2. **Its LaunchDaemon**, `/Library/LaunchDaemons/com.apcoder.lmstudio.plist` (replace each `<account>`, brackets
+   too, with the account it runs as, `lmstudio` above; `plutil -lint` finds one left):
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0">
+   <dict>
+     <key>Label</key><string>com.apcoder.lmstudio</string>
+     <key>ProgramArguments</key><array><string>/Library/APCoder/lm-studio-start.sh</string></array>
+     <key>UserName</key><string><account></string>
+     <key>EnvironmentVariables</key><dict><key>HOME</key><string>/Users/<account></string></dict>
+     <key>RunAtLoad</key><true/>
+     <key>AbandonProcessGroup</key><true/>
+     <key>StandardOutPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
+     <key>StandardErrorPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
+   </dict>
+   </plist>
+   ```
+
+   `AbandonProcessGroup` keeps LM Studio's own daemon running once the script has ended (launchd would otherwise end
+   what it started).
+
+3. **Load it**:
+
+   ```sh
+   sudo chown root:wheel /Library/APCoder/lm-studio-start.sh /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   sudo chmod 755 /Library/APCoder/lm-studio-start.sh
+   sudo chmod 644 /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   sudo launchctl bootstrap system /Library/LaunchDaemons/com.apcoder.lmstudio.plist
+   ```
+
+4. **Check it after a restart with nobody logged in**: `sudo -u <account> /Users/<account>/.lmstudio/bin/lms server
+   status` and `... lms ps` (the model loaded); on the Mac mini, AP Coder's *Settings* → *Reading* → *Check again*.
+   AP Coder is told where it is in the data folder's `.env` (`AP_LLM_BASE_URL=http://10.0.0.20:1234/v1`, and
+   `AP_PAGE_READER_BASE_URL`), and the backup machine as in step 8, point 5.
+
+### The Mac mini's burn-in
+
+Before the pilot tester and AP staff rely on it, let the Mac mini run the service for a week. Restart it once on
+purpose (`sudo fdesetup authrestart` with FileVault on, else `sudo shutdown -r now`); cut its power once (it comes
+back by itself with *Start up automatically after a power failure*; with FileVault on it waits at its unlock screen);
+kill its host once (`sudo kill -9` of the process `apc service status` names: launchd brings it back within seconds);
+and, when you have a newer bundle, run one `server-update` and one `server-update --back`. After each, `apc service
+status` and the end of `logs/service.log`. Each morning, check that the night's backup is in `backups` (section 9)
+and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms ps` after its restart).
+
+| On a Mac, what you see | What to do |
+|---|---|
+| "Run it with sudo" | The service commands change the Mac's own launchd: run them with sudo (`apc`). |
+| "This Mac has no account _apcoder" | Make it (above), or name another with `--account`. |
+| "Give the data folder" | `sudo AP_PRIVATE_DIR=/Library/APCoderData ...` on the command line (sudo leaves the environment out). |
+| `service status` says "not loaded" | Stopped on purpose (`apc service start`), or it could not load: `sudo launchctl print system/com.apcoder.server`, and `logs/launchd.err.log`. |
+| Nothing answers after a power cut | FileVault: the Mac waits at its unlock screen; or *Start up automatically after a power failure* is off. |
+| The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
+| launchd says "last exit code = 75" | The host asked to be started again: another service host runs (someone ran `service run` in Terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. launchd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |

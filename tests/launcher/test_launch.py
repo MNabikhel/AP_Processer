@@ -372,7 +372,7 @@ def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(
     old = launch.running.Server(8501, legacy=True)
     stops: list[int] = []
 
-    def take_over(root, version, ports, data, say, build=""):
+    def take_over(root, version, ports, data, say, build="", here_only=False):
         stops.append(1)
         other.close()  # stopped: the old start ends
         return "clear", None
@@ -933,3 +933,18 @@ def test_the_page_reader_line_says_why_it_cant_be_used(launch, monkeypatch):
     monkeypatch.setattr(page_reader, "reader_status", lambda *a, **k: status)
     level, line = launch.page_reader_line()
     assert level == "warn" and note in line and "isn't running" not in line
+
+
+@pytest.mark.parametrize("argv, here_only", [(["--no-start", "--yes"], True), ([], False)])
+def test_a_set_up_that_starts_nothing_makes_way_only_for_its_own_folder(launch, monkeypatch, argv, here_only):
+    """B-1944: server-update sets the new folder up with its launcher (``--no-start``) while the old version serves:
+    making way for the new .venv refused the service's AP Coder (another account's) or would have stopped it. Only a
+    start that starts the dashboard makes way for an AP Coder of another folder."""
+    asked = []
+
+    def take_over(root, version, ports, data, say, build="", here_only=False):
+        asked.append(here_only)
+        return "clear", None
+
+    monkeypatch.setattr(launch.running, "take_over", take_over)
+    assert launch.make_way_for_venv(argv) is None and asked == [here_only]

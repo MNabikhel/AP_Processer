@@ -530,6 +530,45 @@ jobs:
           .venv\Scripts\python.exe -m pip install --no-index --find-links wheelhouse pytest || exit /b 1
           .venv\Scripts\python.exe -m pytest -q -m "" -p no:cacheprovider tests\offline\test_offline_guard.py tests\ops\test_demo_day.py
 
+  windows-server-update:
+    # D-188: an update of the company server, timed. The offline bundle is built once, set up as the server (its
+    # launcher, offline) on a data folder of 20,000 invoices (python -m ap_coder.bench seed) and installed as the
+    # service (the scheduled task as SYSTEM, plain HTTP on 127.0.0.1); then server-update installs the same bundle
+    # again (--force). It prepares the new folder while the old one serves; the job fails when the service is down
+    # (stopped to the new version answering) more than 300 s, and prints each step's time. The logic is in
+    # scripts/ci/server_update_downtime.py (its verdict tested on Linux: tests/ops/test_server_update_downtime.py).
+    name: server-update under 5 minutes (Windows, 20,000 invoices)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the bundle once (online)
+        run: python scripts/build_offline_bundle.py --python 3.12
+      - name: The service on 20,000 invoices, updated by server-update, internet cut off; over 300 s down fails
+        shell: pwsh
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          PIP_INDEX_URL: http://127.0.0.1:9/simple
+          NO_PROXY: 127.0.0.1,localhost
+        run: |
+          $zip = Get-ChildItem dist -Filter 'APProcessor-offline-*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no bundle built' }
+          python scripts/ci/server_update_downtime.py windows --bundle $zip.FullName --work "$env:RUNNER_TEMP\downtime" --invoices 20000 --limit 300
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove the service
+        if: always()
+        shell: pwsh
+        run: python scripts/ci/server_update_downtime.py cleanup --work "$env:RUNNER_TEMP\downtime"
+
   macos-offline-bundle:
     # The tester's Mac: Python 3.14 and nothing else, no internet. Build the offline bundle for it (online),
     # unzip it to a fresh folder, hide every other Python, double-click APProcessor.command with the internet
@@ -842,6 +881,30 @@ jobs:
       - name: Stop what is still running
         if: always()
         run: pkill -f 'ap_coder|launch\.py|fake_lm_studio' || true
+
+  macos-service:
+    # The company server's service on a Mac (D-186), for real: the LaunchDaemon installed with sudo (GitHub's runner
+    # asks no password) as the runner's account, under a test label, on 127.0.0.1 over plain HTTP; the dashboard
+    # answers; its host is killed with kill -9 and launchd starts it again; service start while it runs restarts it;
+    # launchctl bootout (launchd's SIGTERM: the host ends its dashboard, then itself, and stays stopped); service stop,
+    # and it is still stopped a minute later; service start, and it answers; an update cut short (root's marker and
+    # stopped file, as sudo server-update leaves them) dealt with by the host at the daemon's next load; service
+    # remove, and the plist is gone. scripts/ci/macos_service.py (it prints the service's logs and what launchd says
+    # on a failure, and removes the test daemon).
+    name: The server's service on macOS (launchd)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: AP Coder in this folder's .venv, as the service runs it
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
+      - name: Install, kill, stop, start and remove the LaunchDaemon
+        run: .venv/bin/python scripts/ci/macos_service.py --data "$RUNNER_TEMP/APCoderData" --port 8597
 
   update-over-older-install:
     # The update a user does, from the oldest versions of main and from the last one before the web app, each really
