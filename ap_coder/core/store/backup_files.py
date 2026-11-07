@@ -378,28 +378,40 @@ def _inside(path: Path, folder: Path) -> bool:
 def _elsewhere(sources: Iterable[str], data: Path) -> list[Path]:
     """The invoices' files outside the folders a backup holds (a watched folder elsewhere, data an update kept aside
     in ``backups/from-...``, also inside the install folder: B-1562), there now; never the samples that come with
-    AP Coder."""
+    AP Coder. Each folder and each file's path is resolved once (``_inside`` for each: one per invoice, a year's
+    300,000 when server-update lists the files with the service stopped, D-196)."""
+    folders = []
+    for folder in [*(data / area for area in AREAS), PROJECT_DIR / "samples"]:
+        with contextlib.suppress(OSError):
+            folders.append(folder.resolve())
     out = []
     for stored in sources:
         path = Path(stored)
-        if any(_inside(path, data / area) for area in AREAS) or _inside(path, PROJECT_DIR / "samples"):
+        try:
+            found = path.resolve()
+        except OSError:
+            found = None
+        if found is not None and any(found.is_relative_to(folder) for folder in folders):
             continue
         if path.is_file():
             out.append(path)
     return out
 
 
-def snapshot(backup: Path, data: Path) -> dict[str, Any]:
+def snapshot(backup: Path, data: Path, hashed: bool = True, database: Path | None = None) -> dict[str, Any]:
     """The list of files of ``backup`` (the database copied already), the files that are new kept beside it. A file
     unchanged since the last backup (its size and time as listed then) is not read again. Raises OSError when the
-    files can't be kept (a full disk): the database copy is there, its list is not."""
+    files can't be kept (a full disk): the database copy is there, its list is not. ``hashed`` False: the database's
+    SHA-256 is left out, read in later (``hash_database``: server-update's safety copy, its service stopped, D-196).
+    ``database``: the one whose invoices name the files, when ``backup`` must not be opened yet (that copy made
+    ahead, whose list is made then so that only what changed is read once the service is stopped)."""
     folder = backup.parent
     before: dict[str, dict[str, Any]] = {}  # the newest list: its files' sizes and times, by place
     for listed in sorted(folder.glob(f"ap_coder-*{LIST_SUFFIX}"), key=_mtime, reverse=True):
         if listed != list_path(backup) and (found := _load(listed)) is not None:
             before = {e.get("from") or e["path"]: e for e in _entries(found)}
             break
-    invoices, sources = _from_database(backup)
+    invoices, sources = _from_database(database or backup)
     entries: list[dict[str, Any]] = []
     skipped: list[str] = []
     taken: set[str] = set()
@@ -435,12 +447,20 @@ def snapshot(backup: Path, data: Path) -> dict[str, Any]:
         if entry["path"] not in taken:
             entries.append({**entry, "from": str(source)})
             taken.add(entry["path"])
-    sha, size = _sha_size(backup)
+    sha, size = _sha_size(backup) if hashed else ("", backup.stat().st_size)
     found = {"format": FORMAT, "database": backup.name, "database_size": size, "database_sha256": sha,
              "made": dt.datetime.now().isoformat(timespec="seconds"), "data_folder": str(data),
              "invoices": invoices, "files": entries, "skipped": skipped}  # fmt: skip
     _write_json(list_path(backup), found)
     return found
+
+
+def hash_database(backup: Path) -> None:
+    """The database's SHA-256 put in ``backup``'s list when ``snapshot`` left it out (``hashed=False``)."""
+    found = read_list(backup)
+    if found is not None and not found.get("database_sha256"):
+        sha, size = _sha_size(backup)
+        _write_json(list_path(backup), {**found, "database_sha256": sha, "database_size": size})
 
 
 def before_update(store: Any, found: int) -> str:
@@ -533,7 +553,7 @@ def check(backup: Path, deep: bool = False, seen: dict[str, int | None] | None =
         elif seen[e["sha256"]] != e["size"]:
             held.damaged.append(e["path"])
     try:
-        if deep:
+        if deep and found.get("database_sha256"):  # (none yet: server-update's safety copy, until it serves again)
             held.database_damaged = _sha_size(backup) != (found.get("database_sha256"), found.get("database_size"))
         else:
             held.database_damaged = backup.stat().st_size != found.get("database_size")

@@ -12,17 +12,20 @@ prepare the new version while the old one keeps serving (D-188):
 4. **Update a copy of the database** with the new version (``service/update-check``, removed after): the migration is
    proven, and timed, before anything stops.
 5. **Self-check**: the new folder's ``scripts/pilot_check.py`` (the sample invoices read right).
+6. **Copy the database ahead** for the safety copy (``copy_ahead``, D-196): the file held still (what is written
+   meanwhile goes to its write-ahead log) and copied as it is, the old version still serving.
 
 Then the switch, the service stopped (the downtime, printed and recorded):
 
-6. **Stop the service** (``service stop``).
-7. **Back up the database** and the files: ``backups/ap_coder-<time>-before-update-<version>.db`` and its list of
-   files (``safety_copy``, D-143).
-8. **Update the database**: the new version opens it once (``Store``: its migrations).
-9. **Start the service** from the new folder (``run.cmd`` rewritten), and wait for the dashboard to answer. The
-   backup is then copied to the second backup folder, when one is set (by the new version).
+7. **Stop the service** (``service stop``).
+8. **Back up the database** and the files: ``backups/ap_coder-<time>-before-update-<version>.db`` and its list of
+   files (``safety_copy``, D-143): the copy made ahead, brought up to date with what was written since (the log), so
+   about as quick whatever the database's size. Its SHA-256 is read into the list once the service answers.
+9. **Update the database**: the new version opens it once (``Store``: its migrations).
+10. **Start the service** from the new folder (``run.cmd`` rewritten), and wait for the dashboard to answer. The
+    backup is then copied to the second backup folder, when one is set (by the new version).
 
-When 2 to 5 fail, nothing was stopped or changed: the old version kept serving. When 6 to 9 fail, the backup is put
+When 2 to 6 fail, nothing was stopped or changed: the old version kept serving. When 7 to 10 fail, the backup is put
 back, the service switched back to the old folder and started again. The previous folder is kept: ``server-update
 --back`` goes back to it and puts back the pre-update backup (an older version refuses a database a newer one has
 changed). Putting a backup back keeps the user accounts and paused logins as they are, and logs everyone out
@@ -52,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core import paths
 from ..core.paths import PROJECT_DIR, private_dir
-from ..core.store.backups import accounts_in, carry_accounts_into, copy_database, one_file, setting_in
+from ..core.store.backups import CopyAhead, accounts_in, carry_accounts_into, copy_database, one_file, setting_in
 from . import service
 from . import update_recovery as recovery
 from .offline import sha256 as file_sha256
@@ -200,27 +203,68 @@ def private_copy(bundle: Path, folder: Path) -> Path:
     return copy
 
 
-def safety_copy(db: Path, label: str) -> Path:
-    """A backup of the database and the data folder's files as they are now (D-143), made without AP Coder's own
-    code opening the database (it may be a newer version's). Never while another backup or a restore runs (B-1559).
-    """
+def _backup_name(db: Path, label: str) -> Path:
+    return db.parent / "backups" / f"ap_coder-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{label}.db"
+
+
+def copy_ahead(db: Path, label: str, say: Say) -> CopyAhead | None:
+    """The safety copy begun while the old version serves (D-196): the database file held still and copied as it is,
+    and the data folder's files listed and kept (so that once stopped only what changed since is read), the backups'
+    lock held until ``safety_copy`` finishes it. None when the file can't be held still (said): it is copied whole
+    once the service is stopped, as before."""
     from ..core.store import backup_files
 
-    with backup_files.exclusive(db.parent):
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest = db.parent / "backups" / f"ap_coder-{stamp}-{label}.db"
-        part = dest.with_name(dest.name + ".part")  # renamed once complete: one cut short is no backup (B-1955)
+    name = _backup_name(db, label)
+    ahead = CopyAhead(db, name.with_name(name.name + ".part"))
+    why = ahead.start()
+    if why:
+        say(f"The database could not be copied ahead ({why}): it is copied whole once the service is stopped.")
+        return None
+    try:
+        backup_files.snapshot(ahead.part, db.parent, hashed=False, database=db)
+    except BaseException:
+        ahead.close()
+        raise
+    return ahead
+
+
+def safety_copy(db: Path, label: str, ahead: CopyAhead | None = None, hashed: bool = True) -> Path:
+    """A backup of the database and the data folder's files as they are now (D-143), made without AP Coder's own
+    code opening the database (it may be a newer version's). Never while another backup or a restore runs (B-1559).
+    ``ahead`` (``copy_ahead``): only what was written since it began is copied now. ``hashed`` False: the list of files
+    is made without the database's SHA-256, read in later (``backup_files.hash_database``)."""
+    from ..core.store import backup_files
+
+    with contextlib.ExitStack() as lock:
+        if ahead is None:
+            lock.enter_context(backup_files.exclusive(db.parent))
+        else:  # (the copy made ahead has held the backups' lock since it began: let go at the end)
+            lock.callback(ahead.close)
+        dest = _backup_name(db, label)
+        part = ahead.part if ahead is not None else dest.with_name(dest.name + ".part")  # (no backup yet: B-1955)
         try:
-            copy_database(db, part)
-            one_file(part)
+            if ahead is None or not ahead.finish():
+                copy_database(db, part)
+                one_file(part)
             os.replace(part, dest)
+            _flush_folder(dest.parent)
         except BaseException:
             for leftover in (part, part.with_name(part.name + "-journal")):
                 with contextlib.suppress(OSError):
                     leftover.unlink(missing_ok=True)
             raise
-        backup_files.snapshot(dest, db.parent)
+        backup_files.snapshot(dest, db.parent, hashed=hashed)
     return dest
+
+
+def _flush_folder(folder: Path) -> None:
+    """The rename in ``folder`` on the disk before the database is migrated (Windows journals it)."""
+    if os.name != "nt":
+        fd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 # --- The server: the service, the new folder's setup and checks (stood in for by the tests) ---------------------------
@@ -277,8 +321,8 @@ class Server:
 
     def migrate(self, folder: Path, db: Path) -> bool:
         """``db`` updated by the new version (its ``Store``), without the copy a Store makes before it migrates: the
-        copy server-update updates first is thrown away, and the real database has its safety copy, made a moment
-        before with the service stopped (D-188). A second copy would only add its minutes to the downtime."""
+        copy server-update updates first is thrown away, and the real database has its safety copy, brought up to date
+        a moment before with the service stopped (D-188, D-196). A second copy would add its minutes to the downtime."""
         done = subprocess.run(
             [str(service.folder_python(folder)), *SAFE_PYTHON, "-c", MIGRATE, str(db)],
             cwd=folder,  # noqa: S603
@@ -509,12 +553,14 @@ def _dry_run(bundle: Path, db: Path, s: service.ServerSettings, plan: dict, inst
         f"Update a copy of the database with the new version, and time it ({recovery.check_folder(db.parent)}, "
         "removed after)",
         f"Self-check: {new / 'scripts' / 'pilot_check.py'} (the sample invoices read right)",
+        f"Copy the database {db} ahead for the backup, as it is (what is written meanwhile goes to its log)",
     ]
     switch = [
         f'Stop the service: the task "{s.task_name}" (python -m ap_coder service stop)'
         if installed
         else "The service is not installed on this computer: nothing to stop",
-        f"Back up the database {db} and the invoice files to backups\\ap_coder-<date>-{plan['label']}.db",
+        f"Back up the database and the invoice files to backups\\ap_coder-<date>-{plan['label']}.db (the copy made "
+        "ahead, brought up to date with what was written since)",
         "Update the database (the new version opens it once: its migrations)",
         f"Start the service from {new} and wait for the dashboard to answer (the downtime: stop to answer)"
         if installed
@@ -526,7 +572,7 @@ def _dry_run(bundle: Path, db: Path, s: service.ServerSettings, plan: dict, inst
     for n, step in enumerate(switch, len(steps) + 1):
         say(f"  {n}. {step}")
     again = "the service started again from" if installed else "the service switched back to"
-    say(f"If 2 to 5 fail, nothing was stopped or changed. If 6 to 9 fail: the backup is put back and {again} "
+    say(f"If 2 to 6 fail, nothing was stopped or changed. If 7 to 10 fail: the backup is put back and {again} "
         f"{current}.")  # fmt: skip
     say(f"The current folder {current} is kept: server-update --back goes back to it.")
     say("Nothing was changed (dry run).")
@@ -594,17 +640,28 @@ def _install(bundle: Path, top: str, data: Path, db: Path, server: Server, insta
         say(result)
         if not ok:
             return not_updated(f"The self-check failed: {result}")
+        ahead = None
+        if db.exists():
+            say("Copying the database ahead for the backup (it is brought up to date once the service is stopped)...")
+            started = time.monotonic()
+            ahead = copy_ahead(db, plan["label"], say)
+            times["copy_ahead_s"] = _seconds(started)
     except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - nothing stopped yet: said, the old one serves on
         why = "interrupted (Ctrl+C)" if isinstance(exc, KeyboardInterrupt) else f"stopped on an error: {exc}"
         return not_updated(f"The update was {why}.")
     times["prepare_s"] = _seconds(began)
     say(f"Prepared in {times['prepare_s']:g} s while AP Coder {old_version} kept serving.")
-    return _switch_over(data, db, server, installed, plan, times, step, say)
+    try:
+        return _switch_over(data, db, server, installed, plan, times, step, say, ahead)
+    finally:
+        if ahead is not None:
+            ahead.close()  # (once the safety copy is made, or the update went back before it)
 
 
 def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: dict, times: dict[str, float],
-                 step: Callable[[str], None], say: Say) -> int:  # fmt: skip
-    """Stop, safety copy, the database updated, switched and started: the downtime, from the stop to the answer."""
+                 step: Callable[[str], None], say: Say, ahead: CopyAhead | None = None) -> int:  # fmt: skip
+    """Stop, safety copy (``ahead``, made while the old version served, brought up to date), the database updated,
+    switched and started: the downtime, from the stop to the answer."""
     current, new = Path(plan["from_folder"]), Path(plan["to_folder"])
     old_version, new_version, label = plan["from"], plan["to"], plan["label"]
     backup: Path | None = None
@@ -615,6 +672,8 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
         with contextlib.suppress(OSError):  # (a full disk: the going back goes on all the same)
             step("going-back")
         say(f"\n{reason}\nGoing back to AP Coder {old_version}...")
+        if ahead is not None:
+            ahead.close()  # (the database let go before the old version starts on it)
         if started:
             server.stop()
         if backup is not None:
@@ -651,7 +710,7 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
         if db.exists():
             step("safety-copy")
             mark = time.monotonic()
-            backup = safety_copy(db, label)
+            backup = safety_copy(db, label, ahead, hashed=False)  # (its SHA-256 read once it serves: below)
             plan["safety_copy"] = str(backup)
             times["safety_copy_s"] = _seconds(mark)
             say(f"Database backed up: {backup}")
@@ -695,6 +754,10 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
     say(f"\nUpdated AP Coder from {old_version} to {new_version}: {new}.")
     say(f"{stopped}: {times['downtime_s']:g} s ({said}); prepared beforehand in {times['prepare_s']:g} s.")
     if backup is not None:
+        from ..core.store import backup_files
+
+        with contextlib.suppress(OSError):  # (else its list has the size only, which ``check`` then compares)
+            backup_files.hash_database(backup)
         copied = server.second_copy(new, db, backup)
         if copied:
             say(copied)

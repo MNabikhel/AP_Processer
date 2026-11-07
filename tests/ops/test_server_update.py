@@ -108,7 +108,7 @@ def test_dry_run_prints_the_steps_and_changes_nothing(server, capsys):
     out = capsys.readouterr().out
     assert code == 0
     for step in ("Check the bundle", "Stop the service", "Back up the database", "Unzip", "Update the database",
-                 "Self-check", "Start the service"):  # fmt: skip
+                 "Self-check", "Copy the database", "Start the service"):  # fmt: skip
         assert step in out, step
     assert "before-update-0.4.0" in out and "APProcessor-0.4.0" in out and "Nothing was changed (dry run)" in out
     assert not (server["current"].parent / "APProcessor-0.4.0").exists()
@@ -508,7 +508,7 @@ def test_a_step_that_raises_while_preparing_stops_nothing(server, error, capsys)
 
 
 def test_a_backup_that_fails_starts_the_service_again_and_changes_nothing(server, monkeypatch, capsys):
-    def full(db, label):
+    def full(db, label, ahead=None, hashed=True):
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(server_update, "safety_copy", full)
@@ -622,3 +622,82 @@ def test_a_safety_copy_cut_short_leaves_nothing_that_looks_like_a_backup(server,
     with pytest.raises(OSError):
         server_update.safety_copy(server["db"], "before-going-back")
     assert list((server["data"] / "backups").glob("ap_coder-*")) == []
+
+
+# --- The safety copy made ahead, while the old version serves (D-196) -------------------------------------------------
+
+
+class LastWork(FakeServer):
+    """The old version serving on while the safety copy is made ahead: people still work until it stops (a setting,
+    a bulk of pages past the log's checkpoints, an invoice that came in)."""
+
+    def __init__(self, db: Path, up_ok: bool = True) -> None:
+        super().__init__(up_ok=up_ok)
+        self.db = db
+
+    def stop(self) -> bool:
+        if "stop" not in self.calls:  # (the update's own stop)
+            store = Store(self.db)
+            store.set_setting("marker", "written while it was copied ahead")
+            store.set_setting("bulk", "x" * 3_000_000)
+            (self.db.parent / "invoices").mkdir(exist_ok=True)
+            (self.db.parent / "invoices" / "late.pdf").write_bytes(b"%PDF-1.4 came in meanwhile")
+        return super().stop()
+
+
+@pytest.mark.parametrize("answers", [True, False])
+def test_the_safety_copy_holds_what_was_done_while_it_was_made_ahead(server, answers, capsys):
+    """D-196: the safety copy is begun while the old version serves, and brought up to date once it is stopped, so it
+    is the database as it was the moment the service stopped (D-188's promise): an update goes back to that, and so
+    does --back. Its list of files has the invoice that came in meanwhile, and the database's SHA-256 once it serves;
+    nothing of the copy made ahead is left."""
+    from ap_coder.core.store.backups import setting_in
+
+    fake = LastWork(server["db"], up_ok=answers)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == (0 if answers else 1)
+    assert fake.calls[:4] == ["set up APProcessor-0.4.0", "migrate copy", "self-check", "stop"]
+    (backup,) = (server["data"] / "backups").glob("ap_coder-*-before-update-0.4.0.db")
+    assert setting_in(backup, "marker") == "written while it was copied ahead"
+    assert setting_in(backup, "bulk") == "x" * 3_000_000
+    listed = backup_files.read_list(backup)
+    assert "invoices/late.pdf" in [e["path"] for e in listed["files"]]
+    assert sorted(p.name for p in (server["data"] / "backups").iterdir() if ".db." in p.name) == []  # (.part, list)
+    times = service.read_config(server["data"])["history"][-1]["times"]
+    assert times["copy_ahead_s"] >= 0 and times["safety_copy_s"] >= 0
+    if answers:  # its SHA-256, read once the new version serves
+        assert listed["database_sha256"] == backup_files._sha_size(backup)[0]
+        assert _marker(server["db"]) == "changed by the new version"
+        assert server_update.go_back(server["data"], server["db"], server=FakeServer(), yes=True) == 0
+    assert _marker(server["db"]) == "written while it was copied ahead"  # as it was the moment it stopped
+    assert "Copying the database ahead" in capsys.readouterr().out
+
+
+def test_a_database_that_cant_be_held_still_is_copied_whole_once_stopped(server, monkeypatch, capsys):
+    """A long report keeps part of the log from the database file for longer than the copy waits: the update goes
+    through all the same, the safety copy made whole once the service is stopped, as before D-196 (said)."""
+    from ap_coder.core.store import backups
+
+    monkeypatch.setattr(backups.CopyAhead, "start", lambda self: "it was never still for a moment in 60 s")
+    fake = LastWork(server["db"], up_ok=False)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert _marker(server["db"]) == "written while it was copied ahead"  # rolled back to the database at the stop
+    out = capsys.readouterr().out
+    assert "could not be copied ahead (it was never still" in out and "copied whole once the service is stopped" in out
+
+
+def test_a_copy_ahead_that_fails_stops_nothing_and_leaves_nothing(server, monkeypatch, capsys):
+    from ap_coder.core.store import backups
+
+    def full(source: Path, dest: Path, size: int, page: int) -> None:
+        dest.write_bytes(b"SQLite format 3\x00 half")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(backups, "_copy_as_is", full)
+    fake = FakeServer()
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=fake) == 1
+    assert fake.calls == ["set up APProcessor-0.4.0", "migrate copy", "self-check"]  # never stopped
+    assert _marker(server["db"]) == "as before the update"
+    assert [p.name for p in (server["data"] / "backups").iterdir() if p.name != ".lock"] == []
+    out = capsys.readouterr().out
+    assert "No space left on device" in out and "AP Coder 0.3.0 kept serving" in out
+    assert Store(server["db"]).backup_now("manual").exists()  # the backups' lock let go

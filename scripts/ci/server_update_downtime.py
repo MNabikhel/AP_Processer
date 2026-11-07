@@ -1,7 +1,8 @@
 """server-update's downtime on a big database (D-188): from the service stopped to the new version answering, which
 must stay under 5 minutes. server-update prepares the new version while the old one serves (unzip, set up, a copy
-of the database updated, the self-check), so the downtime is the stop, the safety copy, the database's update and
-the start; it records each in server.json (``history[-1]["times"]``).
+of the database updated, the self-check, the safety copy made ahead: D-196), so the downtime is the stop, the safety
+copy brought up to date (what was written since), the database's update and the start; it records each in
+server.json (``history[-1]["times"]``).
 
 On Windows (CI's job "server-update under 5 minutes"), from a checkout, with the offline bundle built once:
 
@@ -17,8 +18,9 @@ service afterwards.
 Anywhere (a stopwatch for a developer: no service, the dashboard run as a process of its own, this .venv's
 packages for both folders):
 
-    python scripts/ci/server_update_downtime.py local [--work FOLDER] [--invoices 20000] [--limit 300]
+    python scripts/ci/server_update_downtime.py local [--work FOLDER] [--invoices 20000 | --data FOLDER] [--limit 300]
 
+(``--data``: a data folder seeded before, a copy made bigger say, used as it is; its database is updated);
 and ``check --data FOLDER [--limit 300]`` judges the last update a data folder's server.json recorded: exit 0 when it
 went through within the limit. Standard library only, but ``local`` (it runs server-update itself).
 """
@@ -43,8 +45,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LIMIT = 300.0  # seconds: the downtime allowed (D-188)
 PORT = 8541
 PARTS = [("prepare_s", "prepared, the old version serving"), ("check_migration_s", "  of it: a copy of the database "
-         "updated"), ("self_check_s", "  of it: the self-check"), ("stop_s", "stopping the service"),
-         ("safety_copy_s", "the safety copy"), ("migrate_s", "the database updated"),
+         "updated"), ("self_check_s", "  of it: the self-check"), ("copy_ahead_s", "  of it: the safety copy, ahead"),
+         ("stop_s", "stopping the service"), ("safety_copy_s", "the safety copy (what changed since)"),
+         ("migrate_s", "the database updated"),
          ("start_s", "starting, until it answers"), ("downtime_s", "DOWNTIME (stopped to answering)")]  # fmt: skip
 
 
@@ -202,7 +205,7 @@ def local(args: argparse.Namespace) -> int:
     from ap_coder.ops import server_update, service
 
     work = Path(args.work or tempfile.mkdtemp(prefix="ap_coder-downtime-")).resolve()
-    apps, data = work / "apps", work / "APCoderData"
+    apps, data = work / "apps", Path(args.data).resolve() if args.data else work / "APCoderData"
     venv = Path(sys.prefix)
 
     class LocalServer(server_update.Server):
@@ -238,8 +241,9 @@ def local(args: argparse.Namespace) -> int:
     bundle = code_bundle(work / "APProcessor-offline-local.zip")
     current = unzip(bundle, apps)
     (current / ".venv").symlink_to(venv, target_is_directory=True)
-    seed = [sys.executable, "-m", "ap_coder.bench", "seed", "--out", data, "--invoices", args.invoices]
-    timed(f"A data folder of {args.invoices:,} invoices", seed, cwd=ROOT, env=server_env(data))
+    if not args.data:
+        seed = [sys.executable, "-m", "ap_coder.bench", "seed", "--out", data, "--invoices", args.invoices]
+        timed(f"A data folder of {args.invoices:,} invoices", seed, cwd=ROOT, env=server_env(data))
     # (the record of installs, which a switch writes, in the work folder: never this account's own)
     os.environ.update({"AP_PRIVATE_DIR": str(data), "AP_SERVER_MODE": "1",
                        "AP_USER_SETTINGS": str(work / "user-settings.json")})  # fmt: skip
@@ -269,6 +273,8 @@ def main(argv: list[str] | None = None) -> int:
                            help="where the folders are made (empty)")  # fmt: skip
         if name in ("windows", "local"):
             p.add_argument("--invoices", type=int, default=20_000, help="invoices in the database (20,000)")
+        if name == "local":
+            p.add_argument("--data", default=None, help="a data folder seeded before, used as it is (no --invoices)")
         if name == "windows":
             p.add_argument("--bundle", required=True, help="the offline bundle (built once)")
         if name == "check":
