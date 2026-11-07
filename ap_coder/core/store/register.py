@@ -81,8 +81,11 @@ def _search_kept(conn: sqlite3.Connection, top: int | None, cleared: bool = Fals
     if cleared:  # (made again: FTS5 removes a row at a time)
         conn.execute("DROP TABLE IF EXISTS register_search")
         conn.execute(SEARCH_SCHEMA)
+    above, params = (
+        ("", ()) if cleared else (f" WHERE {ROWID} > ?", (top,))
+    )  # (cleared: every row, 0 and below: B-2039)
     conn.execute(f"INSERT INTO register_search ({ROWID}, plain_name, raw_number) SELECT {ROWID}, plain_name, "
-                 f"raw_number FROM erp_invoices WHERE {ROWID} > ?", (top,))  # fmt: skip
+                 f"raw_number FROM erp_invoices{above}", params)  # fmt: skip
     conn.execute(f"INSERT INTO settings (key, value) VALUES (?, {_COUNT}) ON CONFLICT(key) DO UPDATE SET "
                  "value = excluded.value", (SEARCH_STEP,))  # fmt: skip
 

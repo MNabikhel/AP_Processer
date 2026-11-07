@@ -3587,6 +3587,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     FTS5 with external content (31 MB less, but out of step it fails its deletes) or contentless with deletes (SQLite
     3.43+: not on every Python AP Coder supports); month-end's rows held in each process (95 MB each at 300,000,
     D-177); one write for every vendor's rows after a read (the write lock held through the biggest's).
+  - **After its review (B-2039 to B-2041):** the index made again (a start, a clear) takes every row, rowid 0 and
+    below too; a search text with a NUL in it is matched exactly (FTS5 reads its MATCH text up to a NUL: the Search
+    page failed); each word's condition on the register is one level, as on the summary (from 499 words SQLite's
+    depth limit). The review's probes found month-end's kept rows equal to a fresh computation over 2,350 random
+    changes in two Pythons and with two processes, and the indexed search equal to the exact one over 1,375 searches
+    (non-ASCII letters, ligatures, accents, FTS5's own characters).
   - (`ap_coder/core/store/{purchasing,register,migrations,_base}.py`, `erp/search.py`, `erp/insights.py`;
     `tests/erp/test_accruals.py`, `tests/erp/test_invoice_summary.py`, `tests/erp/test_search.py`,
     `tests/core/test_kept_answers.py`)

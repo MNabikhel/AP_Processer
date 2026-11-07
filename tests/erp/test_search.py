@@ -188,6 +188,41 @@ def test_a_register_row_given_a_rowid_at_random_is_still_found(tmp_path):
     assert len(search.erp_hits(store, ["granite"], [])) == 5
 
 
+def test_register_rows_at_rowid_zero_or_below_are_in_the_index_built_at_start(tmp_path):
+    """B-2039: the index built again at a start took the register's rows above rowid 0 only, and said it was in step:
+    a row plain SQL put at rowid 0 or below was never found by the quick search again, though the register has it."""
+    import sqlite3
+
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    with sqlite3.connect(store.path) as conn:
+        for rowid, name in ((0, "zeta parts"), (-5, "zeta tools")):
+            conn.execute("INSERT INTO erp_invoices (rowid, vendor_key, number_key, total, vendor_name, invoice_number, "
+                         "imported_at, plain_name, raw_number) VALUES (?, ?, '9', 1, ?, '9', '2026', ?, '9')",
+                         (rowid, name, name.title(), name))  # fmt: skip
+    Store(store.path)  # (a start: the index built again)
+    assert sorted(h.row["vendor_name"] for h in search.erp_hits(store, ["zeta"], [])) == ["Zeta Parts", "Zeta Tools"]
+
+
+def test_a_search_with_a_nul_in_it_finds_nothing_and_never_fails(tmp_path):
+    """B-2040: a NUL in a search ended FTS5's MATCH text early ("unterminated string"): the quick search failed (a
+    500 on the Search page) where the exact match finds nothing."""
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    assert search.erp_hits(store, ["gra\x00nite"], []) == []
+    assert search.find(store, "gra\x00nite") == []
+    assert [h.row["invoice_number"] for h in search.find(store, "G-1\x00")] == ["G-1"]  # (a number: the NUL dropped)
+
+
+def test_a_search_of_many_words_is_one_condition_sqlite_can_read(tmp_path):
+    """B-2041: each word of a search added two conditions to the register's, all at one level: from 499 words the
+    expression was deeper than SQLite reads ("Expression tree is too large"). Each word's is one, as the summary's."""
+    store = Store(tmp_path / "s.db")
+    store.import_erp_register([{"vendor_name": "Granite Logistics", "invoice_number": "G-1", "total": 10.0}])
+    assert search.erp_hits(store, [f"word{n:04d}" for n in range(990)], []) == []
+    assert len(search.erp_hits(store, ["granite", "logistics"] * 300, [])) == 1
+
+
 def test_who_acts_next_on_an_invoice_in_each_state():
     """D-140: the directory says who has to act next, and what, beside where the invoice stands."""
     from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW

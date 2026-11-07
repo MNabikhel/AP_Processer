@@ -160,7 +160,7 @@ def _contains(column: str, text: str, fts: bool, index: tuple[str, str] = _SUMMA
     narrowed first by the FTS5 trigram index when there is one and ``text`` is three characters or more (D-110).
     ``index``: another table's rows and index (the ERP register's, D-194)."""
     exact = f"instr({column}, ?) > 0"
-    if not fts or len(text) < 3:
+    if not fts or len(text) < 3 or "\x00" in text:  # (FTS5 reads its MATCH text up to a NUL: B-2040)
         return exact, [text]
     key, table = index
     phrase = '"' + text.replace('"', '""') + '"'
@@ -227,7 +227,7 @@ def _in_register(words: list[str], numbers: list[str], fts: bool = False) -> tup
     where, params = [], []
     for w in words:
         sql, values = _contains("plain_name", w, fts, _REGISTER_INDEX)
-        where.append(sql)
+        where.append(f"({sql})")  # (one level a word: else SQLite's depth limit from 499 words, B-2041)
         params += values
     for token in numbers:
         number, amount, raw, plain = norm_invoice_number(token), parse_amount(token), _raw(token), _plain(token)
