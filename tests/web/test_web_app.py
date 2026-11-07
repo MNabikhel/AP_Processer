@@ -667,12 +667,15 @@ def test_in_a_browser_a_poll_asks_less_while_nothing_changes_and_nothing_while_t
         page.evaluate(POLL, 200)
         wait_until(page, lambda: len(looks) >= 7, timeout=10)
         gaps = [b - a for a, b in zip(looks, looks[1:], strict=False)]
-        assert gaps[0] < 0.4 and gaps[1] > gaps[0] and gaps[2] > gaps[1], gaps  # 0.2, 0.3, 0.45...
+        # Each look is timed and answered when this test's side of Playwright takes it, so a gap is its wait and more,
+        # never less: a late one only makes its gap longer (CI: 0.20, 0.55, 0.45 s), never one shorter than its wait.
+        waits = [0.2, 0.3, 0.45, 0.6]  # the pace, growing by half, up to three times the pace
+        assert gaps[0] < 0.5 and all(g > w - 0.03 for g, w in zip(gaps, waits, strict=False)), gaps
         assert all(0.5 < g < 1.0 for g in gaps[4:6]), gaps  # ... up to 0.6 s
         answer["done"] = 1  # a change: back to the pace
         seen = len(looks)
         wait_until(page, lambda: len(looks) >= seen + 2, timeout=5)
-        assert looks[seen + 1] - looks[seen] < 0.4, looks
+        assert looks[seen + 1] - looks[seen] < 0.5, looks  # (0.2 s, not the 0.6 it had grown to)
 
         page.evaluate(HIDDEN, True)
         hidden_at = time.monotonic()
