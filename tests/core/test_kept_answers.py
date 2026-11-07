@@ -1753,7 +1753,8 @@ def test_the_vendors_workload_is_worked_out_once_for_every_process_and_follows_a
     """D-194: the Vendors page's workload (``insights.vendor_workload``, worked out again after each change: 4% of the
     web workers' CPU at 300,000 invoices) was kept by each web worker for itself. It is worked out once for every
     process, what working it out afresh gives (its codes a list each), and again after any change to an invoice,
-    whoever made it, once settled (D-197: only shown, as Insights); each caller gets its own copy to change."""
+    whoever made it, once settled (D-197: only shown, for ten times its work, B-2044); each caller gets its own copy
+    to change."""
     from ap_coder.core.store import reports
     from ap_coder.erp import insights
 
@@ -1761,7 +1762,15 @@ def test_the_vendors_workload_is_worked_out_once_for_every_process_and_follows_a
     monkeypatch.setattr(reports, "wall", lambda: clock[0])
     worked: list[int] = []
     real = insights._vendor_workload
-    monkeypatch.setattr(insights, "_vendor_workload", lambda *a: worked.append(1) or real(*a))
+    work = 6.0  # (its work's seconds on this clock: settled for ten times that)
+
+    def timed(*a):
+        worked.append(1)
+        clock[0] += work
+        return real(*a)
+
+    monkeypatch.setattr(insights, "_vendor_workload", timed)
+    settle = reports.SETTLE_SHARE * work
     process = _Processes(monkeypatch)
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
 
@@ -1780,9 +1789,9 @@ def test_the_vendors_workload_is_worked_out_once_for_every_process_and_follows_a
         ("Acme Supply", 2, ["TOTAL_MISMATCH"])] and len(worked) == 1  # fmt: skip
     assert shown("worker 2") == before == real(store, 2) and len(worked) == 1  # (worker 1's)
     bill("Z-1", "Zeta Parts"), bill("Z-2", "Zeta Parts"), bill("Z-3", "Zeta Parts")
-    clock[0] += insights.SETTLE_SECONDS - 1
+    clock[0] = 1000 + settle - 1  # (its work began at 1000)
     assert shown("worker 2") == before and len(worked) == 1  # (settled)
-    clock[0] += 1
+    clock[0] = 1000 + settle
     after = shown("worker 2")
     assert [v["vendor_name"] for v in after] == ["Zeta Parts", "Acme Supply"] and len(worked) == 2
     after[0]["top_codes"].append("changed by its caller")
@@ -2206,20 +2215,30 @@ def test_an_answer_a_process_keeps_for_itself_settles_for_ten_times_its_work_cap
 def test_the_vendors_pages_totals_settle_but_every_other_reader_of_them_is_exact(tmp_path, ground_truth, monkeypatch):
     """D-197: the Vendors page's counts and spend by vendor (``_vendor_totals``, 20% of a web worker's CPU with
     Spend's at 300,000 invoices, worked out again at every change) only show: once an invoice changed, the page takes
-    the totals kept for ``VENDORS_SETTLE`` (or ten times their work). The Statements page, the JD Edwards worksheet and
-    a vendor's controls read them exactly, and a vendor opened that came in after the page's totals opens."""
-    from ap_coder.core.store.vendors import VENDORS_SETTLE
+    the totals kept for ten times their work (B-2044: no floor, so a laptop's are exact). The Statements page, the JD
+    Edwards worksheet and a vendor's controls read them exactly, and a vendor opened that came in after the page's
+    totals opens."""
+    from ap_coder.core.store import reports
     from tests.webclient import client_for
 
     clock = [1000.0]
     monkeypatch.setattr(summary_module, "monotonic", lambda: clock[0])
+    work = 6.0  # (the totals' work on this clock: settled for ten times that)
+    real = Store._vendor_totals
+
+    def timed(self):
+        clock[0] += work
+        return real(self)
+
+    monkeypatch.setattr(Store, "_vendor_totals", timed)
+    settle = reports.SETTLE_SHARE * work
     store = Store(tmp_path / "ap.db")
     _invoice(store, tmp_path, ground_truth, "A-1", "Acme Supply")
     shown = store.vendor_summaries(settled=True)
     assert [v["invoices"] for v in shown] == [1]
     _invoice(store, tmp_path, ground_truth, "A-2", "Acme Supply")
     _invoice(store, tmp_path, ground_truth, "B-1", "Beta Parts")
-    clock[0] = 1000 + VENDORS_SETTLE - 1
+    clock[0] = 1000 + settle - 1
     assert store.vendor_summaries(settled=True) == shown  # (settled)
     client = client_for(store)
     page = client.get("/vendors").text
@@ -2230,8 +2249,60 @@ def test_the_vendors_pages_totals_settle_but_every_other_reader_of_them_is_exact
     assert "Beta Parts" in opened and 'id="vendor"' in opened
     exact = store.vendor_summaries()
     assert sorted(v["invoices"] for v in exact) == [1, 2]
-    clock[0] = 1000 + VENDORS_SETTLE
+    clock[0] = 1000 + settle + 10  # (past the first totals' settle; the exact ones' work began at 1059)
     _invoice(store, tmp_path, ground_truth, "B-2", "Beta Parts")
     assert store.vendor_summaries(settled=True) == exact  # (the exact read is the one kept: settled from it)
-    clock[0] += VENDORS_SETTLE
+    clock[0] += settle
     assert store.vendor_summaries(settled=True) == store.vendor_summaries()
+
+
+def test_an_answers_work_time_is_its_own_work_not_the_wait_before_it(tmp_path):
+    """B-2043: the time an answer's work lasted (D-197) was counted from the ask, so a wait for another thread's work
+    that failed counted too, and the next answer settled ten times that wait."""
+    from ap_coder.core.store import reports
+
+    store = Store(tmp_path / "s.db")
+    calls = []
+
+    def compute() -> dict:
+        calls.append(threading.current_thread().name)
+        if len(calls) == 1:
+            time.sleep(1.5)
+            raise RuntimeError("the first work fails")
+        return {"n": 1}
+
+    def ask() -> None:
+        try:
+            store.shared_answer("probe", compute, version="p-1", topic="", settle=5.0)
+        except RuntimeError:
+            pass
+
+    first = threading.Thread(target=ask, name="first")
+    first.start()
+    time.sleep(0.2)
+    ask()  # (waits for the first's work, which fails, then works it out itself)
+    first.join()
+    assert calls == ["first", "MainThread"]
+    found = store.kept_answer("probe", reports.asked_key(None), "p-1")
+    assert found[3] < 0.5, found[3]
+
+
+def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, ground_truth):
+    """B-2044: the Vendors page's counts settled for 60 s whatever their work (D-197), so on a laptop, where the work
+    takes milliseconds, a person's own change (an invoice rejected, a new vendor) was missing for a minute. They
+    settle by their own work alone: ten times its milliseconds."""
+    from tests.conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "s.db")
+    gt, pdf = ground_truth, SAMPLES / f"{SAMPLE_STEM}.pdf"
+    first = store.add_invoice(
+        pdf, {**gt, "invoice_number": "A-1"}, {"requires_review": True, "adjusted_confidence": 0.5}
+    )
+    assert [v["to_review"] for v in store.vendor_summaries(settled=True)] == [1]
+    store.reject_invoice(first, "tester", "duplicate")
+    store.add_invoice(pdf, {**gt, "invoice_number": "A-2", "vendor_name": "Brand New Supplier Ltd"},
+                      {"requires_review": True, "adjusted_confidence": 0.5})  # fmt: skip
+    time.sleep(0.2)  # (more than ten times the work here)
+    shown = {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries(settled=True)}
+    assert shown == {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries()}
+    assert shown.get("Brand New Supplier Ltd") == 1

@@ -22,6 +22,7 @@ from typing import Any
 from ..coding.terms import parse_terms, payment
 from ..core.memory import vendor_key
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, _in_list
+from ..core.store.reports import OWN_WORK
 from ..core.store.summary import _code_rows, computed
 from ..core.store.summary import broken as summary_broken
 from ..core.store.summary import whole as summary_whole
@@ -595,9 +596,14 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
     correcting what AP Coder read was AP Coder's misread, not the vendor's doing (B-1183). Worked out again once an
     invoice or the audit trail changed (the summary's ``workload``, D-110), once for every process (D-194), and under
     a stream of changes at most every ``SETTLE_SECONDS`` (or ten times its work): only shown, as Insights (D-197)."""
-    found = store.shared_answer("vendor_workload", lambda: _vendor_workload(store, min_invoices),
-                                version=WORKLOAD_FORMAT, topic="workload", asked=min_invoices,
-                                settle=SETTLE_SECONDS)  # fmt: skip
+    found = store.shared_answer(
+        "vendor_workload",
+        lambda: _vendor_workload(store, min_invoices),
+        version=WORKLOAD_FORMAT,
+        topic="workload",
+        asked=min_invoices,
+        settle=OWN_WORK,
+    )  # fmt: skip  (ten times its work: B-2044)
     return [{**v, "top_codes": list(v["top_codes"])} for v in found]
 
 

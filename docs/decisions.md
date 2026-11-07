@@ -3814,9 +3814,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     once for every process (`shared_answer`), Spend's figures and currencies (30 s), month-end's received-not-invoiced
     lines and invoices not in the ERP on its page (30 s; its CSV exact), Sales tax (30 s), Insights' figures and
     operations (60 s), Learning's (60 s), the recurring vendors (60 s, the queue's late pill too) and, new, the Vendors
-    page's workload (`insights.vendor_workload`, Insights' 60 s); in each process (`summary_memo`), the rail's counts
-    (`status_counts(settled=True)`, 5 s) and, new, the Vendors page's counts, spend and dates by vendor
-    (`vendor_summaries(settled=True)`, `VENDORS_SETTLE` 60 s). Exact: the duplicate audit's pairs, month-end's CSV,
+    page's workload (`insights.vendor_workload`, by its own work alone: `OWN_WORK`, B-2044); in each process
+    (`summary_memo`), the rail's counts (`status_counts(settled=True)`, 5 s) and, new, the Vendors page's counts,
+    spend and dates by vendor (`vendor_summaries(settled=True)`, `VENDORS_SETTLE` = `OWN_WORK`: ten times their work,
+    no floor, so a laptop's are exact). Exact: the duplicate audit's pairs, month-end's CSV,
     the vendor lists of Statements and the JD Edwards worksheet, a vendor's controls (`/vendors/save`), and every
     other kept answer.
   - **The Vendors page** only shows its workload and totals; a vendor's hold, numbers and notes are read afresh from
@@ -3847,8 +3848,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     answer's stamp or value instead of a column (the stamp is compared whole and read by SQL at a restore's clean-up,
     and a value from before could not be told apart); the Vendors totals shared by every process (every vendor's row
     through JSON in each worker; each keeps its own, as D-162).
+  - **After its review (B-2043 to B-2045):** an answer's work time is its work alone (not the wait for another's
+    work before it); the Vendors page settles by its own work only (it was exact before: a laptop's person saw their
+    own change a minute late); a restore's copy gets `report_answers.lasted` before it goes in (a page asked while an
+    older backup was restored failed). A session's memo (B-2042) holds 64 MB, so a vendor of up to about 70,000
+    invoices is read once in a check (300,000 invoices' biggest: 23,000).
   - **Left:** the Vendors totals are each worker's own: 4 workers each work them out at most once a settle (0.24 s
     at 60,000). An older AP Coder of the same version updating a kept answer (during an update, both running) leaves
-    the `lasted` of the one before.
+    the `lasted` of the one before. Month-end's page shows three parts each settled by its own work (lines received
+    and not invoiced, invoices not in the ERP, the recurring vendors): at 300,000 invoices one may be a few minutes
+    behind another, so an invoice that moved between two parts meanwhile shows in both or neither for that long (it
+    was a minute at most before); its CSV, what is booked, is worked out exactly.
   - (`ap_coder/core/store/reports.py`, `core/store/summary.py`, `core/store/migrations.py`, `core/store/vendors.py`,
     `erp/insights.py`, `web/pages/vendors.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`)

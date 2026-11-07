@@ -1277,3 +1277,30 @@ def test_a_list_made_without_the_databases_sha256_is_checked_by_its_size_until_i
         f.seek(200)
         f.write(b"\xff")
     assert backup_files.check(made, deep=True).database_damaged
+
+
+def test_a_page_asked_while_a_backup_from_before_d197_is_restored_reads_its_answers(tmp_path, monkeypatch):
+    """B-2045: a backup made before D-197 has no ``report_answers.lasted``; the restore put it in, copied the data
+    folder's files (minutes on a big one), and only then added the column: a page asked meanwhile (another tab on a
+    laptop: the queue's late pill, Spend, Vendors) failed with "no such column: lasted". The restore's copy has it
+    before it goes in."""
+    from ap_coder.core.store import backup_files
+    from ap_coder.erp import recurring
+
+    store = Store(tmp_path / "ap_coder.db")
+    made = store.backup_now("before-d197")
+    with sqlite3.connect(made) as conn:  # (as a version before D-197 made it)
+        conn.execute("ALTER TABLE report_answers DROP COLUMN lasted")
+    seen = []
+    real = backup_files.restore_files
+
+    def files_meanwhile(*a, **k):
+        try:
+            seen.append(len(recurring.detected(store)))
+        except sqlite3.Error as exc:
+            seen.append(str(exc))
+        return real(*a, **k)
+
+    monkeypatch.setattr(backup_files, "restore_files", files_meanwhile)
+    store.restore_from(made)
+    assert seen == [0]

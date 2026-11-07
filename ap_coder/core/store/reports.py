@@ -44,6 +44,7 @@ ANSWER_WAIT_MOST = 180.0  # ... and while the one working it out still renews it
 ANSWER_POLL = 0.25
 SETTLE_SHARE = 10  # a settled answer is taken after a change at least this many times as long as its work lasted ...
 SETTLE_MOST = 15 * 60.0  # ... but for that no longer than this (a work once slow, its cache cold: D-197)
+OWN_WORK = 0.001  # a settle of the answer's own work alone (ten times it): on a laptop's database, exact (B-2044)
 OWNER = f"{os.getpid()}:{secrets.token_hex(4)}"  # this process, as the answers' leases name it
 
 WAITING, RUNNING, MADE, FAILED = "waiting", "running", "done", "failed"
@@ -188,9 +189,10 @@ class ReportsMixin:
                     stamp, start = seen, began
                     if not taken:  # (after waiting for another process: worked out from what the database holds now)
                         start, (stamp, _) = wall(), self._answer_stamp(topic, changes)
+                    working_from = wall()  # (the work alone: not the wait before it, B-2043)
                     with self._holding(lease, owner) if taken else nullcontext():
                         value = compute()
-                    lasted = wall() - start
+                    lasted = wall() - working_from
                     kept, encoded = (stamp, value, start, lasted), encode(value)
                     if self.keep_answer(name, key, version, stamp, encoded, start, lasted) is None:
                         unkept = lambda: self.keep_answer(name, key, version, stamp, encoded, start, lasted, wait=True)  # noqa: E731

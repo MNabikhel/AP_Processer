@@ -26,6 +26,7 @@ from ._base import (
 )
 from .capture import capture_lookup
 from .learning import one_snapshot
+from .reports import OWN_WORK
 from .summary import fetch_rows
 
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
@@ -44,7 +45,7 @@ VENDOR_ROWS_MOST = 64 * MB
 _VENDOR_ROWS = Bounded("vendors' invoices", VENDOR_ROWS_MOST, size=lambda kept: size_of(kept[1]))
 _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
-VENDORS_SETTLE = 60.0  # seconds the Vendors page's counts and spend may be behind a change, as Insights (D-197)
+VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a change by ten times their work (B-2044)
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:

@@ -485,7 +485,7 @@ the launcher.
   instead of 0.47 s at 20,000). Those a page only shows settle as before (D-164), by when their work began in
   whichever process did it, and for ten times as long as that work lasted when longer, 15 minutes at most
   (`ap_coder/core/store/reports.py:settle_for`, D-197: Spend's 20 s at 300,000 invoices settle for 200 s; the Vendors
-  page's workload and totals settle too). One process works an answer out while the others wait for it, and take it even when
+  page's workload and totals settle by their own work alone, exact on a laptop). One process works an answer out while the others wait for it, and take it even when
   something changed meanwhile (it was worked out after they asked, B-1802); of those a page only shows, the others
   take the answer before meanwhile instead (this database's latest, D-179). One an older AP Coder wrote, over 16 MB,
   or worked out in a write under way is not kept for the others.

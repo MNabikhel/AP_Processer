@@ -503,9 +503,8 @@ class _Held:
 
 
 _sessions = threading.local()
-SESSION_MEMO_BYTES = (
-    32 * MB
-)  # one session's memo at most: the biggest vendor's invoices at 300,000 (24 MB) and more (B-2042)
+# One session's memo at most: a vendor's invoices up to about 70,000 (300,000 invoices' biggest: 24 MB; B-2042)
+SESSION_MEMO_BYTES = 64 * MB
 
 
 def _held_connections() -> dict[str, _Held]:

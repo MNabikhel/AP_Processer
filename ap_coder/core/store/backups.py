@@ -30,6 +30,7 @@ from ._base import (
     _store_class,
 )
 from .backup_files import Retention
+from .migrations import _answer_work
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS, make_triggers
 from .users import carry_accounts, saved_accounts
@@ -657,6 +658,10 @@ class BackupsMixin:
         conn = sqlite3.connect(path)
         try:
             make_triggers(conn, missing=False, counts=True)
+            if "report_answers" in dialect.table_names(
+                conn
+            ):  # (the kept answers read as this version reads them: B-2045)
+                _answer_work(None, conn)
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
                 conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE "
                              "SET value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip
