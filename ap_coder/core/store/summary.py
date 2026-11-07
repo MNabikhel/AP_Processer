@@ -36,7 +36,19 @@ from typing import Any
 
 from ..keys import search_keys
 from ..tax_setup import DEFAULT_TREATMENTS, TAX_TYPES, TaxTreatment
-from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, VENDOR_CHANGES, VENDOR_LOGGED, _in_list
+from ._base import (
+    APPROVED,
+    FAILED,
+    PARKED,
+    PENDING,
+    QUEUE_CHANGES,
+    QUEUE_CHANGES_KEPT,
+    REJECTED,
+    REVIEW,
+    VENDOR_CHANGES,
+    VENDOR_LOGGED,
+    _in_list,
+)
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -183,6 +195,10 @@ SUMMARY_SCHEMA = (
     # The queue's confidences in its order (``list_invoices``, B-1737), read without the rows.
     "CREATE INDEX IF NOT EXISTS summary_queue_order ON invoice_summary (status, requires_review DESC, "
     "adjusted_confidence, id)",
+    # The queue's Approved tab, the latest approved first (``recently_approved``, D-193): its rows read off it, not
+    # sorted out of a year of approvals at each visit.
+    "CREATE INDEX IF NOT EXISTS summary_recent ON invoice_summary (status, COALESCE(reviewed_at, '') DESC, "
+    "requires_review DESC, adjusted_confidence, id)",
     # The invoice directory's default order, newest received first (``directory.order_by`` of its "received", B-1740):
     # its first page is read off it, not sorted out of every invoice.
     "CREATE INDEX IF NOT EXISTS summary_received ON invoice_summary (COALESCE(created_at, '') = '', created_at DESC, "
@@ -293,8 +309,10 @@ def make_triggers(conn: sqlite3.Connection, missing: bool = True, counts: bool =
     ``_summary_schema``). Without it (a backup's copy being restored, ``backups._own_triggers``), only those there are
     made again: an older backup may lack their tables, which its migration makes first. With ``counts``, also the
     counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720). In either, the
-    vendors' change log the vendors' counts' triggers write is made first (``vendor_changes``, D-174)."""
+    vendors' change log the vendors' counts' triggers write is made first (``vendor_changes``, D-174), and the queue's
+    the summary writes (``queue_changes``, D-193): a backup's copy is written to before its migration."""
     conn.execute(VENDOR_CHANGES)
+    conn.execute(QUEUE_CHANGES)
     made = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} if counts else set()
     for name, sql in SUMMARY_TRIGGERS.items():
@@ -337,7 +355,6 @@ TOPICS: dict[str, Callable[[dict[str, Any] | None], Any]] = {
     "listed": lambda r: tuple(r[c] for c in _LISTED_KEPT) if r and r["status"] in QUEUES else None,
 }
 QUEUE_READ = ("broken", "q_audit", "q_stamp", "q_found", "r_stamp", "r_found", "q_pick", "q_pick_cc", "q_pay")
-_FOUND_TEXTS = ("q_found", "r_found")  # of them, the findings texts: each read once (``queue_rows``)
 QUEUES = (REVIEW, PARKED, PENDING)  # the lists the ``listed`` topic covers
 LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", "invoice_date", "due_date", "currency",
                   "grand_total", "model_confidence", "adjusted_confidence", "requires_review", "error", "created_at",
@@ -345,6 +362,18 @@ LISTED_COLUMNS = ("id", "file_name", "status", "vendor_name", "invoice_number", 
 CONFIDENCE = ("adjusted_confidence", "requires_review")  # what a check writes (``Store.refresh_confidence``)
 _LISTED_KEPT = tuple(c for c in LISTED_COLUMNS if c not in CONFIDENCE)
 QUEUE_ORDER = "requires_review DESC, adjusted_confidence ASC, id ASC"  # the ones to review first (an index's order)
+# The refreshes of the summary that kept the queue's log (D-193), counted beside ``summary_generation/all``: an older
+# AP Coder working the summary out moves the generation alone (``review_queue.py`` then reads the queue whole).
+LOGGED = "summary_logged"
+
+
+def queue_logged(r: dict[str, Any] | None) -> Any:
+    """What the queue's log (``queue_changes``, D-193) follows of an invoice's summary row (None: none): its row in the
+    queue's lists, the confidence a check writes included, and its facts in review (the ``queue`` topic: one the
+    summary could not work out, at each change). One that came into the queues or left them changed both."""
+    return tuple(r[c] for c in LISTED_COLUMNS) if r and r["status"] in QUEUES else None, TOPICS["queue"](r)
+
+
 _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
                                       "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
@@ -554,14 +583,16 @@ class SummaryMixin:
 
     def _refresh_summary(self, conn: sqlite3.Connection) -> None:
         """Work out again every invoice in ``summary_dirty``, in the transaction under way; the generation of each
-        part of the summary that changed (``TOPICS``, and ``all``) is one more (``summary_memo``)."""
+        part of the summary that changed (``TOPICS``, and ``all``) is one more (``summary_memo``), and so is
+        ``LOGGED``: this refresh kept the queue's log."""
         treatments, changed = None, set()
         while True:
             ids = [r[0] for r in conn.execute(f"SELECT id FROM summary_dirty LIMIT {CHUNK}")]
             if not ids:
-                for topic in sorted(changed | {"all"}) if treatments is not None else ():
+                counts = [*(f"summary_generation/{topic}" for topic in sorted(changed | {"all"})), LOGGED]
+                for key in counts if treatments is not None else ():
                     conn.execute("INSERT INTO settings (key, value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET "
-                                 "value = CAST(value AS INTEGER) + 1", (f"summary_generation/{topic}",))  # fmt: skip
+                                 "value = CAST(value AS INTEGER) + 1", (key,))  # fmt: skip
                 return
             if treatments is None:
                 treatments = self.tax_treatments_in(conn)
@@ -569,7 +600,8 @@ class SummaryMixin:
             conn.execute(f"DELETE FROM summary_dirty WHERE {_in_list('id')}", (json.dumps(ids),))
 
     def _summarize(self, conn: sqlite3.Connection, ids: list[int], treatments: dict[str, Any]) -> set[str]:
-        """Work out ``ids`` again; returns the ``TOPICS`` they changed."""
+        """Work out ``ids`` again; returns the ``TOPICS`` they changed. Those whose queue's row changed are logged
+        (``queue_changes``, ``queue_logged``)."""
         listed = json.dumps(ids)
         before = {r[0]: r for r in conn.execute(f"SELECT {', '.join(_TOPIC_COLUMNS)} FROM invoice_summary WHERE "
                                                 f"{_in_list('id')}", (listed,))}  # fmt: skip
@@ -615,8 +647,17 @@ class SummaryMixin:
         def row(values: Any) -> dict[str, Any] | None:
             return None if values is None else dict(zip(_TOPIC_COLUMNS, values, strict=True))
 
-        return {topic for topic, key in TOPICS.items() for i in ids
-                if key(row(before.get(i))) != key(row(after.get(i)))}  # fmt: skip
+        changed, logged = set(), []
+        for i in ids:
+            old, new = row(before.get(i)), row(after.get(i))
+            changed |= {topic for topic, key in TOPICS.items() if key(old) != key(new)}
+            if queue_logged(old) != queue_logged(new):
+                logged.append((i,))
+        if logged:  # (each change removes the one QUEUE_CHANGES_KEPT before it: the log never empties)
+            conn.executemany("INSERT INTO queue_changes (id) VALUES (?)", logged)
+            conn.execute(f"DELETE FROM queue_changes WHERE seq <= (SELECT MAX(seq) FROM queue_changes) - "
+                         f"{QUEUE_CHANGES_KEPT}")  # fmt: skip
+        return changed
 
     @staticmethod
     def tax_treatments_in(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -755,16 +796,6 @@ class SummaryMixin:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows
 
-    def recently_approved(self, limit: int) -> list[dict[str, Any]]:
-        """The ``limit`` invoices approved last (``list_invoices(APPROVED)`` by approval time, latest first)."""
-        with self._conn() as conn:
-            self._summary_fresh(conn)
-            return fetch_rows(conn,
-                "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, "
-                "grand_total, model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, "
-                "reviewer, second_reviewer FROM invoice_summary WHERE status = ? ORDER BY COALESCE(reviewed_at, '') "
-                "DESC, requires_review DESC, adjusted_confidence ASC, id ASC LIMIT ?", (APPROVED, limit))  # fmt: skip
-
     def status_counts(self, settled: bool = False) -> dict[str, int]:
         """{status: how many invoices}, from the invoices' summary (counted again once one changed its status).
         ``settled``: for counts only shown (every page's rail, the queue's tabs), up to ``COUNTS_SETTLE`` seconds
@@ -792,35 +823,6 @@ class SummaryMixin:
             else:
                 rows = conn.execute(f"SELECT id FROM invoice_summary WHERE instr({column}, ?) > 0", (text,))
             return {r[0] for r in rows}
-
-    def stale_checks(self, stamp: str, ids: list[int] | None = None) -> list[int]:
-        """The invoices in review (only ``ids``' when given) whose stored checks and queue re-check were both made
-        against other settings than ``stamp`` (``Store.checks_stamp``), in the queue's order: what
-        ``coding.bulk.recheck_queue`` checks again. From the invoices' summary."""
-        where, params = "status = ? AND q_stamp != ? AND r_stamp != ?", [REVIEW, stamp, stamp]
-        if ids is not None:
-            where += f" AND {_in_list('id')}"
-            params.append(json.dumps([int(i) for i in ids]))
-        rows = self.summary_rows(where, params, "id", "requires_review DESC, adjusted_confidence ASC, id ASC")
-        return [r["id"] for r in rows]
-
-    def queue_rows(self, ids: list[int]) -> list[dict[str, Any]]:
-        """The queue's facts (``id`` and ``QUEUE_READ``) of the invoices of ``ids`` in review, by id: the rows
-        ``summary_rows`` gives, but each findings text (``q_found``, ``r_found``) read once for all the invoices that
-        have it (the queue's share a few: 190 texts, 2.1 MB in its rows at 100,000 invoices, B-1741), in the same read
-        transaction as the rest."""
-        where, params = f"status = ? AND {_in_list('id')}", (REVIEW, json.dumps([int(i) for i in ids]))
-        columns = ", ".join(f"NULL AS {c}" if c in _FOUND_TEXTS else c for c in ("id", *QUEUE_READ))
-        texts = " UNION ALL ".join(f"SELECT '{c}' AS c, {c} AS text, json_group_array(id) AS ids FROM invoice_summary "
-                                   f"WHERE {where} AND {c} IS NOT NULL GROUP BY {c}" for c in _FOUND_TEXTS)  # fmt: skip
-        with self.summary_snapshot(), self._conn() as conn:
-            rows = fetch_rows(conn, f"SELECT {columns} FROM invoice_summary WHERE {where} ORDER BY id", params)
-            found = fetch_rows(conn, texts, params * len(_FOUND_TEXTS))
-        by_id = {r["id"]: r for r in rows}
-        for t in found:
-            for invoice_id in json.loads(t["ids"]):
-                by_id[invoice_id][t["c"]] = t["text"]
-        return rows
 
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""
