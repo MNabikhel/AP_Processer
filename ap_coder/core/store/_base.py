@@ -41,7 +41,9 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # 27: report_answers and report_jobs (by _SCHEMA: the big answers worked out once for every process of the company
 # server, and the downloads its background process makes, reports.py, D-169); past_lines came later in 27 (by
 # _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178),
-# and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185)
+# and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185), and
+# billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
+# purchasing.py, D-194)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -288,6 +290,10 @@ CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEG
 CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
     stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
 CREATE TABLE IF NOT EXISTS past_lines (vendor_key TEXT PRIMARY KEY, stamp TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS billing_facts (vendor_key TEXT NOT NULL, id INTEGER NOT NULL, facts TEXT NOT NULL,
+    PRIMARY KEY (vendor_key, id));
+CREATE TABLE IF NOT EXISTS billing_vendors (vendor_key TEXT PRIMARY KEY, kept TEXT NOT NULL, logged INTEGER NOT NULL,
+    counted INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, kind TEXT NOT NULL,
     params TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',

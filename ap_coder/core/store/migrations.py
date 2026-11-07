@@ -295,6 +295,13 @@ def _register_by_number(store: Any, conn: sqlite3.Connection) -> None:
     conn.execute(_REGISTER_BY_NUMBER)
 
 
+def _billing_by_vendor(store: Any, conn: sqlite3.Connection) -> None:
+    """Month-end's billing lines kept by vendor among the shared answers (``report_answers``, ``billing/<key>``,
+    D-177), kept by invoice since (``billing_facts``, D-194): the vendors' rows, read by no one now, removed (about
+    63 MB at 300,000 invoices)."""
+    conn.execute("DELETE FROM report_answers WHERE name >= 'billing/' AND name < 'billing0'")
+
+
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
     """A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
     amount), for what is left to expense on the review screen."""
@@ -420,6 +427,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _feedback_tax_codes),
     (EVERY_TIME, _reading_as_d89),
     (EVERY_TIME, _seen_files),
+    (EVERY_TIME, _billing_by_vendor),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 
