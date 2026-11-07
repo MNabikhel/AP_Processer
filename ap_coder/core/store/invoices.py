@@ -44,6 +44,7 @@ from ._base import (
     parse_fx_rates,
     suggestion_kept,
 )
+from .dialect import begin_write
 from .learning import forget_past_lines
 from .summary import CONFIDENCE, LISTED_COLUMNS, QUEUE_ORDER, QUEUES, fetch_rows
 from .users import VOUCH_DAYS, account_of, same_approver
@@ -451,8 +452,7 @@ class InvoicesMixin:
         own transaction: of two screens checking at once only the first writes. False: nothing was written."""
         with self._conn() as conn:
             if expect is not None:
-                if not conn.in_transaction:
-                    conn.execute("BEGIN IMMEDIATE")  # read and written in one go: no other writer in between
+                begin_write(conn)  # read and written in one go: no other writer in between
                 if not expect(self.invoice_draft(invoice_id, person)):
                     return False
             if draft is None:

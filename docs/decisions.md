@@ -3242,3 +3242,53 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`core/store/{postings,transaction,hub,backups,vendors,purchasing,learning,__init__}.py`, `erp/jde_post.py`,
     `erp/jde_sync.py`, `erp/hub/run.py`, `erp/hub/landing.py`, `ops/server_update.py`, `ops/share_report.py`;
     `tests/meta/test_sql_in_store.py`)
+- **D-190** · **A PostgreSQL seam: the store's migrations as numbered steps, SQLite's own SQL behind names, and the
+  database each release made brought up to date and compared with a new one** (scale goal, phase 7, C3; B-1975).
+  - **Why:** a move off SQLite (for high availability) had no map. `_migrate` was one 200-line run of version tests
+    and column looks; the SQLite-only constructs were spread over 40 files, uncounted; the migrations were tested on
+    faked old schemas only (the real ones reached schema 15, and columns came at 19 without a version of their own).
+  - **The steps** (`core/store/migrations.py`): `STEPS`, `(number, step)` in the order `_migrate` ran them. A
+    numbered step runs on a database older than its number (`MIGRATIONS = {2: _v2_vendor_keys, ..., 26:
+    _v26_indexes}`); a step numbered `EVERY_TIME` runs whatever the version, where it ran before (`_po_key_index`
+    right after 4, seventeen more after 26). `_migrate` is the loop. The same statements in the same order: the new
+    `migrate` probe of `same_behaviour.py` (22 old databases seeded with invoices, lessons, vendors, POs, ERP bills,
+    profiles, snapshots and events) gives the same schema, in SQLite's own order, and the same rows as 537708d, but
+    for B-1975's index. Its constants moved with it (`_INDEXES_*`, `_SNAPSHOTS_SCHEMA`, `FEEDBACK_CLEANUP`);
+    `_fill_tax_codes` and `_recompute_vendor_keys` stay on StoreCore. `_base.py` went from 997 lines to 740.
+  - **Migrated equals fresh** (`tests/core/test_migrations.py`): `scripts/old_schemas.py` runs each release's own
+    code (`git archive` of its commit, or its code unpacked: PR #3 to #8 are older than this clone's history) to
+    make a new database, kept as SQL in `tests/fixtures/old_schemas/` (22 files, one per distinct database: PR #1's
+    schema 2 to PR #99's 27, the pilot's and hand-over's tags among them, and 20 to 26, which no release had). Each is
+    opened by this version and compared, by name, with a new database: each table's columns (type, NOT NULL,
+    default, key), foreign keys and AUTOINCREMENT, each index's columns, uniqueness and WHERE, each trigger and view.
+    One difference is left, listed with why it does no harm (`KNOWN`: the AI reviewer's queue's columns in another
+    order); one put right must come off the list. The check found B-1975.
+  - **The dialect** (`core/store/dialect.py`): SQLite only, each name saying PostgreSQL's form: `PARAM`, `in_list`,
+    `json_get`, `json_valid`, `upsert`, `insert_or_replace`, `insert_or_ignore`, `update_or_ignore`, `NOW_DAYS`,
+    `NOW_SECONDS`, `group_concat`, `like`, `nocase`, `ROWID`, `settle`, `begin_write`, `busy_timeout`,
+    `set_busy_timeout`, `data_version`, `table_names`, `columns`, `add_column`. The shared helpers use them, so each
+    has one place: `_in_list`, `_STALE`, `ephemeral._DB_NOW`, `database_schema`, `briefly`, `_session_memo`, `_open`,
+    the store's opening, the migrations and the vendor keys' recount; `begin_write` at the seven sites that already
+    joined a transaction under way (the same behaviour). No other query was rewritten. Not converted: the 29 sites
+    with a bare `BEGIN IMMEDIATE`, which fail inside a transaction (the digest's R4); through `begin_write` they would
+    join it, a change of behaviour left to the nested-transactions item. `strftime` was dropped from the plan's
+    list: the SQL uses none.
+  - **The inventory** (`scripts/sql_inventory.py`, docs/POSTGRES.md): each construct counted in the text of the
+    string literals that read as SQL (the syntax tree, docstrings left out) and the driver's in the code (calls,
+    attributes): about 1,560 placeholders and some 340 uses of SQLite's own SQL, 80% in `core/store`, the JSON
+    functions the most (about 130). The port planned at about 17 days, 19 with the clean-ups before it.
+  - **The guard** (`tests/meta/test_dialect.py`): for the 15 constructs the dialect covers, the uses outside
+    `dialect.py` may not rise above today's (`ALLOWED`). A total per construct, not per file: SQL moved between files
+    (phase 7's SQL out of `erp/` and `ops/`) doesn't trip it; a fall doesn't fail it (the numbers are lowered by hand),
+    so work in parallel isn't stopped by it. The whole-code scan takes about a second: in the slow list, run by CI.
+  - **Alternatives:** a dict of numbered steps alone (the steps that run whatever the version would have moved,
+    and the order of the schema's rows with them); the every-time steps made numbered ones (a database at 27 lacking
+    a column would no longer get it); a dialect object handed round with the connection (nothing to choose between
+    yet); old schemas written from each commit's `_SCHEMA` (not what the release made: its `_migrate` added columns);
+    a per-file or exact allowance (every move or removal a failure).
+  - **Left:** the 29 bare `BEGIN IMMEDIATE`; the parts' own `julianday('now')` (8) and the other counted constructs;
+    the port itself (POSTGRES.md's plan).
+  - (`ap_coder/core/store/migrations.py`, `dialect.py`, `_base.py`, `ephemeral.py`, `purchasing.py`, `invoices.py`,
+    `reports.py`, `bulk_jobs.py`; `scripts/old_schemas.py`, `scripts/sql_inventory.py`, `scripts/probes/migrate.py`,
+    `scripts/same_behaviour.py`; `tests/core/test_migrations.py`, `tests/core/test_dialect.py`,
+    `tests/meta/test_dialect.py`, `tests/fixtures/old_schemas/`; docs/POSTGRES.md)
