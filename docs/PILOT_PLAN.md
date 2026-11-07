@@ -14,12 +14,12 @@ Each item ends with something a person can check. The company's IT and the JDE t
 
 - [ ] **The code goes into the company's own repository** ([HANDOFF.md](HANDOFF.md) section 1), and its tests
       run green there.
-- [ ] **The pilot computer:** for the pilot's handful of people, a laptop with an NVIDIA graphics card with 16 GB
-      of VRAM or more and 32 GB of memory ([SERVER.md](SERVER.md) section 1), docked and plugged in, sleep off, in a
-      locked spot (or a desktop), given a burn-in week and set up in
-      server mode ([SERVER.md](SERVER.md): Windows 11 Pro runs it), with LM Studio, OvisOCR2 and the chat model on it
-      (section 8). The pilot tester and the clerks log in from their browsers, each with their own account
-      (section 10).
+- [ ] **The pilot computers:** AP Coder runs in server mode on a Mac mini, as a macOS service (a LaunchDaemon:
+      [SERVER.md](SERVER.md) section 14), and its AI models (OvisOCR2 and the chat model, in LM Studio) on a Mac
+      Studio beside it on the company network. The Mac mini's own LM Studio, with the same models, is the backup:
+      when the Mac Studio stops answering, the calls go to it within a minute (section 8, point 5). Both machines are
+      never asleep, start again after a power cut, sit on a UPS in a locked spot and get a burn-in week (section 14).
+      The pilot tester and the clerks log in from their browsers, each with their own account (section 10).
 - [ ] **The AP inbox:** a Power Automate flow saves the AP mailbox's emails into AP Coder's invoices folder
       ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)). AP Coder never holds the mailbox's password. Check *Emails that
       need a person* on Import invoices each day.
@@ -105,5 +105,8 @@ sample:
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 
-If the pilot goes well, the next stage takes AP Coder to more of AP's districts, on a company server that also hosts
-the Finance AI Hub (finance's local-model and other workflows); the whole company comes after that.
+If the pilot goes well, the next stage takes AP Coder to more of AP's districts: 300 to 400 people and about 25,000
+invoices a month, on one company server (a Windows virtual machine with 32 vCPUs and 64 GB of memory,
+[SERVER.md](SERVER.md) section 1) that also hosts the Finance AI Hub (finance's local-model and other workflows). The
+AI models stay on the Mac Studio, with the Mac mini as their backup. The whole company comes after that. What AP
+Coder was made ready for at that size, and how it was measured: [SCALE.md](SCALE.md).

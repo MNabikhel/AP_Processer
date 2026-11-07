@@ -364,12 +364,13 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts, with a code from an authenticator app at every
   login, D-146), four roles
   (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
-  allowed-hosts list, a Windows scheduled-task service (`python -m ap_coder service install ...`), `server-update
-  <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
-- **IT supplies:** Windows Server 2019–2025 (or, for the pilot, a laptop or desktop with Windows 11 Pro: `docs/SERVER.md`
-  section 1), 8–16 cores, 32–64 GB RAM, an NVIDIA GPU with 12 GB+ of VRAM (16 GB+ for the pilot computer) for
-  LM Studio, 60–200 GB SSD, Python 3.12, a service account, a DNS name and a certificate for it, a firewall rule
-  for the port, LM Studio installed headless with the models.
+  allowed-hosts list, a service (`python -m ap_coder service install ...`: a Windows scheduled task, or a macOS
+  LaunchDaemon), `server-update <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
+- **IT supplies:** for the pilot, a Mac mini that runs AP Coder (`docs/SERVER.md` section 14) and a Mac Studio with
+  LM Studio and the models (the Mac mini's own LM Studio as their backup); for the next stage (300 to 400 people,
+  about 25,000 invoices a month), a Windows virtual machine with 32 vCPUs and 64 GB of memory (`docs/SERVER.md`
+  section 1), the models staying on the Mac Studio. On either: 60–200 GB SSD, Python 3.12, a service account, a DNS
+  name and a certificate for it, a firewall rule for the port. What was measured for that size: `docs/SCALE.md`.
 - **Not done:** never installed anywhere (stage 0 sets it up on the pilot computer); the company's security review
   (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single
   sign-on with the company's accounts.
@@ -461,12 +462,12 @@ check. Don't start the next while the last one's tests are red. Dates move with 
    `pilot_check.py`, get CI running in the company's system (section 3: the runners and hosts it needs). Replace the
    README's CI badge and links, which point at the original GitHub repository. *Done when* the tests are green on
    the company's CI and the dashboard opens.
-2. **The pilot computer in server mode.** For the pilot's handful of people, a laptop with an NVIDIA card with 16 GB
-   of VRAM or more and 32 GB of memory (`docs/SERVER.md` section 1), docked, plugged in, sleep off, in a locked spot
-   (or a desktop). IT gives it a burn-in week, then sets it up
-   in server mode (`docs/SERVER.md`; Windows 11 Pro runs it): the service, the first Admin, the users, LM Studio with the
-   models. Import the company's master data there (section 7), the vendors' AN8s included. *Done when* the pilot
-   tester and the clerks log in from their browsers and a real invoice is read and coded.
+2. **The pilot computers in server mode.** AP Coder on a Mac mini and the AI models on a Mac Studio beside it, on a UPS,
+   never asleep, in a locked spot (`docs/SERVER.md` section 14). IT gives them a burn-in week, then sets the Mac mini up
+   in server mode: the service, the first Admin, the users; and LM Studio with the models on the Mac Studio, the same
+   models on the Mac mini as the backup (section 8, point 5). Import the company's master data there (section 7), the
+   vendors' AN8s included. *Done when* the pilot tester and the clerks log in from their browsers and a real invoice is
+   read and coded.
 3. **The AP inbox.** The developer builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (D-147), and IT
    gives the flow's account access to the AP shared mailbox (AP Coder never holds the mailbox's password); schedule
    `python -m ap_coder watch`. *Done when* a week of AP's mailbox lands in the review
@@ -551,7 +552,7 @@ production:
 
 `docs/KNOWN_LIMITS.md` (ten points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
-pilot computer); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
+pilot's Mac mini); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
 never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
 mailbox connection by design; AP Coder's own logins with authenticator codes (D-146), no single sign-on with the
 company's accounts (Entra ID a possible later option); accuracy measured on samples only; job cost
