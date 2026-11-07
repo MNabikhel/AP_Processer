@@ -20,6 +20,7 @@ from ..memory import ACCEPTED, AUTONOMOUS_REVIEWER, BULK, CODED, CORRECTED, pair
 from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
+from . import _base
 from ._base import (
     _FOUND,
     _HEADER_FIELDS,
@@ -258,7 +259,7 @@ class InvoicesMixin:
         if stored and not recent:
             if Path(stored).exists():
                 _FOUND[stored] = time.monotonic()
-                if len(_FOUND) > 50_000:
+                if len(_FOUND) > _base.LOOKED_KEPT:
                     _FOUND.clear()
             else:
                 self.invoice_file(inv)  # moved (an update): found again, and ``inv`` points there
@@ -295,6 +296,8 @@ class InvoicesMixin:
         places = [data / "invoices", *aside, *([PROJECT_DIR / "samples"] if demo else [])]
         found = find_moved_file(stored, sha, places, name=str(inv.get("file_name") or ""), data=data)
         if found is None:
+            if len(_NOT_FOUND) >= _base.LOOKED_KEPT:  # (B-2026)
+                _NOT_FOUND.clear()
             _NOT_FOUND[key] = time.monotonic()
             return None
         new = str(found.resolve())

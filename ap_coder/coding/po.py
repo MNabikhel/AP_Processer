@@ -157,7 +157,7 @@ def _tokens(text: str) -> frozenset[str]:
     return frozenset(w for w in words if w not in _STOP and len(w) > 1)
 
 
-@lru_cache(maxsize=65536)  # the same descriptions come back on every invoice of a PO
+@lru_cache(maxsize=32768)  # the same descriptions come back on every invoice of a PO (0.75 KB a pair, D-195)
 def similarity(a: str, b: str) -> float:
     """0..1: how likely two line descriptions are the same item (word overlap, then character similarity)."""
     ta, tb = _tokens(a), _tokens(b)

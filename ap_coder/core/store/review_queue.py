@@ -31,7 +31,7 @@ from .summary import LISTED_COLUMNS, LOGGED, QUEUE_ORDER, QUEUE_READ, QUEUES, co
 # (database, what) -> ((its summary_id, the summary's refreshes made without the log, the last change read), {id: row})
 _KEPT: dict[tuple[str, str], tuple[tuple[Any, ...], dict[int, Any]]] = {}
 _KEPT_LOCK = threading.Lock()
-KEPT_MOST = 16  # databases and what of each, kept in a process (the oldest let go first)
+KEPT_MOST = 4  # what of each database kept in a process: two databases' lists and facts (the oldest let go first)
 _FOUND_TEXTS = ("q_found", "r_found")  # of the queue's facts, the findings texts: each read once (``queue_rows``)
 # The stamp and the invoices logged after the last change read (``seq > ?``; NULL: none), in one statement.
 _STAMP = ("SELECT (SELECT value FROM settings WHERE key = 'summary_id'), "

@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Any
 
+from .caches import MB
+
 ACCEPTED, CORRECTED = "accepted", "corrected"
 # A line whose account the AI only guessed (``offline_coder.guessed``), or left blank, then coded by the reviewer: what
 # the reviewer approved is their own coding, learned from like any other, but neither confirmed nor corrected: coding
@@ -131,7 +133,7 @@ def _token_set(text: str) -> frozenset[str]:
     return frozenset(w for w in _normalise(text).split() if len(w) >= 3 and not w.isdigit() and w not in _STOP_WORDS)
 
 
-_token_set_short = lru_cache(maxsize=131072)(_token_set)
+_token_set_short = lru_cache(maxsize=65536)(_token_set)  # (0.7 KB a description: 46 MB at most, D-195)
 
 
 def tokens(text: str) -> set[str]:
@@ -185,10 +187,14 @@ class RowsCache:
     vendor's invoice has a list of its own (``Store.learning_rows``), and invoices of it and of other vendors in
     turn would otherwise rebuild the value each time. ``get``'s ``update(rows kept, their value)``: the value for the
     rows asked for, from one kept (an approval's lessons added in front of them, D-171), or None; asked before the
-    value is built. Each slot is [rows, their fingerprint (worked out once compared), extra, value]."""
+    value is built. Each slot is [rows, their fingerprint (worked out once compared), extra, value]. With ``most``,
+    the latest is always kept and the others while the values together are within ``most`` bytes, each counted at
+    ``row_bytes`` a row (what the value holds a row at most, measured: every description a different one; the rows
+    themselves are the store's, D-195)."""
 
-    def __init__(self, slots: int = 2) -> None:
+    def __init__(self, slots: int = 2, most: int = 0, row_bytes: int = 0) -> None:
         self._size = max(1, slots)
+        self.most, self.row_bytes = most, row_bytes
         self._slots: tuple[list[Any], ...] = ()  # the latest first
 
     def get(self, rows: list[dict[str, Any]], extra: Any, build: Callable[[], Any],
@@ -212,7 +218,13 @@ class RowsCache:
         return self._keep(slots, None, [list(rows), fingerprint, extra, value])
 
     def _keep(self, slots: tuple, old: Any, new: list[Any]) -> Any:
-        self._slots = (new, *(s for s in slots if s is not old))[: self._size]
+        kept, held = [new], len(new[0]) * self.row_bytes
+        for s in slots:
+            more = len(s[0]) * self.row_bytes
+            if s is not old and len(kept) < self._size and (not self.most or held + more <= self.most):
+                kept.append(s)
+                held += more
+        self._slots = tuple(kept)
         return new[3]
 
 
@@ -439,7 +451,7 @@ class WithPast(Sequence):
         return f"WithPast({self._all()!r})"
 
 
-_AGGREGATED = RowsCache()
+_AGGREGATED = RowsCache(most=28 * MB, row_bytes=512)  # (50,000 lessons: 24 MB at most, and Learning's 2,000)
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:

@@ -226,6 +226,24 @@ def server_config(app: Any, host: str, port: int, certfile: str | None, keyfile:
 
 
 WORKER_MB = 1500  # what a web worker uses on a 300,000-invoice database, its threads capped (D-153)
+MALLOC_ARENAS, ARENAS_ENV = 2, "MALLOC_ARENA_MAX"  # glibc's malloc arenas in a process of the server (D-195)
+
+
+def fewer_malloc_arenas() -> None:
+    """On Linux, at most ``MALLOC_ARENAS`` malloc arenas in this process (``mallopt``, the arenas made from now on) and
+    in those it starts (glibc's ``MALLOC_ARENA_MAX``: the web workers, the background and capture processes). By
+    default each thread may make one of its own (8 a core), and each keeps the memory a request's peak freed there: a
+    web worker on 60,000 invoices held 714 MB, 536 MB with two, its pages as fast (D-195). Not where it is set
+    already, nor elsewhere (macOS and Windows have their own allocators)."""
+    if not sys.platform.startswith("linux") or os.environ.get(ARENAS_ENV):
+        return
+    os.environ[ARENAS_ENV] = str(MALLOC_ARENAS)
+    try:
+        import ctypes
+
+        ctypes.CDLL(None).mallopt(-8, MALLOC_ARENAS)  # M_ARENA_MAX
+    except (OSError, AttributeError):  # (a libc without mallopt: musl)
+        pass
 
 
 def default_workers(cores: int | None = None, memory_mb: float | None = None) -> int:
@@ -318,6 +336,8 @@ def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, 
         print("On plain HTTP (--insecure-http): passwords and invoices cross the network unencrypted. Only for a "
               "first test: give the certificate (--certfile and --keyfile) before AP staff use it.",
               file=sys.stderr)  # fmt: skip
+    if server_mode():
+        fewer_malloc_arenas()
     if server_mode() and workers > 1:
         return _serve_workers(host, port, store, certfile, keyfile, proxy, insecure_http, workers)
     app = create_app(store=store, address=host, insecure_http=insecure_http)

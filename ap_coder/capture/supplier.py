@@ -217,18 +217,19 @@ def _matches_key(name: str, raw: str, target: Any) -> str | None:
     return "" if _printed_key(name, raw) == target else None
 
 
-# The same printed spans are read again for each field and each approval: their readings are kept (pure functions).
-@lru_cache(maxsize=65536)
+# The same printed spans are read again for each field and each approval: their readings are kept (pure functions),
+# for the spans of the last approvals (another invoice's are others: D-195).
+@lru_cache(maxsize=16384)
 def _printed_dates(raw: str) -> tuple[tuple[str, str], ...]:
     return tuple(date_candidates(raw))
 
 
-@lru_cache(maxsize=65536)
+@lru_cache(maxsize=16384)
 def _printed_amount(raw: str) -> float | None:
     return parse_amount(raw)
 
 
-@lru_cache(maxsize=65536)
+@lru_cache(maxsize=16384)
 def _printed_key(name: str, raw: str) -> Any:
     return compare_key(name, raw)
 
@@ -1139,7 +1140,7 @@ def outcome_rows(proposed: Any, final: Any, fields: Iterable[str] = FIELDS) -> l
     return rows
 
 
-@lru_cache(maxsize=65536)  # a pure search, asked twice for each vendor listed
+@lru_cache(maxsize=16384)  # a pure search, asked twice for each vendor listed
 def clean_fields_needed(correct: int, n: int, target: float, z: float = 1.96, limit: int = 1_000_000) -> int | None:
     """How many more correct fields in a row would lift the lower bound to ``target`` (None: out of reach)."""
     if wilson_lower(correct, n, z) >= target:

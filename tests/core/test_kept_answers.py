@@ -428,7 +428,7 @@ def test_vendors_asked_with_no_invoices_are_not_kept_for_ever(tmp_path, ground_t
     all, counted as they are kept; one vendor of more rows than half that is not kept."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_KEYS_KEPT", 50)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 4)
@@ -458,7 +458,7 @@ def test_one_vendor_is_kept_up_to_half_the_rows_kept_so_a_big_one_never_empties_
     other half left to the others."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
     store = Store(tmp_path / "ap.db")
@@ -481,7 +481,7 @@ def test_a_vendor_grown_past_half_the_rows_kept_is_no_longer_kept(tmp_path, monk
     when it is next read."""
     from ap_coder.core.store import vendors as vendors_module
 
-    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", type(vendors_module._VENDOR_ROWS)())
+    monkeypatch.setattr(vendors_module, "_VENDOR_ROWS", vendors_module.Bounded("rows", vendors_module.VENDOR_ROWS_MOST))
     monkeypatch.setattr(vendors_module, "_VENDOR_ROWS_HELD", 0)
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 10)
     store = Store(tmp_path / "ap.db")

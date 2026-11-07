@@ -3520,6 +3520,121 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     vendor: an approved invoice's change is not in the queue's log); the template and the 50 rows' codings.
   - (`core/store/{review_queue,summary,_base,invoices,__init__}.py`, `coding/bulk.py`, `web/pages/review.py`,
     `docs/HOW_IT_RUNS.md`; `tests/core/test_queue_changes.py`, `tests/core/test_kept_answers.py`)
+- **D-195** · **What fills a web worker, each per-process cache within its bytes (1 GB for a web worker in all), two
+  malloc arenas, and a memory slope for an hour's run** (scale goal, phase 8, E3; B-2025 to B-2027).
+  - **Why:** target 1 includes "memory flat for an hour" with 100 people on 300,000 invoices, and each web worker
+    reached 1.65-1.77 GB at 300,000 against `WORKER_MB` 1,500. Most caches were bounded by entries (64 answers, 32
+    vendors, 131,072 descriptions) whatever an entry held, a few by nothing at all, and nothing said what a worker
+    holds in all.
+  - **Measured** (a 60,000-invoice seed, `bench seed --invoices 60000`; one worker in a process of its own, driven by
+    `bench load`'s people, 20 for 180 s, its background work in another; then each cache walked object by object,
+    `sys.getsizeof` over what the gc says it refers to, each object counted once, in the order below; the lru caches
+    by `tracemalloc`, filled with a big company's lines):
+
+    | what a web worker keeps | at 60,000, measured | at 300,000, projected | its bound now |
+    |---|---:|---:|---|
+    | the learning memory (`_base._FEEDBACK`) | 66.6 MB | 67 MB | `Bounded` 96 MB |
+    | the GL suggestions' index (`suggest._MEMORY`) | 9.5 MB | 10 (54 *) MB | 104 MB, 2 KB a lesson |
+    | the examples' patterns (`memory._AGGREGATED`) | 18.9 → 9.5 MB | 19 (24 *) MB | 28 MB, 512 B a lesson |
+    | vendors' older lessons (`_base._PAST_MEMORY`) | 0.04 MB | 78 MB | `Bounded` 80 MB |
+    | their extended indexes (`suggest._PAST`) | 17.1 MB | 48 MB | PAST_BYTES_KEPT |
+    | their lines' patterns (`suggest._OLDER`) | 0.7 MB | 12 MB | PAST_ROWS_KEPT |
+    | older lessons by line (`_base._PAST_LINES`) | 0.1 MB | 64 MB | PAST_LINES_BYTES |
+    | vendors' lessons (`_base._VENDOR_LESSONS`) | 0.2 MB | 2 MB | `Bounded` 8 MB |
+    | the pages' answers (`summary._MEMO`) | 36.9-43.5 MB | 60 MB | `Bounded` 112 MB |
+    | the reports' answers (`reports._KEPT`) | 2.8 MB | 15 MB | `Bounded` 32 MB |
+    | vendors' invoices (`vendors._VENDOR_ROWS`) | 8.9-14.3 MB | 53 MB | `Bounded` 64 MB |
+    | JD Edwards' live check (`jde_sync._CACHE`) | (not set up) | grew all day | `Bounded` 32 MB (B-2025) |
+    | invoices whose file is gone (`_base._NOT_FOUND`) | none | grew for ever | 50,000: 24 MB (B-2026) |
+    | 29 pure functions' caches (`lru_cache`) | 18 MB ** | 400 * MB at the old sizes | maxsize: 249 MB |
+    | the rest (reference data, findings texts, accruals...) | 6 MB | 20 MB | 62 MB |
+    | **in all** | **about 180 MB** | **450 (750 *) MB** | **1,017 MB** |
+
+    \* with a big company's vocabulary: every lesson's description its own (the seed has 41). At 60,000: the learning
+    memory is 50,000 lessons and Learning's 2,000; the extended indexes 32 vendors', older lessons 6 and 51 vendors';
+    the pages' answers 16 (the vendor list 15.6 MB, master numbers 6.7, vendor ids 6.3, the queue's checks 4.4 and
+    lists 3.1, vendor totals 2.9, terms 2.7); vendors' invoices 51-53 vendors'. \*\* the walk can't see an
+    `lru_cache`'s answers: its entries at the size measured of one (the walk: 170.5 MB in all before, 172.9 after).
+    The worker's RSS 714 → 695 MB.
+    - **The rest of the RSS** is not the caches': of 714 MB, 76 MB are the libraries, 321 MB pymalloc's arenas (242 MB
+      of objects in them, 45 MB free blocks), and about 250 MB glibc's: each thread could make a malloc arena of its
+      own (8 a core), each keeping what a request's peak freed there; `malloc_trim` gave back only 34 MB.
+  - **Each cache within its bytes** (`core/caches.py`):
+    - `size_of`: what a value holds, about: `sys.getsizeof` of it and of what it refers to (by the gc: a dict's keys
+      too, a mapping proxy's dict), each object once; a container of more than 32 items by 32 of them spread over it,
+      the first paying for what they share. 20,000 rows in about a millisecond (the whole walk: 0.3 s), within 5%;
+      values shared by many items make it count more (the queue's checks: 14.7 for 4.4 MB), rarely less.
+    - `Bounded`: a cache's dict that sizes each entry as it is kept (`size_of`, or the owner's), lets go of the ones
+      used longest ago (kept or read with `get`) while over its bytes, the latest always (alone when bigger), and
+      keeps the owner's own bounds and locks. On `summary_memo`'s answers (112 MB), the reports' (32), the learning
+      memory (96), vendors' older lessons (80) and lessons (8), vendors' invoices (64), JD Edwards' live check (32).
+    - `RowsCache(most, row_bytes)`: the memory's index and patterns keep the latest always and another only while
+      both fit, counted a lesson at a time (2 KB and 512 B, measured with every description its own): `size_of` on an
+      index takes 100 ms, an approval's update of it 8.
+    - The pure functions' caches, sized by their bytes: the descriptions' words 131,072 → 65,536 (`keys`,
+      `_token_set_short`: the memory holds 50,000 lessons at most), word pairs 262,144 → 131,072, PO description
+      pairs 65,536 → 32,768, printed spans 65,536 → 16,384, the suppliers' counts 65,536 → 16,384. A miss costs
+      microseconds (a description's words, a pair compared), the answers are the same.
+    - `CACHES`: every per-process cache, "module:name", with the bytes it holds at most and how; 1,017 MB for a web
+      worker (not a laptop's page pictures, kept on disk on the server, nor a scan's), within `WORKER_CACHES_MOST`
+      (1 GB; 1,050 MB with D-193's two, below) and so within `WORKER_MB` with room for the requests under way.
+    - `tests/meta/test_caches.py`: what a module keeps at its top level (an empty dict, set or list it fills, a
+      container or cache made by a call, an `lru_cache`) is in `CACHES` or in its `STATE` (locks, threads, flags: what
+      bounds them); a `Bounded` or `RowsCache` declared with its own bytes; the web worker's sum within 1 GB.
+      `tests/core/test_caches.py`: each `Bounded` filled with 300,000 invoices' answers (8,000 rows, 6 MB each) to twice
+      its bytes, `summary_memo` and `shared_answer` through their own code (the answer used kept), each pure
+      function's cache full of a big company's lines, the index and patterns of 10,000 such lessons.
+  - **Two malloc arenas** (`web/server.py fewer_malloc_arenas`): in server mode on Linux the server's process
+    (`mallopt`) and those it starts (`MALLOC_ARENA_MAX`: the workers, the background and capture processes) keep two;
+    one set by IT is left. The same probe on the code before the bounds: 714 → 536 MB, pages p50/p95 0.098/0.80 →
+    0.095/0.75 s. glibc's alone: on Windows and macOS nothing is set or called (`sys.platform`), and their workers
+    keep what they kept. Windows' C runtime allocates from the one heap of the process, with no arena a thread, and
+    macOS's malloc gives its free pages back by itself; there pymalloc's own arenas (the same on all three) and the
+    caches' bounds are what count. A Linux without glibc (musl: no `mallopt`) is left as it is too.
+  - **Measured after:** the probe's worker 695 MB (the bounds don't bind at 60,000: its caches 172.9 MB). `bench load
+    --users 20 --duration 180 --workers 1` (one process, its background work in it): 972 → 606 MB (peak 991 → 606),
+    pages p50 151 → 118 ms, p95 0.85 → 1.15 s, actions p95 565 → 439 ms (one run each, the machine shared: the
+    routes' p95 move both ways).
+  - **An hour's flatness:** `bench load --sample-every 10` samples each server process's RSS every 10 s, and the report
+    says its slope (MB a 10 minutes, least squares) over the run and over its second half (`rss_slope`), once its
+    caches have filled; `--max-slope MB` fails a run over it. 15 minutes on the 60,000 seed (`--users 20 --duration
+    900 --ramp 30 --workers 2 --sample-every 10`), twice with all of this (RSS MB first → last (peak); MB a 10
+    minutes over the run, **over its second half**):
+
+    | process | first run | its slope | second run | its slope |
+    |---|---|---|---|---|
+    | web worker 1 | 250 → 561 (610) | +92.8, **+17.6** | 132 → 556 (556) | +93.3, **+25.0** |
+    | web worker 2 | 132 → 537 (537) | +92.8, **+9.7** | 171 → 570 (570) | +93.9, **+16.9** |
+    | the background process | 118 → 148 (154) | +9.5, **-3.8** | 120 → 148 (148) | +9.9, **+4.7** |
+    | the two capture processes | 134 → 318, 134 → 315 | **+1.9, +1.3** | 134 → 317, 134 → 315 | **+1.2, +2.1** |
+
+    The workers are at about 500 MB after 2 minutes, then grow 30 to 60 MB in the 13 that follow, more and more
+    slowly (the second run's worker 2: 1.9 MB in its last 5 minutes): at 60,000 the caches are far from their bounds,
+    still filling with each vendor asked for. At +25 MB a 10 minutes an hour adds 150 MB, within `WORKER_MB`; phase
+    8's hour at 300,000 says whether the second half is flat once they are full. Pages p50 93 and 80 ms, p95 535 and
+    683 ms, actions p95 106 and 191 ms, no 5xx. The second run, started 6 minutes after the machine restarted, while
+    another agent's tests filled the shared cores, had 5 requests over 30 s in its first minute (the server's own 8 to
+    45 s, as each worker first built its caches); two 180 s runs straight after, the database warm and then let go
+    from the disk's cache, had none (the worst 10 s's p95 443 ms and 1.40 s).
+  - **Alternatives:** one shared budget for all caches (one bigger answer evicting another cache's; harder to reason
+    about); bounding by entries alone (what an entry holds grows with the database); measuring each value whole (0.3
+    s for 20,000 rows); `malloc_trim` after requests (34 MB at the end of the run: the arenas' memory is fragmented,
+    not free at their top); `PYTHONMALLOC=malloc` (not tried: pymalloc's arenas held what is alive).
+  - **Left:** the requests' own peaks (4 threads, about 110 MB each at 100,000, D-153; more at 300,000) are what
+    remains of 1.65-1.77 GB: the queue's lists and month-end's rows (phase 8's other items) shrink them. Not measured
+    at 300,000 here (the 300,000 seed is another run's). The lru caches are bounded by entries of a measured size,
+    not by their bytes (an lru_cache can't be sized from Python). A few caches live in objects, not modules
+    (`app.state._needs`, 4,096 entries; a session's memo, one request): not in `CACHES`.
+  - (`ap_coder/core/caches.py`, `core/memory.py`, `core/store/{_base,summary,reports,learning,vendors,invoices}.py`,
+    `ai/{suggest,line_match}.py`, `coding/po.py`, `capture/supplier.py`, `erp/jde_sync.py`, `ops/system_log.py`,
+    `web/server.py`, `bench/load.py`; `tests/core/test_caches.py`, `tests/meta/test_caches.py`,
+    `tests/erp/test_jde_sync.py`, `tests/ops/test_system_log.py`, `tests/web/test_server_capacity.py`,
+    `tests/bench/test_bench_load.py`, `tests/core/test_kept_answers.py`)
+  - **With D-193 (merged beside it):** the review queue's two caches are listed too: its lists and facts kept by
+    invoice (`review_queue._KEPT`, 16 MB: two databases', about 1.1 KB an invoice in the queue, 5.4 MB for the
+    100,000-invoice seed's 3,036 listed and 2,122 in review; `KEPT_MOST` 16 -> 4, a company server has one) and the
+    Pay from texts decoded (`review._PAYS`, 6 MB full). A web worker's caches come to 1,039 MB; `WORKER_CACHES_MOST`
+    is 1,050 MB, 0.7 of `WORKER_MB` (the test's limit).
 - **D-196** · **server-update's safety copy is made while the old version serves and brought up to date once it is
   stopped, with only what was written since: the downtime no longer grows with the database** (scale goal, phase 8,
   E4; B-2035).

@@ -47,6 +47,7 @@ from typing import Any
 
 from ..coding import po as po_mod
 from ..coding.vendors import master_rows, norm_invoice_number
+from ..core.caches import MB, Bounded
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store.register import CLEARED_KEY
@@ -705,7 +706,10 @@ DOWN_SECONDS = 60.0
 LIVE_TIMEOUT = 5.0
 LIVE_PAGES = 40  # at most this many pages (of 500) of one supplier's vouchers
 TOO_WIDE = (jde_ais.TooManyPages, jde_ais.PageRepeated)  # the live check's question too wide: JDE is not down
-_CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
+# What JDE answered, by (database, AN8, the invoice number when asked by it): (when, its vouchers), within CACHE_MOST
+# bytes, the ones used longest ago going first; one CACHE_SECONDS old goes as another is kept (B-2025).
+CACHE_MOST = 32 * MB
+_CACHE: Bounded = Bounded("JD Edwards' live check", CACHE_MOST)
 _DOWN: dict[str, tuple[float, str]] = {}
 _BIG: set[tuple[str, str]] = set()  # (database, AN8): more vouchers in the window than LIVE_PAGES, asked by number
 _CLIENTS: dict[str, jde_ais.AisClient] = {}  # database -> this process's client for the live check, signed in once
@@ -805,6 +809,8 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         with _LOCK:
             if an8 and by_number:
                 _BIG.add((where, an8))
+            for old in [k for k, (at, _) in _CACHE.items() if now - at >= CACHE_SECONDS]:
+                del _CACHE[old]
             _CACHE[(where, an8, number if by_number else "")] = (now, rows)
             _DOWN.pop(where, None)
     from . import jde_post
