@@ -115,6 +115,18 @@ def next_second() -> None:
         time.sleep(0.01)
 
 
+def until(condition, seconds: float = 10.0) -> bool:
+    """Whether ``condition()`` comes true within ``seconds``: a test waiting for another thread or process to get
+    somewhere waits for that, not a fixed time (too short on a busy machine, too long on a quick one). (For a page in a
+    browser: ``tests/browser.py``'s ``wait_until``.)"""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return bool(condition())
+
+
 DATA = ROOT / "data"
 SAMPLES = ROOT / "samples"
 SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"

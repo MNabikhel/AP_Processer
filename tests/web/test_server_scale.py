@@ -12,6 +12,7 @@ import pytest
 
 from ap_coder.ops import offline
 from ap_coder.web import server
+from tests.conftest import until
 
 
 def _free_port() -> int:
@@ -129,19 +130,14 @@ def test_a_job_one_worker_runs_is_seen_and_not_started_again_by_another(store):
         return {"messages": [{"text": "3 invoices read.", "tone": "ok"}]}
 
     assert first.get("process").start(work, total=3)
-    time.sleep(0.2)
+    assert until(lambda: second.get("process").running)
     other = second.get("process")
     assert other.running and second.known("process")
     assert not other.start(work)  # one import at a time, whichever worker is asked
-    deadline = time.monotonic() + 5  # (the worker running it says how far it got every second)
-    while other.snapshot()["note"] != "Reading a.pdf" and time.monotonic() < deadline:
-        time.sleep(0.1)
-    assert other.snapshot()["note"] == "Reading a.pdf"
+    assert until(lambda: other.snapshot()["note"] == "Reading a.pdf", 5)  # (it says how far it got every second)
     go.set()
     first.get("process").wait(10)
-    deadline = time.monotonic() + 5
-    while other.running and time.monotonic() < deadline:
-        time.sleep(0.05)
+    assert until(lambda: not other.running, 5)
     assert other.snapshot()["result"]["messages"][0]["text"] == "3 invoices read."
     assert not other.running and other.start(lambda job: {}) and other.wait(10)
 
@@ -476,7 +472,7 @@ def test_the_background_reader_reads_llm_parallel_invoices_at_once(store, monkey
 
     settings = Settings()
     settings = dataclasses.replace(settings, llm=dataclasses.replace(settings.llm, parallel=3))
-    lock, marks, now, most = threading.Lock(), set(), [0], [0]
+    lock, marks, now, most, began = threading.Lock(), set(), [0], [0], [0]
 
     def read_one(settings, store, **kw):
         mark = kw.get("reader") or page_worker.READER_ID
@@ -484,6 +480,7 @@ def test_the_background_reader_reads_llm_parallel_invoices_at_once(store, monkey
             assert page_worker.reader_alive(mark)  # another thread putting reads back in line leaves it alone
             with lock:
                 marks.add(mark)
+                began[0] += 1
                 now[0] += 1
                 most[0] = max(most[0], now[0])
             time.sleep(0.3)
@@ -497,7 +494,7 @@ def test_the_background_reader_reads_llm_parallel_invoices_at_once(store, monkey
     monkeypatch.setattr(page_worker, "self_test_if_due", lambda settings, store: None)
     reader = page_worker.BackgroundReader(lambda: settings, lambda: store)
     reader.start()
-    time.sleep(1.0)
+    assert until(lambda: began[0] >= 6)  # two rounds of three
     reader.stop()
     reader.join(5)
     assert most[0] == 3 and len(marks) == 3 and page_worker.READER_ID in marks

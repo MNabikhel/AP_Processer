@@ -26,7 +26,7 @@ from ap_coder.core.paths import PROJECT_DIR
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake.imports import Reader
-from tests.conftest import SAMPLES
+from tests.conftest import SAMPLES, until
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test: these ask fake model servers
 CHAT = "gemma-4-12b-it"
@@ -72,15 +72,6 @@ def _models_asked(fake: FakeModel, kind: str = "suggest") -> list[str]:
 
 def _served(fake: FakeModel, kind: str) -> int:
     return sum(1 for h in fake.history() if h["kind"] == kind and h["outcome"] == "served")
-
-
-def _until(condition, seconds: float = 10.0) -> bool:
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.02)
-    return condition()
 
 
 # --- B-1843 ---------------------------------------------------------------------------------------------------------
@@ -178,7 +169,7 @@ def test_a_call_waiting_on_a_hung_primary_is_asked_again_on_the_backup_at_once(t
 
     asking = threading.Thread(target=ask)
     asking.start()
-    assert _until(lambda: primary.stats()["hanging"] == 1)
+    assert until(lambda: primary.stats()["hanging"] == 1)
     breaker = local_llm.chat_failover(settings.llm)
     for _ in range(local_llm.FAILOVER_FAILURES):  # two calls found it hung (another process's, say)
         breaker.failed(primary.base_url, "no answer in time")
@@ -205,7 +196,7 @@ def test_an_arrival_that_waited_for_its_chat_slot_is_no_failure_of_the_server(tw
     def arrival(within: float) -> str:  # behind a call that holds the one chat slot for 0.6 s
         holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
         holder.start()
-        time.sleep(0.05)
+        assert until(lambda: primary.stats()["active"] == 1)  # the holder has the slot, and the server its call
         try:
             coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + within)
             return "answered"
@@ -240,7 +231,7 @@ def test_an_arrival_waiting_for_a_slot_held_past_the_hang_limit_counts_against_t
     primary.set(hang_rate=1.0)
     holder = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
     holder.start()  # hung on the primary, holding the one chat slot
-    assert _until(lambda: primary.stats()["hanging"] == 1)
+    assert until(lambda: primary.stats()["hanging"] == 1)
     with pytest.raises(ChatTimeout, match="busy"):  # given up with the holder under 0.5 s old: AP Coder's own line
         coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.2)
     assert breaker.state()["failures"][PRIMARY] == 0
@@ -295,7 +286,7 @@ def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, 
     time.sleep(0.5)
     assert breaker.serving() == backup.base_url and breaker.state()["good"] == 0  # its probes go unanswered
     primary.set(down=False)
-    assert _until(lambda: breaker.serving() == primary.base_url, 10)
+    assert until(lambda: breaker.serving() == primary.base_url, 10)
     back = time.monotonic()
     assert back - moved >= local_llm.HOLD_SECONDS
     probes = [h for h in primary.history() if h["kind"] == "chat" and h["outcome"] == "served"]
@@ -303,7 +294,7 @@ def test_the_primary_is_taken_back_only_after_it_answered_well_for_a_while(two, 
     for _ in range(local_llm.FAILOVER_FAILURES):  # fails again at once: twice the hold
         breaker.failed(primary.base_url, "not answering")
     assert breaker.serving() == backup.base_url and breaker.state()["hold"] == 2 * local_llm.HOLD_SECONDS
-    assert _until(lambda: breaker.serving() == primary.base_url, 10)
+    assert until(lambda: breaker.serving() == primary.base_url, 10)
 
 
 def test_with_both_servers_down_the_primary_is_taken_back_as_soon_as_it_answers(two, quick, monkeypatch, reference):
@@ -327,7 +318,7 @@ def test_with_both_servers_down_the_primary_is_taken_back_as_soon_as_it_answers(
         InvoiceCoder(settings, reference, provider="local")._prepare_local()
     assert breaker.state()["failures"][BACKUP] == local_llm.FAILOVER_FAILURES
     primary.set(down=False)
-    assert _until(lambda: breaker.serving() == primary.base_url, 5)
+    assert until(lambda: breaker.serving() == primary.base_url, 5)
 
 
 def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypatch):
@@ -343,7 +334,7 @@ def test_the_breaker_is_shared_by_the_servers_processes(two, tmp_path, monkeypat
     started = time.time()
     subprocess.run([sys.executable, "-c", code, primary.base_url, backup.base_url], check=True, timeout=60,
                    cwd=PROJECT_DIR, env=dict(os.environ))  # fmt: skip
-    assert _until(lambda: here.serving() == backup.base_url, 2 * local_llm.STATE_SECONDS + 1)
+    assert until(lambda: here.serving() == backup.base_url, 2 * local_llm.STATE_SECONDS + 1)
     assert here.left_since() >= started
     kept = json.loads(next((tmp_path / "llm").glob("failover-*.json")).read_text(encoding="utf-8"))
     assert kept["on"] == BACKUP and kept["moves"] == 1
@@ -428,7 +419,7 @@ def test_a_call_waiting_behind_another_of_ap_coders_is_no_hang_while_that_one_is
         coder._local_create(model, messages, {"type": "object"})  # (its client made, its way of asking found)
         review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
         review.start()
-        assert _until(lambda: primary.stats()["active"] == 1)
+        assert until(lambda: primary.stats()["active"] == 1)
         for _ in range(local_llm.FAILOVER_FAILURES):  # arrivals in the server's line behind it, under 1.5 s old
             with pytest.raises(ChatTimeout, match="no answer in the time an arriving invoice waits"):
                 coder._local_create(model, messages, {"type": "object"}, deadline=time.monotonic() + 0.4)
@@ -439,7 +430,7 @@ def test_a_call_waiting_behind_another_of_ap_coders_is_no_hang_while_that_one_is
         primary.set(hang_rate=1.0)  # hung: the call ahead of the page reads is silent past the hang limit
         review = threading.Thread(target=lambda: coder._local_create(model, messages, {"type": "object"}))
         review.start()
-        assert _until(lambda: primary.stats()["hanging"] == 1)
+        assert until(lambda: primary.stats()["hanging"] == 1)
         with pytest.raises(page_reader.PageReaderError, match="no word from the model"):
             page_reader.transcribe(settings, b"page 0", model=READER)
         assert page_reader.transcribe(settings, b"page 1", model=READER)  # the second moves them: read on the backup
@@ -469,7 +460,7 @@ def test_a_hang_while_reviews_hold_the_chat_slots_moves_the_calls_within_a_minut
                                                                    timeout=300 * scale)) for _ in range(2)]  # fmt: skip
     for review in reviews:
         review.start()
-    assert _until(lambda: primary.stats()["hanging"] == 2)
+    assert until(lambda: primary.stats()["hanging"] == 2)
     stop = threading.Event()
 
     def arrivals() -> None:  # one arriving invoice's chat call after another, each waiting for a slot
@@ -488,7 +479,7 @@ def test_a_hang_while_reviews_hold_the_chat_slots_moves_the_calls_within_a_minut
     for worker in workers:
         worker.start()
     breaker = local_llm.chat_failover(settings.llm)
-    moved = _until(lambda: breaker.state()["on"] == BACKUP, 300 * scale)
+    moved = until(lambda: breaker.state()["on"] == BACKUP, 300 * scale)
     took = time.monotonic() - hung
     stop.set()
     for thread in (*reviews, *workers):
@@ -579,7 +570,7 @@ def test_a_read_in_flight_when_the_primary_dies_is_read_on_the_backup_and_stored
     outcome: dict = {}
     reading = threading.Thread(target=lambda: outcome.update(read=page_worker.read_one(settings, store)))
     reading.start()
-    assert _until(lambda: primary.stats()["hanging"] >= 1, 30)
+    assert until(lambda: primary.stats()["hanging"] >= 1, 30)
     breaker = page_reader.reader_failover(settings)
     for _ in range(local_llm.FAILOVER_FAILURES):
         breaker.failed(primary.base_url, "no answer in time")

@@ -15,7 +15,7 @@ from ap_coder.ai import page_reader, page_worker
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.core.config import PageReaderSettings, Settings
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
-from tests.conftest import SAMPLES
+from tests.conftest import SAMPLES, until
 
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 MODEL = "ath-maas_ovisocr2"
@@ -1043,12 +1043,13 @@ def test_a_test_left_by_a_closed_dashboard_is_not_under_way(store):
 def test_the_background_reader_waits_while_the_page_reader_is_tested(store, fake_reader, monkeypatch):
     settings = _settings()
     _process(store, settings)
-    monkeypatch.setattr(page_worker, "test_under_way", lambda store: {"model": MODEL})
+    looked = []
+    monkeypatch.setattr(page_worker, "test_under_way", lambda store: looked.append(1) or {"model": MODEL})
     monkeypatch.setattr(page_worker, "IDLE_SECONDS", 0.01)
     worker = page_worker.BackgroundReader(lambda: settings, lambda: store)
     worker.start()
     try:
-        time.sleep(0.3)
+        assert until(lambda: len(looked) >= 3)  # it went round three times, finding the test under way each time
     finally:
         worker.stop()
         worker.join(10)

@@ -17,6 +17,7 @@ from ap_coder.core.store import APPROVED, REVIEW, Store, bulk_jobs, load_sample_
 from ap_coder.web import jobs
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import review
+from tests.conftest import until
 from tests.webclient import PAGE, add_clean, client_for, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
@@ -344,13 +345,6 @@ def _ends_failing(monkeypatch, times: int) -> list[int]:
     return tried
 
 
-def _until(seen, seconds: float = 10) -> None:
-    ends = time.monotonic() + seconds
-    while not seen() and time.monotonic() < ends:
-        time.sleep(0.02)
-    assert seen()
-
-
 def test_a_database_error_at_a_jobs_end_never_stops_the_laptops_later_bulk_approvals(store, monkeypatch):
     """The error went out of the laptop's thread, which died still marked as the one at the database's bulk
     approvals: every later one of the process waited for good, its page on "Approving…", a new one refused."""
@@ -358,7 +352,7 @@ def test_a_database_error_at_a_jobs_end_never_stops_the_laptops_later_bulk_appro
     tried = _ends_failing(monkeypatch, 1)
     first, _ = store.start_bulk_job("ann", SAM, _asked(store, ids[:1]), bulk.JOB_FORMAT)
     jobs.approve_here(store, web_settings)
-    _until(lambda: tried == [first] and str(store.path) not in jobs._HERE)
+    assert until(lambda: tried == [first] and str(store.path) not in jobs._HERE)
     second, _ = store.start_bulk_job("bo", SAM, _asked(store, ids[1:]), bulk.JOB_FORMAT)
     jobs.approve_here(store, web_settings)
     ended = _ended(store, second, seconds=10)
@@ -373,7 +367,7 @@ def test_a_database_error_at_a_jobs_end_never_stops_the_background_processs_runn
         store.start_bulk_job(f"p{n}", SAM, _asked(store, [i]), bulk.JOB_FORMAT)
     runner = jobs.BulkRunner(web_settings, lambda: store).start()
     try:
-        _until(lambda: len(tried) == jobs.BULK_RUNNERS)
+        assert until(lambda: len(tried) == jobs.BULK_RUNNERS)
         last, _ = store.start_bulk_job("last", SAM, _asked(store, ids[-1:]), bulk.JOB_FORMAT)
         runner.wake()
         assert _ended(store, last, seconds=10)["state"] == bulk_jobs.DONE
@@ -390,7 +384,7 @@ def test_no_bulk_approval_is_taken_while_a_backup_is_restored(store, monkeypatch
     monkeypatch.setattr(Store, "restoring", lambda self: restoring["now"])
     here, _ = store.start_bulk_job("ann", SAM, _asked(store, ids[:1]), bulk.JOB_FORMAT)
     jobs.approve_here(store, web_settings)
-    _until(lambda: str(store.path) not in jobs._HERE)
+    assert until(lambda: str(store.path) not in jobs._HERE)
     runner = jobs.BulkRunner(web_settings, lambda: store).start()
     try:
         runner.wake()
