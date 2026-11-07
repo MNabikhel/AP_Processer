@@ -38,6 +38,28 @@ recomputation for every invoice the runs touched.
 - **Where the CPU went at 30 minutes:** the busiest web worker: the check 22.5%, the queue 20%, the invoice page
   16%, search 15%; the background process: the kept answers worked out again 51%, the search downloads 32%.
 
+## A first start with the reports worked out ahead (phase 8 part 3, D-200)
+
+The same 10-minute run on a 300,000-invoice database never served, made afresh, at 8879c07 (D-200 and its review
+fixes: at every start the background process works out each report's default view, and the latest question asked of
+each, before anyone asks):
+
+| run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | 5xx | 'database is locked' |
+|---|---:|---|---:|---:|---:|---:|
+| first start, before D-200 (963a7cc) | 15,413 | 129 ms / 1.17 s / 5.78 s | 660 ms | 7 | 0 | 0 |
+| **first start, D-200 (8879c07)** | **15,277** | **109 ms / 736 ms / 3.59 s** | **442 ms** | **7** | **0** | **0** |
+
+- **The warm-up:** the background process began 13 s after the server and had worked out all 14 default views 100 s
+  later (Month-end's lines by invoice built first). From the third minute on, no minute's worst 10 s passed 0.91 s at
+  p95.
+- **What is left:** the bench's people arrive from the first second. All 16 requests the server took 5 s or more on
+  fell in those first 100 s. Four Month-end asks waited for the warm-up's work (10.7-49 s), as they should: it was
+  under way. Each waiting request held one of its web worker's 4 threads (`WORKER_THREADS`), though, so a worker
+  with several such waits (Spend, Exports, Month-end twice, Activity) kept its other requests waiting: the queue
+  46.7 s and an invoice 36 s at the client, under 5 s at the server. Once in a database's life (a database served
+  before starts with its answers). The way out, not done here: a report page with no answer yet answers at once,
+  "being worked out", and draws itself again when it is ready, instead of holding a thread.
+
 ## The first measurement (8e3915a)
 
 | run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | 5xx | 'database is locked' |
