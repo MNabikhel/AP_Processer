@@ -3087,7 +3087,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     weeks. Two builds of one commit gave different ZIPs (file times, the build time in the manifest).
   - **The update** (`ops/server_update.py`): unzip, set up, a copy of the database (SQLite's backup, consistent while
     the old version writes) migrated by the new version in `service/update-check` (timed, removed after), and the
-    self-check, all before the stop, after a check of the disk's room for a copy. Then stop, the safety copy, the real
+    self-check, all before the stop, after a check of the disk's room for a copy (the new folder's launcher runs with
+    `--no-start`, which leaves the AP Coder of another folder serving, B-1944). Then stop, the safety copy, the real
     migration, switch, start, healthy. The downtime (stop to healthy) and each step are printed and kept in
     server.json's `history[-1]["times"]` (`prepare_s`, `check_migration_s`, `self_check_s`, `stop_s`,
     `safety_copy_s`, `migrate_s`, `start_s`, `downtime_s`). A failure before the stop changes nothing ("not updated");

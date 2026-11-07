@@ -441,7 +441,7 @@ def taken_over(port: int) -> bool:
 
 def take_over(root: Path, version: str, ports: list[int], data: Path | None,
               say: Callable[[str], None] = print, patience: float = PATIENCE,
-              build: str = "") -> tuple[str, int | None]:  # fmt: skip
+              build: str = "", here_only: bool = False) -> tuple[str, int | None]:  # fmt: skip
     """Make way for AP Coder ``version`` from ``root``. Returns what to do:
 
     * ``("open", port)``: this same folder and version is running: open it (nothing to set up);
@@ -450,8 +450,14 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
     * ``("other", port)``: another computer account's AP Coder runs on this data: stop, and say whose
       (:func:`owner`);
     * ``("blocked", port)``: an older one is still running after ``patience`` seconds: stop (port None: an older
-      watch or read-pages)."""
+      watch or read-pages).
+
+    ``here_only``: a set-up that starts nothing (``--no-start``) looks only at what runs from ``root`` (its files may
+    be in use); an AP Coder of another folder or account is left serving: server-update sets up the new version's
+    folder while the old one still serves (D-188, B-1944)."""
     for server in find(ports, data):
+        if here_only and not same_folder(server.folder, root):
+            continue
         verdict = judge(server, root, version, build)
         if verdict == "other":
             return "other", server.port
@@ -468,6 +474,8 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
             return "blocked", server.port
         say("  It closed.")
     for worker in workers(data):  # an older watch / read-pages on the same data: stopped too (a newer one is left)
+        if here_only and not same_folder(worker.folder, root):
+            continue
         if judge(worker, root, version) != "older":
             continue
         say(f"{worker.name()} is still running: stopping it, so this version takes over.")
