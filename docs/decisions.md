@@ -3512,11 +3512,24 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **An hour's flatness:** `bench load --sample-every 10` samples each server process's RSS every 10 s, and the report
     says its slope (MB a 10 minutes, least squares) over the run and over its second half (`rss_slope`), once its
     caches have filled; `--max-slope MB` fails a run over it. 15 minutes on the 60,000 seed (`--users 20 --duration
-    900 --ramp 30 --workers 2 --sample-every 10`, after all of this): the two web workers 374 → 561 MB (peak 610) and
-    220 → 537 MB, +92.8 MB a 10 minutes over the run (their caches filling), **+17.6 and +9.7 over its second half**;
-    the background process -3.8, the capture processes +1.9 and +1.3; pages p50 93 ms, p95 535 ms, actions p95 106
-    ms, 0 errors. At 60,000 the caches are far from their bounds, still filling with each vendor asked for: phase 8's
-    hour at 300,000 says whether the second half is flat once they are full.
+    900 --ramp 30 --workers 2 --sample-every 10`), twice with all of this (RSS MB first → last (peak); MB a 10
+    minutes over the run, **over its second half**):
+
+    | process | first run | its slope | second run | its slope |
+    |---|---|---|---|---|
+    | web worker 1 | 250 → 561 (610) | +92.8, **+17.6** | 132 → 556 (556) | +93.3, **+25.0** |
+    | web worker 2 | 132 → 537 (537) | +92.8, **+9.7** | 171 → 570 (570) | +93.9, **+16.9** |
+    | the background process | 118 → 148 (154) | +9.5, **-3.8** | 120 → 148 (148) | +9.9, **+4.7** |
+    | the two capture processes | 134 → 318, 134 → 315 | **+1.9, +1.3** | 134 → 317, 134 → 315 | **+1.2, +2.1** |
+
+    The workers are at about 500 MB after 2 minutes, then grow 30 to 60 MB in the 13 that follow, more and more
+    slowly (the second run's worker 2: 1.9 MB in its last 5 minutes): at 60,000 the caches are far from their bounds,
+    still filling with each vendor asked for. At +25 MB a 10 minutes an hour adds 150 MB, within `WORKER_MB`; phase
+    8's hour at 300,000 says whether the second half is flat once they are full. Pages p50 93 and 80 ms, p95 535 and
+    683 ms, actions p95 106 and 191 ms, no 5xx. The second run, started 6 minutes after the machine restarted, while
+    another agent's tests filled the shared cores, had 5 requests over 30 s in its first minute (the server's own 8 to
+    45 s, as each worker first built its caches); two 180 s runs straight after, the database warm and then let go
+    from the disk's cache, had none (the worst 10 s's p95 443 ms and 1.40 s).
   - **Alternatives:** one shared budget for all caches (one bigger answer evicting another cache's; harder to reason
     about); bounding by entries alone (what an entry holds grows with the database); measuring each value whole (0.3
     s for 20,000 rows); `malloc_trim` after requests (34 MB at the end of the run: the arenas' memory is fragmented,
