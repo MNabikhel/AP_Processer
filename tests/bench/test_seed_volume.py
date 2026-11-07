@@ -255,3 +255,29 @@ def test_the_full_scans_are_read_from_the_plan_with_the_tables_aliases():
     finally:
         conn.close()
     assert volume.shape("SELECT * FROM t WHERE a = 'it''s' AND b = 12.5") == "SELECT * FROM t WHERE a = ? AND b = ?"
+
+
+def test_a_seed_on_a_file_system_out_of_links_for_a_template_copies_it_and_goes_on(tmp_path, monkeypatch):
+    """B-1943: the seed's invoices are hard links to a few templates' PDFs, and NTFS allows 1,023 links to one file:
+    at 20,000 invoices the Windows CI job's seed failed ("An attempt was made to create more links on a file than the
+    file system supports"). A template out of links is copied once and the copy takes the next links."""
+    import errno
+    import os
+
+    real, made = os.link, {}
+
+    def link(src, dst, *args, **kwargs):  # a file system allowing 3 links to a file
+        if made.get(str(src), 0) >= 3:
+            raise OSError(errno.EMLINK, "Too many links", str(src))
+        made[str(src)] = made.get(str(src), 0) + 1
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", link)
+    data = tmp_path / "data"
+    with isolated(tmp_path):
+        assert main(["seed", "--out", str(data), "--invoices", "60", "--vendors", "10", "--master", "50", "--gl",
+                     "50", "--cost-centers", "10", "--pos", "5", "--users", "4", "--queue", "20", "--register",
+                     "50", "--workers", "1"]) == 0  # fmt: skip
+    files = [p for p in (data / "invoices").iterdir() if p.suffix == ".pdf"]
+    assert len(files) >= 60 and all(p.stat().st_size > 0 for p in files)
+    assert max(made.values()) <= 3

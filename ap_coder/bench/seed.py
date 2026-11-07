@@ -43,6 +43,7 @@ import argparse
 import base64
 import bisect
 import datetime as dt
+import errno
 import hashlib
 import json
 import math
@@ -754,6 +755,12 @@ def _coding(text: str | None, c: Clone, v: Vendor,
     return doc, _due(doc, terms_days, v.terms), sums
 
 
+# The file an invoice's hard link is made to, by its template's file: the template's own until the file system has no
+# links left for it, then a copy of it (B-1943); one per process, as ``_CONTEXT``.
+_LINKED: dict[str, Path] = {}
+ERROR_TOO_MANY_LINKS = 1142  # Windows: "An attempt was made to create more links on a file than the file system ..."
+
+
 def _file(c: Clone, template: dict[str, Any]) -> tuple[Path, str]:
     """The clone's file in ``invoices/`` and the SHA-256 its row records: a copy of its template's PDF with a line of
     its own (its own SHA-256), or a hard link to it (``--files link``) with a SHA-256 of its own all the same, as a
@@ -766,7 +773,14 @@ def _file(c: Clone, template: dict[str, Any]) -> tuple[Path, str]:
         data = Path(template["file"]).read_bytes() + f"\n% {c.id}\n".encode()
         path.write_bytes(data)
         return path, hashlib.sha256(data).hexdigest()
-    os.link(template["file"], path)
+    source = _LINKED.get(template["file"], template["file"])
+    try:
+        os.link(source, path)
+    except OSError as exc:  # the file system's links to one file used up (NTFS: 1,023): a copy takes the next (B-1943)
+        if exc.errno != errno.EMLINK and getattr(exc, "winerror", None) != ERROR_TOO_MANY_LINKS:
+            raise
+        shutil.copyfile(template["file"], path)
+        _LINKED[template["file"]] = path
     return path, hashlib.sha256(f"{template['sha']}/{c.id}".encode()).hexdigest()
 
 
