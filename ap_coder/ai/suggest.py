@@ -39,6 +39,7 @@ from dataclasses import dataclass, field, replace
 from itertools import chain, repeat
 from typing import Any
 
+from ..core.caches import MB
 from ..core.memory import (
     PAST_BYTES_KEPT,
     PAST_KEPT,
@@ -150,7 +151,9 @@ _SAID_LOCK = threading.Lock()
 # none of its lessons is on an account that counts) and the number of its newest decision.
 _Made = tuple[tuple[Any, ...], Any, "_Pattern | None", int]
 
-_MEMORY = RowsCache()  # the lines of an invoice (and its review screen) share one index of the history
+# The lines of an invoice (and its review screen) share one index of the memory: 50,000 lessons, each of another
+# description, hold about 1.9 KB a lesson (95 MB); a second list is kept while both fit (D-195).
+_MEMORY = RowsCache(most=104 * MB, row_bytes=2048)
 # A vendor's ``learning_rows`` past the whole memory's cap (``WithPast``), by whose they are: (the shared rows and the
 # accounts their memory was built for, the vendor's older lessons by line it was extended by, the memory extended, the
 # bytes it holds of its own: ``_own_bytes``), the latest used last (``_with_past``).

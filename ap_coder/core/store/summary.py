@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from time import monotonic
 from typing import Any
 
+from ..caches import MB, Bounded, size_of
 from ..keys import search_keys
 from ..tax_setup import DEFAULT_TREATMENTS, TAX_TYPES, TaxTreatment
 from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, VENDOR_CHANGES, VENDOR_LOGGED, _in_list
@@ -348,8 +349,9 @@ QUEUE_ORDER = "requires_review DESC, adjusted_confidence ASC, id ASC"  # the one
 _TOPIC_COLUMNS = tuple(dict.fromkeys(("id", "status", "vendor_key", "vendor_name", "invoice_date", "grand_total",
                                       "currency", "export_batch", "w_key", "w_name", "w_codes", "w_corrected",
                                       *QUEUE_READ, *LISTED_COLUMNS)))  # fmt: skip
-# ``summary_memo``: (database, name) -> (stamp, value, when it began to be worked out: ``monotonic``)
-_MEMO: dict[tuple[str, str], tuple[Any, Any, float]] = {}
+# ``summary_memo``: (database, name) -> (stamp, value, when it began to be worked out: ``monotonic``), 64 at most and
+# within their bytes, the ones used longest ago going first (D-195)
+_MEMO = Bounded("summary_memo", 112 * MB, size=lambda kept: size_of(kept[1]))
 _MEMO_LOCK = threading.Lock()
 # One ``summary_memo`` worked out at a time, by name and what is asked (its ``repr``'s hash: two asks hashed alike only
 # wait for each other); past COMPUTING_KEPT, the locks no page holds are let go.

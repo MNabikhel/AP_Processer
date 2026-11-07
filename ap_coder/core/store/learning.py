@@ -271,9 +271,7 @@ class LearningMixin:
             writing = conn.in_transaction
             stamp = self._lessons_stamp(conn, key, writing)
         with _FEEDBACK_LOCK:
-            kept = _VENDOR_LESSONS.pop(kept_key, None)
-            if kept is not None:
-                _VENDOR_LESSONS[kept_key] = kept  # the latest used, kept the longest
+            kept = _VENDOR_LESSONS.get(kept_key)  # (the latest used, kept the longest)
         if kept is not None and kept[0] == stamp:
             return kept[1]
         reading = _VENDOR_READING[hash(kept_key) % len(_VENDOR_READING)]
@@ -449,9 +447,7 @@ class LearningMixin:
         """``_past_memory``'s rows from what is kept (as it is, or carried forward), else read whole; kept."""
         stamp = (*self._lessons_stamp(conn, key, writing), last["id"], history)
         with _FEEDBACK_LOCK:
-            kept = _PAST_MEMORY.pop(kept_key, None)
-            if kept is not None:
-                _PAST_MEMORY[kept_key] = kept  # the latest used, kept the longest
+            kept = _PAST_MEMORY.get(kept_key)  # (the latest used, kept the longest)
         if kept is not None and kept[0] == stamp:
             return kept[1]
         missing = _carried(conn, key, kept, stamp) if kept is not None else None

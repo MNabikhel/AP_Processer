@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ...coding.terms import DEFAULT_TERMS_DAYS, payment
+from ..caches import MB, Bounded, size_of
 from ..keys import norm_invoice_number
 from ..memory import pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
@@ -67,6 +68,7 @@ _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
 # Invoice files found where they were recorded, and when: an invoice read is not checked again for this long.
 _FOUND: dict[str, float] = {}
+LOOKED_KEPT = 50_000  # of each (the files found, those not): past it they are all let go (B-2026)
 
 BRIEF_WAIT_MS = 200  # how long a page's bookkeeping (``Store.briefly``) may wait for another writer
 
@@ -75,17 +77,18 @@ BRIEF_WAIT_MS = 200  # how long a page's bookkeeping (``Store.briefly``) may wai
 _RESTORING: set[str] = set()
 _RESTORING_LOCK = threading.Lock()
 
-# The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
-_FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+# The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``). These
+# caches of the learning are kept within their bytes too, the ones used longest ago going first (D-195).
+_FEEDBACK = Bounded("learning memory", 96 * MB, size=lambda kept: size_of(kept[1]))
 _FEEDBACK_LOCK = threading.Lock()
 # The learning memory's part of ``Store.metrics`` as last counted, per database: (its stamp, the counts).
 _METRICS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 # What a vendor's lessons say as last worked out, per (database, vendor key): (their stamp, ``VendorLessons``), the
 # latest used last (``Store.vendor_lessons``).
-_VENDOR_LESSONS: dict[tuple[str, str], tuple[tuple[Any, ...], Any]] = {}
+_VENDOR_LESSONS = Bounded("vendors' lessons", 8 * MB, size=lambda kept: size_of(kept[1]))
 # A vendor's lessons the whole memory does not hold, as last read, per (database, vendor key): (their stamp, rows), the
 # latest used last, ``memory.PAST_KEPT`` vendors and ``PAST_ROWS_KEPT`` lessons at most (``Store.learning_rows``).
-_PAST_MEMORY: dict[tuple[str, str], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+_PAST_MEMORY = Bounded("vendors' older lessons", 80 * MB, size=lambda kept: size_of(kept[1]))
 # The same lessons by line (``memory.PastLines``), per (database, vendor key): (their stamp, the lines, the lessons they
 # were carried on by since the database's copy, ``past_lines``), the latest used last (``Store._past_lines``, D-178).
 _PAST_LINES: dict[tuple[str, str], tuple[tuple[Any, ...], Any, int]] = {}

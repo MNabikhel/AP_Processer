@@ -32,6 +32,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from typing import Any
 
+from ..caches import MB, Bounded, size_of
 from .dialect import begin_write
 
 ANSWER_MOST_BYTES = 16 * 1024 * 1024  # an answer bigger than this as JSON is not kept for the other processes
@@ -76,8 +77,9 @@ def _later(kept: list[Any], seen: list[Any]) -> bool:
 
 
 # What this process keeps of the shared answers, before reading them from the database again: (database, name, what
-# for) -> (the stamp, the value, when its work began: ``time.time``), the latest used last, KEPT_HERE at most.
-_KEPT: dict[tuple[str, str, str], tuple[list[Any], Any, float]] = {}
+# for) -> (the stamp, the value, when its work began: ``time.time``), the latest used last, KEPT_HERE at most and
+# within their bytes (D-195).
+_KEPT = Bounded("shared answers", 32 * MB, size=lambda kept: size_of(kept[1]))
 _KEPT_LOCK = threading.Lock()
 wall = time.time  # an answer's age, the same clock in every process (tests set it)
 _WORKING: dict[tuple[str, str, str], threading.Lock] = {}  # one thread of this process works an answer out at a time
