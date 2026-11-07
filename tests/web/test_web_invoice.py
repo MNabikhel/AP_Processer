@@ -1487,8 +1487,11 @@ def test_in_a_browser_the_reader_poll_draws_the_panel_again_only_once_it_changed
     page = chromium.new_page(viewport={"width": 1400, "height": 1000})
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    polls: list[str] = []
-    page.on("request", lambda r: "/reader" in r.url and polls.append(r.url.split("?", 1)[-1]))
+    from urllib.parse import parse_qs, urlsplit
+
+    polls: list[str] = []  # what each poll says the panel shows (it also sends the screen's revisions, D-184)
+    page.on("request", lambda r: "/reader" in r.url and polls.append(
+        "seen=" + parse_qs(urlsplit(r.url).query, keep_blank_values=True)["seen"][0]))  # fmt: skip
     page.clock.install()
     page.goto(f"{base}/review/{inv_id}")
     page.wait_for_selector(".iv-sheet:not(.loading)")

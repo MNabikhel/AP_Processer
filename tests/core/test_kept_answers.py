@@ -1921,3 +1921,35 @@ def test_a_process_waits_for_an_answer_another_is_still_working_out_rather_than_
     assert second() == ["first"] and second.worked == 0
     one.join(10)
     assert found == [["first"]]
+
+
+@pytest.mark.parametrize("when", ["before its hold is asked for", "while it waits"])
+def test_an_answer_kept_just_as_its_maker_lets_go_is_taken_never_worked_out_again(tmp_path, monkeypatch, when):
+    """B-1919: a process waiting for the answer another was working out read the answers kept (none yet), then looked
+    whether the other still held the work: kept and let go of between those two looks, it worked the answer out
+    again itself (Windows CI, B-1808's test). The same between its first look and its asking for the hold: free,
+    the hold was its own, and it worked it out again. Whenever the hold is found gone, or taken, the answers kept
+    are looked at once more first."""
+    from ap_coder.core.store import reports
+
+    monkeypatch.setattr(reports, "ANSWER_WAIT", 3.0)
+    monkeypatch.setattr(reports, "ANSWER_POLL", 0.01)
+    _Processes(monkeypatch)("worker 2")
+    monkeypatch.setattr(reports, "OWNER", "worker 2")
+    store = Store(tmp_path / "ap.db")
+    second = Shared(store, "slow", lambda: ["second"], version="t-1", topic="", changes=("vendors",))
+    lease = f"answer/slow/{reports.asked_key(None)}"
+    assert store.take_lease(lease, "worker 1", reports.ANSWER_LEASE)  # worker 1 works it out
+    real, looks = store.kept_answer, []
+
+    def look(name, key, version):
+        found = real(name, key, version)
+        looks.append(found)
+        if len(looks) == (1 if when.startswith("before") else 2):  # worker 1 keeps it and lets go just after this look
+            stamp, _ = store._answer_stamp("", ("vendors",))
+            assert store.keep_answer(name, key, version, stamp, ["first"], time.time())
+            store.drop_lease(lease, "worker 1")
+        return found
+
+    monkeypatch.setattr(store, "kept_answer", look)
+    assert second() == ["first"] and second.worked == 0

@@ -6,13 +6,19 @@
     <div class="rvw-doc-head"><b>Document</b><span class="file" title="{{ doc.file_name }}">{{ doc.file_name }}</span>
       {% if doc.kind %}<span class="apc-pill {{ doc.kind.tone }} doc-kind" title="{{ doc.kind.title }}"><span class="ms" aria-hidden="true">{{ doc.kind.icon }}</span>{{ doc.kind.label }}</span>{% endif %}</div>
     <div class="row inv-doc-tools">
-    {% if mode == "review" and (lm_off or doc.reader.lines or doc.reader.queue or doc.reviewer.lines or doc.reviewer.again or doc.lines_note) %}
+    {# The reader panel's poll, while OvisOCR2 reads it (data-reading), and on a screen in the review queue to say who
+       else has it open and whether it is out of date (doc.watch, D-184): the panel is hidden when there is no
+       Reading tools to show it in. #}
+    {% set reader_attrs %}data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-reading data-poll="{{ poll_seconds }}"{% elif doc.watch %} data-poll="{{ watch_seconds }}"{% endif %} data-tag="{{ doc.reader_tag }}"{% endset %}
+    {% set tools = mode == "review" and (lm_off or doc.reader.lines or doc.reader.queue or doc.reviewer.lines or doc.reviewer.again or doc.lines_note) %}
+    {% if not tools and doc.watch %}<div {{ reader_attrs }} hidden></div>{% endif %}
+    {% if tools %}
     {# The readers and the AI reviewer, for the person setting up: folded away from the clerk's view (D-75). #}
     <details class="pop inv-doc-more" data-doc-more>
       <summary class="btn sm ghost" title="How this invoice was read: OvisOCR2, the AI reviewer, LM Studio"><span class="ms" aria-hidden="true">tune</span>Reading tools{% if lm_off %}<span class="inv-dot warn" aria-label="(LM Studio isn't running)"></span>{% endif %}</summary>
       <div class="pop-body stack inv-doc-more-body">
         {% if lm_off %}<div class="inv-note warn"><span class="ms" aria-hidden="true">visibility_off</span><span>{{ lm_off }}</span></div>{% endif %}
-        <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %} data-tag="{{ doc.reader_tag }}">{{ live_ui.reader(doc.reader, inv.id, can("/review/1/read-pages")) }}</div>
+        <div {{ reader_attrs }}>{{ live_ui.reader(doc.reader, inv.id, can("/review/1/read-pages")) }}</div>
         {% for icon, text in doc.reviewer.lines %}<div class="inv-note"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span></div>{% endfor %}
         {% if doc.reviewer.again and can("/review/1/review-again") %}
         <form method="post" action="/review/{{ inv.id }}/review-again" class="inv-inline"><button class="btn sm ghost" type="submit" title="The AI reviewer checks the invoice against its pages, with the chat model in LM Studio"><span class="ms" aria-hidden="true">fact_check</span>{{ "Have the AI reviewer check it" if doc.reviewer.state == "none" else "Have the AI reviewer check it again" }}</button></form>

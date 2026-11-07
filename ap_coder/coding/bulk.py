@@ -10,7 +10,8 @@ Everything else is skipped with the reason, and still needs a person.
 
 Entry points: ``sort_for_bulk`` (the queue's clean invoices, and why each other is left), ``queue_checks`` (what the
 queue reads of its invoices, from the invoices' summary), ``recheck_queue`` and ``QueueRecheck`` (the queue checked
-again after a change of settings, in the background), ``issues_today`` and ``bulk_approve``.
+again after a change of settings, in the background), ``issues_today`` and ``bulk_approve``, and ``approve_in_job``
+(a person's bulk approval as a job, done in the background as them: D-185).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store import REVIEW, Store
 from ..core.store._base import CHECKS_STAMP_KEY
+from ..core.store.bulk_jobs import CHANGED, GONE
 from ..core.store.summary import QUEUE_READ, computed
 from .review import codes_to_pick
 from .vendors import moved_off_hold
@@ -456,53 +458,131 @@ def _bulk_approve(
     skipped: list[tuple[int, str]] = []
     stamp = store.checks_stamp()
     for invoice_id in invoice_ids:
-        inv = store.get_invoice(invoice_id)
-        if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
-            skipped.append((invoice_id, "no longer in the queue"))
-            continue
-        if _audit_pick(inv.get("meta")):
-            skipped.append((invoice_id, AUDIT_PICK[:1].upper() + AUDIT_PICK[1:]))
-            continue
-        # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
-        # reader's line items or text layer read differently): finalise_coding below does not raise it again.
-        validation = inv.get("validation") or {}
-        found = validation.get("issues") or []
-        if validation.get(CHECKS_STAMP_KEY) != stamp:  # checked against other settings (B-815)
-            found = _kept(found)  # the coding's own checks are done again below, as they come out today
-        stored = [i for i in found if needs_a_person(i.get("severity"), i.get("code"))]
-        if stored:
-            skipped.append((invoice_id, _plain(stored[0].get("message"), stored[0].get("code"))))
-            continue
-        coded = inv.get("final_output") or inv["ai_output"]
-        coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
-        try:
-            coding = InvoiceCoding.model_validate(coded)
-        except ValueError:
-            skipped.append((invoice_id, "the coding needs fixing by hand"))
-            continue
-        if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
-            skipped.append((invoice_id, "it is a credit note: a credit is always applied by a person"))
-            continue
-        moved = moved_off_hold(store, inv["ai_output"], coding) if server else []
-        if moved:  # a held vendor's, by the GST/HST number or bank account it shows (B-1551)
-            skipped.append((invoice_id, _plain(moved[0][2], moved[0][1])))
-            continue
-        output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
-                                         received=_received_on(inv))  # fmt: skip
-        blocking = [i for i in report.issues if needs_a_person(i.severity, i.code)]
-        if blocking:
-            skipped.append((invoice_id, _plain(blocking[0].message, blocking[0].code)))
-            continue
-        if report.requires_review:
-            skipped.append((invoice_id, f"confidence {report.adjusted_confidence:.0%} is below the threshold"))
+        output, why = _still_clean(store, reference, settings, invoice_id, stamp, server)
+        if output is None:
+            skipped.append((invoice_id, why))
             continue
         try:
             store.approve_invoice(invoice_id, output, reviewer, bulk=True, login=login)
         except (KeyError, ValueError):
             # A colleague parked, rejected or approved it while the loop checked the others: skip this one only.
-            skipped.append((invoice_id, "no longer in the queue (someone else acted on it meanwhile)"))
+            skipped.append((invoice_id, GONE))
             continue
         # Nobody opened it: it teaches the template, but only a correction counts towards touchless processing.
         learn_from_approval(store, invoice_id, output, actor=reviewer, bulk=True)
         approved.append(invoice_id)
     return {"approved": approved, "skipped": skipped}
+
+
+def _still_clean(store: Store, reference: ReferenceData, settings: Settings, invoice_id: int, stamp: str,
+                 server: bool) -> tuple[dict[str, Any] | None, str]:  # fmt: skip
+    """(the coding to approve, "") when invoice ``invoice_id`` is still clean, checked again now as it is coded;
+    (None, why it is left for a person) otherwise."""
+    inv = store.get_invoice(invoice_id)
+    if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
+        return None, "no longer in the queue"
+    if _audit_pick(inv.get("meta")):
+        return None, AUDIT_PICK[:1].upper() + AUDIT_PICK[1:]
+    # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
+    # reader's line items or text layer read differently): finalise_coding below does not raise it again.
+    validation = inv.get("validation") or {}
+    found = validation.get("issues") or []
+    if validation.get(CHECKS_STAMP_KEY) != stamp:  # checked against other settings (B-815)
+        found = _kept(found)  # the coding's own checks are done again below, as they come out today
+    stored = [i for i in found if needs_a_person(i.get("severity"), i.get("code"))]
+    if stored:
+        return None, _plain(stored[0].get("message"), stored[0].get("code"))
+    coded = inv.get("final_output") or inv["ai_output"]
+    coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
+    try:
+        coding = InvoiceCoding.model_validate(coded)
+    except ValueError:
+        return None, "the coding needs fixing by hand"
+    if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
+        return None, "it is a credit note: a credit is always applied by a person"
+    moved = moved_off_hold(store, inv["ai_output"], coding) if server else []
+    if moved:  # a held vendor's, by the GST/HST number or bank account it shows (B-1551)
+        return None, _plain(moved[0][2], moved[0][1])
+    output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id,
+                                     received=_received_on(inv))  # fmt: skip
+    blocking = [i for i in report.issues if needs_a_person(i.severity, i.code)]
+    if blocking:
+        return None, _plain(blocking[0].message, blocking[0].code)
+    if report.requires_review:
+        return None, f"confidence {report.adjusted_confidence:.0%} is below the threshold"
+    return output, ""
+
+
+# --- Bulk approval as a job (D-185) ---------------------------------------------------------------------------------
+# A person's bulk approval is a job kept in the database (``Store.start_bulk_job``), approved by a background thread
+# (``web/jobs.py`` ``BulkRunner``) while their page shows how far it got: the web worker asked holds no thread for it.
+
+JOB_FORMAT = "bulk-2"  # what a job's record is (another: a job an older AP Coder left ends, and says so)
+
+
+class Stopping(Exception):
+    """The job stops for now: AP Coder is stopping (it is put back in line), or it is no longer this runner's."""
+
+
+def _open_elsewhere(store: Store, invoice_id: int, owner: str) -> str:
+    """Why invoice ``invoice_id`` is left when someone other than ``owner`` (whose job it is) has it open on their
+    review screen now (``Store.open_by``, the server's, D-184): "Ann Lee has it open on the review screen"; "" when
+    nobody else has."""
+    people = store.open_by(invoice_id).get(invoice_id, {})
+    # (each as the screens show it to the others: never an email)
+    names = list(dict.fromkeys(str(name).split("@")[0] for who, name in people.items() if who != owner))
+    if not names:
+        return ""
+    who = f"{', '.join(names[:-1])} and {names[-1]}" if len(names) > 1 else names[0]
+    return f"{who} {'has' if len(names) == 1 else 'have'} it open on the review screen"
+
+
+def approve_in_job(
+    store: Store, settings: Settings, job: dict[str, Any], runner: str, *, stopping: Callable[[], bool] = lambda: False,
+    refused: Callable[[], str] = lambda: "",
+) -> str:  # fmt: skip
+    """Approve the invoices of bulk job ``job`` (claimed by ``runner``) not done yet, in the order asked, each exactly
+    as ``bulk_approve`` does and as the person who asked (``job["person"]``: their name and login on each approval;
+    the caller makes them who the other events name). Each outcome is kept with its approval (``Store.bulk_step``).
+    An invoice is left for a person, with why, when it is no longer the one asked (``CHANGED``: another
+    ``row_identity``, or its stamp moved since the queue listed it, ``Store.bulk_stamps``: approved and undone,
+    parked, read again; ``bulk_step`` looks again in the approval's own transaction), when it is no longer clean, or
+    when someone else has it open on their review screen (``Store.open_by``) or edits of it kept there (``bulk_step``
+    looks there too). Raises ``Stopping`` once ``stopping()`` is true, or the job is no longer ``runner``'s. Returns ""
+    once every invoice is done, else why it stopped: what ``refused()`` says (the person may no longer approve)."""
+    person = job["person"]
+    taken = set(job["approved"]) | {s[0] for s in job["skipped"]}
+    reference = store.reference_data()
+    stamp = store.checks_stamp()
+    for invoice_id, identity, listed in job["ids"]:
+        if invoice_id in taken:
+            continue
+        # Its progress noted at each invoice's start too, not only at each approval: the last one's learning taking
+        # long never lets another runner take the job meanwhile (one that did goes on with it).
+        if stopping() or not store.renew_bulk_job(job["id"], runner):
+            raise Stopping
+        why = refused()
+        if why:
+            return why
+        output = None
+        now = store.row_identity(invoice_id)
+        if now is None:
+            why = "no longer in the queue"
+        elif list(now) != identity:
+            why = CHANGED
+        else:
+            output, why = _still_clean(store, reference, settings, invoice_id, stamp, bool(person.get("server")))
+        if output is not None and (why := _open_elsewhere(store, invoice_id, job["owner"])):
+            output = None  # (theirs to approve as they see it, though nothing of theirs is checked yet)
+
+        def approve(invoice_id: int = invoice_id, output: dict[str, Any] | None = output) -> None:
+            store.approve_invoice(invoice_id, output or {}, person["name"], bulk=True, login=person.get("login") or "")
+
+        outcome = store.bulk_step(job["id"], runner, invoice_id, why, approve if output is not None else None,
+                                  expect=(identity, listed))  # fmt: skip
+        if outcome is None:
+            raise Stopping  # (taken again by another runner: it goes on with it)
+        if outcome == "approved":
+            # Nobody opened it: it teaches the template, but only a correction counts towards touchless processing.
+            learn_from_approval(store, invoice_id, output or {}, actor=person["name"], bulk=True)
+    return ""

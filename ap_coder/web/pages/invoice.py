@@ -12,7 +12,8 @@ What is worked out lives in ``ap_coder/web/invoice_view.py``; the page script is
 page viewer ``static/js/invoice_viewer.js``.
 
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
-the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
+the pages, to teach a field), ``reader`` (the screen's poll: OvisOCR2's progress on it, who else has it open and
+whether the screen is out of date, D-184), ``approved.pdf``; POST ``check``,
 ``approve``, ``undo-approve`` (the approval banner's Undo), ``park``, ``reject``, ``note``, ``teach``, ``split``,
 ``apply-rules``, ``po-coding``,
 ``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
@@ -28,6 +29,7 @@ import gzip
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
 import threading
 from copy import copy
@@ -209,7 +211,7 @@ def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bo
     return draft, draft.reader_at != _reader_at(inv)
 
 
-_NOT_THE_EDITS = ("saved_at", "check")  # what a kept draft carries besides the edits
+_NOT_THE_EDITS = ("saved_at", "check", "screen")  # what a kept draft carries besides the edits
 
 
 def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
@@ -218,9 +220,18 @@ def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
     return _drafts(request)
 
 
-def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None) -> None:
+def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None,
+                screen: str = "", form: Any = None) -> None:  # fmt: skip
     """Keep the edits (``keep``) or drop them. ``saved_at`` is when they were last edited: the same edits checked again
-    (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996)."""
+    (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996).
+    ``screen``: the review screen they come from (the form's ``screen``), kept as the one that wrote them (D-184).
+    ``form``: the screen's form (its ``screen`` and ``draft_rev``): written only while that screen is still at the
+    person's draft, read again in the write's own transaction; else refused as out of date (``_OutOfDate``: two tabs
+    whose checks overlap, the second to write, B-1938)."""
+    store, person = get_store(request), _person(person_key())
+    drawn = None if form is None else form.get("draft_rev")
+    screen = screen if form is None else _screen(form)
+    expect = None if drawn is None else lambda now: _at_draft(store, invoice_id, now, str(drawn), screen)
     if keep:
         edits = draft.to_dict()
         before = _drafts(request).get(invoice_id) or {}
@@ -230,10 +241,148 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
             return  # nothing new to keep
         at = before["saved_at"] if same and before.get("saved_at") else dt.datetime.now().isoformat(timespec="minutes")
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
+        if writer := before.get("screen") if same else screen:
+            kept["screen"] = writer
+        if not store.save_invoice_draft(invoice_id, person, kept, expect=expect):  # first: it may be left undone
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
         _drafts(request)[invoice_id] = kept
-    elif invoice_id in _drafts(request):
-        forget_draft(request, invoice_id)
+    elif invoice_id in _drafts(request):  # (the screen's own requests sent meanwhile are still at it: ``_at_draft``)
+        if not store.save_invoice_draft(invoice_id, person, None, screen=screen, seconds=UNDONE_SECONDS, expect=expect):
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
+        _drafts(request).pop(invoice_id, None)
+
+
+def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
+    """Whether a check keeps the screen's edits as a draft: a field to fix, an edit of the coding, words taught."""
+    return analysis.coding is None or analysis.changed or bool(draft.taught)
+
+
+# --- Many people on one queue (D-184) -------------------------------------------------------------------------------
+# Who else has an invoice open (server mode): the screen's poll renews it, written at most every OPEN_RENEW_SECONDS
+# and gone OPEN_SECONDS after the last renewal; Previous / Next pass over those invoices. A screen carries two
+# revisions: the invoice's (``Store.coding_revision``, the form's ``rev``) and the person's draft's (``draft_rev``, in
+# the approve bar each check draws again). A screen behind either one is out of date: its poll or its next check
+# says so once and it turns read-only; a check or a line action from it changes nothing, an action is "changed
+# meanwhile". On a laptop (one person) nobody else is shown; the revisions hold between its tabs.
+
+OPEN_SECONDS = 120  # someone's invoice open: forgotten this long after the screen's last renewal (a closed tab)
+OPEN_RENEW_SECONDS = 45  # renewed at most this often (the screen asks every 30 to 60 s)
+WATCH_SECONDS = 30  # how often the screen asks while nothing is being read
+UNDONE_SECONDS = 120  # a draft a screen's own check dropped: the requests it sent meanwhile are its own this long
+NO_DRAFT = "0"  # the draft revision of no draft kept
+
+
+def _draft_rev(kept: dict[str, Any] | None) -> str:
+    """A draft's revision: its edits in a few letters (``NO_DRAFT`` when none is kept). The same edits keep it."""
+    if not kept:
+        return NO_DRAFT
+    edits = {k: v for k, v in kept.items() if k not in _NOT_THE_EDITS}
+    return hashlib.blake2b(json.dumps(edits, sort_keys=True).encode(), digest_size=6).hexdigest()
+
+
+def shown_name(name: str) -> str:
+    """A person's name as the screens show it to the others: never an email (the part before its @)."""
+    name = str(name or "").strip()
+    return name.split("@")[0] if "@" in name else name
+
+
+def names_text(names: list[str]) -> str:
+    """ "Ann Lee", "Ann Lee and Bo Chen", "Ann Lee, Bo Chen and 2 others"."""
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{names[0]}, {names[1]} and {ui.plural(len(names) - 2, 'other')}"
+
+
+def open_elsewhere(request: Request, store: Store, invoice_id: int | None = None) -> dict[int, list[str]]:
+    """The invoices someone else has open now, with their names (every one's, or one's); none on a laptop."""
+    if not server_mode(request):
+        return {}
+    me = _person(person_key())
+    found = {}
+    for open_id, people in store.open_by(invoice_id).items():
+        names = list(dict.fromkeys(shown_name(name) for who, name in people.items() if who != me))
+        if names:
+            found[open_id] = names
+    return found
+
+
+def working_here(names: list[str]) -> str:
+    """What the screen says of the others who have it open ("" when nobody else does)."""
+    return f"{names_text(names)} {'is' if len(names) == 1 else 'are'} working on this invoice too." if names else ""
+
+
+def _keep_open(request: Request, store: Store, inv: dict[str, Any]) -> None:
+    """The person asking has the invoice open (server mode, in the review queue, a role that may edit it)."""
+    if server_mode(request) and inv["status"] == REVIEW and can(request, f"/review/{inv['id']}/check"):
+        store.keep_open(inv["id"], _person(person_key()), reviewer(), OPEN_SECONDS, OPEN_RENEW_SECONDS)
+
+
+_CHANGES = {"approved": "Approved", "final_approved": "Given its second approval", "sent_back": "Sent back",
+            "reopened": "Reopened", "parked": "Parked", "unparked": "Brought back from Parked", "rejected": "Rejected",
+            "deleted": "Deleted", "sent_to_manager": "Sent to the manager to confirm the coding",
+            "manager_confirmed": "Coding confirmed", "manager_sent_back": "Coding sent back",
+            "manager_request_withdrawn": "Request to the manager withdrawn"}  # fmt: skip
+STALE_SUB = "This screen is read-only now: what you typed is still here to copy."
+
+
+def _stale(store: Store, invoice_id: int, query: dict[str, str], gone: bool, draft: dict[str, Any] | None = None,
+           mine: bool = False) -> dict[str, str]:  # fmt: skip
+    """What an out-of-date screen says, once: what was done since it was drawn, by whom and when ("Approved by Ann
+    Lee today at 10:41 a.m.", ``ui.day_and_time``), or ``mine``: the person's own edits saved in another tab
+    (``draft``, None: dropped there); and where to see the invoice as it is now (the queue: ``gone``, deleted)."""
+    if mine:
+        at = _when(str((draft or {}).get("saved_at") or ""))
+        text = f"Edited in another tab or window {at}" if draft and at else "Edits undone in another tab or window"
+    else:
+        change = store.last_change(invoice_id) or {}
+        verb = _CHANGES.get(str(change.get("action") or ""), "Changed")
+        by = f" by {shown_name(change['actor'])}" if change.get("actor") else ""
+        try:
+            at = " " + ui.day_and_time(dt.datetime.fromisoformat(str(change.get("created_at") or "")))
+        except ValueError:
+            at = ""
+        text = f"{verb}{by}{at}"
+    text += "" if text.endswith(".") else "."  # ("10:41 a.m." ends its sentence)
+    return {"text": text, "sub": STALE_SUB, "url": _with_query("/review" if gone else f"/review/{invoice_id}", query),
+            "link": "Open the queue" if gone else "Open it as it is now"}  # fmt: skip
+
+
+def _out_of_date(request: Request, store: Store, invoice_id: int, inv: dict[str, Any] | None,
+                 form: Any) -> dict[str, str] | None:  # fmt: skip
+    """``_stale`` when the screen that posted ``form`` is behind the invoice (``rev``) or the person's draft
+    (``draft_rev``: one of the revisions it may be at), else None; a form with neither (not the screen's) is not
+    compared."""
+    rev, drawn = form.get("rev"), form.get("draft_rev")
+    query = _nav_query(form)
+    if rev is not None and (inv is None or inv["status"] != REVIEW or str(store.coding_revision(invoice_id)) != rev):
+        return _stale(store, invoice_id, query, inv is None)
+    kept = _drafts(request).get(invoice_id)
+    if drawn is not None and not _at_draft(store, invoice_id, kept, str(drawn), _screen(form)):
+        return _stale(store, invoice_id, query, False, kept, mine=True)
+    return None
+
+
+def _at_draft(store: Store, invoice_id: int, kept: dict[str, Any] | None, drawn: str, screen: str) -> bool:
+    """Whether a screen at revisions ``drawn`` is at the person's draft ``kept``: one of them, the draft written by
+    that screen itself (``screen``: a check of its own answered after it asked), or none since that screen's own check
+    dropped it (its edits put back as stored, B-1937)."""
+    if _draft_rev(kept) in drawn.split():
+        return True
+    if not screen:
+        return False
+    if kept:
+        return kept.get("screen") == screen
+    return store.draft_dropped_by(invoice_id, _person(person_key())) == screen
+
+
+class _OutOfDate(Exception):
+    """A line action from a screen out of date (``_out_of_date``): refused as its check is."""
+
+    def __init__(self, stale: dict[str, str]) -> None:
+        super().__init__(stale["text"])
+        self.stale = stale
 
 
 # --- Helpers --------------------------------------------------------------------------------------------------------
@@ -297,21 +446,53 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str], request: Re
         if invoice_id not in ids:
             ids = [i["id"] for i in pending]
     if invoice_id not in ids:
-        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": "", "next_id": None}
+        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": "", "next_id": None, "busy": {},
+                "skipped": ""}  # fmt: skip
     position = ids.index(invoice_id)
     url = lambda i: _with_query(f"/review/{i}", query)  # noqa: E731
+    # The ones someone else has open are passed over (D-184), unless every other one is
+    busy = open_elsewhere(request, store) if request is not None else {}
+    if all(i in busy for i in ids if i != invoice_id):
+        busy = {}
+    prev, before = _step(ids, position, busy, -1)
+    after, passed = _step(ids, position, busy, 1)
+    later = [i for i in ids[position + 1 :] if i not in busy]
     return {
         "ids": ids,
         "position": position,
         "count": len(ids),
         "done_pct": round((position + 1) / len(ids) * 100),
         # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
-        "prev": url(ids[(position - 1) % len(ids)]),
-        "next": url(ids[(position + 1) % len(ids)]),
+        "prev": url(prev),
+        "next": url(after),
         # The one after it as the screen showed it (none for the last): where an action on it goes next, even if
         # editing moved it in the queue's order meanwhile (B-426).
-        "next_id": ids[position + 1] if position + 1 < len(ids) else None,
+        "next_id": later[0] if later else None,
+        "busy": busy,
+        "skipped": _skipped(busy, before, passed),
     }
+
+
+def _step(ids: list[int], position: int, busy: dict[int, list[str]], by: int) -> tuple[int, list[int]]:
+    """The invoice ``by`` (1 the next, -1 the previous) from ``position`` (wrapping around), past those someone else
+    has open (``busy``), and the ones passed over."""
+    passed = []
+    for k in range(1, len(ids)):
+        found = ids[(position + by * k) % len(ids)]
+        if found not in busy:
+            return found, passed
+        passed.append(found)
+    return ids[(position + by) % len(ids)], []
+
+
+def _skipped(busy: dict[int, list[str]], before: list[int], after: list[int]) -> str:
+    """What the screen says of the invoices Previous / Next pass over ("" when none is)."""
+    passed = list(dict.fromkeys(after + before))
+    if not passed:
+        return ""
+    names = list(dict.fromkeys(name for i in passed for name in busy[i]))
+    which = "Previous and Next skip" if before and after else "Next skips" if after else "Previous skips"
+    return f"{which} {len(passed)} that {names_text(names)} {'has' if len(names) == 1 else 'have'} open."
 
 
 def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None,
@@ -329,15 +510,29 @@ def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: An
         seen = int(seen_next or 0)
     except (TypeError, ValueError):
         seen = 0
-    if seen in remaining:
+    free = [i for i in remaining if i not in nav["busy"]] or remaining  # none someone else has open (D-184)
+    if seen in free:
         return _with_query(f"/review/{seen}", query)
     if position is None or position >= len(remaining):  # it was the last one: back to the first, as said (B-998)
-        return _with_query(f"/review/{remaining[0]}", query)
-    return _with_query(f"/review/{remaining[position]}", query)
+        return _with_query(f"/review/{free[0]}", query)
+    return _with_query(f"/review/{next(i for i in remaining[position:] + remaining[:position] if i in free)}", query)
 
 
 _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval", REJECTED: "rejected",
         PARKED: "parked", REVIEW: "in the review queue", FAILED: "a failed read"}  # fmt: skip
+
+
+def _acted_on_meanwhile(request: Request, store: Store, invoice_id: int, inv: dict[str, Any],
+                        form: Any) -> JSONResponse | None:  # fmt: skip
+    """An action of the screen (approve, send to the manager) from a screen out of date (``_out_of_date``): while
+    the invoice is in the review queue, refused as its check is (409, ``stale``: the screen says so and keeps what was
+    typed in its boxes, B-1936); once it left it, "changed meanwhile" (D-184). None: up to date."""
+    stale = _out_of_date(request, store, invoice_id, inv, form)
+    if stale is None:
+        return None
+    if inv["status"] == REVIEW:
+        return refuse(stale["text"], 409, stale=stale)
+    return changed_meanwhile(request, invoice_id)
 
 
 def changed_meanwhile(request: Request, invoice_id: int) -> JSONResponse:
@@ -476,11 +671,12 @@ def _sent_back(events: list[dict[str, Any]]) -> dict[str, str] | None:
             "reason": (back["detail"] or {}).get("reason") or "no reason given"}  # fmt: skip
 
 
-def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True) -> dict[str, Any]:
+def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True, draft_rev: str = "") -> dict[str, Any]:
     """The sections' values with what the person's role may use (server mode, D-98): Read-only changes nothing, and
-    the JD Edwards settings are an Admin's."""
+    the JD Edwards settings are an Admin's. ``draft_rev``: the draft revision the screen is at (D-184)."""
     return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
-            "setup_contact": "an Admin" if server_mode(request) else "the pilot tester"}  # fmt: skip
+            "setup_contact": "an Admin" if server_mode(request) else "the pilot tester",
+            "draft_rev": draft_rev}  # fmt: skip
 
 
 def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
@@ -547,6 +743,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     may_read = can(request, f"/review/{invoice_id}/read-pages")
     context["doc"]["reader_tag"] = reader_tag(context["doc"]["reader"], may_read)  # what its poll sends back (D-160)
+    context["doc"]["watch"] = editable  # its poll: who else has it open, and whether it is out of date (D-184)
     if not editable:
         mode = _mode(inv)
         if mode in ("approved", "pending", "rejected", "parked"):  # nothing left to read: no reading tools' warning
@@ -554,8 +751,13 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         return render(request, "invoice.html", "review", mode=mode, reading_status=status, **context,
                       manager=_manager_context(request, store, inv), **_closed(store, reference, inv))  # fmt: skip
     saved_at = str((_drafts(request).get(invoice_id) or {}).get("saved_at") or "")  # edits kept from before
+    drawn = _draft_rev(_drafts(request).get(invoice_id))
     draft, kept = current_draft(request, inv)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer(), capture=capture)
+    # The draft's revision once the page has kept it, or the one before when that is left to the next check (D-184)
+    will = _draft_rev(draft.to_dict()) if _keeps(draft, analysis) else NO_DRAFT
+    draft_rev = will if will == drawn else f"{will} {drawn}"
+    screen = secrets.token_hex(4)  # this screen's own, its drafts say they are from it
     context["manager"] = _manager_context(request, store, inv, list(analysis.output.get("line_items") or []))
     sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
     start = _start(inv)
@@ -574,7 +776,9 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     page = render(
         request, "invoice.html", "review", mode="review", reading_status=status, **context,
         draft=replace(draft, header=header),
-        kept=kept, live=_shown_live(request, analysis.live, may_edit), sure=sure,
+        kept=kept, live=_shown_live(request, analysis.live, may_edit, draft_rev), sure=sure,
+        rev=store.coding_revision(invoice_id), screen=screen, watch_seconds=WATCH_SECONDS,
+        others=working_here(open_elsewhere(request, store, invoice_id).get(invoice_id, [])),
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
                           view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
               "tax_marks": analysis.live.get("tax_marks") or {}},
@@ -597,7 +801,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     if may_edit:
         try:
             with store.briefly():
-                _keep_checked(request, store, invoice_id, draft, analysis)
+                _keep_checked(request, store, invoice_id, draft, analysis, screen)
+                _keep_open(request, store, inv)  # the others see who has it open (D-184)
         except sqlite3.OperationalError:
             pass
     return page
@@ -821,21 +1026,52 @@ def page_words(request: Request, invoice_id: int) -> JSONResponse:
 
 
 @router.get("/review/{invoice_id:int}/reader")
-def reader_progress(request: Request, invoice_id: int, seen: str = "") -> JSONResponse:
-    """OvisOCR2's progress on this invoice, for the page to follow while it waits or reads. ``seen``: the ``tag`` of
-    what the page's panel shows (``reader_tag``): while it still is, the answer says ``same``, without the panel."""
+def reader_progress(request: Request, invoice_id: int, seen: str = "", rev: str | None = None,
+                    draft: str | None = None, screen: str = "") -> JSONResponse:  # fmt: skip
+    """The review screen's poll: OvisOCR2's progress on this invoice, for the page to follow while it waits or reads
+    (``reading``); on a screen of an invoice in the review queue, who else has it open (renewing the person's own,
+    D-184) and, given the screen's revisions (``rev``, ``draft``), whether it is out of date (``stale``). ``seen``:
+    the ``tag`` of what the page's panel shows (``reader_tag``): while it still is, the answer says ``same``, without
+    the panel. ``poll``: whether to ask again."""
     store, settings = get_store(request), get_settings(request)
-    inv = _invoice(store, invoice_id)
+    inv = store.get_invoice(invoice_id)
+    if inv is None and rev is not None:  # deleted meanwhile: the screen says so
+        stale = _stale(store, invoice_id, _nav_query(request.query_params), True)
+        return JSONResponse({"poll": False, "stale": stale}, headers={"Cache-Control": "no-store"})
+    inv = inv if inv is not None else _invoice(store, invoice_id)
     status = reading_status_or_none(settings, store)
     state = view.reader_state(store, settings, inv, status)
     if inv["status"] == REVIEW and lm_studio_off(status):
         state = folded_reader(state)  # as the screen drew it (B-444)
     may = can(request, f"/review/{invoice_id}/read-pages")
     tag = reader_tag(state, may)
-    answer = {"state": state["state"], "poll": state["poll"], "tag": tag, "same": bool(seen) and seen == tag}
+    watch = inv["status"] == REVIEW and reference_or_none(store) is not None  # as the screen's doc.watch
+    answer = {"state": state["state"], "poll": state["poll"] or watch, "tag": tag, "same": bool(seen) and seen == tag}
+    if answer["poll"] and not state["poll"]:
+        answer["reading"] = False  # (else it is the poll's: OvisOCR2 has it, or nothing more to ask)
     if not answer["same"]:
         answer["html"] = str(templates.env.get_template("_invoice_live.html").module.reader(state, invoice_id, may))
+    if watch and server_mode(request):
+        answer["others"] = working_here(open_elsewhere(request, store, invoice_id).get(invoice_id, []))
+        _renew_open(request, store, inv)
+    query = _nav_query(request.query_params)
+    if rev is not None and (inv["status"] != REVIEW or str(store.coding_revision(invoice_id)) != rev):
+        answer["stale"] = _stale(store, invoice_id, query, False)
+    elif draft is not None and inv["status"] == REVIEW:
+        kept = store.invoice_draft(invoice_id, _person(person_key()))
+        if not _at_draft(store, invoice_id, kept, draft, screen):
+            answer["stale"] = _stale(store, invoice_id, query, False, kept, mine=True)
     return JSONResponse(answer, headers={"Cache-Control": "no-store"})
+
+
+def _renew_open(request: Request, store: Store, inv: dict[str, Any]) -> None:
+    """The screen's poll renews who has it open; behind another writer it waits for the next one (a poll never holds
+    the page up)."""
+    try:
+        with store.briefly():
+            _keep_open(request, store, inv)
+    except sqlite3.OperationalError:
+        pass
 
 
 def reader_tag(state: dict[str, Any], may: bool) -> str:
@@ -877,12 +1113,18 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     confidence this screen shows (edits and today's checks included). The form is read here; the checking runs on a
     threadpool thread, so a check never holds up the dashboard's other requests."""
     form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
-    return await run_in_threadpool(_check, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_check, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
 def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
+    stale = _out_of_date(request, store, invoice_id, store.get_invoice(invoice_id), form)
+    if stale:  # the screen says so once and turns read-only (D-184)
+        return refuse(stale["text"], 409, stale=stale)
     inv = _in_review(store, invoice_id)
     reference = _reference(store)
     draft = _from_form(request, inv, form)
@@ -890,7 +1132,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
-    kept = _keep_checked(request, store, invoice_id, draft, analysis)  # written last: nothing is read after it
+    kept = _keep_checked(request, store, invoice_id, draft, analysis, form=form)  # written last: read nothing after
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
     codes = view.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
@@ -908,16 +1150,24 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
                          # the tax rows as checked: a row moved to a new place of supply moves on screen (B-1020)
                          "taxes": [{"tax_type": t.get("tax_type") or "", "province": t.get("province") or ""}
                                    for t in draft.taxes],
-                         "sections": _render_live(_shown_live(request, analysis.live), invoice_id)})  # fmt: skip
+                         "sections": _render_live(_shown_live(request, analysis.live, draft_rev=_draft_rev(
+                             _drafts(request).get(invoice_id))), invoice_id)})  # fmt: skip
 
 
-def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis) -> bool:
-    """What a check of the screen keeps: the confidence it worked out (the queue shows the one the screen shows, edits
-    and today's checks included), and the edits as a draft, or none when there are none. Whether they are kept."""
+def _screen(form: Any) -> str:
+    """The review screen a form comes from (its ``screen``, D-184)."""
+    return str(form.get("screen") or "")
+
+
+def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis,
+                  screen: str = "", form: Any = None) -> bool:  # fmt: skip
+    """What a check of the screen keeps: the edits as a draft, or none when there are none, and the confidence it
+    worked out (the queue shows the one the screen shows, edits and today's checks included). Whether they are kept.
+    ``screen``, ``form``: the screen's own (``_keep_draft``; refused: nothing is kept)."""
+    kept = _keeps(draft, analysis)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None, screen, form)
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    kept = analysis.coding is None or analysis.changed or bool(draft.taught)
-    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None)
     return kept
 
 
@@ -947,6 +1197,8 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
 def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     query = _nav_query(form)
@@ -1112,7 +1364,10 @@ async def send_to_manager(request: Request, invoice_id: int) -> JSONResponse:
     """Ask the manager of the invoice's cost centers to confirm how it is coded (D-138): the lines on screen are kept
     with the request and the invoice waits, parked, until the manager answers (pages/manager.py)."""
     form = await posted_form(request)
-    return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
@@ -1123,6 +1378,8 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     inv = _invoice(store, invoice_id)
     if inv["status"] != REVIEW:
         return changed_meanwhile(request, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, _reference(store), inv, draft, reviewer())
     lines = [dict(li) for li in (analysis.output.get("line_items") or [])]
@@ -1146,7 +1403,9 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
         return refuse("Say who the manager is.")
     if email and ("@" not in email or any(c.isspace() for c in email)):
         return refuse("The manager's email doesn't look like one (name@company.com).")
-    _keep_draft(request, invoice_id, draft, True)  # the edits on screen stay for when it comes back
+    _keep_draft(request, invoice_id, draft, True, form=form)  # the edits on screen stay for its return
+    # the next one while this one is in the queue: past those someone else has open, as park and approve (B-1939)
+    after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request) if user_id is not None else ""
     try:
         note = str(form.get("manager_note") or "")
         rid = store.send_to_manager(invoice_id, reviewer(), manager_name=name, manager_email=email,
@@ -1157,7 +1416,6 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if form.get("remember_manager") and centers and user_id is None:
         store.set_cost_center_manager(centers, name, email, reviewer())
     if user_id is not None:
-        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request)
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
     return done(request, f"/manager/{rid}", flash_message(
@@ -1233,6 +1491,8 @@ def _posted_in_review(request: Request, invoice_id: int,
                       form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft]:  # fmt: skip
     """A grid action's invoice (still in the review queue), the GL accounts and the draft the form posted."""
     store = get_store(request)
+    if stale := _out_of_date(request, store, invoice_id, store.get_invoice(invoice_id), form):  # first, as a check
+        raise _OutOfDate(stale)  # (left the queue meanwhile: what was done, once, B-1940)
     inv = _in_review(store, invoice_id)
     reference = _reference(store)
     return store, inv, reference, _from_form(request, inv, form)
@@ -1247,20 +1507,31 @@ def _coded(request: Request, invoice_id: int,
 
 
 def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draft: view.Draft,
-               lines: list[dict[str, Any]], text: str, icon: str) -> JSONResponse:  # fmt: skip
-    """The grid with its new rows, kept as the draft; the page draws them and checks again."""
+               lines: list[dict[str, Any]], text: str, icon: str, form: Any) -> JSONResponse:  # fmt: skip
+    """The grid with its new rows, kept as the draft; the page draws them and checks again (at the draft's revision
+    now, ``draft_rev``)."""
     draft.lines = lines
-    _keep_draft(request, invoice_id, draft, True)
+    _keep_draft(request, invoice_id, draft, True, form=form)
     ai = (get_store(request).get_invoice(invoice_id) or {}).get("ai_output") or {}
-    return message(text, "ok", lines=_render_lines(reference, draft, ai), icon=icon)
+    return message(text, "ok", lines=_render_lines(reference, draft, ai), icon=icon,
+                   draft_rev=_draft_rev(_drafts(request).get(invoice_id)))  # fmt: skip
+
+
+async def _line_action(action: Any, request: Request, invoice_id: int) -> JSONResponse:
+    """A line action's form read here, the action on a threadpool thread; refused as a check is when its screen is out
+    of date (D-184)."""
+    form = await posted_form(request)
+    try:
+        return await run_in_threadpool(action, request, invoice_id, form)
+    except _OutOfDate as stale:
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @router.post("/review/{invoice_id:int}/split")
 async def split(request: Request, invoice_id: int) -> JSONResponse:
     """Split one line across several GL accounts / cost centers (shared costs), by percentage or, with
     ``split_by=amount``, by dollar amount (D-126)."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_split, request, invoice_id, form)
+    return await _line_action(_split, request, invoice_id)
 
 
 @one_connection
@@ -1283,14 +1554,15 @@ def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     except ValueError as exc:
         return refuse(f"Not split: {exc}.")
     shown = sum(1 for p in parts if (p[2] != 0 if by == "amount" else p[2] > 0))
-    return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} split in {shown}.", "call_split")
+    return _new_lines(
+        request, invoice_id, reference, draft, lines, f"Line {number} split in {shown}.", "call_split", form
+    )
 
 
 @router.post("/review/{invoice_id:int}/apply-rules")
 async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
     """Code the lines as the fixed coding rules say (e.g. a rule added after the invoice was processed)."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_apply_rules, request, invoice_id, form)
+    return await _line_action(_apply_rules, request, invoice_id)
 
 
 @one_connection
@@ -1298,14 +1570,13 @@ def _apply_rules(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, inv, reference, draft, coding = _coded(request, invoice_id, form)
     lines, n = view.apply_rules(store, coding, draft, invoice_id, inv["ai_output"] or {})
     return _new_lines(request, invoice_id, reference, draft, lines,
-                      f"Coding rules applied to {ui.plural(n, 'line')}.", "rule_settings")  # fmt: skip
+                      f"Coding rules applied to {ui.plural(n, 'line')}.", "rule_settings", form)  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/po-coding")
 async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
     """Set the GL account and cost center of the lines that differ from the purchase order to the PO's."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_use_po_coding, request, invoice_id, form)
+    return await _line_action(_use_po_coding, request, invoice_id)
 
 
 @one_connection
@@ -1313,14 +1584,13 @@ def _use_po_coding(request: Request, invoice_id: int, form: Any) -> JSONResponse
     store, _, reference, draft, coding = _coded(request, invoice_id, form)
     lines, n = view.po_coding(store, coding, draft, invoice_id)
     return _new_lines(request, invoice_id, reference, draft, lines,
-                      f"Applied the PO's coding to {ui.plural(n, 'line')}.", "auto_fix_high")  # fmt: skip
+                      f"Applied the PO's coding to {ui.plural(n, 'line')}.", "auto_fix_high", form)  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/suggestion")
 async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
     """Code a line with a suggested GL account (one click, from past decisions and the account list)."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_use_suggestion, request, invoice_id, form)
+    return await _line_action(_use_suggestion, request, invoice_id)
 
 
 @one_connection
@@ -1335,15 +1605,16 @@ def _use_suggestion(request: Request, invoice_id: int, form: Any) -> JSONRespons
     except ValueError as exc:
         return refuse(f"Not changed: {exc}.")
     number = coding.line_items[position].line_number
-    return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} coded to GL {gl}.", "add_task")
+    return _new_lines(
+        request, invoice_id, reference, draft, lines, f"Line {number} coded to GL {gl}.", "add_task", form
+    )
 
 
 @router.post("/review/{invoice_id:int}/fill-lines")
 async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
     """Apply to all lines: one GL account and / or cost center for every line that has none yet (lines already
     coded keep theirs)."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_fill_lines, request, invoice_id, form)
+    return await _line_action(_fill_lines, request, invoice_id)
 
 
 @one_connection
@@ -1360,7 +1631,7 @@ def _fill_lines(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     done_text = [f"GL {gl} set on {ui.plural(n_gl, 'line')}" if gl else "",
                  f"Cost center {cc} set on {ui.plural(n_cc, 'line')}" if cc else ""]  # fmt: skip
     text = "; ".join(t for t in done_text if t) + ". Lines already coded kept theirs."
-    return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check")
+    return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check", form)
 
 
 # --- OvisOCR2 ---------------------------------------------------------------------------------------------------------

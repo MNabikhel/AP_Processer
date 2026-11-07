@@ -139,13 +139,17 @@ class ReportsMixin:
                 return hit[1]  # type: ignore[index]
             found = self.kept_answer(name, key, version)
             lease, taken, took = f"answer/{name}/{key}", True, holds(found, later=True)
+            mine = False  # (the hold taken here: let go of at the end)
             if not took:
-                taken = self._briefly_or(lambda: self.take_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
+                taken = mine = self._briefly_or(lambda: self.take_lease(lease, owner, ANSWER_LEASE), False)  # type: ignore[attr-defined]
+                if mine:  # the answer kept as its maker let go, just after the look above: taken (B-1919)
+                    found = self.kept_answer(name, key, version)
+                    took = holds(found, later=True)
                 # Another process works it out (its hold: not just a database too busy to give one, B-1838)
                 other = not taken and self._lease_held(lease)
                 if other and before(hit) and not (before(found) and found[2] > hit[2]):  # type: ignore[index]
                     return hit[1]  # type: ignore[index]  (another process works it out again: the one before meanwhile)
-                took = other and before(found)  # (or the database's, when it is the latest)
+                took = took or (other and before(found))  # (or the database's, when it is the latest)
                 # another process works it out, with no answer before to show: taken once written, waited for while
                 # its hold is renewed (it is alive and working, B-1807), up to ANSWER_WAIT_MOST (B-1914)
                 until = time.monotonic() + ANSWER_WAIT_MOST
@@ -154,6 +158,9 @@ class ReportsMixin:
                     found = self.kept_answer(name, key, version)
                     took = holds(found, later=True)
                     if took or not self._lease_held(lease):  # (it stopped, or wrote one for an older stamp)
+                        if not took:  # kept and let go of since the look above: taken (B-1919)
+                            found = self.kept_answer(name, key, version)
+                            took = holds(found, later=True)
                         break
             unkept: Callable[[], Any] | None = None  # what the database was too busy to keep just now (B-1808)
             try:
@@ -179,7 +186,7 @@ class ReportsMixin:
                             del _WORKING[idle]
                 return value
             finally:
-                if not took and taken:
+                if mine:
                     self._let_go(lease, owner, unkept)
         finally:
             if got:

@@ -7,7 +7,9 @@
      are POSTs answered with the new rows ([data-grid-action]).
    * The page viewer (invoice_viewer.js): focusing a field of the form highlights its box on the page; "Teach a
      field" lets the reviewer click the words that hold it (sent with the approval, the supplier's template learns).
-   * OvisOCR2: while it has this invoice in its queue, its progress is looked up again every few seconds.
+   * OvisOCR2: while it has this invoice in its queue, its progress is looked up again every few seconds. The same
+     poll says who else has the invoice open (the company server) and whether the screen is out of date (acted on in
+     another tab or by someone else since it was drawn): it says so once and turns read-only (D-184).
    * Keys: Ctrl+Enter approves (typed in another form or a dialog, it is theirs), Alt+←/→ previous / next invoice
      and Alt+↑ the queue (not in a text box, where they move the caret). Enter in a text box approves nothing: in an
      invoice detail it goes to the next one (Shift+Enter the one before). P opens Park, X opens Reject (only opens).
@@ -48,6 +50,7 @@ if (viewerRoot && viewerData) {
 /* ---------- Checking the edits ---------- */
 
 let timer = 0;
+let stale = null; // what the screen said once it was out of date (showStale): nothing is checked or sent from it after
 let running = null; // the check under way (a promise), with any rounds asked for meanwhile
 let queued = false; // edits made while a check runs: check again after it
 const checking = document.querySelector("[data-checking]"); // "Checking…" beside the approve bar meanwhile
@@ -110,7 +113,7 @@ function applyTaxRows(taxes, posted) {
 async function check() {
   clearTimeout(timer);
   timer = 0;
-  if (!form || readOnly || form.dataset.sending) return; // being approved, or read-only: nothing to check
+  if (!form || readOnly || stale || form.dataset.sending) return; // being approved, read-only or out of date
   if (running) {
     queued = true;
     return running;
@@ -120,6 +123,10 @@ async function check() {
       queued = false;
       const body = formData();
       const answer = await post(`${base}/check`, body);
+      if (answer.stale) {
+        showStale(answer.stale); // acted on in another tab or by someone else since it was drawn (D-184)
+        break;
+      }
       lastCheckOk = Boolean(answer.ok);
       lastDraft = Boolean(answer.draft); // kept as a draft (an edit of the coding), not a tick of "Approve anyway"
       if (answer.ok) applySections(answer, body);
@@ -237,14 +244,15 @@ document.addEventListener(
       // only reach the server after the approval, and be told the invoice is no longer in the queue.
       clearTimeout(timer);
       timer = 0;
-      return;
-    }
-    if (!form || passing === f || !(timer || running)) return;
+      // A check under way: the approval waits for its answer, which draws the draft's revision it is at (B-1937)
+      if (passing === f || !running) return;
+    } else if (!form || passing === f || !(timer || running)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     waiting.add(f);
-    flush().then(() => {
+    (f === form ? running : flush()).then(() => {
       waiting.delete(f);
+      if (f === form && stale) return; // out of date, said by that check: nothing is sent from it
       passing = f;
       f.requestSubmit(e.submitter || undefined);
       passing = null;
@@ -340,7 +348,9 @@ async function gridAction(url, extra, button, undoText = "") {
   }
   try {
     const answer = await post(url, formData(data));
-    if (answer.ok && typeof answer.lines === "string") {
+    if (answer.stale) showStale(answer.stale);
+    else if (answer.ok && typeof answer.lines === "string") {
+      setDraftRev(answer.draft_rev); // kept as the draft: the check after it is at it (D-184)
       setLines(answer.lines);
       offerUndo(answer.toast || { text: undoText || "Lines changed.", tone: "ok" }, snap);
       await check();
@@ -1358,23 +1368,102 @@ document.addEventListener("apc:ask-why", (event) => {
 
 /* ---------- OvisOCR2 ---------- */
 
+/* The screen's poll (the reader panel's): OvisOCR2's progress while it reads the invoice (data-reading: the page is
+   drawn again once it is done); on a screen in the review queue, who else has it open (D-184) and whether it is out
+   of date: approved, parked, rejected or deleted since, or the person's edits saved in another tab. */
 const reader = document.querySelector("[data-reader][data-poll]");
 if (reader) {
   const every = Math.max(5, Number(reader.dataset.poll) || 20) * 1000;
-  // Looked at less often while nothing changes, never while the tab is hidden, and no more once the session ended.
-  // seen: what the panel shows; while it still is, the answer is only "same", without the panel (D-160)
-  poll(() => `${base}/reader?seen=${encodeURIComponent(reader.dataset.tag || "")}`, async (answer) => {
-    if (answer.poll) {
-      if (!answer.same) {
+  const reading = reader.hasAttribute("data-reading");
+  const others = document.querySelector("[data-others]");
+  // Looked at less often while nothing changes (a minute apart at most: who has it open is renewed by it), never
+  // while the tab is hidden, and no more once the session ended. seen: what the panel shows; while it still is, the
+  // answer is only "same", without the panel (D-160). rev, draft, screen: the revisions the screen is at.
+  const address = () => {
+    const ask = new URLSearchParams(location.search);
+    ask.set("seen", reader.dataset.tag || "");
+    if (form && !readOnly) {
+      ask.set("rev", form.elements.rev?.value || "");
+      ask.set("draft", draftRev()?.value || "");
+      ask.set("screen", form.elements.screen?.value || "");
+    }
+    return `${base}/reader?${ask}`;
+  };
+  poll(address, async (answer) => {
+    if (others && typeof answer.others === "string") {
+      others.querySelector("[data-others-text]").textContent = answer.others;
+      others.hidden = !answer.others;
+    }
+    if (answer.stale) {
+      showStale(answer.stale);
+      return true;
+    }
+    if ((answer.reading ?? answer.poll) || !reading) {
+      if (!answer.same && typeof answer.html === "string") {
         reader.innerHTML = answer.html; // drawn by the server, every text escaped
         reader.dataset.tag = answer.tag || "";
       }
-      return false;
+      return !answer.poll;
     }
     await flush(); // the edits are kept: the page then shows the reading, or offers to start over from it
     location.reload();
     return true;
-  }, { everyMs: every, firstMs: every });
+  }, { everyMs: every, firstMs: every, mostMs: 60000 });
+}
+
+// Approve or Send to the manager from a screen out of date: said as its check says it, what was typed kept (B-1936)
+document.addEventListener("apc:stale", (event) => {
+  if (event.detail.form === form) showStale(event.detail.stale);
+});
+
+/** The approve bar's draft revision (each check draws it again, D-184). */
+function draftRev() {
+  return document.querySelector('[form="inv"][name="draft_rev"]');
+}
+
+function setDraftRev(rev) {
+  const box = draftRev();
+  if (box && rev) box.value = rev;
+}
+
+/** Out of date (D-184): said once, above the invoice, and the screen turns read-only. What was typed stays in its
+    boxes to copy; the invoice as it is now opens in a new tab. */
+function showStale(said) {
+  if (stale) return;
+  stale = said;
+  clearTimeout(timer);
+  timer = 0;
+  lockFields();
+  if (approveButton) approveButton.disabled = true;
+  document.querySelector(".inv-actionbar")?.setAttribute("hidden", "");
+  const banner = document.createElement("div");
+  banner.className = "rvw-status warn";
+  banner.setAttribute("role", "alert");
+  banner.dataset.stale = "";
+  const title = document.createElement("div");
+  title.className = "rvw-status-title";
+  const icon = document.createElement("span");
+  icon.className = "ms";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "sync_problem";
+  const text = document.createElement("span");
+  text.textContent = said.text || "Changed since this screen was drawn.";
+  title.append(icon, text);
+  const sub = document.createElement("div");
+  sub.className = "rvw-status-sub";
+  sub.textContent = `${said.sub || ""} `;
+  if (said.url) {
+    const link = document.createElement("a");
+    link.href = said.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = said.link || "Open it as it is now";
+    sub.append(link);
+  }
+  banner.append(title, sub);
+  const at = document.querySelector(".inv-summary");
+  if (at) at.before(banner);
+  else document.querySelector("main")?.prepend(banner);
 }
 
 /* ---------- Keys ---------- */
@@ -1434,7 +1523,7 @@ document.addEventListener("keydown", (e) => {
   // Enter in "Why approve anyway?" approves, as Ctrl+Enter does: the reason is the last thing typed (B-1011).
   const why = e.key === "Enter" && !e.shiftKey && !e.altKey && e.target.matches?.("[data-override-reason]");
   if (((e.ctrlKey || e.metaKey) && e.key === "Enter" || why) && approveButton && form) {
-    if (elsewhere(e.target)) return;
+    if (elsewhere(e.target) || stale) return;
     e.preventDefault();
     flush().then(() => {
       if (!approveButton.disabled) form.requestSubmit(approveButton);
@@ -1460,10 +1549,10 @@ document.addEventListener("keydown", (e) => {
 /* The page left another way (the browser's Back, closing the tab) while an edit waits to be checked: it is sent
    anyway, so the server keeps it as a draft (keepalive: the request outlives the page). */
 window.addEventListener("pagehide", () => {
-  if (!form || readOnly || !timer || form.dataset.sending) return;
+  if (!form || readOnly || stale || !timer || form.dataset.sending) return;
   clearTimeout(timer);
   timer = 0;
-  fetch(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }).catch(() => {});
+  fetchWithin(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }, ACTION_MS).catch(() => {});
 });
 
 /* ---------- Undo: the last change, put back (D-60) ----------
@@ -2396,7 +2485,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.ctrlKey || e.metaKey || e.shiftKey || typing(e.target)) return;
   const pop = { p: "[data-park]", P: "[data-park]", x: "[data-reject]", X: "[data-reject]" }[e.key];
-  const details = pop && document.querySelector(pop);
+  const details = pop && !stale && document.querySelector(pop); // (out of date: the approve bar is gone)
   if (!details) return;
   e.preventDefault();
   document.querySelectorAll("details.pop[open]").forEach((d) => d !== details && d.removeAttribute("open"));
@@ -2690,7 +2779,9 @@ document.addEventListener("apc:session-ended", () => {
   if (!form || readOnly || !account) return;
   try {
     const fields = [...formData()].filter(([, v]) => typeof v === "string");
-    sessionStorage.setItem(UNSAVED, JSON.stringify({ account, fields }));
+    const snap = snapshot(); // the boxes as they are, put back in them if it changed meanwhile (B-1941)
+    snap.edits = snap.edits ? [...snap.edits] : null;
+    sessionStorage.setItem(UNSAVED, JSON.stringify({ account, fields, snap }));
   } catch {
     /* not kept: the edits made since the session ended are lost, as before */
   }
@@ -2701,16 +2792,22 @@ function unsaved() {
   try {
     const kept = JSON.parse(sessionStorage.getItem(UNSAVED) || "null");
     sessionStorage.removeItem(UNSAVED);
-    return kept && account && kept.account === account && !readOnly ? kept.fields : null;
+    return kept && account && kept.account === account && !readOnly ? kept : null;
   } catch {
     return null;
   }
 }
 
-async function putBack(fields) {
+async function putBack({ fields, snap }) {
   const body = new FormData();
   for (const [k, v] of fields) body.append(k, v);
   const answer = await post(`${base}/check`, body);
+  if (answer.stale) {
+    // Changed since (D-184): the page was drawn afresh, so the edits go in its boxes first, read-only there to copy
+    // (B-1941)
+    if (snap) restore(snap);
+    return showStale(answer.stale);
+  }
   if (answer.ok && answer.draft) return location.reload(); // drawn again with them: the draft they are now
   if (answer.error) toast({ text: `Your edits from before you logged in again were not kept: ${answer.error}`, tone: "err" }, 9000);
   return check().then(() => focusFirstToCheck());
