@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import os
 import shutil
 import sqlite3
 import ssl
@@ -122,7 +123,9 @@ def test_the_admins_banner_says_a_certificate_near_its_end_and_follows_its_file(
     cert.write_bytes(_pem(_certificate(soon)))
     notice = health.certificate_notice(str(cert))  # (a new file: read again at once)
     assert notice["tone"] == "warn" and "expires on" in notice["text"]
-    cert.write_bytes(_pem(_certificate(b"200101000000Z")))
+    cert.write_bytes(_pem(_certificate(b"200101000000Z")))  # renewed (here: expired) later on, as IT would
+    later = cert.stat().st_mtime_ns + 2_000_000_000  # (Windows may give two writes within its clock's tick one time)
+    os.utime(cert, ns=(later, later))
     assert health.certificate_notice(str(cert))["tone"] == "err"
 
 

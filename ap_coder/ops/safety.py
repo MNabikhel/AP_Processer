@@ -23,7 +23,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePath
 
 WINDOWS = os.name == "nt"
 DRIVE_REMOTE = 4  # GetDriveTypeW
@@ -98,10 +98,18 @@ def mount_of(folder: str, mounts: list[tuple[str, str]]) -> tuple[str, str]:
     return best
 
 
+def _written(folder: str | Path, windows: bool) -> str:
+    """``folder`` as text in the form of the system it is looked at for (a POSIX path's forward slashes kept when a
+    Path is looked at as a POSIX one, whatever this machine is: the tests on Windows)."""
+    if not windows and isinstance(folder, PurePath):
+        return folder.as_posix()
+    return str(folder)
+
+
 def network_share(folder: str | Path, *, windows: bool = WINDOWS, drive_type: Callable[[str], int] | None = None,
                   mounts: list[tuple[str, str]] | None = None) -> str:  # fmt: skip
     """How ``folder`` is on another computer, in words ("" when it is on this one, or that can't be told)."""
-    text = str(folder).strip().strip('"')
+    text = _written(folder, windows).strip().strip('"')
     if windows:
         if _unc(text):
             return f"a network path ({text})"
@@ -130,7 +138,7 @@ def host_share(folder: str | Path, *, windows: bool = WINDOWS, mounts: list[tupl
     if windows:
         return ""
     try:
-        real = os.path.realpath(str(folder).strip().strip('"'))
+        real = os.path.realpath(_written(folder, windows).strip().strip('"'))
     except OSError:
         return ""
     point, kind = mount_of(real, _mounts() if mounts is None else mounts)

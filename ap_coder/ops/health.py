@@ -191,7 +191,8 @@ def certificate_notice(certfile: str | None) -> dict[str, str] | None:
     if not certfile:
         return None
     try:
-        stamp: Any = os.stat(certfile).st_mtime_ns
+        found_file = os.stat(certfile)
+        stamp: Any = (found_file.st_ino, found_file.st_mtime_ns, found_file.st_size)
     except OSError:
         stamp = None
     with _NOTICES_LOCK:
