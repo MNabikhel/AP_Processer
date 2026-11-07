@@ -496,8 +496,9 @@ the launcher.
   lease "answers/refresher", which the askers count on) works the wants out one at a time, oldest first, through
   `ap_coder/web/refresh.py:ANSWERS` (each answer's own caller, so its format, stamp and settle), and at its start
   those asked in the last day; with none (a first start: a database never served, or not asked anything for a day),
-  each page's default view, as the page itself picks it, Month-end's first (`refresh.py:DEFAULTS`, D-200), so the
-  first person to open a report takes a kept answer too. A request with nothing to show (the first ask, another
+  each page's default view, as the page itself picks it, Month-end's first (`refresh.py:DEFAULTS`, D-200), kept warm
+  until someone asks it (a day at most, B-2051), so the first person to open a report takes a kept answer too; a
+  database restored while it runs gets its own start (B-2052). A request with nothing to show (the first ask, another
   format after an update) works it out, or waits for the refresher's work under way, as before; so does one past the
   cap or with the refresher down. A laptop works each out in the request, as before.
 

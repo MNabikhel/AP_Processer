@@ -3995,24 +3995,36 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
 - **D-200** · **At a first start the background process works out each report's default view before anyone asks**
   (scale goal, target 1's first minutes).
   - **Why:** D-198's refresher, at its start, works out again the settled answers asked in the last day. On a
-    database never served, or not asked anything for a day (a fresh install, the first start after an update that
-    changes what a report keeps), nothing was asked, so the first person to open each report worked it out in their
-    web worker. At 300,000 invoices with 100 people that start measured Month-end's first build of its lines by
-    invoice (D-194, `billing_facts`) 12-50 s (four asks at once, three waiting for the first), Spend 15.8 s, Sales
-    tax 9-11 s, Learning 6-12 s, Vendors 7 s, and the other requests of those workers waited behind that work: p99
-    5.78 s and 7 requests over 30 s in the first 10 minutes (the hour after: p99 2.02 s, none over 30 s).
-  - **What:** when the refresher's start finds nothing asked within `ASKED_WITHIN` (`want_again`: none waiting), it
-    works out each settled answer's default view, what its page asks opened with nothing in its address, today
-    (`web/refresh.py` `DEFAULTS`, beside `ANSWERS`), in this order: Month-end's three first, the biggest (the lines
-    received and not invoiced, the invoices not in the ERP, the recurring vendors for its period end), then the
-    recurring vendors for today (the queue's late pill, the Vendors page), Spend's currencies and figures, Sales tax,
-    Learning's three, the Vendors page's totals and workload, Insights' two.
+    database never served (a fresh install, a company's database moved onto the server) or not asked anything for a
+    day (a server started again after a quiet day or a weekend, an update among them), nothing was asked, so the first
+    person to open each report worked it out in their web worker. At 300,000 invoices with 100 people that start
+    measured Month-end's first build of its lines by invoice (D-194, `billing_facts`) 12-50 s (four asks at once,
+    three waiting for the first), Spend 15.8 s, Sales tax 9-11 s, Learning 6-12 s, Vendors 7 s, and the other
+    requests of those workers waited behind that work: p99 5.78 s and 7 requests over 30 s in the first 10 minutes
+    (the hour after: p99 2.02 s, none over 30 s).
+  - **What:** when the refresher's start finds nothing asked within `ASKED_WITHIN` (`want_again`: none asked since,
+    a want left waiting from before not counted, B-2053), it works out each settled answer's default view, what its
+    page asks opened with nothing in its address, today (`web/refresh.py` `DEFAULTS`, beside `ANSWERS`), in this
+    order: Month-end's three first, the biggest (the lines received and not invoiced, the invoices not in the ERP,
+    the recurring vendors for its period end), then the recurring vendors for today (the queue's late pill, the
+    Vendors page), Spend's currencies and figures, Sales tax, Learning's three, the Vendors page's totals and
+    workload, Insights' two.
     - Each goes through `ANSWERS` with its arguments as a want keeps them (JSON), inside `reports.refreshing()`
       (`default_view`), so it is worked out by its caller and kept for every process under the very question the page
       asks; one that is kept and holds still (a database served before, not asked for a day) is taken, not worked
       out. One at a time, a want waiting taken before the next; one whose work, or its arguments', fails is logged
       and the others go on; the refresher stopped stops them after the one under way; logged once at the end ("the
       reports' default views worked out at a first start: N").
+    - **Kept warm until asked** (B-2051): after that pass, a default view nobody asked since the start (no
+      `answer_wants` row of its name and question asked since: `Store.answer_seen`; its question is the one
+      `reports.refreshing()` saw its caller ask) is asked again while no want waits, once its answer is `WARM_AGAIN`
+      old (`STALE_MOST / 2`, 15 minutes), looked at every `WARM_LOOK` (60 s): a cheap take while it holds, worked out
+      again once something changed, so one younger than `STALE_MOST` is there to show when the first person comes
+      (the night's intake, JD Edwards' nightly sync); for `ASKED_WITHIN` after the start at most. One a page asked is
+      left to D-198 (worked out again as it is asked); one that failed is not asked again before the next start.
+    - **Each database its start** (B-2052): the start (the answers asked lately, or a first start's default views) is
+      done for each database the refresher finds (`Store.database_id`, its `summary_id`): a restore on the running
+      server (another `summary_id`, its wants of the database before forgotten) gets one once the restore is in.
     - The arguments are picked by the code the page runs, moved into functions both call: `web/pages/month_end.py`
       `asked` (the period end and the settle), `web/pages/spend.py` `asked` (the currencies offered, the one shown,
       and the dates, currency, categories and rates `spend.figures` is asked with) with `spend.default_period`,
@@ -4025,8 +4037,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       `start_background_work` makes the server's background Store the company server's (`background_answers`).
   - **Same:** a laptop (no background process, so no refresher: none of this runs); a start that finds answers asked
     in the last day (D-198, unchanged); what each page shows and asks (its choices moved into the functions, not
-    changed: a test opens each page and finds it asks exactly the questions and arguments warmed). A default view of
-    today's date asked tomorrow is another question, worked out by its first ask as before: a first start only.
+    changed: a test opens each page and finds it asks exactly the questions and arguments warmed, the clock past
+    every settle, so only a stamp that holds is taken). A default view of today's date is asked anew by each pass
+    kept warm, so the next day's question within a day of the start is warmed too.
   - **Measured** (a 20,000-invoice seed of its own, `bench seed --invoices 20000 --workers 2`, never served; a web
     worker process with nothing in its memory opening each page in turn with nothing in its address, its refresher's
     hold taken; after a first start without the warm-up, and after the background process's warm-up; two rounds,
@@ -4047,7 +4060,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     process: 3.97 s (2.64 s of CPU), month-end's received lines 1.28 s of it, its invoices not in the ERP 0.50 s,
     Spend's figures 0.27 s. At 300,000 invoices the work moved is the first start's 12-50 s, 15.8 s, 9-11 s, 6-12 s
     and 7 s above: done by the background process at its start, one answer at a time, instead of in the first
-    person's web worker. The first 10 minutes at 300,000 are to be measured again with it.
+    person's web worker. The first 10 minutes at 300,000 are to be measured again with it. Kept warm, nothing
+    changed (each of the 14 due, a cheap take): 93 ms of CPU a pass (the Vendors page's totals 42 ms: the vendor
+    list read around them; Sales tax 12 ms), at most one a minute while nobody asked them, so 0.16% of a core; a look
+    with none due 16 ms.
   - **Alternatives:** every period anyone might ask worked out at each start (D-198's alternative; this is one view
     a page, at a first start only); the warm-up at every start (one that has asks works out again those, the views
     people use); the default arguments written out in `refresh.py` (a page that changes its default would warm
@@ -4056,6 +4072,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Left:** a start that finds asks works out only those, so a report nobody opened that day is worked out by its
     first ask, as before; a view with an address of its own (another period, currency, tab) likewise. The
     background process's share of the machine's cores in its first minutes grows by the warm-up (one answer at a
-    time, a few minutes at 300,000).
-  - (`ap_coder/web/refresh.py`, `web/pages/month_end.py`, `web/pages/spend.py`, `web/pages/sales_tax.py`,
-    `erp/insights.py`, `web/app.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/web/test_refresh.py`)
+    time, a few minutes at 300,000), and while nobody asked them under a stream of changes by each default view
+    worked out again every `WARM_AGAIN` (at 300,000 up to the first start's minute or so of work every 15 minutes, a
+    day at most). After a quiet half hour, a change within the minute (`WARM_LOOK`) before the first person comes
+    can still have that person's web worker work the answer out. A default view whose question changed (a PO's
+    change, a JD Edwards posting: in month-end's question) is asked under the new one once the one before is
+    `WARM_AGAIN` old.
+  - (`ap_coder/web/refresh.py`, `core/store/reports.py`, `web/pages/month_end.py`, `web/pages/spend.py`,
+    `web/pages/sales_tax.py`, `erp/insights.py`, `web/app.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/web/test_refresh.py`)

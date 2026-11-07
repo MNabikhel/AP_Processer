@@ -71,8 +71,9 @@ Why these numbers:
   Since these were measured, the background process works the reports' figures out again (D-198): the person who
   opens one after a change is given the figures of a moment before at once, like the others, and nothing waits
   behind that work in a web worker; at its start it works out again those asked in the last day, and on a database
-  nobody used in the last day (its first start, or after a quiet day) each report as it first opens (D-200), so the
-  first person to open one doesn't wait for it either. The hour at 300,000 is to be measured again with it.
+  nobody used in the last day (its first start, or after a quiet day) each report as it first opens, kept up to date
+  until someone opens it (D-200), so the first person to open one doesn't wait for it either. The hour at 300,000
+  is to be measured again with it.
 
   *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
   32; to be measured on the real server):

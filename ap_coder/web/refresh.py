@@ -22,6 +22,7 @@ import datetime as dt
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -34,6 +35,10 @@ from ap_coder.web.pages import spend as spend_page
 ASKED_WITHIN = 24 * 3600.0  # at its start the refresher works out again the answers asked this long ago at most
 POLL = 0.5  # seconds between two looks for a want while none waits
 LEASE, RENEW = 30.0, 5.0  # its hold (``reports.REFRESHER``): askers count on it while it is renewed
+# A first start's default view nobody asked yet is asked again once its answer is this old, a cheap take while it
+# holds (looked at every WARM_LOOK seconds while no want waits), so one is always there to show (STALE_MOST), for
+# ASKED_WITHIN after the start at most (B-2051)
+WARM_AGAIN, WARM_LOOK = reports.STALE_MOST / 2, 60.0
 
 
 def _day(text: str) -> dt.date:
@@ -106,25 +111,76 @@ def refresh(store: Any, want: dict[str, Any]) -> bool:
     return True
 
 
-def default_view(store: Any, name: str, default: Callable[[Any], list[Any]]) -> bool:
+def default_view(store: Any, name: str, default: Callable[[Any], list[Any]]) -> tuple[bool, str | None]:
     """At a first start (D-200): answer ``name`` as a page asks it opened with nothing in its address (``default``,
     one of ``DEFAULTS``), its arguments as a want keeps them (JSON), worked out through ``ANSWERS`` and kept for every
-    process; one whose work fails (or its arguments') is logged, the others go on. Whether it was worked out."""
+    process; one whose work fails (or its arguments') is logged, the others go on. (Whether it was worked out, the
+    question it is kept under: its ``asked_key``, None when not known.)"""
     try:
-        with reports.refreshing():
+        with reports.refreshing() as asked:
             ANSWERS[name](store, json.loads(json.dumps(default(store))))
     except Exception:  # noqa: BLE001 - any answer's failure: logged, the others go on
         logging.getLogger(__name__).warning("the %s answer's default view was not worked out at a first start", name,
                                             exc_info=True)  # fmt: skip
-        return False
-    return True
+        return False, None
+    return True, next((key for seen, key in reversed(asked) if seen == name), None)
+
+
+class _Views:
+    """A first start's default views on one database (D-200): each worked out once, in ``DEFAULTS``' order; then those
+    nobody asked since the start kept warm, for ``ASKED_WITHIN`` at most (B-2051)."""
+
+    def __init__(self, began: float) -> None:
+        self.began = began  # (``reports.wall``)
+        self.left = list(range(len(DEFAULTS)))  # those to ask now, by their place in DEFAULTS
+        self.warm: set[int] = set(self.left)  # those nobody asked yet
+        self.keys: dict[int, str] = {}  # the question each was kept under last
+        self.first, self.made, self.look = True, 0, 0.0
+
+    def step(self, store: Any) -> bool:
+        """One default view asked (or those kept warm looked at): whether one was."""
+        log = logging.getLogger(__name__)
+        if not self.left and self.warm and time.monotonic() >= self.look:
+            self.look = time.monotonic() + WARM_LOOK
+            self._due(store)
+            log.debug("the reports' default views nobody asked yet: %d of %d asked again", len(self.left),
+                      len(self.warm))  # fmt: skip
+        if not self.left:
+            return False
+        n = self.left.pop(0)
+        worked, key = default_view(store, *DEFAULTS[n])
+        if key is None:
+            self.warm.discard(n)  # (failed, logged, or its question not known: not kept warm)
+        else:
+            self.keys[n] = key
+        if self.first:
+            self.made += worked
+            if not self.left:
+                log.info("the reports' default views worked out at a first start: %d", self.made)
+                self.first = False
+        return True
+
+    def _due(self, store: Any) -> None:
+        """Those kept warm that are due again (their answer ``WARM_AGAIN`` old) waiting to be asked; one asked by a
+        page since the start is left to D-198 (worked out again as it is asked)."""
+        now = reports.wall()
+        if now - self.began > ASKED_WITHIN:
+            self.warm.clear()
+            return
+        for n in sorted(self.warm):
+            made, asked = store.answer_seen(DEFAULTS[n][0], self.keys[n])
+            if asked is not None and asked >= self.began:
+                self.warm.discard(n)
+            elif made is None or now - made >= WARM_AGAIN:
+                self.left.append(n)
 
 
 class Refresher:
     """The wants worked out by the company server's background process (``app.start_background_work``), one at a time,
     while it holds ``reports.REFRESHER`` (one refresher a database; renewed on a thread of its own, an answer's work
     may last longer than the hold); at its start, those asked in the last ``ASKED_WITHIN`` first, and with none (a
-    first start), each of ``DEFAULTS`` while no want waits (D-200)."""
+    first start), each of ``DEFAULTS`` while no want waits (D-200), kept warm until asked (B-2051). Its start is done
+    again for another database (a restore while it runs, B-2052)."""
 
     def __init__(self, store_factory: Callable[[], Any]) -> None:
         self.store_factory = store_factory
@@ -144,21 +200,19 @@ class Refresher:
         held = threading.Event()
         beat = threading.Thread(target=self._hold, args=(held,), name="ap-coder-answers-hold", daemon=True)
         beat.start()
-        started, views, made = False, [], 0  # (views: the default views left to work out at a first start)
+        started: str | None = None  # (the database its start was done for)
+        views: _Views | None = None  # (a first start's default views, D-200)
         while not self._halt.is_set():
             try:
                 store = self.store_factory()
                 want = None
                 if held.is_set() and not store.restoring():
-                    if not started:  # (those asked lately: after a restart or an update, worked out first)
+                    if (db := store.database_id()) != started:  # (those asked lately: worked out first)
                         waiting = store.want_again(reports.wall() - ASKED_WITHIN)
                         log.info("the reports' answers asked lately, waiting to be worked out again: %d", waiting)
-                        started, views = True, [] if waiting else list(DEFAULTS)  # (none: a first start, D-200)
+                        started, views = db, None if waiting else _Views(reports.wall())  # (none: a first start)
                     want = store.next_want()
-                    if want is None and views:  # (one at a time, a person's want first)
-                        made += default_view(store, *views.pop(0))
-                        if not views:
-                            log.info("the reports' default views worked out at a first start: %d", made)
+                    if want is None and views is not None and views.step(store):  # (a person's want first)
                         continue
             except Exception:  # noqa: BLE001 - a busy database: looked at again
                 log.debug("no answer to work out again looked for", exc_info=True)
