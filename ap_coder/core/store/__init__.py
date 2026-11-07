@@ -20,8 +20,8 @@ approving, the second approval), ``register`` (the ERP's invoice register, JD Ed
 D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the
 invoice files and others a backup holds, D-143), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages
 and uploads kept for a short while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts,
-D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings ledger kept across a
-restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
+D-97), ``hub`` (what the finance hub feed reads, D-103), ``postings`` (the JD Edwards postings: the table's reads and writes,
+D-189, and their ledger kept across a restore, D-105), ``summary`` (the invoices' summary the lists, the search and the reports read, D-110), ``managers``
 (a manager confirming an invoice's cost allocation, D-138), ``suppliers`` (every supplier's record at once, for the
 pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
 (the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every
@@ -117,6 +117,7 @@ from .learning import LearningMixin
 from .lessons import LessonsMixin
 from .managers import ManagersMixin
 from .page_queue import PageQueueMixin
+from .postings import PostingsMixin
 from .purchasing import PurchasingMixin
 from .register import RegisterMixin
 from .reports import ReportsMixin
@@ -148,6 +149,7 @@ class Store(
     ImportsMixin,
     ReportsMixin,
     BulkJobsMixin,
+    PostingsMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 
