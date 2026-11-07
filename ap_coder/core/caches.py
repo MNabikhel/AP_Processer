@@ -73,10 +73,11 @@ def size_of(value: Any, sample: int = SAMPLE) -> int:
 class Bounded(dict):
     """A per-process cache's dict whose entries are kept within ``most`` bytes: each entry's size is worked out as it
     is kept (``size(value)``, by default ``size_of``), and the entries used longest ago (the first in the dict) are let
-    go while they are over. An entry is used when it is kept or read (``get``). One bigger than ``most`` alone is not
-    kept at all. The caller's own bounds (entries, rows) stay as they were, and so does its locking: the dict changes
-    only where the caller changes it, under the caller's lock. ``popitem(last=False)`` and ``move_to_end`` as an
-    ``OrderedDict``'s (the oldest first, put last)."""
+    go while they are over. An entry is used when it is kept or read (``get``). The latest kept always stays, alone
+    when it is bigger than ``most`` (then worked out once, not on every ask: an answer is bounded by what makes it,
+    the learning memory by FEEDBACK_READ lessons). The caller's own bounds (entries, rows) stay as they were, and so
+    does its locking: the dict changes only where the caller changes it, under the caller's lock.
+    ``popitem(last=False)`` and ``move_to_end`` as an ``OrderedDict``'s (the oldest first, put last)."""
 
     def __init__(self, name: str, most: int, size: Callable[[Any], int] | None = None) -> None:
         super().__init__()
@@ -87,8 +88,6 @@ class Bounded(dict):
     def __setitem__(self, key: Hashable, value: Any) -> None:
         size = max(0, int(self.size(value)))
         self.pop(key, None)
-        if size > self.most:
-            return  # (not kept: worked out again when asked)
         while self and self.held + size > self.most:
             self.pop(next(iter(self)))
         dict.__setitem__(self, key, value)

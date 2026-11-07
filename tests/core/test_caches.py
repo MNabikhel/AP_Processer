@@ -79,9 +79,11 @@ def test_a_bounded_cache_lets_go_of_the_ones_used_longest_ago_past_its_bytes():
     assert kept.get("b") and list(kept) == ["c", "d", "b"]  # read: used now, the last to go
     kept["e"] = "y" * 3000
     assert list(kept) == ["d", "b", "e"]
-    kept["big"] = "z" * 10_001  # bigger than the whole: not kept, nothing let go for it
-    assert "big" not in kept and list(kept) == ["d", "b", "e"]
     kept["b"] = "w" * 100  # kept again: its new size, the last
+    assert list(kept) == ["d", "e", "b"] and kept.held == 6100
+    kept["big"] = "z" * 10_001  # bigger than the whole: kept alone (worked out once, not on every ask)
+    assert list(kept) == ["big"] and kept.held == 10_001
+    kept["d"], kept["e"], kept["b"] = "x" * 3000, "y" * 3000, "w" * 100
     assert list(kept) == ["d", "e", "b"] and kept.held == 6100
     assert kept.pop("d") and kept.popitem(last=False) == ("e", "y" * 3000) and kept.held == 100
     del kept["b"]
