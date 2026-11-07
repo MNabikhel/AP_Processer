@@ -22,6 +22,9 @@ def conn():
 def test_the_names_give_the_sql_the_store_wrote_before():
     assert _in_list("id") == dialect.in_list("id") == "id IN (SELECT value FROM json_each(?))"
     assert dialect.json_get("e.detail", "$.key") == "json_extract(e.detail, '$.key')"
+    assert dialect.json_values("doc", ["$.a", "$.b"]) == "json_extract(doc, '$.a', '$.b')"
+    with pytest.raises(ValueError):
+        dialect.json_values("doc", ["$.a"])  # (one path: json_get, whose answer is the value itself, not a list)
     assert dialect.NOW_SECONDS == "((julianday('now') - 2440587.5) * 86400.0)"
     assert dialect.upsert("settings", ("key", "value"), ("key",)) == (
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"

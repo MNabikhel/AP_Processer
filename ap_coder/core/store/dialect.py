@@ -31,6 +31,16 @@ def json_get(value: str, path: str) -> str:
     return f"json_extract({value}, '{path}')"
 
 
+def json_values(value: str, paths: Sequence[str]) -> str:
+    """The values at ``paths`` (two or more ``'$.key'``) of the JSON text ``value``, as one JSON array's text (SQLite's
+    ``json_extract`` with several paths; a missing one null). PostgreSQL: ``jsonb_build_array((value)::jsonb #> '{a}',
+    ...)::text``."""
+    if len(paths) < 2:
+        raise ValueError("json_values takes two paths or more (one: json_get)")
+    quoted = ", ".join(f"'{path}'" for path in paths)
+    return f"json_extract({value}, {quoted})"
+
+
 def json_valid(value: str) -> str:
     """Whether the text ``value`` is JSON (1 or 0). PostgreSQL 16: ``pg_input_is_valid(value, 'jsonb')``."""
     return f"json_valid({value})"

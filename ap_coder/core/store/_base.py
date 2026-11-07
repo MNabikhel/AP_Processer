@@ -44,7 +44,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # _SCHEMA, no version of its own: an older version leaves it be; a vendor's older lessons by line, learning.py, D-178),
 # and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185), and
 # billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
-# purchasing.py, D-194)
+# purchasing.py, D-194), and answer_wants (by _SCHEMA, no version of its own either: the settled answers the server's
+# background process works out again, reports.py, D-198)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -136,6 +137,13 @@ VENDOR_LOGGED = ("INSERT INTO vendor_changes (vendor_key, invoice_id) SELECT {0}
 # QUEUE_CHANGES_KEPT are kept. Made with the vendors' log (``summary.make_triggers``).
 QUEUE_CHANGES_KEPT = 20_000
 QUEUE_CHANGES = "CREATE TABLE IF NOT EXISTS queue_changes (seq INTEGER PRIMARY KEY, id INTEGER NOT NULL)"
+# The settled answers asked on the company server, by name and what was asked (``reports.asked_key``): what the
+# background process works each out again from (``args``, JSON), the database it was asked of (``summary_id``), when it
+# was last asked and, while it waits for the background process, when it was first wanted (D-198, reports.py). Made by
+# ``_SCHEMA`` and in a restore's copy of an older backup (``_own_triggers``).
+ANSWER_WANTS = ("CREATE TABLE IF NOT EXISTS answer_wants (name TEXT NOT NULL, asked TEXT NOT NULL, args TEXT NOT NULL, "
+                "db TEXT NOT NULL, asked_at REAL NOT NULL, wanted_at REAL, tries INTEGER NOT NULL DEFAULT 0, "
+                "PRIMARY KEY (name, asked))")  # fmt: skip
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -322,6 +330,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS bulk_jobs_one ON bulk_jobs (owner, db) WHERE s
 CREATE INDEX IF NOT EXISTS bulk_jobs_state ON bulk_jobs (state, id);
 CREATE INDEX IF NOT EXISTS bulk_jobs_owner ON bulk_jobs (owner, id);
 """
+_SCHEMA += ANSWER_WANTS + ";\n"  # (made in a restore's copy of an older backup too)
 
 # The page reader's queue (``page_reads.status``, ``page_queue``). A read not renewed for READING_STALE_SECONDS was
 # interrupted (the computer slept, its process paused): it waits in line again. ``reader`` names the process reading

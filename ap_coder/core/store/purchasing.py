@@ -29,6 +29,18 @@ from .reports import _version
 from .summary import BIT, fetch_rows
 
 BILLING_BATCH = 500  # the codings ``billing_codings`` reads at a time
+# What ``po_invoices`` reads of each invoice's coding (the approved one, else AP Coder's): SQLite writing the coding's
+# own text of each value; the coding itself when it is not an object of valid JSON, for Python to read as before.
+PO_CODING = ("subtotal", "invoice_date", "line_items")
+_PO_INVOICES = f"""
+WITH coded AS (SELECT id, status, invoice_number, invoice_date, export_batch,
+                      COALESCE(NULLIF(final_output, ''), NULLIF(ai_output, ''), '{{}}') AS doc FROM invoices
+               WHERE po_key = ? AND status IN {_ACTIVE_IN}),
+read AS (SELECT *, CASE WHEN NOT {dialect.json_valid("doc")} THEN 0 ELSE json_type(doc) = 'object' END AS ok FROM coded)
+SELECT id, status, invoice_number, invoice_date, export_batch,
+       CASE WHEN ok THEN {dialect.json_values("doc", [f"$.{k}" for k in PO_CODING])} END,
+       CASE WHEN NOT ok THEN doc END FROM read ORDER BY id
+"""
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
 # Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
 # null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
@@ -402,26 +414,22 @@ class PurchasingMixin:
             ]
 
     def po_invoices(self, key: str, exclude_id: int | None = None) -> list[dict[str, Any]]:
-        """Invoices quoting this PO (in review or approved), with their current coding and export batch (None: not
-        exported yet)."""
+        """Invoices quoting this PO (in review or approved), with what a PO's match and page read of their current
+        coding (``coding``: its subtotal, invoice date and lines, ``PO_CODING``) and export batch (None: not exported
+        yet). SQLite reads those out of each coding, the rest of it not decoded: a PO billed by every invoice of a big
+        vendor has thousands (3,381 at 300,000 invoices), whose whole codings took 1.5 s to decode at each open and
+        check of one of them (D-199)."""
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output, export_batch FROM invoices "
-                "WHERE po_key = ? AND status IN " + _ACTIVE_IN + " ORDER BY id",
-                (key, *ACTIVE_STATUSES),
-            ).fetchall()
-        return [
-            {
-                "id": r["id"],
-                "status": r["status"],
-                "invoice_number": r["invoice_number"],
-                "invoice_date": r["invoice_date"],
-                "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
-                "export_batch": r["export_batch"],
-            }  # fmt: skip
-            for r in rows
-            if r["id"] != exclude_id
-        ]
+            rows = conn.execute(_PO_INVOICES, (key, *ACTIVE_STATUSES)).fetchall()
+        out = []
+        for n, status, number, date, batch, facts, doc in rows:
+            if n == exclude_id:
+                continue
+            # Not an object of valid JSON: the coding read as it was, failing as it did.
+            coding = dict(zip(PO_CODING, json.loads(facts), strict=True)) if doc is None else json.loads(doc)
+            out.append({"id": n, "status": status, "invoice_number": number, "invoice_date": date, "coding": coding,
+                        "export_batch": batch})  # fmt: skip
+        return out
 
     def vendor_invoices_without_po(self, key: str) -> list[dict[str, Any]]:
         """This vendor's active invoices that quote no PO, with their coding (they may still bill a PO line)."""

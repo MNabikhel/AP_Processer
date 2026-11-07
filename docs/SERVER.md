@@ -68,6 +68,10 @@ Why these numbers:
   worker make the slowest 1%. Memory: each web worker about 1 GB on 300,000 invoices (its caches bounded, D-195),
   the background process 150 MB, each capture process 320 MB. The first minutes after the first start on a big
   database, and after an update that changes what the reports keep, are slower: each report is worked out once.
+  Since these were measured, the background process works the reports' figures out again (D-198): the person who
+  opens one after a change is given the figures of a moment before at once, like the others, and nothing waits
+  behind that work in a web worker; at its start it works out again those asked in the last day. The hour at 300,000
+  is to be measured again with it.
 
   *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
   32; to be measured on the real server):

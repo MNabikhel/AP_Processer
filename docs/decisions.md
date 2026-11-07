@@ -2531,6 +2531,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     in `date_format`; undated vouchers swept by the whole read; a read's first day left alone; a PO's lines its open
     ones; a read complete only on an empty or shorter page; the lease checked each page, `MAX(seen)`; a bill's
     copies its vouchers; a connection unused 30 seconds not used again; `PageRepeated` for the live check.
+  - **Amended** (7 Nov 2026, phase 8 part 2): another writer beside the sync (an approval during the nightly read)
+    waits as long as the sync's write under way, and longer when SQLite's busy timeout, retrying after 1, 2, 5, 10
+    ms... then every 100 ms, misses the moments between its short writes (each 7-40 ms here): its single longest
+    wait swings run to run (0.1-1.4 s here and on CI) while its p99 stays 0.02-0.08 s. The volume test asserts the
+    p99 under 0.5 s and the longest under 3 s in each of the four syncs (it asserted the longest under 0.5 s, which
+    held by chance). Leaving the lock free between the writes (pausing as long as each held it) was tried: 0.034 s
+    at most on Linux, but on Windows, where each write holds longer, the volume run took 1,957 s for 785 s and still
+    waited 1.4 s, so it was taken out. Left: an approval during the nightly sync can wait about a second, rarely.
   - (`erp/jde_sync.py`, `erp/jde_ais.py`, `erp/jde_orchestrations.json`, `core/store/{register,invoices,vendors,
     purchasing,_base,__init__}.py`, `ops/jde_cmd.py`, `web/pages/settings_jde.py`, `web/templates/settings_jde.html`,
     `docs/JDE_ORCHESTRATIONS.md`, `docs/JDE_E1.md`; `tests/fake_ais.py`, `tests/erp/test_jde_sync_scale.py`,
@@ -3861,3 +3869,126 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     was a minute at most before); its CSV, what is booked, is worked out exactly.
   - (`ap_coder/core/store/reports.py`, `core/store/summary.py`, `core/store/migrations.py`, `core/store/vendors.py`,
     `erp/insights.py`, `web/pages/vendors.py`, `docs/HOW_IT_RUNS.md`; `tests/core/test_kept_answers.py`)
+- **D-198** · **A settled answer worked out again by the background process, never by a request that has one to
+  show** (scale goal, target 1's p99).
+  - **Why:** phase 8's hour of 100 people on 300,000 invoices (4 web workers, 4 cores) met every target but p99: 5.50 s
+    for 3 s. Once a report's settled answer (D-164, D-197) no longer held, the web worker of the first person to open
+    the page worked it out (server p95: Spend 11.4 s, Month-end 8.7 s, Vendors 6.0 s, Insights 6.0 s, Sales tax
+    5.8 s), and that worker's other requests waited behind its one running thread (the queue p99 3.6 s, the invoice
+    4.5 s, the check 3.4 s). On a database never served, and after an update that changes an answer's format, the
+    first minutes worked every answer out at once in the web workers.
+  - **What:** on the company server a settled answer is worked out again by the background process; a request that
+    has one to show takes it at once.
+    - `Store.shared_answer(..., again=)`: what the answer is worked out again from (JSON: dates as ISO text), given by
+      each caller of a settled answer. With it, `settle` and `Store.background_answers` (set by `create_app` in server
+      mode; a laptop's is off, and nothing of this runs there), once an answer of this database (`summary_id`) and
+      format no longer holds (changed, past its settle) and the background process's refresher runs (its `ephemeral`
+      lease `answers/refresher`, 30 s, renewed every 5 s), the request takes the latest kept, its own memory's or the
+      database's, whose work began less than `STALE_MOST` ago (2 x `SETTLE_MOST`: 30 minutes), and leaves a want
+      (`reports.py` `_meanwhile`): one row of `answer_wants` per name and question (`asked_key`), with the arguments,
+      the database's `summary_id`, when it was last asked and when it was first wanted: one want however many ask,
+      its place in line kept. A request with nothing to show (the first ask, another format after an update, only
+      another database's after a restore), or past the cap, or with the refresher down (its lease run out), works it
+      out, or waits for another's work under way, exactly as before (B-1834, B-1838, B-1914, B-1919 unchanged).
+    - **The refresher** (`web/refresh.py` `Refresher`, started by `app.start_background_work` on the server, beside
+      the downloads and the bulk approvals: the background process, or the one process of `--workers 1`): one thread,
+      one refresher a database (its lease), the oldest want first, one at a time, worked out through `ANSWERS` (each
+      answer by its name: its own caller, the arguments read back, so its version, format, stamp and settle are the
+      caller's; inside `reports.refreshing()` it is worked out there, not wanted again) under the answer's own hold
+      (`answer/<name>/<key>`: never two processes on one answer, B-1807), kept for every process (`keep_answer`), the
+      want dropped. A want that fails (its arguments not read back, an answer AP Coder no longer has, its work
+      raising) is logged, waits again behind the others and is dropped, row and all, after `WANT_TRIES` (3); a
+      database too busy to drop one stops nothing (it is taken again, held by then).
+    - **At its start** the refresher works out again every answer of this database asked in the last day
+      (`ASKED_WITHIN`), the latest asked first: `asked_at` is written with each want and, as an answer is asked, at
+      most once an hour a process (`ASKED_NOTE`: no write at every page); the rows of another database (before a
+      restore) are forgotten then and by the downloads' sweep. After a restart or an update the answers people were
+      looking at are worked out before they ask them again.
+    - **Worked out again this way:** Spend's figures and currencies (30 s, `erp/spend.py`), Insights' figures and
+      operations (60 s) and the Vendors page's workload (by its own work, `erp/insights.py`), Sales tax (30 s),
+      Learning's three (corrections, metrics, approvals: 60 s, `learning.SETTLED`), the recurring vendors (60 s: the
+      queue's late pill, Vendors, Month-end), month-end's received-not-invoiced lines and invoices not in the ERP on
+      its page (30 s; `accruals.received_not_invoiced` and `accruals.not_in_erp`, split out of `build`), and the
+      Vendors page's totals, moved from each worker's `summary_memo` onto `shared_answer` (`vendor-totals-1`): one
+      answer for every process. **Exact, as before:** the duplicate audit's pairs, month-end's CSV (its lines and
+      recurring vendors asked with no settle), the vendor lists of Statements and the JD Edwards worksheet, a vendor's
+      controls and a vendor opened that the settled totals don't have (`vendor_summaries()`), the rail's counts (each
+      process's, 5 s), and everything a check, an approval, an export or a posting decides with.
+    - **How far behind:** a page's figures may be behind a change by its settle (`settle_for`: the caller's, or ten
+      times the answer's work, 15 minutes at most) plus the refresher's line (one answer at a time: under a stream of
+      changes about one round of the answers being asked), never more than `STALE_MOST` (30 minutes: past it the
+      request works it out), never another database's or another format's (B-1834's and B-1838's rules).
+    - **The table:** `answer_wants`, made by `_SCHEMA` (no version of its own), and in a restore's copy of an older
+      backup before it goes in (`backups._own_triggers`, as B-2045 did for `report_answers.lasted`): a page asked
+      while the data folder's files are copied reads it.
+  - **Measured** (the 60,000-invoice seed, `bench seed --invoices 60000`; one web worker: a process asking Spend,
+    Vendors, Month-end and Insights in turn, one a second, and the queue every half second on another thread, while
+    another process approved an invoice every second; after, with the background process's refresher; the first
+    visit of each and the queue's checks done again not counted; before: a875aae):
+
+    | one web worker, 3 minutes | before | after |
+    |---|---:|---:|
+    | Spend, p95 / max | 1.70 / 1.77 s | 0.024 / 0.030 s |
+    | Vendors, p50 / p95 | 0.70 / 1.07 s | 0.070 / 0.10 s |
+    | Month-end, p95 / max | 1.46 / 1.77 s | 0.25 / 0.29 s |
+    | Insights, p95 / max | 0.86 / 0.90 s | 0.019 / 0.020 s |
+    | the queue beside them, p95 / p99 / max | 0.34 / 0.55 / 0.72 s | 0.21 / 0.26 / 0.28 s |
+    | the web worker's CPU; its memory at most | 79 s (44%); 595 MB | 38 s (21%); 369 MB |
+
+    | with Spend's and month-end's work made 11 s long, as at 300,000 (4 minutes) | before | after |
+    |---|---:|---:|
+    | Spend / Month-end, at most | 12.0 / 12.1 s | 0.018 / 0.35 s |
+    | the queue beside them, p95 / p99 / max | 0.55 / 3.55 / 4.41 s | 0.21 / 0.26 / 0.34 s |
+    | the web worker's CPU | 117 s (49%) | 52 s (22%) |
+
+    The refresher worked out 149 answers in its 4.3 minutes (59 s of work, about a quarter of a core; the Vendors
+    page's totals and workload most often, settled for ten times their 0.4-0.5 s), 139 with the 11 s works (115 s);
+    its process held 350 MB at most, one answer's work at a time. `bench load` (30 people, 2 minutes, 4 web workers,
+    the seed never served before): pages p50 67 ms, p95 747 ms, p99 2.20 s, actions p95 122 ms, 0 5xx, 0 "database
+    is locked", the correctness checks the same; the background process 222 → 456 MB (150 MB at 300,000 before:
+    it now holds the reports' work, as a web worker did). `same_behaviour` approve and pipeline: the same.
+  - **Alternatives:** the reports worked out by the background process on a timer (every period anyone might ask,
+    looked at or not: this works out only what was asked, as it is asked); a process of its own for the refresher
+    (its own running thread, away from the bulk approvals and the downloads: another Python process of 300 MB, and
+    its start, stop and log, for a thread's work; left to measure at 300,000); a request with nothing kept waiting
+    for the background process (as long a wait, and the first ask of a question never was the background's); each
+    ask noted in the database (a write at every page: once an hour a process instead); a function for each answer
+    from its arguments beside its caller (two places to keep its format, stamp and settle the same: `ANSWERS` calls
+    the caller).
+  - **Left:** the refresher shares the background process's one running thread with the bulk approvals, the downloads
+    and the queue's re-check: while many answers wait (the start after an update at 300,000), those are slower
+    meanwhile. An answer asked with today's date (Insights' operations, the recurring vendors, and Spend's default view,
+    which ends today) is worked out by the first request of a new day, and at a start yesterday's are worked out again
+    for nothing (`ANSWERS_KEPT` of a name at most). A database never served still works each answer out once, at its
+    first ask. The background process's memory at 300,000 and the hour's p99 are to be measured again with it.
+  - **After its review (B-2046 to B-2048):** a worker shows its own copy only when it is the one the database keeps
+    (an answer too big to keep for every process, or holding NaN, is worked out where it is asked, as before); an
+    answer asked with arguments JSON can't hold is worked out where it is asked, said in the log (it failed the page
+    on the server); a laptop's Vendors page keeps its settled totals in the process as before, writing nothing.
+  - (`ap_coder/core/store/reports.py`, `core/store/_base.py`, `core/store/backups.py`, `core/store/vendors.py`,
+    `erp/spend.py`, `erp/insights.py`, `erp/recurring.py`, `erp/accruals.py`, `web/pages/sales_tax.py`,
+    `web/pages/learning.py`, `web/refresh.py`, `web/app.py`, `web/server.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/web/test_refresh.py`, `tests/core/test_kept_answers.py`, `tests/web/test_downloads.py`)
+- **D-199** · **A PO's invoices read for what its match uses, each billed line matched once** (scale goal, targets 1
+  and 2).
+  - **Why:** the hour of 100 people on 300,000 invoices after D-198 met every target, but its 4 requests over 30 s
+    were all on invoices of the biggest vendor (23,174 invoices), on its PO billed by 3,381 of them: each open and
+    check matches the invoice against its PO (`coding/po.match_invoice`), which read every other invoice on the PO
+    with its whole coding (`Store.po_invoices`: 6-7 KB of JSON each, 1.5 s) and matched each of their lines to the
+    PO's lines twice (0.25 s): 1.75 s for one person, 4-15 s at the server under load when several people had that
+    vendor's invoices open (`po_invoices` 10.9% of a worker's CPU at 30 minutes).
+  - **What:** `po_invoices` has SQLite read out each invoice's `subtotal`, `invoice_date` and `line_items`
+    (`purchasing.PO_CODING`; `coding` holds only those), the rest of the coding not decoded, as month-end's
+    `billing_codings` does (D-177); a coding that is not an object of valid JSON is read by Python as before (failing
+    as it did). `po_lines_billed(..., matched=)` keeps each (description, unit price)'s PO line for the calls of one
+    PO (the match's quantities and amounts, the PO page's), so a line repeated across the PO's invoices is matched
+    once. For the 3,381-invoice PO: `po_invoices` 1.49 → 0.19 s, the billed lines 0.25 → 0.11 s (15,820 distinct
+    lines in the seed; a real standing PO repeats more).
+  - **Same:** what the match and the PO page read: the invoices, their subtotals, dates and statuses, what each PO
+    line was billed (quantities and amounts, with and without credits), against the whole codings decoded
+    (`tests/coding/test_po.py`, 80 invoices of random lines, prices as numbers, text and none, credits, codings of
+    AP Coder's and approved, `''`, `null`, not JSON).
+  - **Alternatives:** the PO's billed lines kept by invoice in each process and refreshed from the vendors' change log
+    (D-174; 0.3 s → near 0, but an invoice joins or leaves a PO by its coding, under any vendor: a log of its own to
+    get right), or kept in the database for every process as month-end's (D-194); left until measured to need it.
+  - (`ap_coder/core/store/purchasing.py`, `coding/po.py`, `web/pages/purchase_orders.py`; `tests/coding/test_po.py`)

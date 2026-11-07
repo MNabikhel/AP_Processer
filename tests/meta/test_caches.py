@@ -33,6 +33,7 @@ STATE = {
     "ap_coder.core.store._base:_RESTORING": "the databases being restored now",
     "ap_coder.core.store.learning:_READING": "a lock a memory read (one a database and cap)",
     "ap_coder.core.store.reports:_WORKING": "a lock an answer, let go past 4 x KEPT_HERE",
+    "ap_coder.core.store.reports:_ASKED": "one time an answer was noted asked, 4 x KEPT_HERE at most (D-198)",
     "ap_coder.core.store.summary:_COMPUTING": "a lock an answer, let go past COMPUTING_KEPT",
     "ap_coder.core.store.summary:_ONE_GO": "one flag",
     "ap_coder.core.store.users:_DUMMY": "one hash",

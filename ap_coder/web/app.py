@@ -269,9 +269,10 @@ def own_work_running(state: Any) -> bool:
 def start_background_work(settings_factory: Callable[[], Settings], store: Store) -> tuple[Any, ...]:
     """The work the dashboard does on its own: the page reader and the AI reviewer (``page_worker``), the optional
     Azure check, the JD Edwards API's nightly sync and voucher queue, the review queue checked again after a change
-    of settings, and on the company server the bulk approvals (``jobs.BulkRunner``, D-185) and the long downloads
-    (``pages/downloads.py``, D-169). In the dashboard's own process (the laptop), or, with several web workers, in the
-    server's background process only (``server.run_background``, D-111)."""
+    of settings, and on the company server the bulk approvals (``jobs.BulkRunner``, D-185), the long downloads
+    (``pages/downloads.py``, D-169) and the settled answers worked out again (``refresh.Refresher``, D-198). In the
+    dashboard's own process (the laptop), or, with several web workers, in the server's background process only
+    (``server.run_background``, D-111)."""
     from ap_coder.ai import azure_check, page_worker
     from ap_coder.coding.bulk import RECHECK_LEASE, QueueRecheck
     from ap_coder.erp import jde_sync
@@ -290,9 +291,13 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
         return reader, azure, jde, recheck
     from ap_coder.web.jobs import BulkRunner
     from ap_coder.web.pages.downloads import Runner
+    from ap_coder.web.refresh import Refresher
 
     bulk = BulkRunner(settings_factory, lambda: store).start()
-    return reader, azure, jde, recheck, bulk, Runner(lambda: store).start()
+    # (the background process's own Store too, which no create_app sets: what its refresher works out is kept for
+    # every process, the Vendors page's totals as the others, B-2050)
+    store.background_answers = True
+    return reader, azure, jde, recheck, bulk, Runner(lambda: store).start(), Refresher(lambda: store).start()
 
 
 def create_app(settings: Settings | None = None, store: Store | None = None, *, address: str = "127.0.0.1",
@@ -340,7 +345,7 @@ def _lifespan(store: Store, settings_factory: Callable[[], Settings], *, server:
         if start_reader and background:
             (app.state.reader, app.state.azure_checker, app.state.jde_worker, app.state.queue_recheck,
              *made) = start_background_work(settings_factory, store)  # fmt: skip
-            app.state.bulk_runner, app.state.downloads = made if made else (None, None)
+            app.state.bulk_runner, app.state.downloads, app.state.answers = made if made else (None, None, None)
         if background and app.state.processes == 1:  # files left in the import queue by the last run (D-168)
             from ap_coder.web.pages import process
 
@@ -354,7 +359,7 @@ def _lifespan(store: Store, settings_factory: Callable[[], Settings], *, server:
             from ap_coder.web.pages import process
 
             process.stop_reading(app)
-        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads", "bulk_runner"):
+        for name in ("reader", "azure_checker", "jde_worker", "queue_recheck", "downloads", "bulk_runner", "answers"):
             worker = getattr(app.state, name, None)
             if worker is not None:
                 worker.stop()
@@ -398,6 +403,10 @@ def _set_state(app: FastAPI, store: Store, settings_factory: Callable[[], Settin
     app.state.queue_recheck = None  # the review queue checked again after a change of settings (coding/bulk.py)
     app.state.downloads = None  # the server's long downloads (ap_coder/web/pages/downloads.py), likewise
     app.state.bulk_runner = None  # the server's bulk approvals (ap_coder/web/jobs.py), likewise
+    app.state.answers = None  # the server's settled answers worked out again (ap_coder/web/refresh.py), likewise
+    # On the company server a settled answer that no longer holds is worked out again by the background process
+    # (its refresher, while it runs), never by a request that has one to show (D-198); a laptop works it out.
+    store.background_answers = server
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve

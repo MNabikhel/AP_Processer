@@ -340,3 +340,80 @@ def test_a_database_from_before_the_open_amount_gets_its_column(tmp_path):
            "unit_price": 100.0, "amount": 100.0, "open_amount": 60.0, "status": "open"}  # fmt: skip
     store.import_purchase_orders([row, {**row, "line_number": 2, "open_amount": None}])
     assert [li["open_amount"] for li in store.purchase_order(po_key("PO-1"))["lines"]] == [60.0, None]
+
+
+def test_a_pos_invoices_read_lean_give_what_their_whole_codings_gave(store, tmp_path):
+    """D-199: ``po_invoices`` has SQLite read out each invoice's subtotal, date and lines (a PO billed by every
+    invoice of a big vendor has thousands, whose whole codings took 1.5 s to decode at each open and check), and the
+    PO's billed lines match each (description, unit price) once. What the PO's match and page read is what the whole
+    codings gave: the invoices, their subtotals and dates, what each PO line was billed (quantities and amounts, with
+    and without credits); a coding that isn't JSON fails as it did."""
+    import json
+    import random
+
+    from ap_coder.coding import po as po_mod
+    from ap_coder.core.store.purchasing import PO_CODING
+
+    key = po_key("PO-88213")
+    order = store.purchase_order(key)
+    base, rnd = _gt(NW), random.Random(7)
+    words = [pl["description"] for pl in order["lines"]] + ["Freight", "Fuel surcharge", "Something else entirely"]
+    for n in range(80):
+        doc = copy.deepcopy(base)
+        doc["invoice_number"] = f"NW-{n}"
+        doc["line_items"] = [{**base["line_items"][0], "description": rnd.choice(words),
+                              "unit_price": rnd.choice([1.5, 2.0, 120.0, "120.00", None]),
+                              "quantity": rnd.choice([1, 2, -1, 0, 3.5]), "amount": rnd.choice([10.0, -10.0, 0, 7.25])}
+                             for _ in range(rnd.randint(0, 6))]  # fmt: skip
+        if n % 7 == 0:
+            doc.pop("subtotal", None)
+        if n % 11 == 0:
+            doc.pop("line_items")
+        store.add_invoice(tmp_path / f"{n}.pdf", doc, {})
+    with sqlite3.connect(store.path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT id FROM invoices WHERE po_key = ? ORDER BY id", (key,))]
+        for n in ids[::3]:  # approved with a coding of their own
+            doc = json.loads(conn.execute("SELECT ai_output FROM invoices WHERE id = ?", (n,)).fetchone()[0])
+            doc["subtotal"], doc["line_items"] = 99.5, (doc.get("line_items") or [])[:2]
+            conn.execute("UPDATE invoices SET status = 'approved', final_output = ?, export_batch = ? WHERE id = ?",
+                         (json.dumps(doc), "batch-1" if n % 2 else None, n))  # fmt: skip
+        conn.execute("UPDATE invoices SET final_output = '' WHERE id = ?", (ids[1],))  # (AP Coder's coding, then)
+        conn.execute("UPDATE invoices SET final_output = 'null' WHERE id = ?", (ids[4],))  # (valid JSON, no object)
+        conn.execute("UPDATE invoices SET status = 'rejected' WHERE id = ?", (ids[5],))
+        whole = [{"id": r[0], "status": r[1], "invoice_number": r[2], "invoice_date": r[3],
+                  "coding": json.loads(r[5] or r[4] or "{}"), "export_batch": r[6]}
+                 for r in conn.execute("SELECT id, status, invoice_number, invoice_date, ai_output, final_output, "
+                                       "export_batch FROM invoices WHERE po_key = ? AND status IN ('review', 'parked', "
+                                       "'pending_approval', 'approved') ORDER BY id", (key,))]  # fmt: skip
+    with pytest.raises(AttributeError):  # ("null": not an object, as before)
+        po_mod.billed_by_line(order, store.po_invoices(key))
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = '{}' WHERE id = ?", (ids[4],))
+    whole = [{**w, "coding": {} if w["id"] == ids[4] else w["coding"]} for w in whole]
+    lean = store.po_invoices(key)
+    assert len(lean) == len(whole) > 50
+    for got, was in zip(lean, whole, strict=True):
+        assert got == {**was, "coding": {k: was["coding"].get(k) for k in PO_CODING}}
+    assert [o["id"] for o in store.po_invoices(key, exclude_id=ids[0])] == [w["id"] for w in whole[1:]]
+
+    def billed(invoices, positive_only=False, amounts=False):  # (as before: every line matched afresh)
+        out = {}
+        for inv in invoices:
+            lines = inv["coding"].get("line_items") or []
+            if positive_only:
+                lines = [li for li in lines if po_mod.billed_quantity(li) > 0]
+            for li, line in zip(lines, po_mod.po_lines_billed(lines, order["lines"]), strict=True):
+                if line is not None:
+                    value = float(li.get("amount") or 0) if amounts else po_mod.billed_quantity(li)
+                    out[line] = out.get(line, 0.0) + value
+        return out
+
+    matched = {}
+    for positive_only, amounts in ((False, False), (False, True), (True, False), (True, True)):
+        assert po_mod.billed_by_line(order, lean, positive_only, amounts, matched) == billed(whole, positive_only,
+                                                                                               amounts)  # fmt: skip
+    assert billed(whole) and matched
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET final_output = 'not JSON' WHERE id = ?", (ids[3],))
+    with pytest.raises(json.JSONDecodeError):
+        store.po_invoices(key)
