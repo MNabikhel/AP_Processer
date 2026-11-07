@@ -1,6 +1,5 @@
 """The vendor master imported from the ERP: vendor IDs in exports, unknown vendors, terms, default GL."""
 
-import json
 import sqlite3
 
 from ap_coder.ai.pipeline import finalise_coding
@@ -11,11 +10,7 @@ from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master
 from ap_coder.erp import exports
 from ap_coder.ops.demo import load_demo, remove_demo
-from tests.conftest import SAMPLE_STEM, SAMPLES
-
-
-def _gt(**changes):
-    return {**json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), **changes}
+from tests.webclient import gt as _gt
 
 
 def _codes(store, doc):

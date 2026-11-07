@@ -19,6 +19,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ._base import _in_list
+from .dialect import begin_write
 from .invoices import REVISION_ACTIONS
 
 WAITING, RUNNING, DONE, STOPPED = "waiting", "running", "done", "stopped"
@@ -60,8 +61,7 @@ class BulkJobsMixin:
         those of another database, go now."""
         now = time.time()
         with self._conn() as conn:  # type: ignore[attr-defined]
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")  # one asker at a time: never two jobs of the same person
+            begin_write(conn)  # one asker at a time: never two jobs of the same person
             db = self._database_id(conn)  # type: ignore[attr-defined]
             row = conn.execute(f"SELECT id FROM bulk_jobs WHERE owner = ? AND db = ? AND state IN {_OPEN}",
                                (owner, db)).fetchone()  # fmt: skip
@@ -107,8 +107,7 @@ class BulkJobsMixin:
             if conn.execute("SELECT 1 FROM bulk_jobs WHERE db = ? AND (state = ? OR (state = ? AND renewed_at < ?)) "
                             "LIMIT 1", (db, WAITING, RUNNING, now - stale)).fetchone() is None:  # fmt: skip
                 return None
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             while True:
                 row = conn.execute(
                     "SELECT * FROM bulk_jobs WHERE db = ? AND (state = ? OR (state = ? AND renewed_at < ?)) ORDER BY "
@@ -154,8 +153,7 @@ class BulkJobsMixin:
         stamp as the queue listed it; ``GONE`` when the approval found it no longer in the queue). None, and nothing
         done, when the job is no longer ``runner``'s, or has this invoice already."""
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
-            if not conn.in_transaction:
-                conn.execute("BEGIN IMMEDIATE")  # the job's own, and the approval with it: one at a time
+            begin_write(conn)  # the job's own, and the approval with it: one at a time
             row = conn.execute("SELECT approved, skipped FROM bulk_jobs WHERE id = ? AND runner = ? AND state = ?",
                                (job_id, runner, RUNNING)).fetchone()  # fmt: skip
             approved, skipped = (json.loads(row["approved"]), json.loads(row["skipped"])) if row else ([], [])

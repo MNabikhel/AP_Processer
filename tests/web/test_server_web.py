@@ -6,19 +6,13 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.core.store import PENDING, Store, load_sample_setup
+from ap_coder.core.store import PENDING, Store
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, enrol, known_vendors, sign_in, web_settings
 
 GOOD = "correct horse battery"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def server_client(store: Store, base: str = "https://localhost", client: tuple[str, int] = ("10.0.0.5", 50000)):

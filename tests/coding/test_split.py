@@ -1,6 +1,5 @@
 """Splitting a line across GL accounts / cost centers."""
 
-import json
 import re
 
 import pandas as pd
@@ -12,10 +11,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
 from tests.conftest import SAMPLE_STEM, SAMPLES
 from tests.webclient import client_for, draft_form, follow, post
-
-
-def _gt():
-    return json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+from tests.webclient import gt as _gt
 
 
 def test_split_keeps_the_total_and_the_numbering(reference):

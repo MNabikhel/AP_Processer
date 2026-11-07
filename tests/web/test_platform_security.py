@@ -12,21 +12,11 @@ from fastapi.testclient import TestClient
 from ap_coder.ai import local_llm
 from ap_coder.core.store import APPROVED, PENDING, Store
 from ap_coder.web.app import create_app
-from tests.conftest import copy_database, next_second
+from tests.conftest import next_second
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE, add_clean, web_settings
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test (no real LM Studio)
-
-
-@pytest.fixture(scope="module")
-def demo_db(demo_template):
-    """The demo invoices, made once a run (tests/conftest.py)."""
-    return demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def local(app) -> TestClient:

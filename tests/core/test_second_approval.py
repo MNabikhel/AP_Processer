@@ -1,17 +1,13 @@
 """Second approval above the approval limit (separation of duties)."""
 
-import json
 import re
 
 import pytest
 
 from ap_coder.core.store import APPROVED, PENDING, REVIEW, Store, load_sample_setup
-from tests.conftest import SAMPLE_STEM, SAMPLES, next_second
+from tests.conftest import next_second
 from tests.webclient import client_for, follow, post
-
-
-def _gt():
-    return json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())  # total 18,017.85
+from tests.webclient import gt as _gt
 
 
 @pytest.fixture

@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from ...core.envfile import read_env
-from ...core.store.hub import HUB_RUN
+from ...core.store.hub import HUB_RUN, HubState
 from . import landing
 from .landing import CSV, DELETE, PARQUET, UPSERT, Destination, FolderDestination, HubError
 from .tables import HUB_SCHEMA_VERSION, TABLES, Context, build
@@ -180,47 +180,7 @@ def last_run(store: Any) -> dict[str, Any] | None:
     return found if isinstance(found, dict) else None
 
 
-# --- What was sent --------------------------------------------------------------------------------------------------
-
-
-class State:
-    """``finance_hub/state.db`` in the data folder: each row's fingerprint as sent, the watermark, the file numbers."""
-
-    def __init__(self, folder: Path) -> None:
-        folder.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(folder / STATE_FILE, timeout=30)
-        self.conn.executescript(
-            "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-            "CREATE TABLE IF NOT EXISTS sent (tbl TEXT NOT NULL, key TEXT NOT NULL, hash TEXT NOT NULL, "
-            "PRIMARY KEY (tbl, key));"
-        )
-
-    def get(self, key: str, default: str = "") -> str:
-        row = self.conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
-        return row[0] if row else default
-
-    def set(self, key: str, value: Any) -> None:
-        self.conn.execute("INSERT INTO kv VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                          (key, str(value)))  # fmt: skip
-
-    def sent(self, table: str) -> dict[str, str]:
-        return dict(self.conn.execute("SELECT key, hash FROM sent WHERE tbl = ?", (table,)))
-
-    def forget(self, everything: bool = True) -> None:
-        """Forget what was sent (a new destination, format or schema version); the file numbers too for a new
-        destination (the same folder keeps counting up)."""
-        self.conn.execute("DELETE FROM sent")
-        self.conn.execute("DELETE FROM kv" if everything else "DELETE FROM kv WHERE key NOT LIKE 'seq:%'")
-
-    def record(self, table: str, upserts: dict[str, str], deletes: list[str]) -> None:
-        self.conn.executemany(
-            "INSERT INTO sent VALUES (?, ?, ?) ON CONFLICT(tbl, key) DO UPDATE SET hash = excluded.hash",
-            [(table, k, h) for k, h in upserts.items()],
-        )
-        self.conn.executemany("DELETE FROM sent WHERE tbl = ? AND key = ?", [(table, k) for k in deletes])
-
-    def close(self) -> None:
-        self.conn.close()
+# --- What was sent (``finance_hub/state.db``: core/store/hub.py ``HubState``) -----------------------------------------
 
 
 def _key(row: dict[str, Any], key: tuple[str, ...]) -> str:
@@ -346,7 +306,7 @@ class _Nowhere(landing.MemoryDestination):
 
 
 def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folder: Path, started: str) -> None:
-    state = State(folder)
+    state = HubState(folder / STATE_FILE)
     try:
         full = result.full
         fresh = (state.get("destination") != dest.ident() or state.get("format") != result.format
@@ -434,7 +394,7 @@ def _run(store: Any, config: HubConfig, dest: Destination, result: Result, folde
         state.set("schema_version", HUB_SCHEMA_VERSION)
         state.set("watermark", last_id)
         state.set("stamp", store.hub_event_stamp(last_id) if last_id else "")
-        state.conn.commit()
+        state.commit()
     finally:
         state.close()
 

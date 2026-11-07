@@ -582,6 +582,18 @@ class LearningMixin:
             "top_corrections": [dict(r) for r in learned["top_corrections"]],
         }
 
+    def invoice_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0])
+
+    def run_summary_rows(self, latest: int | None = None) -> list[dict[str, Any]]:
+        """What the redacted run summary (``ops/share_report.py``) reads of every invoice, or of the ``latest`` ones,
+        oldest first, in one query: its id, file, status, error, meta and validation (their JSON as stored)."""
+        newest = "" if latest is None else "WHERE id IN (SELECT id FROM invoices ORDER BY id DESC LIMIT ?) "
+        sql = f"SELECT id, source_path, status, error, meta, validation FROM invoices {newest}ORDER BY id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, () if latest is None else (latest,))]
+
     def line_metrics(self) -> dict[str, Any]:
         """``metrics()``'s counts of the lines AP reviewed (``lines_*``, ``line_accuracy``) alone: what the review queue
         shows, from the counts the summary keeps (``feedback_counts``) instead of four scans of the learning memory."""

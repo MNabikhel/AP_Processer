@@ -51,7 +51,7 @@ _CREDIT_MARK = re.compile(r"\d[.,]\d{2}cr", re.I)  # "342.18CR": a credit's mark
 def _printed_as_money(token: str) -> bool:
     """A line's amount printed as money, as OCR reads it too: "1530:00" (the point read as a colon) and "342.18CR"
     (a credit's mark run into it) are money; "5%" and "12" are not."""
-    from ..normalize import _ocr_amount_text
+    from ...core.parsing import _ocr_amount_text
 
     fixed = _ocr_amount_text(token)
     return looks_like_money(fixed) or bool(_CREDIT_MARK.search(fixed))

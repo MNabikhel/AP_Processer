@@ -29,7 +29,6 @@ import io
 import json
 import os
 import re
-import sqlite3
 import stat
 import tempfile
 import uuid
@@ -37,6 +36,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
+from ...core.store.hub import write_gateway_database
 from .tables import BOOL, DATE, FLOAT, HUB_SCHEMA_VERSION, INT, MONEY, TABLES, TIMESTAMP, Table
 
 PARQUET, CSV = "parquet", "csv"
@@ -298,16 +298,7 @@ def _parquet(table: Table, rows: list[dict[str, Any]], markers: list[int]) -> by
     return buffer.getvalue()
 
 
-# --- The gateway's SQLite file ---------------------------------------------------------------------------------------
-
-_SQLITE_TYPES = {INT: "INTEGER", MONEY: "REAL", FLOAT: "REAL", BOOL: "INTEGER"}
-GATEWAY_VIEWS = {
-    "v_invoice_lines": "SELECT l.*, i.vendor_name, i.vendor_erp_id, i.invoice_number, i.invoice_date, i.currency, "
-    "i.status FROM invoice_lines l JOIN invoices i ON i.invoice_id = l.invoice_id",
-    "v_approved_invoices": "SELECT * FROM invoices WHERE status = 'approved'",
-    "v_accuracy_by_field": "SELECT field, COUNT(correct) AS checked, SUM(correct) AS right, "
-    "ROUND(1.0 * SUM(correct) / NULLIF(COUNT(correct), 0), 4) AS rate FROM accuracy GROUP BY field",
-}
+# --- The gateway's SQLite file (its statements: core/store/hub.py, ``write_gateway_database``) -----------------------
 
 
 def gateway_database(tables: dict[str, list[dict[str, Any]]], built_at: str) -> Path:
@@ -315,24 +306,5 @@ def gateway_database(tables: dict[str, list[dict[str, Any]]], built_at: str) -> 
     moves it into place and removes the folder. One self-contained file (no write-ahead log), read-only."""
     folder = Path(tempfile.mkdtemp(prefix="ap_coder-hub-"))
     path = folder / GATEWAY_FILE
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute("PRAGMA journal_mode=DELETE")
-        for name, table in TABLES.items():
-            cols = ", ".join(f'"{c.name}" {_SQLITE_TYPES.get(c.type, "TEXT")}' for c in table.columns)
-            conn.execute(f'CREATE TABLE "{name}" ({cols}, PRIMARY KEY ({", ".join(table.key)}))')
-            marks = ", ".join("?" for _ in table.columns)  # one per column of a fixed table, at most 45
-            conn.executemany(
-                f'INSERT INTO "{name}" VALUES ({marks})',
-                [[(int(v) if isinstance(v, bool) else v) for v in (r.get(c) for c in table.names)]
-                 for r in tables.get(name, [])],
-            )  # fmt: skip
-        for view, sql in GATEWAY_VIEWS.items():
-            conn.execute(f'CREATE VIEW "{view}" AS {sql}')
-        conn.execute("CREATE TABLE _hub_info (key TEXT PRIMARY KEY, value TEXT)")
-        conn.executemany("INSERT INTO _hub_info VALUES (?, ?)",
-                         [("schema_version", str(HUB_SCHEMA_VERSION)), ("built_at", built_at)])  # fmt: skip
-        conn.commit()
-    finally:
-        conn.close()
+    write_gateway_database(path, tables, built_at)
     return path

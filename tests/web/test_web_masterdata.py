@@ -20,8 +20,8 @@ from ap_coder.coding.vendors import ON_HOLD
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
 from tests.conftest import fill_from
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 MASTER_PAGES = [
     "/vendors",
     "/vendors?view=hold",

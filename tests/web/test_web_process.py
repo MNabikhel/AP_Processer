@@ -20,17 +20,11 @@ from ap_coder.web.app import create_app
 from ap_coder.web.core import invoice_dir
 from ap_coder.web.pages.process import safe_file_name, save_upload
 from tests.conftest import SAMPLES
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 OTHER = "northwind_ON_HST_NW-2026-0912"
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 @pytest.fixture

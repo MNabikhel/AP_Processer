@@ -1283,6 +1283,21 @@ def _vendor_rows(store: Store) -> list[list]:
     return [list(r) for r in _rows(store, "vendors")]
 
 
+def _waiting(store: Store, monkeypatch) -> threading.Event:
+    """Set when a thread asking ``store`` for a shared answer finds another process holding its lease: it waits for
+    that one's answer from then on."""
+    waiting, held = threading.Event(), store._lease_held
+
+    def lease_held(lease: str) -> bool:
+        found = held(lease)
+        if found:
+            waiting.set()
+        return found
+
+    monkeypatch.setattr(store, "_lease_held", lease_held)
+    return waiting
+
+
 def test_a_shared_answer_is_worked_out_once_for_every_process_and_follows_each_change_made_elsewhere(
     tmp_path, monkeypatch
 ):
@@ -1428,10 +1443,10 @@ def test_a_process_waits_for_another_working_the_same_shared_answer_out(tmp_path
     kept = Shared(store, "slow", lambda: ["mine"], version="t-1", topic="", changes=("vendors",))
     assert store.take_lease(f"answer/slow/{reports.asked_key(None)}", "another process", 60)
     process("worker 1")
-    found = []
+    found, waiting = [], _waiting(store, monkeypatch)
     asking = threading.Thread(target=lambda: found.append(kept()))
     asking.start()
-    time.sleep(0.5)
+    assert waiting.wait(10)
     stamp = store._answer_stamp("", ("vendors",))[0]
     store.keep_answer("slow", reports.asked_key(None), "t-1", stamp, ["theirs"])
     asking.join(10)
@@ -1549,9 +1564,10 @@ def test_an_answer_only_shown_asked_while_another_works_it_out_again_is_the_one_
         if restored:  # (what is kept is of the database before a restore: another summary_id)
             _plain(store, "UPDATE settings SET value = 'restored' WHERE key = 'summary_id'")
         found.clear()
+        waiting = _waiting(store, monkeypatch)
         asking = threading.Thread(target=lambda ask=ask: found.append(ask()))
         asking.start()
-        time.sleep(0.5)
+        assert waiting.wait(10), name
         assert not found, name  # (waiting)
         store.keep_answer("rows", reports.asked_key(None), "t-1", store._answer_stamp("", ("vendors",))[0],
                           ["theirs"], clock[0])  # fmt: skip
@@ -1574,10 +1590,10 @@ def test_a_process_waiting_takes_the_answer_another_began_after_it_asked_though_
     lease = f"answer/slow/{reports.asked_key(None)}"
     assert store.take_lease(lease, "another process", 60)
     process("worker 1")
-    found = []
+    found, waiting = [], _waiting(store, monkeypatch)
     asking = threading.Thread(target=lambda: found.append(kept()))
     asking.start()
-    time.sleep(0.5)
+    assert waiting.wait(10)
     stamp = store._answer_stamp("", ("vendors",))[0]  # (what the other read before its work: the same)
     _plain(store, "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES ('acme', 'Acme', ?)", NOW)
     store.keep_answer("slow", reports.asked_key(None), "t-1", stamp, ["theirs"])

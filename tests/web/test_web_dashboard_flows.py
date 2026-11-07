@@ -13,21 +13,13 @@ import zipfile
 from email.message import EmailMessage
 from types import SimpleNamespace
 
-import pytest
-
 from ap_coder.coding.rules import Rule
-from ap_coder.core.store import APPROVED, PENDING, REJECTED, Store, load_sample_purchase_orders, load_sample_setup
+from ap_coder.core.store import APPROVED, PENDING, REJECTED, load_sample_purchase_orders
 from ap_coder.web.core import invoice_dir
 from tests.conftest import SAMPLE_STEM, SAMPLES, fill_from
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import check, form_of
 from tests.webclient import add_clean, follow, gt, known_vendors, post
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def _flagged(store, doc=None, **changes):

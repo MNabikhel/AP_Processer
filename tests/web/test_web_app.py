@@ -21,9 +21,9 @@ from ap_coder.web import core, server
 from ap_coder.web.app import CODE_FOLDER, create_app
 from ap_coder.web.jobs import DONE, ERROR, Job
 from ap_coder.web.pages import PAGES
+from tests.webclient import PAGE
 
 ROOT = Path(__file__).resolve().parents[2]
-PAGE = {"X-AP-Coder": "1"}
 
 
 def web_settings() -> Settings:

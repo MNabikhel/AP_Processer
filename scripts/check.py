@@ -25,7 +25,7 @@ WIDE = 12  # a module imported by more test files than this (the store, the sche
 
 # Files every test leans on: a change to one runs the whole default run.
 SHARED = {"tests/conftest.py", "tests/webclient.py", "tests/pdfs.py", "tests/scripts.py", "tests/browser.py",
-          "tests/slow_tests.txt", "pyproject.toml"}  # fmt: skip
+          "tests/slow_tests.txt", "tests/stores.py", "pyproject.toml"}  # fmt: skip
 OWN = {"ap_coder/__init__.py": ["tests/meta/test_moved_modules.py"]}  # the package itself: its own tests by name
 
 

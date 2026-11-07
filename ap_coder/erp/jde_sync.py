@@ -154,20 +154,6 @@ class _Run:
 # --- The parts --------------------------------------------------------------------------------------------------
 
 
-def _vendor_rows(store: Any, keys: set[str], ids: set[str]) -> dict[str, dict[str, Any]]:
-    """The vendor master's vendors of these keys or ERP IDs, by key."""
-    sql = (
-        "SELECT vendor_key, display_name, erp_id, expected_gst, terms, status, qst_number, pst_number, province, "
-        "erp_bank, erp_hold FROM vendors WHERE in_master = 1 AND {} IN (SELECT value FROM json_each(?))"
-    )
-    found: dict[str, dict[str, Any]] = {}
-    with store._conn() as conn:
-        for column, values in (("vendor_key", keys), ("erp_id", ids)):
-            for r in conn.execute(sql.format(column), (json.dumps(sorted(values)),)):
-                found[r["vendor_key"]] = dict(r)
-    return found
-
-
 VENDOR_FIELDS = {"erp_id": "number", "expected_gst": "GST/HST number", "terms": "terms", "erp_hold": "hold",
                  "qst_number": "QST number", "pst_number": "PST number", "province": "province",
                  "erp_bank": "bank account"}  # fmt: skip
@@ -203,14 +189,11 @@ def _suppliers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[st
     ids = {_text(r.get("an8")) for r in found} - {""}
     named = [(vendor_key(r["vendor_name"]), r["erp_id"]) for r in records]
     keys = {key for name, an8 in named for key in (name, f"{name} #{an8}")}
-    before = _vendor_rows(store, keys, ids)
+    before = store.master_vendors_of(keys, ids)
     result = store.import_vendor_master(master_rows(records, SUPPLIER_COLUMNS), actor=run.actor, by_erp_id=True,
                                         log=False)  # fmt: skip
-    with store._conn() as conn:
-        conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
-                         "(erp_bank != ?1 OR erp_hold != ?2)",
-                         [(banks.get(an8, ""), holds.get(an8, ""), an8) for an8 in sorted(ids)])  # fmt: skip
-    after = _vendor_rows(store, keys, ids)
+    store.set_erp_bank_and_hold({an8: (banks.get(an8, ""), holds.get(an8, "")) for an8 in sorted(ids)})
+    after = store.master_vendors_of(keys, ids)
     _note(run.report, "added", sorted(after[k]["display_name"] for k in after.keys() - before.keys()))
     changed = []
     for key in sorted(after.keys() & before.keys()):
@@ -434,16 +417,11 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
     before = set(state(store).get("po_keys") or [])
     seen = set(run.cache.get("seen") or ())
     if run.report.get("resumed"):  # the pages read before it stopped: the POs written since it began
-        with store._conn() as conn:
-            seen |= {r[0] for r in conn.execute("SELECT po_key FROM purchase_orders WHERE updated_at >= ?",
-                                                (run.plan["started"],))}  # fmt: skip
+        seen |= store.po_keys_written_since(run.plan["started"])
     if run.mode != FULL or _cut_short(run, read, "PO line", "close"):
         _save_state(store, po_keys=sorted(before | seen))
         return
-    with store._conn() as conn:
-        open_synced = {r[0]: r[1] for r in conn.execute(
-            "SELECT po_key, po_number FROM purchase_orders WHERE status = ? AND po_key IN (SELECT value FROM "
-            "json_each(?)) ORDER BY po_key", (po_mod.OPEN, json.dumps(sorted(before))))}  # fmt: skip
+    open_synced = store.open_po_numbers(sorted(before))
     gone = [k for k in open_synced if k not in seen]
     if not run.allow_mass_close and _too_many(len(gone), len(open_synced)):
         run.report["refused_close"] = (
@@ -454,7 +432,7 @@ def _close_pos(store: Any, run: _Run, read: dict[str, Any]) -> None:
         seen |= set(gone)  # still known as synced, so a later sync can close them
     else:
         for start in range(0, len(gone), WRITE_ROWS):
-            with store.session(), store._conn():
+            with store.transaction():
                 for key in gone[start : start + WRITE_ROWS]:
                     store.set_po_status(key, po_mod.CLOSED, actor=run.actor)
         _note(run.report, "closed", [open_synced[k] for k in gone])
@@ -591,11 +569,12 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
                 read["longest"] = max(read.get("longest", 0), len(page))
                 if part == "vouchers":  # a long page a few hundred at a time, each with the lease (B-1918)
                     while len(rows) > VOUCHERS_A_WRITE:
-                        with store._conn():
+                        with store.transaction():
                             WRITE[part](store, rows[:VOUCHERS_A_WRITE], run, read)
                             _hold(store, lease)
                         rows = rows[VOUCHERS_A_WRITE:]
-                with store._conn():  # the page (its last part), where the read is and the lease: one short transaction
+                # the page (its last part), where the read is and the lease: one short transaction
+                with store.transaction():
                     if rows:
                         WRITE[part](store, rows, run, read)
                         plan["after"] = jde_ais.row_key(spec, rows[-1])
@@ -609,7 +588,7 @@ def _sync_part(store: Any, client: jde_ais.AisClient, part: str, actor: str | No
             store.set_setting(PROGRESS_KEY, json.dumps(progress))
         _log_part(store, run)
         progress.pop(part, None)
-        with store._conn():
+        with store.transaction():
             store.set_setting(PROGRESS_KEY, json.dumps(progress))
             parts = state(store).get("parts") or {}
             whole_at = plan["started"] if plan["mode"] == FULL else (parts.get(part) or {}).get("full")

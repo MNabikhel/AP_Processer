@@ -63,7 +63,7 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    """The slow tests (a browser, or over half a second: tests/slow_tests.txt) are marked ``slow``: the default run
+    """The slow tests (a browser, or measured slow: tests/slow_tests.txt) are marked ``slow``: the default run
     leaves them out (pyproject.toml), ``python -m pytest -m ""`` and CI run everything. ``--shard K/N`` keeps the
     K-th of N groups of whole test files (see :func:`_shard`)."""
     for item in items:
@@ -113,6 +113,18 @@ def next_second() -> None:
     start = int(time.time())
     while int(time.time()) == start:
         time.sleep(0.01)
+
+
+def until(condition, seconds: float = 10.0) -> bool:
+    """Whether ``condition()`` comes true within ``seconds``: a test waiting for another thread or process to get
+    somewhere waits for that, not a fixed time (too short on a busy machine, too long on a quick one). (For a page in a
+    browser: ``tests/browser.py``'s ``wait_until``.)"""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return bool(condition())
 
 
 DATA = ROOT / "data"
@@ -314,6 +326,13 @@ def cost_centers_demo_template(tmp_path_factory) -> Path:
     """A database with the sample cost centers (``load_sample_cost_centers``; the demo has none: D-53), then the
     demo."""
     return _template(tmp_path_factory, "cost-centers-demo", _sample_cost_centers, _demo)
+
+
+@pytest.fixture
+def demo_db(demo_template):
+    """The demo invoices, made once a run: what a test file's ``store`` copies (tests/stores.py ``demo_store``). A
+    file may make it another template (the cost centers' demo)."""
+    return demo_template
 
 
 def copy_database(template: Path, target: Path):

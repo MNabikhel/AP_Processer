@@ -7,9 +7,12 @@ formula when opened in Excel. (On the dashboard, every text is HTML-escaped by i
 
 from __future__ import annotations
 
-import math
 import re
 from typing import Any
+
+# An amount from a spreadsheet's cell (D-191): read in core/parsing.py, its rules for typed values; imported from
+# here as before.
+from .parsing import parse_amount  # noqa: F401
 
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 _NUMBER = re.compile(r"^[+-]?(\d[\d,]*)?(\.\d+)?$")
@@ -43,64 +46,3 @@ def neutralise_sheet(ws: Any) -> None:
             if isinstance(cell.value, str) and cell.value.startswith(FORMULA_START):
                 cell.data_type = "s"
                 cell.quotePrefix = True
-
-
-_CURRENCY = re.compile(r"(?i)(ca\$|c\$|us\$|cdn|cad|usd|eur|\$|€|£)")  # "CA$" before "$": no "CA" left over
-
-
-def _thousands(text: str, sep: str) -> bool:
-    """Whether ``text`` is digits in real thousands groups: 1-3 digits (not 0) first, then threes ("1,234,567";
-    not "0,125", "1,2345" or "12.50.00")."""
-    return re.fullmatch(rf"[1-9]\d{{0,2}}(?:{re.escape(sep)}\d{{3}})+", text) is not None
-
-
-def parse_amount(value: Any) -> float | None:
-    """A number from a spreadsheet cell as people write it: "1,234.50", "1 234,56 $", "(150.00)",
-    "150.00-", "99.00 CR", "250.00 DR", "-$150", "−150.00" (a typeset minus), "CA$1,234.50", "150,00". A credit
-    (CR) is negative, a debit (DR) positive, as a register or statement shows them. None when it is not a number
-    (or NaN / infinite)."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-        return number if math.isfinite(number) else None
-    text = (
-        _CURRENCY.sub("", str(value)).replace(" ", "").replace(" ", "").replace(" ", "").strip().replace("\u2212", "-")
-    )
-    if not text:
-        return None
-    negative = False
-    if text.startswith("(") and text.endswith(")"):
-        negative, text = True, text[1:-1]
-    if text.upper().endswith("CR"):
-        negative, text = True, text[:-2]
-    elif text.upper().endswith("DR"):
-        text = text[:-2]
-    if text.endswith("-"):
-        negative, text = True, text[:-1]
-    if text.startswith("-"):
-        negative, text = True, text[1:]
-    elif text.startswith("+"):
-        text = text[1:]
-    if "," in text and "." in text:  # the last separator is the decimal mark, the other the thousands one
-        mark = "," if text.rfind(",") > text.rfind(".") else "."
-        whole, _, decimals = text.rpartition(mark)
-        group = "." if mark == "," else ","
-        if group in whole and not _thousands(whole, group):
-            return None  # "12,34.50": not real thousands
-        text = f"{whole.replace(group, '')}.{decimals}"
-    elif "," in text or "." in text:
-        sep = "," if "," in text else "."
-        if _thousands(text, sep) and (sep == "," or text.count(".") > 1):  # "1,234", "1,234,567", "1.234.567"
-            text = text.replace(sep, "")
-        elif text.count(sep) == 1:  # "150,00", "0,125", "1,2345": a decimal comma ("1.5" as it is)
-            text = text.replace(",", ".")
-        else:  # "12.50.00", "01.02.2026": not a number
-            return None
-    try:
-        number = float(text)
-    except ValueError:
-        return None
-    if not math.isfinite(number):
-        return None
-    return -number if negative else number

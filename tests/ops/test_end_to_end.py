@@ -19,10 +19,7 @@ from ap_coder.erp.insights import _week
 from ap_coder.ops import help as help_catalog
 from tests.conftest import SAMPLE_STEM, SAMPLES
 from tests.webclient import client_for, follow, post
-
-
-def _gt(stem=SAMPLE_STEM):
-    return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())  # Northwind: 18,017.85 CAD
+from tests.webclient import gt as _gt
 
 
 @pytest.fixture

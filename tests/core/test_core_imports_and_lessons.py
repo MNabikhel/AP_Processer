@@ -23,8 +23,7 @@ from ap_coder.core.schema import OUTSIDE_CANADA, province_code
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.files import read_sheet
-
-PAGE = {"X-AP-Coder": "1"}
+from tests.webclient import PAGE
 
 # --- B-158: a withdrawn approval stops teaching ---------------------------------------------------------------------
 

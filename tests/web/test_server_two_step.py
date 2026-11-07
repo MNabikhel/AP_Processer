@@ -11,24 +11,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core import authenticator
-from ap_coder.core.store import Store, load_sample_setup, users
+from ap_coder.core.store import Store, users
 from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import PENDING_COOKIE, SESSION_COOKIE
 from ap_coder.web.pages import login
+from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.web.test_roles import Probe, app_routes, concrete
 from tests.webclient import PAGE, authenticator_code, client_for, enrol, sign_in, web_settings
 
 GOOD = "correct horse battery"
 TEMPORARY = "abcd-efgh-jkmn-pqrs"
 STEPS = ("/login/new-password", "/login/authenticator", "/login/code")
-
-
-@pytest.fixture
-def store(tmp_path):
-    store = Store(tmp_path / "private" / "ap_coder.db")
-    load_sample_setup(store)
-    return store
 
 
 def server_client(store: Store) -> TestClient:

@@ -20,21 +20,11 @@ from ap_coder.web.app import create_app
 from ap_coder.web.pages import invoice as _invoice_page  # noqa: F401 - imported before `me` patches web.core (below)
 from ap_coder.web.pages import review as _review_page  # noqa: F401
 from tests.browser import browser_on
-from tests.conftest import SAMPLES, copy_database
+from tests.conftest import SAMPLES
+from tests.stores import demo_store  # noqa: F401  (the tests' store)
+from tests.webclient import PAGE
 
-PAGE = {"X-AP-Coder": "1"}
 LAPTOP = {"width": 1366, "height": 768}
-
-
-@pytest.fixture(scope="module")
-def demo_db(demo_template):
-    """The demo invoices, made once a run (tests/conftest.py)."""
-    return demo_template
-
-
-@pytest.fixture
-def store(demo_db, tmp_path):
-    return copy_database(demo_db, tmp_path / "private" / "ap_coder.db")
 
 
 def _app(store: Store, **kwargs):
