@@ -6,6 +6,7 @@
      {toast: {text, tone}}          stay, show a message
      {error: "…"}                   stay, show the problem
      {job: "process", status: url}  background work started: the page polls the status URL (see pollJob)
+     {stale: {text, sub, url, link}} the review screen is out of date: it says so and keeps its boxes (invoice.js)
 
    Attributes a template can use:
      form[data-confirm="Question?"]   ask first
@@ -320,6 +321,13 @@ async function submitForm(form, submitter) {
     delete form.dataset.sending;
     setBusy(form, false);
     document.dispatchEvent(new CustomEvent("apc:ask-why", { detail: { form, submitter, ask: answer.ask_why } }));
+    return;
+  }
+  if (answer.stale) {
+    // An approval from a review screen out of date (D-184): the screen says so and turns read-only, what was typed
+    // still in its boxes (invoice.js); nothing more is sent from it.
+    setBusy(form, false);
+    document.dispatchEvent(new CustomEvent("apc:stale", { detail: { form, stale: answer.stale } }));
     return;
   }
   if (answer.job && answer.status) {

@@ -433,6 +433,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             next_limit=limit + QUEUE_PAGE,
             threshold=threshold,
             candidates=candidates if len(candidates) >= 2 else [],
+            # each one's stamp as the page lists it: one changed before the job comes to it is left (D-185)
+            bulk_revs=store.bulk_stamps([c["id"] for c in candidates]) if len(candidates) >= 2 else {},
             candidates_total=by_currency(candidates),
             candidates_left=left_out(pending, reasons, left),
         )  # fmt: skip
@@ -540,11 +542,12 @@ async def review_bulk_approve(request: Request) -> JSONResponse:
     (D-185), the web worker holding no thread for it. Each is re-checked first; any that is no longer clean is left
     for a person, with the reason. One done within ``BULK_WAIT`` is answered as before, with what was done; a longer
     one goes to its page, which says how far it got (it goes on when the page is left)."""
-    try:  # one field per invoice the page lists, however many (B-461)
-        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    try:  # one field per invoice the page lists, however many (B-461), and its stamp as the page listed it
+        form = await posted_form(request)
+        ids, revs = [int(str(i)) for i in form.getlist("ids")], [int(str(r)) for r in form.getlist("revs")]
     except ValueError:
         return refuse("Nothing to approve.")
-    started = await run_in_threadpool(_start_bulk, request, ids)
+    started = await run_in_threadpool(_start_bulk, request, ids, revs)
     if not isinstance(started, tuple):
         return started
     job, here = started  # (here: set once it ends in this process)
@@ -561,15 +564,17 @@ async def review_bulk_approve(request: Request) -> JSONResponse:
     return done(request, BULK_PAGE)
 
 
-def _start_bulk(request: Request, ids: list[int]) -> tuple[int, threading.Event] | JSONResponse:
-    """The bulk approval of ``ids`` asked for: the job started (its id, and what is set once it ends in this process),
-    or the answer when none is."""
+def _start_bulk(request: Request, ids: list[int], revs: list[int]) -> tuple[int, threading.Event] | JSONResponse:
+    """The bulk approval of ``ids`` asked for (``revs``: their stamps as the page listed them, ``Store.bulk_stamps``;
+    else as they are now): the job started (its id, and what is set once it ends in this process), or the answer when
+    none is."""
     store = get_store(request)
     with store.session():
         if reference_or_none(store) is None or not ids:
             return refuse("Nothing to approve.")
         person = {"name": reviewer(), "login": login(), "server": server_mode(request), "as": identity.kept_person()}
-        asked = [[i, list(store.row_identity(i) or [])] for i in dict.fromkeys(ids)]  # each one as the page listed it
+        listed = dict(zip(ids, revs, strict=True)) if len(revs) == len(ids) else store.bulk_stamps(ids)
+        asked = [[i, list(store.row_identity(i) or []), listed[i]] for i in dict.fromkeys(ids)]  # each as listed
         job, new = store.start_bulk_job(_bulk_owner(), person, asked, bulk.JOB_FORMAT)
     if not new:
         return done(request, BULK_PAGE, flash_message(STILL_UNDER_WAY, "info", icon="hourglass_top"))

@@ -7,6 +7,7 @@ import json
 import math
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -438,15 +439,47 @@ class InvoicesMixin:
     # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
     # One row per invoice and person ("" this computer, else a colleague's key on the office network: web/pages/
     # invoice.py), so the edits outlive a restart, as the screen says. Dropped on approval, rejection, Start over.
+    # A draft a review screen's own check dropped names that screen a short while (the ``ephemeral`` row
+    # "draft-dropped:<invoice id>" of the person, D-184).
 
-    def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any]) -> None:
+    def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any] | None, *, screen: str = "",
+                           seconds: float = 0, expect: Callable[[dict[str, Any] | None], bool] | None = None
+                           ) -> bool:  # fmt: skip
+        """Keep ``draft`` as ``person``'s edits of the invoice, or drop them (None): ``screen``, the review screen
+        whose check dropped them, is then remembered ``seconds`` (``draft_dropped_by``). ``expect`` (a review
+        screen's, D-184): given the draft kept now (None: none), whether this one may replace it, read in the write's
+        own transaction: of two screens checking at once only the first writes. False: nothing was written."""
         with self._conn() as conn:
+            if expect is not None:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")  # read and written in one go: no other writer in between
+                if not expect(self.invoice_draft(invoice_id, person)):
+                    return False
+            if draft is None:
+                conn.execute("DELETE FROM invoice_drafts WHERE invoice_id = ? AND person = ?", (invoice_id, person))
+                if screen:
+                    now = time.time()
+                    conn.execute(
+                        "INSERT INTO ephemeral (kind, token, value, created_at, expires_at) VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT(kind, token) DO UPDATE SET value = excluded.value, "
+                        "expires_at = excluded.expires_at",
+                        (f"draft-dropped:{invoice_id}", person, screen.encode(), now, now + seconds),
+                    )
+                return True
             conn.execute(
                 "INSERT INTO invoice_drafts (invoice_id, person, draft, updated_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(invoice_id, person) DO UPDATE SET draft = excluded.draft, "
                 "updated_at = excluded.updated_at",
                 (invoice_id, person, json.dumps(draft), _now()),
             )
+        return True
+
+    def draft_dropped_by(self, invoice_id: int, person: str) -> str:
+        """The review screen whose check dropped ``person``'s draft of the invoice lately ("" none)."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM ephemeral WHERE kind = ? AND token = ? AND expires_at > ?",
+                               (f"draft-dropped:{invoice_id}", person, time.time())).fetchone()  # fmt: skip
+        return bytes(row["value"]).decode("utf-8", "replace") if row is not None else ""
 
     def invoice_draft(self, invoice_id: int, person: str) -> dict[str, Any] | None:
         """One person's draft of an invoice; None when none is kept (or it can't be read)."""
@@ -681,8 +714,9 @@ class InvoicesMixin:
         approved_before = (inv.get("meta") or {}).get("reopened_coding") or {}  # before a reopen (B-1299, D-112)
         kept = suggestion_kept
         # Without a cost center list the review screen has none to show or keep: a cost center the AI copied from
-        # coding memory is not part of what it proposed (B-562).
-        cost_centers = out.cost_centers = bool(self.list_accounts("cost_centers"))
+        # coding memory is not part of what it proposed (B-562). Whether there is one, never the whole list (B-1933).
+        with self._conn() as conn:
+            cost_centers = out.cost_centers = conn.execute("SELECT 1 FROM cost_centers LIMIT 1").fetchone() is not None
         final_lines = final_output.get("line_items", [])
         # Where it is supplied, for the tax code each line is remembered with (D-80).
         province = supply_province(final_output, self.our_province())

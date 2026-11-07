@@ -204,12 +204,22 @@ async def d(request):
 # Every request of the pages' scripts has a deadline (D-161) and sees the login's answer (D-185): ``fetchWithin``
 # (app.js) is their one fetch. A bare ``fetch(`` waited for ever on a server that never answered, and an answer that
 # was the login's went unseen; an XMLHttpRequest (the upload, for its progress) is given up (``abort()``) once no
-# answer came in time (B-1926).
+# answer came in time (B-1926), each by an abort or a timeout of its own, near it. ``navigator.sendBeacon``, an
+# ``EventSource`` and a ``WebSocket`` have no deadline the page sets and see no login: none is used (B-1942).
 JS = ROOT / "ap_coder" / "web" / "static" / "js"
+NO_DEADLINE = "(an XMLHttpRequest with no abort or timeout of its own)"
+_ASKS = (
+    r"\bfetch\s*(?:\(|\.\s*(?:call|apply|bind)\b)"  # fetch(…), window.fetch(…), fetch.call(…)
+    r"|\[\s*([\"'`])fetch\1\s*\]"  # window["fetch"]
+    r"|=\s*(?:(?:window|globalThis|self)\s*\.\s*)?fetch\b"  # one under another name: const get = window.fetch
+    r"|\bsendBeacon\b|\bnew\s+(?:EventSource|WebSocket)\b"
+)
+_NEAR = 40  # the lines after an XMLHttpRequest where its own abort or timeout is looked for
 
 
 def _bare_requests(name: str, source: str) -> list[str]:
-    """Each ``fetch(`` of a page's script outside app.js's ``fetchWithin``, and an XMLHttpRequest never aborted."""
+    """Each request of a page's script outside app.js's ``fetchWithin`` (``fetch(``, the other ways a page asks), and
+    an XMLHttpRequest without an abort or a timeout of its own near it."""
     import re
 
     code = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), source, flags=re.S)  # (comments: not code)
@@ -217,10 +227,15 @@ def _bare_requests(name: str, source: str) -> list[str]:
     if name == "app.js" and "export function fetchWithin(" in code:
         start = code.index("export function fetchWithin(")
         code = code[:start] + code[code.index("\n}\n", start) :]
-    found = [f"{name}: {code[: m.start()].count(chr(10)) + 1}" for m in re.finditer(r"\bfetch\(", code)]
-    if "XMLHttpRequest" in code and ".abort()" not in code:
-        found.append(f"{name}: an XMLHttpRequest with no deadline")
-    return found
+    found = [(code[: m.start()].count("\n") + 1, "") for m in re.finditer(_ASKS, code)]
+    lines = code.split("\n")
+    for m in re.finditer(r"\bnew\s+XMLHttpRequest\b", code):
+        at = code[: m.start()].count("\n")
+        named = re.search(r"\b(\w+)\s*=\s*$", code[code.rfind("\n", 0, m.start()) + 1 : m.start()])  # xhr = new …
+        near = "\n".join(lines[at : at + _NEAR])
+        if not named or not re.search(rf"\b{named[1]}\s*\.\s*(?:abort\s*\(|timeout\s*=(?!=))", near):
+            found.append((at + 1, f" {NO_DEADLINE}"))
+    return [f"{name}: {line}{what}" for line, what in sorted(found)]
 
 
 def test_every_request_of_the_pages_scripts_has_a_deadline_and_sees_the_login():
@@ -250,6 +265,34 @@ export function fetchWithin(url, options = {}, ms = LOOK_MS) {
 }
 export const after = 1;
 """
-    assert _bare_requests("x.js", bad) == ["x.js: 2", "x.js: 3", "x.js: an XMLHttpRequest with no deadline"]
+    assert _bare_requests("x.js", bad) == ["x.js: 2", "x.js: 3", f"x.js: 4 {NO_DEADLINE}"]
     assert _bare_requests("x.js", safe) == []
     assert _bare_requests("app.js", helper) == [] and len(_bare_requests("other.js", helper)) == 2
+
+
+def test_the_deadline_rule_finds_the_other_ways_a_page_asks():
+    """B-1942: the rule saw only ``fetch(``, and one ``.abort()`` anywhere in a file: ``navigator.sendBeacon``, an
+    ``EventSource``, a ``WebSocket``, ``window["fetch"]`` and every XMLHttpRequest of a file where another was given
+    up passed. Each is found; an XMLHttpRequest needs an abort or a timeout of its own, near it."""
+    bad = """
+navigator.sendBeacon("/review/1/check", body);
+const events = new EventSource("/jobs/status");
+const socket = new WebSocket("ws://127.0.0.1:8501/x");
+window["fetch"]("/review/1/words");
+const get = window.fetch;
+const first = new XMLHttpRequest();
+setTimeout(() => first.abort(), LOOK_MS);
+const second = new XMLHttpRequest();
+second.send(body);
+new XMLHttpRequest().send(body);
+"""
+    safe = """
+const xhr = new XMLHttpRequest();
+xhr.timeout = LOOK_MS;
+const other = new XMLHttpRequest();
+other.open("POST", url);
+const quiet = setTimeout(() => other.abort(), LOOK_MS);
+"""
+    assert _bare_requests("x.js", bad) == ["x.js: 2", "x.js: 3", "x.js: 4", "x.js: 5", "x.js: 6",
+                                           f"x.js: 9 {NO_DEADLINE}", f"x.js: 11 {NO_DEADLINE}"]  # fmt: skip
+    assert _bare_requests("x.js", safe) == []

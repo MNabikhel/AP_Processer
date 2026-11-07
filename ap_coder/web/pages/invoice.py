@@ -221,10 +221,17 @@ def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
 
 
 def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None,
-                screen: str = "") -> None:  # fmt: skip
+                screen: str = "", form: Any = None) -> None:  # fmt: skip
     """Keep the edits (``keep``) or drop them. ``saved_at`` is when they were last edited: the same edits checked again
     (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996).
-    ``screen``: the review screen they come from (the form's ``screen``), kept as the one that wrote them (D-184)."""
+    ``screen``: the review screen they come from (the form's ``screen``), kept as the one that wrote them (D-184).
+    ``form``: the screen's form (its ``screen`` and ``draft_rev``): written only while that screen is still at the
+    person's draft, read again in the write's own transaction; else refused as out of date (``_OutOfDate``: two tabs
+    whose checks overlap, the second to write, B-1938)."""
+    store, person = get_store(request), _person(person_key())
+    drawn = None if form is None else form.get("draft_rev")
+    screen = screen if form is None else _screen(form)
+    expect = None if drawn is None else lambda now: _at_draft(store, invoice_id, now, str(drawn), screen)
     if keep:
         edits = draft.to_dict()
         before = _drafts(request).get(invoice_id) or {}
@@ -236,10 +243,15 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
         kept = {**edits, "saved_at": at, **({"check": check} if check is not None else {})}
         if writer := before.get("screen") if same else screen:
             kept["screen"] = writer
-        get_store(request).save_invoice_draft(invoice_id, _person(person_key()), kept)  # first: it may be left undone
+        if not store.save_invoice_draft(invoice_id, person, kept, expect=expect):  # first: it may be left undone
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
         _drafts(request)[invoice_id] = kept
-    elif invoice_id in _drafts(request):
-        forget_draft(request, invoice_id)
+    elif invoice_id in _drafts(request):  # (the screen's own requests sent meanwhile are still at it: ``_at_draft``)
+        if not store.save_invoice_draft(invoice_id, person, None, screen=screen, seconds=UNDONE_SECONDS, expect=expect):
+            raise _OutOfDate(_stale(store, invoice_id, _nav_query(form), False, store.invoice_draft(invoice_id, person),
+                                    mine=True))  # fmt: skip
+        _drafts(request).pop(invoice_id, None)
 
 
 def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
@@ -258,6 +270,7 @@ def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
 OPEN_SECONDS = 120  # someone's invoice open: forgotten this long after the screen's last renewal (a closed tab)
 OPEN_RENEW_SECONDS = 45  # renewed at most this often (the screen asks every 30 to 60 s)
 WATCH_SECONDS = 30  # how often the screen asks while nothing is being read
+UNDONE_SECONDS = 120  # a draft a screen's own check dropped: the requests it sent meanwhile are its own this long
 NO_DRAFT = "0"  # the draft revision of no draft kept
 
 
@@ -346,15 +359,22 @@ def _out_of_date(request: Request, store: Store, invoice_id: int, inv: dict[str,
     if rev is not None and (inv is None or inv["status"] != REVIEW or str(store.coding_revision(invoice_id)) != rev):
         return _stale(store, invoice_id, query, inv is None)
     kept = _drafts(request).get(invoice_id)
-    if drawn is not None and not _at_draft(kept, str(drawn), str(form.get("screen") or "")):
+    if drawn is not None and not _at_draft(store, invoice_id, kept, str(drawn), _screen(form)):
         return _stale(store, invoice_id, query, False, kept, mine=True)
     return None
 
 
-def _at_draft(kept: dict[str, Any] | None, drawn: str, screen: str) -> bool:
-    """Whether a screen at revisions ``drawn`` is at the person's draft ``kept``: one of them, or the draft written
-    by that screen itself (``screen``: a check of its own answered after it asked)."""
-    return _draft_rev(kept) in drawn.split() or bool(kept and screen and kept.get("screen") == screen)
+def _at_draft(store: Store, invoice_id: int, kept: dict[str, Any] | None, drawn: str, screen: str) -> bool:
+    """Whether a screen at revisions ``drawn`` is at the person's draft ``kept``: one of them, the draft written by
+    that screen itself (``screen``: a check of its own answered after it asked), or none since that screen's own check
+    dropped it (its edits put back as stored, B-1937)."""
+    if _draft_rev(kept) in drawn.split():
+        return True
+    if not screen:
+        return False
+    if kept:
+        return kept.get("screen") == screen
+    return store.draft_dropped_by(invoice_id, _person(person_key())) == screen
 
 
 class _OutOfDate(Exception):
@@ -500,6 +520,19 @@ def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: An
 
 _NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval", REJECTED: "rejected",
         PARKED: "parked", REVIEW: "in the review queue", FAILED: "a failed read"}  # fmt: skip
+
+
+def _acted_on_meanwhile(request: Request, store: Store, invoice_id: int, inv: dict[str, Any],
+                        form: Any) -> JSONResponse | None:  # fmt: skip
+    """An action of the screen (approve, send to the manager) from a screen out of date (``_out_of_date``): while
+    the invoice is in the review queue, refused as its check is (409, ``stale``: the screen says so and keeps what was
+    typed in its boxes, B-1936); once it left it, "changed meanwhile" (D-184). None: up to date."""
+    stale = _out_of_date(request, store, invoice_id, inv, form)
+    if stale is None:
+        return None
+    if inv["status"] == REVIEW:
+        return refuse(stale["text"], 409, stale=stale)
+    return changed_meanwhile(request, invoice_id)
 
 
 def changed_meanwhile(request: Request, invoice_id: int) -> JSONResponse:
@@ -1026,7 +1059,7 @@ def reader_progress(request: Request, invoice_id: int, seen: str = "", rev: str 
         answer["stale"] = _stale(store, invoice_id, query, False)
     elif draft is not None and inv["status"] == REVIEW:
         kept = store.invoice_draft(invoice_id, _person(person_key()))
-        if not _at_draft(kept, draft, screen):
+        if not _at_draft(store, invoice_id, kept, draft, screen):
             answer["stale"] = _stale(store, invoice_id, query, False, kept, mine=True)
     return JSONResponse(answer, headers={"Cache-Control": "no-store"})
 
@@ -1080,7 +1113,10 @@ async def check(request: Request, invoice_id: int) -> JSONResponse:
     confidence this screen shows (edits and today's checks included). The form is read here; the checking runs on a
     threadpool thread, so a check never holds up the dashboard's other requests."""
     form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
-    return await run_in_threadpool(_check, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_check, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
@@ -1096,7 +1132,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
     listed = {code for code, _ in view.gl_options(reference, draft.lines)}
     used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
-    kept = _keep_checked(request, store, invoice_id, draft, analysis, _screen(form))  # written last: read nothing after
+    kept = _keep_checked(request, store, invoice_id, draft, analysis, form=form)  # written last: read nothing after
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
     codes = view.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
@@ -1124,14 +1160,14 @@ def _screen(form: Any) -> str:
 
 
 def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis,
-                  screen: str = "") -> bool:  # fmt: skip
-    """What a check of the screen keeps: the confidence it worked out (the queue shows the one the screen shows, edits
-    and today's checks included), and the edits as a draft, or none when there are none. Whether they are kept.
-    ``screen``: the screen's own (``_keep_draft``)."""
+                  screen: str = "", form: Any = None) -> bool:  # fmt: skip
+    """What a check of the screen keeps: the edits as a draft, or none when there are none, and the confidence it
+    worked out (the queue shows the one the screen shows, edits and today's checks included). Whether they are kept.
+    ``screen``, ``form``: the screen's own (``_keep_draft``; refused: nothing is kept)."""
+    kept = _keeps(draft, analysis)
+    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None, screen, form)
     if analysis.report is not None:
         store.refresh_confidence(invoice_id, analysis.report.adjusted_confidence, analysis.report.requires_review)
-    kept = _keeps(draft, analysis)
-    _keep_draft(request, invoice_id, draft, kept, _draft_blocker(analysis) if kept else None, screen)
     return kept
 
 
@@ -1161,8 +1197,8 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
 def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    if _out_of_date(request, store, invoice_id, inv, form):  # its screen is behind the invoice or the draft (D-184)
-        return changed_meanwhile(request, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     reference = _reference(store)
     draft = _from_form(request, inv, form)
     query = _nav_query(form)
@@ -1328,7 +1364,10 @@ async def send_to_manager(request: Request, invoice_id: int) -> JSONResponse:
     """Ask the manager of the invoice's cost centers to confirm how it is coded (D-138): the lines on screen are kept
     with the request and the invoice waits, parked, until the manager answers (pages/manager.py)."""
     form = await posted_form(request)
-    return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    try:
+        return await run_in_threadpool(_send_to_manager, request, invoice_id, form)
+    except _OutOfDate as stale:  # another tab's check wrote the draft meanwhile (B-1938)
+        return refuse(stale.stale["text"], 409, stale=stale.stale)
 
 
 @one_connection
@@ -1337,8 +1376,10 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    if inv["status"] != REVIEW or _out_of_date(request, store, invoice_id, inv, form):  # (D-184)
+    if inv["status"] != REVIEW:
         return changed_meanwhile(request, invoice_id)
+    if behind := _acted_on_meanwhile(request, store, invoice_id, inv, form):
+        return behind
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, _reference(store), inv, draft, reviewer())
     lines = [dict(li) for li in (analysis.output.get("line_items") or [])]
@@ -1362,7 +1403,9 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
         return refuse("Say who the manager is.")
     if email and ("@" not in email or any(c.isspace() for c in email)):
         return refuse("The manager's email doesn't look like one (name@company.com).")
-    _keep_draft(request, invoice_id, draft, True, screen=_screen(form))  # the edits on screen stay for its return
+    _keep_draft(request, invoice_id, draft, True, form=form)  # the edits on screen stay for its return
+    # the next one while this one is in the queue: past those someone else has open, as park and approve (B-1939)
+    after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request) if user_id is not None else ""
     try:
         note = str(form.get("manager_note") or "")
         rid = store.send_to_manager(invoice_id, reviewer(), manager_name=name, manager_email=email,
@@ -1373,7 +1416,6 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     if form.get("remember_manager") and centers and user_id is None:
         store.set_cost_center_manager(centers, name, email, reviewer())
     if user_id is not None:
-        after = next_url(store, invoice_id, _nav_query(form), form.get("next_id"), request)
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
     return done(request, f"/manager/{rid}", flash_message(
@@ -1449,9 +1491,9 @@ def _posted_in_review(request: Request, invoice_id: int,
                       form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft]:  # fmt: skip
     """A grid action's invoice (still in the review queue), the GL accounts and the draft the form posted."""
     store = get_store(request)
+    if stale := _out_of_date(request, store, invoice_id, store.get_invoice(invoice_id), form):  # first, as a check
+        raise _OutOfDate(stale)  # (left the queue meanwhile: what was done, once, B-1940)
     inv = _in_review(store, invoice_id)
-    if stale := _out_of_date(request, store, invoice_id, inv, form):
-        raise _OutOfDate(stale)
     reference = _reference(store)
     return store, inv, reference, _from_form(request, inv, form)
 
@@ -1469,7 +1511,7 @@ def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draf
     """The grid with its new rows, kept as the draft; the page draws them and checks again (at the draft's revision
     now, ``draft_rev``)."""
     draft.lines = lines
-    _keep_draft(request, invoice_id, draft, True, screen=_screen(form))
+    _keep_draft(request, invoice_id, draft, True, form=form)
     ai = (get_store(request).get_invoice(invoice_id) or {}).get("ai_output") or {}
     return message(text, "ok", lines=_render_lines(reference, draft, ai), icon=icon,
                    draft_rev=_draft_rev(_drafts(request).get(invoice_id)))  # fmt: skip
