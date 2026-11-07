@@ -216,6 +216,7 @@ def apply(state: dict, chosen: str, data: Path, db: Path, say: Say, switch: bool
     be told: the folders are gone) and what was done, in words. run.cmd (the Mac's link) and server.json are
     switched to it; only server.json when ``switch`` is False (the service host runs that folder already). Once the
     safety copy is put back the marker says so, and it is never put back again (``rule``)."""
+    from ..core.store import backup_files
     from . import server_update, service
 
     old, new = Path(str(state.get("from_folder") or ".")), Path(str(state.get("to_folder") or "."))
@@ -230,6 +231,8 @@ def apply(state: dict, chosen: str, data: Path, db: Path, say: Say, switch: bool
     elif chosen == BACK and safety is not None:
         files = server_update.put_back(safety, db)
         write(data, {**state, "put_back": safety.name})  # (a step below that fails is tried again: this is not)
+        with contextlib.suppress(OSError):  # (listed without its SHA-256, which the old version's check wants: B-2037)
+            backup_files.hash_database(safety)
         say(f"The database is back as it was before the update ({safety.name}); the user accounts are kept as they "
             f"are, and everyone logs in again. The files: {files.words()}.")  # fmt: skip
     _drop_cut_copy(state, db)

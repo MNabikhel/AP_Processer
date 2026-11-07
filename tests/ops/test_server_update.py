@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import zipfile
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -649,8 +650,9 @@ class LastWork(FakeServer):
 def test_the_safety_copy_holds_what_was_done_while_it_was_made_ahead(server, answers, capsys):
     """D-196: the safety copy is begun while the old version serves, and brought up to date once it is stopped, so it
     is the database as it was the moment the service stopped (D-188's promise): an update goes back to that, and so
-    does --back. Its list of files has the invoice that came in meanwhile, and the database's SHA-256 once it serves;
-    nothing of the copy made ahead is left."""
+    does --back. Its list of files has the invoice that came in meanwhile, and the database's SHA-256 once it serves,
+    the new version or the old one it went back to (B-2037: the old version's check took it for damaged); nothing of
+    the copy made ahead is left."""
     from ap_coder.core.store.backups import setting_in
 
     fake = LastWork(server["db"], up_ok=answers)
@@ -664,8 +666,9 @@ def test_the_safety_copy_holds_what_was_done_while_it_was_made_ahead(server, ans
     assert sorted(p.name for p in (server["data"] / "backups").iterdir() if ".db." in p.name) == []  # (.part, list)
     times = service.read_config(server["data"])["history"][-1]["times"]
     assert times["copy_ahead_s"] >= 0 and times["safety_copy_s"] >= 0
-    if answers:  # its SHA-256, read once the new version serves
-        assert listed["database_sha256"] == backup_files._sha_size(backup)[0]
+    assert backup_files.read_list(backup)["database_sha256"] == backup_files._sha_size(backup)[0]
+    assert not backup_files.check(backup, deep=True).damaged
+    if answers:
         assert _marker(server["db"]) == "changed by the new version"
         assert server_update.go_back(server["data"], server["db"], server=FakeServer(), yes=True) == 0
     assert _marker(server["db"]) == "written while it was copied ahead"  # as it was the moment it stopped
@@ -685,10 +688,30 @@ def test_a_database_that_cant_be_held_still_is_copied_whole_once_stopped(server,
     assert "could not be copied ahead (it was never still" in out and "copied whole once the service is stopped" in out
 
 
+def test_a_copy_made_ahead_that_cant_be_brought_up_to_date_is_said_and_made_whole(server, monkeypatch, capsys):
+    """Should the file held still be written after all (B-2036's lost hold), ``finish`` throws the copy away and the
+    database is copied whole while the service is stopped: the downtime longer, and said (it was silent)."""
+    from ap_coder.core.store import backups
+    from ap_coder.core.store.backups import setting_in
+
+    def written_after_all(self) -> bool:
+        self._let_go()
+        self._remove_part()
+        return False
+
+    monkeypatch.setattr(backups.CopyAhead, "finish", written_after_all)
+    assert _install(_bundle(server["tmp"]), server["data"], server["db"], server=LastWork(server["db"])) == 0
+    (backup,) = (server["data"] / "backups").glob("ap_coder-*-before-update-0.4.0.db")
+    assert setting_in(backup, "marker") == "written while it was copied ahead"
+    assert "could not be brought up to date (its file was written meanwhile): it was copied whole" in (
+        capsys.readouterr().out
+    )
+
+
 def test_a_copy_ahead_that_fails_stops_nothing_and_leaves_nothing(server, monkeypatch, capsys):
     from ap_coder.core.store import backups
 
-    def full(source: Path, dest: Path, size: int, page: int) -> None:
+    def full(source: BinaryIO, dest: Path, size: int, page: int) -> None:
         dest.write_bytes(b"SQLite format 3\x00 half")
         raise OSError(28, "No space left on device")
 

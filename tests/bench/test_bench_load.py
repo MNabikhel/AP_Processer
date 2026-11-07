@@ -360,6 +360,12 @@ def test_each_server_processs_memory_slope_is_reported_and_a_limit_on_it_fails_t
     report["config"] = {"max_slope": 5.0}
     assert load.gate(report, None, 1.5) == ["worker 2's memory grew 10.0 MB a 10 minutes over the run's second half "
                                             "(more than 5)"]  # fmt: skip
+    short = {**one, "rss_slope": 40.0, "rss_slope_late": None}  # (a 90 s run: no second half to judge, B-2038)
+    report["processes"] = [short, model]
+    said = "the memory slope can't be judged: the run's second half has under a minute of samples"
+    assert load.gate(report, None, 1.5) == [f"{said} (--max-slope wants a run of 2 minutes or more)"]
+    report["processes"] = [one, short, model]  # (a worker started afresh late, beside one judged: as before)
+    assert load.gate(report, None, 1.5) == []
     cfg = {"users": 3, "duration": 3600.0, "workers": 2, "ramp": 0.0, "think": 1.0, "invoices": 10, "data": "a folder",
            "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
     text = load.markdown(load.build_report(_run(), cfg, {"started": "2026-11-07T09:00:00", "processes": [one, two]}))

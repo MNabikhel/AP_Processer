@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -477,8 +478,8 @@ def _cut_in_the_copy(server, monkeypatch, where: str) -> dict:
     monkeypatch.setattr(backups.CopyAhead, "_remove_part", lambda self: None)
     if where == "copy":
 
-        def half(source: Path, dest: Path, size: int, page: int) -> None:
-            dest.write_bytes(source.read_bytes()[: size // 2])
+        def half(source: BinaryIO, dest: Path, size: int, page: int) -> None:
+            dest.write_bytes(source.read()[: size // 2])
             Store(server["db"]).set_setting("marker", LATE)  # (the old version, serving on)
             raise PowerCut
 
@@ -534,5 +535,10 @@ def test_an_update_cut_short_in_its_safety_copy_made_ahead_loses_nothing(server,
         assert where == "copy" or not service.stop_flag(server["data"]).exists()
     assert _marker(server["db"]) == LATE and _runs(server) == "APProcessor"
     assert [p.name for p in backups.iterdir() if ".db." in p.name] == []
+    if where == "migrate":  # put back: its list has the SHA-256 the old version's check wants (B-2037)
+        from ap_coder.core.store import backup_files
+
+        (safety,) = backups.glob(f"ap_coder-*-{state['label']}.db")
+        assert backup_files.read_list(safety)["database_sha256"] == backup_files._sha_size(safety)[0]
     assert not update_recovery.marker_path(server["data"]).exists()
     assert _install(_bundle(server["tmp"], "0.5.0"), server["data"], server["db"], server=Service(server["data"])) == 0

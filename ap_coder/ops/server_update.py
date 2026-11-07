@@ -692,6 +692,8 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
             server.start()
             if not server.up(current):
                 say("The old version does not answer either: see the log, python -m ap_coder service status.")
+        if backup is not None:  # (B-2037)
+            _read_in_sha(backup)
         kept = f" The new folder {new} is kept to look at; delete it when done." if new.exists() else ""
         say(f"AP Coder went back to {old_version}.{kept}")
         return 1
@@ -713,6 +715,9 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
             backup = safety_copy(db, label, ahead, hashed=False)  # (its SHA-256 read once it serves: below)
             plan["safety_copy"] = str(backup)
             times["safety_copy_s"] = _seconds(mark)
+            if ahead is not None and not ahead.caught_up:
+                say("The copy of the database made ahead could not be brought up to date (its file was written "
+                    "meanwhile): it was copied whole instead.")  # fmt: skip
             say(f"Database backed up: {backup}")
         step("migrate")
         say("Updating the database...")
@@ -754,10 +759,7 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
     say(f"\nUpdated AP Coder from {old_version} to {new_version}: {new}.")
     say(f"{stopped}: {times['downtime_s']:g} s ({said}); prepared beforehand in {times['prepare_s']:g} s.")
     if backup is not None:
-        from ..core.store import backup_files
-
-        with contextlib.suppress(OSError):  # (else its list has the size only, which ``check`` then compares)
-            backup_files.hash_database(backup)
+        _read_in_sha(backup)
         copied = server.second_copy(new, db, backup)
         if copied:
             say(copied)
@@ -778,6 +780,15 @@ def _switch_over(data: Path, db: Path, server: Server, installed: bool, plan: di
 
 
 # --- server-update --back ---------------------------------------------------------------------------------------------
+
+
+def _read_in_sha(backup: Path) -> None:
+    """The safety copy's SHA-256 read into its list once a version serves again (``safety_copy(hashed=False)``): else
+    the list has the size only, which ``check`` compares, and an older version's check calls it damaged (B-2037)."""
+    from ..core.store import backup_files
+
+    with contextlib.suppress(OSError):
+        backup_files.hash_database(backup)
 
 
 def go_back(data: Path, db: Path, *, server: Server | None = None, dry_run: bool = False, yes: bool = False,

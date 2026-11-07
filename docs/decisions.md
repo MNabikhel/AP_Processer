@@ -3697,6 +3697,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     copy); SQLite's session extension (not in Python's sqlite3); no copy when the schema is unchanged (the new
     version still writes, and `--back` would have no database of the stop); a hard link (one file: the new version's
     checkpoints write into it); comparing pages after the stop (reads the whole database).
+  - **After its review (B-2036, B-2037):** the copy reads the database through one handle, opened after the hold and
+    closed only after it: on Linux and macOS closing any handle on a file lets go of every lock the process holds on
+    it (POSIX), the hold's own too, so another process could write the log into the file held still, and with
+    SQLite 3.45 (Ubuntu 24.04's) the old version's last connection then deleted a log with its last writes in it,
+    lost from the database and the safety copy (40 of 41 rows in the review's probe). A copy that can't be brought up
+    to date (made whole at the stop) is said. An update that goes back, and the recovery that puts the copy back, read
+    in its SHA-256: the old version's `backup check` took a list without one for a damaged copy.
   - **Left:** the files listed at the stop are one walk with two stats a file (more on Windows); `--back`'s own safety
     copy is still whole (the update's downtime is the target); the Windows job's number with this is its next run's.
   - (`ap_coder/core/store/backups.py`, `core/store/backup_files.py`, `ops/server_update.py`, `ops/update_recovery.py`,

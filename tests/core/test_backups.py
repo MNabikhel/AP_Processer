@@ -1103,6 +1103,86 @@ def test_a_copy_made_ahead_holds_what_is_written_until_it_is_finished(tmp_path):
     assert not _busy(tmp_path)  # the lock let go
 
 
+_OTHER_PROCESS_LOCKS = """
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDWR)
+try:  # SQLite's shared bytes (SHARED_FIRST, SHARED_SIZE), all of them: refused while any process reads
+    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 510, 0x40000000 + 2, os.SEEK_SET)
+    print("locked")
+except OSError:
+    print("refused")
+"""
+
+_OLD_VERSION = """
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1], timeout=10)
+conn.execute("SELECT 1").fetchone()
+print("open", flush=True); sys.stdin.readline()
+for n in range(40):
+    with conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (f"late {n}", "x" * 3000))
+conn.close()  # (the service stops: its last connection closes)
+print("closed", flush=True)
+"""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX locks: a Windows handle keeps its own")
+def test_a_copy_made_ahead_keeps_its_hold_against_another_process(tmp_path):
+    """B-2036: on Linux and macOS closing any handle on a file lets go of every lock the process holds on it. The copy
+    read the database through a handle of its own and closed it, so the hold's own lock went with it: another process
+    could then write the log into the file held still (and, on SQLite 3.45, an old version's last connection could
+    delete a log with its last writes in it). Copied, the hold still keeps another process from the file."""
+    import subprocess
+    import sys
+
+    from ap_coder.core.store.backups import CopyAhead
+
+    db, part = tmp_path / "ap_coder.db", tmp_path / "backups" / "x.db.part"
+    Store(db).set_setting("marker", "x")
+    ahead = CopyAhead(db, part)
+    assert ahead.start() == ""
+    tried = subprocess.run([sys.executable, "-c", _OTHER_PROCESS_LOCKS, str(db)], capture_output=True, text=True)
+    ahead.close()
+    assert tried.stdout.strip() == "refused", tried.stdout + tried.stderr
+
+
+def test_a_copy_made_ahead_keeps_what_another_process_wrote_meanwhile(tmp_path):
+    """B-2036, as server-update meets it: the old version (another process) writes while the copy is held, then
+    stops. The database file is still as it was held, the copy is finished with what was written, and neither the
+    database nor the copy loses a write."""
+    import subprocess
+    import sys
+
+    from ap_coder.core.store.backups import CopyAhead
+
+    db, part = tmp_path / "ap_coder.db", tmp_path / "backups" / "x.db.part"
+    Store(db).set_setting("marker", "x")
+    old = subprocess.Popen([sys.executable, "-c", _OLD_VERSION, str(db)], stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, text=True)  # fmt: skip
+    ahead = CopyAhead(db, part)
+    try:
+        assert old.stdout.readline().strip() == "open"
+        assert ahead.start() == ""
+        held = db.stat()  # (not read here: closing a handle on it would let go of the hold, as the bug did)
+        old.stdin.write("\n")
+        old.stdin.flush()
+        assert old.stdout.readline().strip() == "closed"
+        old.wait(30)
+        now = db.stat()
+        assert (now.st_size, now.st_mtime_ns) == (held.st_size, held.st_mtime_ns)  # (written into the log alone)
+        assert ahead.finish()
+        done = part.rename(part.with_suffix(""))
+    finally:
+        ahead.close()
+        old.kill()
+    for path in (db, done):
+        conn = sqlite3.connect(path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM settings WHERE key LIKE 'late %'").fetchone()[0] == 40
+        finally:
+            conn.close()
+
+
 @pytest.mark.parametrize("why", ["a reader on an older state", "not in WAL mode"])
 def test_a_database_that_cant_be_held_still_is_not_copied_ahead(tmp_path, monkeypatch, why):
     """A reader that keeps part of the log from the file (a long report), longer than it waits: the copy is not begun
@@ -1173,9 +1253,9 @@ def test_a_copy_made_ahead_never_reads_sqlites_lock_byte_page(tmp_path, monkeypa
             read.append((self.f.tell(), self.f.tell() + n))
             return self.f.read(n)
 
-    monkeypatch.setattr(backups, "open", lambda p, m: Watched(real_open(p, m)) if m == "rb" else real_open(p, m),
-                        raising=False)  # fmt: skip
-    backups._copy_as_is(source, dest, page * pages, page)
+    with Watched(real_open(source, "rb")) as watched:
+        watched.name = str(source)
+        backups._copy_as_is(watched, dest, page * pages, page)
     want = source.read_bytes()
     assert dest.read_bytes() == want[: 5 * page] + bytes(page) + want[6 * page :]
     assert not [r for r in read if r[0] < 6 * page and r[1] > 5 * page]

@@ -1736,8 +1736,15 @@ def gate(report: dict[str, Any], baseline: dict[str, Any] | None, factor: float)
     if report["counts"].get(NOT_MADE):
         problems.append(f"{NOT_MADE}: {report['counts'][NOT_MADE]}")
     most = (report.get("config") or {}).get("max_slope")
-    for p in report.get("processes") or [] if most is not None else []:
-        if p["process"] != "model" and (p.get("rss_slope_late") or 0) > most:
+    # (a process with too few samples, a worker started afresh late, is left out; none left: the run was too short,
+    # which passed unjudged, B-2038)
+    found = report.get("processes") or []
+    judged = [p for p in found if p["process"] != "model" and p.get("rss_slope_late") is not None]
+    if most is not None and not judged:
+        problems.append("the memory slope can't be judged: the run's second half has under a minute of samples "
+                        "(--max-slope wants a run of 2 minutes or more)")  # fmt: skip
+    for p in judged if most is not None else []:
+        if p["rss_slope_late"] > most:
             problems.append(f"{p['process']}'s memory grew {p['rss_slope_late']:.1f} MB a 10 minutes over the run's "
                             f"second half (more than {most:g})")  # fmt: skip
     for route, base in ((baseline or {}).get("routes") or {}).items():

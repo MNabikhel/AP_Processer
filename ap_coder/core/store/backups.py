@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from ..paths import pid_alive
 from . import backup_files, dialect
@@ -246,7 +246,11 @@ class CopyAhead:
     def __init__(self, db: Path, part: Path) -> None:
         self.db, self.part = db, part
         self.held: sqlite3.Connection | None = None
+        # The database file, opened once for the copy and closed only once the hold is let go: on Linux and macOS
+        # closing any handle on a file lets go of every lock this process holds on it, the hold's own (B-2036).
+        self._file: BinaryIO | None = None
         self.seen: tuple[int, int] = (0, 0)
+        self.caught_up = False  # (``finish`` brought it up to date: else the database was copied whole)
         self._lock = contextlib.ExitStack()
 
     def start(self) -> str:
@@ -264,7 +268,8 @@ class CopyAhead:
             self.seen = (found.st_size, found.st_mtime_ns)
             self._remove_part()
             self.part.parent.mkdir(parents=True, exist_ok=True)
-            _copy_as_is(self.db, self.part, found.st_size, page)
+            self._file = open(self.db, "rb")  # noqa: SIM115 - closed by _let_go, after the hold (above)
+            _copy_as_is(self._file, self.part, found.st_size, page)
         except BaseException:
             self.close()
             raise
@@ -289,6 +294,7 @@ class CopyAhead:
             conn.execute("PRAGMA journal_mode=DELETE")
         finally:
             conn.close()
+        self.caught_up = True
         return True
 
     def close(self) -> None:
@@ -300,6 +306,9 @@ class CopyAhead:
         if self.held is not None:
             self.held.close()
             self.held = None
+        if self._file is not None:  # (after the hold: B-2036)
+            self._file.close()
+            self._file = None
 
     def _remove_part(self) -> None:
         """The copy not finished, SQLite's files beside it, and the list of files made with it (server-update's)."""
@@ -341,10 +350,11 @@ def _hold_still(db: Path, wait: float) -> tuple[sqlite3.Connection | None, str]:
         writer.close()
 
 
-def _copy_as_is(source: Path, dest: Path, size: int, page: int) -> None:
-    """The first ``size`` bytes of ``source`` into the new file ``dest``, flushed to the disk; SQLite's lock-byte page
-    (``LOCK_PAGE``, ``page`` bytes) written as zeros, never read."""
-    with open(source, "rb") as src, open(dest, "xb") as out:
+def _copy_as_is(src: BinaryIO, dest: Path, size: int, page: int) -> None:
+    """The first ``size`` bytes of the open file ``src`` (left open: B-2036) into the new file ``dest``, flushed to
+    the disk; SQLite's lock-byte page (``LOCK_PAGE``, ``page`` bytes) written as zeros, never read."""
+    src.seek(0)
+    with open(dest, "xb") as out:
         done = 0
         while done < size:
             if done == LOCK_PAGE:
@@ -354,7 +364,7 @@ def _copy_as_is(source: Path, dest: Path, size: int, page: int) -> None:
                 continue
             block = src.read(min(CHUNK, size - done, LOCK_PAGE - done if done < LOCK_PAGE else CHUNK))
             if not block:
-                raise OSError(f"{source.name} ends at {done:,} bytes, not {size:,}")
+                raise OSError(f"{Path(src.name).name} ends at {done:,} bytes, not {size:,}")
             out.write(block)
             done += len(block)
         out.flush()
