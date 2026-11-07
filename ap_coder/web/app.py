@@ -294,6 +294,9 @@ def start_background_work(settings_factory: Callable[[], Settings], store: Store
     from ap_coder.web.refresh import Refresher
 
     bulk = BulkRunner(settings_factory, lambda: store).start()
+    # (the background process's own Store too, which no create_app sets: what its refresher works out is kept for
+    # every process, the Vendors page's totals as the others, B-2050)
+    store.background_answers = True
     return reader, azure, jde, recheck, bulk, Runner(lambda: store).start(), Refresher(lambda: store).start()
 
 

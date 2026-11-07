@@ -549,3 +549,70 @@ def test_on_a_laptop_the_vendors_page_writes_nothing_to_show_its_totals(
     assert [v["invoices"] for v in store.vendor_summaries(settled=True)] == [2]
     with sqlite3.connect(store.path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM report_answers WHERE name = 'vendor_totals'").fetchone()[0] == 0
+
+
+def _background_work(store: Store, monkeypatch, server: bool = True) -> tuple:
+    """``app.start_background_work`` on the company server for ``store`` (the background process's own, as
+    ``ap_coder background`` makes it; ``server`` False: a laptop's dashboard), its other work stubbed: (the last
+    worker it started, everything it started)."""
+    from types import SimpleNamespace
+
+    from ap_coder.ai import azure_check, page_worker
+    from ap_coder.coding import bulk
+    from ap_coder.erp import jde_sync
+    from ap_coder.web import app as web_app
+    from tests.webclient import web_settings
+
+    stub = SimpleNamespace(stop=lambda: None)
+    stub.start = lambda: stub
+    for module, name in ((page_worker, "start_background"), (azure_check, "start_background"),
+                         (jde_sync, "Background"), (bulk, "QueueRecheck")):  # fmt: skip
+        monkeypatch.setattr(module, name, lambda *args, **kwargs: stub)
+    if server:
+        monkeypatch.setenv("AP_SERVER_MODE", "1")
+    else:
+        monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    workers = web_app.start_background_work(web_settings, store)
+    return workers[-1], workers
+
+
+def _stopped(workers: tuple) -> None:
+    for worker in workers:
+        worker.stop()
+    for worker in workers:
+        thread = getattr(worker, "thread", None)
+        if thread is not None:
+            thread.join(10)
+
+
+def test_the_background_process_keeps_the_vendors_totals_it_works_out_again_for_every_process(
+    tmp_path, ground_truth, clock, monkeypatch
+):
+    """B-2050: the company server's background process (``ap_coder background``: a Store of its own, which no
+    ``create_app`` sets) worked the Vendors page's totals out again in its own memory only (``summary_memo``, a
+    laptop's way since B-2048): the web workers went on showing the totals kept before, up to ``STALE_MOST`` old,
+    then worked them out in a request (7 s at 300,000 invoices). What its refresher works out is kept for every
+    process."""
+    process = _Processes(monkeypatch)
+    worker = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    _invoice(worker, tmp_path, ground_truth, "A-1", "Acme Supply")
+    process("worker 1")
+    assert [v["invoices"] for v in worker.vendor_summaries(settled=True)] == [1]
+    _invoice(worker, tmp_path, ground_truth, "A-2", "Acme Supply")
+    clock[0] += reports.SETTLE_MOST  # (past its settle)
+    process("background")
+    background = Store(worker.path)
+    refresher, workers = _background_work(background, monkeypatch)
+    try:
+        ends = time.monotonic() + 20
+        while (not worker._lease_held(reports.REFRESHER) or worker.next_want() is not None) and time.monotonic() < ends:
+            time.sleep(0.05)
+        time.sleep(2 * refresh.POLL)  # (its start: the totals asked lately, worked out again)
+        assert worker.next_want() is None
+        process("worker 2")
+        worked = []
+        real = worker._vendor_totals
+        monkeypatch.setattr(worker, "_vendor_totals", lambda: worked.append(1) or real())
+        assert [v["invoices"] for v in worker.vendor_summaries(settled=True)] == [2] and worked == []
+    finally:
+        _stopped(workers)
