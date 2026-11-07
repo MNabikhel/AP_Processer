@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ai.extraction import TEXT_EXTENSIONS
+from ..core.memory import AUTONOMOUS_REVIEWER  # noqa: F401  (its name here too)
 from ..core.schema import as_read
 from ..core.ui import FIELD_WORDS
 from . import analyze, build_layout, line_memory
@@ -42,8 +43,6 @@ from .supplier import (
 from .types import Box, CaptureResult
 
 log = logging.getLogger(__name__)
-
-AUTONOMOUS_REVIEWER = "AP Coder (autonomous)"
 
 
 def supplier_for(store: Any, output: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:

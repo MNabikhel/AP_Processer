@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..coding.vendors import mask_account
+from .keys import mask_account
 from .memory import pair_lines
 
 HEADER_LABELS = {

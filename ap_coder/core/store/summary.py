@@ -34,6 +34,8 @@ from contextlib import contextmanager
 from time import monotonic
 from typing import Any
 
+from ..keys import search_keys
+from ..tax_setup import DEFAULT_TREATMENTS, TAX_TYPES, TaxTreatment
 from ._base import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, VENDOR_CHANGES, VENDOR_LOGGED, _in_list
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
@@ -619,8 +621,6 @@ class SummaryMixin:
     @staticmethod
     def tax_treatments_in(conn: sqlite3.Connection) -> dict[str, Any]:
         """``tax_treatments()`` read on ``conn`` (the summary is worked out inside a transaction under way)."""
-        from ...coding.tax import DEFAULT_TREATMENTS, TAX_TYPES, TaxTreatment
-
         stored = {r["tax_type"]: r for r in conn.execute("SELECT * FROM tax_treatments")}
         out = {}
         for tax_type in TAX_TYPES:
@@ -862,8 +862,6 @@ BIT = {part: 1 << n for n, part in enumerate(PARTS)}
 def _summary_row(r: dict[str, Any], approvals: list[Any],
                  treatments: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[Any, ...]]]:  # fmt: skip
     """(the ``invoice_summary`` row of invoice ``r``, its ``summary_spend`` rows)."""
-    from ...erp.search import search_keys
-
     plain, number, raw = search_keys(r)
     computed: dict[str, Any] = {name: None for name, _ in COMPUTED}
     computed.update(plain_name=plain, number_key=number, raw_number=raw, tax_date="", f_date="", i_codes="[]",

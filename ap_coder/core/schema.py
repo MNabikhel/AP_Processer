@@ -22,8 +22,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..coding.tax import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
 from .reference_data import UNASSIGNED, ReferenceData
+from .tax_setup import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
 
 SCHEMA_NAME = "ap_invoice_coding"
 

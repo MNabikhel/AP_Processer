@@ -20,8 +20,8 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ...coding.po import po_key
-from ..memory import CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
+from ..keys import po_key
+from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
 from ..reference_data import UNASSIGNED
 from . import dialect
 from ._base import SCHEMA_VERSION, _due, _forget_learning
@@ -342,8 +342,6 @@ def _feedback_cleanup(store: Any, conn: sqlite3.Connection) -> None:
     if (row["value"] if row else "") != FEEDBACK_CLEANUP:
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn, as nothing is recorded for them any more.
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
-
         conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
         # Older versions recorded a GL account filled in where the AI proposed none as a correction: it is the
         # reviewer's coding (B-650), recounted (the learning memory reads both alike).

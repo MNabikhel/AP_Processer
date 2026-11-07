@@ -47,6 +47,10 @@ CODED = "coded"
 # A line approved in bulk as it was proposed: nobody looked at it, so it is neither confirmed nor corrected, and the
 # accuracy figures leave it out (B-955). Its tax code is no vote either (``line_tax.tax_vote``, B-764).
 BULK = "bulk"
+HISTORY = "history"  # a line of past AP coding imported from the ERP (``ai/history.py``), not an approval here
+# The reviewer of an invoice AP Coder approved on its own (touchless, ``capture/workflow.py``): nobody checked its
+# coding, so its approval records no feedback (``Store.approve_invoice``).
+AUTONOMOUS_REVIEWER = "AP Coder (autonomous)"
 
 
 def changed_account(row: dict[str, Any]) -> bool:

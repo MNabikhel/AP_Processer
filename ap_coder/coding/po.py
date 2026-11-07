@@ -36,6 +36,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from ..core.headers import match_columns
+from ..core.keys import po_key
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 
@@ -79,13 +80,6 @@ TEMPLATE_COLUMNS = (
     "po_number", "vendor_name", "line_number", "description", "quantity", "unit_price", "amount", "open_amount",
     "received_quantity", "gl_code", "cost_center", "status",
 )  # fmt: skip
-
-
-def po_key(value: Any) -> str:
-    """Compare PO numbers the way people mean them: "PO-00412", "PO 412" and "412" are the same."""
-    text = re.sub(r"[^0-9a-z]", "", str(value or "").lower())
-    text = re.sub(r"^(purchaseorder|po|bc|order|number|no|num)+", "", text) or text
-    return text.lstrip("0") or text
 
 
 def map_columns(headers: list[str]) -> dict[str, str]:

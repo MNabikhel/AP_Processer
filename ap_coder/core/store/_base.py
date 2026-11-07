@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ...coding.terms import DEFAULT_TERMS_DAYS, payment
-from ...coding.vendors import norm_invoice_number
+from ..keys import norm_invoice_number
 from ..memory import pair_lines, refresh_vendor_key, vendor_key
 from ..paths import default_db_path, private_dir  # noqa: F401  (private_dir: re-exported by the package)
 from ..reference_data import UNASSIGNED

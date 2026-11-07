@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from ...coding.line_tax import invoice_uncollected, supply_province, tax_vote
-from ...coding.po import po_key
 from ...coding.terms import DEFAULT_TERMS_DAYS
 from ..audit import changed_since, diff_coding
-from ..memory import ACCEPTED, BULK, CODED, CORRECTED, pair_lines, vendor_key
+from ..keys import po_key
+from ..memory import ACCEPTED, AUTONOMOUS_REVIEWER, BULK, CODED, CORRECTED, pair_lines, vendor_key
 from ..paths import PROJECT_DIR, find_moved_file
 from ..reference_data import UNASSIGNED
 from ..schema import as_read
@@ -622,8 +622,6 @@ class InvoicesMixin:
         errors and warnings still showing when the reviewer approved (kept in the audit trail). Only an invoice
         in the review queue can be approved. An approval by AP Coder on its own (``AUTONOMOUS_REVIEWER``)
         records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
-        from ...capture.workflow import AUTONOMOUS_REVIEWER
-
         inv = self._approvable(invoice_id)
         ai = inv["ai_output"] or {"line_items": []}
         # The limit and rate in force since the invoice came in, the strictest of them (B-970), kept in the event; a

@@ -11,11 +11,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from ..keys import LINE_FIELDS, line_pattern
 from ..memory import (
     ACCEPTED,
     BULK,
     CODED,
     CORRECTED,
+    HISTORY,
     PAST_KEPT,
     PAST_LINES_BYTES,
     PAST_LINES_KEPT,
@@ -466,8 +468,6 @@ class LearningMixin:
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
         Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
-        from ...ai.history import HISTORY
-
         added = skipped = unknown = 0
         with self._conn() as conn:
             known_gls = {r[0] for r in conn.execute("SELECT code FROM gl_accounts")}
@@ -522,8 +522,6 @@ class LearningMixin:
         """Forget lines of the coding memory (Learning → Coding memory). What each line's approval taught the lessons
         for lines like it (its GL account and cost center lessons, ``lessons.LINE_FIELDS``) is withdrawn with it, once
         no line of that kind is left on that invoice (B-1422): a forgotten line is no hint and reaches no AI."""
-        from ...ai.lessons import LINE_FIELDS, line_pattern
-
         with self._conn() as conn:
             gone = conn.execute(
                 "SELECT invoice_id, description FROM feedback WHERE invoice_id IS NOT NULL AND id IN "

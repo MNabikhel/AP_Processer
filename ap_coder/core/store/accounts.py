@@ -15,9 +15,9 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
-from ...coding import tax as _tax
-from ...coding.tax import TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from .. import tax_setup as _tax
 from ..reference_data import ReferenceData, ReferenceTable, marks_meals, parse_policy_notes
+from ..tax_setup import TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from ._base import (
     ACCOUNT_TABLES,
     APPROVAL_CONTROLS,
@@ -31,6 +31,9 @@ from .summary import PAID_FROM, fetch_rows
 
 # How the reason for a second approval starts when it is the currency changed from the one read (D-132).
 CURRENCY_CHANGED = "the currency was changed from"
+# Our bank accounts' columns (``bank_accounts``, D-66), the import's rows keyed by them (``coding/banks.py``).
+BANK_COLUMNS = ("code", "name", "currency", "institution", "transit", "account_number", "gl_account", "is_default",
+                "active")  # fmt: skip
 # The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
 _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
@@ -382,23 +385,22 @@ class AccountsMixin:
     ) -> dict[str, int]:
         """Add or change accounts (``banks.clean_rows`` output), by code; an account not in ``rows`` is kept. An
         account made the default of its currency is the only one. Returns {"added", "updated"}."""
-        from ...coding.banks import COLUMNS
-
         before = {r["code"]: r for r in self.bank_accounts()}
         added = updated = 0
         now = _now()
         upsert = (
-            f"INSERT INTO bank_accounts ({', '.join(COLUMNS)}, updated_at) VALUES ({', '.join('?' * len(COLUMNS))}, ?) "
+            f"INSERT INTO bank_accounts ({', '.join(BANK_COLUMNS)}, updated_at) VALUES "
+            f"({', '.join('?' * len(BANK_COLUMNS))}, ?) "
             "ON CONFLICT(code) DO UPDATE SET "
-            + ", ".join(f"{c} = excluded.{c}" for c in COLUMNS[1:])
+            + ", ".join(f"{c} = excluded.{c}" for c in BANK_COLUMNS[1:])
             + ", updated_at = excluded.updated_at"
         )
         with self._conn() as conn:
             for row in rows:
-                values = [row[c] if c not in ("is_default", "active") else int(bool(row[c])) for c in COLUMNS]
+                values = [row[c] if c not in ("is_default", "active") else int(bool(row[c])) for c in BANK_COLUMNS]
                 if row["code"] in before:
                     old = before[row["code"]]
-                    if all(old[c] == row[c] for c in COLUMNS):
+                    if all(old[c] == row[c] for c in BANK_COLUMNS):
                         continue
                     updated += 1
                 else:

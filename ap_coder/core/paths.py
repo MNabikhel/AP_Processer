@@ -469,3 +469,31 @@ def _unlinked(path: Path) -> int:
         return 1
     except OSError:
         return 0
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether a process with this id runs on this computer (Windows: asked without touching it; ``os.kill`` with
+    signal 0 would end it there)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return kernel32.GetLastError() == 5  # access denied: it runs, as another user
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True

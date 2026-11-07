@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
 
+from ..core.keys import supplier_key  # noqa: F401  (its name here too)
 from ..core.memory import vendor_key
 from . import normalize
 from .confidence import wilson_lower  # one Wilson lower bound for the bar and the calibration
@@ -97,19 +98,6 @@ def _now() -> str:
 
 
 # --- Supplier key ---------------------------------------------------------------------------------------------
-
-
-def supplier_key(vendor_name: str | None, gst_number: str | None = None, vendor_id: str | None = None) -> str:
-    """``id:<vendor master id>``, else ``bn:<the 9 digits of the GST/HST business number>``, else
-    ``name:<memory.vendor_key(name)>``; "" when there is nothing to go on."""
-    vid = str(vendor_id or "").strip()
-    if vid:
-        return f"id:{vid}"
-    digits = re.sub(r"\D", "", str(gst_number or ""))
-    if len(digits) >= 9:
-        return f"bn:{digits[:9]}"
-    name = vendor_key(vendor_name or "")
-    return f"name:{name}" if name else ""
 
 
 # --- Normalizing: how a template reads what is printed (``normalize`` gives the comparison keys) --------------
