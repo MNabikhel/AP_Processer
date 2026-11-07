@@ -17,18 +17,15 @@ edits or retires them on the Learning page.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..core.keys import LINE_CC, LINE_FIELDS, LINE_GL, line_pattern
 from ..core.memory import pair_lines, vendor_key
 from ..core.reference_data import UNASSIGNED
 from ..core.ui import FIELD_WORDS as _WORDS
 
 SETTING = "why_after"  # corrections of one situation since its last reason before the "why" question
 DEFAULT_WHY_AFTER = 3
-LINE_GL = "line_gl"  # the field of a line-coding lesson (its GL account)
-LINE_CC = "line_cc"  # the field of a line's cost center lesson
-LINE_FIELDS = (LINE_GL, LINE_CC)
 INVOICE, CREDIT_NOTE = "invoice", "credit note"
 MAX_PROMPT_LINES = 8
 
@@ -40,13 +37,6 @@ def kind_of(output: dict[str, Any]) -> str:
         return CREDIT_NOTE if float(output.get("grand_total") or 0) < 0 else INVOICE
     except (TypeError, ValueError):
         return INVOICE
-
-
-def line_pattern(description: str) -> str:
-    """The words that make a line "the same kind of line" from one invoice to the next: its first four words,
-    without numbers, dates or punctuation ("Mobility services Oct 2026 - 555-0101" -> "mobility services")."""
-    words = re.findall(r"[a-zà-ÿ]{2,}", str(description or "").lower())
-    return " ".join(words[:4])
 
 
 def situation(vendor: str, kind: str, field: str, pattern: str = "", key: str | None = None) -> str:

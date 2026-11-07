@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from ._base import _now
+from .dialect import begin_write
 
 IMPORT_WAITING, IMPORT_READING, IMPORT_DONE, IMPORT_FAILED, IMPORT_SKIPPED = (
     "waiting", "reading", "done", "failed", "skipped")  # fmt: skip
@@ -89,7 +90,7 @@ class ImportsMixin:
         now = _now()
         files = [(str(place), size, mtime, sha) for place, size, mtime, sha in files]
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             known = set() if force else self.known_files([f[3] for f in files], include_failed)
             todo, left_out, seen = [], list(skipped), set()
             for place, size, mtime, sha in files:
@@ -145,7 +146,9 @@ class ImportsMixin:
                             "lease_until < julianday('now')) LIMIT 1").fetchone() is None:  # fmt: skip
                 return None  # (an idle reader's look every second takes no write lock)
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
-            conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
+            # Its own, the write lock from the choice to the mark: the claim and its lease commit before the read starts
+            # (outside any transaction), so its heartbeat (``renew_imports``, another thread's connection) finds them.
+            self._begin_alone(conn, "claim_import")  # type: ignore[attr-defined]
             closed = self._expire_imports(conn)
             taken = None
             while taken is None:
@@ -190,7 +193,7 @@ class ImportsMixin:
         why; ``invoice_id`` the failed invoice, when one was saved) or ``skipped`` (no longer there to read: ``GONE``).
         ``line``: what the Process page says of it. False when ``owner`` no longer holds it (its lease ran out)."""
         with self.session(), self._conn() as conn:  # type: ignore[attr-defined]
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT batch FROM import_files WHERE id = ? AND owner = ? AND status = 'reading'",
                                (file_id, owner)).fetchone()  # fmt: skip
             if row is None:

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import Settings
+from ..core.paths import pid_alive as _pid_alive  # (its name here: web/server.py and the tests use it)
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -759,34 +760,6 @@ def run_queue(settings: Settings, store: Any, *, minutes: float = 30.0, cache_di
 
 
 # --- Who is reading: an invoice whose reader is gone goes back in line -------------------------------------------
-
-
-def _pid_alive(pid: int) -> bool:
-    """Whether a process with this id runs on this computer (Windows: asked without touching it; ``os.kill`` with
-    signal 0 would end it there)."""
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return kernel32.GetLastError() == 5  # access denied: it runs, as another user
-        try:
-            code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def reader_alive(reader: str) -> bool:

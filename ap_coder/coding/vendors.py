@@ -41,7 +41,17 @@ import statistics
 from typing import TYPE_CHECKING, Any
 
 from ..core.headers import header_key, match_columns
-from ..core.memory import vendor_key
+from ..core.keys import ACCOUNT_LABEL as _ACCOUNT_LABEL
+from ..core.keys import (  # noqa: F401  (the names this module had: imported from here too)
+    ADDED_HERE,
+    IN_ERP,
+    mask_account,
+    master_vendor_id,
+    norm_invoice_number,
+    norm_tax_number,
+    same_tax_number,
+)
+from ..core.keys import BUSINESS_NUMBER as _BUSINESS_NUMBER
 
 if TYPE_CHECKING:
     from ..core.schema import InvoiceCoding
@@ -50,46 +60,10 @@ if TYPE_CHECKING:
 ERROR, WARNING, INFO = "error", "warning", "info"
 ON_HOLD, ACTIVE = "on_hold", "active"
 MOVED_OFF_HOLD = "VENDOR_CHANGED_FROM_HELD"  # a held vendor's invoice coded to another vendor (D-142)
-# vendors.in_master: 0 a vendor AP only set controls for, 1 in the vendor master imported from the ERP, 2 added to
-# the vendor list from the review screen (a new vendor: set up in the ERP before it is paid).
-IN_ERP, ADDED_HERE = 1, 2
 UNUSUAL_FACTOR = 3.0  # total above 3x this vendor's median...
 UNUSUAL_MIN_GAP = 1000.0  # ...and at least this much above it
 UNUSUAL_MIN_HISTORY = 3
 DUPLICATE_WINDOW_DAYS = 45
-
-_NUMBER_PREFIXES = re.compile(r"^(invoice|inv|facture|fact|bill|no|num|nr|n°|#)+")
-
-
-def norm_invoice_number(value: Any) -> str:
-    """Compare invoice numbers the way people mean them: "INV-00123", "#123" and "123" are the same."""
-    text = re.sub(r"[^0-9a-z°#]", "", str(value or "").lower())
-    text = _NUMBER_PREFIXES.sub("", text)
-    text = re.sub(r"[^0-9a-z]", "", text)
-    return text.lstrip("0") or text
-
-
-def norm_tax_number(value: Any) -> str:
-    return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
-
-
-_BUSINESS_NUMBER = re.compile(r"(\d{9})(?:rt\d{0,4})?")
-
-
-def same_tax_number(a: Any, b: Any) -> bool:
-    """Whether two GST/HST numbers are the same registration. A vendor master often keeps only the 9-digit Business
-    Number ("123456789") while the invoice shows the full account ("123456789 RT0001"): when either side lacks the
-    RT program suffix, the 9 digits decide. Two full accounts (RT0001 and RT0002) must match exactly."""
-    a, b = norm_tax_number(a), norm_tax_number(b)
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    bn_a, bn_b = _BUSINESS_NUMBER.fullmatch(a), _BUSINESS_NUMBER.fullmatch(b)
-    if not bn_a or not bn_b or (len(a) == 15 and len(b) == 15):
-        return False
-    return bn_a.group(1) == bn_b.group(1)
-
 
 _QST_FILE = re.compile(r"(\d{10})(?:tq\d{0,4})?")
 
@@ -106,26 +80,6 @@ def same_qst_number(a: Any, b: Any) -> bool:
     if not file_a or not file_b or (len(a) == 16 and len(b) == 16):
         return False
     return file_a.group(1) == file_b.group(1)
-
-
-def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
-    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by its GST/HST number
-    however much of it either side keeps (``same_tax_number``: the master's 9-digit Business Number for the invoice's
-    full account, or the master's full account for 9 digits), else by name. The number first: two suppliers whose
-    names read the same ("… Inc." and "… Limited") have their own numbers (B-930). "" when the master doesn't know it.
-    The supplier key (``Store.supplier_key_for``) and the export files both use this, so they agree."""
-    if gst_number:
-        number = norm_tax_number(gst_number)
-        bn = number[:9] if number[:9].isdigit() else ""
-        found = ids.get(f"gst:{number}") or (
-            bn and (ids.get(f"bn:{bn}") or (ids.get(f"bnx:{bn}") if len(number) == 9 else None))
-        )
-        if found:
-            return found
-    return ids.get(vendor_key(vendor_name or "")) or ""
-
-
-_ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")
 
 
 def bank_digits(value: Any) -> tuple[str, tuple[str, ...]]:
@@ -177,15 +131,6 @@ def same_bank_account(a: Any, b: Any) -> bool:
         return True
     cut_a, cut_b = ("; ".join(cut_bank_details(part) for part in str(v or "").split("; ")) for v in (a, b))
     return _same_digits(cut_a, cut_b)
-
-
-def mask_account(value: Any) -> str:
-    """ "…4567": the last 4 digits of the account number (the number after "Account", else the end of the
-    details), never the whole account."""
-    text = str(value or "")
-    labelled = _ACCOUNT_LABEL.search(text)
-    digits = re.sub(r"\D", "", labelled.group(1)) if labelled else "".join(re.findall(r"\d+", text))
-    return f"…{digits[-4:]}" if digits else "(none)"
 
 
 def bank_branch(value: Any) -> str:

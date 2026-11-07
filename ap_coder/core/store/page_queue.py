@@ -85,7 +85,9 @@ class PageQueueMixin:
         invoice."""
         now, stale = _now(), _stale()
         with self._conn() as conn:  # type: ignore[attr-defined]
-            conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
+            # Its own, the write lock from the choice to the mark: the claim commits before the read starts (seconds,
+            # outside any transaction), so its heartbeat (``renew_page_read``, another thread's connection) finds it.
+            self._begin_alone(conn, "next_page_read")  # type: ignore[attr-defined]
             if invoice_id is None:
                 row = conn.execute(
                     f"SELECT p.invoice_id FROM {_ROWS} WHERE {_LINE} ORDER BY {', '.join(_ORDER)} LIMIT 1", stale

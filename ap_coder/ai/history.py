@@ -12,10 +12,10 @@ import re
 from typing import Any
 
 from ..core.headers import match_columns
+from ..core.memory import HISTORY  # noqa: F401  (its name here too)
 from ..core.safe import parse_amount
 from ..erp.statements import day_first_order, read_date
 
-HISTORY = "history"
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "fournisseur", "name"),
     "description": ("description", "linedescription", "itemdescription", "memo", "text", "lineitem", "details"),

@@ -19,11 +19,11 @@ from collections.abc import Iterable
 from typing import Any
 
 from ..core.headers import match_columns
+from ..core.store.accounts import BANK_COLUMNS as COLUMNS  # (the table's own, kept with it)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 PICK = "Pick the bank account to pay this invoice from"
 NONE_YET = "Add your bank accounts on GL accounts & tax to choose which account pays"
-COLUMNS = ("code", "name", "currency", "institution", "transit", "account_number", "gl_account", "is_default", "active")
 # The import's columns and the headers each is recognised by (``header_key`` of the header).
 ALIASES: dict[str, tuple[str, ...]] = {
     "code": ("code", "bankcode", "accountcode", "id", "shortcode", "bankaccountcode", "bankid"),
