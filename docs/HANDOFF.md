@@ -369,8 +369,8 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **IT supplies:** for the pilot, a Mac mini that runs AP Coder (`docs/SERVER.md` section 14) and a Mac Studio with
   LM Studio and the models (the Mac mini's own LM Studio as their backup); for the next stage (300 to 400 people,
   about 25,000 invoices a month), a Windows virtual machine with 32 vCPUs and 64 GB of memory (`docs/SERVER.md`
-  section 1), the models staying on the Mac Studio. On either: 60–200 GB SSD, Python 3.12, a service account, a DNS
-  name and a certificate for it, a firewall rule for the port. What was measured for that size: `docs/SCALE.md`.
+  section 1), the models staying on the Mac Studio. On either: an SSD (200 GB for the pilot, about 1 TB for the next
+  stage), Python 3.12, a service account, a DNS name and a certificate for it, a firewall rule for the port. What was measured for that size: `docs/SCALE.md`.
 - **Not done:** never installed anywhere (stage 0 sets it up on the pilot computer); the company's security review
   (and a penetration test if IT requires one) is in stage 0, before production write access to JD Edwards; no single
   sign-on with the company's accounts.
@@ -550,14 +550,15 @@ production:
 
 ## 10. Known limits and open questions
 
-`docs/KNOWN_LIMITS.md` (ten points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
+`docs/KNOWN_LIMITS.md` (eleven points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (stage 0 sets it up on the
 pilot's Mac mini); minutes a page without a graphics card; sample data until the company's is imported; JD Edwards
 never tried against a real E1 (stage 0 tests read and write in PY); the mailbox flow set up in stage 0, no direct
 mailbox connection by design; AP Coder's own logins with authenticator codes (D-146), no single sign-on with the
 company's accounts (Entra ID a possible later option); accuracy measured on samples only; job cost
 coding to build in stage 0; Python installed by IT; the security review (and a penetration test if IT requires one) in
-stage 0, before production write access.
+stage 0, before production write access; the capacity for 300 to 400 people measured on a 4-core test machine, the
+real server's figures estimates until stage 2 (`docs/SCALE.md`).
 
 ---
 

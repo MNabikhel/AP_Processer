@@ -35,7 +35,7 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 | Processor | 8 cores (the OCR of scans runs on the processor) | 16 cores |
 | Memory | 32 GB | 64 GB |
 | Graphics card (for LM Studio) | NVIDIA with 12 GB of VRAM (an estimate) | 16 GB of VRAM or more (an estimate) |
-| Disk | 60 GB free on an SSD | 200 GB |
+| Disk | 60 GB free on an SSD | 200 GB (about 1 TB for 25,000 invoices a month: below) |
 | Python | Python 3.12, 64-bit, installed for all users | |
 | LM Studio | 0.4.8 or newer, with its models copied in | |
 
@@ -48,23 +48,39 @@ Why these numbers:
   server's memory and are slower; 12 GB holds them, 16 GB leaves room. Without a graphics card AP Coder still works,
   but reading each page takes minutes on the processor instead of seconds (estimated) on a graphics card.
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
-  the previous one, to go back to). The models are about 10 GB. The data grows with the invoices (about 0.5 MB each,
-  kept with the database) and 14 daily copies of the database, plus one copy of each invoice file (each content
-  kept once, D-143): about twice the invoices' size.
-- **How many people and invoices** (D-111). *Measured*: a 12,000-invoice database, a load test of logged-in people
-  each clicking every 10 seconds on average through the review queue, invoices, their pages, approvals, search and
-  exports, on a 4-core test machine (shared with other work, so on the slow side), before the database speed-ups
-  of the same release:
+  the previous one, to go back to). The models are about 10 GB. The data grows with the invoices: the database about
+  34 KB an invoice (measured: 3.5 GB at 100,000 invoices, 10 GB at 300,000, a year at 25,000 a month), the invoice
+  files about 0.5 MB each, and the backups: up to 32 copies of the database on the server (14 days, 8 weeks, 12
+  months, D-187) plus one copy of each invoice file (each content kept once, D-143).
+- **How many people and invoices** (D-111, measured again for 300-400 people: docs/SCALE.md). *Measured* on a
+  4-core test machine with the bench's stand-in for the models: simulated people, each clicking every 10 seconds on
+  average through the review queue, invoices, their pages, approvals, search, the reports and the exports, against
+  the service's own web workers (`--workers 4`, two capture processes):
 
-  | People at once | 1 web worker | 4 web workers |
+  | Database | People at once | Half the pages within | 95% within | 99% within | Approvals and checks, 95% within |
+  |---|---|---|---|---|---|
+  | 100,000 invoices (four months at 25,000 a month) | 100 | 0.09 s | 0.58 s | 2.6 s | 0.34 s |
+  | 300,000 invoices (a year), for an hour | 100 | 0.12 s | 1.5 s | 5.5 s | 1.0 s |
+
+  No error and no "database is locked" in either. The slowest pages at 300,000 are the reports (Spend, Month-end,
+  Vendors, Insights, Sales tax): 6 to 11 s for the one person who opens one first after its figures change, while
+  the others are given the figures of a moment before (D-197); the pages that wait behind that work in the same web
+  worker make the slowest 1%. Memory: each web worker about 1 GB on 300,000 invoices (its caches bounded, D-195),
+  the background process 150 MB, each capture process 320 MB. The first minutes after the first start on a big
+  database, and after an update that changes what the reports keep, are slower: each report is worked out once.
+
+  *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
+  32; to be measured on the real server):
+
+  | | The pilot: 3 to 5 people | The next stage: 300 to 400 people, 25,000 invoices a month |
   |---|---|---|
-  | 25 | half the pages in 6.9 s, 95% in 39 s | half in 0.4 s, 95% in 1.5 s |
-  | 50 | half in 45 s; 22 pages gave up after 2 minutes | half in 1.0 s, 95% in 5.9 s |
-  | 100 | 82 pages gave up after 2 minutes | half in 6.9 s, 95% in 22 s (all 4 cores busy) |
+  | AP Coder | a Mac mini (step 14) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
+  | The AI models | LM Studio on a Mac Studio, the Mac mini's own as the backup (step 8, point 5) | the same machines |
+  | Disk | 200 GB | about 1 TB on an SSD: a year's database 10 GB and its backups about 320 GB, a year's invoice files 150 GB, and room to grow |
+  | Reading 1,250 invoices a day | | in the review queue 65 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (stage 0 measures the Mac Studio; `--llm-parallel`, step 8) |
 
-  Memory: 2 GB for the 4 workers and the background process with 25 people, 5 GB with 100. *Estimated* (the
-  processor and memory from that measurement; the graphics card's rows are estimates, from an assumed 15 s a page,
-  not measured on a graphics card):
+  On one Windows Server with LM Studio on it instead (the first layout; the graphics card's rows estimated from an
+  assumed 15 s a page, not measured on a graphics card):
 
   | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
   |---|---|---|
@@ -246,19 +262,19 @@ account, task name or folder, give them again each time;
 service's own `python.exe` (its `.venv`'s, or the Python that `.venv` was made with) when it will not stop by itself,
 and the service host only while it runs (it holds `service\host.lock`).
 
-**Workers** (`--workers N`, kept in `server.json` as `"workers"`): one Python process answers about 1.6 pages a
-second however many cores the server has, so the service runs N *web workers*, all answering on the same port, and
-one *background process* beside them for the work nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure
-check, JD Edwards, the review queue checked again after a change of settings, the daily backup, the finance hub's
-schedule), and for the long downloads (search to Excel, the Activity CSV, the duplicate audit: the page says how far
-the file got and downloads it once made; each person's own, kept an hour in `.cache\downloads\made`). The invoices
-brought in (uploads, the invoices folder, a scheduled watch) wait in an import queue in the database, kept over a
-restart, and are read by *capture processes* of their own, one per core but two (`server.json` `"capture_processes"`,
-1 to 64, or `AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by a web worker: a big batch doesn't slow the pages, and colleagues' batches are read in turn.
-A file a scanner or a mail rule saves in the invoices folder shows on *Import invoices* within a minute (the folder is
-listed once for every worker, D-176). A
-worker, the background process or a capture process that stops is started again on its own (a download it was making
-is made again). `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
+**Workers** (`--workers N`, kept in `server.json` as `"workers"`): one Python process works on one request at a time
+(about 0.1 s of the processor a request on 300,000 invoices, so some 10 a second) however many cores the server has, so
+the service runs N *web workers*, all answering on the same port, and one *background process* beside them for the work
+nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure check, JD Edwards, the review queue checked again after
+a change of settings, the daily backup, the finance hub's schedule), and for the long downloads (search to Excel, the
+Activity CSV, the duplicate audit: the page says how far the file got and downloads it once made; each person's own,
+kept an hour in `.cache\downloads\made`). The invoices brought in (uploads, the invoices folder, a scheduled watch) wait
+in an import queue in the database, kept over a restart, and are read by *capture processes* of their own, one per core
+but two (`server.json` `"capture_processes"`, 1 to 64, or `AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by
+a web worker: a big batch doesn't slow the pages, and colleagues' batches are read in turn. A file a scanner or a mail
+rule saves in the invoices folder shows on *Import invoices* within a minute (the folder is listed once for every
+worker, D-176). A worker, the background process or a capture process that stops is started again on its own (a download
+it was making is made again). `--workers 1` runs everything in one process, as before. Stopping (`service stop`) gives
 the requests under way 25 seconds, then ends them: the service is stopped within 30 seconds.
 
 - **The default** (D-153): one worker per processor core but an eighth of them, and no more than fit in the memory at
@@ -267,7 +283,7 @@ the requests under way 25 seconds, then ends them: the service is stopped within
 - **Each worker works on 4 requests at once** (`server.json` `"worker_threads"`, 1 to 40; the others wait their
   turn): one process works on one at a time anyway, and each request under way holds what it read (about 110 MB on
   a big database). With anyio's default of 40, 16 people at once took a worker to about 2 GB; with 4, to 1.3 GB, the
-  same work done. A worker stays near 1 to 1.5 GB.
+  same work done. A worker stays near 1 GB on 300,000 invoices (an hour of 100 people: 940-990 MB, 1,030 at most).
 - **Reports and exports take turns**: the reports (Activity, the controls report, Spend, Month-end and its
   accruals, Sales tax, Insights), the exports (the Exports page, a batch, its files, the duplicates CSV, search to
   CSV or Excel, the JD Edwards worksheet), Report a problem, a backup or restore, and the buttons that wait on LM
@@ -431,15 +447,16 @@ window, started at boot like AP Coder.
   label (yours, an update's, a restore's) is always kept, and the newest complete one is never deleted.
   - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
     during the working day. The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
-    server's clock. A year's database is 7-9 GB: the copy takes minutes of disk work. If the server was off
-    during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped (B-1671).
+    server's clock. A year's database (300,000 invoices) is about 10 GB: the copy takes minutes of disk work. If the
+    server was off during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped
+    (B-1671).
   - **Room:** a backup starts only when the copy and 512 MB more fit on the disk. A full disk would stop every write
     to the database. Otherwise *Settings* → *Data & backups* says it was not made and why (B-1670).
-  - Plan the disk for about 32 copies of the database (14 days, 8 weeks and 12 months, which overlap), plus the
-    invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings* →
-  *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
-  made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
-  restorable whole (D-143):
+  - Plan the disk for about 32 copies of the database (14 days, 8 weeks and 12 months, which overlap: about 320 GB for a
+    year's), plus the invoice files once. It is made in the background: AP Coder serves pages meanwhile, and *Settings*
+    → *Data & backups* says while one is being made (B-1553). An update adds its own (`...-before-update-<version>`),
+    made before the update goes on, kept until you delete it. Each backup is AP Coder as it was at that moment,
+    restorable whole (D-143):
   - `ap_coder-<date>-<time>.db`: the database;
   - `ap_coder-<date>-<time>.files.json`: its list of files, each with its size and SHA-256: the whole `invoices`
     folder (the PDFs and pictures, `originals`, `deleted`, `statements`, the saved emails and their attachments in

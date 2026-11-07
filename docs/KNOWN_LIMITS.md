@@ -32,3 +32,10 @@ pilot).
 10. **Not yet reviewed by a company's IT security team.** It runs offline by design: it opens nothing to the
     network and sends nothing out ([HOW_IT_RUNS.md](HOW_IT_RUNS.md)). The review (and a penetration test if IT requires
     one) is in stage 0, before AP Coder gets production write access to JD Edwards.
+11. **Sized for 300 to 400 people on a test machine, not yet on the real server.** AP Coder was made ready for 300 to
+    400 people and about 25,000 invoices a month and measured on a 4-core test machine with 100 simulated people
+    ([SCALE.md](SCALE.md)): on 100,000 invoices every page target is met; on 300,000 (a year) half the pages answer
+    within 0.12 s and 95% within 1.5 s, but the slowest 1% take up to 5.5 s (the report pages, worked out by the
+    first person to open them after a change). The 32-vCPU server's figures are estimates until stage 2 measures them
+    there. It is one server with one SQLite database, backed up every day: no standby server (a move to PostgreSQL,
+    for that, is prepared but not done: [POSTGRES.md](POSTGRES.md)).
