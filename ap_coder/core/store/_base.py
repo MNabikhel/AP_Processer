@@ -446,6 +446,11 @@ class DatabaseTooNew(RuntimeError):
     """The database was made by a newer AP Coder: this (older) one never opens it, so it is never downgraded."""
 
 
+class NestedWrite(RuntimeError):
+    """A write that commits on its own (a queue's claim, a try at logging in: ``StoreCore._begin_alone``) was called
+    inside another transaction, which would hold its commit back or undo it with a rollback."""
+
+
 def database_schema(path: Path) -> int | None:
     """The ``schema_version`` a database file records (1 for one older than the setting; None for a missing or
     empty file, or one with no tables yet: a new database). Only reads."""
@@ -497,7 +502,10 @@ class StoreCore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         unsaved = self._before_migrating()
-        with self._conn() as conn:
+        held = _held_connections().get(str(self.path))
+        # Inside this thread's transaction on the database, on a connection of its own: ``executescript`` commits the
+        # transaction under way first (B-1996). Nothing is due there (the caller's Store made it current): no lock.
+        with self._conn(own=held is not None and held.depth > 0) as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             if unsaved:  # said on Settings → Data & backups (``backups.BACKUP_STATUS``)
@@ -686,9 +694,21 @@ class StoreCore:
             conn.commit()  # the upgrade's changes left open would refuse the caller's own BEGIN IMMEDIATE
         return conn
 
-    @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
+    def _begin_alone(self, conn: sqlite3.Connection, what: str) -> None:
+        """The write lock for a transaction that must commit on its own, at the end of the ``_conn`` block of the
+        method ``what`` (why: its comment, and ``tests/meta/test_nested_writes.py``): ``NestedWrite`` inside another
+        transaction, which every other write joins (``dialect.begin_write``)."""
         held = _held_connections().get(str(self.path))
+        if conn.in_transaction or (held is not None and held.conn is conn and held.depth > 1):
+            raise NestedWrite(f"Store.{what} commits on its own, so it can't be called inside Store.transaction() or "
+                              "another write.")  # fmt: skip
+        dialect.begin_write(conn)
+
+    @contextmanager
+    def _conn(self, own: bool = False) -> Iterator[sqlite3.Connection]:
+        """The connection a call works on: this thread's session's, if it holds one (the outermost block commits, or
+        rolls back), else one of its own (``own``: always), committed and closed at the end."""
+        held = None if own else _held_connections().get(str(self.path))
         if held is not None and not self.path.exists():  # the file was deleted meanwhile: on with a fresh one
             _held_connections().pop(str(self.path), None)
             held.conn.close()

@@ -400,7 +400,7 @@ class InvoicesMixin:
         and exported by someone else since a Delete button was shown for it (reopen it first)."""
         with self._conn() as conn:
             if keep_approved:
-                conn.execute("BEGIN IMMEDIATE")  # checked and deleted in one go: an approval cannot slip in between
+                begin_write(conn)  # checked and deleted in one go: an approval cannot slip in between
             row = conn.execute(
                 "SELECT file_name, vendor_name, vendor_key, invoice_number, status FROM invoices WHERE id = ?",
                 (invoice_id,),
@@ -871,7 +871,7 @@ class InvoicesMixin:
             raise PermissionError(f"the second approval can't come from an account the first approver added or reset "
                                   f"the password of in the last {VOUCH_DAYS} days")  # fmt: skip
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # checked and approved in one go: no new first approval in between
+            begin_write(conn)  # checked and approved in one go: no new first approval in between
             latest = conn.execute(
                 "SELECT MAX(id) FROM events WHERE invoice_id = ? AND action = 'approved'", (invoice_id,)
             ).fetchone()[0]

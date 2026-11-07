@@ -457,7 +457,7 @@ class PurchasingMixin:
         at once never put the same invoice in two batches: the write lock is taken before the invoices are
         read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
+            begin_write(conn)  # the write lock from the read to the marks
             # The ids as one JSON list: one '?' however many are ticked (SQLite takes only so many bound variables).
             eligible = conn.execute(
                 "SELECT id, grand_total, currency FROM invoices WHERE id IN (SELECT value FROM json_each(?)) "
@@ -540,7 +540,7 @@ class PurchasingMixin:
         the AI's accuracy is measured on its own answer for them."""
         with self._conn() as conn:
             # The write lock from the read to the write: a background check's notes saved in between are kept (B-658).
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return

@@ -18,6 +18,7 @@ import json
 from typing import Any
 
 from ._base import PARKED, REVIEW, _now
+from .dialect import begin_write
 
 WAITING, CONFIRMED, SENT_BACK, WITHDRAWN = "waiting", "confirmed", "sent_back", "withdrawn"
 ANSWERS = (CONFIRMED, SENT_BACK)
@@ -173,7 +174,7 @@ class ManagersMixin:
             raise ValueError("Say what the manager wants changed.")
         meanwhile = "This request was answered or withdrawn meanwhile."
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")  # read and answered in one go: two answers at once keep one (B-1578)
+            begin_write(conn)  # read and answered in one go: two answers at once keep one (B-1578)
             req = conn.execute("SELECT * FROM manager_requests WHERE id = ?", (request_id,)).fetchone()
             if req is None or req["status"] != WAITING:
                 raise ValueError(meanwhile)

@@ -26,6 +26,7 @@ from ._base import (
     _now,
     _stale_before,
 )
+from .dialect import begin_write
 
 
 def capture_value(stored: str | bytes) -> Any:
@@ -143,7 +144,7 @@ class CaptureMixin:
         with self._conn() as conn:
             before = None
             if snapshot:
-                conn.execute("BEGIN IMMEDIATE")  # checked and saved in one go: a withdrawal cannot slip in between
+                begin_write(conn)  # checked and saved in one go: a withdrawal cannot slip in between
                 status = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
                 if status is None or status["status"] not in (APPROVED, PENDING):
                     return False
@@ -263,7 +264,7 @@ class CaptureMixin:
         learned is taken back (``_forget_learning``), in the same transaction as the check (B-782). True when it
         was. A deleted invoice is left to ``delete_invoice``."""
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write(conn)
             row = conn.execute("SELECT status FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
             if row is None:
                 return False
@@ -790,7 +791,9 @@ class CaptureMixin:
             else ""
         )
         with self._conn() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # Its own: the claim commits before the check starts (Azure's minutes, outside any transaction): never the
+            # write lock held, and every other writer waiting, all that time.
+            self._begin_alone(conn, "next_azure_check")
             row = conn.execute(
                 f"SELECT invoice_id FROM azure_checks WHERE {_AZURE_IN_LINE}{later} "
                 "ORDER BY created_at, invoice_id LIMIT 1",

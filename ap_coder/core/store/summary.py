@@ -532,10 +532,10 @@ class SummaryMixin:
         self._summary_migrate(conn)
 
     @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
+    def _conn(self, own: bool = False) -> Iterator[sqlite3.Connection]:
         """``StoreCore._conn``, the summary kept in step: before a change commits, the invoices it changed are worked
         out again, in the same transaction. A connection that changed nothing has nothing to do."""
-        with super()._conn() as conn:  # type: ignore[misc]
+        with super()._conn(own) as conn:  # type: ignore[misc]
             yield conn
             if conn.in_transaction:
                 try:
