@@ -665,7 +665,7 @@ It prints how long the service was down (from the stop to the new version answer
 keeps them in `server.json`'s `history` (`times`, in seconds). The downtime no longer grows with the database: the
 whole copy is made in step 6, while staff work (about a minute per GB on a slow disk), and step 8 adds only what
 was written during it. What step 8 still does for every invoice is to look at its file again (about 2 seconds per
-20,000 files on a Linux test computer). Measured there (D-196): with 20,000 invoices (669 MB) down 7 s, and with
+20,000 files on a Linux test computer). Measured there (D-196): with 20,000 invoices (669 MB) down 6 s, and with
 120,000 (2.45 GB) down 6 s, where it was 12 s and 16 s with the copy made in step 8. CI checks that with 20,000
 invoices it stays under 5 minutes on Windows. If the database can't be copied in step 6 (a report that reads for over a
 minute keeps it from being still), it says so and copies it whole in step 8, as before. If step 2 to 6 fails,

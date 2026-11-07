@@ -3483,7 +3483,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     nothing: "not updated".
   - **Measured** (Linux, 4 cores, `server_update_downtime.py local`, before → after; 20,000 invoices, 669 MB, on the
     disk; 120,000 invoices, 2.45 GB, made by duplicating a seed's invoices, events and feedback, in RAM since the
-    shared disk was short of room): 669 MB down 11.9 s → 7.3 s, the safety copy 6.2 s → 2.4 s (7.0 s ahead, while
+    shared disk was short of room): 669 MB down 11.9 s → 5.9 s, the safety copy 6.2 s → 2.0 s (6.2 s ahead, while
     serving); 2.45 GB down 15.9 s → 6.0 s, the safety copy 10.4 s → 1.9 s (8.3 s ahead). What is left at the stop is
     the data folder's files listed again, about 1.8 s per 20,000 invoice files there (`_elsewhere` now resolves each
     invoice's path once, not once per folder with the folders again each time: 2.1 → 1.75 s; same result). The
