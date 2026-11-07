@@ -13,6 +13,8 @@ so both runs see the same ones):
     approve   approvals into new databases, every table dumped (N per database, default 200; ~1 min)
     read      reading generated invoices and two suppliers' streams with AP's approvals (N, default 24; ~3 min)
     pipeline  whole files through the offline pipeline into a database (N, default 20; ~5 min)
+    migrate   each older release's database (tests/fixtures/old_schemas/), seeded and brought up to date: its schema
+              and every table (N invoices in each, default 30; ~10 s)
 
 Exit code 0 when every probe gives the same output, 1 when one differs (the first difference is shown), 2 when a
 probe failed to run. A difference is a change of behaviour: either intended (then say so in the commit) or a bug.
@@ -33,7 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROBES = ROOT / "scripts" / "probes"
-DEFAULT_N = {"tax": 20000, "approve": 200, "read": 24, "pipeline": 20}
+DEFAULT_N = {"tax": 20000, "approve": 200, "read": 24, "pipeline": 20, "migrate": 30}
 DEFAULT = ("tax", "approve", "read")
 
 
