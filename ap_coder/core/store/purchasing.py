@@ -36,9 +36,9 @@ _PO_INVOICES = f"""
 WITH coded AS (SELECT id, status, invoice_number, invoice_date, export_batch,
                       COALESCE(NULLIF(final_output, ''), NULLIF(ai_output, ''), '{{}}') AS doc FROM invoices
                WHERE po_key = ? AND status IN {_ACTIVE_IN}),
-read AS (SELECT *, CASE WHEN NOT json_valid(doc) THEN 0 ELSE json_type(doc) = 'object' END AS ok FROM coded)
+read AS (SELECT *, CASE WHEN NOT {dialect.json_valid("doc")} THEN 0 ELSE json_type(doc) = 'object' END AS ok FROM coded)
 SELECT id, status, invoice_number, invoice_date, export_batch,
-       CASE WHEN ok THEN json_extract(doc, {", ".join(f"'$.{k}'" for k in PO_CODING)}) END,
+       CASE WHEN ok THEN {dialect.json_values("doc", [f"$.{k}" for k in PO_CODING])} END,
        CASE WHEN NOT ok THEN doc END FROM read ORDER BY id
 """
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
