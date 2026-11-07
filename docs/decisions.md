@@ -3434,3 +3434,83 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (an import line), `coding/{po,vendors,rules,tax,banks}.py`, `erp/search.py`, `capture/{supplier,workflow}.py`,
     `ai/{lessons,history,page_worker}.py`; `tests/core/test_store_transaction.py`, `tests/meta/test_nested_writes.py`,
     `tests/meta/test_core_imports.py`, `tests/core/test_store_perf.py`)
+- **D-193** · **The review queue's lists and facts kept by invoice and brought up to date from the summary's log of
+  the queue's changes; the Approved tab read off an index; the queue's reasons work each Pay from choice out once**
+  (scale goal, phase 8, E1; changes how D-159 and D-167 keep the queue's lists and checks).
+  - **Why:** with 100 people on 300,000 invoices, `/review` was 25% of the busiest web workers' CPU
+    (`docs/archive/scale-2026-11/phase3c-load-100-people.md`). In its samples: the lists' rows read whole again
+    (`list_invoices`' kept answer, 15% of the page) and their confidences and order read as rows at every ask (10%),
+    the queue's checks worked out whole again (12%) and copied twice for each caller (5%), `attention` (19%), the
+    Approved tab sorting a year of approvals (7%). Each check, approval or park moved the `listed` and `queue` topics
+    (D-159), so every worker read the queue's 2,700 invoices again at its next `/review`. (The phase's list also named
+    `summary_rows`: in that profile it is the Vendors page's workload, Insights, Sales tax and the quick search, not
+    the queue.)
+  - **A log the summary writes** (`queue_changes (seq INTEGER PRIMARY KEY, id)`, `_base.QUEUE_CHANGES`): each
+    invoice whose queue row changed (`summary.queue_logged`: its row in the lists, `LISTED_COLUMNS` with the
+    confidence a check writes; its facts in review, the `queue` topic, one the summary could not work out at each
+    change; or its coming into the queues or leaving them), written by `_summarize` in the same transaction as the
+    change. Every change of an invoice is worked into the summary there (plain SQL too: `summary_dirty`, worked out by
+    the next read), so the log holds them all. The latest `QUEUE_CHANGES_KEPT` (20,000) are kept, pruned in the same
+    write; the log never empties. `summary_logged` counts the refreshes that kept it, beside `summary_generation/all`.
+    - Not triggers: a trigger on `invoices` or the summary can't tell whether the queue's row changed (the summary
+      deletes and inserts each row), and a trigger of a new name makes every older version refuse this version's
+      backups (D-159's check). Not `shared_answer` (D-169): every other process would still decode the whole answer,
+      2,700 rows, after each change.
+  - **The read** (`core/store/review_queue.py`, `_kept`): in one read transaction, one statement reads the database's
+    `summary_id`, the refreshes made without the log (the generation less `summary_logged`: an older AP Coder on the
+    same database, B-1811's case), the log's first and last change, and the invoices logged since the one kept. Only
+    those are read again; all, when the database is another (a restore, a summary built again), the log no longer
+    holds every change since, or an older AP Coder worked the summary out meanwhile. The caller's reads inside are of
+    the same moment. Inside a write under way, or a read transaction, it is read afresh and not kept (D-159's rule).
+    - **The lists** (`queue_listed`, through `list_invoices`): the rows of the three queues kept as one; each ask reads
+      the ids of the asked lists in the queue's order off `summary_queue_order` (`json_group_array`: 0.8 ms, the
+      confidences as rows 3.9 ms) and gives copies of the rows. A check's confidence is in the log: D-167 kept it out of
+      the `listed` topic because a check comes between nearly every two asks; logged, a check reads one row again.
+    - **The facts** (`Store.queue_facts`): what the queue reads of every invoice in review. `bulk.queue_checks` takes
+      those it is asked (from `KEEP_FROM` as before) and works their findings out at each call (`_today`, decoded once
+      in `_FOUND`); each caller gets one copy, not two.
+    - The topics `listed` and `queue` move as before: an older AP Coder reading the same database follows them.
+  - **The queue's reasons** (`review.attention`): the findings counted in one pass (`_to_fix`); each Pay from asked
+    (the account, approved before, the currency, the vendor's last one) checked once a call (`opening_choice`,
+    `blocking`, pure); each Pay from text decoded once (`_PAYS`, 16,384 texts, then all let go).
+  - **The Approved tab** (`recently_approved`): read off the index `summary_recent`, in its order, not sorted out of
+    every approval at each visit.
+  - **No schema version:** a table and an index, made at every start where missing (`make_triggers` makes the log with
+    the vendors' log, so a backup's copy being restored gets it before another worker writes there, D-174;
+    `SUMMARY_SCHEMA` the index); an older AP Coder leaves both alone. `queue_rows`, `stale_checks` and
+    `recently_approved` moved from `summary.py` into `review_queue.py` (996 lines left).
+  - **Measured** (the bench's seed of 30,000 invoices, 2,491 in review from 968 vendors, 116 parked, 93 waiting for a
+    second approval, two bank accounts in use; one request's CPU by `time.process_time`, medians of 12, the two codes
+    in turn on the same database, the write made by another process before each request; d417b98 before):
+
+    | request | alone | after a check | after a park | after an approval |
+    |---|---:|---:|---:|---:|
+    | `GET /review` | 52-66 → 45 ms | 54-70 → 48-51 ms | 106-156 → 48-51 ms | 111-155 → 44-56 ms |
+    | `GET /review?tab=approved` | 93 → 40 ms | | 136 → 41-44 ms | |
+    | `GET /review/{id}` | | 34-36 → 32-37 ms | 32-36 → 31-34 ms | |
+    | `POST /review/{id}/check` (noise) | 23 → 21 ms | 20 → 22 ms | 20 → 22 ms | |
+
+    - On one connection after a park: `list_invoices` 30 → 2.4 ms, `queue_checks` 30 → 6.5 ms (the checks stamp is
+      2 ms of it), `attention` 23 → 13 ms; the Approved tab's rows 40 → 2.4 ms (27,000 approved).
+    - The writes: a check's confidence 3.75 → 4.04 ms (the log's row), a park and its unpark 8.1 → 8.2 ms, 3,000
+      invoices worked into the summary 1.53 → 1.40 s (each one's topic keys made once, not once a topic).
+    - At 300,000 the queue's size sets these (about 2,700 in review), not the database's, but for the Approved tab's
+      sort (ten times the approvals: about 0.4 s a visit before). By the phase 3 part 3 profile's samples, the queue's
+      25% of the busiest workers' CPU comes to about 12%: what is left is `attention`, the order read, the copies,
+      the template and the 50 rows.
+  - **Proven the same:** random writes by two workers (each its own rows kept), plain SQL and an older AP Coder (an
+    invoice added, checked, parked, approved, rejected, reopened, deleted, exported; its findings, coding, vendor or
+    status changed; the settings its checks are made against, the vendor master, a bank account; a write undone, a
+    restore), with a log of 4 changes and of 20,000: every list, the queue's checks (of the queue, part of it, every
+    invoice) and every reason equal a fresh computation (`tests/core/test_queue_changes.py`). Seven mutations (the
+    confidence not logged, pruning not seen, a row gone left kept, the older AP Coder or a restore not seen, kept
+    inside a write, no log in a backup's copy) each fail it. `scripts/same_behaviour.py --ref d417b98`: approve,
+    pipeline and tax the same; migrate differs by the table, its index and the count alone (22 databases, compared
+    with them set aside). The queue's pages byte for byte: a worker of each code side by side on the seed, 9 views of
+    the queue, Previous and Next and bulk approval's candidates drawn after each of 120 writes by a third process: 1,220
+    files, none differs (the ages "3 minutes ago" masked: the two read the clock a moment apart).
+  - **Not done:** the findings counted at each visit (5 ms: the queue's 30,000 findings); the checks stamp (2 ms: the
+    GL accounts and cost centers joined and hashed at each ask, `accounts.py`); `last_pay_froms` (2.5 ms, a seek a
+    vendor: an approved invoice's change is not in the queue's log); the template and the 50 rows' codings.
+  - (`core/store/{review_queue,summary,_base,invoices,__init__}.py`, `coding/bulk.py`, `web/pages/review.py`,
+    `docs/HOW_IT_RUNS.md`; `tests/core/test_queue_changes.py`, `tests/core/test_kept_answers.py`)

@@ -185,7 +185,7 @@ RECHECK_BATCH = 50  # invoices checked again, then kept in one short write
 RECHECK_WAIT = 300.0  # how long a laptop's queue waits for the re-check under way (its own background thread's)
 RECHECK_STOP_SECONDS = 5.0  # how long a stop waits for the background's re-check to end between two batches
 QUEUE_COLUMNS = ", ".join(("id", *QUEUE_READ))  # what the summary's ``queue`` topic follows
-KEEP_FROM = 50  # invoices asked from which their facts are taken from the whole queue's kept (fewer: read each time)
+KEEP_FROM = 50  # from this many invoices asked, their facts are taken from the whole queue's (fewer: read each time)
 # Each invoice's findings as the queue reads them (``_found``), by the texts the summary keeps: the queue's invoices
 # share a few of them (211 for 2,654 invoices at 100,000), so each is decoded once, not again after each approval or
 # park (B-1730). Shared: read-only. Past FOUND_KEPT texts they are all let go.
