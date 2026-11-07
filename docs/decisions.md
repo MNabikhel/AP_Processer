@@ -3481,7 +3481,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `recently_approved` moved from `summary.py` into `review_queue.py` (996 lines left).
   - **Measured** (the bench's seed of 30,000 invoices, 2,491 in review from 968 vendors, 116 parked, 93 waiting for a
     second approval, two bank accounts in use; one request's CPU by `time.process_time`, medians of 12, the two codes
-    in turn on the same database, the write made by another process before each request; d417b98 before):
+    in turn on the same database, the write made by another process before each request; d417b98 before;
+    `e1/probe.py` in the session's scratchpad):
 
     | request | alone | after a check | after a park | after an approval |
     |---|---:|---:|---:|---:|
@@ -3508,7 +3509,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     pipeline and tax the same; migrate differs by the table, its index and the count alone (22 databases, compared
     with them set aside). The queue's pages byte for byte: a worker of each code side by side on the seed, 9 views of
     the queue, Previous and Next and bulk approval's candidates drawn after each of 120 writes by a third process: 1,220
-    files, none differs (the ages "3 minutes ago" masked: the two read the clock a moment apart).
+    files, none differs (the ages "3 minutes ago" masked: the two read the clock a moment apart; `e1/identity.py`).
+    The base code passes the same property test, adapted to its kept answers: none was wrong, only worked out again.
   - **Not done:** the findings counted at each visit (5 ms: the queue's 30,000 findings); the checks stamp (2 ms: the
     GL accounts and cost centers joined and hashed at each ask, `accounts.py`); `last_pay_froms` (2.5 ms, a seek a
     vendor: an approved invoice's change is not in the queue's log); the template and the 50 rows' codings.

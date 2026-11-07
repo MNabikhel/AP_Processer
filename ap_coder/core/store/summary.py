@@ -309,8 +309,8 @@ def make_triggers(conn: sqlite3.Connection, missing: bool = True, counts: bool =
     ``_summary_schema``). Without it (a backup's copy being restored, ``backups._own_triggers``), only those there are
     made again: an older backup may lack their tables, which its migration makes first. With ``counts``, also the
     counts' triggers (``changes_*``) whose table is there, with ``settings`` they count in (B-1720). In either, the
-    vendors' change log the vendors' counts' triggers write is made first (``vendor_changes``, D-174), and the queue's
-    the summary writes (``queue_changes``, D-193): a backup's copy is written to before its migration."""
+    vendors' change log the vendors' counts' triggers write is made first (``vendor_changes``, D-174), and so is the
+    queue's, which the summary writes (``queue_changes``, D-193): a backup's copy is written to before its migration."""
     conn.execute(VENDOR_CHANGES)
     conn.execute(QUEUE_CHANGES)
     made = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
