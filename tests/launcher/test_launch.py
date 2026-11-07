@@ -372,7 +372,7 @@ def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(
     old = launch.running.Server(8501, legacy=True)
     stops: list[int] = []
 
-    def take_over(root, version, ports, data, say, build=""):
+    def take_over(root, version, ports, data, say, build="", here_only=False):
         stops.append(1)
         other.close()  # stopped: the old start ends
         return "clear", None

@@ -151,7 +151,7 @@ def test_an_older_dashboard_still_running_is_stopped_not_opened(launch, monkeypa
     """It was opened as if it were this version: the person saw the old version while this one was half set up."""
     started, _, _ = _quiet_setup(launch, monkeypatch)
     from_port = []
-    monkeypatch.setattr(launch.running, "take_over", lambda root, version, ports, data, say, build="":
+    monkeypatch.setattr(launch.running, "take_over", lambda root, version, ports, data, say, build="", here_only=False:
                         from_port.append(ports) or ("clear", None))  # fmt: skip
     monkeypatch.setattr(launch, "open_browser", lambda url: pytest.fail("opened the old dashboard"))
     args, rest = launch.parse(["--port", "8597"])
