@@ -48,10 +48,11 @@ _INDEXES_20 = (
 # people the events are by (Activity's Person filter, an event by one person), each read off the index alone, not the
 # events table (400,000 events at 100,000 invoices); the ERP register's invoices of some numbers (the JD Edwards
 # duplicate check of a batch), not the whole register (200,000 rows).
+_REGISTER_BY_NUMBER = "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)"
 _INDEXES_24 = (
     "CREATE INDEX IF NOT EXISTS events_created ON events (created_at, action)",
     "CREATE INDEX IF NOT EXISTS events_actor ON events (actor)",
-    "CREATE INDEX IF NOT EXISTS erp_invoices_number ON erp_invoices (number_key)",
+    _REGISTER_BY_NUMBER,
 )
 # Schema 25's index (B-1714): a lesson's corrections, and the ones agreeing with it, counted off the index alone
 # (``lessons._LESSON``: the review screen's "Learned" hints), not every approval that saw its situation (220,000 for
@@ -288,6 +289,12 @@ def _register_columns(store: Any, conn: sqlite3.Connection) -> None:
     add_jde_register(conn, columns)
 
 
+def _register_by_number(store: Any, conn: sqlite3.Connection) -> None:
+    """The ERP register by invoice number (schema 24's index) also on a database that recorded 24 before the index
+    was one of the step's (B-1975)."""
+    conn.execute(_REGISTER_BY_NUMBER)
+
+
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
     """A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
     amount), for what is left to expense on the review screen."""
@@ -406,6 +413,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _picture_sha),
     (EVERY_TIME, _lookup_indexes),
     (EVERY_TIME, _register_columns),
+    (EVERY_TIME, _register_by_number),
     (EVERY_TIME, _po_open_amount),
     (EVERY_TIME, _snapshots_by_seq),
     (EVERY_TIME, _vendor_key_rules),

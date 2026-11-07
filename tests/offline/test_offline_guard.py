@@ -130,6 +130,8 @@ TOUCHPOINTS = {
     "scripts/fetch_models.py": "model download only with AP_ALLOW_INTERNET=1 (else copied from models/)",
     "scripts/check.py": "git status on this checkout, for the changed files (no network)",
     "scripts/same_behaviour.py": "git worktree of a local ref, to compare its code with this checkout (no network)",
+    "scripts/old_schemas.py": "git archive of an older commit in this clone, for the database it made (no network); "
+    "never run by the launcher",
     "scripts/check_deps.py": "urllib.request.url2pathname only (a file: URL), no connection",
     "scripts/install.py": "git fetch/pull only with AP_ALLOW_INTERNET=1",
     "scripts/build_offline_bundle.py": "the bundle builder (online by design: it sets AP_ALLOW_INTERNET=1 itself)",
