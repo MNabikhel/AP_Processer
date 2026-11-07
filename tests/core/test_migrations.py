@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
 from ap_coder.core.store import SCHEMA_VERSION, Store, migrations
+from tests.scripts import load_script
 
 OLD = Path(__file__).parents[1] / "fixtures" / "old_schemas"
 SNAPSHOTS = sorted(OLD.glob("schema-*.sql"))
@@ -75,14 +77,18 @@ def differences(new: dict[str, object], old: dict[str, object]) -> list[str]:
     return said
 
 
-def _old_database(snapshot: Path, folder: Path) -> Path:
-    """The database ``snapshot`` holds, as its release left it (in a folder of its own: the update backs it up)."""
+def _old_database_from(sql: str, folder: Path) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     db = folder / "ap_coder.db"
     conn = sqlite3.connect(db)
-    conn.executescript(snapshot.read_text(encoding="utf-8"))
+    conn.executescript(sql)
     conn.close()
     return db
+
+
+def _old_database(snapshot: Path, folder: Path) -> Path:
+    """The database ``snapshot`` holds, as its release left it (in a folder of its own: the update backs it up)."""
+    return _old_database_from(snapshot.read_text(encoding="utf-8"), folder)
 
 
 @pytest.fixture(scope="module")
@@ -123,6 +129,21 @@ def test_the_old_databases_are_those_of_every_release(tmp_path):
         assert snapshot.name.startswith(f"schema-{int(recorded[0]):02d}-")
         versions.add(int(recorded[0]))
     assert RELEASED <= versions and max(versions) <= SCHEMA_VERSION
+
+
+def test_a_database_kept_as_sql_is_made_again_the_same(tmp_path):
+    """The way the old databases are kept (``scripts/old_schemas.py``'s dump) loses nothing: a new database dumped and
+    made again from the SQL has the same tables, columns, indexes, triggers and settings."""
+    old_schemas = load_script("old_schemas", "ap_old_schemas")
+    made = Store(tmp_path / "a" / "ap_coder.db").path
+    again = _old_database_from(old_schemas.dump(made), tmp_path / "b")
+    assert shape(again) == shape(made)
+
+    def settings(db: Path) -> list[tuple[str, str]]:
+        with closing(sqlite3.connect(db)) as conn:
+            return conn.execute("SELECT key, value FROM settings WHERE key != 'summary_id' ORDER BY key").fetchall()
+
+    assert settings(again) == settings(made)
 
 
 def test_the_numbered_steps_run_in_the_order_of_their_versions():

@@ -5,16 +5,11 @@ be lowered as the port (docs/POSTGRES.md) or a clean-up moves them behind the se
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 
-from tests.conftest import ROOT
+from tests.scripts import load_script
 
-_spec = importlib.util.spec_from_file_location("ap_sql_inventory", ROOT / "scripts" / "sql_inventory.py")
-inventory = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = inventory
-_spec.loader.exec_module(inventory)
+inventory = load_script("sql_inventory", "ap_sql_inventory")
 
 ALLOWED = {
     "`INSERT OR IGNORE`": 12,

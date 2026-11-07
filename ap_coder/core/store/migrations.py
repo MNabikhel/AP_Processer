@@ -8,10 +8,10 @@ lacks (the capture's and the summary's own come after them: ``SummaryMixin._migr
   and the one-off clean-ups recorded on their own (``vendor_key_rules``, ``feedback_cleanup``...). Each stays where
   it ran before, its order kept.
 
-A new version: its step at the end, ``(SCHEMA_VERSION, _vNN_what)``, and SCHEMA_VERSION one more. An older database
-brought up to date must be the same as a new one: ``tests/core/test_migrations.py`` checks it on the database each
-release made (``tests/fixtures/old_schemas/``, ``scripts/old_schemas.py``). Every look at a table goes through
-``dialect`` (``columns``, ``add_column``)."""
+A new schema version N: SCHEMA_VERSION becomes N and its step goes at the end of STEPS, ``(N, _vN_what)``. An older
+database brought up to date must be the same as a new one: ``tests/core/test_migrations.py`` checks it on the
+database each release made (``tests/fixtures/old_schemas/``, ``scripts/old_schemas.py``). Every look at a table goes
+through ``dialect`` (``columns``, ``add_column``)."""
 
 from __future__ import annotations
 

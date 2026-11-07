@@ -70,7 +70,7 @@ def code_of(sha: str, folder: Path) -> bool:
     if archive.returncode:
         return False
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
-        tar.extractall(folder, filter="data")
+        tar.extractall(folder, filter="data") if sys.version_info >= (3, 12) else tar.extractall(folder)  # noqa: S202
     return True
 
 
