@@ -370,3 +370,28 @@ def test_each_server_processs_memory_slope_is_reported_and_a_limit_on_it_fails_t
            "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
     text = load.markdown(load.build_report(_run(), cfg, {"started": "2026-11-07T09:00:00", "processes": [one, two]}))
     assert "| worker 2 |" in text and "| +10.0, +10.0 |" in text and "RSS MB a 10 min: whole run, second half" in text
+
+
+def test_a_process_that_has_ended_gives_no_memory_sample(tmp_path):
+    """B-2049: the sample taken as the run stops found the web workers ended but not yet waited for (zombies, an RSS of
+    0 in /proc), and kept "0 MB" as their last memory: the hour at 300,000 invoices said the workers ended at 0.0 MB
+    and their second-half slope was −10 to −23 MB a 10 minutes, where it was +2 to +14. An ended process gives no
+    sample; one still running does."""
+
+    def stat(pid: int, state: str, ppid: int, ticks: int, pages: int) -> None:
+        rest = [state, str(ppid)] + ["0"] * 9 + [str(ticks), "0"] + ["0"] * 8 + [str(pages)]
+        (tmp_path / str(pid)).mkdir(exist_ok=True)
+        (tmp_path / str(pid) / "stat").write_text(f"{pid} (python) {' '.join(rest)}", encoding="utf-8")
+        (tmp_path / str(pid) / "cmdline").write_bytes(b"python\0-c\0from multiprocessing.spawn import spawn_main")
+
+    sampler = load.Sampler({"server": 100}, 0.0)
+    sampler.proc, sampler.psutil, sampler.tick, sampler.page = tmp_path, False, 100, 1_000_000
+    stat(100, "S", 1, 100, 60)
+    stat(101, "S", 100, 200, 700)
+    sampler.sample()
+    stat(101, "Z", 100, 300, 0)  # (ended, not yet waited for)
+    sampler.sample()
+    server, worker = sampler.summary()
+    assert server["process"] == "server" and len(sampler.series[100]["points"]) == 2
+    assert worker["process"] == "worker 1" and worker["rss_mb_last"] == worker["rss_mb_peak"] == 700.0
+    assert len(sampler.series[101]["points"]) == 1

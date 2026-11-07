@@ -472,12 +472,18 @@ class Sampler(threading.Thread):
             for label, root in self.roots.items():
                 try:
                     top = psutil.Process(root)
-                    for p in [top, *top.children(recursive=True)]:
+                    family = [top, *top.children(recursive=True)]
+                except (psutil.Error, OSError):
+                    continue
+                for p in family:
+                    try:
+                        if p.status() == psutil.STATUS_ZOMBIE:
+                            continue  # (ended: no sample, B-2049)
                         t, rss = p.cpu_times(), p.memory_info().rss
                         found[p.pid] = (self._label(label, p.pid, root, p.cmdline()), p.ppid(), t.user + t.system,
                                         rss / 1e6)  # fmt: skip
-                except (psutil.Error, OSError):
-                    continue
+                    except (psutil.Error, OSError):
+                        continue
             return found
         stats = {}
         for entry in self.proc.iterdir():
@@ -488,6 +494,8 @@ class Sampler(threading.Thread):
             except OSError:
                 continue
             rest = text[text.rfind(")") + 2 :].split()
+            if rest[0] in ("Z", "X"):
+                continue  # ended, not yet waited for: its RSS reads 0, so it gives no sample (B-2049)
             stats[int(entry.name)] = (int(rest[1]), (int(rest[11]) + int(rest[12])) / self.tick,
                                       int(rest[21]) * self.page / 1e6)  # fmt: skip
         found = {}
