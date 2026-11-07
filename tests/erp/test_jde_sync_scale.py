@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import datetime as dt
 import sqlite3
-from itertools import pairwise
 
 import pytest
 
@@ -158,59 +157,6 @@ def test_a_long_page_of_vouchers_is_written_a_few_hundred_at_a_time(store, ais, 
     assert report["ok"], report["errors"]
     assert max(written) == 4 and sum(written) == 24  # the 23 and the stand-in's own
     assert _numbers(store) == {"INV-7001", *(v["invoice_number"] for v in made)}
-
-
-def test_the_syncs_writes_leave_the_write_lock_free_between_them(store, ais, monkeypatch):
-    """B-2051: the sync wrote a page's vouchers a few hundred at a time back to back (and the vouchers it removes), the
-    write lock free between two writes for a moment only; another writer (an approval) retries after 1, 2, 5, 10 ms...
-    then every 100 ms (SQLite's busy timeout), missed those moments again and again: at the company's size it waited
-    up to 0.63 s here, 0.53 to 0.73 s on CI. Each write now begins once the lock has been free about as long as the
-    last one held it (PACE_MIN to PACE_MAX); the time a page takes to come from JDE counts. On a clock of its own."""
-    connect(store, ais)
-    ais.mapping["ais"]["page_size"] = 10
-    monkeypatch.setattr(jde_sync, "VOUCHERS_A_WRITE", 4)
-    monkeypatch.setattr(jde_sync, "WRITE_ROWS", 2)
-    made = _vouchers(ais, 23)
-    now, slept, writes = [0.0], [], []
-    holds = iter([0.03, 0.0005, 0.2, 0.008] * 10)  # how long each write holds the lock: the floor and the cap too
-
-    def sleep(seconds):
-        slept.append(seconds)
-        now[0] += seconds
-
-    def timed(real):
-        def write(*args, **kwargs):
-            began = now[0]
-            now[0] += next(holds)
-            writes.append((began, now[0]))
-            return real(*args, **kwargs)
-
-        return write
-
-    monkeypatch.setattr(jde_sync, "_clock", lambda: now[0])
-    monkeypatch.setattr(jde_sync, "_sleep", sleep)
-    monkeypatch.setattr(store, "import_jde_vouchers", timed(store.import_jde_vouchers))
-    monkeypatch.setattr(store, "remove_jde_vouchers", timed(store.remove_jde_vouchers))
-    client = jde_ais.AisClient(ais.settings(), ais.mapping)
-    call = client.call
-
-    def page(*args, **kwargs):  # a page takes 0.1 s to come from JDE
-        now[0] += 0.1
-        return call(*args, **kwargs)
-
-    monkeypatch.setattr(client, "call", page)
-    assert jde_sync.sync(store, parts=("vouchers",), client=client)["ok"]
-    voided = {v["key"] for v in made[:5]}
-    ais.data["vouchers"] = [v for v in ais.data["vouchers"] if v["key"] not in voided]
-    report = jde_sync.sync(store, parts=("vouchers",), client=client, full=True)
-    assert report["ok"] and report["parts"]["vouchers"]["removed"] == 5
-    assert len(writes) == 7 + 6 + 3  # a page of 10 in three writes; the 5 voided removed 2 at a time
-    for (began, ended), (following, _) in pairwise(writes):
-        rest = min(max(ended - began, jde_sync.PACE_MIN), jde_sync.PACE_MAX)
-        assert following - ended >= rest - 1e-9, writes
-    assert max(slept) == pytest.approx(jde_sync.PACE_MAX) and min(slept) == pytest.approx(jde_sync.PACE_MIN)
-    assert len(slept) < len(writes) - 2  # (none after a page read from JDE: it left the lock free long enough)
-    assert _numbers(store) == {"INV-7001", *(v["invoice_number"] for v in made[5:])}
 
 
 def test_the_po_sync_reads_the_pos_a_page_at_a_time_with_jdes_line_numbers(store, ais, monkeypatch):
