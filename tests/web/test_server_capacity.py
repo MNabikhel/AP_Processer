@@ -1149,6 +1149,35 @@ def test_the_reports_process_whose_server_is_gone_stops_before_its_next_view(mon
     assert not server._parent_gone()
 
 
+def test_the_server_answers_though_its_reports_could_not_be_looked_at_or_started(store, monkeypatch, capsys):
+    """B-2071: an error looking whether the database had the reports (a database too busy) or starting their process
+    (no process to be had) stopped the server's start, where its reports are no reason not to serve: it says so in
+    one line of the window and the server answers, the refresher working them out while it serves."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+
+    def locked(store):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(refresh, "served_before", locked)
+    server.prepare_reports(store)
+    assert capsys.readouterr().err.splitlines() == [
+        "The reports' default views were not worked out before the dashboard answers (database is locked): the "
+        "background process works them out while it serves."]  # fmt: skip
+
+    def unstarted():
+        raise OSError("no process to be had")
+
+    monkeypatch.setattr(refresh, "served_before", lambda store: False)
+    monkeypatch.setattr(multiprocessing, "get_context", lambda method: SimpleNamespace(
+        Process=lambda **kwargs: SimpleNamespace(start=unstarted, pid=None)))  # fmt: skip
+    server.prepare_reports(store)
+    assert capsys.readouterr().err.splitlines() == [
+        "The reports' default views were not worked out before the dashboard answers (no process to be had): the "
+        "background process works them out while it serves."]  # fmt: skip
+
+
 def _queue_with_lessons(store: Store) -> tuple[int, str]:
     """An invoice in the review queue, a line of it without an account (its screen suggests one from the learning
     memory), and lessons of its vendor: (the invoice, its vendor's key)."""

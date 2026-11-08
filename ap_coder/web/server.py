@@ -486,10 +486,14 @@ def prepare_reports(store: Store) -> None:
 
     from ap_coder.web import refresh
 
-    if refresh.served_before(store):
-        _said("The reports' default views are not worked out before the dashboard answers: this database has had them "
-              "(by this version or an earlier one), and the background process brings them up to date while it "
-              "serves.")  # fmt: skip
+    try:
+        if refresh.served_before(store):
+            _said("The reports' default views are not worked out before the dashboard answers: this database has had "
+                  "them (by this version or an earlier one), and the background process brings them up to date while "
+                  "it serves.")  # fmt: skip
+            return
+    except Exception as exc:  # noqa: BLE001 - no reason not to serve (B-2071)
+        _not_prepared(exc)
         return
     most = refresh.PREPARE_MOST
     process = multiprocessing.get_context("spawn").Process(target=_prepare_reports, args=(str(store.path), most),
@@ -510,12 +514,16 @@ def prepare_reports(store: Store) -> None:
     taken = os.name != "nt" and threading.current_thread() is threading.main_thread()
     before = signal.signal(signal.SIGTERM, stopped) if taken else None
     try:
-        process.start()
         try:
+            process.start()
             process.join(most + PREPARE_ENDS)
         except KeyboardInterrupt:  # (the server stopped as it starts: that process with it)
-            end()
+            if process.pid is not None:
+                end()
             raise
+        except Exception as exc:  # noqa: BLE001 - no process to be had: no reason not to serve (B-2071)
+            _not_prepared(exc)
+            return
     finally:
         if taken:
             signal.signal(signal.SIGTERM, before)
@@ -525,6 +533,12 @@ def prepare_reports(store: Store) -> None:
         _said(f"{left} was ended after {most + PREPARE_ENDS:g} s. The background process works out the rest.")
     elif process.exitcode:
         _said(f"{left} stopped (exit code {process.exitcode}). The background process works out the rest.")
+
+
+def _not_prepared(exc: Exception) -> None:
+    """Said in the window: the reports were not worked out before the server answers, because of ``exc``."""
+    _said(f"The reports' default views were not worked out before the dashboard answers ({exc or type(exc).__name__}): "
+          "the background process works them out while it serves.")  # fmt: skip
 
 
 def _prepare_reports(db: str, most: float) -> None:
