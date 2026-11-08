@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{# A report with nothing kept to show yet while another works it out (the company server's first start, D-201: web/app.py being_worked_out): the page asks again by itself every few seconds, no script needed. #}
+{% block head %}<meta http-equiv="refresh" content="{{ again }}">{% endblock %}
+{% block content %}
+<section class="card" role="status">
+  {{ ui.empty_state("This report is being worked out", "The first time on a big database it takes about a minute. This page opens the report by itself once it is ready.") }}
+  <div class="row center">
+    <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
+  </div>
+</section>
+{% endblock %}

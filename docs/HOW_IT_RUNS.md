@@ -500,8 +500,11 @@ the launcher.
   last day warm (`refresh.py:_Warm`: asked again once its answer is 15 minutes old, a cheap take while it holds), so
   the first person to open a report, in the morning too, takes a kept answer; a database restored while it runs gets
   its own start. A request with nothing to show (the first ask, another format after an update) works it out, or
-  waits for the refresher's work under way, as before; so does one past the cap or with the refresher down. A laptop
-  works each out in the request, as before.
+  waits for the refresher's work under way, as before; so does one past the cap or with the refresher down. A page's
+  GET waits for another's work 2 s at most (`ap_coder/core/store/reports.py:ANSWER_BRIEF`, D-201), then answers at
+  once (`ap_coder/web/app.py:being_worked_out`) with a page saying the report is being worked out, which asks again
+  by itself every 5 s (a script's ask: 503 with Retry-After; the queue opens without its late pill). A laptop works
+  each out in the request, as before.
 
   **The invoices folder listed once for every process** (D-176): Import invoices on the server shows the folder's
   latest listing, kept in `folder_listings` (`core/store/folder.py`): a pick-up's (the Process button, a scheduled

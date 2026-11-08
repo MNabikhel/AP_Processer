@@ -15,6 +15,8 @@
   older than ``STALE_MOST``) at once and leaves a want; the background process's refresher (``web/refresh.py``, its
   hold ``REFRESHER``) works the wants out, oldest first, one at a time (``next_want``, ``want_done``), and at its start
   those asked in the last day (``want_again``), so no web worker's request works one out while it has one to show.
+  A page's request with none to show while another thread or process works it out (the refresher's start) waits
+  ``ANSWER_BRIEF`` at most, then is told so (``Working``, D-201): the web app answers that it is being worked out.
 * **Downloads made by the background process** (``report_jobs``, ``web/pages/downloads.py``): on the company server a
   long download (search to Excel, the Activity CSV, the duplicate audit) is not made by the web worker the person
   asked: it waits here, the background process makes it (``claim_download``, ``renew_download``), and the person's page
@@ -25,6 +27,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import logging
@@ -46,6 +49,7 @@ ANSWER_LEASE = 10.0  # seconds a process working an answer out holds it for the 
 ANSWER_RENEW = 3.0  # that stopped (killed, B-1807) is passed over within ANSWER_LEASE; renewed every ANSWER_RENEW
 ANSWER_WAIT = 30.0  # seconds another process asking the same waits for that answer before working it out itself
 ANSWER_WAIT_MOST = 180.0  # ... and while the one working it out still renews its hold, at most this long (B-1914)
+ANSWER_BRIEF = 2.0  # ... but a page's request on the company server, with none to show, then is told so (D-201)
 ANSWER_POLL = 0.25
 SETTLE_SHARE = 10  # a settled answer is taken after a change at least this many times as long as its work lasted ...
 SETTLE_MOST = 15 * 60.0  # ... but for that no longer than this (a work once slow, its cache cold: D-197)
@@ -121,6 +125,31 @@ _ASKED: dict[tuple[str, str, str], float] = {}  # when this process last noted e
 _HERE = threading.local()
 KEPT_HERE = 32
 KeptAnswer = tuple[Any, Any, float, float | None]  # (its stamp, its value, when its work began, how long it lasted)
+# a page's GET: how long it waits at most for an answer another works out, with none to show (D-201); None: not a page
+_BY_A_PAGE: contextvars.ContextVar[float | None] = contextvars.ContextVar("ap_coder_answers_by_a_page", default=None)
+
+
+class Working(Exception):
+    """A settled answer a page asked (``asked_by_a_page``) on the company server with none to show, which another
+    thread or process works out (at a first start, the refresher's warm-up: D-200), still under way after
+    ``ANSWER_BRIEF`` (D-201): the web app answers at once that it is being worked out, holding no thread meanwhile."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"the {name} answer is being worked out")
+        self.name = name
+
+
+@contextmanager
+def asked_by_a_page(most: float | None = None) -> Iterator[None]:
+    """Inside: a page's GET request (``web/core.py`` ``one_connection``). On the company server a settled answer the
+    refresher works out (``shared_answer``'s ``again``) that it asks with none to show while another works it out is
+    waited for ``most`` seconds at most (default ``ANSWER_BRIEF``; 0: a part of the page it may leave out), then
+    ``Working`` is raised (D-201); anywhere else (a laptop, an action, a background job) as before."""
+    token = _BY_A_PAGE.set(ANSWER_BRIEF if most is None else most)
+    try:
+        yield
+    finally:
+        _BY_A_PAGE.reset(token)
 
 
 @contextmanager
@@ -172,8 +201,9 @@ class ReportsMixin:
         neither read nor kept. ``again`` (with ``settle``; D-198): what the background process works it out again
         from (JSON-ready; its name one of ``web/refresh.py``'s ``ANSWERS``): on the company server
         (``background_answers``), while its refresher runs, one that no longer holds is not worked out here but taken
-        as kept, up to ``STALE_MOST`` old, and asked of the refresher (``_meanwhile``). The value is shared: read it,
-        don't change it."""
+        as kept, up to ``STALE_MOST`` old, and asked of the refresher (``_meanwhile``); asked by a page
+        (``asked_by_a_page``) with none to show while another works it out, waited for its wait at most (2 s), then
+        ``Working`` is raised (D-201). The value is shared: read it, don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
         if getattr(_HERE, "on", False):
@@ -185,6 +215,8 @@ class ReportsMixin:
         wanted = again is not None and bool(settle) and self.background_answers and not getattr(_HERE, "on", False)
         if wanted:
             self._asked(here, again, seen)
+        most = _BY_A_PAGE.get() if wanted else None  # (a page's wait: D-201)
+        brief = None if most is None else time.monotonic() + most
 
         def holds(found: KeptAnswer | None, later: bool = False) -> bool:
             if found is None:
@@ -207,8 +239,10 @@ class ReportsMixin:
             return hit[1]  # type: ignore[index]
         if wanted and (shown := self._meanwhile(here, version, decode, again, seen, began, hit, holds)):
             return shown[0]
-        if not before(hit):
-            got = working.acquire(timeout=ANSWER_WAIT_MOST)  # (a thread here works it out: it is alive, B-1914)
+        if not before(hit):  # (a thread here works it out: it is alive, B-1914; a page's waits briefly, D-201)
+            got = working.acquire(timeout=ANSWER_WAIT_MOST if brief is None else max(0.0, brief - time.monotonic()))
+            if not got and brief is not None:
+                raise Working(name)
         elif not (got := working.acquire(blocking=False)):
             return hit[1]  # type: ignore[index]  (another thread here works it out again: the one before meanwhile)
         try:
@@ -230,8 +264,9 @@ class ReportsMixin:
                     return hit[1]  # type: ignore[index]  (another process works it out again: the one before meanwhile)
                 took = took or (other and before(found))  # (or the database's, when it is the latest)
                 # another process works it out, with no answer before to show: taken once written, waited for while
-                # its hold is renewed (it is alive and working, B-1807), up to ANSWER_WAIT_MOST (B-1914)
-                until = time.monotonic() + ANSWER_WAIT_MOST
+                # its hold is renewed (it is alive and working, B-1807), up to ANSWER_WAIT_MOST (B-1914); by a page,
+                # up to its brief wait, then it is told so (D-201)
+                until = time.monotonic() + ANSWER_WAIT_MOST if brief is None else brief
                 while not taken and not took and time.monotonic() < until:
                     time.sleep(ANSWER_POLL)
                     found = self.kept_answer(name, key, version)
@@ -241,6 +276,8 @@ class ReportsMixin:
                             found = self.kept_answer(name, key, version)
                             took = holds(found, later=True)
                         break
+                if brief is not None and not taken and not took and self._lease_held(lease):
+                    raise Working(name)  # (another still works it out, its brief wait over)
             unkept: Callable[[], Any] | None = None  # what the database was too busy to keep just now (B-1808)
             try:
                 if took:

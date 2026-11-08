@@ -53,7 +53,7 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.core.store import REVIEW, Store
+from ap_coder.core.store import REVIEW, Store, reports
 from ap_coder.ops import offline
 from ap_coder.web import identity
 from ap_coder.web.access import is_admin
@@ -232,14 +232,16 @@ def get_store(request: Request) -> Store:
 def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
     """A page handler (a plain ``def``: FastAPI runs it on a threadpool thread) whose store calls all share one
     database connection (``Store.session``, held by that thread for the request): a heavy page makes dozens of
-    store calls, and a connection opened and closed for each costs more than the queries."""
+    store calls, and a connection opened and closed for each costs more than the queries. A GET's report answer that
+    another works out with none to show is not waited for past its brief wait (``reports.asked_by_a_page``, D-201)."""
 
     @functools.wraps(handler)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         request = kwargs.get("request")
         if request is None:
             request = next(a for a in args if isinstance(a, Request))
-        with get_store(request).session():
+        page = reports.asked_by_a_page() if request.method == "GET" else contextlib.nullcontext()
+        with get_store(request).session(), page:
             return handler(*args, **kwargs)
 
     wrapped.one_connection = True  # type: ignore[attr-defined]

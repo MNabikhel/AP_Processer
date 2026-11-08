@@ -40,6 +40,7 @@ from ap_coder.core.store import (
     bulk_jobs,
     fold_text,
     load_sample_setup,
+    reports,
 )
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import recurring
@@ -317,8 +318,13 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
     to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
     # the recurring vendors, from every vendor's invoice dates (0.95 s at 100,000 invoices): only shown, so worked out
     # again at most every LATE_SETTLE seconds under a stream of uploads and rejections, once for every process, and
-    # read as they are, never settled again on top (B-1732, B-1798)
-    late = [r.vendor_name for r in recurring.detected(store, settle=LATE_SETTLE) if r.status == recurring.LATE]
+    # read as they are, never settled again on top (B-1732, B-1798); while another works them out with none kept yet
+    # (the server's first start), the queue opens at once without the pill (D-201)
+    try:
+        with reports.asked_by_a_page(0.0):
+            late = [r.vendor_name for r in recurring.detected(store, settle=LATE_SETTLE) if r.status == recurring.LATE]
+    except reports.Working:
+        late = []
     pills = [
         (f"{overdue} past due, not approved yet", "err") if overdue else None,
         (f"{due_soon} due within {DUE_SOON_DAYS} days", "warn") if due_soon else None,

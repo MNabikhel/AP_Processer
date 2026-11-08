@@ -45,7 +45,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ap_coder import __version__
 from ap_coder.core import envfile, paths
 from ap_coder.core.config import Settings, process_var
-from ap_coder.core.store import Store, default_db_path
+from ap_coder.core.store import Store, default_db_path, reports
 from ap_coder.ops import health, offline
 from ap_coder.web import core, identity, roles
 from ap_coder.web.errors import FriendlyErrors
@@ -195,6 +195,9 @@ class BackupCheck:
 # same work done). The others wait their turn. A laptop keeps anyio's default.
 THREADS_ENV = "AP_WORKER_THREADS"
 WORKER_THREADS = 4
+# A report being worked out (D-201): its page asks again this many seconds later (a script: Retry-After)
+WORKING_AGAIN = 5
+WORKING = "This report is being worked out (the first time on a big database, about a minute). Ask again shortly."
 
 
 def worker_threads() -> int:
@@ -572,6 +575,17 @@ def _add_error_pages(app: FastAPI) -> None:
             return JSONResponse({"ok": False, "error": detail}, status_code=422)
         return await run_in_threadpool(core.render, request, "error.html", "", status_code=422, title="Not understood",
                                        code=422, detail=detail)  # fmt: skip
+
+    @app.exception_handler(reports.Working)
+    async def being_worked_out(request: Request, exc: reports.Working) -> Any:
+        # A report asked with nothing kept to show yet while another works it out (the server's first start, D-201):
+        # said at once, the page asking again by itself (no script: the Content-Security-Policy allows it)
+        if not (request.method == "GET" and "text/html" in request.headers.get("accept", "")):
+            return JSONResponse({"ok": False, "error": WORKING, "working": True}, status_code=503,
+                                headers={"Retry-After": str(WORKING_AGAIN), "Cache-Control": "no-store"})  # fmt: skip
+        page = next((p.key for p in PAGES if p.path == request.url.path), "")
+        return await run_in_threadpool(core.render, request, "working.html", page, again=WORKING_AGAIN,
+                                       **({} if page else {"title": "Being worked out"}))  # fmt: skip
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> Any:
