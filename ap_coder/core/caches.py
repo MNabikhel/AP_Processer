@@ -166,6 +166,8 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store.reports:_KEPT": Kept(32 * MB, "Bounded; KEPT_HERE answers"),
     "ap_coder.erp.jde_sync:_CACHE": Kept(32 * MB, "Bounded (CACHE_MOST); CACHE_SECONDS old at most (B-2025)"),
     "ap_coder.core.store._base:_VENDOR_LESSONS": Kept(8 * MB, "Bounded; VENDOR_LESSONS_KEPT vendors"),
+    "ap_coder.coding.po:_KEPT": Kept(30 * MB, "Bounded (PO_KEPT_MOST); POs of PO_KEPT_FROM invoices or more (one of "
+                                              "3,414 invoices of 8 lines, the 300,000 seed's biggest: about 24 MB)"),
     # Bounded by bytes their own way.
     "ap_coder.core.store._base:_PAST_LINES": Kept(64 * MB, "PAST_LINES_BYTES (PastLines.size), PAST_LINES_KEPT "
                                                            "vendors"),
@@ -211,7 +213,7 @@ CACHES: dict[str, Kept] = {
     "ap_coder.web.pages.help:_setup_cache": Kept(1 * MB, "one report a database"),
     # Pure functions' answers (lru_cache): their maxsize, at the size measured of an entry.
     "ap_coder.ai.line_match:word_match": Kept(34 * MB, "131,072 pairs of words, 0.25 KB each"),
-    "ap_coder.coding.po:similarity": Kept(26 * MB, "32,768 pairs of descriptions, 0.75 KB each"),
+    "ap_coder.coding.po:similarity": Kept(7 * MB, "8,192 pairs of descriptions, 0.75 KB each"),
     "ap_coder.core.memory:_token_set_short": Kept(48 * MB, "65,536 descriptions' words, 0.7 KB each"),
     "ap_coder.ai.line_match:keys": Kept(40 * MB, "65,536 descriptions' words, 0.6 KB each"),
     "ap_coder.core.memory:_normalise_short": Kept(36 * MB, "131,072 texts of 300 characters at most, 0.25 KB each"),

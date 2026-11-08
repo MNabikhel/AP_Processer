@@ -97,10 +97,11 @@ def po_detail(store: Store, p: dict[str, Any]) -> dict[str, Any] | None:
     full = store.purchase_order(p["po_key"])
     if full is None:
         return None
-    invoices = store.po_invoices(p["po_key"])
+    billing = po_mod.po_billing(store, p["po_key"], full)
+    invoices = billing.rows
     matched: dict[Any, int | None] = {}
-    billed = po_mod.billed_by_line(full, invoices, matched=matched)
-    billed_amount = po_mod.billed_by_line(full, invoices, amounts=True, matched=matched)
+    billed = billing.billed(full, invoices, matched=matched)
+    billed_amount = billing.billed(full, invoices, amounts=True, matched=matched)
     lines = []
     for li in full["lines"]:
         coding = " · ".join(x for x in (li["gl_code"], li["cost_center"]) if x)

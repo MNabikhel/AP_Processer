@@ -4166,3 +4166,75 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `web/templates/working.html`, `web/templates/error.html`, `web/pages/review.py`, `web/pages/vendors.py`,
     `web/pages/learning.py`, `bench/load.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/web/test_refresh.py`,
     `tests/bench/test_bench_load.py`)
+- **D-202** · **A big PO's invoices kept in each process with what their lines bill, brought up to date from the
+  vendors' change log** (scale goal, target 1's first minutes; D-199's alternative, measured to need it).
+  - **Why:** at 300,000 invoices and 100 people the biggest vendor's standing PO is billed by 3,414 invoices. Every
+    open of one of them (`GET /review/{id}`: `analyse` runs the check's `po_findings` and the screen's `po_section`)
+    and every check matched it against the PO (`po.match_invoice`): every other invoice on the PO read
+    (`Store.po_invoices`, D-199) and each of their lines matched to the PO's (`billed_by_line`): about 0.3 s of CPU
+    each, twice an open. Under load, sharing a worker's GIL, these were the slow requests of a first 10 minutes (3-6 s
+    at the server), setting the pages' p99 there (3.6-4.4 s for 3 s).
+  - **What:** `po.po_billing(store, key, po)` gives the PO's invoices in review or approved (`Store.po_invoices`'
+    rows, in order) and what each bills on the PO's lines (`PoBilling.billed`: `billed_by_line`'s sums); the match
+    (`match_invoice`, its left to expense) and the PO page (`po_detail`) take them from it. A PO quoted by
+    `PO_KEPT_FROM` (100) invoices or more has them kept in each process (`po._KEPT`, a `Bounded` of `PO_KEPT_MOST`,
+    30 MB, in `CACHES`), by database and PO: the rows, and each row's lines as matched, (the PO line, the quantity,
+    the amount) of each matched line, against the PO's lines as matched (each one's description, price and number:
+    when they differ, every row is matched again, none read). At each ask `Store.po_invoices_since` reads, in one
+    moment (B-1812's rule), the database's `summary_id`, the change log's first and last change, which invoices quote
+    the PO (any status, off its index: a PO key changed alone, by plain SQL, is no change the log follows; 0.7 ms for
+    3,424), and the invoices to read again: every one when nothing is kept, or the `summary_id` is another (a
+    restore, a summary built again), or a change since is gone from the log; else those not kept, those the log names
+    since (any vendor's), those of a vendor whose count of changes moved by more than the log says (B-1811's rule:
+    an older AP Coder's triggers count and log nothing), and those with no vendor (no log follows them). Those read
+    are matched (`_billed`), their texts made one object for each value (`_share_texts`: 31 → 21 MB for that PO),
+    and the PO kept with the counts of its invoices' vendors; when nothing of it changed but the log moved (nearly
+    every ask under load) only its stamp moves (its size not measured again). The open's or check's own invoice is
+    left out as before (`exclude_invoice_id`).
+  - **Same, by construction and by test:** the sums are added up in the order `billed_by_line` adds them (row by
+    row, line by line), so they are the same to the last digit; an invoice whose lines can't be worked out so (a
+    coding not an object, lines not a list, a quantity not a number) has none kept, and any sum over it is worked out
+    by `billed_by_line` as before, failing where it did; a coding not JSON fails in the read as before. A PO of fewer
+    invoices, and every ask inside a write under way (which may yet be undone, D-159), read and match afresh as
+    before, nothing kept nor taken. `tests/coding/test_po.py`: random writes by two workers (each its own cache) and
+    plain SQL in every way an invoice on a PO or the PO changes (added, approved onto it or off it, rejected,
+    reopened, parked, deleted, exported and undone, its lines and its approved coding changed, moved to another
+    vendor, its vendor merged, its PO key changed alone, left with no vendor, a coding the match can't read, a write
+    undone, a restore, the PO's lines and open amounts), each worker asking between them, with a log of 1,000 and of
+    8 changes; every answer of the match, its checks, the review screen's PO section and the PO page equal to a fresh
+    read's to the last digit (its `repr`) or the same error; quantities and amounts that add up differently in another
+    order. Targeted: only the invoices changed are read and matched, none after a change elsewhere, all matched and
+    none read after a PO line changed; a few invoices not kept; an older AP Coder's change; one moment; a write
+    undone; a restore. Mutations of the read and the keeping (each rule above left out, the sums in another order, an
+    invoice not worked out taken, which invoices quote the PO taken from what was kept) each fail them, but one: the
+    log's pruning not seen, which the count rule catches as well (each change it logs is counted with it). On the
+    seed below, the 5 biggest POs' 194 answers (the match, its checks, the PO section with and without the invoice
+    left out, the PO page) the same digest in either code; `scripts/same_behaviour.py` tax, approve, read and pipeline
+    the same (none of their inputs has a PO loaded: the probes don't reach this path).
+  - **Measured** (an 80,000-invoice seed, `bench seed --invoices 80000 --history 0`, its biggest vendor's PO grown to
+    the 300,000 seed's: 3,414 invoices of 8 lines, 2,441 more of the vendor's invoices quoting it; process CPU,
+    medians of 7, each in a page's session; the code before, f1dcb10, against D-202, Python 3.12):
+    - nothing changed since: the open's PO section 305 → 5.3 ms, the check's coding (`finalise_coding` with the
+      store) 321 → 13.1 ms, the PO page 301 → 5.4 ms; an open or a check runs both: about 626 → 18 ms;
+    - the first ask after another process changed another invoice on the PO (a line's quantity): 271 → 10.4, 278 →
+      21.5, 264 → 10.8 ms; after a change to the invoice itself: 256 → 9.1, 263 → 21.4, 257 → 9.6 ms;
+    - the first ask in a process (every invoice read and matched, then kept): 319-338 → 381-385 ms, once (the texts
+      made one 25 ms, the size measured 4 ms); then 6.4-6.7 ms;
+    - kept: 23.8 MB for that PO in each process (`size_of`; 23.9 MB traced), 33.8 MB before the texts were shared.
+  - **Within the worker's budget:** `WORKER_CACHES_MOST` (1,050 MB) had 11 MB left. The PO description pairs'
+    `similarity` cache goes from 32,768 to 8,192 pairs (26 → 7 MB): it was sized for each open matching every line of
+    a big PO's invoices again (D-195); now those are matched once a process, and what is left (the invoice's own
+    lines, those changed, month-end's descriptions once a PO is worked out again) is far less. On the seed every pair
+    fits in either (its PO lines' descriptions repeat).
+  - **Alternatives:** kept in the database for every process, as month-end's billing lines (D-194): one copy, but
+    each ask would decode the PO's rows again (65-70 ms of JSON for 3,414, measured) or build them from a compact
+    form (90-150 ms); keeping only the sums' parts and building the rows at each ask: the same, as the match's
+    `other_invoices` and the PO page's rows carry each invoice's lines and must stay as they were; a log of its own of
+    which invoices quote a PO (D-199's worry): the PO's index says it at each ask for 0.7 ms; each PO line's values in
+    order, summed with `functools.reduce` (0.5 ms against 1.2 ms a sum): not worth its upkeep.
+  - **Left:** each process builds its own at its first ask of such a PO (about 0.38 s once, as many threads as ask at
+    once at a cold start each building); a PO whose invoices hold more than 30 MB is kept alone, as every `Bounded`
+    keeps its latest. Kept rows are every caller's (`PoBilling`'s docstring: read them, don't change them), as
+    `summary_memo`'s values. The 300,000 seed's first 10 minutes under load to be measured again with it.
+  - (`ap_coder/coding/po.py`, `core/store/purchasing.py`, `core/caches.py`, `web/pages/purchase_orders.py`,
+    `docs/HOW_IT_RUNS.md`; `tests/coding/test_po.py`)

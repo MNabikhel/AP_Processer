@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from ..core.caches import MB, Bounded, size_of
 from ..core.headers import match_columns
 from ..core.keys import po_key
 from ..core.memory import vendor_key
@@ -53,6 +55,13 @@ AMOUNT_TOLERANCE_ABS = 1.00  # a line's amount may be 2% or a dollar above its q
 TOTAL_TOLERANCE = 0.02  # invoices on a PO may total 2% more than the PO (rounding, small freight)
 MATCH_THRESHOLD = 0.45
 SAME_PRICE = 0.2  # what a PO line's price, the same as an invoice line's, adds to how much the two resemble
+# A PO quoted by PO_KEPT_FROM invoices or more has them kept in each process (``po_billing``, D-202): each invoice as
+# ``Store.po_invoices`` reads it and what its lines bill on the PO's lines, brought up to date from the invoices changed
+# since (``Store.po_invoices_since``), not read and matched again at each open and check of one of them (the biggest
+# vendor's standing PO at 300,000 invoices: 3,414 invoices, 0.3 s). Within PO_KEPT_MOST bytes (D-195): a PO of 3,414
+# invoices of 8 lines, as that one, holds about 24 MB.
+PO_KEPT_FROM = 100
+PO_KEPT_MOST = 30 * MB
 
 Finding = tuple[str, str, str, "int | None"]
 
@@ -157,7 +166,7 @@ def _tokens(text: str) -> frozenset[str]:
     return frozenset(w for w in words if w not in _STOP and len(w) > 1)
 
 
-@lru_cache(maxsize=32768)  # the same descriptions come back on every invoice of a PO (0.75 KB a pair, D-195)
+@lru_cache(maxsize=8192)  # (0.75 KB a pair, D-195; a big PO's invoices' lines matched once a process, D-202)
 def similarity(a: str, b: str) -> float:
     """0..1: how likely two line descriptions are the same item (word overlap, then character similarity)."""
     ta, tb = _tokens(a), _tokens(b)
@@ -321,13 +330,13 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     cost_centers = bool(store.list_accounts("cost_centers"))
     po_lines = po["lines"]
     by_line = {pl["line_number"]: pl for pl in po_lines}
-    live = store.po_invoices(key)
-    others = [o for o in live if o["id"] != exclude_invoice_id]
+    live = po_billing(store, key, po)
+    others = [o for o in live.rows if o["id"] != exclude_invoice_id]
     result.other_invoices = others
     result.billed_before = sum(float(o["coding"].get("subtotal") or 0) for o in others)
     matched: dict[Any, int | None] = {}
-    billed_before = billed_by_line(po, others, matched=matched)
-    billed_before_amount = billed_by_line(po, others, amounts=True, matched=matched)
+    billed_before = live.billed(po, others, matched=matched)
+    billed_before_amount = live.billed(po, others, amounts=True, matched=matched)
 
     items = [li.model_dump() for li in coding.line_items]
     billed_now: dict[int, float] = {}
@@ -384,7 +393,7 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
 def _left_to_expense(
     result: PoMatch,
     po: dict[str, Any],
-    live: list[dict[str, Any]],
+    live: PoBilling,
     billed_before: dict[int, float],
     this_invoice: dict[int, float],
     invoice_id: int | None,
@@ -392,10 +401,10 @@ def _left_to_expense(
     """``result.left``: each PO line's ``LineLeft``, from what the other invoices bill on it (``billed_before``, in
     amounts) and this one; with an open amount, the invoices exported to the ERP don't count (this one included)."""
     not_exported: dict[int, float] = {}
-    exported = any(o["id"] == invoice_id and o["export_batch"] is not None for o in live)
+    exported = any(o["id"] == invoice_id and o["export_batch"] is not None for o in live.rows)
     if any(pl["open_amount"] is not None for pl in po["lines"]):
-        waiting = [o for o in live if o["export_batch"] is None and o["id"] != invoice_id]
-        not_exported = billed_by_line(po, waiting, amounts=True)
+        waiting = [o for o in live.rows if o["export_batch"] is None and o["id"] != invoice_id]
+        not_exported = live.billed(po, waiting, amounts=True)
     for pl in po["lines"]:
         n, opened = pl["line_number"], pl["open_amount"]
         if opened is None:
@@ -531,6 +540,135 @@ def billed_by_line(
                 value = float(li.get("amount") or 0) if amounts else billed_quantity(li)
                 billed[po_line] = billed.get(po_line, 0.0) + value
     return billed
+
+
+class PoBilling:
+    """A PO's invoices in review or approved (``rows``: ``Store.po_invoices``' rows, in order) and, once kept
+    (``po_billing``), what each bills on the PO's lines (``_billed``): kept rows are every caller's, read them, don't
+    change them."""
+
+    def __init__(self, rows: list[dict[str, Any]], billed: dict[int, Any] | None = None) -> None:
+        self.rows, self._billed = rows, billed
+
+    def billed(self, po: dict[str, Any], invoices: list[dict[str, Any]], amounts: bool = False,
+               matched: dict[Any, int | None] | None = None) -> dict[int, float]:  # fmt: skip
+        """``billed_by_line(po, invoices, amounts=amounts, matched=matched)`` for ``invoices``, some of ``rows``: from
+        what each bills as kept, added up in the same order (the same sums to the last digit); as before when not kept,
+        or when one's lines could not be worked out so (it fails where it did)."""
+        kept = self._billed
+        if kept is None or any(kept[o["id"]] is None for o in invoices):
+            return billed_by_line(po, invoices, amounts=amounts, matched=matched)
+        billed: dict[int, float] = {}
+        get = billed.get
+        for o in invoices:
+            for po_line, quantity, amount in kept[o["id"]]:
+                billed[po_line] = get(po_line, 0.0) + (amount if amounts else quantity)
+        return billed
+
+
+def _billed(row: dict[str, Any], po_lines: list[dict[str, Any]], matched: dict[Any, int | None]) -> Any:
+    """What an invoice (``Store.po_invoices``' row) bills on the PO lines its lines match, its lines in order: (the PO
+    line, the quantity, the amount) of each, as ``billed_by_line`` adds them up; None when they can't be worked out so
+    (a coding not an object, lines not lines, a quantity not a number): ``PoBilling.billed`` then works out the
+    invoices with it as before, failing where it did."""
+    try:
+        lines = row["coding"].get("line_items") or []
+        return tuple((po_line, billed_quantity(li), float(li.get("amount") or 0))
+                     for li, po_line in zip(lines, po_lines_billed(lines, po_lines, matched), strict=True)
+                     if po_line is not None)  # fmt: skip
+    except Exception:  # (whatever it was, it is met again where it was met: in billed_by_line)
+        return None
+
+
+@dataclass(frozen=True)
+class _KeptPo:
+    """A PO's invoices kept in this process (``po_billing``): the stamp they were read with
+    (``Store.po_invoices_since``), the PO's lines they were matched to (``_matched_to``), every invoice quoting the
+    PO in order with its vendor as read (``vendors``), those in review or approved (``rows``: ``Store.po_invoices``'
+    rows, in order), what each of them bills by id (``_billed``), and the bytes it holds."""
+
+    stamp: tuple[Any, int, dict[str, int]]
+    lines: tuple[tuple[Any, Any, Any], ...]
+    vendors: dict[int, Any]
+    rows: list[dict[str, Any]]
+    billed: dict[int, Any]
+    size: int = 0
+
+
+def _kept_size(kept: Any) -> int:
+    """A kept PO's bytes, measured once its invoices changed (not again when only its stamp moved, at nearly every
+    ask under load)."""
+    return kept.size if isinstance(kept, _KeptPo) else size_of(kept)
+
+
+# (database, PO key) -> _KeptPo, within PO_KEPT_MOST bytes (D-195), the ones asked longest ago let go first.
+_KEPT = Bounded("POs' invoices", PO_KEPT_MOST, size=_kept_size)
+_KEPT_LOCK = threading.Lock()
+
+
+def _share_texts(rows: Iterable[dict[str, Any] | None]) -> None:
+    """The texts of these rows' lines (``Store.po_invoices``' rows, just read, kept by no one yet) made one object for
+    each value, as their keys are: a standing PO's lines repeat their descriptions, codes and taxes (3,414 invoices
+    of 8 lines: 21 MB, 31 MB without). The same texts: what reads them is the same."""
+    texts: dict[str, str] = {}
+    for row in rows:
+        coding = row["coding"] if row is not None else None
+        lines = coding.get("line_items") if isinstance(coding, dict) else None
+        for li in lines if isinstance(lines, list) else ():
+            for k, v in li.items() if isinstance(li, dict) else ():
+                if type(v) is str:
+                    li[k] = texts.setdefault(v, v)
+                elif type(v) is list:
+                    v[:] = [texts.setdefault(x, x) if type(x) is str else x for x in v]
+
+
+def _matched_to(po: dict[str, Any]) -> tuple[tuple[Any, Any, Any], ...]:
+    """What matching an invoice's lines to ``po``'s reads of each of its lines (``_po_line``), in order."""
+    return tuple((pl.get("description", ""), pl.get("unit_price"), pl.get("line_number")) for pl in po["lines"])
+
+
+def po_billing(store: Store, key: str, po: dict[str, Any]) -> PoBilling:
+    """The invoices quoting the PO ``key`` (``po``: its ``Store.purchase_order``) in review or approved, as
+    ``Store.po_invoices`` reads them, and what they bill on its lines (``PoBilling``). Kept in this process for a PO of
+    PO_KEPT_FROM invoices or more (D-202), by database and PO, and brought up to date from the invoices changed since,
+    whoever changed them (``Store.po_invoices_since``): only those are read and matched again, and all of them are
+    matched again once the PO's lines are not the ones they were matched to. Inside a write under way they are read
+    afresh and nothing is kept or taken (it may yet be undone, D-159); a PO of fewer invoices is read at each ask."""
+    lines = _matched_to(po)
+    where = (str(store.path), key)
+    with _KEPT_LOCK:
+        kept = _KEPT.get(where)
+    changes = store.po_invoices_since(key, kept.stamp if kept else None, kept.vendors if kept else None)
+    if changes is None:
+        return PoBilling(store.po_invoices(key))
+    read = changes.read
+    if kept is not None and not read and lines == kept.lines and changes.quoting == list(kept.vendors):
+        if changes.stamp != kept.stamp:  # (only other invoices changed since: these kept as of now)
+            with _KEPT_LOCK:
+                _KEPT[where] = replace(kept, stamp=changes.stamp)
+        return PoBilling(kept.rows, kept.billed)
+    rows_of = {row["id"]: row for row in kept.rows} if kept is not None else {}
+    vendors: dict[int, Any] = {}
+    rows: list[dict[str, Any]] = []
+    for n in changes.quoting:
+        vendors[n], row = read[n] if n in read else (kept.vendors[n], rows_of.get(n))  # type: ignore[union-attr]
+        if row is not None:
+            rows.append(row)
+    if len(changes.quoting) < PO_KEPT_FROM:
+        if kept is not None:
+            with _KEPT_LOCK:
+                _KEPT.pop(where, None)
+        return PoBilling(rows)
+    _share_texts(row for _, row in read.values())
+    same = kept is not None and lines == kept.lines
+    matched: dict[Any, int | None] = {}
+    billed = {row["id"]: kept.billed[row["id"]] if same and row["id"] not in read  # type: ignore[union-attr]
+              else _billed(row, po["lines"], matched) for row in rows}  # fmt: skip
+    entry = _KeptPo(changes.stamp, lines, vendors, rows, billed)
+    entry = replace(entry, size=size_of(entry))
+    with _KEPT_LOCK:
+        _KEPT[where] = entry
+    return PoBilling(rows, billed)
 
 
 def positive_lines(invoices: Iterable[dict[str, Any]]) -> list[tuple[Any, float, float]]:
