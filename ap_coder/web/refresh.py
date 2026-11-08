@@ -170,7 +170,7 @@ def prepare(store: Any, say: Callable[[str], None], most: float = PREPARE_MOST) 
             continue
         if not due:
             say(f"Working out the reports' default views before the dashboard answers (none kept for them yet, as at a "
-                f"first start or after an update), {most / 60:g} minutes at most...")  # fmt: skip
+                f"first start or after an update), {most:g} seconds at most...")  # fmt: skip
         due += 1
         made += ahead(store, name, lambda store, args=args: args, "default view")[0]
     seconds = time.monotonic() - began

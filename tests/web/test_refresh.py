@@ -1486,7 +1486,9 @@ def test_the_servers_start_works_out_exactly_the_default_views_with_none_kept_be
     said = capsys.readouterr().err.splitlines()
     every = len(refresh.DEFAULTS)
     assert sorted(worked) == sorted(name for name, _ in refresh.DEFAULTS)  # (each default view once, nothing more)
-    assert len(said) == 2 and said[0].startswith("Working out the reports' default views before the dashboard answers")
+    assert len(said) == 2 and said[0] == ("Working out the reports' default views before the dashboard answers (none "
+                                          "kept for them yet, as at a first start or after an update), "
+                                          f"{refresh.PREPARE_MOST:g} seconds at most...")  # fmt: skip
     assert re.fullmatch(rf"The reports' default views worked out before the dashboard answers: {every} of the {every} "
                         rf"with none kept \({every} in all\), in [\d.]+ s\.", said[1]), said  # fmt: skip
     assert _wants(store) == []  # (nobody asked)
