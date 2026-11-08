@@ -457,9 +457,9 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
 
 def prepare_reports(store: Store) -> None:
     """The reports' default views with no answer kept worked out before the server answers (D-204,
-    ``refresh.prepare``), each kept for every process (``background_answers``: B-2050), as the background process's
-    refresher would after the start while people already asked them. What was done is said in the server's window
-    (and the service's log), which shows warnings and up only (B-240), as its other lines at a start."""
+    ``refresh.prepare``), each kept for every process (``background_answers``: B-2050): the background process's
+    refresher worked them out after the start, while people already asked them. What was done is said in the server's
+    window (and the service's log), which shows warnings and up only (B-240), as its other lines at a start are."""
     from ap_coder.web import refresh
 
     store.background_answers = True
