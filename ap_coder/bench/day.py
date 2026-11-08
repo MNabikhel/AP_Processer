@@ -45,6 +45,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -782,16 +783,22 @@ class Server:
             self.proc.wait(10)
 
     def log_counts(self) -> dict[str, int]:
-        """Lines of the server's output and logs that say something went wrong."""
-        texts = [self.log] + sorted((self.data / "logs").glob("*.log")) if (self.data / "logs").is_dir() else [self.log]
+        """Lines of the server's output and logs that say something went wrong, each once: the window repeats what a
+        process also writes in its own log (the background's, a capture process's, a web worker's), so a line there
+        counts only as often as the window holds it more than the logs do (B-2066)."""
         words = ("database is locked", "Traceback", "ERROR")
-        counts = dict.fromkeys(words, 0)
-        for path in texts:
+
+        def said(path: Path) -> Counter[str]:
+            lines: Counter[str] = Counter()
             with contextlib.suppress(OSError), path.open(encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    for word in words:
-                        counts[word] += word in line
-        return counts
+                lines.update(line.rstrip("\n") for line in f if any(word in line for word in words))
+            return lines
+
+        logs: Counter[str] = Counter()
+        for path in sorted((self.data / "logs").glob("*.log")) if (self.data / "logs").is_dir() else []:
+            logs += said(path)
+        lines = logs + (said(self.log) - logs)  # (Counter's minus keeps what is left above 0)
+        return {word: sum(n for line, n in lines.items() if word in line) for word in words}
 
 
 def _direct() -> urllib.request.OpenerDirector:
