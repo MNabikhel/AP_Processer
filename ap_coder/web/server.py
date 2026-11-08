@@ -477,6 +477,7 @@ def prepare_reports(store: Store) -> None:
     fails or is ended is no reason not to serve: the refresher works out the rest, as before. Said in the window, by
     that process and, when it did not finish, here."""
     import multiprocessing
+    import signal
 
     from ap_coder.web import refresh
 
@@ -496,12 +497,23 @@ def prepare_reports(store: Store) -> None:
             process.kill()
             process.join(5)
 
-    process.start()
+    def stopped(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt  # (as Ctrl+C: that process ended, then the server's start)
+
+    # A stop of the service before uvicorn's supervisor takes SIGTERM (B-2068); on Windows the service's job object
+    # ends that process with this one.
+    taken = os.name != "nt" and threading.current_thread() is threading.main_thread()
+    before = signal.signal(signal.SIGTERM, stopped) if taken else None
     try:
-        process.join(most + PREPARE_ENDS)
-    except KeyboardInterrupt:  # (the server stopped as it starts: that process with it)
-        end()
-        raise
+        process.start()
+        try:
+            process.join(most + PREPARE_ENDS)
+        except KeyboardInterrupt:  # (the server stopped as it starts: that process with it)
+            end()
+            raise
+    finally:
+        if taken:
+            signal.signal(signal.SIGTERM, before)
     left = "The reports' default views were not all worked out before the dashboard answers: their process"
     if process.is_alive():
         end()
@@ -520,11 +532,20 @@ def _prepare_reports(db: str, most: float) -> None:
     try:
         prepared = Store(Path(db))
         prepared.background_answers = True
-        refresh.prepare(prepared, _said, most)
+        refresh.prepare(prepared, _said, most, halted=_parent_gone)
     except Exception:  # noqa: BLE001 - whatever stopped it: said, and the server answers all the same
         logging.getLogger(__name__).warning("The reports' default views were not worked out before the dashboard "
                                             "answers.", exc_info=True)  # fmt: skip
         sys.exit(1)
+
+
+def _parent_gone() -> bool:
+    """Whether the process that started this one has ended: the reports' process, its server's process killed
+    outright, stops before its next view (B-2068)."""
+    import multiprocessing
+
+    parent = multiprocessing.parent_process()
+    return parent is not None and not parent.is_alive()
 
 
 def _stop_background_when_asked(should_exit: threading.Event, background: Any) -> None:

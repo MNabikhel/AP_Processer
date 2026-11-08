@@ -140,22 +140,26 @@ def served_before(store: Any) -> bool:
     return bool(store.answered_before(sorted({name for name, _ in DEFAULTS})))
 
 
-def prepare(store: Any, say: Callable[[str], None], most: float = PREPARE_MOST) -> tuple[int, int, float]:
+def prepare(store: Any, say: Callable[[str], None], most: float = PREPARE_MOST,
+            halted: Callable[[], bool] = lambda: False) -> tuple[int, int, float]:  # fmt: skip
     """The company server's first start on a database that never had the reports (``served_before``), before it
     answers (D-204): each default view (``DEFAULTS``, in that order) worked out as the refresher works it out
     (``ahead``), kept for every process (``store``: the company server's, ``background_answers``), so no page waits for
-    it. Within ``most`` seconds, looked at before each view: past them the rest is left to the refresher. One that fails
-    is logged and the next goes on. ``say``: told before the first and at the end. (worked out, left, seconds.)"""
+    it. Within ``most`` seconds, looked at before each view: past them the rest is left to the refresher, as it is once
+    ``halted()`` (its server gone: B-2068). One that fails is logged and the next goes on. ``say``: told before the
+    first and at the end. (worked out, left, seconds.)"""
     began, made, left = time.monotonic(), 0, 0
     say(f"Working out the reports' default views before the dashboard answers (this database never had them), "
         f"{most:g} seconds at most...")  # fmt: skip
+    why = ""
     for n, (name, args_of) in enumerate(DEFAULTS):
-        if time.monotonic() - began >= most:
+        why = "its server stopped" if halted() else f"past {most:g} s" if time.monotonic() - began >= most else ""
+        if why:
             left = len(DEFAULTS) - n
             break
         made += ahead(store, name, args_of, "default view")[0]
     seconds = time.monotonic() - began
-    past = f"; past {most:g} s, {left} left to the background process" if left else ""
+    past = f"; {why}, {left} left to the background process" if left else ""
     say(f"The reports' default views worked out before the dashboard answers: {made} of {len(DEFAULTS)}, in "
         f"{seconds:.1f} s{past}.")  # fmt: skip
     return made, left, seconds

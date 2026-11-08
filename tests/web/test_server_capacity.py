@@ -1051,6 +1051,67 @@ def test_the_server_answers_though_its_reports_process_failed_or_was_ended_past_
             "ended after 0.05 s. The background process works out the rest.") in capfd.readouterr().err  # fmt: skip
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows: the service's job object ends the reports' process with it")
+def test_a_stop_of_the_server_while_it_works_its_reports_out_ends_their_process_too(store, monkeypatch):
+    """B-2068: SIGTERM (the service's stop, launchd's) while the reports were worked out before the server answered,
+    before uvicorn's supervisor takes that signal, ended the server's process at once and left the reports' process
+    running, holding the window's pipe: the service host's read went on until it ended (on a Mac, ``service stop`` up
+    to launchd's 60 s). The signal now ends that process, then the server's start, as Ctrl+C does, and the signal's
+    handler is given back."""
+    import multiprocessing
+    import signal
+
+    ended: list[str] = []
+
+    class Process:  # (the reports' process: still working when the signal comes)
+        exitcode, pid = None, 4242
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            if not ended:
+                time.sleep(timeout)
+
+        def is_alive(self):
+            return not ended
+
+        def terminate(self):
+            ended.append("ended")
+
+        def kill(self):
+            ended.append("killed")
+
+    def untaken(signum, frame):
+        raise RuntimeError("SIGTERM not taken while the reports are worked out")
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda method: SimpleNamespace(Process=Process))
+    before = signal.signal(signal.SIGTERM, untaken)
+    try:
+        threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGTERM)).start()
+        with pytest.raises(KeyboardInterrupt):
+            server.prepare_reports(store)
+        assert ended == ["ended"] and signal.getsignal(signal.SIGTERM) is untaken
+    finally:
+        signal.signal(signal.SIGTERM, before)
+
+
+def test_the_reports_process_whose_server_is_gone_stops_before_its_next_view(monkeypatch):
+    """B-2068: the reports' process, its server's process killed outright (no signal to take), went on with its views
+    for minutes; it looks before each view whether the process that started it still runs (``_parent_gone``)."""
+    import multiprocessing
+
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: SimpleNamespace(is_alive=lambda: False))
+    assert server._parent_gone()
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: SimpleNamespace(is_alive=lambda: True))
+    assert not server._parent_gone()
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: None)  # (started by nobody: this test's process)
+    assert not server._parent_gone()
+
+
 def _queue_with_lessons(store: Store) -> tuple[int, str]:
     """An invoice in the review queue, a line of it without an account (its screen suggests one from the learning
     memory), and lessons of its vendor: (the invoice, its vendor's key)."""

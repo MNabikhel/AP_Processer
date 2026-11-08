@@ -1579,3 +1579,17 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
                         r"past 0\.4 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
     assert store.answer_made("slow", reports.asked_key([2])) and store.answer_made("left", reports.asked_key([4])) is (
         None)  # fmt: skip
+
+
+def test_the_servers_start_stops_working_the_views_out_once_the_server_is_gone(tmp_path, monkeypatch):
+    """B-2068: the reports' process stops before its next view once ``halted`` says its server is gone, the rest
+    left to the background process of the next start."""
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    order = []
+    for name in ("first", "second", "third"):
+        monkeypatch.setitem(refresh.ANSWERS, name, lambda store, args, name=name: order.append(name))
+    monkeypatch.setattr(refresh, "DEFAULTS", tuple((name, lambda s: []) for name in ("first", "second", "third")))
+    said = []
+    made, left, _ = refresh.prepare(store, said.append, halted=lambda: bool(order))
+    assert order == ["first"] and (made, left) == (1, 2)
+    assert said[-1].endswith("; its server stopped, 2 left to the background process.")
