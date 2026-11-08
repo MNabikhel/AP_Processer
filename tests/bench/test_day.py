@@ -192,3 +192,21 @@ def test_with_a_backup_the_drill_says_when_the_calls_moved_there_and_back(tmp_pa
     with FakeModel() as primary, FakeModel() as backup:
         env = day._server_env(primary, 2, a, backup)
         assert env["AP_LLM_BACKUP_URL"] == backup.base_url and env["AP_FAILOVER_SHARED"] == "0"
+
+
+def test_a_line_the_window_and_a_process_log_both_hold_is_counted_once(tmp_path):
+    """B-2066: the server's window (``server.log``) repeats each warning or error a process also writes in its own
+    log (the background process's, a capture process's, and since B-2065 each web worker's ``web-<n>.log``), so the
+    day's failures counted each "database is locked" and traceback twice. A line the window holds once more than the
+    logs is still counted (uvicorn's own traceback, a line of the host's)."""
+    (tmp_path / "logs").mkdir()
+    said = "2026-11-08 09:00:00,001 ERROR ap_coder.web.server: database is locked\n"
+    trace = "Traceback (most recent call last):\n"
+    (tmp_path / "logs" / "web-1.log").write_text(said + trace, encoding="utf-8")
+    (tmp_path / "logs" / "background.log").write_text(said.replace("web.server", "background") + trace,
+                                                      encoding="utf-8")  # fmt: skip
+    window = tmp_path / "server.log"
+    own = "2026-11-08 09:00:01,000 ERROR uvicorn.error: database is locked\n"  # (the window's alone)
+    window.write_text(said + trace + said.replace("web.server", "background") + trace + trace + own, encoding="utf-8")
+    server = day.Server(tmp_path, window, 2, {})
+    assert server.log_counts() == {"database is locked": 3, "Traceback": 3, "ERROR": 3}

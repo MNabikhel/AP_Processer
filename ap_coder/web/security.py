@@ -305,7 +305,7 @@ NAME_KEY = "ap_coder.name"  # and the person's name, as their events name them
 _SLOT: list[Any] = []  # (number, lock) of this web worker's own access log, the lock held while it runs
 
 
-def _worker_slot(folder: Any) -> int:
+def worker_slot(folder: Any) -> int:
     """This web worker's number among those running (1, 2...): the first whose lock no other process holds."""
     from ap_coder.core.paths import try_lock
 
@@ -330,7 +330,7 @@ def access_logger(folder: Any, shared: bool = False) -> Any:
     log = logging.getLogger("ap_coder.access")
     path = Path(folder) / ACCESS_LOG
     if shared:
-        path = Path(folder) / f"access-{_worker_slot(Path(folder))}.log"
+        path = Path(folder) / f"access-{worker_slot(Path(folder))}.log"
     if not any(getattr(h, "baseFilename", "") == str(path.resolve()) for h in log.handlers):
         for handler in list(log.handlers):
             log.removeHandler(handler)

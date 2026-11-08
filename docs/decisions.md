@@ -4269,3 +4269,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     them), as `summary_memo`'s values. The 300,000 seed's first 10 minutes under load to be measured again with it.
   - (`ap_coder/coding/po.py`, `core/store/purchasing.py`, `core/caches.py`, `web/pages/purchase_orders.py`,
     `docs/HOW_IT_RUNS.md`; `tests/coding/test_po.py`)
+- **D-203** · **Not kept: each web worker of the company server warmed as it starts** (scale goal, target 1's first
+  minutes; tried and measured, 8 Nov 2026).
+  - **Why it was tried:** at 300,000 invoices, on a database never served with 100 people from the first second, the
+    pages' p99 over the first 10 minutes was 2.24 and 3.18 s (D-202; 3 s the target), set by the first 1-2 minutes: each
+    web worker's first opens of an invoice built that worker's memories in the request (3-6 s at the server), and Sales
+    tax and Learning were asked before the background process's warm-up reached them (3.6-4.7 s).
+  - **What was tried** (never merged): a thread in each web worker that, once the worker serves, builds what a first
+    open and Learning read (the learning memory, the vendor list, the vendors' ERP IDs, what the held vendors were paid
+    with, the reading status, Learning's latest lessons, the review queue's biggest vendors' lessons and invoices), each
+    step through the page's own function and after the worker's requests under way (2 s at most); a vendor's invoices
+    read by one thread at a time (64 striped locks, then one read per vendor handed to those waiting); and three orders
+    of the warm-up's default views (D-200).
+  - **Measured** (4 cores, 100 people for 600 s, each run on a fresh seed of its own, nothing else running): a cold
+    worker's first open of the queue's first invoice 6.33 → 0.61-0.71 s and its first Learning 3.16 → 0.17 s at 300,000.
+    The first 10 minutes as a whole were not better (pages p95, p99):
+    - without it (D-202): 898 and 977 ms, 2.24 and 3.18 s;
+    - the quick views first, Month-end last: 661 and 755 ms, 2.19 and 2.93 s, but a Month-end page asked before the
+      warm-up reached it was worked out in its request (12-50 s at 300,000, the review's finding);
+    - a page's ask of a view still to come taken first: 808 ms, 3.22 s (Month-end last); 725 and 877 ms, 2.51 and 6.29 s
+      (Month-end first: the views asked during Month-end's first build waited behind it, 90 pages said "being worked
+      out");
+    - Month-end first, as without it (the version to keep): 1.13 and 1.32 s, 3.45 and 6.30 s. Its misses came 6-8
+      minutes in (10-second windows' p95 7.6-9.1 s) while the server's own slowest request took 5.4 s: requests waited
+      before a worker's thread took them. Not traced further.
+  - **Decision:** not kept. It makes a cold worker's first open fast, but with the warm-up's order the database needs
+    (Month-end first), the first 10 minutes' p95 and p99 were worse than without it in both runs. Kept from the work:
+    B-2064 (Month-end's invoices not in the ERP read in one moment, found by its load runs) and B-2065 (each web
+    worker's own log, found by its review). The first 10 minutes at 300,000 stay at the edge (SCALE.md row 1); a next
+    try starts from a profile of those minutes 6 to 8.

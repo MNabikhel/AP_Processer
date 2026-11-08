@@ -234,6 +234,33 @@ def test_a_voucher_refused_after_its_go_ahead_is_accrued_after_another_dry_run_t
         assert _api_accrued(store) == set()
 
 
+def test_the_invoices_not_in_the_erp_are_of_one_moment_though_another_worker_rejects_one_while_they_are_read(
+    tmp_path, monkeypatch
+):
+    """B-2064: the invoices not in the ERP were found in the summary a moment before their rows were read, so another
+    worker's rejection between the two left a rejected invoice among them, and Month-end's answer failed (KeyError
+    'rejected', its note looked up by its status): in the background process's refresher (a 300,000-invoice load run)
+    and in a page's request. They are read in one moment."""
+    import threading
+
+    store, other = Store(tmp_path / "a.db"), Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    invoice = store.add_invoice(tmp_path / "a.pdf", _coded(store, "northwind_ON_HST_NW-2026-0912"), {})
+    real, raced = Store.invoice_columns, []
+
+    def racing(self, columns, status=None, ids=None, decode=True):  # another worker's rejection, just before
+        if self is store and ids is not None and not raced:
+            raced.append(1)
+            worker = threading.Thread(target=other.reject_invoice, args=(invoice, "Jordan Lee", "duplicate"))
+            worker.start()
+            worker.join()
+        return real(self, columns, status, ids, decode)
+
+    monkeypatch.setattr(Store, "invoice_columns", racing)
+    assert any("NW-2026-0912" in x.reference for x in accruals._not_in_erp(store, END))  # (as the read began)
+    assert raced and not any("NW-2026-0912" in x.reference for x in accruals._not_in_erp(store, END))
+
+
 def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)

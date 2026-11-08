@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web import app as web_app
-from ap_coder.web import core, roles, server
+from ap_coder.web import core, roles, security, server
 from ap_coder.web.app import create_app
 from ap_coder.web.jobs import Jobs
 from tests.webclient import PAGE, enrol, sign_in, web_settings
@@ -795,10 +796,68 @@ def test_each_web_worker_of_the_server_hands_its_connections_back_and_keeps_them
             "proxy": "", "port": 8501, "token": "t", "data": str(tmp_path), "parent": os.getpid()}  # fmt: skip
     monkeypatch.setenv(server.WORKER_ENV, json.dumps(spec))
     monkeypatch.setattr(server, "_stop_worker_when_asked", lambda *a: None)
+    monkeypatch.setattr(server, "worker_log", lambda folder: None)  # (no log of its own in pytest's)
     app = server.worker_app()
     assert server.HandBack in [m.cls for m in app.user_middleware]
     assert server.KEEP_ALIVE_SECONDS == 75
     assert server.server_config(app, "127.0.0.1", 8501, None, None, None).timeout_keep_alive == 75
+
+
+SAID = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (INFO|WARNING) ap_coder\.[\w.]+: ")  # (a log's line)
+
+
+def test_a_web_worker_of_the_server_says_what_it_does_in_its_own_log_and_its_warnings_with_their_time(tmp_path):
+    """B-2065: a web worker of the company server is a process uvicorn spawns, which set up no logging of its own: what
+    AP Coder said there at INFO went nowhere, and its warnings (a worker started afresh, D-153; the invoices folder
+    not listed) reached the server's window bare, through ``logging.lastResort``, with no time. A worker made as
+    uvicorn makes one (a fresh interpreter, uvicorn's own loggers set up, then the factory) logs to
+    ``logs/web-<n>.log``, its access log's number, in the background process's format, and the window's line has its
+    time."""
+    store = Store(tmp_path / "ap_coder.db")
+    spec = {"db": str(store.path), "address": "127.0.0.1", "insecure_http": True, "workers": 2, "secret": "00" * 32,
+            "proxy": "", "port": 8501, "token": "t", "data": str(tmp_path), "parent": os.getpid()}  # fmt: skip
+    script = ("import logging, sys\nimport uvicorn\nfrom ap_coder.web import security, server\n"
+              "uvicorn.Config('ap_coder.web.server:worker_app', factory=True,"
+              " log_level='warning').configure_logging()\n"
+              "server.worker_app()\n"
+              "logging.getLogger('ap_coder.web.server').info('said at INFO')\n"
+              "logging.getLogger('ap_coder.web.server').warning('said at WARNING')\n"
+              "access = security.access_logger(sys.argv[1], shared=True)\n"
+              "print(access.handlers[0].baseFilename)\n")  # fmt: skip
+    env = {**os.environ, server.WORKER_ENV: json.dumps(spec), "AP_PRIVATE_DIR": str(tmp_path)}
+    done = subprocess.run([sys.executable, "-c", script, str(tmp_path / "logs")],
+                          cwd=Path(__file__).resolve().parents[2], env=env, capture_output=True, text=True,
+                          timeout=120)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    own = tmp_path / "logs" / "web-1.log"
+    assert own.is_file(), sorted(p.name for p in (tmp_path / "logs").glob("*"))
+    said = [line for line in own.read_text(encoding="utf-8").splitlines() if "said at" in line]
+    assert [line.split(" ", 2)[2] for line in said] == ["INFO ap_coder.web.server: said at INFO",
+                                                        "WARNING ap_coder.web.server: said at WARNING"]  # fmt: skip
+    assert all(SAID.match(line) for line in said), said
+    window = [line for line in done.stderr.splitlines() if "said at" in line]
+    assert len(window) == 1 and SAID.match(window[0]) and window[0].endswith("WARNING ap_coder.web.server: said at "
+                                                                             "WARNING"), window  # fmt: skip
+    assert done.stdout.strip().endswith("access-1.log"), done.stdout  # (the same number as its access log)
+
+
+def test_a_web_workers_own_log_is_set_up_once_in_a_process(tmp_path, monkeypatch):
+    """B-2065: asked again in the same process, ``worker_log`` adds no second handler (each line once in the log)."""
+    monkeypatch.setattr(server.logging.getLogger("ap_coder"), "handlers", [])
+    monkeypatch.setattr(server.logging.getLogger(), "handlers", [object()])  # (a window's handler there already)
+    monkeypatch.setattr(security, "_SLOT", [])
+    level = server.logging.getLogger("ap_coder").level
+    first = server.worker_log(tmp_path / "logs")
+    try:
+        assert first is not None and server.worker_log(tmp_path / "logs") is None
+        assert server.logging.getLogger("ap_coder").handlers == [first]
+        assert first.baseFilename.endswith("web-1.log")
+    finally:
+        if first is not None:
+            first.close()
+        server.logging.getLogger("ap_coder").setLevel(level)  # (and the loggers' cache cleared)
+        for _, lock in security._SLOT:
+            lock.close()
 
 
 # --- How many workers --------------------------------------------------------------------------------------------

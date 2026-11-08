@@ -59,22 +59,25 @@ Why these numbers:
 
   | Database | People at once | Half the pages within | 95% within | 99% within | Approvals and checks, 95% within |
   |---|---|---|---|---|---|
-  | 100,000 invoices (four months at 25,000 a month) | 100 | 0.09 s | 0.58 s | 2.6 s | 0.34 s |
-  | 300,000 invoices (a year), for an hour | 100 | 0.12 s | 1.5 s | 5.5 s | 1.0 s |
+  | 100,000 invoices (four months at 25,000 a month) | 100 | 0.07 s | 0.28 s | 0.48 s | 0.16 s |
+  | 300,000 invoices (a year), for an hour | 100 | 0.10 s | 0.65 s | 2.0 s | 0.39 s |
+  | 300,000 invoices, a database's first 10 minutes (never served) | 100 | 0.12 s | 0.90-0.98 s | 2.2-3.2 s | 0.40-0.45 s |
 
-  No error and no "database is locked" in either. The slowest pages at 300,000 are the reports (Spend, Month-end,
-  Vendors, Insights, Sales tax): 6 to 11 s for the one person who opens one first after its figures change, while
-  the others are given the figures of a moment before (D-197); the pages that wait behind that work in the same web
-  worker make the slowest 1%. Memory: each web worker about 1 GB on 300,000 invoices (its caches bounded, D-195),
-  the background process 150 MB, each capture process 320 MB. The first minutes after the first start on a big
-  database, and after an update that changes what the reports keep, are slower: each report is worked out once.
-  Since these were measured, the background process works the reports' figures out again (D-198): the person who
-  opens one after a change is given the figures of a moment before at once, like the others, and nothing waits
-  behind that work in a web worker; at its start it works out again those asked in the last day and each report as
-  it first opens, and from then on keeps those and the last view of each report people opened up to date (D-200),
-  so the first person to open one, in the morning too, doesn't wait for it either. A report opened in a first
-  start's first minutes, before that work is done, says it is being worked out and opens by itself once it is ready
-  (D-201). The hour at 300,000 is to be measured again with it.
+  No error and no "database is locked" in any. The reports (Spend, Month-end, Vendors, Insights, Sales tax) are worked
+  out again by the background process after a change (D-198): the person who opens one is given the figures of a moment
+  before at once, and nothing waits behind that work in a web worker. At its start the background process works out
+  again those asked in the last day and each report as it first opens, and from then on keeps those and the last view of
+  each report people opened up to date (D-200), so the first person to open one, in the morning too, doesn't wait for it
+  either; a report opened before that work is done says it is being worked out and opens by itself once it is ready
+  (D-201). A big PO's invoices are kept with what each bills (D-202). Over the hour at 300,000 the slowest 1% are opens
+  of the biggest vendor's invoices. In a database's first 10 minutes the slowest 1% are each web worker's first opens of
+  an invoice (3 to 6 s: that worker's memories built) and the reports asked before the background process has worked
+  them out (3 to 4 s), so its 99% within 3 s is at the edge (2.2 and 3.2 s in two runs; building each worker's memories
+  as it starts was tried and made the whole worse: D-203). That happens once in a database's life; an update's restart
+  finds the reports kept. Memory over the hour at 300,000: each web worker 0.7 to 0.75 GB at the end, flat in the second
+  half (its caches bounded, D-195), the background process about 0.5 GB, each capture process 320 MB. 200 people at once
+  on these 4 cores (50 a core, four times what 400 people put on each of the next stage's 32) fill them: 95%
+  within 5.3 s, no error.
 
   *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
   32; to be measured on the real server):
@@ -84,7 +87,7 @@ Why these numbers:
   | AP Coder | a Mac mini (step 14) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
   | The AI models | LM Studio on a Mac Studio, the Mac mini's own as the backup (step 8, point 5) | the same machines |
   | Disk | 200 GB | about 1 TB on an SSD: a year's database 10 GB and its backups about 320 GB, a year's invoice files 150 GB, and room to grow |
-  | Reading 1,250 invoices a day | | in the review queue 65 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (stage 0 measures the Mac Studio; `--llm-parallel`, step 8) |
+  | Reading 1,250 invoices a day | | in the review queue 64 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (stage 0 measures the Mac Studio; `--llm-parallel`, step 8) |
 
   On one Windows Server with LM Studio on it instead (the first layout; the graphics card's rows estimated from an
   assumed 15 s a page, not measured on a graphics card):
@@ -290,7 +293,7 @@ the requests under way 25 seconds, then ends them: the service is stopped within
 - **Each worker works on 4 requests at once** (`server.json` `"worker_threads"`, 1 to 40; the others wait their
   turn): one process works on one at a time anyway, and each request under way holds what it read (about 110 MB on
   a big database). With anyio's default of 40, 16 people at once took a worker to about 2 GB; with 4, to 1.3 GB, the
-  same work done. A worker stays near 1 GB on 300,000 invoices (an hour of 100 people: 940-990 MB, 1,030 at most).
+  same work done. A worker stays under 1 GB on 300,000 invoices (an hour of 100 people: 712-735 MB at the end, 814 MB at most).
 - **Reports and exports take turns**: the reports (Activity, the controls report, Spend, Month-end and its
   accruals, Sales tax, Insights), the exports (the Exports page, a batch, its files, the duplicates CSV, search to
   CSV or Excel, the JD Edwards worksheet), Report a problem, a backup or restore, and the buttons that wait on LM
@@ -345,7 +348,7 @@ them in `server.json` or the machine's environment (step 2). The backup model se
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
 user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
 milliseconds (10 MB, then up to 9 older files); with several workers, one file per worker, `access-1.log`,
-`access-2.log`... And `D:\APCoderData\logs\background.log`: what the background process does, the work nobody waits on (it starts, the page reader's self-test, each invoice read, each AI review, JD Edwards; 5 MB, then up to 5 older files). Each download (a batch's files or ZIP, the directory's export, a
+`access-2.log`... And `D:\APCoderData\logs\background.log`: what the background process does, the work nobody waits on (it starts, the page reader's self-test, each invoice read, each AI review, JD Edwards; 5 MB, then up to 5 older files). With several workers, each also has its own log, `web-1.log`, `web-2.log`... (its access log's number; 5 MB, then up to 5 older files): what it says, a worker started afresh among it (its warnings also reach `service.log`, with their time). Each download (a batch's files or ZIP, the directory's export, a
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 
