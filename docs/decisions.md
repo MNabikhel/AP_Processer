@@ -4409,6 +4409,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     process, the server answering 9.4 s after its start, its own process 118 MB; each worker 2.5-2.7 s for 24 steps;
     a first open after them 0.25 s in a worker's process, half of it importing the PDF library (`capture.layout`,
     once a process), then 0.07 s.
+  - **Where each half applies** (the review's point): in production a database is mostly first served empty, its
+    invoices brought in through the dashboard's own pages, and a laptop pilot's database counts as served once its
+    review queue or a report was opened: the reports' half mostly covers a database built without being served
+    (`ap_coder process`, a bulk load) and the bench's seed. The workers' half applies at every start, an update's too.
+  - **The 5 minutes, tightened** (an update of a database that never had the reports, the only one that works them
+    out first): no view is begun past 200 s, and Month-end's three, by far the longest, come first, so the one under
+    way then is a quick one (about 10 s at 300,000, estimated); `PREPARE_ENDS` (15 s) is its time to finish, then its
+    process is ended (SIGTERM ends it at once; 5 s more, then a kill, for one that doesn't); the workers begin no step
+    past 25 s (each step 1-3 s at 300,000). The start is then within about 260 s, inside server-update's `UP_WAIT`
+    (300 s: a start that overran it would roll the update back), and the downtime, with server-update's own 16-40 s,
+    within the 5 minutes; the reports only near 200 s far above 300,000 invoices (92-121 s there).
+  - **After its review** (a fresh reviewer, 5a40c17..f6ce662): B-2067 (a worker started afresh: no other one stopped
+    until its replacement serves, `WARMING_NOTE`), B-2068 (a SIGTERM while the reports are worked out ends their
+    process too; that process stops once its server is gone), B-2069 (the server file written before the reports),
+    B-2070 (the day bench counts "database is locked" on no INFO line), B-2071 (an error looking at the reports or
+    starting their process: said, and the server answers). Ctrl+C ends the reports' process quietly.
   - **Left:** a database that had the reports and was updated waits for the refresher for its first minute or two,
     as before D-204 (D-201 says "being worked out"); a database restored from a backup keeps its answers, of another
     database, until they are swept, and counts as served. A start's workers serve nothing for their seconds of

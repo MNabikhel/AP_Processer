@@ -433,7 +433,8 @@ the launcher.
   connections, then uvicorn stops it gracefully (the requests under way given up to an hour, `RECYCLE_GRACE_SECONDS`)
   and its supervisor starts another (`_Supervisor` does not ask the ending one "alive?",
   `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
-  (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
+  (`.ap_coder_worker_restart.lock`, then until its replacement has built its memories and serves,
+  `.ap_coder_worker_warming`, 85 s at most: B-2067), never while a job, a backup, waiting imports or the lane are busy. One that a
   request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
   the service still ends it at its deadline. The workers share one socket, and the first free one takes each new
   connection; a busy one (requests waiting for its threads or its lane) hands its connections back

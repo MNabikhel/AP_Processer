@@ -306,8 +306,8 @@ the requests under way 25 seconds, then ends them: the service is stopped within
 - **A worker is started afresh** past its share of the memory (that 1.5 GB share, at least 2 GB; the variable
   `AP_WORKER_MAX_MB`, 0 for never) or after about 50,000 requests (a number of its own, so they don't all go
   together; `AP_WORKER_MAX_REQUESTS`). It takes no new requests, finishes those under way and what they started (an
-  import, a backup), and a new one takes its place as it ends; one worker at a time, and never while an import, a
-  backup or a report of its own runs. Nobody is signed out (logins are in the database). The service log says "A web
+  import, a backup), and a new one takes its place as it ends; one worker at a time (the next only once the new
+  one serves), and never while an import, a backup or a report of its own runs. Nobody is signed out (logins are in the database). The service log says "A web
   worker (process N) is started afresh after ...".
 
 **Requests to LM Studio at once** (`--llm-parallel N`, `server.json` `"llm_parallel"`, or `AP_LLM_PARALLEL`;
@@ -346,10 +346,11 @@ them), AP Coder works out each report's first view before it opens its port (con
 them)..." and then how many and how long), and at every start each web worker builds what an invoice's first opening
 reads before it takes a request (its `web-<n>.log` says so). Measured on a test computer (4 cores): at 60,000 invoices
 and 2 web workers it answered 13 s after its start (the reports 8 s, each worker 3 s) where it took 2 s before; at
-300,000 and 4 web workers the reports took 92 s (never more than 200 s: then the rest is worked out after the start)
-and each worker about 13 s (25 s at most). A restart or an update finds the database has had the reports: it works
-none out before it answers (`service.log` says so), only the workers' memories (5 s at 60,000), and the reports are
-brought up to date while it serves.
+300,000 and 4 web workers the reports took 92 s (none is begun past 200 s, and their process is ended at 215 s, a few
+seconds more to end it: the rest is then worked out after the start) and each worker about 13 s (none of its steps
+begun past 25 s). A restart, or an update of a database that had the reports, works none out before it answers
+(`service.log` says so), only the workers' memories (5 s at 60,000), and the reports are brought up to date while it
+serves.
 The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
 `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
@@ -711,10 +712,12 @@ was written during it. What step 8 still does for every invoice is to look at it
 20,000 files on a Linux test computer). Measured there (D-196): with 20,000 invoices (669 MB) down 6 s, and with
 120,000 (2.45 GB) down 6 s, where it was 12 s and 16 s with the copy made in step 8. CI checks that with 20,000
 invoices it stays under 5 minutes on Windows. The new version's start adds each web worker's memories built before it
-serves (D-204: about 13 s at 300,000 invoices, 25 s at most); the reports are not worked out before it answers (an
-update keeps none of the version before's: they are worked out while it serves). In the first minute or two after an
-update, as before D-204, a report opened before the background process has worked it out says it is being worked
-out and opens by itself once it is ready; invoices open fast from the first request.
+serves (D-204: about 13 s at 300,000 invoices, none of its steps begun past 25 s). On a database that had the reports
+(any served before), they are not worked out before it answers (an update keeps none of the version before's: they
+are worked out while it serves): in the first minute or two after the update, as before D-204, a report opened
+before the background process has worked it out says it is being worked out and opens by itself once it is ready;
+invoices open fast from the first request. (A database that never had them has them worked out first, as at its
+first start.)
 If the database can't be copied in step 6 (a report that reads for over a
 minute keeps it from being still), it says so and copies it whole in step 8, as before. If step 2 to 6 fails,
 nothing was stopped or changed: the old version kept serving, and it says why. If step 7, 8, 9 or 10 fails, it puts

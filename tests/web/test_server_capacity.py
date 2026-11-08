@@ -1149,6 +1149,21 @@ def test_the_reports_process_whose_server_is_gone_stops_before_its_next_view(mon
     assert not server._parent_gone()
 
 
+def test_the_reports_process_ends_quietly_on_ctrl_c(store, monkeypatch, capsys):
+    """D-204's review: a Ctrl+C in the server's window reaches the reports' process too, which printed "Process
+    ap-coder-reports:" and a traceback cut short there; it ends with exit code 1 and says nothing (its server says
+    why it stops)."""
+    from ap_coder.web import refresh
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(refresh, "prepare", interrupted)
+    with pytest.raises(SystemExit) as ended:
+        server._prepare_reports(str(store.path), refresh.PREPARE_MOST)
+    assert ended.value.code == 1 and capsys.readouterr().err == ""
+
+
 def test_the_server_answers_though_its_reports_could_not_be_looked_at_or_started(store, monkeypatch, capsys):
     """B-2071: an error looking whether the database had the reports (a database too busy) or starting their process
     (no process to be had) stopped the server's start, where its reports are no reason not to serve: it says so in
