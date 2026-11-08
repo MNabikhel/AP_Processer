@@ -411,11 +411,13 @@ def stop_file(data: Path | None = None) -> Path:
 def _serve_workers(host: str, port: int, store: Store | None, certfile: str | None, keyfile: str | None,
                    proxy: str | None, insecure_http: bool, workers: int) -> int:  # fmt: skip
     store = store or Store(paths.env_path("AP_DB_PATH") or paths.default_db_path())  # (its upgrade runs here, once)
+    token = secrets.token_urlsafe(24)
+    write_server_file(port, token)  # (a server working its reports out is one running: B-2069)
     try:
         prepare_reports(store)  # (the port still closed: nobody waits for them, D-204)
     except KeyboardInterrupt:
+        remove_server_file(token)
         return 0
-    token = secrets.token_urlsafe(24)
     data = paths.private_dir()
     stop_file(data).unlink(missing_ok=True)
     (data / RECYCLE_PID).unlink(missing_ok=True)  # a worker of the last run ending: its number may be given again
@@ -432,8 +434,11 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     # time: one taken for hung is ended and started again.
     config = server_config("ap_coder.web.server:worker_app", host, port, certfile, keyfile, proxy, factory=True,
                            workers=workers, timeout_worker_healthcheck=30)  # fmt: skip
-    supervisor = Supervisor(config, sockets=[listening_socket(config)])
-    write_server_file(port, token)
+    try:
+        supervisor = Supervisor(config, sockets=[listening_socket(config)])
+    except BaseException:  # (its port taken meanwhile: no server runs)
+        remove_server_file(token)
+        raise
     count = capture_processes()
     background = Together([BackgroundWork(store.path),
                            *(CaptureWork(store.path, n, count) for n in range(1, count + 1))])  # fmt: skip

@@ -973,6 +973,43 @@ def test_the_server_works_its_reports_out_before_its_port_opens_and_only_with_se
     assert done == ["served", "served"]
 
 
+def test_a_server_working_its_reports_out_is_running_by_its_server_file(store, tmp_path, monkeypatch):
+    """B-2069: the server file (``.ap_coder_server.json``) was written once the reports had been worked out (D-204), so
+    for up to 215 s a server starting said nothing: the launcher's "never two versions on one database" and
+    ``dashboard_stopped`` saw none running. It is written before them, and removed as before, a stop meanwhile too."""
+    seen = []
+
+    def prepared(store):
+        seen.append(json.loads(server.server_file().read_text(encoding="utf-8"))["pid"])
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            self.should_exit.set()
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(
+        bind_socket=lambda: SimpleNamespace(listen=lambda n: None), backlog=2048))  # fmt: skip
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "Together", lambda works: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    monkeypatch.setattr(server, "prepare_reports", prepared)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [os.getpid()] and not server.server_file().exists()
+
+    def stopped(store):
+        prepared(store)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server, "prepare_reports", stopped)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [os.getpid()] * 2 and not server.server_file().exists()
+
+
 def test_the_servers_reports_are_worked_out_in_a_process_of_its_own_before_it_answers(store, monkeypatch, capfd):
     """D-204: the reports' default views worked out before the server answers peaked the memory of the server's own
     process (uvicorn's supervisor, which lives as long as the server: 114 MB with its imports, 235-241 MB after the
