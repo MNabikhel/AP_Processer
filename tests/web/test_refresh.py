@@ -21,7 +21,7 @@ import pytest
 from ap_coder.core.store import Store, reports, summary
 from ap_coder.web import refresh
 from tests.conftest import ROOT
-from tests.core.test_kept_answers import Shared, _approved, _invoice, _plain, _Processes, _vendor_rows
+from tests.core.test_kept_answers import Shared, _approved, _bill, _invoice, _plain, _Processes, _vendor_rows
 
 ADD = "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'A vendor', '2026-01-05T09:00:00')"
 
@@ -1062,3 +1062,383 @@ def test_a_page_asked_a_moment_before_the_refreshers_start_does_not_skip_the_def
         refresher = _first_start(Store(web.path), caplog, ends=10)
         _halted(refresher)
     assert order[:4] == ["queue_pill", "month_end", "spend", "queue_pill"]  # (the one asked lately first)
+
+
+# --- A report being worked out, answered at once (D-201) -------------------------------------------------------------
+
+HTML = {"accept": "text/html,application/xhtml+xml"}  # (a browser's page: a link, the address bar, a reload)
+REFRESH = re.compile(r'<meta http-equiv="refresh" content="\d+">')
+GOOD = "correct horse battery"
+LATE_PILL = "regular invoice late"  # (the queue's pill of the recurring vendors: ``review.today_pills``)
+
+
+def _on_the_server(store: Store, base_url: str = "https://localhost"):
+    """A web worker of the company server on ``store``, an Admin logged in."""
+    from fastapi.testclient import TestClient
+
+    from ap_coder.web.app import create_app
+    from tests.webclient import enrol, sign_in, web_settings
+
+    client = TestClient(create_app(web_settings(), store, start_reader=False, server=True), base_url=base_url,
+                        client=("10.0.0.5", 50000))  # fmt: skip
+    uid = store.add_user("boss", GOOD, role="admin", display_name="Boss")
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)
+    assert sign_in(client, "boss", GOOD).status_code in (200, 303)
+    return client
+
+
+def _month_end_held(store: Store, client, monkeypatch, page: str = "/month-end") -> list[str]:
+    """Month-end's answers (or ``page``'s) asked once, then none kept anywhere (the database's, this process's memory)
+    and each held by another process, as the background process's warm-up holds them at a first start (D-200): their
+    holds."""
+    held, real = [], Store.take_lease
+
+    def take(self, name, owner, seconds):
+        if name.startswith("answer/") and name not in held:
+            held.append(name)
+        return real(self, name, owner, seconds)
+
+    monkeypatch.setattr(Store, "take_lease", take)
+    assert client.get(page, headers=HTML).status_code == 200
+    monkeypatch.setattr(Store, "take_lease", real)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM report_answers")
+    _Processes(monkeypatch)("a web worker just started")
+    for lease in held:
+        assert store.take_lease(lease, "the background process", 600)
+    return held
+
+
+def _month_end_worked_out_ahead(store: Store, held: list[str]) -> None:
+    """The warm-up's work on Month-end done (``refresh.DEFAULTS``' first three): kept for every process, let go of."""
+    for lease in held:
+        store.drop_lease(lease, "the background process")
+    for name, args_of in refresh.DEFAULTS[:3]:
+        assert refresh.ahead(store, name, args_of, "default view")[0], name
+
+
+def test_on_the_server_a_report_another_process_works_out_with_nothing_kept_says_so_at_once(
+    tmp_path, ground_truth, monkeypatch
+):
+    """D-201: at a first start (nothing kept yet) the background process's warm-up holds Month-end's work (12 to 50 s
+    at 300,000 invoices); a web worker's request asking it waited for that work, up to ``ANSWER_WAIT_MOST``, holding
+    a thread (four asks waited 10.7-49 s, the worker's other requests behind them). It waits ``ANSWER_BRIEF`` at most
+    now: a browser's page is a page in the app's layout saying the report is being worked out, which asks again by
+    itself (a meta refresh: no script, within the Content-Security-Policy), never kept by the browser; a script's ask
+    (JSON, a file) a 503 with Retry-After. Two asks at once in one worker likewise. Once the warm-up kept the answers,
+    the page shows them, working none out."""
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 8.0)  # (waited for this long before, then worked out here)
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.5)
+    store = Store(tmp_path / "ap.db")
+    _approved(store, tmp_path, ground_truth, "A-1")
+    client = _on_the_server(store)
+    held = _month_end_held(store, client, monkeypatch)
+    assert len(held) == 3  # (received, not invoiced; not in the ERP; the recurring vendors)
+    worked, real = [], Store.shared_answer
+
+    def counted(self, name, compute, **kwargs):
+        return real(self, name, lambda: worked.append(name) or compute(), **kwargs)
+
+    monkeypatch.setattr(Store, "shared_answer", counted)
+
+    at = time.monotonic()
+    page = client.get("/month-end", headers=HTML)
+    assert time.monotonic() - at < reports.ANSWER_BRIEF + 1.5
+    assert page.status_code == 200 and page.headers["cache-control"] == "no-store", page.status_code
+    assert page.headers["x-ap-coder-working"] == "1"  # (said apart from a page served: the access log, bench load)
+    assert "This report is being worked out" in page.text and REFRESH.search(page.text)
+    assert 'name="end"' not in page.text and 'class="rail"' in page.text  # (not the report: the app's layout)
+    for asked in ({"accept": "application/json"}, {"accept": "*/*"}, {"accept": "text/csv"}):
+        answer = client.get("/month-end", headers=asked)
+        assert answer.status_code == 503 and int(answer.headers["retry-after"]) > 0, asked
+        assert answer.headers["cache-control"] == "no-store" and answer.headers["x-ap-coder-working"] == "1"
+        assert answer.json()["ok"] is False and "being worked out" in answer.json()["error"]
+
+    answers, threads = [], []
+    for _ in range(2):  # (two asks at once in this process: the second waits on the first's thread here)
+        threads.append(threading.Thread(target=lambda: answers.append(client.get("/month-end", headers=HTML))))
+    at = time.monotonic()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert time.monotonic() - at < reports.ANSWER_BRIEF + 2.5
+    assert [a.status_code for a in answers] == [200, 200] and all("being worked out" in a.text for a in answers)
+    assert not set(worked) & set(refresh.ANSWERS), worked  # (nothing worked out here meanwhile)
+
+    _month_end_worked_out_ahead(store, held)
+    _Processes(monkeypatch)("the web worker")
+    worked.clear()
+    shown = client.get("/month-end", headers=HTML)
+    assert shown.status_code == 200 and 'name="end"' in shown.text and "being worked out" not in shown.text
+    assert not REFRESH.search(shown.text) and not set(worked) & set(refresh.ANSWERS), worked
+
+
+def test_on_a_laptop_a_report_held_by_another_is_still_worked_out_in_the_request(tmp_path, ground_truth, monkeypatch):
+    """D-201 changes nothing on a laptop (no background process): its page waits for an answer another works out, as
+    before, then works it out itself, and shows the report."""
+    from tests.webclient import client_for
+
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 0.6)
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.1)
+    store = Store(tmp_path / "ap.db")
+    _approved(store, tmp_path, ground_truth, "A-1")
+    client = client_for(store)
+    _month_end_held(store, client, monkeypatch)
+    at = time.monotonic()
+    page = client.get("/month-end", headers=HTML)
+    assert time.monotonic() - at >= reports.ANSWER_WAIT_MOST  # (waited for the other, as before)
+    assert page.status_code == 200 and 'name="end"' in page.text and "being worked out" not in page.text
+
+
+def test_only_a_pages_read_on_the_server_is_told_an_answer_is_being_worked_out(tmp_path, clock, monkeypatch):
+    """D-201's answer at once is a page's GET on the company server only (``reports.asked_by_a_page``), of a settled
+    answer the refresher works out (``again``): asked anywhere else (a background job, an action's POST), with no
+    ``again``, or in a write under way, it is waited for or worked out as before."""
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 0.6)
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.2)
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    asked = _rows_answer(store)
+    exact = Shared(store, "exact", lambda: _vendor_rows(store), version="t-1", topic="", changes=("vendors",))
+    for name in ("rows", "exact"):
+        assert store.take_lease(f"answer/{name}/{reports.asked_key(None)}", "the background process", 600)
+    with reports.asked_by_a_page():
+        at = time.monotonic()
+        with pytest.raises(reports.Working):
+            asked()
+        assert time.monotonic() - at < reports.ANSWER_BRIEF + 0.5 and asked.worked == 0
+        assert exact() == [] and exact.worked == 1  # (not settled, no refresher behind it: waited for, then here)
+        with store.session(), store._conn() as conn:  # (a write under way: worked out afresh, never waited for)
+            conn.execute(ADD, ("acme",))
+            assert asked() == [] and asked.worked == 1  # (``_vendor_rows`` reads what is committed)
+    at = time.monotonic()
+    assert asked() == _vendor_rows(store) != [] and asked.worked == 2  # (outside a page's read: waited for, as before)
+    assert time.monotonic() - at >= reports.ANSWER_WAIT_MOST
+
+
+def test_on_the_server_the_queue_opens_without_its_late_pill_while_the_recurring_vendors_are_worked_out(
+    tmp_path, ground_truth, monkeypatch
+):
+    """The queue (everyone's first page) shows the recurring vendors only as a pill: while another process works
+    them out with nothing kept yet, it opens at once without the pill (not even ``ANSWER_BRIEF`` waited: at a first
+    start everyone opens it, each wait a thread), never "being worked out"; once they are kept, the pill is back."""
+    from ap_coder.core.store import load_sample_setup
+
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 8.0)
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 4.0)
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)  # (the queue itself, not its first steps)
+    for n, days_ago in enumerate((120, 90, 60)):  # (a monthly bill, a month late)
+        _bill(store, tmp_path, ground_truth, f"R-{n}", days_ago)
+    client = _on_the_server(store)
+    _Processes(monkeypatch)("a web worker just started")
+    lease = f"answer/recurring/{reports.asked_key(dt.date.today())}"
+    assert store.take_lease(lease, "the background process", 600)
+    at = time.monotonic()
+    queue = client.get("/review", headers=HTML)
+    assert time.monotonic() - at < reports.ANSWER_BRIEF - 1.5
+    assert queue.status_code == 200 and "R-2" in queue.text and "being worked out" not in queue.text
+    assert not REFRESH.search(queue.text) and LATE_PILL not in queue.text
+    store.drop_lease(lease, "the background process")
+    assert refresh.ahead(store, *refresh.DEFAULTS[3], "default view")[0]  # (the warm-up's: the queue's, today's)
+    _Processes(monkeypatch)("the web worker")
+    assert LATE_PILL in client.get("/review", headers=HTML).text
+
+
+def test_in_a_browser_the_being_worked_out_page_draws_itself_again_then_shows_the_report(
+    tmp_path, ground_truth, monkeypatch, chromium
+):
+    """D-201 in a browser, under the company server's Content-Security-Policy: Month-end opened while the warm-up
+    holds its work shows that it is being worked out and asks again by itself, every few seconds, with no script and
+    nothing the policy refuses; once the work is kept, the same page shows the report."""
+    from ap_coder.web import app as web_app
+    from ap_coder.web.identity import SESSION_COOKIE
+    from tests.browser import browser_on, wait_until
+
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.3)
+    monkeypatch.setattr(web_app, "WORKING_AGAIN", 1)
+    store = Store(tmp_path / "ap.db")
+    _approved(store, tmp_path, ground_truth, "A-1")
+    client = _on_the_server(store)  # (logged in over HTTPS: its Secure cookie kept and sent)
+    held = _month_end_held(store, client, monkeypatch)
+    assert len(held) == 3
+    with browser_on(chromium, client.app) as (browser, base):
+        context = browser.new_context()
+        # As a header: the __Host- cookie is Secure, which Chromium doesn't take for this http:// address
+        context.set_extra_http_headers({"Cookie": f"{SESSION_COOKIE}={client.cookies.get(SESSION_COOKIE)}"})
+        page = context.new_page()
+        problems, asks = [], []
+        page.on("console", lambda m: problems.append(m.text) if "Content Security Policy" in m.text else None)
+        page.on("pageerror", lambda e: problems.append(str(e)))
+        page.on("request", lambda r: asks.append(r.url) if r.url.endswith("/month-end") else None)
+        answer = page.goto(base + "/month-end")
+        assert answer is not None and answer.status == 200 and "content-security-policy" in answer.headers
+        page.wait_for_selector("text=This report is being worked out")
+        wait_until(page, lambda: len(asks) >= 3, timeout=10)  # (it drew itself again, still being worked out)
+        assert len(asks) >= 3 and page.locator("input[name=end]").count() == 0
+        _month_end_worked_out_ahead(store, held)
+        page.wait_for_selector("input[name=end]", timeout=15000)
+        assert "being worked out" not in page.content()
+    assert problems == [], problems
+
+
+@pytest.mark.parametrize("most", [None, 0.0, 2.0])
+def test_an_answer_another_kept_and_let_go_of_just_after_the_ask_looked_is_taken_by_a_page_too(
+    tmp_path, clock, monkeypatch, most
+):
+    """B-2058: the other process kept its answer and let go of its hold just after this ask found none and could not
+    take the hold (B-1919's moment). The wait's first look takes it (``most`` None: not a page); a page's ask whose
+    wait was over by then (the queue's 0 s, or a page that spent its 2 s on a thread here) skipped that look and
+    worked the answer out itself, without a hold. It looks once more before it says "being worked out" or works it
+    out."""
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    asked = _rows_answer(store)
+    key = reports.asked_key(None)
+    lease = f"answer/rows/{key}"
+    assert store.take_lease(lease, "the background process", 600)
+    real = Store.take_lease
+
+    def take(self, name, owner, seconds):
+        got = real(self, name, owner, seconds)
+        if name == lease and not got:  # (the other process done just now: kept, then let go of)
+            stamp, _ = store._answer_stamp("", ("vendors",))
+            store.keep_answer("rows", key, "t-1", stamp, [["kept by the other"]], reports.wall(), 0.01)
+            store.drop_lease(lease, "the background process")
+        return got
+
+    monkeypatch.setattr(Store, "take_lease", take)
+    if most is None:
+        assert asked() == [["kept by the other"]]
+    else:
+        with reports.asked_by_a_page(most):
+            assert asked() == [["kept by the other"]]
+    assert asked.worked == 0
+
+
+def test_a_pages_ask_without_a_wait_takes_the_answer_kept_while_a_thread_here_only_reads_it(
+    tmp_path, clock, monkeypatch
+):
+    """B-2059: the queue's late pill (an ask that waits 0 s) gave up at once on this process's lock of the answer,
+    which a thread here holds a moment while it only reads and decodes the answer kept: it is taken from the
+    database when that one holds, and "being worked out" is said only when none there does."""
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    asked = _rows_answer(store)
+    assert asked() == [] and asked.worked == 1  # (kept for every process)
+    _Processes(monkeypatch)("another web worker")  # (nothing in its memory)
+    with reports._WORKING.setdefault((str(store.path), "rows", reports.asked_key(None)), threading.Lock()):
+        with reports.asked_by_a_page(0.0):  # (a thread here reading the kept answer meanwhile)
+            assert asked() == [] and asked.worked == 1
+            _plain(store, ADD, "acme")
+            clock[0] += 61  # (the one kept no longer holds, nor is shown meanwhile: past its settle and the wait)
+            with pytest.raises(reports.Working):
+                asked()
+    assert asked.worked == 1
+
+
+def test_three_queues_opened_at_once_in_a_worker_with_nothing_in_memory_all_show_the_late_pill(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-2059 on the page: a web worker just started (nothing in its memory) opens three queues at once while the
+    recurring vendors kept for every process hold; the first reads them (0.3 s, a big answer), the others showed no
+    late pill. Each shows it."""
+    from ap_coder.core.store import load_sample_setup
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    for n, days_ago in enumerate((120, 90, 60)):
+        _bill(store, tmp_path, ground_truth, f"R-{n}", days_ago)
+    client = _on_the_server(store)
+    assert LATE_PILL in client.get("/review", headers=HTML).text  # (worked out and kept for every process)
+    _Processes(monkeypatch)("a web worker just started")
+    real = Store.kept_answer
+
+    def slow(self, name, key, version):  # (a big answer's read and decode: the recurring vendors at 300,000)
+        if name == "recurring":
+            time.sleep(0.3)
+        return real(self, name, key, version)
+
+    monkeypatch.setattr(Store, "kept_answer", slow)
+    shown: list[bool] = []
+    threads = [threading.Thread(target=lambda: shown.append(LATE_PILL in client.get("/review", headers=HTML).text))
+               for _ in range(3)]  # fmt: skip
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert shown == [True, True, True]
+
+
+def test_the_vendor_master_and_past_codings_views_are_never_replaced_by_being_worked_out(
+    tmp_path, ground_truth, monkeypatch
+):
+    """B-2060: the Vendors page and Learning's coding tab were replaced whole by "being worked out" while one of
+    their report answers was: a vendor's details (to put it on hold, correct its numbers), the vendor master's import
+    (Getting started's step) and Teach from past coding. Those views wait for the answers as before; the report
+    views themselves (the vendor list, the coding accuracy) may say so."""
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 0.3)
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.1)
+    store = Store(tmp_path / "ap.db")
+    _approved(store, tmp_path, ground_truth, "A-1")
+    client = _on_the_server(store)
+    with sqlite3.connect(store.path) as conn:
+        key = conn.execute("SELECT vendor_key FROM invoices LIMIT 1").fetchone()[0]
+    views = {
+        "/vendors": {f"/vendors?open={key}": 'id="vendor"', "/vendors?setup=1": 'id="import" open'},
+        "/learning": {"/learning?teach=1": 'id="history" open', "/learning?history=gone": 'id="history" open'},
+    }
+    for report, shown in views.items():
+        held = _month_end_held(store, client, monkeypatch, report)
+        assert held and "being worked out" in client.get(report, headers=HTML).text, report
+        for view, mark in shown.items():
+            _Processes(monkeypatch)("a web worker just started")
+            with sqlite3.connect(store.path) as conn:
+                conn.execute("DELETE FROM report_answers")
+            page = client.get(view, headers=HTML)
+            assert page.status_code == 200 and mark in page.text and "being worked out" not in page.text, view
+        for lease in held:
+            store.drop_lease(lease, "the background process")
+
+
+def test_a_report_asked_while_the_workers_long_routes_are_busy_draws_itself_again(tmp_path, monkeypatch):
+    """B-2061: the "being worked out" page asks again by itself; one of its asks that waited too long for a place in
+    its web worker's long routes (``core.run_heavy``) got the "Busy" page, which did not, so the person was left on
+    "Busy" until they asked again. A browser's busy page draws itself again too; a script's 503 is as before."""
+    import anyio
+
+    from ap_coder.web import core
+
+    class Full:  # (every place of the long routes taken)
+        async def acquire(self) -> None:
+            await anyio.sleep(30)
+
+        def release(self) -> None:
+            pass
+
+    monkeypatch.setattr(core, "heavy_lane", Full)
+    monkeypatch.setattr(core, "HEAVY_WAIT", 0.1)
+    client = _on_the_server(Store(tmp_path / "ap.db"))
+    page = client.get("/month-end", headers=HTML)
+    assert page.status_code == 503 and "Busy" in page.text and REFRESH.search(page.text)
+    answer = client.get("/month-end", headers={"accept": "application/json"})
+    assert answer.status_code == 503 and answer.json()["error"] == core.BUSY
+
+
+def test_a_job_started_by_a_pages_read_waits_for_its_answers_as_anywhere(tmp_path, clock, monkeypatch):
+    """B-2063 (latent): a job's thread runs in a copy of the request's context (who started it is who its events
+    name), so a job started by a page's GET took the page's brief wait along: a settled answer another process works
+    out failed the job with "being worked out" instead of being waited for. A job (and each file a run reads on a
+    thread of its own) waits as anywhere."""
+    from ap_coder.web.jobs import DONE, Job
+
+    monkeypatch.setattr(reports, "ANSWER_BRIEF", 0.1)
+    monkeypatch.setattr(reports, "ANSWER_WAIT_MOST", 0.6)
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    asked = _rows_answer(store)
+    assert store.take_lease(f"answer/rows/{reports.asked_key(None)}", "the background process", 600)
+    job = Job("a page's job")
+    with reports.asked_by_a_page():
+        assert job.start(lambda j: {"rows": asked()})
+    assert job._finished.wait(10)
+    assert job.state == DONE and job.result == {"rows": []} and asked.worked == 1, job.error

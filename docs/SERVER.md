@@ -72,8 +72,9 @@ Why these numbers:
   opens one after a change is given the figures of a moment before at once, like the others, and nothing waits
   behind that work in a web worker; at its start it works out again those asked in the last day and each report as
   it first opens, and from then on keeps those and the last view of each report people opened up to date (D-200),
-  so the first person to open one, in the morning too, doesn't wait for it either. The hour at 300,000 is to be
-  measured again with it.
+  so the first person to open one, in the morning too, doesn't wait for it either. A report opened in a first
+  start's first minutes, before that work is done, says it is being worked out and opens by itself once it is ready
+  (D-201). The hour at 300,000 is to be measured again with it.
 
   *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
   32; to be measured on the real server):

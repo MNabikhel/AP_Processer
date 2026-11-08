@@ -16,6 +16,7 @@ waiting for its columns are in the address.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import re
@@ -34,7 +35,7 @@ from markupsafe import Markup
 from ap_coder.ai import history
 from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, reports
 from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import (
@@ -569,9 +570,12 @@ def learning_page(request: Request) -> HTMLResponse:
         "teach": bool(q.get("teach")),
     }  # from Getting started: Teach from past coding open
     if tab == "coding":
-        context.update(corrections_context(store))
-        context.update(_history_context(store, q.get("history"), q.get("sheet")))
-        context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
+        # Teach from past coding is never replaced by "being worked out": the accuracy beside it waited for as
+        # anywhere (B-2060); the tab alone may say so (D-201)
+        with reports.as_anywhere() if context["teach"] or q.get("history") else contextlib.nullcontext():
+            context.update(corrections_context(store))
+            context.update(_history_context(store, q.get("history"), q.get("sheet")))
+            context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
         context.update(suppliers_context(store, shown_count(q.get("shown"), SUPPLIERS_SHOWN)))
     elif tab == "lessons":

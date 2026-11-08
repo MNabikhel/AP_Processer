@@ -60,6 +60,28 @@ each, before anyone asks):
   before starts with its answers). The way out, not done here: a report page with no answer yet answers at once,
   "being worked out", and draws itself again when it is ready, instead of holding a thread.
 
+## A first start with a report not yet worked out saying so at once (phase 8 part 4, D-201)
+
+The same 10-minute run on a 300,000-invoice database never served, made afresh, at 351a725 (D-201 and its review
+fixes: on the server, a report with nothing kept yet whose work another process holds waits 2 s at most, then the
+page says it is being worked out and draws itself again; `bench load` asks again after the page's refresh, as a
+browser does, and counts those answers apart from the pages):
+
+| run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | "being worked out" | 5xx, 'locked' |
+|---|---:|---|---:|---:|---:|---|
+| first start, D-200 (8879c07) | 15,277 | 109 ms / 736 ms / 3.59 s | 442 ms | 7 | | 0, 0 |
+| **first start, D-201 (351a725)** | **15,469** | **143 ms / 1.24 s / 4.41 s** | **607 ms** | **0** | **3** | **0, 0** |
+| 100k, 10 min, before (963a7cc) | 14,300 | 70 ms / 276 ms / 484 ms | 159 ms | 0 | | 0, 0 |
+| 100k, 10 min, D-201 (351a725) | 13,896 | 62 ms / 240 ms / 524 ms | 128 ms | 0 | 0 | 0, 0 |
+
+- **What D-201 did:** no request waited 30 s any more (7 before); the warm-up was done 58 s after the start; three
+  report asks were told "being worked out" (p50 2.1 s) and had the report at their page's next look.
+- **What sets the first 10 minutes' p99 (3.6-4.4 s in the two runs):** not the warm-up. After it the server's slow
+  requests (3-6 s) were opens and checks of the biggest vendor's invoices on its standing PO (3,414 invoices), and
+  where they fall in a 10-minute sample of 100 people moves the p99: the hour's p99 at 300,000 was 2.02 s. The
+  workers' CPU was 12% higher in this run than in D-200's for the same requests; at 100,000 invoices the same code
+  used 12% less than before, with the same latencies (p95 240 ms for 276), so that is the sample, not D-201.
+
 ## The first measurement (8e3915a)
 
 | run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | 5xx | 'database is locked' |

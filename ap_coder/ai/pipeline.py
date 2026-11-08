@@ -42,6 +42,7 @@ from ..core.memory import compare_patterns, compare_with_history, format_example
 from ..core.reference_data import ReferenceData
 from ..core.schema import InvoiceCoding
 from ..core.store.imports import ClaimLost
+from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
 from . import azure_check, verifier
 from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
@@ -833,8 +834,10 @@ class InvoicePipeline:
             return [r for r in results if r is not None]
         pool = ThreadPoolExecutor(max_workers=workers)
         try:
-            # each file in a copy of the caller's context: who started the run, for the events (B-130)
-            futures = {pool.submit(contextvars.copy_context().run, self.process, p): i for i, p in enumerate(paths)}
+            # each file in a copy of the caller's context: who started the run, for the events (B-130); never a
+            # page's brief wait for a report's answer (B-2063)
+            futures = {pool.submit(anywhere_in(contextvars.copy_context()).run, self.process, p): i
+                       for i, p in enumerate(paths)}  # fmt: skip
             for future in as_completed(futures):
                 done(futures[future], future.result())
         except KeyboardInterrupt:

@@ -4093,3 +4093,76 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/web/refresh.py`, `core/store/reports.py`, `web/pages/month_end.py`, `web/pages/spend.py`,
     `web/pages/sales_tax.py`, `erp/insights.py`, `web/app.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
     `tests/web/test_refresh.py`)
+- **D-201** · **A report asked before its first answer is worked out says so at once, and opens by itself once
+  ready** (scale goal, target 1's first minutes).
+  - **Why:** at a first start D-200's warm-up works each report out, Month-end first (12-50 s at 300,000 invoices).
+    A page asking an answer the database has none of yet, while another process held its work, waited for it in the
+    request (up to `ANSWER_WAIT_MOST`, 180 s): four Month-end asks waited 10.7-49 s, and each wait held what its web
+    worker serves others with (a report one of the long routes' 2 places, `HEAVY_AT_ONCE`; the queue, waiting for its
+    late pill's recurring vendors, one of the 4 threads), so the others waited behind: the queue 46.7 s and an
+    invoice 36 s at the client, p99 3.59 s, 7 requests over 30 s, all in the first 100 s.
+  - **What:** on the company server (`background_answers`), a page's GET (`web/core.py` `one_connection` sets
+    `reports.asked_by_a_page`) asking a settled answer of the kind the refresher works out (`shared_answer`'s
+    `again` and `settle`, whether the refresher runs or not) with nothing kept to show, while another thread or
+    process works it out (the warm-up, or another web worker's request), waits for it `ANSWER_BRIEF` (2 s) at most,
+    for the thread here and for the other's hold together; the database is looked at once more at the end, however
+    short the wait (`_waited`: one kept and let go of just after the ask looked is taken, B-2058), and a thread here
+    that holds the answer's lock may only be reading the one kept, which is taken when it holds (B-2059). Then
+    `reports.Working` is raised and one handler (`web/app.py` `being_worked_out`) answers, with
+    `X-AP-Coder-Working: 1` (`WORKING_HEADER`), so it is told apart from a page served (`bench load` counts it apart
+    and asks again as the browser does, B-2062):
+    - a browser's page (GET, Accept text/html): the page in the app's layout, under the report's own title, "This
+      report is being worked out" (AP Coder is working it out just now: after a start on a big database, a minute or
+      so; `templates/working.html`), with `<meta http-equiv="refresh" content="5">` (`WORKING_AGAIN`): it asks again
+      by itself until the report shows, with no script, which the Content-Security-Policy allows (a browser test
+      checks it). Status 200, never kept by the browser (`render`'s no-store): it is the page asked for, saying where
+      things stand; a 5xx body can be swapped for a reverse proxy's own error page (IIS's custom errors, nginx's
+      `proxy_intercept_errors`), losing the refresh, and a load balancer's passive checks count 5xx, so a first
+      start's hundred people could have it take the workers out. An ask again that waited too long for a place in
+      the long routes gets the "Busy" page, which draws itself again too (B-2061);
+    - any other ask (JSON, a file, a script): 503, `Retry-After: 5`, no-store, `{"ok": false, "error": "This report
+      is being worked out just now ...", "working": true}`: a script must know it has no answer.
+    - The queue (everyone's first page) shows the recurring vendors only as its late pill: it asks them waiting 0 s
+      (`asked_by_a_page(0.0)`) and, while they are being worked out, opens without the pill (`today_pills`).
+    - Views that are never replaced (`reports.as_anywhere`, B-2060): a vendor's details, the vendor master's import
+      and Teach from past coding wait for their answers as before; the vendor list and the coding accuracy may say
+      they are being worked out. A job's thread, and each file a run reads on one, never takes a page's brief wait
+      along from the request it copies its context from (`reports.anywhere_in`, B-2063).
+  - **Same:** a laptop (no `background_answers`: its pages work their answers out where asked; a test); an action's
+    POST, a background job, the refresher, a write under way (worked out afresh) and an answer without `again` or
+    `settle` (the CSVs booked from, the duplicate audit) wait as before (a test); an answer with one to show is
+    shown at once as before (D-198, D-179); one nobody works out is worked out in the request as before (the first
+    ask before the warm-up gets to it).
+  - **Measured** (a 20,000-invoice seed of its own, `bench seed --invoices 20000 --workers 2`, a fresh copy never
+    served for each run; the server as the service runs it, 2 web workers and the background process; a process of
+    its own holding Month-end's first answer and the queue's recurring vendors for 60 s, the warm-up's own
+    `refresh.ahead` with their work slowed, as at 300,000; 8 Admins logged in, then asks at once, timed at the
+    client; the code before, 5983127, against D-201):
+    - **28 asks in the first seconds** (6 Month-end, 6 queue, 6 invoices, 2 each of Vendors, Learning, Spend,
+      Insights, Sales tax): before, median 56.3 s, max 58.2 s, 19 over 10 s, 7 "busy" 503s (Spend, Insights,
+      Month-end, Sales tax: 30 s in the long routes' line), the queue 56.2-56.7 s; with D-201, median 3.9 s, max
+      6.5 s, none over 10 s, no 503, the queue 1.0-1.2 s (no late pill), Month-end and Vendors (the recurring
+      vendors) "being worked out". The 28 share 4 cores at a cold start: the invoices took 3.4-4.1 s with D-201,
+      2.5-2.8 s before, when most of the others slept.
+    - **The workers warmed** on the queue and invoices, then 4 Month-end, 4 queue and 6 invoices at once: before,
+      Month-end 53.2-53.6 s, the queue 51.3-51.4 s, the invoices 0.11-0.58 s; with D-201, Month-end 2.08-2.32 s
+      "being worked out" and one 4.04 s (a worker's third: its 2 long routes' places each held for the 2 s wait),
+      the queue 0.19-0.56 s, the invoices 0.15-0.69 s.
+    - Once the work was kept, the next asks showed the reports (Month-end 1.0-1.3 s, the queue 0.5-1.2 s, its pill
+      back), before and with D-201 alike.
+  - **Alternatives:** the app's own poll (a script asking a status address, then drawing the page: a route, its role
+    rule and a script, for what the meta refresh does without them); the page as a 503 (as a restore's): above; a
+    longer brief wait (each ask holds its place that long, and a page asks again every 5 s: at most 40% of a place
+    a person waiting); the request leaving the work to the refresher and answering at once whenever nothing is
+    kept, also when nobody holds the work (no request would ever work a report out on the server: a bigger change,
+    measured on its own, left); waiting without a thread (the pages' handlers are plain ones, on threads).
+  - **Left:** while the work goes on, each ask again holds its long routes' place (or thread) for up to the 2 s;
+    many people on reports in a first start's first minute line up behind each other in a worker (the 4.04 s above).
+    A report whose first ask comes before the warm-up reaches it is still worked out in that request. The views
+    never replaced (a vendor's details, the imports) wait for the warm-up's work as before D-201, holding their
+    thread: rare in a first start's first minutes. The 300,000 first start to be measured again with it.
+  - Reviewed by a fresh reviewer: B-2058 to B-2063 fixed test-first (above).
+  - (`ap_coder/core/store/reports.py`, `web/core.py`, `web/app.py`, `web/jobs.py`, `ai/pipeline.py`,
+    `web/templates/working.html`, `web/templates/error.html`, `web/pages/review.py`, `web/pages/vendors.py`,
+    `web/pages/learning.py`, `bench/load.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/web/test_refresh.py`,
+    `tests/bench/test_bench_load.py`)

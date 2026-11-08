@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from typing import Any
 from urllib.parse import urlencode
@@ -32,7 +33,7 @@ from ap_coder.coding.vendors import (
     vendor_number_problems,
 )
 from ap_coder.core import ui
-from ap_coder.core.store import PARKED, REVIEW, Store
+from ap_coder.core.store import PARKED, REVIEW, Store, reports
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
@@ -222,7 +223,11 @@ def vendors_page(
     view = view if view in VIEWS else "all"
     count = shown_count(rows, VENDORS_SHOWN)
     sort = sort if sort in SORTS else "spend"
-    vendors = store.vendor_summaries(settled=True)  # (only shown: D-197)
+    # A vendor's details and the vendor master's import are never replaced by "being worked out": their answers are
+    # waited for as anywhere (B-2060); the vendor list alone may say so (D-201)
+    anywhere = reports.as_anywhere if opened or setup or file else contextlib.nullcontext
+    with anywhere():
+        vendors = store.vendor_summaries(settled=True)  # (only shown: D-197)
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
     new = [v for v in vendors if (v["first_seen"] or "") >= month_ago]
     on_hold = [v for v in vendors if v["status"] == ON_HOLD or v.get("erp_hold")]  # here, or in JD Edwards
@@ -265,7 +270,9 @@ def vendors_page(
     chosen_vendor = next((v for v in vendors if v["vendor_key"] == opened), None) if opened else None
     if opened and chosen_vendor is None:  # (one whose first invoice came after the totals settled: read exactly)
         chosen_vendor = next((v for v in store.vendor_summaries() if v["vendor_key"] == opened), None)
-    found, late = recurring_rows(store) if vendors else ([], [])
+    with anywhere():
+        found, late = recurring_rows(store) if vendors else ([], [])
+        workload = workload_rows(store) if vendors else []
     keep = {"view": view, "q": q, "sort": sort, **({"shown": count} if count > VENDORS_SHOWN else {})}
     return render(
         request,
@@ -305,7 +312,7 @@ def vendors_page(
         late_total=sum(r.typical_total for r in late),
         recurring_late=recurring.LATE,
         recurring_soon=recurring.DUE_SOON,
-        workload=workload_rows(store) if vendors else [],
+        workload=workload,
         number_problems=vendor_number_problems,
     )
 

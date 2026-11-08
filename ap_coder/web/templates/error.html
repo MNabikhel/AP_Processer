@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{# A page not found (404), AP Coder busy (503: core.run_heavy), or an error no page expected (500, web/errors.py: what to do, the details folded away). #}
+{# A page not found (404), AP Coder busy (503: core.run_heavy, asked again by itself every few seconds: B-2061), or an error no page expected (500, web/errors.py: what to do, the details folded away). #}
+{% block head %}{% if again %}<meta http-equiv="refresh" content="{{ again }}">{% endif %}{% endblock %}
 {% block header %}
 <header class="apc-head apc-anim"><div>
   {{ ui.breadcrumbs(["AP Coder"]) }}
@@ -10,6 +11,7 @@
 <section class="card">
   {{ ui.empty_state("Nothing here" if code == 404 else ("Not for your role" if code == 403 else ("Busy just now" if code == 503 else "That didn't work")), detail) }}
   {% if what_to_do %}<p class="center"><b>What to do:</b> {{ what_to_do }}</p>{% endif %}
+  {% if again %}<p class="center muted">This page tries again by itself.</p>{% endif %}
   <div class="row center">
     <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
     {% if code not in (403, 404, 503) %}<a class="btn" href="/help/report" data-busy="Gathering the reports…"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
