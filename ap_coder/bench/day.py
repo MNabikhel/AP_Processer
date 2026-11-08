@@ -35,6 +35,7 @@ import datetime as dt
 import json
 import os
 import platform
+import re
 import shutil
 import sqlite3
 import statistics
@@ -785,13 +786,16 @@ class Server:
     def log_counts(self) -> dict[str, int]:
         """Lines of the server's output and logs that say something went wrong, each once: the window repeats what a
         process also writes in its own log (the background's, a capture process's, a web worker's), so a line there
-        counts only as often as the window holds it more than the logs do (B-2066)."""
+        counts only as often as the window holds it more than the logs do (B-2066). A log's INFO line says nothing went
+        wrong, "database is locked" in it too (a write tried again by design, B-1808): not counted (B-2070)."""
         words = ("database is locked", "Traceback", "ERROR")
+        info = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (DEBUG|INFO) ")  # (a log's own line, its level)
 
         def said(path: Path) -> Counter[str]:
             lines: Counter[str] = Counter()
             with contextlib.suppress(OSError), path.open(encoding="utf-8", errors="replace") as f:
-                lines.update(line.rstrip("\n") for line in f if any(word in line for word in words))
+                lines.update(line.rstrip("\n") for line in f
+                             if any(word in line for word in words) and not info.match(line))  # fmt: skip
             return lines
 
         logs: Counter[str] = Counter()
