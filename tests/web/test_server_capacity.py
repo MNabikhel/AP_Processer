@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web import app as web_app
-from ap_coder.web import core, roles, server
+from ap_coder.web import core, roles, security, server
 from ap_coder.web.app import create_app
 from ap_coder.web.jobs import Jobs
 from tests.webclient import PAGE, enrol, sign_in, web_settings
@@ -832,6 +832,24 @@ def test_a_web_worker_of_the_server_says_what_it_does_in_its_own_log_and_its_war
     assert len(window) == 1 and SAID.match(window[0]) and window[0].endswith("WARNING ap_coder.web.server: said at "
                                                                              "WARNING"), window  # fmt: skip
     assert (tmp_path / "logs" / "access-1.lock").exists()  # (the same number as its access log)
+
+
+def test_a_web_workers_own_log_is_set_up_once_in_a_process(tmp_path, monkeypatch):
+    """B-2065: asked again in the same process, ``worker_log`` adds no second handler (each line once in the log)."""
+    monkeypatch.setattr(server.logging.getLogger("ap_coder"), "handlers", [])
+    monkeypatch.setattr(server.logging.getLogger(), "handlers", [object()])  # (a window's handler there already)
+    monkeypatch.setattr(security, "_SLOT", [])
+    level = server.logging.getLogger("ap_coder").level
+    first = server.worker_log(tmp_path / "logs")
+    try:
+        assert first is not None and server.worker_log(tmp_path / "logs") is None
+        assert server.logging.getLogger("ap_coder").handlers == [first]
+        assert first.baseFilename.endswith("web-1.log")
+    finally:
+        first.close()
+        server.logging.getLogger("ap_coder").setLevel(level)  # (and the loggers' cache cleared)
+        for _, lock in security._SLOT:
+            lock.close()
 
 
 # --- How many workers --------------------------------------------------------------------------------------------

@@ -896,10 +896,11 @@ def worker_log(folder: Path) -> logging.Handler | None:
     from ap_coder.web.security import worker_slot
 
     folder.mkdir(parents=True, exist_ok=True)
-    path = (folder / f"web-{worker_slot(folder)}.log").resolve()
-    if any(getattr(h, "baseFilename", "") == str(path) for h in logging.getLogger("ap_coder").handlers):
+    name = f"web-{worker_slot(folder)}.log"
+    path = os.path.abspath(folder / name)  # (as the file handler names its file)
+    if any(getattr(h, "baseFilename", "") == path for h in logging.getLogger("ap_coder").handlers):
         return None
-    handler = background_log(folder, path.name)
+    handler = background_log(folder, name)
     root = logging.getLogger()
     if not root.handlers:
         window = logging.StreamHandler()  # (stderr: the server's window, or the service's log)
