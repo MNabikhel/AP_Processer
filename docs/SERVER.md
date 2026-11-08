@@ -345,7 +345,7 @@ them in `server.json` or the machine's environment (step 2). The backup model se
 `service.log.1` to `.5`), and `D:\APCoderData\logs\access.log`, a line per request: the time, the address, the
 user name (`-` before a login), the method, the path (without what follows `?`), the status, the bytes and the
 milliseconds (10 MB, then up to 9 older files); with several workers, one file per worker, `access-1.log`,
-`access-2.log`... And `D:\APCoderData\logs\background.log`: what the background process does, the work nobody waits on (it starts, the page reader's self-test, each invoice read, each AI review, JD Edwards; 5 MB, then up to 5 older files). Each download (a batch's files or ZIP, the directory's export, a
+`access-2.log`... And `D:\APCoderData\logs\background.log`: what the background process does, the work nobody waits on (it starts, the page reader's self-test, each invoice read, each AI review, JD Edwards; 5 MB, then up to 5 older files). With several workers, each also has its own log, `web-1.log`, `web-2.log`... (its access log's number; 5 MB, then up to 5 older files): what it says, a worker started afresh among it (its warnings also reach `service.log`, with their time). Each download (a batch's files or ZIP, the directory's export, a
 backup, a report) is also in *Activity* → *Logins*, with the person. The daily database backup runs as on a laptop
 (step 9).
 

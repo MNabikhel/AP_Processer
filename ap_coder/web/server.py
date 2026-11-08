@@ -567,6 +567,7 @@ def worker_app() -> Any:
     the server opened, without the background work, with the server's token and the key the workers share."""
     spec = json.loads(os.environ[WORKER_ENV])
     store = Store(Path(spec["db"]))
+    worker_log(store.path.parent / "logs")
     app = create_app(store=store, address=spec["address"], insecure_http=bool(spec["insecure_http"]),
                      background=False, processes=int(spec["workers"]),
                      secret=bytes.fromhex(spec["secret"]))  # fmt: skip
@@ -883,6 +884,28 @@ def background_log(folder: Path, name: str = BACKGROUND_LOG) -> logging.Handler:
     log.addHandler(handler)
     if log.level == logging.NOTSET or log.level > logging.INFO:
         log.setLevel(logging.INFO)
+    return handler
+
+
+def worker_log(folder: Path) -> logging.Handler | None:
+    """A web worker's own log, ``logs/web-<n>.log`` beside its access log (``access-<n>.log``, the same number), as
+    ``background_log`` writes the background process's: what ``ap_coder`` says there, INFO and up. A web worker is a
+    process uvicorn spawns, which sets up no logging of its own: its warnings reached the server's window bare
+    (``logging.lastResort``, no time) and the rest went nowhere (B-2065); with no handler of the window yet, one in the
+    log's format, warnings and up. None when this process has that log already."""
+    from ap_coder.web.security import worker_slot
+
+    folder.mkdir(parents=True, exist_ok=True)
+    path = (folder / f"web-{worker_slot(folder)}.log").resolve()
+    if any(getattr(h, "baseFilename", "") == str(path) for h in logging.getLogger("ap_coder").handlers):
+        return None
+    handler = background_log(folder, path.name)
+    root = logging.getLogger()
+    if not root.handlers:
+        window = logging.StreamHandler()  # (stderr: the server's window, or the service's log)
+        window.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        window.setLevel(logging.WARNING)
+        root.addHandler(window)
     return handler
 
 

@@ -383,7 +383,8 @@ the launcher.
   hourly upload allowance, a temporary password on its way to its page (sealed with the key the workers hold in
   memory), the review screen's drafts (read afresh at each request), a restore under way (`<db>.restoring`: every
   worker answers everyone else 503 meanwhile, `web/maintenance.py`, D-188). Each
-  worker writes `logs/access-<n>.log`. `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
+  worker writes `logs/access-<n>.log` and its own log, `logs/web-<n>.log` (`server.worker_log`, B-2065).
+  `POST /shutdown` to any worker writes `<data>/.ap_coder_server.stop`: the
   server and every worker stop (25 s grace for requests under way, then ended). With `--workers 1` (and on a laptop
   always) everything runs in the one process, as before.
 
