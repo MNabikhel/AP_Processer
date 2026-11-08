@@ -467,17 +467,23 @@ def _said(text: str) -> None:
 
 
 def prepare_reports(store: Store) -> None:
-    """The reports' default views with no answer kept worked out before the server answers (D-204,
-    ``refresh.prepare``), each kept for every process: the background process's refresher worked them out after the
-    start, while people already asked them. In a process of its own, started afresh ("spawn", as uvicorn's web
-    workers), so this one, the server's as long as it runs, keeps none of the memory the work peaked at; waited for
-    ``PREPARE_MOST`` and ``PREPARE_ENDS`` at most, then ended. One that fails or is ended is no reason not to serve:
-    the refresher works out the rest, as before. Said in the window, by that process and, when it did not finish,
-    here."""
+    """On a database that never had the reports' default views (``refresh.served_before``), each worked out before the
+    server answers (D-204, ``refresh.prepare``), kept for every process: the background process's refresher worked them
+    out after the start, while people already asked them. One that had them (a restart, an update) is served at once,
+    as before, its views worked out while it serves: an update's downtime stays as it was (D-188). In a process of its
+    own, started afresh ("spawn", as uvicorn's web workers), so this one, the server's as long as it runs, keeps none
+    of the memory the work peaked at; waited for ``PREPARE_MOST`` and ``PREPARE_ENDS`` at most, then ended. One that
+    fails or is ended is no reason not to serve: the refresher works out the rest, as before. Said in the window, by
+    that process and, when it did not finish, here."""
     import multiprocessing
 
     from ap_coder.web import refresh
 
+    if refresh.served_before(store):
+        _said("The reports' default views are not worked out before the dashboard answers: this database has had them "
+              "(by this version or an earlier one), and the background process brings them up to date while it "
+              "serves.")  # fmt: skip
+        return
     most = refresh.PREPARE_MOST
     process = multiprocessing.get_context("spawn").Process(target=_prepare_reports, args=(str(store.path), most),
                                                            name="ap-coder-reports", daemon=True)  # fmt: skip

@@ -949,8 +949,33 @@ def test_the_servers_reports_are_worked_out_in_a_process_of_its_own_before_it_an
     said = [line for line in capfd.readouterr().err.splitlines() if "default views" in line]
     every = len(refresh.DEFAULTS)
     assert len(said) == 2 and said[0].startswith("Working out the reports' default views before the dashboard answers")
-    assert said[1].startswith(f"The reports' default views worked out before the dashboard answers: {every} of the "
-                              f"{every} with none kept ({every} in all), in "), said  # fmt: skip
+    assert said[1].startswith(f"The reports' default views worked out before the dashboard answers: {every} of "
+                              f"{every}, in "), said  # fmt: skip
+
+
+def test_a_database_that_had_the_reports_is_served_at_once_with_none_worked_out_before(store, monkeypatch, capfd):
+    """D-204: on a database that has had the reports' default views (kept by this version or an earlier one: a restart,
+    an update), the server answers at once, as before D-204: no process is started for them, and the window says in
+    one line why and that they are worked out while it serves. An update's downtime stays as it was (D-188)."""
+    import multiprocessing
+
+    from ap_coder.core.store import reports
+    from ap_coder.web import refresh
+
+    for name, _ in refresh.DEFAULTS:
+        store.keep_answer(name, reports.asked_key(name), "t-1", [None], [name])
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE report_answers SET version = '0.1.0/t-1'")  # (only an earlier version's)
+
+    def started(method):
+        raise AssertionError("a process was started")
+
+    monkeypatch.setattr(multiprocessing, "get_context", started)
+    server.prepare_reports(store)
+    said = [line for line in capfd.readouterr().err.splitlines() if line.strip()]
+    assert said == ["The reports' default views are not worked out before the dashboard answers: this database has had "
+                    "them (by this version or an earlier one), and the background process brings them up to date "
+                    "while it serves."]  # fmt: skip
 
 
 def test_the_server_answers_though_its_reports_process_failed_or_was_ended_past_its_bound(store, tmp_path, monkeypatch,
@@ -964,7 +989,7 @@ def test_the_server_answers_though_its_reports_process_failed_or_was_ended_past_
 
     broken = tmp_path / "broken.db"
     broken.write_bytes(b"not a database " * 1000)
-    server.prepare_reports(SimpleNamespace(path=broken))
+    server.prepare_reports(SimpleNamespace(path=broken, answered_before=lambda names: False))
     err = capfd.readouterr().err
     assert re.search(r"WARNING ap_coder\.web\.server: The reports' default views were not worked out", err), err
     assert ("The reports' default views were not all worked out before the dashboard answers: their process stopped "
@@ -1164,7 +1189,8 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
 ):
     """D-204: the real server, two web workers, on a database never served: its window says the reports' default
     views were worked out before it answered, each web worker's own log (``logs/web-<n>.log``, B-2065) that it built
-    its memories before it served, and it serves. Started again, it works none out: each is kept."""
+    its memories before it served, and it serves. Started again, it answers at once, the reports worked out while it
+    serves (this database has had them), each web worker's memories built again."""
     from ap_coder.web import refresh
     from tests.webclient import add_clean
 
@@ -1209,23 +1235,27 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
         return window.read_text(encoding="utf-8")
 
     first = started(1)
-    assert f"worked out before the dashboard answers: {every} of the {every} with none kept" in first, first
+    assert f"worked out before the dashboard answers: {every} of {every}, in " in first, first
     for n in (1, 2):
         own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
         assert re.search(r"INFO ap_coder\.web\.server: A web worker \(process \d+\) built \d+ of its memories before "
                          r"it served", own), own  # fmt: skip
     again = started(2)
-    assert f"worked out before the dashboard answers: 0 of the 0 with none kept ({every} in all)" in again, again
+    assert "The reports' default views are not worked out before the dashboard answers: this database has had them" in (
+        again), again  # fmt: skip
     assert "Working out the reports' default views" not in again
+    for n in (1, 2):
+        own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
+        assert own.count("of its memories before it served") == 2, own
 
 
 def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers():
-    """D-204: a first start (or one after an update) works the reports out before the server answers, then each web
-    worker its memories: server-update's wait for the new version (before it goes back to the old one), the load and
-    day benches' and CI's update job's waits for the server they start cover both bounds (the reports' process ended
-    ``PREPARE_ENDS`` past its own), the step under way at the workers', and the processes' own start. And an update's
-    downtime stays within D-188's 5 minutes: those and server-update's own stop, copy and update (16-40 s
-    measured)."""
+    """D-204: a first start on a database that never had the reports works them out before the server answers, then
+    at each start each web worker builds its memories: server-update's wait for the new version (before it goes back
+    to the old one), the load and day benches' and CI's update job's waits for the server they start cover both bounds
+    (the reports' process ended ``PREPARE_ENDS`` past its own), the step under way at the workers', and the processes'
+    own start. An update of a database that had them works none out; one that never had them still stays within
+    D-188's 5 minutes: those and server-update's own stop, copy and update (16-40 s measured)."""
     import inspect
 
     from ap_coder.bench import day, load
