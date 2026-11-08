@@ -4310,14 +4310,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **What:**
     - **The reports, before the port opens** (`web/server.py:prepare_reports`, `web/refresh.py:prepare`): in
       `_serve_workers`, before `listening_socket` (connections are refused meanwhile, none held), each of `DEFAULTS`
-      with no answer kept for its question is worked out through `ahead`, as the refresher works it out, on the
-      server's Store with `background_answers` (B-2050: the Vendors page's totals kept for every process too). One kept
-      already, of any age, is not: the refresher brings it up to date after the start, as before.
-      `refresh.PREPARE_MOST` (120 s, looked at before each view, the one under way finished) bounds the whole; the rest
-      is then the refresher's. A view that fails, or whose question can't be found, is logged and the next goes on. The
-      window (and `service.log`) says "Working out the reports' default views..." before the first, and at the end how
-      many of how many were worked out, in how long. Printed, as the server's other lines at a start: the window shows
-      warnings and up only (`cli.configure_logging`, B-240; uvicorn at "warning"), so an INFO line would reach nobody.
+      with no answer kept for its question is worked out through `ahead`, as the refresher works it out, on a Store
+      with `background_answers` (B-2050: the Vendors page's totals kept for every process too), in `DEFAULTS`' order
+      (Month-end's three first). One kept already, of any age, is not: the refresher brings it up to date after the
+      start, as before. A view that fails, or whose question can't be found, is logged and the next goes on.
+    - **In a process of its own** (`server._prepare_reports`, started with multiprocessing's "spawn", as uvicorn's web
+      workers, on Windows and Linux alike): the server's own process (uvicorn's supervisor, which lives as long as the
+      server) did the work at first and its allocator kept what it peaked at (114 MB with the server's imports, 235-241
+      MB after the work at 60,000 invoices); now it waits for that process and keeps 118 MB (20,000 invoices). Its
+      bounds: `refresh.PREPARE_MOST`, 200 s, looked at before each view, the view under way finished, then
+      `server.PREPARE_ENDS`, 15 s more, after which the process is ended. A process that fails (exit code 1, its
+      warning in the window with its time) or is ended is no reason not to serve: the window says so and the
+      refresher works out the rest after the start, as before D-204.
+    - **Said in the window** (and `service.log`): "Working out the reports' default views... 200 seconds at most"
+      before the first, then how many of how many were worked out, in how long (or that its process stopped or was
+      ended). Printed, as the server's other lines at a start: the window shows warnings and up only
+      (`cli.configure_logging`, B-240; uvicorn at "warning"), so an INFO line would reach nobody.
     - **"Kept already", without working it out:** an answer's row is found by its name and its question's key
       (`asked_key` of the `asked` its caller builds: Learning's from a count of events, Month-end's from the late
       batches and the vouchers not posted, Sales tax's from the tax setup...), not from the refresher's arguments, so
@@ -4329,19 +4337,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       the caller's format) on this database (its stamp's `summary_id`): one row read, no value decoded. The lookups
       take 0.1 s for all 14 views at 60,000 invoices.
     - **Each web worker's memories, before it serves** (`server.warm_worker`, in `worker_app`, uvicorn's factory):
-      the learning memory, the vendor list, the vendors' ERP IDs, what the held vendors were paid with, the reading
-      status, Learning's latest lessons, then the lessons and invoices of the biggest vendors of the review queue's
-      first 50 invoices (8 at most, their invoices within half of `VENDOR_ROWS_KEPT`): D-203's `warm_steps`, each
-      through the page's own function, run in turn with no thread and no request to yield to. `WARM_MOST` (15 s,
-      looked at before each step) bounds it: uvicorn's pong thread answers the supervisor's "alive?" meanwhile, and a
-      worker started afresh by `restart_all` must serve within `timeout_worker_healthcheck` (30 s). A step that fails
-      is logged and the next goes on; a worker asked to stop stops building. Said in its own `logs/web-<n>.log`
-      (B-2065). The other workers serve meanwhile (a worker started afresh by `Recycle`, D-153); at a first start
-      none does for those seconds, and connections wait in the port's queue.
+      the templates of an invoice and of the review queue (`WARM_TEMPLATES`, with every template they extend, include
+      or import: 0.43 s a first open compiled at 60,000 invoices), the learning memory, the GL suggestions' index of
+      it (`suggest_gl` asked of one line: 0.32 s), the vendor list, the vendors' ERP IDs, what the held vendors were
+      paid with, the reading status, Learning's latest lessons, then the lessons and invoices of the biggest vendors
+      of the review queue's first 50 invoices (8 at most, their invoices within half of `VENDOR_ROWS_KEPT`): D-203's
+      `warm_steps` and those two, each through the page's own function, run in turn with no thread and no request to
+      yield to. `WARM_MOST` (25 s, looked at before each step) bounds it; uvicorn's pong thread answers the
+      supervisor's "alive?" meanwhile. The 30 s uvicorn gives a new worker to serve (`timeout_worker_healthcheck`) is
+      `restart_all`'s alone, on SIGHUP, which AP Coder never sends: a worker that ended (`Recycle`, D-153) is replaced
+      with no such wait. A step that fails is logged and the next goes on; a worker asked to stop stops building. Said
+      in its own `logs/web-<n>.log` (B-2065). The other workers serve meanwhile (a worker started afresh by
+      `Recycle`); at a first start none does for those seconds, and connections wait in the port's queue.
     - **The waits for a server started:** server-update's for the new version (`UP_WAIT`, before it goes back to the
       old one) 180 → 300 s, `bench load`'s 180 → 300 s (`START_WAIT`), `bench day`'s 120 → 300 s, CI's update job's
       300 s made a constant (`UP_WAIT`); `test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers`
-      holds each at `PREPARE_MOST + WARM_MOST` + 2 minutes or more.
+      holds each at `PREPARE_MOST + PREPARE_ENDS + WARM_MOST` + 30 s or more (270 s).
+    - **Within an update's 5 minutes (D-188):** the reports' bound is looked at before each view and Month-end's three,
+      by far the longest (121 s together at 300,000 on a database never served), come first, so the view under way
+      at 200 s is one of the quick ones: the longest of them about 10 s at 300,000 (estimated: the Vendors page's
+      totals 7 s there, B-2050; Spend's figures and Learning's corrections 1.1-1.3 s at 60,000), and `PREPARE_ENDS`
+      ends it at 215 s whatever. With the workers' 25 s, the step under way and the processes' starts (about 15 s)
+      and server-update's own stop, copy and update (16-40 s measured), the worst case is 295 s; the waits' test
+      holds 200 + 15 + 25 + 15 + 40 within CI's 300 s limit.
   - **What stays the same:** a laptop and the server in one process (`--workers 1`) prepare and build nothing ahead;
     the refresher's start, its wants and its views kept warm are as they were (at its start it takes the answers kept,
     a cheap take); an ordinary restart finds each view kept and works none out (0.1 s of lookups); what a page shows.
@@ -4353,14 +4371,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     before it returns and an invoice opened right after reads none again; only a server's web worker builds them; the
     queue's biggest vendors within their bounds; the bound, a stop, a failing step and steps not found; the real
     two-worker server: its window's line, each `web-<n>.log`'s, it serves, and started again it works none out; the
-    waits). Seven mutations (no `background_answers`, kept never found, another version's taken, either bound not
-    looked at, the memories not built, nothing prepared) each fail them.
+    waits; the reports in another process, none of their work in this one; that process failing or ended at its
+    bound, the window saying so and the server answering; the templates compiled and the GL index built before the
+    worker serves, an invoice and the queue opened after compiling and building none). Seven mutations (no
+    `background_answers`, kept never found, another version's taken, either bound not looked at, the memories not
+    built, nothing prepared) each fail them.
   - **Measured** (4 cores shared with another seed's build, Python 3.12, a 60,000-invoice seed of my own,
     `bench seed --invoices 60000`, 2 web workers):
     - the reports before the port opens, on the database never served: 7.9 s in the server; 12.5 s timed view by view
       with the other build busier, Month-end's received POs 6.2 s of it, the next longest Spend's figures 1.3 s and
-      Learning's corrections 1.1 s; with Month-end's billing lines kept already (D-194), 5.3 s. At 300,000 about 5
-      times as long (estimated: about a minute; to be measured);
+      Learning's corrections 1.1 s; with Month-end's billing lines kept already (D-194), 5.3 s. At 300,000 not 5 times
+      as long (the estimate before): Month-end's three alone took 121 s (below);
     - each web worker's memories: 2.9-3.1 s (22 steps; the learning memory 1.0 s, the vendor list 0.5 s, Learning's
       latest lessons 0.4 s, the reading status 0.2 s, the biggest vendor's lessons 0.4 s); D-203 measured about 9 s at
       300,000;
@@ -4371,14 +4392,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       What a first open still builds (a profile): Jinja's templates compiled, 0.43 s, and the GL suggestions' index of
       the learning memory (`suggest._build_memory`), 0.32 s; neither grows much with the database.
     - a process doing the same as the server's own (uvicorn's supervisor), after the reports: 235-241 MB, where the
-      server's imports alone take 114 MB: its allocator keeps what the work peaked at (at 300,000, more: to be
-      measured).
+      server's imports alone take 114 MB: its allocator keeps what the work peaked at. (Hence their own process.)
+  - **At 300,000 invoices** (the lead's run of 6696496: a seed never served, 100 people for 10 minutes from its first
+    start, 4 web workers): the window said "3 of the 3 with none kept (14 in all), in 121.3 s; past 120 s, 11 left to
+    the background process": Month-end's three alone took 121.3 s (their billing facts, D-194, built from nothing);
+    each worker's memories stopped at the 15 s bound with 8-12 of their steps (4 workers building at once). Pages p50
+    115 ms, p95 686 ms, p99 2.91 s (under the 3 s target; 2.24-3.18 s before), actions p95 347 ms, no error, none over
+    30 s. The slow ones left were in the first 2 minutes: the quick reports the 120 s bound left out (Sales tax p95
+    3.44 s, Insights, Vendors). Hence `PREPARE_MOST` 120 → 200 s (all 14: Month-end's 121 s and about a minute for the
+    others, estimated), the reports in a process of their own, `WARM_MOST` 15 → 25 s and the two steps more.
+  - **After them** (a 20,000-invoice seed of my own, 2 web workers, a first start): the reports 3.6 s in their own
+    process, the server answering 9.4 s after its start, its own process 118 MB; each worker 2.5-2.7 s for 24 steps;
+    a first open after them 0.25 s in a worker's process, half of it importing the PDF library (`capture.layout`,
+    once a process), then 0.07 s.
   - **Left:** every update works all of the views out before it answers, since an answer's version is AP Coder's own
-    (`reports._version`): the update's downtime grows by that time (D-188's 5 minutes: at 300,000 about a minute,
-    estimated); CI's update job installs the same version again (`--force`), so it does not see it. A first start's
-    workers serve nothing for their 3-15 s, all at once. The supervisor keeps the memory of that work (above); a
-    process of its own for it would give it back, at the cost of another start. The 300,000 seed's first 10 minutes
-    under load to be measured again with it.
+    (`reports._version`), and Month-end's billing facts are kept by version too (`purchasing`'s `kept`): at 300,000
+    an update's start costs about what a database never served does, Month-end's 121 s and about a minute more
+    (estimated: about 3 minutes, the bound 200 s), so its downtime is about 3.5 to 4 minutes of D-188's 5 (estimated);
+    CI's update job installs the same version again (`--force`), so it does not see it. A first start's workers serve
+    nothing for their seconds of building, all at once. The 300,000 seed's first 10 minutes under load to be measured
+    again with these.
   - (`ap_coder/web/server.py`, `web/refresh.py`, `core/store/reports.py`, `ops/server_update.py`, `bench/load.py`,
     `bench/day.py`, `scripts/ci/server_update_downtime.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
     `tests/web/test_refresh.py`, `tests/web/test_server_capacity.py`)

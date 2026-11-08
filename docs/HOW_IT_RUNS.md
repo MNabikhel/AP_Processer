@@ -367,13 +367,17 @@ the launcher.
   `ap_coder/web/server.py:_serve_workers` first works out the reports' default views that have no answer kept for
   their question, the port still closed (`server.prepare_reports`, `ap_coder/web/refresh.py:prepare`, D-204: a
   database never served, or after an update, an answer's version being AP Coder's; each found without working it out,
-  `reports.question_of` and `Store.answer_kept`; one kept, of any age, is the refresher's; 2 minutes at most,
-  `refresh.PREPARE_MOST`; said in the window and `service.log`), then opens the port
+  `reports.question_of` and `Store.answer_kept`; one kept, of any age, is the refresher's; in a process of its own,
+  `server._prepare_reports`, started with "spawn", so the server's own keeps none of its memory; 200 s at most,
+  `refresh.PREPARE_MOST`, looked at before each view, then 15 s more, `server.PREPARE_ENDS`, before that process is
+  ended; one that fails or is ended is no reason not to serve; said in the window and `service.log`), then opens the
+  port
   and runs uvicorn's own supervisor, which starts N web workers with "spawn" (Windows and Linux alike: each is a fresh
   Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over, then the worker's memories before
-  it serves: the learning memory, the vendor list, the vendors' ERP IDs and on-hold numbers, the reading status,
-  Learning's latest lessons, the queue's biggest vendors' lessons and invoices, each through the page's own function,
-  15 s at most, `server.warm_worker`, said in its `web-<n>.log`; the others serve meanwhile), and starts again a worker
+  it serves: an invoice's and the queue's templates, the learning memory and its GL suggestions' index, the vendor
+  list, the vendors' ERP IDs and on-hold numbers, the reading status, Learning's latest lessons, the queue's biggest
+  vendors' lessons and invoices, each through the page's own function, 25 s at most, `server.warm_worker`, said in
+  its `web-<n>.log`; the others serve meanwhile), and starts again a worker
   that stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
