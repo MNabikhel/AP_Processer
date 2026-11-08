@@ -634,9 +634,10 @@ def _mend(path) -> None:
     """Every coding the match can't read made one it can again (each a change)."""
     with sqlite3.connect(path) as conn:
         for column in ("ai_output", "final_output"):
-            conn.execute(f"UPDATE invoices SET {column} = ? WHERE {column} IS NOT NULL AND (NOT json_valid({column}) "
-                         f"OR json_type({column}) != 'object' OR json_type({column}, '$.line_items') = 'text' OR "
-                         f"json_type({column}, '$.subtotal') = 'text' OR {column} LIKE '%\"quantity\": \"x\"%')",
+            conn.execute(f"UPDATE invoices SET {column} = ? WHERE CASE WHEN {column} IS NULL THEN 0 WHEN NOT "
+                         f"json_valid({column}) THEN 1 WHEN json_type({column}) != 'object' THEN 1 ELSE "
+                         f"json_type({column}, '$.line_items') = 'text' OR json_type({column}, '$.subtotal') = 'text' "
+                         f"OR {column} LIKE '%\"quantity\": \"x\"%' END",
                          (json.dumps(_doc(random.Random(0), 0)),))  # fmt: skip
 
 
