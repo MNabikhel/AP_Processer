@@ -1151,3 +1151,23 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
     again = started(2)
     assert f"worked out before the dashboard answers: 0 of the 0 with none kept ({every} in all)" in again, again
     assert "Working out the reports' default views" not in again
+
+
+def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers():
+    """D-204: a first start (or one after an update) works the reports out before the server answers, then each web
+    worker its memories: server-update's wait for the new version (before it goes back to the old one), the load and
+    day benches' and CI's update job's waits for the server they start cover both bounds, the view and the step
+    under way at them, and the processes' own start."""
+    import inspect
+
+    from ap_coder.bench import day, load
+    from ap_coder.ops import server_update
+    from ap_coder.web import refresh
+    from tests.scripts import load_script
+
+    first = refresh.PREPARE_MOST + server.WARM_MOST + 120
+    downtime = load_script("ci/server_update_downtime", "ap_script_server_update_downtime_waits")
+    waits = {"server-update": server_update.UP_WAIT, "bench load": load.START_WAIT, "CI's update job": downtime.UP_WAIT,
+             "bench day": inspect.signature(day.Server.start).parameters["timeout"].default}  # fmt: skip
+    assert all(wait >= first for wait in waits.values()), (first, waits)
+    assert server.WARM_MOST <= 30 / 2  # (uvicorn waits 30 s for a worker started afresh to serve: restart_all)

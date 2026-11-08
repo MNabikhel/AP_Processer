@@ -73,8 +73,10 @@ Why these numbers:
   of the biggest vendor's invoices. In a database's first 10 minutes the slowest 1% are each web worker's first opens of
   an invoice (3 to 6 s: that worker's memories built) and the reports asked before the background process has worked
   them out (3 to 4 s), so its 99% within 3 s is at the edge (2.2 and 3.2 s in two runs; building each worker's memories
-  as it starts was tried and made the whole worse: D-203). That happens once in a database's life; an update's restart
-  finds the reports kept. Memory over the hour at 300,000: each web worker 0.7 to 0.75 GB at the end, flat in the second
+  as it starts was tried and made the whole worse: D-203). Since D-204 that work is done before the server answers
+  (the 300,000 run above is from before it, to be measured again): the reports with none kept are worked out before
+  the port opens, and each web worker builds its memories before it takes a request, so a first start of a big
+  database takes longer before the dashboard answers (below). Memory over the hour at 300,000: each web worker 0.7 to 0.75 GB at the end, flat in the second
   half (its caches bounded, D-195), the background process about 0.5 GB, each capture process 320 MB. 200 people at once
   on these 4 cores (50 a core, four times what 400 people put on each of the next stage's 32) fill them: 95%
   within 5.3 s, no error.
@@ -335,7 +337,15 @@ many invoices at once.
 
 What it does: the task runs `run.cmd`, which runs AP Coder's *service host* (`python -m ap_coder service run`). The
 host starts the dashboard (`python -m ap_coder serve --server ...` with the settings of `server.json`) and starts it
-again if it stops (after 5 seconds, then longer, up to 5 minutes). The task itself comes back within 5 minutes if the
+again if it stops (after 5 seconds, then longer, up to 5 minutes). **A first start takes longer before the dashboard
+answers** (D-204): on a database never served, and after an update, AP Coder works out each report's first view
+before it opens its port (connections are refused meanwhile; `service.log` says "Working out the reports' default
+views before the dashboard answers..." and then how many and how long), and each web worker builds what an invoice's
+first opening reads before it takes a request (its `web-<n>.log` says so). Measured on a test computer (4 cores,
+2 web workers): at 60,000 invoices it answered 13 s after its start (the reports 8 s, each worker 3 s) where it took
+2 s before; at 300,000 the reports take about a minute (estimated), never more than 2 minutes (then the rest is
+worked out after the start, as before), each worker 15 s at most. An ordinary restart finds the reports kept and
+answers within a few seconds (5 s at 60,000). The task itself comes back within 5 minutes if the
 host was ended. Settings can also come from environment variables, which win over `server.json`: `AP_SERVER_PORT`,
 `AP_DASHBOARD_ADDRESS`, `AP_TLS_CERT`, `AP_TLS_KEY`, `AP_ALLOWED_HOSTS`, `AP_SERVER_PROXY`, `AP_SERVER_WORKERS`,
 `AP_LLM_PARALLEL`, `AP_WORKER_THREADS`, `AP_CAPTURE_PROCESSES`. The host reads the data folder's `.env` into its
@@ -685,7 +695,8 @@ Then the switch, the only time staff see AP Coder closed:
    copy of step 6 with what was written since added, so it is the database as it was the moment the service
    stopped;
 9. updates the database (the new version opens it once);
-10. starts the service from the new folder, and waits for it to answer. The backup's SHA-256 is then written in its
+10. starts the service from the new folder, and waits for it to answer (5 minutes at most: a new version works the
+    reports out before it answers, up to 2 minutes, D-204). The backup's SHA-256 is then written in its
     list, and the backup copied to the second backup folder, when one is set.
 
 It prints how long the service was down (from the stop to the new version answering) and each step's time, and
@@ -694,7 +705,9 @@ whole copy is made in step 6, while staff work (about a minute per GB on a slow 
 was written during it. What step 8 still does for every invoice is to look at its file again (about 2 seconds per
 20,000 files on a Linux test computer). Measured there (D-196): with 20,000 invoices (669 MB) down 6 s, and with
 120,000 (2.45 GB) down 6 s, where it was 12 s and 16 s with the copy made in step 8. CI checks that with 20,000
-invoices it stays under 5 minutes on Windows. If the database can't be copied in step 6 (a report that reads for over a
+invoices it stays under 5 minutes on Windows. A new version's start adds the reports' first views worked out before
+it answers (D-204: an answer kept by the version before is not taken), 8 s at 60,000 invoices, about a minute at
+300,000 (estimated), 2 minutes at most. If the database can't be copied in step 6 (a report that reads for over a
 minute keeps it from being still), it says so and copies it whole in step 8, as before. If step 2 to 6 fails,
 nothing was stopped or changed: the old version kept serving, and it says why. If step 7, 8, 9 or 10 fails, it puts
 the database backup back, switches the service back to the old folder and starts it again, and says why. Either way

@@ -716,7 +716,7 @@ class Server:
         self.proc: subprocess.Popen[bytes] | None = None
         self.settings = {k: v for k, v in env.items() if k.startswith("AP_")}
 
-    def start(self, timeout: float = 120.0) -> None:
+    def start(self, timeout: float = 300.0) -> None:  # (a first start works the reports out first: D-204)
         from ap_coder.core import paths
 
         empty = self.data.parent / "empty.env"

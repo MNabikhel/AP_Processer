@@ -43,6 +43,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LIMIT = 300.0  # seconds: the downtime allowed (D-188)
+UP_WAIT = 300.0  # seconds a dashboard started has to answer (a first start works the reports out first: D-204)
 PORT = 8541
 PARTS = [("prepare_s", "prepared, the old version serving"), ("check_migration_s", "  of it: a copy of the database "
          "updated"), ("self_check_s", "  of it: the self-check"), ("copy_ahead_s", "  of it: the safety copy, ahead"),
@@ -154,7 +155,7 @@ def windows(args: argparse.Namespace) -> int:
           "--invoices", args.invoices, "--replace"], cwd=folder, env=env)  # fmt: skip
     timed("The service installed and started", [python, "-m", "ap_coder", "service", "install", "--account", "SYSTEM",
           "--insecure-http", "--host", "127.0.0.1", "--port", PORT, "--workers", "2"], cwd=folder, env=env)  # fmt: skip
-    print(f"=== It answers after {wait_until_up(PORT, 300):.1f} s", flush=True)
+    print(f"=== It answers after {wait_until_up(PORT, UP_WAIT):.1f} s", flush=True)
     size = (data / "ap_coder.db").stat().st_size / 1e6
     print(f"=== The database: {size:,.0f} MB", flush=True)
     done = subprocess.run([str(python), "-m", "ap_coder", "server-update", str(bundle), "--sha256", sha256(bundle),  # noqa: S603
@@ -250,7 +251,7 @@ def local(args: argparse.Namespace) -> int:
     service.write_config(data, folder=str(current), insecure_http=True, host="127.0.0.1", port=PORT, workers=2)
     server = LocalServer(data, service.settings(data))
     server.start()
-    print(f"=== It answers after {wait_until_up(PORT, 300):.1f} s; the database: "
+    print(f"=== It answers after {wait_until_up(PORT, UP_WAIT):.1f} s; the database: "
           f"{(data / 'ap_coder.db').stat().st_size / 1e6:,.0f} MB", flush=True)  # fmt: skip
     server_update.running_folder = lambda: Path(service.read_config(data)["folder"])  # (the "cd" into it)
     try:
