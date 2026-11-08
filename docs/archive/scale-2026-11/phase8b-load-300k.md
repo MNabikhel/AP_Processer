@@ -60,6 +60,26 @@ each, before anyone asks):
   before starts with its answers). The way out, not done here: a report page with no answer yet answers at once,
   "being worked out", and draws itself again when it is ready, instead of holding a thread.
 
+## A first start with the big PO's billing kept by invoice (phase 8 part 5, D-202): every target met
+
+The same 10-minute run on a 300,000-invoice database never served, made afresh, at aeb40ef (D-202 and its review
+fixes: a PO billed by 1,000 invoices or more is kept in each process with each invoice's matched lines and brought up
+to date from the vendors' change log; the smaller POs' line matches kept; the open and the check of an invoice on the
+biggest vendor's standing PO, 3,382 invoices, about 626 → 18 ms of CPU):
+
+| run | requests | pages p50 / p95 / p99 | actions p95 | over 30 s | "being worked out" | 5xx, 'locked' |
+|---|---:|---|---:|---:|---:|---|
+| first start, before D-200 (963a7cc) | 15,413 | 129 ms / 1.17 s / 5.78 s | 660 ms | 7 | | 0, 0 |
+| first start, D-200 (8879c07) | 15,277 | 109 ms / 736 ms / 3.59 s | 442 ms | 7 | | 0, 0 |
+| first start, D-201 (351a725) | 15,469 | 143 ms / 1.24 s / 4.41 s | 607 ms | 0 | 3 | 0, 0 |
+| **first start, D-202 (aeb40ef)** | **14,764** | **116 ms / 898 ms / 2.24 s** | **397 ms** | **0** | **1** | **0, 0** |
+| first start, D-202, again (1f45173, a fresh seed) | 15,276 | 122 ms / 977 ms / 3.18 s | 454 ms | 0 | 0 | 0, 0 |
+| 100k, 10 min, D-202 (aeb40ef) | 14,083 | 62 ms / 233 ms / 591 ms | 119 ms | 0 | 0 | 0, 0 |
+
+**In a database's first 10 minutes at 300,000 invoices every target is met in the first run, and all but the p99 (3.18 s for 3 s) in the second.** The second's slowest server requests were the first 1-2 minutes: each web worker's first invoice opens (3-6 s), and Sales tax and Learning asked before the warm-up reached them (3.6-4.7 s: worked out in the request; Learning's past-coding rows 2.2 s on each worker's first visit; both 0.05-0.08 s at their next ask). The invoice page's p99 2.72 s (the
+D-201 run's 3.65 s), the check's 1.11 s (1.61 s), the queue's 1.34 s (4.51 s); Month-end's slowest 1.04 s; no minute's
+worst 10 s over 1.9 s at p95. At 100,000 invoices the same code holds its figures (p99 591 ms; 484-524 ms before).
+
 ## A first start with a report not yet worked out saying so at once (phase 8 part 4, D-201)
 
 The same 10-minute run on a 300,000-invoice database never served, made afresh, at 351a725 (D-201 and its review

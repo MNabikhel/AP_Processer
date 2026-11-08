@@ -41,6 +41,26 @@ SELECT id, status, invoice_number, invoice_date, export_batch,
        CASE WHEN ok THEN {dialect.json_values("doc", [f"$.{k}" for k in PO_CODING])} END,
        CASE WHEN NOT ok THEN doc END FROM read ORDER BY id
 """
+# Of each of these invoices (a JSON list of ids), what ``po_invoices_since`` reads: its vendor, the columns
+# ``po_invoices`` gives, and of one in review or approved its coding as ``po_invoices`` reads it (``active``).
+_PO_INVOICES_OF = f"""
+WITH coded AS (SELECT id, vendor_key, status, invoice_number, invoice_date, export_batch,
+                      status IN {_ACTIVE_IN} AS active,
+                      COALESCE(NULLIF(final_output, ''), NULLIF(ai_output, ''), '{{}}') AS doc FROM invoices
+               WHERE {_in_list("id")}),
+read AS (SELECT *, CASE WHEN NOT active THEN NULL WHEN NOT {dialect.json_valid("doc")} THEN 0
+                        ELSE json_type(doc) = 'object' END AS ok FROM coded)
+SELECT id, vendor_key, status, invoice_number, invoice_date, export_batch,
+       CASE WHEN ok THEN {dialect.json_values("doc", [f"$.{k}" for k in PO_CODING])} END,
+       CASE WHEN NOT ok THEN doc END, active FROM read ORDER BY id
+"""
+# The moment a PO's invoices are brought up to date in: the database's ``summary_id``, the vendors' change log's first
+# and last change, and the invoices quoting the PO (any status: a JSON list of ids, by the PO's index).
+_PO_MOMENT = (
+    "SELECT (SELECT value FROM settings WHERE key = 'summary_id'), (SELECT MIN(seq) FROM vendor_changes), "
+    "(SELECT MAX(seq) FROM vendor_changes), (SELECT json_group_array(id) FROM invoices WHERE po_key = ?)"
+)
+_VENDOR_COUNTS = f"SELECT key, COALESCE(CAST(value AS INTEGER), 0) FROM settings WHERE {_in_list('key')}"
 # Of each of these invoices (a JSON list of ids), what billing a PO reads of its coding (the approved one, else AP
 # Coder's: ``po_invoices``): [id, [invoice date, lines], null], SQLite writing the coding's own text of each value; [id,
 # null, the coding] when it is not an object of valid JSON, for Python to read as before. All in one JSON text.
@@ -75,6 +95,34 @@ class BillingMoment:
     # (vendor, its stamp as read, its stamp now, its invoices decoded: [(id, what was read)], the ids whose rows go:
     # None, all)
     keep: list[tuple[str, Any, tuple[str, int, int], list[tuple[int, Any]], Any]] = field(default_factory=list)
+
+
+@dataclass
+class PoChanges:
+    """What ``po_invoices_since`` read of a PO's invoices, in one moment: its ``stamp`` (the database's ``summary_id``,
+    the last change of the vendors' change log, and each of the invoices' vendors' count of changes then, B-1811),
+    the invoices quoting the PO (``quoting``: any status, in order), and those of them read (``read``: {id: (its
+    vendor, its row as ``po_invoices`` gives it; None when it is not in review or approved)})."""
+
+    stamp: tuple[Any, int, dict[str, int]]
+    quoting: list[int]
+    read: dict[int, tuple[Any, dict[str, Any] | None]]
+
+
+def _vendor_counts(conn: Any, vendors: Any) -> dict[str, int]:
+    """Each of ``vendors``' count of changes on ``conn`` (``changes/vendor/<key>``, which every version's triggers
+    keep, D-159; 0 before its first)."""
+    keys = {vendor: f"changes/vendor/{vendor}" for vendor in vendors}
+    found = dict(conn.execute(_VENDOR_COUNTS, (json.dumps(sorted(keys.values())),)).fetchall())
+    return {vendor: found.get(key, 0) for vendor, key in keys.items()}
+
+
+def _po_row(n: int, status: str, number: Any, date: Any, batch: Any, facts: Any, doc: Any) -> dict[str, Any]:
+    """An invoice as ``po_invoices`` gives it: its coding read out of SQLite's values of PO_CODING (``facts``,
+    decoded), else (not an object of valid JSON) read as it was, failing as it did."""
+    coding = dict(zip(PO_CODING, facts, strict=True)) if doc is None else json.loads(doc)
+    return {"id": n, "status": status, "invoice_number": number, "invoice_date": date, "coding": coding,
+            "export_batch": batch}  # fmt: skip
 
 
 def _billing(coding: Any) -> Any:
@@ -418,18 +466,64 @@ class PurchasingMixin:
         coding (``coding``: its subtotal, invoice date and lines, ``PO_CODING``) and export batch (None: not exported
         yet). SQLite reads those out of each coding, the rest of it not decoded: a PO billed by every invoice of a big
         vendor has thousands (3,381 at 300,000 invoices), whose whole codings took 1.5 s to decode at each open and
-        check of one of them (D-199)."""
+        check of one of them (D-199). The match and the PO page keep a big PO's in each process (``po.po_billing``,
+        D-202), brought up to date by ``po_invoices_since``."""
         with self._conn() as conn:
             rows = conn.execute(_PO_INVOICES, (key, *ACTIVE_STATUSES)).fetchall()
         out = []
         for n, status, number, date, batch, facts, doc in rows:
             if n == exclude_id:
                 continue
-            # Not an object of valid JSON: the coding read as it was, failing as it did.
-            coding = dict(zip(PO_CODING, json.loads(facts), strict=True)) if doc is None else json.loads(doc)
-            out.append({"id": n, "status": status, "invoice_number": number, "invoice_date": date, "coding": coding,
-                        "export_batch": batch})  # fmt: skip
+            out.append(_po_row(n, status, number, date, batch, json.loads(facts) if doc is None else None, doc))
         return out
+
+    def po_invoices_since(self, key: str, since: tuple[Any, int, dict[str, int]] | None = None,
+                          kept: dict[int, Any] | None = None) -> PoChanges | None:  # fmt: skip
+        """The invoices quoting the PO ``key`` now, and those of them to read again, read (``PoChanges``), for a
+        process keeping them (``po.po_billing``, D-202): every one without ``since`` (an earlier read's stamp) or once
+        it no longer holds (another database or summary since, a restore; a change since gone from the vendors' change
+        log); else those not in ``kept`` ({id: its vendor, as read then}), those the log names since (D-174), those of
+        a vendor whose count of changes moved by more than the log says (an older AP Coder's triggers count, writing
+        no log: B-1811), and those with no vendor, whose changes no log follows. Which invoices quote the PO is read
+        each time, off its index (a PO number changed by plain SQL alone is no change the log follows). The log and
+        the invoices it names are read in one moment (B-1812). None inside a write under way, which may yet be undone:
+        nothing read in it is kept (``po_invoices`` reads them afresh)."""
+        kept = kept or {}
+        with self._conn() as conn:
+            if conn.in_transaction:
+                return None
+            with one_snapshot(conn):
+                summary_id, first, last, quoting = conn.execute(_PO_MOMENT, (key,)).fetchone()
+                quoting = sorted(json.loads(quoting))
+                todo = quoting
+                if since is not None and since[0] == summary_id and since[1] >= (first or 1) - 1:
+                    named, logged = set(), dict.fromkeys(since[2], 0)
+                    for vendor, n in json.loads(conn.execute(
+                            "SELECT json_group_array(json_array(vendor_key, invoice_id)) FROM vendor_changes WHERE "
+                            "seq > ?", (since[1],)).fetchone()[0]):  # fmt: skip
+                        named.add(n)
+                        if vendor in logged:
+                            logged[vendor] += 1
+                    counts = _vendor_counts(conn, since[2])
+                    moved = {v for v, count in since[2].items() if counts[v] - count != logged[v]}
+                    todo = [n for n in quoting if n not in kept or n in named or kept[n] is None or kept[n] in moved]
+                read = self._po_invoices_of(conn, todo)
+                vendors = {kept[n] for n in quoting if n not in read} | {vendor for vendor, _ in read.values()}
+                vendors.discard(None)
+                counts = _vendor_counts(conn, vendors)
+        return PoChanges((summary_id, last or 0, counts), quoting, read)
+
+    @staticmethod
+    def _po_invoices_of(conn: Any, ids: list[int]) -> dict[int, tuple[Any, dict[str, Any] | None]]:
+        """{id: (its vendor, its ``po_invoices`` row; None when not in review or approved)} of each of ``ids``, on
+        ``conn``; SQLite's values of the codings decoded at once (each key one object for all, as in one coding)."""
+        if not ids:
+            return {}
+        rows = conn.execute(_PO_INVOICES_OF, (*ACTIVE_STATUSES, json.dumps(ids))).fetchall()
+        facts = iter(json.loads(f"[{','.join(r[6] for r in rows if r[6] is not None)}]"))
+        return {n: (vendor, _po_row(n, status, number, date, batch, next(facts) if values is not None else None, doc)
+                    if active else None)
+                for n, vendor, status, number, date, batch, values, doc, active in rows}  # fmt: skip
 
     def vendor_invoices_without_po(self, key: str) -> list[dict[str, Any]]:
         """This vendor's active invoices that quote no PO, with their coding (they may still bill a PO line)."""
