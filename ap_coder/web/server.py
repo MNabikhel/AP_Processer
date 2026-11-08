@@ -455,15 +455,69 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     return 1 if supervisor.failed else 0
 
 
+# Seconds past ``refresh.PREPARE_MOST`` the reports' process has to finish the view under way, then it is ended (D-204):
+# Month-end's, the longest, come first, so it is one of the quick ones (10 s at most at 300,000 invoices, estimated).
+PREPARE_ENDS = 15.0
+
+
+def _said(text: str) -> None:
+    """``text`` in the server's window (and the service's log), which shows warnings and up only (B-240): what its
+    start does, as its other lines there."""
+    print(text, file=sys.stderr, flush=True)
+
+
 def prepare_reports(store: Store) -> None:
     """The reports' default views with no answer kept worked out before the server answers (D-204,
-    ``refresh.prepare``), each kept for every process (``background_answers``: B-2050): the background process's
-    refresher worked them out after the start, while people already asked them. What was done is said in the server's
-    window (and the service's log), which shows warnings and up only (B-240), as its other lines at a start are."""
+    ``refresh.prepare``), each kept for every process: the background process's refresher worked them out after the
+    start, while people already asked them. In a process of its own, started afresh ("spawn", as uvicorn's web
+    workers), so this one, the server's as long as it runs, keeps none of the memory the work peaked at; waited for
+    ``PREPARE_MOST`` and ``PREPARE_ENDS`` at most, then ended. One that fails or is ended is no reason not to serve:
+    the refresher works out the rest, as before. Said in the window, by that process and, when it did not finish,
+    here."""
+    import multiprocessing
+
     from ap_coder.web import refresh
 
-    store.background_answers = True
-    refresh.prepare(store, lambda text: print(text, file=sys.stderr, flush=True))
+    most = refresh.PREPARE_MOST
+    process = multiprocessing.get_context("spawn").Process(target=_prepare_reports, args=(str(store.path), most),
+                                                           name="ap-coder-reports", daemon=True)  # fmt: skip
+
+    def end() -> None:
+        process.terminate()
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join(5)
+
+    process.start()
+    try:
+        process.join(most + PREPARE_ENDS)
+    except KeyboardInterrupt:  # (the server stopped as it starts: that process with it)
+        end()
+        raise
+    left = "The reports' default views were not all worked out before the dashboard answers: their process"
+    if process.is_alive():
+        end()
+        _said(f"{left} was ended after {most + PREPARE_ENDS:g} s. The background process works out the rest.")
+    elif process.exitcode:
+        _said(f"{left} stopped (exit code {process.exitcode}). The background process works out the rest.")
+
+
+def _prepare_reports(db: str, most: float) -> None:
+    """``prepare_reports``' own process: on its own Store, the company server's (``background_answers``: B-2050, the
+    Vendors page's totals kept for every process too), within ``most`` seconds; what it logs in the window with its
+    time (a process started afresh has no handler: B-2065); exit code 1 when it failed."""
+    from ap_coder.web import refresh
+
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.WARNING)
+    try:
+        prepared = Store(Path(db))
+        prepared.background_answers = True
+        refresh.prepare(prepared, _said, most)
+    except Exception:  # noqa: BLE001 - whatever stopped it: said, and the server answers all the same
+        logging.getLogger(__name__).warning("The reports' default views were not worked out before the dashboard "
+                                            "answers.", exc_info=True)  # fmt: skip
+        sys.exit(1)
 
 
 def _stop_background_when_asked(should_exit: threading.Event, background: Any) -> None:

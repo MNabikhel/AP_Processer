@@ -1482,7 +1482,7 @@ def test_the_servers_start_works_out_exactly_the_default_views_with_none_kept_be
     _invoice(store, tmp_path, ground_truth, "Q-1")
     worked, process = _counting(monkeypatch), _Processes(monkeypatch)
     process("the server, before it answers")
-    server.prepare_reports(Store(store.path))  # (a Store as the server opens it: no create_app sets it)
+    server._prepare_reports(str(store.path), refresh.PREPARE_MOST)  # (its own process's work, here: its own Store)
     said = capsys.readouterr().err.splitlines()
     every = len(refresh.DEFAULTS)
     assert sorted(worked) == sorted(name for name, _ in refresh.DEFAULTS)  # (each default view once, nothing more)

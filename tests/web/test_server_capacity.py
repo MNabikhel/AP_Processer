@@ -926,6 +926,59 @@ def test_the_server_works_its_reports_out_before_its_port_opens_and_only_with_se
     assert done == ["served", "served"]
 
 
+def test_the_servers_reports_are_worked_out_in_a_process_of_its_own_before_it_answers(store, monkeypatch, capfd):
+    """D-204: the reports' default views worked out before the server answers peaked the memory of the server's own
+    process (uvicorn's supervisor, which lives as long as the server: 114 MB with its imports, 235-241 MB after the
+    work at 60,000 invoices), and its allocator kept it. They are worked out in a process of its own, started afresh
+    ("spawn", as uvicorn's web workers): nothing of them in this one, each kept for every process, and the window
+    says what was done, as before."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+    from tests.webclient import add_clean
+
+    add_clean(store)
+    worked, real = [], Store.shared_answer
+    monkeypatch.setattr(Store, "shared_answer", lambda self, name, *a, **k: worked.append(name) or real(
+        self, name, *a, **k))  # fmt: skip
+    server.prepare_reports(store)
+    assert worked == [] and multiprocessing.active_children() == []
+    with sqlite3.connect(store.path) as conn:
+        kept = {name for (name,) in conn.execute("SELECT name FROM report_answers")}
+    assert kept >= {name for name, _ in refresh.DEFAULTS}
+    said = [line for line in capfd.readouterr().err.splitlines() if "default views" in line]
+    every = len(refresh.DEFAULTS)
+    assert len(said) == 2 and said[0].startswith("Working out the reports' default views before the dashboard answers")
+    assert said[1].startswith(f"The reports' default views worked out before the dashboard answers: {every} of the "
+                              f"{every} with none kept ({every} in all), in "), said  # fmt: skip
+
+
+def test_the_server_answers_though_its_reports_process_failed_or_was_ended_past_its_bound(store, tmp_path, monkeypatch,
+                                                                                          capfd):  # fmt: skip
+    """D-204: the reports' process failing (its database unreadable) or still working past ``PREPARE_MOST`` and
+    ``PREPARE_ENDS`` (ended then) is no reason not to serve: the window says so, the server goes on to answer, and the
+    background process's refresher works out what is left, as before D-204. No process is left behind."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+
+    broken = tmp_path / "broken.db"
+    broken.write_bytes(b"not a database " * 1000)
+    server.prepare_reports(SimpleNamespace(path=broken))
+    err = capfd.readouterr().err
+    assert re.search(r"WARNING ap_coder\.web\.server: The reports' default views were not worked out", err), err
+    assert ("The reports' default views were not all worked out before the dashboard answers: their process stopped "
+            "(exit code 1). The background process works out the rest.") in err  # fmt: skip
+
+    monkeypatch.setattr(refresh, "PREPARE_MOST", 0.0)
+    monkeypatch.setattr(server, "PREPARE_ENDS", 0.05)  # (ended while it starts)
+    began = time.monotonic()
+    server.prepare_reports(store)
+    assert time.monotonic() - began < 10 and multiprocessing.active_children() == []
+    assert ("The reports' default views were not all worked out before the dashboard answers: their process was "
+            "ended after 0.05 s. The background process works out the rest.") in capfd.readouterr().err  # fmt: skip
+
+
 def _queue_with_lessons(store: Store) -> tuple[int, str]:
     """An invoice in the review queue, a line of it without an account (its screen suggests one from the learning
     memory), and lessons of its vendor: (the invoice, its vendor's key)."""
@@ -1156,8 +1209,10 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
 def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers():
     """D-204: a first start (or one after an update) works the reports out before the server answers, then each web
     worker its memories: server-update's wait for the new version (before it goes back to the old one), the load and
-    day benches' and CI's update job's waits for the server they start cover both bounds, the view and the step
-    under way at them (a quick one: Month-end's come first), and the processes' own start."""
+    day benches' and CI's update job's waits for the server they start cover both bounds (the reports' process ended
+    ``PREPARE_ENDS`` past its own), the step under way at the workers', and the processes' own start. And an update's
+    downtime stays within D-188's 5 minutes: those and server-update's own stop, copy and update (16-40 s
+    measured)."""
     import inspect
 
     from ap_coder.bench import day, load
@@ -1165,9 +1220,10 @@ def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers()
     from ap_coder.web import refresh
     from tests.scripts import load_script
 
-    first = refresh.PREPARE_MOST + server.WARM_MOST + 60
+    first = refresh.PREPARE_MOST + server.PREPARE_ENDS + server.WARM_MOST + 30
     downtime = load_script("ci/server_update_downtime", "ap_script_server_update_downtime_waits")
     waits = {"server-update": server_update.UP_WAIT, "bench load": load.START_WAIT, "CI's update job": downtime.UP_WAIT,
              "bench day": inspect.signature(day.Server.start).parameters["timeout"].default}  # fmt: skip
     assert all(wait >= first for wait in waits.values()), (first, waits)
+    assert refresh.PREPARE_MOST + server.PREPARE_ENDS + server.WARM_MOST + 15 + 40 <= downtime.LIMIT
     assert server.WARM_MOST <= 30 / 2  # (uvicorn waits 30 s for a worker started afresh to serve: restart_all)
