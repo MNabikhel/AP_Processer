@@ -73,9 +73,10 @@ biggest vendor's standing PO, 3,382 invoices, about 626 → 18 ms of CPU):
 | first start, D-200 (8879c07) | 15,277 | 109 ms / 736 ms / 3.59 s | 442 ms | 7 | | 0, 0 |
 | first start, D-201 (351a725) | 15,469 | 143 ms / 1.24 s / 4.41 s | 607 ms | 0 | 3 | 0, 0 |
 | **first start, D-202 (aeb40ef)** | **14,764** | **116 ms / 898 ms / 2.24 s** | **397 ms** | **0** | **1** | **0, 0** |
+| first start, D-202, again (1f45173, a fresh seed) | 15,276 | 122 ms / 977 ms / 3.18 s | 454 ms | 0 | 0 | 0, 0 |
 | 100k, 10 min, D-202 (aeb40ef) | 14,083 | 62 ms / 233 ms / 591 ms | 119 ms | 0 | 0 | 0, 0 |
 
-**Every target is met in a database's first 10 minutes at 300,000 invoices.** The invoice page's p99 2.72 s (the
+**In a database's first 10 minutes at 300,000 invoices every target is met in the first run, and all but the p99 (3.18 s for 3 s) in the second.** The second's slowest server requests were the first 1-2 minutes: each web worker's first invoice opens (3-6 s), and Sales tax and Learning asked before the warm-up reached them (3.6-4.7 s: worked out in the request; Learning's past-coding rows 2.2 s on each worker's first visit; both 0.05-0.08 s at their next ask). The invoice page's p99 2.72 s (the
 D-201 run's 3.65 s), the check's 1.11 s (1.61 s), the queue's 1.34 s (4.51 s); Month-end's slowest 1.04 s; no minute's
 worst 10 s over 1.9 s at p95. At 100,000 invoices the same code holds its figures (p99 591 ms; 484-524 ms before).
 
