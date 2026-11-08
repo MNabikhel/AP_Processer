@@ -166,8 +166,9 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store.reports:_KEPT": Kept(32 * MB, "Bounded; KEPT_HERE answers"),
     "ap_coder.erp.jde_sync:_CACHE": Kept(32 * MB, "Bounded (CACHE_MOST); CACHE_SECONDS old at most (B-2025)"),
     "ap_coder.core.store._base:_VENDOR_LESSONS": Kept(8 * MB, "Bounded; VENDOR_LESSONS_KEPT vendors"),
-    "ap_coder.coding.po:_KEPT": Kept(30 * MB, "Bounded (PO_KEPT_MOST); POs of PO_KEPT_FROM invoices or more (one of "
-                                              "3,414 invoices of 8 lines, the 300,000 seed's biggest: about 24 MB)"),
+    "ap_coder.coding.po:_KEPT": Kept(24 * MB, "Bounded (PO_KEPT_MOST); POs of PO_KEPT_FROM invoices or more (the "
+                                              "300,000 seed's one, 3,382 invoices of 8 lines: 22.5 MB)"),
+    "ap_coder.coding.po:_MATCHED": Kept(6 * MB, "Bounded (MATCHED_MOST); the matches of the POs read at each ask"),
     # Bounded by bytes their own way.
     "ap_coder.core.store._base:_PAST_LINES": Kept(64 * MB, "PAST_LINES_BYTES (PastLines.size), PAST_LINES_KEPT "
                                                            "vendors"),

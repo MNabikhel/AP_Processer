@@ -6,6 +6,7 @@ import random
 import re
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import replace
 
 import pytest
 
@@ -22,7 +23,7 @@ from ap_coder.coding.po import (
     similarity,
     template_csv,
 )
-from ap_coder.core.caches import Bounded
+from ap_coder.core.caches import Bounded, size_of
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_purchase_orders
@@ -456,20 +457,23 @@ class _Afresh:
 
 
 class _Worker:
-    """A web worker: a Store of its own and the POs' invoices it keeps (``po._KEPT``), its own."""
+    """A web worker: a Store of its own and the POs' invoices and matches it keeps (``po._KEPT``, ``po._MATCHED``),
+    its own."""
 
     def __init__(self, path) -> None:
         self.store = Store(path)
         self.kept = Bounded("POs' invoices", po_mod.PO_KEPT_MOST, po_mod._kept_size)
+        self.matched = Bounded("POs' matched lines", po_mod.MATCHED_MOST)
 
     @contextmanager
     def running(self):
         """This worker's turn (inside another's, that one's again after it)."""
-        before, po_mod._KEPT = po_mod._KEPT, self.kept
+        before = po_mod._KEPT, po_mod._MATCHED
+        po_mod._KEPT, po_mod._MATCHED = self.kept, self.matched
         try:
             yield self.store
         finally:
-            po_mod._KEPT = before
+            po_mod._KEPT, po_mod._MATCHED = before
 
 
 @pytest.fixture
@@ -477,6 +481,7 @@ def workers(store, monkeypatch):
     """Two web workers on one database with the sample POs, a PO kept from 3 invoices on (their keeping restored
     after the test)."""
     monkeypatch.setattr(po_mod, "_KEPT", po_mod._KEPT)
+    monkeypatch.setattr(po_mod, "_MATCHED", po_mod._MATCHED)
     monkeypatch.setattr(po_mod, "PO_KEPT_FROM", 3)
     return _Worker(store.path), _Worker(store.path)
 
@@ -641,9 +646,9 @@ def _mend(path) -> None:
                          (json.dumps(_doc(random.Random(0), 0)),))  # fmt: skip
 
 
-@pytest.mark.parametrize("seed, keep", [(1, 1000), (2, 1000), (3, 8)])
+@pytest.mark.parametrize("seed, keep, kept_from", [(1, 1000, 3), (2, 1000, 3), (3, 8, 3), (4, 1000, 10**6)])
 def test_each_workers_kept_po_gives_what_a_fresh_read_gives_after_any_writes_in_any_order(
-    workers, tmp_path, seed, keep
+    workers, tmp_path, monkeypatch, seed, keep, kept_from
 ):
     """D-202: random writes by two workers and plain SQL, in every way an invoice on a PO changes (added, approved
     onto it or off it, rejected, reopened, parked, deleted, exported and its batch undone, its lines and its approved
@@ -651,7 +656,9 @@ def test_each_workers_kept_po_gives_what_a_fresh_read_gives_after_any_writes_in_
     coding the match can't read, a write undone, a restore) and the PO's own lines; each worker asking between them,
     the changes of several writes taken at once, with a log of ``keep`` changes (8: some pruned before a worker asks).
     Every answer, to the last digit or the error raised, is what reading the PO's invoices afresh and matching each
-    line again gives: the match, its checks, the review screen's PO section, the PO page."""
+    line again gives: the match, its checks, the review screen's PO section, the PO page; the PO kept whole (from
+    ``kept_from`` invoices on) or read at each ask, its lines' matches kept."""
+    monkeypatch.setattr(po_mod, "PO_KEPT_FROM", kept_from)
     rng = random.Random(seed)
     first, second = workers
     with first.running() as store:
@@ -671,7 +678,7 @@ def test_each_workers_kept_po_gives_what_a_fresh_read_gives_after_any_writes_in_
             with worker.running() as store:
                 coding = InvoiceCoding.model_validate(_doc(rng, n, True))
                 exclude = rng.choice([*_ids(store.path), None])
-                kept += (str(store.path), KEY) in worker.kept
+                kept += (str(store.path), KEY) in (worker.kept if kept_from < 10**6 else worker.matched)
                 assert _answers(store, coding, exclude) == _answers(_Afresh(store), coding, exclude), (
                     seed, n, done[-3:])  # fmt: skip
         if done[-1] == "broken":
@@ -774,7 +781,8 @@ def test_a_change_an_older_ap_coder_made_without_the_log_reads_that_vendors_invo
 
 def test_a_pos_invoices_brought_up_to_date_are_those_of_one_moment(workers, tmp_path, monkeypatch):
     """As B-1812: which invoices quote the PO, the log and the invoices it names are read in one moment, so another
-    worker's change between them is taken at the next ask, not half of it at this one."""
+    worker's change between them is taken at the next ask, not half of it at this one (the invoice read again as
+    after it, the one kept as before it)."""
     first, _ = workers
     rng = random.Random(7)
     with first.running() as store:
@@ -788,9 +796,10 @@ def test_a_pos_invoices_brought_up_to_date_are_those_of_one_moment(workers, tmp_
         real, raced = purchasing_module.PurchasingMixin._po_invoices_of, []
 
         def racing(conn, todo):
-            if not raced:  # another worker's change, just after the log was read
-                raced.append(1)
-                _plain(store.path, "UPDATE invoices SET status = 'parked', po_key = '' WHERE id IN (?, ?)", *ids[1:3])
+            if not raced:  # another worker's one write, just after the log was read: of an invoice this ask reads
+                raced.append(1)  # again (ids[0]) and of one it takes as kept (ids[1])
+                _plain(store.path, "UPDATE invoices SET status = CASE id WHEN ? THEN 'review' ELSE 'parked' END WHERE "
+                                   "id IN (?, ?)", ids[0], ids[0], ids[1])  # fmt: skip
             return real(conn, todo)
 
         monkeypatch.setattr(purchasing_module.PurchasingMixin, "_po_invoices_of", staticmethod(racing))
@@ -844,3 +853,103 @@ def test_a_po_kept_before_a_restore_is_read_whole_after_it(workers, tmp_path):
         got = match_invoice(coding, store)
         assert repr(got) == repr(match_invoice(coding, _Afresh(store)))
         assert [o["status"] for o in got.other_invoices] == ["review"] * 4
+
+
+def test_a_change_an_older_ap_coder_made_after_the_po_was_brought_up_to_date_reads_that_vendors_invoices_again(
+    workers, tmp_path
+):
+    """B-1811's rule after the PO was brought up to date once, not only after it was read whole: the stamp holds the
+    count of every kept invoice's vendor, not only of those just read (here the other vendor's)."""
+    first, _ = workers
+    rng = random.Random(6)
+    with first.running() as store:
+        for i in range(4):  # two vendors
+            pdf = tmp_path / f"v-{i}.pdf"
+            pdf.write_bytes(f"invoice {i}".encode())
+            store.add_invoice(pdf, {**_doc(rng, i), "vendor_name": VENDORS[i % 2]}, {})
+        ids = _ids(store.path)
+        coding = InvoiceCoding.model_validate(_doc(rng, 9, True))
+        match_invoice(coding, store)
+        _plain(store.path, "UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", ids[0])  # (logged)
+        match_invoice(coding, store)  # brought up to date: ids[0] alone read again
+        with sqlite3.connect(store.path) as conn:  # the older version's triggers: counting only
+            for name in _LOGGING:
+                conn.execute(f"DROP TRIGGER {name}")
+                conn.execute(re.sub(r"; INSERT INTO vendor_changes .*? - \d+", "", SUMMARY_TRIGGERS[name]))
+        _plain(store.path, "UPDATE invoices SET status = 'parked' WHERE id = ?", ids[1])  # the other vendor's
+        got = match_invoice(coding, store)
+        assert repr(got) == repr(match_invoice(coding, _Afresh(store)))
+        assert got.other_invoices[1]["status"] == "parked"
+
+
+def test_a_kept_po_is_counted_at_its_size_within_the_bound(workers, tmp_path):
+    """The bound holds only if each kept PO is counted at its bytes, and again once it changed."""
+    first, _ = workers
+    rng = random.Random(3)
+    with first.running() as store:
+        ids = _one_vendors(store, tmp_path, rng, 6)
+        coding = InvoiceCoding.model_validate(_doc(rng, 9, True))
+        match_invoice(coding, store)
+        entry = first.kept[(str(store.path), KEY)]
+        assert first.kept.held == entry.size == size_of(replace(entry, size=0)) > 6 * 1000
+        _plain(
+            store.path,
+            "UPDATE invoices SET ai_output = json_set(ai_output, '$.line_items', json(?)) WHERE id = ?",
+            json.dumps([{"description": "x" * 20_000, "quantity": 1, "unit_price": 1, "amount": 1}]),
+            ids[0],
+        )
+        match_invoice(coding, store)
+        again = first.kept[(str(store.path), KEY)]
+        assert first.kept.held == again.size == size_of(replace(again, size=0)) >= entry.size + 15_000
+        assert first.kept.held <= po_mod.PO_KEPT_MOST
+
+
+def _northwind(store: Store, tmp_path, n: int) -> list[int]:
+    """``n`` invoices on PO-88213 of one vendor, each with the sample's five lines."""
+    for i in range(n):
+        pdf = tmp_path / f"nw-{i}.pdf"
+        pdf.write_bytes(f"invoice {i}".encode())
+        store.add_invoice(pdf, {**_gt(NW), "invoice_number": f"NW-{i}"}, {})
+    return _ids(store.path)
+
+
+def test_an_invoice_read_again_alone_shares_the_kept_rows_texts(workers, tmp_path):
+    """A kept PO's lines hold each text once, keys and values, also an invoice read again alone after a change: a PO
+    brought up to date an invoice at a time holds what it held (at 300,000: 22.5 MB, not 30.2)."""
+    first, _ = workers
+    with first.running() as store:
+        ids = _northwind(store, tmp_path, 4)
+        coding = InvoiceCoding.model_validate(_gt(NW))
+        match_invoice(coding, store)
+        _plain(store.path, "UPDATE invoices SET invoice_date = '2026-02-02' WHERE id = ?", ids[1])
+        got = match_invoice(coding, store)
+        assert repr(got) == repr(match_invoice(coding, _Afresh(store)))
+        one, two = (o["coding"]["line_items"][0] for o in got.other_invoices[:2])
+        assert one is not two and one == two and one["description"] is two["description"]
+        assert all(a is b for a, b in zip(one, two, strict=True))  # (its keys)
+
+
+def test_a_po_read_at_each_ask_matches_its_invoices_lines_once_while_its_lines_stay(workers, tmp_path, monkeypatch):
+    """A PO of fewer than PO_KEPT_FROM invoices is read at each ask, its invoices' lines' matches kept in the process
+    (``po._MATCHED``): they are matched again only once the PO's lines changed, whatever the descriptions (the pairs'
+    cache holds 8,192); each worker its own. The answers are a fresh read's each time."""
+    first, second = workers
+    monkeypatch.setattr(po_mod, "PO_KEPT_FROM", 10**6)
+    calls, real = [], po_mod._po_line
+    monkeypatch.setattr(po_mod, "_po_line", lambda *args: calls.append(1) or real(*args))
+    coding = InvoiceCoding.model_validate(_gt(NW))
+    own = len(coding.line_items)
+
+    def ask(worker):
+        with worker.running() as store:
+            del calls[:]
+            got, n = repr(match_invoice(coding, store)), len(calls)
+            assert got == repr(match_invoice(coding, _Afresh(store)))
+        return n
+
+    with first.running() as store:
+        _northwind(store, tmp_path, 4)
+    assert ask(first) == own + own and ask(first) == own  # (the invoices' 5 lines once, then the invoice's own alone)
+    assert ask(second) == own + own and not first.kept and (str(first.store.path), KEY) in first.matched
+    _plain(first.store.path, "UPDATE po_lines SET unit_price = 2.0 WHERE po_key = ? AND line_number = 1", KEY)
+    assert ask(first) == own + own and ask(first) == own

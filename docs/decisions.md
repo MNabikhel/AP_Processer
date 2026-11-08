@@ -4177,8 +4177,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **What:** `po.po_billing(store, key, po)` gives the PO's invoices in review or approved (`Store.po_invoices`'
     rows, in order) and what each bills on the PO's lines (`PoBilling.billed`: `billed_by_line`'s sums); the match
     (`match_invoice`, its left to expense) and the PO page (`po_detail`) take them from it. A PO quoted by
-    `PO_KEPT_FROM` (100) invoices or more has them kept in each process (`po._KEPT`, a `Bounded` of `PO_KEPT_MOST`,
-    30 MB, in `CACHES`), by database and PO: the rows, and each row's lines as matched, (the PO line, the quantity,
+    `PO_KEPT_FROM` (1,000; 100 before its review, below) invoices or more has them kept in each process (`po._KEPT`,
+    a `Bounded` of `PO_KEPT_MOST`, 24 MB, in `CACHES`), by database and PO: the rows, and each row's lines as
+    matched, (the PO line, the quantity,
     the amount) of each matched line, against the PO's lines as matched (each one's description, price and number:
     when they differ, every row is matched again, none read). At each ask `Store.po_invoices_since` reads, in one
     moment (B-1812's rule), the database's `summary_id`, the change log's first and last change, which invoices quote
@@ -4187,27 +4188,38 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     restore, a summary built again), or a change since is gone from the log; else those not kept, those the log names
     since (any vendor's), those of a vendor whose count of changes moved by more than the log says (B-1811's rule:
     an older AP Coder's triggers count and log nothing), and those with no vendor (no log follows them). Those read
-    are matched (`_billed`), their texts made one object for each value (`_share_texts`: 31 → 21 MB for that PO),
-    and the PO kept with the counts of its invoices' vendors; when nothing of it changed but the log moved (nearly
-    every ask under load) only its stamp moves (its size not measured again). The open's or check's own invoice is
-    left out as before (`exclude_invoice_id`).
+    are matched (`_billed`), the texts of their lines, keys and values, made one object each, those the PO's kept
+    rows hold (`_share_texts` and the kept `texts`: 31 → 21 MB for that PO), and the PO kept with the counts of its
+    invoices' vendors; when nothing of it changed but the log moved (nearly every ask under load) only its stamp moves
+    (its size not measured again). The open's or check's own invoice is left out as before (`exclude_invoice_id`). A
+    PO of fewer invoices is read at each ask as before, and the matches of its invoices' lines are kept in each
+    process (`po._MATCHED`, a `Bounded` of `MATCHED_MOST`, 6 MB: `po_lines_billed`'s `matched` map by database and
+    PO, while the PO's lines are those matched), so its lines are matched once, not at each ask.
   - **Same, by construction and by test:** the sums are added up in the order `billed_by_line` adds them (row by
     row, line by line), so they are the same to the last digit; an invoice whose lines can't be worked out so (a
     coding not an object, lines not a list, a quantity not a number) has none kept, and any sum over it is worked out
-    by `billed_by_line` as before, failing where it did; a coding not JSON fails in the read as before. A PO of fewer
-    invoices, and every ask inside a write under way (which may yet be undone, D-159), read and match afresh as
-    before, nothing kept nor taken. `tests/coding/test_po.py`: random writes by two workers (each its own cache) and
+    by `billed_by_line` as before, failing where it did; a coding not JSON fails in the read as before. A line's match
+    kept is what matching it again gives (D-199: a function of its description, its price and the PO's lines). Every
+    ask inside a write under way (which may yet be undone, D-159) reads and matches afresh as before, nothing kept nor
+    taken. `tests/coding/test_po.py`: random writes by two workers (each its own caches) and
     plain SQL in every way an invoice on a PO or the PO changes (added, approved onto it or off it, rejected,
     reopened, parked, deleted, exported and undone, its lines and its approved coding changed, moved to another
     vendor, its vendor merged, its PO key changed alone, left with no vendor, a coding the match can't read, a write
     undone, a restore, the PO's lines and open amounts), each worker asking between them, with a log of 1,000 and of
-    8 changes; every answer of the match, its checks, the review screen's PO section and the PO page equal to a fresh
-    read's to the last digit (its `repr`) or the same error; quantities and amounts that add up differently in another
-    order. Targeted: only the invoices changed are read and matched, none after a change elsewhere, all matched and
-    none read after a PO line changed; a few invoices not kept; an older AP Coder's change; one moment; a write
-    undone; a restore. Mutations of the read and the keeping (each rule above left out, the sums in another order, an
-    invoice not worked out taken, which invoices quote the PO taken from what was kept) each fail them, but one: the
-    log's pruning not seen, which the count rule catches as well (each change it logs is counted with it). On the
+    8 changes, the PO kept whole or read at each ask; every answer of the match, its checks, the review screen's PO
+    section and the PO page equal to a fresh read's to the last digit (its `repr`) or the same error; quantities and
+    amounts that add up differently in another order. Targeted: only the invoices changed are read and matched, none
+    after a change elsewhere, all matched and none read after a PO line changed; a few invoices not kept; an older AP
+    Coder's change, after a whole read and after an invoice read again; one moment (a change racing the read, of an
+    invoice read again and of one taken as kept); a write undone; a restore; a kept PO counted at its bytes, and
+    again once it changed; an invoice read again alone sharing the kept rows' texts; a PO read at each ask matching
+    its invoices' lines once while its lines stay, each worker its own. Mutations of the read and the keeping (each
+    rule above left out, the sums in another order, an invoice not worked out taken, which invoices quote the PO taken
+    from what was kept, the size counted 0, the texts or keys not shared, the matches kept whatever the PO's lines or
+    not at all: 19) each fail them, but one: the log's pruning not seen, which the count rule catches as well (each
+    change it logs is counted with it). Before the review's tests, three more passed: the read not in one moment (the
+    race then touched only invoices taken as kept), the stamp counting only the vendors of the invoices just read (an
+    older AP Coder was tried only after a whole read), and the size counted 0. On the
     seed below, the 5 biggest POs' 194 answers (the match, its checks, the PO section with and without the invoice
     left out, the PO page) the same digest in either code; `scripts/same_behaviour.py` tax, approve, read and pipeline
     the same (none of their inputs has a PO loaded: the probes don't reach this path).
@@ -4218,23 +4230,42 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       store) 321 → 13.1 ms, the PO page 301 → 5.4 ms; an open or a check runs both: about 626 → 18 ms;
     - the first ask after another process changed another invoice on the PO (a line's quantity): 271 → 10.4, 278 →
       21.5, 264 → 10.8 ms; after a change to the invoice itself: 256 → 9.1, 263 → 21.4, 257 → 9.6 ms;
-    - the first ask in a process (every invoice read and matched, then kept): 319-338 → 381-385 ms, once (the texts
-      made one 25 ms, the size measured 4 ms); then 6.4-6.7 ms;
+    - the first ask in a process (every invoice read and matched, then kept): 262-338 → 330-392 ms, once (the texts
+      made one 30-50 ms, the size measured 3-4 ms); then 5.4-6.7 ms;
     - kept: 23.8 MB for that PO in each process (`size_of`; 23.9 MB traced), 33.8 MB before the texts were shared.
   - **Within the worker's budget:** `WORKER_CACHES_MOST` (1,050 MB) had 11 MB left. The PO description pairs'
     `similarity` cache goes from 32,768 to 8,192 pairs (26 → 7 MB): it was sized for each open matching every line of
-    a big PO's invoices again (D-195); now those are matched once a process, and what is left (the invoice's own
-    lines, those changed, month-end's descriptions once a PO is worked out again) is far less. On the seed every pair
-    fits in either (its PO lines' descriptions repeat).
+    a big PO's invoices again (D-195); now a kept PO's lines are matched once a process, and so are those of a PO read
+    at each ask (`_MATCHED`, since the review), and what is left (the invoice's own lines, month-end's descriptions
+    once a PO is worked out again) is far less. 1,039 − 26 + 7 + 24 + 6 = 1,050 MB.
   - **Alternatives:** kept in the database for every process, as month-end's billing lines (D-194): one copy, but
     each ask would decode the PO's rows again (65-70 ms of JSON for 3,414, measured) or build them from a compact
     form (90-150 ms); keeping only the sums' parts and building the rows at each ask: the same, as the match's
     `other_invoices` and the PO page's rows carry each invoice's lines and must stay as they were; a log of its own of
     which invoices quote a PO (D-199's worry): the PO's index says it at each ask for 0.7 ms; each PO line's values in
     order, summed with `functools.reduce` (0.5 ms against 1.2 ms a sum): not worth its upkeep.
-  - **Left:** each process builds its own at its first ask of such a PO (about 0.38 s once, as many threads as ask at
-    once at a cold start each building); a PO whose invoices hold more than 30 MB is kept alone, as every `Bounded`
-    keeps its latest. Kept rows are every caller's (`PoBilling`'s docstring: read them, don't change them), as
-    `summary_memo`'s values. The 300,000 seed's first 10 minutes under load to be measured again with it.
+  - **After its review** (a fresh reviewer, probes on the 300,000 seed opened read-only; no wrong answer found):
+    - **Which POs are kept:** at 300,000 invoices 35 POs have 100 invoices or more; kept whole they held 63 MB, the
+      biggest alone 22.5 MB, so in 30 MB the others' asks let it go (its first-ask hit rate about 74%, 25% had it
+      grown to 30 MB) and each miss built it again (288 ms against the old read's 205). `PO_KEPT_FROM` 100 → 1,000:
+      only a PO whose read is slow is kept whole (at 300,000 one: 926 invoices are read in 37-39 ms), within 24 MB.
+      Measured on the 300,000 seed (read-only; CPU of an ask's billing, `po_billing` and its two sums): the biggest
+      PO (3,382 invoices in review or approved) 246-290 ms before, 4.4-5.2 ms kept, 302-379 ms to build once a
+      process; kept 22.5 MB; an ask mix of 100,000 drawn by each PO's invoices: the biggest's hit rate 100% after its
+      first, the matches' 79% (34 POs' maps, 7.5 MB in all, in 6 MB), a first ask of a PO of 100 invoices or more
+      81.7 ms before → 12.2 ms (the reviewer's own times: 66.6 ms before, 33.4 with the first design, 17.4 now).
+    - **Its texts drifted:** they were shared only among the invoices read together, so a PO brought up to date an
+      invoice at a time grew (22.5 → 30.2 MB once each of its 3,382 was read again alone); the kept rows' texts are
+      kept with them and the keys shared too: 22.5 → 22.5 MB.
+    - **The pairs' cache cut** slowed POs read at each ask whose invoices' descriptions vary (a ticket, a week): two
+      such POs of 99 invoices asked in turn 7.3 → 57.6 ms an ask, four 11.7 → 93.8 (32,768 → 8,192 pairs). Their
+      lines' matches kept (`_MATCHED`): two 4.6 ms, four 8.9, eight 18.7 (44.0 and 108.4 before, at either size).
+    - The tests and the mutations' account above (the review's: one moment, an older AP Coder after an invoice read
+      again, the size counted).
+  - **Left:** each process builds its own at its first ask of such a PO (about 0.3 s once, as many threads as ask at
+    once at a cold start each building); a PO whose invoices hold more than 24 MB is kept alone, as every `Bounded`
+    keeps its latest, and several POs of 1,000 invoices or more over 24 MB in all let each other go (each then costly
+    to read: the bound, not the rule). Kept rows are every caller's (`PoBilling`'s docstring: read them, don't change
+    them), as `summary_memo`'s values. The 300,000 seed's first 10 minutes under load to be measured again with it.
   - (`ap_coder/coding/po.py`, `core/store/purchasing.py`, `core/caches.py`, `web/pages/purchase_orders.py`,
     `docs/HOW_IT_RUNS.md`; `tests/coding/test_po.py`)

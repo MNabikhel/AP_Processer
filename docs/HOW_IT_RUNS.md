@@ -522,10 +522,11 @@ the launcher.
   own: the vendors asked most recently, at most 50,000 rows and 4,096 vendors, within 64 MB, one vendor up to half the
   rows, a bigger one read once a page; kept on the database's `summary_id`, and brought up to date from the vendors'
   change log the triggers keep, `vendor_changes`: only the invoices changed since are read again, D-174; the check
-  reads them read-only, not a copy); and each PO of 100 invoices or more, its invoices with what their lines bill on
-  its lines, for the match an open and a check make and the PO page (`ap_coder/coding/po.py:po_billing`, within 30 MB:
+  reads them read-only, not a copy); and each PO of 1,000 invoices or more, its invoices with what their lines bill on
+  its lines, for the match an open and a check make and the PO page (`ap_coder/coding/po.py:po_billing`, within 24 MB:
   which invoices quote it read off its index at each ask, the rest brought up to date from the same log, so only the
-  invoices changed since are read and matched again, D-202). The page pictures are not kept in a server worker's memory: they are drawn once
+  invoices changed since are read and matched again; a smaller PO is read at each ask and the matches of its
+  invoices' lines kept, within 6 MB, D-202). The page pictures are not kept in a server worker's memory: they are drawn once
   into the data folder's `.cache/pages/` (`ap_coder/web/document.py:_kept_png`), shared by all the workers.
 
   **Each cache within its bytes** (D-195): every cache a process keeps between requests is listed in
