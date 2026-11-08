@@ -296,22 +296,23 @@ def _not_in_erp(store: Store, period_end: dt.date, no_date: list[Accrual] | None
     from . import jde_post
 
     end = period_end.isoformat()
-    cutoff = late_after(store, end)
     oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
+    cutoff = late_after(store, end)
     unposted = jde_post.not_posted(store)  # exported, its voucher sent through the JD Edwards API, not posted (R4)
-    # Only invoices not in the ERP at the period end are read (the summary says which, D-110): in review, parked,
-    # waiting for a second approval, approved and not exported, exported after the period end (D-133), or exported
-    # with its JD Edwards voucher not posted yet (B-1862).
-    found = store.summary_rows(
-        f"status IN (?, ?, ?) OR (status = ? AND (export_batch IS NULL OR export_batch IN ({_LATE_BATCHES}) OR "
-        "id IN (SELECT value FROM json_each(?))))",
-        (REVIEW, PARKED, PENDING, APPROVED, cutoff, json.dumps(list(unposted))), "id, export_batch")  # fmt: skip
-    late = {r["id"] for r in found if r["export_batch"] is not None and r["id"] not in unposted}
-    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"),
-                                 ids=[r["id"] for r in found])  # fmt: skip
-    # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
-    # again; one flagged as already in the ERP's invoice register is in the ERP.
-    counted = _exported_bills(store, rows, cutoff)
+    with store.summary_snapshot():  # (the summary and the invoices it names read in one moment, B-2064)
+        # Only invoices not in the ERP at the period end are read (the summary says which, D-110): in review, parked,
+        # waiting for a second approval, approved and not exported, exported after the period end (D-133), or
+        # exported with its JD Edwards voucher not posted yet (B-1862).
+        found = store.summary_rows(
+            f"status IN (?, ?, ?) OR (status = ? AND (export_batch IS NULL OR export_batch IN ({_LATE_BATCHES}) OR "
+            "id IN (SELECT value FROM json_each(?))))",
+            (REVIEW, PARKED, PENDING, APPROVED, cutoff, json.dumps(list(unposted))), "id, export_batch")  # fmt: skip
+        late = {r["id"] for r in found if r["export_batch"] is not None and r["id"] not in unposted}
+        rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"),
+                                     ids=[r["id"] for r in found])  # fmt: skip
+        # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
+        # again; one flagged as already in the ERP's invoice register is in the ERP.
+        counted = _exported_bills(store, rows, cutoff)
     treatments = store.tax_treatments()
     out = []
     for r in rows:
