@@ -7,7 +7,9 @@ kept and leaves a want (``core/store/reports.py``); the ``Refresher`` here, a th
 the wants out one at a time, oldest first, and keeps each for every process. At its start it works out again those
 asked in the last day (``ASKED_WITHIN``), so after a restart or an update nobody waits for the first one, then each
 page's default view (``DEFAULTS``, D-200); from then on it keeps those and the latest question asked of each answer
-warm (``WARM_AGAIN``), so the first person to open a report, in the morning too, takes a kept answer.
+warm (``WARM_AGAIN``), so the first person to open a report, in the morning too, takes a kept answer. Those with no
+answer kept for their question (a database never served, an update) are worked out before the server answers at all
+(``prepare``, D-204).
 
 ``ANSWERS``: each settled answer by its name, and how it is worked out again from what was asked (the ``again`` its
 caller gives, JSON): by its caller itself, so with the same version, format, stamp and settle. ``DEFAULTS``: what each
@@ -39,6 +41,10 @@ LEASE, RENEW = 30.0, 5.0  # its hold (``reports.REFRESHER``): askers count on it
 # this old, a cheap take while it holds (looked at every WARM_LOOK seconds while no want waits), so one is always there
 # to show (STALE_MOST): B-2052, B-2055
 WARM_AGAIN, WARM_LOOK = reports.STALE_MOST / 2, 60.0
+# Seconds the company server's start works out the default views with no answer kept at most, before it answers
+# (``prepare``, D-204), the view under way then finished: an update's downtime stays within 5 minutes (D-188), and
+# after an update none is kept (an answer's version is AP Coder's own).
+PREPARE_MOST = 120.0
 
 
 def _day(text: str) -> dt.date:
@@ -124,6 +130,52 @@ def ahead(store: Any, name: str, args_of: Callable[[Any], list[Any]], view: str)
                                             exc_info=True)  # fmt: skip
         return False, None
     return True, next((key for seen, key in reversed(asked) if seen == name), None)
+
+
+def kept_already(store: Any, name: str, args: list[Any]) -> bool:
+    """Whether answer ``name`` asked with ``args`` (as ``ANSWERS`` asks it) has an answer kept for its question, of
+    any age, by this AP Coder on this database (``Store.answer_kept``): its question found by asking it without working
+    it out (``reports.question_of``)."""
+    try:
+        with reports.refreshing(), reports.question_of(name):
+            ANSWERS[name](store, args)
+    except reports.Asked as asked:
+        return bool(store.answer_kept(name, asked.key, asked.version))
+    return False
+
+
+def prepare(store: Any, say: Callable[[str], None], most: float = PREPARE_MOST) -> tuple[int, int, float]:
+    """The company server's start, before it answers (D-204): each default view (``DEFAULTS``, in that order) with no
+    answer kept for its question (a database never served, an update: ``kept_already``) worked out as the refresher
+    works it out (``ahead``), kept for every process (``store``: the company server's, ``background_answers``), so no
+    page waits for it; one kept already, of any age, is left to the refresher, which brings it up to date after the
+    start, so an ordinary restart works none out. Within ``most`` seconds, looked at before each view: past them the
+    rest is left to the refresher too. One that fails is logged and the next goes on. ``say``: told once before the
+    first is worked out and once at the end. (worked out, with none kept, seconds.)"""
+    log, began, made, due = logging.getLogger(__name__), time.monotonic(), 0, 0
+    left = 0  # (those not looked at: past ``most``)
+    for n, (name, args_of) in enumerate(DEFAULTS):
+        if time.monotonic() - began >= most:
+            left = len(DEFAULTS) - n
+            break
+        try:
+            with reports.refreshing(), reports.question_of(name):  # (what it is asked with: Spend's currencies kept)
+                args = json.loads(json.dumps(args_of(store)))
+            if kept_already(store, name, args):
+                continue
+        except Exception:  # noqa: BLE001 - any view's failure: logged, the others go on
+            log.warning("the %s answer's default view: whether one is kept was not found", name, exc_info=True)
+            continue
+        if not due:
+            say(f"Working out the reports' default views before the dashboard answers (none kept for them yet, as at a "
+                f"first start or after an update), {most / 60:g} minutes at most...")  # fmt: skip
+        due += 1
+        made += ahead(store, name, lambda store, args=args: args, "default view")[0]
+    seconds = time.monotonic() - began
+    past = f"; past {most:g} s, {left} left to the background process" if left else ""
+    say(f"The reports' default views worked out before the dashboard answers: {made} of the {due} with none kept "
+        f"({len(DEFAULTS)} in all), in {seconds:.1f} s{past}.")  # fmt: skip
+    return made, due, seconds
 
 
 class _Warm:

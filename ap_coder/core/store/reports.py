@@ -122,7 +122,8 @@ _KEPT_LOCK = threading.Lock()
 wall = time.time  # an answer's age, the same clock in every process (tests set it)
 _WORKING: dict[tuple[str, str, str], threading.Lock] = {}  # one thread of this process works an answer out at a time
 _ASKED: dict[tuple[str, str, str], float] = {}  # when this process last noted each answer asked (D-198)
-# ``on``: this thread is the refresher's, which works out what it asks; ``asked``: (name, key) of each (``refreshing``)
+# ``on``: this thread is the refresher's, which works out what it asks; ``asked``: (name, key) of each (``refreshing``);
+# ``probe``: the answer whose question this thread looks for, worked out nowhere (``question_of``)
 _HERE = threading.local()
 KEPT_HERE = 32
 KeptAnswer = tuple[Any, Any, float, float | None]  # (its stamp, its value, when its work began, how long it lasted)
@@ -171,6 +172,28 @@ def anywhere_in(context: contextvars.Context) -> contextvars.Context:
     the answers it asks are waited for as anywhere else (B-2063)."""
     context.run(_BY_A_PAGE.set, None)
     return context
+
+
+class Asked(Exception):
+    """Raised by ``shared_answer`` inside ``question_of``: the question an answer is asked, found without working it
+    out (``key``: its ``asked_key``; ``version``: its caller's format)."""
+
+    def __init__(self, name: str, key: str, version: str) -> None:
+        super().__init__(f"the {name} answer asked")
+        self.key, self.version = key, version
+
+
+@contextmanager
+def question_of(name: str) -> Iterator[None]:
+    """Inside, on this thread: answer ``name``, once asked (``shared_answer``), is neither worked out nor taken but
+    ``Asked`` raised with its question, so the company server's first start knows which answers it has kept already
+    (D-204); any other answer asked on the way (what its question is made of: Spend's currencies) is taken as kept, of
+    any age, as a page shows it meanwhile, and worked out only when none is."""
+    _HERE.probe = name
+    try:
+        yield
+    finally:
+        _HERE.probe = None
 
 
 @contextmanager
@@ -231,6 +254,11 @@ class ReportsMixin:
             _HERE.asked.append((name, key))
         began = wall()
         seen, writing = self._answer_stamp(topic, changes)
+        if (probe := getattr(_HERE, "probe", None)) is not None:  # (its question looked for: D-204)
+            if probe == name:
+                raise Asked(name, key, version)
+            if not writing and (found := self.kept_answer(name, key, version)) is not None and found[0][:1] == seen[:1]:
+                return decode(found[1])
         if writing:
             return compute()
         wanted = again is not None and bool(settle) and self.background_answers and not getattr(_HERE, "on", False)
@@ -454,6 +482,18 @@ class ReportsMixin:
             row = conn.execute("SELECT made_at FROM report_answers WHERE name = ? AND asked = ?",
                                (name, key)).fetchone()  # fmt: skip
         return None if row is None else float(row[0])
+
+    def answer_kept(self, name: str, key: str, version: str) -> bool:
+        """Whether an answer is kept under ``name`` and ``key`` (``asked_key``) by this ``version`` (AP Coder's and its
+        caller's format) on this database (its ``summary_id``), of any age: one a page may show (D-204)."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT stamp, (SELECT value FROM settings WHERE key = 'summary_id') FROM "
+                               "report_answers WHERE name = ? AND asked = ? AND version = ?",
+                               (name, key, _version(version))).fetchone()  # fmt: skip
+        try:
+            return row is not None and json.loads(row[0])[:1] == [row[1]]
+        except (TypeError, ValueError):
+            return False
 
     def asked_lately(self, since: float) -> list[dict[str, Any]]:
         """The latest question asked of each answer on this database since ``since`` (``wall``): ``name``, ``asked``

@@ -41,7 +41,7 @@ import anyio.to_thread
 
 from ap_coder import __version__
 from ap_coder.core import paths
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, dialect
 from ap_coder.ops import health, system_log
 from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
 from ap_coder.web.app import CODE_FOLDER, create_app, os_user, own_work_running
@@ -411,6 +411,10 @@ def stop_file(data: Path | None = None) -> Path:
 def _serve_workers(host: str, port: int, store: Store | None, certfile: str | None, keyfile: str | None,
                    proxy: str | None, insecure_http: bool, workers: int) -> int:  # fmt: skip
     store = store or Store(paths.env_path("AP_DB_PATH") or paths.default_db_path())  # (its upgrade runs here, once)
+    try:
+        prepare_reports(store)  # (the port still closed: nobody waits for them, D-204)
+    except KeyboardInterrupt:
+        return 0
     token = secrets.token_urlsafe(24)
     data = paths.private_dir()
     stop_file(data).unlink(missing_ok=True)
@@ -449,6 +453,17 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
         os.environ.pop(WORKER_ENV, None)
         os.environ.pop(SLOTS_ENV, None)
     return 1 if supervisor.failed else 0
+
+
+def prepare_reports(store: Store) -> None:
+    """The reports' default views with no answer kept worked out before the server answers (D-204,
+    ``refresh.prepare``), each kept for every process (``background_answers``: B-2050), as the background process's
+    refresher would after the start while people already asked them. What was done is said in the server's window
+    (and the service's log), which shows warnings and up only (B-240), as its other lines at a start."""
+    from ap_coder.web import refresh
+
+    store.background_answers = True
+    refresh.prepare(store, lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def _stop_background_when_asked(should_exit: threading.Event, background: Any) -> None:
@@ -578,7 +593,87 @@ def worker_app() -> Any:
                      name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
     app.add_middleware(HandBack)  # a busy worker's connections go to the others (D-161)
     app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
+    warm_worker(store, app.state.settings_factory)  # (before it serves: D-204)
     return app
+
+
+# --- A web worker's memories built before it serves (D-204) ------------------------------------------------------
+# A web worker keeps what its pages read again and again (core/caches.py CACHES). One just started has none of it, so
+# its first open of an invoice built the learning memory, the vendor list and the vendor's lessons and invoices in that
+# request (3-6 s at 300,000 invoices), and its first Learning visit its latest lessons (2.2 s). Each web worker of the
+# company server builds them in uvicorn's factory (``worker_app``), before it takes a connection: the others serve
+# meanwhile, and the supervisor's "alive?" is answered on a thread of uvicorn's own. Each through the function the page
+# calls, so the page takes what it built. D-203 built them on a thread once the worker served: not kept.
+WARM_MOST = 15.0  # seconds, looked at before each step: well under the 30 s uvicorn gives a worker started afresh
+WARM_FIRST = 50  # the review queue's first invoices (people open those at its top first): their vendors'
+WARM_VENDORS = 8  # lessons and invoices of so many of those vendors, the biggest first (VENDOR_LESSONS_KEPT: 32)
+# The vendors of those invoices, the biggest first, with how many invoices each has
+_FIRST_VENDORS = ("SELECT MIN(q.vendor_name) AS vendor_name, MAX(q.gst_number) AS gst_number, (SELECT COUNT(*) FROM "
+                  "invoice_summary s WHERE s.vendor_key = q.vendor_key) AS invoices FROM invoice_summary q WHERE "
+                  f"{dialect.in_list('q.id')} AND q.vendor_name != '' GROUP BY q.vendor_key ORDER BY invoices DESC, "
+                  "MIN(q.id) LIMIT ?")  # fmt: skip
+
+
+def _held_numbers(store: Store) -> Any:
+    """What the vendors on hold's approved invoices carried, as the check of a held vendor's invoice moved to another
+    vendor reads it at every open (``coding.vendors.held_vendor``); None with no vendor on hold."""
+    held = store.held_vendors()
+    return store.approved_numbers([v["vendor_key"] for v in held]) if held else None
+
+
+def warm_steps(store: Store, settings_factory: Callable[[], Any]) -> Any:
+    """What a web worker builds before it serves, in this order: (what, how). The learning memory (``FEEDBACK_READ``
+    lessons: every open and check of an invoice), the vendor list, the vendors' ERP IDs and the vendors on hold's
+    numbers (every open), the reading status (every page), Learning's latest lessons, then the lessons and invoices of
+    the biggest vendors (by their invoices) of the review queue's first ``WARM_FIRST`` invoices, ``WARM_VENDORS`` at
+    most, their invoices within half of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``): the other half for
+    those people ask."""
+    from ap_coder.core.store import REVIEW
+    from ap_coder.core.store.vendors import VENDOR_ROWS_KEPT
+    from ap_coder.web.core import reading_status_or_none
+    from ap_coder.web.pages import invoice, learning
+
+    yield "the learning memory", store.feedback_rows
+    yield "the vendor list", lambda: invoice.vendor_list(store)
+    yield "the vendors' ERP IDs", store.vendor_ids
+    yield "the vendors on hold's numbers", lambda: _held_numbers(store)
+    yield "the reading status", lambda: reading_status_or_none(settings_factory(), store)
+    yield "Learning's latest lessons", lambda: store.feedback_rows(limit=learning.MEMORY_READ)
+    vendors = store.summary_fetch(_FIRST_VENDORS, (json.dumps(store.listed_ids(REVIEW)[:WARM_FIRST]), WARM_VENDORS))
+    rows = 0
+    for v in vendors:
+        name, key = v["vendor_name"], store.vendor_key_for(v["vendor_name"], v["gst_number"])
+        yield f"the lessons of {name}", lambda name=name, key=key: store.vendor_lessons(name, key)
+        if rows + v["invoices"] <= VENDOR_ROWS_KEPT // 2:
+            rows += v["invoices"]
+            yield f"the invoices of {name}", lambda key=key: store.vendor_invoices(key, shared=True)
+
+
+def warm_worker(store: Store, settings_factory: Callable[[], Any], most: float = WARM_MOST) -> list[str]:
+    """A web worker's memories built before it serves (``warm_steps``), one after the other, within ``most`` seconds
+    (looked at before each step), until the worker is asked to stop. A step that fails is logged and the next goes
+    on: nothing is lost, the page builds it when asked. Said in the worker's own log (``worker_log``). What was
+    built, in order."""
+    log, began, built, cut = logging.getLogger(__name__), time.monotonic(), [], ""
+    try:
+        for what, build in warm_steps(store, settings_factory):
+            if time.monotonic() - began >= most:
+                cut = f"; stopped at {most:g} s"
+                break
+            if (running := uvicorn_server()) is not None and running.should_exit:
+                cut = "; stopped: the worker stops"
+                break
+            try:
+                build()
+                built.append(what)
+            except Exception:  # noqa: BLE001 - any step's failure: logged, the next goes on
+                log.warning("A web worker did not build %s before it served.", what, exc_info=True)
+    except Exception:  # noqa: BLE001 - the steps themselves not found (a busy database): built where asked
+        log.warning("A web worker stopped building its memories before it served.", exc_info=True)
+        cut = "; stopped on an error"
+    log.info("A web worker (process %s) built %d of its memories before it served, in %.1f s%s: %s.", os.getpid(),
+             len(built), time.monotonic() - began, cut, ", ".join(built) or "none")  # fmt: skip
+    return built
 
 
 # --- A web worker started afresh now and then (D-153) ------------------------------------------------------------

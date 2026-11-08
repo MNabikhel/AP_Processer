@@ -1,13 +1,17 @@
 """What one web worker of the company server runs at once (D-153): its thread pool capped, the long routes in a lane
-of their own, a worker started afresh past its memory or requests, and how many workers the server runs."""
+of their own, a worker started afresh past its memory or requests, how many workers the server runs, and what the
+server and each worker do before they answer (D-204)."""
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
+import logging
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -873,3 +877,277 @@ def test_the_default_number_of_workers_follows_the_cores_and_the_memory(cores, g
     if gb is None:
         monkeypatch.setattr(server, "memory_total_mb", lambda: None)  # memory unknown: by the cores
     assert server.default_workers(cores, gb * 1000 if gb else None) == workers
+
+
+# --- What the company server does before it answers (D-204) -------------------------------------------------------
+
+
+def test_the_server_works_its_reports_out_before_its_port_opens_and_only_with_several_workers(
+    store, tmp_path, monkeypatch
+):
+    """D-204: the company server with several web workers works the reports' default views out (``prepare_reports``)
+    before its port is bound, so a connection meanwhile is refused (nobody waits on a socket nothing answers yet); a
+    laptop and the server in one process work none out at their start, as before."""
+    done: list = []
+    monkeypatch.setattr(server, "prepare_reports", lambda store: done.append(("prepared", store.path)))
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            done.append("served")
+            self.should_exit.set()
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    socket_ = SimpleNamespace(listen=lambda n: None)
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(
+        bind_socket=lambda: done.append("bound") or socket_, backlog=2048))  # fmt: skip
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "Together", lambda works: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert done == [("prepared", store.path), "bound", "served"]
+
+    import uvicorn
+
+    done.clear()
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: done.append("served"))
+    monkeypatch.setattr(server, "fewer_malloc_arenas", lambda: None)
+    for on_server in (False, True):
+        if on_server:
+            monkeypatch.setenv("AP_SERVER_MODE", "1")
+        else:
+            monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+        server.serve("127.0.0.1", _free_port(), open_browser=False, store=store, insecure_http=True, workers=1)
+    assert done == ["served", "served"]
+
+
+def _queue_with_lessons(store: Store) -> tuple[int, str]:
+    """An invoice in the review queue, a line of it without an account (its screen suggests one from the learning
+    memory), and lessons of its vendor: (the invoice, its vendor's key)."""
+    from tests.webclient import add_clean, gt
+
+    lines = gt()["line_items"]
+    invoice = add_clean(store, line_items=[{**lines[0], "predicted_gl_code": "UNASSIGNED"}, *lines[1:]])
+    found = store.get_invoice(invoice)
+    with store._conn() as conn:
+        conn.executemany("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, suggested_gl, outcome, "
+                         "created_at) VALUES (?, ?, ?, '5000', '5000', 'accepted', '2026-01-02T03:04:05')",
+                         [(found["vendor_key"], found["vendor_name"], f"Part {n}") for n in range(20)])  # fmt: skip
+    return invoice, found["vendor_key"]
+
+
+def _reads(monkeypatch) -> collections.Counter:
+    """What is read from the database from now on, of what a web worker builds before it serves: the learning memory
+    and Learning's latest lessons (by how many), the vendor list, each vendor's lessons and invoices (by its key; its
+    invoices all of them, or those changed since)."""
+    from ap_coder.core.store import learning as lessons
+    from ap_coder.web.pages import invoice as invoice_page
+
+    read: collections.Counter = collections.Counter()
+    fetch, vendor_list, vendor_invoices = lessons.fetch_rows, invoice_page._vendor_list, Store._vendor_invoices
+
+    def fetching(conn, sql, params=()):
+        if sql.startswith("SELECT * FROM feedback ORDER BY"):
+            read["the learning memory", params[0]] += 1
+        elif sql.startswith(f"SELECT {lessons._VENDOR_COLUMNS} FROM feedback WHERE vendor_key"):
+            read["the lessons of", params[0]] += 1
+        return fetch(conn, sql, params)
+
+    def listing(store):
+        read["the vendor list"] += 1
+        return vendor_list(store)
+
+    def invoices(self, key, ids=None, **kw):
+        read["the invoices of", key, ids is None] += 1
+        return vendor_invoices(self, key, ids, **kw)
+
+    monkeypatch.setattr(lessons, "fetch_rows", fetching)
+    monkeypatch.setattr(invoice_page, "_vendor_list", listing)
+    monkeypatch.setattr(Store, "_vendor_invoices", invoices)
+    return read
+
+
+def _as_a_worker(store: Store, tmp_path, monkeypatch) -> None:
+    """``worker_app`` to be made as uvicorn makes one of the company server's web workers, on ``store``."""
+    spec = {"db": str(store.path), "address": "127.0.0.1", "insecure_http": True, "workers": 2, "secret": "00" * 32,
+            "proxy": "", "port": 8501, "token": "t", "data": str(tmp_path), "parent": os.getpid()}  # fmt: skip
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps(spec))
+    monkeypatch.setattr(server, "_stop_worker_when_asked", lambda *a: None)
+    monkeypatch.setattr(server, "worker_log", lambda folder: None)  # (no log of its own in pytest's)
+
+
+def test_a_web_worker_of_the_server_builds_its_memories_before_it_serves(store, tmp_path, monkeypatch, caplog):
+    """D-204: a web worker's first open of an invoice built the learning memory, the vendor list and its vendor's
+    lessons and invoices in that request (3-6 s at 300,000 invoices), its first Learning visit its latest lessons (2.2
+    s). Each web worker of the company server builds them in uvicorn's factory (``worker_app``), before it serves,
+    each once through the page's own function: an invoice opened right after reads none of them again."""
+    from ap_coder.core.store import FEEDBACK_READ
+    from ap_coder.web.pages import learning
+    from tests.webclient import client_for
+
+    invoice, key = _queue_with_lessons(store)
+    name = store.get_invoice(invoice)["vendor_name"]
+    _as_a_worker(store, tmp_path, monkeypatch)
+    read = _reads(monkeypatch)
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        server.worker_app()
+    assert read == {("the learning memory", FEEDBACK_READ): 1, ("the learning memory", learning.MEMORY_READ): 1,
+                    "the vendor list": 1, ("the lessons of", key): 1, ("the invoices of", key, True): 1}  # fmt: skip
+    said = [r.getMessage() for r in caplog.records if "before it served" in r.getMessage()]
+    assert len(said) == 1 and re.fullmatch(
+        rf"A web worker \(process {os.getpid()}\) built 8 of its memories before it served, in [\d.]+ s: the learning "
+        rf"memory, the vendor list, the vendors' ERP IDs, the vendors on hold's numbers, the reading status, "
+        rf"Learning's latest lessons, the lessons of {re.escape(name)}, the invoices of {re.escape(name)}\.",
+        said[0]), said  # fmt: skip
+    read.clear()
+    assert client_for(store).get(f"/review/{invoice}").status_code == 200
+    assert read == {}
+
+
+def test_only_a_web_worker_of_the_company_server_builds_its_memories_before_it_serves(store, tmp_path, monkeypatch):
+    """D-204: a laptop's dashboard and the server in one process build nothing ahead (with its background work, each
+    page builds what it reads, as before); each web worker of the company server (``worker_app``) on its database."""
+    built: list = []
+    monkeypatch.setattr(server, "warm_worker", lambda store, settings_factory: built.append(store.path))
+    for on_server in (False, True):
+        with TestClient(create_app(web_settings(), store, start_reader=False, server=on_server),
+                        base_url="http://127.0.0.1") as client:  # fmt: skip
+            assert client.get("/healthz").status_code == 200
+    assert built == []
+    _as_a_worker(store, tmp_path, monkeypatch)
+    server.worker_app()
+    assert built == [store.path]
+
+
+def test_a_web_workers_memories_come_from_the_queues_biggest_vendors_first_within_their_bounds(store, monkeypatch):
+    """D-204: people open the review queue's first invoices first: of their vendors (``WARM_FIRST`` invoices), the
+    biggest first by their invoices, ``WARM_VENDORS`` at most, a vendor's invoices only while those built fit in half
+    of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``: the other half for the vendors people ask). A vendor
+    with no invoice in the queue is not taken, however big."""
+    from ap_coder.core.store import vendors as vendors_module
+    from tests.webclient import add_clean
+
+    for name, numbers in (("Acme Supply", 3), ("Beta Ltd", 1), ("Gamma Inc", 1), ("Delta Corp", 5)):
+        for n in range(numbers):
+            add_clean(store, vendor_name=name, invoice_number=f"{name[0]}-{n}")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET status = 'approved' WHERE vendor_name = 'Delta Corp'")
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 6)
+    monkeypatch.setattr(server, "WARM_VENDORS", 2)
+    steps = [what for what, _ in server.warm_steps(store, web_settings)]
+    assert steps[6:] == ["the lessons of Acme Supply", "the invoices of Acme Supply", "the lessons of Beta Ltd"]
+    monkeypatch.setattr(server, "WARM_FIRST", 3)  # (the queue's first three: Acme's)
+    assert [what for what, _ in server.warm_steps(store, web_settings)][6:] == [
+        "the lessons of Acme Supply", "the invoices of Acme Supply"]  # fmt: skip
+
+
+def test_a_web_workers_memories_stop_at_their_bound_or_its_stop_and_a_step_that_fails_is_logged(
+    store, monkeypatch, caplog
+):
+    """D-204: a worker builds its memories within ``WARM_MOST`` (looked at before each step), well under the 30 s
+    uvicorn gives a worker started afresh to serve; a worker asked to stop meanwhile stops; a step that fails is logged
+    and the next goes on (the page builds it when asked), and steps that can't even be listed (a busy database) are
+    logged too. Each time it says what it built."""
+    done: list[str] = []
+
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+
+    def steps(store, settings_factory):
+        yield "the first", lambda: done.append("the first")
+        yield "the failing", locked
+        yield "the slow", lambda: (time.sleep(0.3), done.append("the slow"))
+        yield "the late", lambda: done.append("the late")
+
+    monkeypatch.setattr(server, "warm_steps", steps)
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings, most=0.2) == ["the first", "the slow"] == done
+    said = [r.getMessage() for r in caplog.records]
+    assert said[0] == "A web worker did not build the failing before it served."
+    assert re.fullmatch(r"A web worker \(process \d+\) built 2 of its memories before it served, in [\d.]+ s; stopped "
+                        r"at 0.2 s: the first, the slow\.", said[1]), said  # fmt: skip
+
+    caplog.clear()
+    monkeypatch.setattr(server, "uvicorn_server", lambda: SimpleNamespace(should_exit=True))
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings) == []
+    assert "built 0 of its memories before it served, in" in caplog.text and "stopped: the worker stops: none" in (
+        caplog.text)  # fmt: skip
+
+    def unlisted(store, settings_factory):
+        yield "the first", lambda: None
+        locked()
+
+    monkeypatch.setattr(server, "uvicorn_server", lambda: None)
+    monkeypatch.setattr(server, "warm_steps", unlisted)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings) == ["the first"]
+    assert "A web worker stopped building its memories before it served." in caplog.text
+    assert "built 1 of its memories before it served" in caplog.text and "stopped on an error: the first." in (
+        caplog.text)  # fmt: skip
+
+
+def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_serves_and_again_works_none_out(
+    tmp_path,
+):
+    """D-204: the real server, two web workers, on a database never served: its window says the reports' default
+    views were worked out before it answered, each web worker's own log (``logs/web-<n>.log``, B-2065) that it built
+    its memories before it served, and it serves. Started again, it works none out: each is kept."""
+    from ap_coder.web import refresh
+    from tests.webclient import add_clean
+
+    data, port = tmp_path / "data", _free_port()
+    add_clean(Store(data / "ap_coder.db"))
+    every = len(refresh.DEFAULTS)
+    (tmp_path / "empty.env").write_text("", encoding="utf-8")
+    env = {**os.environ, "AP_PRIVATE_DIR": str(data), "BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1",
+           server.CAPTURE_ENV: "1"}  # fmt: skip
+    command = [sys.executable, "-m", "ap_coder", "--env-file", str(tmp_path / "empty.env"), "--db",
+               str(data / "ap_coder.db"), "serve", "--server", "--insecure-http", "--host", "127.0.0.1", "--port",
+               str(port), "--workers", "2"]  # fmt: skip
+    root = Path(__file__).resolve().parents[2]
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = f"http://127.0.0.1:{port}"
+
+    def started(n: int) -> str:
+        """The server started, until it answered and was stopped: its window."""
+        window = tmp_path / f"server-{n}.log"  # a file, not a pipe: a worker left running can't hold the test up
+        with window.open("w") as out:
+            proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 120
+                while True:
+                    try:
+                        with direct.open(base + "/healthz", timeout=2) as answer:
+                            assert answer.status == 200
+                            break
+                    except OSError:
+                        assert time.monotonic() < deadline and proc.poll() is None, window.read_text()
+                        time.sleep(0.3)
+                token = json.loads((data / ".ap_coder_server.json").read_text(encoding="utf-8"))["token"]
+                stop = urllib.request.Request(base + "/shutdown", data=b"", method="POST",
+                                              headers={"X-AP-Coder-Token": token})  # fmt: skip
+                direct.open(stop, timeout=10).close()
+                proc.wait(40)
+                assert proc.returncode == 0
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(10)
+        return window.read_text(encoding="utf-8")
+
+    first = started(1)
+    assert f"worked out before the dashboard answers: {every} of the {every} with none kept" in first, first
+    for n in (1, 2):
+        own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
+        assert re.search(r"INFO ap_coder\.web\.server: A web worker \(process \d+\) built \d+ of its memories before "
+                         r"it served", own), own  # fmt: skip
+    again = started(2)
+    assert f"worked out before the dashboard answers: 0 of the 0 with none kept ({every} in all)" in again, again
+    assert "Working out the reports' default views" not in again
