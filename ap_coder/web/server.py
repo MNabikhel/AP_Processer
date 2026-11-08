@@ -419,6 +419,7 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     data = paths.private_dir()
     stop_file(data).unlink(missing_ok=True)
     (data / RECYCLE_PID).unlink(missing_ok=True)  # a worker of the last run ending: its number may be given again
+    (data / WARMING_NOTE).unlink(missing_ok=True)  # (and one of its replacements building its memories)
     from ap_coder.ai.local_llm import SLOTS_ENV
 
     os.environ[SLOTS_ENV] = str(data / "llm")  # llm_parallel holds for all the server's processes together
@@ -654,6 +655,8 @@ def worker_app() -> Any:
     app.add_middleware(HandBack)  # a busy worker's connections go to the others (D-161)
     app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
     warm_worker(store, app.state.settings_factory)  # (before it serves: D-204)
+    with contextlib.suppress(OSError):  # (built: another worker may be started afresh, B-2067)
+        (Path(spec["data"]) / WARMING_NOTE).unlink(missing_ok=True)
     return app
 
 
@@ -779,13 +782,19 @@ def warm_worker(store: Store, settings_factory: Callable[[], Any], most: float =
 # memory, or past RECYCLE_REQUESTS requests (each worker a number of its own, up to a quarter more, so they don't all
 # go together), a worker takes no new requests, finishes those under way and ends; uvicorn's supervisor starts
 # another in its place (on Windows too: it ends as any process does, not by a signal). One worker at a time (a lock
-# in the data folder), and never while something of its own runs that would end with it: a job, a backup, imports
-# waiting their turn, the long routes' lane (core.run_heavy). Logins are kept in the database: nobody is signed out.
+# in the data folder, then its replacement's note until it serves: B-2067), and never while something of its own runs
+# that would end with it: a job, a backup, imports waiting their turn, the long routes' lane (core.run_heavy). Logins
+# are kept in the database: nobody is signed out.
 MEMORY_ENV, REQUESTS_ENV = "AP_WORKER_MAX_MB", "AP_WORKER_MAX_REQUESTS"
 RECYCLE_REQUESTS = 50_000  # about a working day for each of 16 workers answering 20-40 requests a second
 RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
 RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
 LEAVING_SECONDS = 600  # how long that note is believed (one still waiting for its own work answers "alive?")
+# Its replacement building its memories before it serves (D-204), written by the supervisor as it starts it and dropped
+# by the replacement once built: no other worker is started afresh meanwhile (B-2067). Believed WARMING_SECONDS at most:
+# a replacement that never serves (it crashed) holds no other back for good.
+WARMING_NOTE = ".ap_coder_worker_warming"
+WARMING_SECONDS = WARM_MOST + 60.0  # (its start, its imports and app, its memories, the step under way)
 MEMORY_EVERY = 10  # requests between two looks at the memory
 DRAIN_SECONDS = 1.0
 RECYCLE_GRACE_SECONDS = 3600  # what an ending worker gives the requests under way (a service stop: GRACEFUL_SECONDS)
@@ -864,6 +873,10 @@ class Recycle:
         self.stopping = try_lock(self.data / RECYCLE_LOCK)
         if self.stopping is None:
             return  # another worker is being started afresh: this one's turn comes after
+        if _leaving(self.data) is not None or _warming(self.data):  # (or its replacement does not serve yet: B-2067)
+            self.stopping.close()  # type: ignore[attr-defined]
+            self.stopping = None
+            return
         with contextlib.suppress(OSError):
             (self.data / RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")
         logging.getLogger(__name__).warning("A web worker (process %s) is started afresh after %s.", os.getpid(),
@@ -897,10 +910,22 @@ def _leaving(data: Path) -> int | None:
 
 
 def _left(data: Path, pid: int) -> None:
-    """The note of the worker ``pid`` started afresh dropped once it has ended (if no other wrote its own since)."""
+    """The note of the worker ``pid`` started afresh dropped once it has ended (if no other wrote its own since), its
+    replacement, started now, noted as building its memories (``WARMING_NOTE``, B-2067) first."""
     if _leaving(data) == pid:
         with contextlib.suppress(OSError):
+            (data / WARMING_NOTE).write_text(str(pid), encoding="ascii")
+        with contextlib.suppress(OSError):
             (data / RECYCLE_PID).unlink()
+
+
+def _warming(data: Path) -> bool:
+    """Whether a worker started afresh still builds its memories before it serves (``WARMING_NOTE``, written at most
+    WARMING_SECONDS ago)."""
+    try:
+        return time.time() - (data / WARMING_NOTE).stat().st_mtime < WARMING_SECONDS
+    except OSError:
+        return False
 
 
 # --- A busy web worker hands its connections back (D-161) --------------------------------------------------------

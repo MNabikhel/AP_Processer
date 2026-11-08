@@ -574,6 +574,53 @@ def test_a_worker_past_its_memory_ends_and_one_worker_at_a_time(tmp_path, monkey
     assert found.should_exit
 
 
+def test_no_worker_is_started_afresh_while_the_one_started_before_it_builds_its_memories(store, tmp_path, monkeypatch):
+    """B-2067: "one worker at a time" (``RECYCLE_LOCK``) lasted only until the worker started afresh had ended; its
+    replacement then built its memories before it served (D-204, up to ``WARM_MOST``) while another worker due
+    meanwhile ended too: no worker served (9.7 s in a probe with two). No other is started afresh until the
+    replacement serves: from the end of the one before (its note, ``RECYCLE_PID``) through the replacement's start
+    (``WARMING_NOTE``, the supervisor's as it starts it) to its memories built; a replacement that never gets there
+    (it crashed) lets the others go after ``WARMING_SECONDS``."""
+    from ap_coder.core.paths import try_lock
+
+    ending = try_lock(tmp_path / server.RECYCLE_LOCK)  # (a worker started afresh, finishing its requests)
+    (tmp_path / server.RECYCLE_PID).write_text("4242", encoding="ascii")
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(worker)
+    assert not found.should_exit
+    ending.close()  # (it has ended; the supervisor has not started its replacement yet)
+    _serve(worker)
+    assert not found.should_exit and worker.stopping is None
+    lock = try_lock(tmp_path / server.RECYCLE_LOCK)  # (let go of: another worker may look in its turn)
+    assert lock is not None
+    lock.close()
+    server._left(tmp_path, 4242)  # (the supervisor starts its replacement)
+    assert server._leaving(tmp_path) is None
+    seen = []
+
+    def steps(store, settings_factory):  # (the replacement building its memories: a slow step)
+        def slow():
+            _serve(worker)  # (the worker due asks again meanwhile)
+            seen.append(found.should_exit)
+
+        yield "a slow step", slow
+
+    monkeypatch.setattr(server, "warm_steps", steps)
+    _as_a_worker(store, tmp_path, monkeypatch)
+    server.worker_app()
+    assert seen == [False]
+    _serve(worker)
+    assert found.should_exit  # (the replacement serves: the next one goes)
+
+    worker.stopping.close()  # (it has ended)
+    server._left(tmp_path, os.getpid())  # (its replacement started, and never served: it crashed)
+    old = time.time() - server.WARMING_SECONDS - 1
+    os.utime(tmp_path / server.WARMING_NOTE, (old, old))
+    late, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(late)
+    assert found.should_exit
+
+
 def test_the_limits_come_from_the_memory_and_the_settings(monkeypatch):
     monkeypatch.delenv(server.MEMORY_ENV, raising=False)
     monkeypatch.delenv(server.REQUESTS_ENV, raising=False)
