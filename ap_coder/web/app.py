@@ -195,9 +195,11 @@ class BackupCheck:
 # same work done). The others wait their turn. A laptop keeps anyio's default.
 THREADS_ENV = "AP_WORKER_THREADS"
 WORKER_THREADS = 4
-# A report being worked out (D-201): its page asks again this many seconds later (a script: Retry-After)
+# A report being worked out (D-201): its page asks again this many seconds later (a script: Retry-After); the answer
+# carries WORKING_HEADER, so it is told apart from the report served (B-2062)
 WORKING_AGAIN = 5
-WORKING = "This report is being worked out (the first time on a big database, about a minute). Ask again shortly."
+WORKING = "This report is being worked out just now. Ask again in a few seconds."
+WORKING_HEADER = "X-AP-Coder-Working"
 
 
 def worker_threads() -> int:
@@ -561,9 +563,12 @@ def _add_error_pages(app: FastAPI) -> None:
         if not wants_page:
             return JSONResponse({"ok": False, "error": str(exc.detail)}, status_code=exc.status_code)
         title = "Busy" if exc.status_code == 503 else "Not found"  # (503: the long routes' lane, core.run_heavy)
+        # busy: asked again by itself, as the "being worked out" page it may have been drawn again from (B-2061)
+        again = WORKING_AGAIN if exc.detail == core.BUSY else 0
         # the page frame reads the database: on a threadpool thread, never holding up the other requests
         return await run_in_threadpool(core.render, request, "error.html", "", status_code=exc.status_code,
-                                       title=title, code=exc.status_code, detail=str(exc.detail))  # fmt: skip
+                                       title=title, code=exc.status_code, detail=str(exc.detail),
+                                       again=again)  # fmt: skip
 
     @app.exception_handler(RequestValidationError)
     async def unreadable(request: Request, exc: RequestValidationError) -> Any:
@@ -579,13 +584,17 @@ def _add_error_pages(app: FastAPI) -> None:
     @app.exception_handler(reports.Working)
     async def being_worked_out(request: Request, exc: reports.Working) -> Any:
         # A report asked with nothing kept to show yet while another works it out (the server's first start, D-201):
-        # said at once, the page asking again by itself (no script: the Content-Security-Policy allows it)
+        # said at once, the page asking again by itself (no script: the Content-Security-Policy allows it); marked
+        # apart from a page served, for the access log's readers and bench load (B-2062)
         if not (request.method == "GET" and "text/html" in request.headers.get("accept", "")):
             return JSONResponse({"ok": False, "error": WORKING, "working": True}, status_code=503,
-                                headers={"Retry-After": str(WORKING_AGAIN), "Cache-Control": "no-store"})  # fmt: skip
+                                headers={"Retry-After": str(WORKING_AGAIN), "Cache-Control": "no-store",
+                                         WORKING_HEADER: "1"})  # fmt: skip
         page = next((p.key for p in PAGES if p.path == request.url.path), "")
-        return await run_in_threadpool(core.render, request, "working.html", page, again=WORKING_AGAIN,
-                                       **({} if page else {"title": "Being worked out"}))  # fmt: skip
+        answer = await run_in_threadpool(core.render, request, "working.html", page, again=WORKING_AGAIN,
+                                         **({} if page else {"title": "Being worked out"}))  # fmt: skip
+        answer.headers[WORKING_HEADER] = "1"
+        return answer
 
     @app.exception_handler(OverflowError)
     async def too_large(request: Request, exc: OverflowError) -> Any:

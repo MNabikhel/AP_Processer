@@ -35,8 +35,10 @@ What it runs:
 
 What it measures: for every route (ids taken out), the count, p50/p95/p99/max (a request without an answer counted at
 its time, at least ``--timeout``), the status codes, refusals (4xx), the requests over 30 seconds, errors (5xx, no
-answer, cut off: still under way when the run stopped its people); the server's own milliseconds from its access
-logs; throughput over time; each server process's CPU and memory over time (``/proc``, or psutil when it is
+answer, cut off: still under way when the run stopped its people); a report the server said is being worked out
+(D-201: its header) is asked again after its page's refresh, as the browser does, and those answers are counted
+apart, beside the pages, never in their figures; the server's own milliseconds from its access logs; throughput over
+time; each server process's CPU and memory over time (``/proc``, or psutil when it is
 installed; every ``--sample-every`` seconds), with how fast its memory grew (MB a 10 minutes over the run and over its
 second half: ``rss_slope``; ``--max-slope`` fails a run whose process grew faster, D-195); "database is locked",
 tracebacks and 5xx lines in the server's logs; the harness's own CPU (it must stay well under one core for the
@@ -100,6 +102,10 @@ QUICK = {"users": 3, "duration": 20.0, "ramp": 5.0, "workers": 1, "think": 3.0, 
 SLOW_SECONDS = 30.0  # a request answered later than this counts as a timeout
 STOP_GRACE = 15.0  # seconds past the run's end and every timeout before the people still under way are stopped
 CUT_OFF = "cut off"  # a request still under way then: recorded with its time so far
+# A report the server said is being worked out (D-201: its header, ``web/app.py`` WORKING_HEADER): recorded as this
+# kind, apart from the pages served, and asked again as the browser does, after its page's meta refresh (B-2062)
+WORKING, WORKING_HEADER = "working", "x-ap-coder-working"
+REFRESH_AFTER = re.compile(r'<meta http-equiv="refresh" content="(\d+)"')
 STEP_THINK = 1 / 3  # the think time between the steps of one scenario: this share of --think
 THINK_SIGMA = 0.6  # the lognormal's spread: its p95 is about 2.7 times its median
 MAX_LAG = 60.0  # a person this far behind their schedule starts again from now
@@ -968,13 +974,14 @@ class Person:
                 raise
             stopped, error = exc, CUT_OFF  # still under way as the run stopped its people: the slowest, recorded
         end = time.monotonic()
-        run.record(route or route_of(method, url), kind, status, end - (start if due is None else due), end - start,
-                   end, size, error)  # fmt: skip
+        working = answer is not None and bool(answer.headers.get(WORKING_HEADER))
+        run.record(route or route_of(method, url), WORKING if working else kind, status,
+                   end - (start if due is None else due), end - start, end, size, error)  # fmt: skip
         if stopped is not None:
             raise stopped
         if answer is None:
             raise StepFailed(error)
-        if status >= 500:
+        if status >= 500 and not working:
             raise StepFailed(str(status))
         if status in (302, 303, 307) and answer.headers.get("location", "").startswith("/login"):
             raise LoggedOut
@@ -989,6 +996,12 @@ class Person:
             if answer.status_code not in (301, 302, 303, 307, 308):
                 break
             answer = await self.send("GET", answer.headers["location"], "page")
+        # a report being worked out: drawn again after its meta refresh until it comes, while the run lasts (B-2062)
+        while answer.headers.get(WORKING_HEADER) and (again := REFRESH_AFTER.search(answer.text)):
+            if time.monotonic() + int(again.group(1)) >= self.run.deadline:
+                return None
+            await asyncio.sleep(int(again.group(1)))
+            answer = await self.send("GET", url, "page", route=route)
         if answer.status_code != 200:
             return None
         text = answer.text
@@ -1551,12 +1564,14 @@ def route_table(samples: list[tuple], timeout: float) -> dict[str, dict[str, Any
     table = {}
     for route, rows in sorted(by.items()):
         answered = [r for r in rows if not r[7]]
-        entry = stats([waited(r, timeout) for r in rows])
-        entry["service"] = stats([waited(r, timeout, 4) for r in rows])
-        entry["kind"] = collections.Counter(r[1] for r in rows).most_common(1)[0][0]
+        served = [r for r in rows if r[1] != WORKING]  # (its figures: not the "being worked out" answers, B-2062)
+        entry = stats([waited(r, timeout) for r in served])
+        entry["service"] = stats([waited(r, timeout, 4) for r in served])
+        entry["kind"] = collections.Counter(r[1] for r in served or rows).most_common(1)[0][0]
+        entry["working"] = len(rows) - len(served)
         entry["statuses"] = dict(sorted(collections.Counter(str(r[2]) for r in answered).items()))
         entry["refused"] = sum(1 for r in answered if 400 <= r[2] < 500)
-        entry["errors_5xx"] = sum(1 for r in answered if r[2] >= 500)
+        entry["errors_5xx"] = sum(1 for r in answered if r[2] >= 500 and r[1] != WORKING)
         entry["no_answer"] = dict(collections.Counter(r[7] for r in rows if r[7]))
         entry["over_30s"] = sum(1 for r in answered if r[3] > SLOW_SECONDS)
         entry["bytes"] = sum(r[6] for r in rows)
@@ -1570,8 +1585,8 @@ def timeline(samples: list[tuple], timeout: float, every: float = 10.0) -> list[
     for s in samples:
         buckets[int(s[5] // every)].append(s)
     return [{"t": k * every, "requests": len(rows), "per_second": round(len(rows) / every, 2),
-             "errors": sum(1 for r in rows if r[7] or r[2] >= 500),
-             "p95": quantile(sorted(waited(r, timeout) for r in rows), 0.95)}
+             "errors": sum(1 for r in rows if r[7] or (r[2] >= 500 and r[1] != WORKING)),
+             "p95": quantile(sorted(waited(r, timeout) for r in rows if r[1] != WORKING), 0.95)}
             for k, rows in sorted(buckets.items())]  # fmt: skip
 
 
@@ -1706,6 +1721,7 @@ def build_report(run: Run, cfg: dict[str, Any], extra: dict[str, Any]) -> dict[s
         },  # fmt: skip
         "pages": pages,
         "actions": actions,
+        "working": _pooled(samples, lambda s: s[1] == WORKING, run.timeout),  # (beside the pages: B-2062)
         "targets": targets,
         "lateness": stats(run.lateness),
         "counts": dict(sorted(run.counts.items())),
@@ -1779,6 +1795,7 @@ def markdown(report: dict[str, Any]) -> str:
     c, pc, r = report["config"], report["computer"], report["requests"]
     h, logs, a = report.get("harness") or {}, report.get("logs") or {}, report.get("audit") or {}
     pages, actions = report["pages"], report["actions"]
+    working = report.get("working") or stats([])
     out = [
         f"# Load test: {c['users']} people for {c['duration']:.0f} s on {c['workers']} worker(s)",
         "",
@@ -1792,6 +1809,9 @@ def markdown(report: dict[str, Any]) -> str:
         f"- Pages: p50 {_s(pages['p50'])}, p95 {_s(pages['p95'])}, p99 {_s(pages['p99'])} ({pages['n']}); actions "
         f"(check, approve, park, reject, final approval): p50 {_s(actions['p50'])}, p95 {_s(actions['p95'])} "
         f"({actions['n']}). Timed from when each step was due (scheduled start).",
+        f"- Being worked out (D-201): {working['n']} answers said a report was being worked out (p50 "
+        f"{_s(working['p50'])}, p95 {_s(working['p95'])}), each asked again after its page's refresh; not counted as "
+        "pages.",
         "- Targets: " + ", ".join(f"{k} {'met' if v else 'NOT met'}" for k, v in report["targets"].items()) + ".",
         f"- Behind schedule: p50 {_s(report['lateness']['p50'])}, p95 {_s(report['lateness']['p95'])}.",
         f"- Harness CPU: {h.get('process_cores')} cores (its event loop {h.get('loop_cores')}): "
@@ -1806,15 +1826,15 @@ def markdown(report: dict[str, Any]) -> str:
     gate_ = report.get("gate") or {}
     out += [f"- {p}" for p in gate_.get("problems", [])] or ["- Passed."]
     out += ["", "## Routes", "",
-            "| route | n | p50 | p95 | p99 | max | server p95 | statuses | refused | errors |",
-            "|---|---:|---:|---:|---:|---:|---:|---|---:|---:|"]  # fmt: skip
+            "| route | n | p50 | p95 | p99 | max | server p95 | statuses | refused | errors | being worked out |",
+            "|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|"]  # fmt: skip
     server = logs.get("server_seconds") or {}
     for route, e in sorted(report["routes"].items(), key=lambda kv: -kv[1]["count"]):
         statuses = ", ".join(f"{k}: {v}" for k, v in e["statuses"].items())
         errors = e["errors_5xx"] + sum(e["no_answer"].values()) + e["over_30s"]
         own = (server.get(route) or {}).get("p95")
         out.append(f"| {route} | {e['count']} | {_s(e['p50'])} | {_s(e['p95'])} | {_s(e['p99'])} | {_s(e['max'])} | "
-                   f"{_s(own)} | {statuses} | {e['refused']} | {errors} |")  # fmt: skip
+                   f"{_s(own)} | {statuses} | {e['refused']} | {errors} | {e.get('working', 0)} |")  # fmt: skip
     out += ["", "## Server processes", "", "| process | CPU s | mean cores | peak cores | RSS MB first → last (peak) | "
             "RSS MB a 10 min: whole run, second half |", "|---|---:|---:|---:|---|---|"]  # fmt: skip
     for p in report.get("processes") or []:

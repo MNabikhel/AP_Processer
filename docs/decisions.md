@@ -4102,22 +4102,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     late pill's recurring vendors, one of the 4 threads), so the others waited behind: the queue 46.7 s and an
     invoice 36 s at the client, p99 3.59 s, 7 requests over 30 s, all in the first 100 s.
   - **What:** on the company server (`background_answers`), a page's GET (`web/core.py` `one_connection` sets
-    `reports.asked_by_a_page`) asking a settled answer the refresher works out (`shared_answer`'s `again` and
-    `settle`) with nothing kept to show, while another thread or process works it out, waits for it `ANSWER_BRIEF`
-    (2 s) at most, for the thread here and for the other's hold together; then `reports.Working` is raised and one
-    handler (`web/app.py` `being_worked_out`) answers:
+    `reports.asked_by_a_page`) asking a settled answer of the kind the refresher works out (`shared_answer`'s
+    `again` and `settle`, whether the refresher runs or not) with nothing kept to show, while another thread or
+    process works it out (the warm-up, or another web worker's request), waits for it `ANSWER_BRIEF` (2 s) at most,
+    for the thread here and for the other's hold together; the database is looked at once more at the end, however
+    short the wait (`_waited`: one kept and let go of just after the ask looked is taken, B-2058), and a thread here
+    that holds the answer's lock may only be reading the one kept, which is taken when it holds (B-2059). Then
+    `reports.Working` is raised and one handler (`web/app.py` `being_worked_out`) answers, with
+    `X-AP-Coder-Working: 1` (`WORKING_HEADER`), so it is told apart from a page served (`bench load` counts it apart
+    and asks again as the browser does, B-2062):
     - a browser's page (GET, Accept text/html): the page in the app's layout, under the report's own title, "This
-      report is being worked out" (the first time on a big database about a minute; `templates/working.html`), with
-      `<meta http-equiv="refresh" content="5">` (`WORKING_AGAIN`): it asks again by itself until the report shows,
-      with no script, which the Content-Security-Policy allows (a browser test checks it). Status 200, never kept by
-      the browser (`render`'s no-store): it is the page asked for, saying where things stand; a 5xx body can be
-      swapped for a reverse proxy's own error page (IIS's custom errors, nginx's `proxy_intercept_errors`), losing
-      the refresh, and a load balancer's passive checks count 5xx, so a first start's hundred people could have it
-      take the workers out;
+      report is being worked out" (AP Coder is working it out just now: after a start on a big database, a minute or
+      so; `templates/working.html`), with `<meta http-equiv="refresh" content="5">` (`WORKING_AGAIN`): it asks again
+      by itself until the report shows, with no script, which the Content-Security-Policy allows (a browser test
+      checks it). Status 200, never kept by the browser (`render`'s no-store): it is the page asked for, saying where
+      things stand; a 5xx body can be swapped for a reverse proxy's own error page (IIS's custom errors, nginx's
+      `proxy_intercept_errors`), losing the refresh, and a load balancer's passive checks count 5xx, so a first
+      start's hundred people could have it take the workers out. An ask again that waited too long for a place in
+      the long routes gets the "Busy" page, which draws itself again too (B-2061);
     - any other ask (JSON, a file, a script): 503, `Retry-After: 5`, no-store, `{"ok": false, "error": "This report
-      is being worked out ...", "working": true}`: a script must know it has no answer.
+      is being worked out just now ...", "working": true}`: a script must know it has no answer.
     - The queue (everyone's first page) shows the recurring vendors only as its late pill: it asks them waiting 0 s
       (`asked_by_a_page(0.0)`) and, while they are being worked out, opens without the pill (`today_pills`).
+    - Views that are never replaced (`reports.as_anywhere`, B-2060): a vendor's details, the vendor master's import
+      and Teach from past coding wait for their answers as before; the vendor list and the coding accuracy may say
+      they are being worked out. A job's thread, and each file a run reads on one, never takes a page's brief wait
+      along from the request it copies its context from (`reports.anywhere_in`, B-2063).
   - **Same:** a laptop (no `background_answers`: its pages work their answers out where asked; a test); an action's
     POST, a background job, the refresher, a write under way (worked out afresh) and an answer without `again` or
     `settle` (the CSVs booked from, the duplicate audit) wait as before (a test); an answer with one to show is
@@ -4148,7 +4158,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     measured on its own, left); waiting without a thread (the pages' handlers are plain ones, on threads).
   - **Left:** while the work goes on, each ask again holds its long routes' place (or thread) for up to the 2 s;
     many people on reports in a first start's first minute line up behind each other in a worker (the 4.04 s above).
-    A report whose first ask comes before the warm-up reaches it is still worked out in that request. The 300,000
-    first start to be measured again with it.
-  - (`ap_coder/core/store/reports.py`, `web/core.py`, `web/app.py`, `web/templates/working.html`,
-    `web/pages/review.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/web/test_refresh.py`)
+    A report whose first ask comes before the warm-up reaches it is still worked out in that request. The views
+    never replaced (a vendor's details, the imports) wait for the warm-up's work as before D-201, holding their
+    thread: rare in a first start's first minutes. The 300,000 first start to be measured again with it.
+  - Reviewed by a fresh reviewer: B-2058 to B-2063 fixed test-first (above).
+  - (`ap_coder/core/store/reports.py`, `web/core.py`, `web/app.py`, `web/jobs.py`, `ai/pipeline.py`,
+    `web/templates/working.html`, `web/templates/error.html`, `web/pages/review.py`, `web/pages/vendors.py`,
+    `web/pages/learning.py`, `bench/load.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/web/test_refresh.py`,
+    `tests/bench/test_bench_load.py`)

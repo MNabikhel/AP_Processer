@@ -33,6 +33,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from ap_coder.core.store import reports
 from ap_coder.web import identity
 
 IDLE, RUNNING, DONE, ERROR = "idle", "running", "done", "error"
@@ -98,8 +99,9 @@ class Job:
                 self.state = IDLE  # another web worker runs it
                 return False
             self._finished.clear()
-        # The thread sees what the request saw: who started the job (web/identity.py) is who its events name.
-        context = contextvars.copy_context()
+        # The thread sees what the request saw: who started the job (web/identity.py) is who its events name; but not
+        # a page's brief wait for a report's answer: a job waits for its answers as anywhere (B-2063)
+        context = reports.anywhere_in(contextvars.copy_context())
         threading.Thread(target=context.run, args=(self._run, work, then), name=f"ap-coder-job-{self.name}",
                          daemon=True).start()  # fmt: skip
         if self.shared is not None:

@@ -238,6 +238,54 @@ def test_the_requests_a_second_of_each_minute_are_over_the_seconds_it_covers():
     assert "| 0 min | 0.5 | 0 | 1.00 s |" in text and "| 1 min | 0.5 | 0 | 1.00 s |" in text
 
 
+def test_a_report_being_worked_out_is_asked_again_as_a_browser_does_and_counted_apart_from_the_pages(monkeypatch):
+    """B-2062: on the company server a report with no answer yet is said to be "being worked out" at once (D-201): a
+    200 page that draws itself again every few seconds. The bench counted it as the report served, in the pages'
+    figures and their targets, and went on as if it had been. It asks again as the browser does (the page's meta
+    refresh) until the report comes, and counts those answers apart (``X-AP-Coder-Working``, the report's line and
+    each route's): the pages' figures are the pages served."""
+    from ap_coder.web import app
+
+    working = ('<html><head><meta http-equiv="refresh" content="5"></head><body>This report is being worked out'
+               "</body></html>")  # fmt: skip
+    answers = iter([(working, True), (working, True), ("<html><body>Month-end</body></html>", False)])
+
+    def server(request):
+        text, said = next(answers)
+        return httpx.Response(200, html=text, headers={app.WORKING_HEADER: "1"} if said else {})
+
+    waits, real_sleep = [], asyncio.sleep
+
+    async def kept(seconds):  # (no waiting in a test: each wait's length kept)
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(load.asyncio, "sleep", kept)
+
+    async def report():
+        run = _run()
+        run.deadline = time.monotonic() + 60
+        me = load.Person(run, load.Account("pat", "pw", "secret", "clerk"), 0, time.monotonic())
+        await me.client.aclose()
+        me.client = httpx.AsyncClient(base_url=run.base, transport=httpx.MockTransport(server))
+        try:
+            return run, await me.page("/month-end")
+        finally:
+            await me.close()
+
+    run, text = asyncio.run(report())
+    assert "Month-end" in text and waits == [5.0, 5.0]
+    assert [(s[0], s[1]) for s in run.samples] == [("GET /month-end", load.WORKING)] * 2 + [("GET /month-end", "page")]
+    built = load.build_report(run, {}, {})
+    assert built["pages"]["n"] == 1 and built["working"]["n"] == 2
+    route = built["routes"]["GET /month-end"]
+    assert route["n"] == 1 and route["working"] == 2 and route["count"] == 3 and route["errors_5xx"] == 0
+    cfg = {"users": 1, "duration": 60.0, "workers": 1, "ramp": 0.0, "think": 1.0, "invoices": 10, "data": "a folder",
+           "model": "a stand-in", "host": "127.0.0.1", "keep_alive": 5.0}  # fmt: skip
+    text = load.markdown(load.build_report(run, cfg, {"started": "2026-11-08T09:00:00"}))
+    assert "- Being worked out (D-201): 2 answers" in text and "| GET /month-end | 3 |" in text
+
+
 def test_a_search_export_is_asked_for_followed_and_downloaded_as_the_page_does(monkeypatch):
     """On the server search to Excel and CSV are jobs of the background process (D-169): the page's link asks with its
     header, follows the job (``app.js`` ``pollJob``: at once, then 0.5 s, half as long again while nothing changes,
