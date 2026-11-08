@@ -1561,7 +1561,7 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
         ("fails", answer("fails", fails=True)),
         ("unasked", answer("unasked")),
         ("slow", answer("slow", 0.3)),
-        ("next", answer("next", 0.3)),
+        ("next", answer("next", 1.0)),
         ("left", answer("left")),
     ):
         monkeypatch.setitem(refresh.ANSWERS, name, work)
@@ -1570,13 +1570,13 @@ def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_
                                               ("left", lambda s: [4]), ("left", lambda s: [5])))  # fmt: skip
     said = []
     with caplog.at_level(logging.WARNING, logger="ap_coder.web.refresh"):
-        made, left, seconds = refresh.prepare(store, said.append, most=0.4)
-    assert order == ["fails", "slow", "next"] and (made, left) == (2, 2) and 0.6 <= seconds < 5
+        made, left, seconds = refresh.prepare(store, said.append, most=1.0)  # ("next" begins at 0.3 s, ends at 1.3)
+    assert order == ["fails", "slow", "next"] and (made, left) == (2, 2) and 1.3 <= seconds < 10
     warned = [r.getMessage() for r in caplog.records]
     assert warned == ["the fails answer's default view was not worked out ahead of its page",
                       "the unasked answer's default view was not worked out ahead of its page"]  # fmt: skip
     assert re.fullmatch(r"The reports' default views worked out before the dashboard answers: 2 of 6, in [\d.]+ s; "
-                        r"past 0\.4 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
+                        r"past 1 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
     assert store.answer_made("slow", reports.asked_key([2])) and store.answer_made("left", reports.asked_key([4])) is (
         None)  # fmt: skip
 

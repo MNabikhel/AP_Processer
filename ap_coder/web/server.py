@@ -552,6 +552,8 @@ def _prepare_reports(db: str, most: float) -> None:
         prepared = Store(Path(db))
         prepared.background_answers = True
         refresh.prepare(prepared, _said, most, halted=_parent_gone)
+    except KeyboardInterrupt:  # (Ctrl+C in the window reaches this process too: it ends quietly, its server says why)
+        sys.exit(1)
     except Exception:  # noqa: BLE001 - whatever stopped it: said, and the server answers all the same
         logging.getLogger(__name__).warning("The reports' default views were not worked out before the dashboard "
                                             "answers.", exc_info=True)  # fmt: skip

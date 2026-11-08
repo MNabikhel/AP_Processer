@@ -1412,8 +1412,8 @@ def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_se
     assert f"worked out before the dashboard answers: {every} of {every}, in " in first, first
     for n in (1, 2):
         own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
-        assert re.search(r"INFO ap_coder\.web\.server: A web worker \(process \d+\) built \d+ of its memories before "
-                         r"it served", own), own  # fmt: skip
+        assert re.search(r"INFO ap_coder\.web\.server: A web worker \(process \d+\) built [1-9]\d* of its memories "
+                         r"before it served", own) and "did not build" not in own, own  # fmt: skip
     again = started(2)
     assert "The reports' default views are not worked out before the dashboard answers: this database has had them" in (
         again), again  # fmt: skip
