@@ -42,9 +42,11 @@ LEASE, RENEW = 30.0, 5.0  # its hold (``reports.REFRESHER``): askers count on it
 # to show (STALE_MOST): B-2052, B-2055
 WARM_AGAIN, WARM_LOOK = reports.STALE_MOST / 2, 60.0
 # Seconds the company server's start works out the default views with no answer kept at most, before it answers
-# (``prepare``, D-204), the view under way then finished: an update's downtime stays within 5 minutes (D-188), and
-# after an update none is kept (an answer's version is AP Coder's own).
-PREPARE_MOST = 120.0
+# (``prepare``, D-204), looked at before each view, the one under way then finished: a database never served at
+# 300,000 invoices takes all 14 (Month-end's three 121 s, the others about a minute), and after an update (none is
+# kept: an answer's version is AP Coder's own) its downtime stays within 5 minutes (D-188). Month-end's, the longest
+# by far, come first: a view under way at the bound is one of the quick ones.
+PREPARE_MOST = 200.0
 
 
 def _day(text: str) -> dt.date:

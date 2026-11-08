@@ -1157,7 +1157,7 @@ def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers()
     """D-204: a first start (or one after an update) works the reports out before the server answers, then each web
     worker its memories: server-update's wait for the new version (before it goes back to the old one), the load and
     day benches' and CI's update job's waits for the server they start cover both bounds, the view and the step
-    under way at them, and the processes' own start."""
+    under way at them (a quick one: Month-end's come first), and the processes' own start."""
     import inspect
 
     from ap_coder.bench import day, load
@@ -1165,7 +1165,7 @@ def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers()
     from ap_coder.web import refresh
     from tests.scripts import load_script
 
-    first = refresh.PREPARE_MOST + server.WARM_MOST + 120
+    first = refresh.PREPARE_MOST + server.WARM_MOST + 60
     downtime = load_script("ci/server_update_downtime", "ap_script_server_update_downtime_waits")
     waits = {"server-update": server_update.UP_WAIT, "bench load": load.START_WAIT, "CI's update job": downtime.UP_WAIT,
              "bench day": inspect.signature(day.Server.start).parameters["timeout"].default}  # fmt: skip

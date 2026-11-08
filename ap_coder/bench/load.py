@@ -115,7 +115,7 @@ JOB_POLL = 0.8  # app.js pollJob's interval
 KEEP_ALIVE = 5.0
 JOB_MOST = 180.0  # an upload's job polled for at most this long; a download's too
 # Seconds the server has to answer once started: on a database never served it works the reports' default views
-# out before it answers (D-204: 2 minutes at most, ``refresh.PREPARE_MOST``) and each web worker its memories
+# out before it answers (D-204: 200 s at most, ``refresh.PREPARE_MOST``) and each web worker its memories
 START_WAIT = 300.0
 DOWNLOAD_POLL, DOWNLOAD_POLL_MOST = 0.5, 5.0  # app.js: a download's job looked at every 0.5 s, up to 5 s apart
 NOT_MADE = "search exports not made"  # its job failed or is gone, or its file was not there: the gate fails (B-1813)

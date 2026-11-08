@@ -67,7 +67,7 @@ Say = Callable[[str], None]
 REQUIRED = ("bundle_manifest.json", "pyproject.toml", "ap_coder/__init__.py", "scripts/launch.py")
 HISTORY_KEPT = 20
 # Seconds the new dashboard has to answer: after an update the server works the reports' default views out before
-# it answers (D-204: 2 minutes at most, ``refresh.PREPARE_MOST``) and each web worker its memories (15 s)
+# it answers (D-204: 200 s at most, ``refresh.PREPARE_MOST``) and each web worker its memories (15 s)
 UP_WAIT = 300.0
 CHECK_TIMEOUT = 900  # the self-check: about 10 s, much longer on a busy server's first OCR
 
