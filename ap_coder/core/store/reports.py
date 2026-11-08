@@ -117,18 +117,20 @@ _KEPT_LOCK = threading.Lock()
 wall = time.time  # an answer's age, the same clock in every process (tests set it)
 _WORKING: dict[tuple[str, str, str], threading.Lock] = {}  # one thread of this process works an answer out at a time
 _ASKED: dict[tuple[str, str, str], float] = {}  # when this process last noted each answer asked (D-198)
-_HERE = threading.local()  # ``on``: this thread is the refresher's, which works out what it asks (``refreshing``)
+# ``on``: this thread is the refresher's, which works out what it asks; ``asked``: (name, key) of each (``refreshing``)
+_HERE = threading.local()
 KEPT_HERE = 32
 KeptAnswer = tuple[Any, Any, float, float | None]  # (its stamp, its value, when its work began, how long it lasted)
 
 
 @contextmanager
-def refreshing() -> Iterator[None]:
+def refreshing() -> Iterator[list[tuple[str, str]]]:
     """Inside, on this thread: the background process's refresher (D-198), which works out the settled answers it asks
-    (``shared_answer``) instead of wanting them of itself."""
-    _HERE.on = True
+    (``shared_answer``) instead of wanting them of itself; given the (name, key: ``asked_key``) of each asked inside,
+    in turn (a default view's question, kept warm by it: D-200)."""
+    _HERE.on, _HERE.asked = True, []
     try:
-        yield
+        yield _HERE.asked
     finally:
         _HERE.on = False
 
@@ -174,6 +176,8 @@ class ReportsMixin:
         don't change it."""
         key, owner = asked_key(asked), OWNER  # (the process's own name for its holds, the same to the end)
         here = (str(self.path), name, key)  # type: ignore[attr-defined]
+        if getattr(_HERE, "on", False):
+            _HERE.asked.append((name, key))
         began = wall()
         seen, writing = self._answer_stamp(topic, changes)
         if writing:
@@ -363,13 +367,40 @@ class ReportsMixin:
     def want_again(self, since: float) -> int:
         """At the refresher's start: each answer of this database asked since ``since`` (``wall``) waits for it, so
         after a restart or an update it is worked out before anyone asks it; those of another database (before a
-        restore) are forgotten. How many wait."""
+        restore) are forgotten. How many were asked since then (a want left waiting from before waits still, not
+        counted: B-2054)."""
         with self._conn() as conn:  # type: ignore[attr-defined]
             db = self._database_id(conn)
             conn.execute("DELETE FROM answer_wants WHERE db != ?", (db,))
             conn.execute("UPDATE answer_wants SET wanted_at = ? WHERE db = ? AND asked_at >= ? AND wanted_at IS NULL",
                          (wall(), db, since))  # fmt: skip
-            return int(conn.execute("SELECT COUNT(*) FROM answer_wants WHERE wanted_at IS NOT NULL").fetchone()[0])
+            return int(conn.execute("SELECT COUNT(*) FROM answer_wants WHERE asked_at >= ?", (since,)).fetchone()[0])
+
+    def database_id(self) -> str:
+        """This database's ``summary_id`` (another after a restore, D-159): the refresher's start is done for each."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            return self._database_id(conn)
+
+    def answer_made(self, name: str, key: str) -> float | None:
+        """When the work of the answer kept under ``name`` and ``key`` began (``wall``); None when none is kept."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT made_at FROM report_answers WHERE name = ? AND asked = ?",
+                               (name, key)).fetchone()  # fmt: skip
+        return None if row is None else float(row[0])
+
+    def asked_lately(self, since: float) -> list[dict[str, Any]]:
+        """The latest question asked of each answer on this database since ``since`` (``wall``): ``name``, ``asked``
+        (its key), ``args`` (what it is worked out from, JSON text) and ``made_at`` (when the work of the one kept
+        began; None: none kept), what the refresher keeps warm (D-200)."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute("SELECT w.name, w.asked, w.args, r.made_at FROM answer_wants w LEFT JOIN "
+                                "report_answers r ON r.name = w.name AND r.asked = w.asked WHERE w.asked_at >= ? AND "
+                                "w.db = COALESCE((SELECT value FROM settings WHERE key = 'summary_id'), '') ORDER BY "
+                                "w.name, w.asked_at DESC", (since,)).fetchall()  # fmt: skip
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            latest.setdefault(row["name"], dict(row))
+        return list(latest.values())
 
     def kept_answer(self, name: str, key: str, version: str) -> KeptAnswer | None:
         """(the stamp, the value, when its work began: ``time.time``, how long it lasted: None when an older AP Coder

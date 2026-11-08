@@ -97,6 +97,26 @@ def month_chart(data: list[dict[str, Any]], months: list[str], order: list[str],
     return chart, legend_items(series)
 
 
+def asked(store: Any, reference: Any, start: dt.date, end: dt.date,
+          currency: str | None = None) -> tuple[list[str], str, dict[str, float], tuple[Any, ...]]:  # fmt: skip
+    """What the page asks for the period ``start`` to ``end`` and the address's ``currency``: (the currencies offered,
+    "All, in CAD" first when Settings has a rate for each; the one shown: ``currency`` when offered, else the first;
+    the Settings rates; what ``spend.figures`` is asked: the dates, the currency, the GL accounts' categories and, all
+    in CAD, the rates). Its default view, worked out at the company server's first start, is asked with this too
+    (``web/refresh.py`` ``DEFAULTS``, D-200)."""
+    currencies = (spend.spend_currencies(store, start, end) if start <= end else []) or ["CAD"]
+    rates = store.fx_rates()
+    if len(currencies) > 1 and all(c in rates for c in currencies):
+        currencies = [ALL_IN_CAD, *currencies]
+    currency = currency or currencies[0]
+    if currency not in currencies:
+        currency = currencies[0]
+    category = {code: row.get("category", "") for code, row in spend.accounts_by_code(reference).items()}
+    all_in_cad = currency == ALL_IN_CAD
+    return currencies, currency, rates, (start, end, "CAD" if all_in_cad else currency, category,
+                                         rates if all_in_cad else None)  # fmt: skip
+
+
 @router.get("/spend", response_class=HTMLResponse)
 def spend_page(request: Request) -> HTMLResponse:
     store = get_store(request)
@@ -105,13 +125,7 @@ def spend_page(request: Request) -> HTMLResponse:
     default_start, default_end = spend.default_period()
     start, start_ok = _date(q.get("start"), default_start)
     end, end_ok = _date(q.get("end"), default_end)
-    currencies = (spend.spend_currencies(store, start, end) if start <= end else []) or ["CAD"]
-    rates = store.fx_rates()
-    if len(currencies) > 1 and all(c in rates for c in currencies):
-        currencies = [ALL_IN_CAD, *currencies]
-    currency = q.get("currency") or currencies[0]
-    if currency not in currencies:
-        currency = currencies[0]
+    currencies, currency, rates, figures_asked = asked(store, reference, start, end, q.get("currency"))
     context: dict[str, Any] = {
         "start": start,
         "end": end,
@@ -122,9 +136,8 @@ def spend_page(request: Request) -> HTMLResponse:
         "rates_note": "",
         "workbook": workbook_state(request),
     }
-    shown_currency = currency
+    _, _, shown_currency, category, _ = figures_asked
     if currency == ALL_IN_CAD:
-        shown_currency = "CAD"
         context["rates_note"] = (
             "All currencies in CAD at the rates in Settings → Review ("
             + ", ".join(f"{c} {r:g}" for c, r in sorted(rates.items()) if c != "CAD")
@@ -132,10 +145,8 @@ def spend_page(request: Request) -> HTMLResponse:
         )
     context["shown_currency"] = shown_currency
     accounts = spend.accounts_by_code(reference)
-    category = {code: row.get("category", "") for code, row in accounts.items()}
     # Summed by SQLite, not every cost line of the period read (D-156).
-    found = spend.figures(store, start, end, shown_currency, category, rates if currency == ALL_IN_CAD else None) \
-        if start <= end else {"lines": False}  # fmt: skip
+    found = spend.figures(store, *figures_asked) if start <= end else {"lines": False}
     if not found["lines"]:
         return render(request, "spend.html", "spend", rows=False, **context)
 

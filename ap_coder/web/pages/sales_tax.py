@@ -58,15 +58,23 @@ def period(start: str, end: str) -> tuple[dt.date, dt.date]:
     return address_day(start, default_start), address_day(end, default_end)
 
 
+def asked(start: str = "", end: str = "", show: str = "", rows: str = "",
+          self_rows: str = "") -> tuple[dt.date, dt.date, str, int, int]:  # fmt: skip
+    """What the page asks ``shown`` for from its address: the period, the list shown, how many claims and
+    self-assessments. Its default view (nothing in the address), worked out at the company server's first start, is
+    asked with this too (``web/refresh.py`` ``DEFAULTS``, D-200)."""
+    first, last = period(start, end)
+    return first, last, show, shown_count(rows, ROWS_SHOWN), shown_count(self_rows, ROWS_SHOWN)
+
+
 @router.get("/sales-tax", response_class=HTMLResponse)
 def sales_tax_page(request: Request, start: str = "", end: str = "", show: str = "", rows: str = "",
                    self_rows: str = "") -> HTMLResponse:  # fmt: skip
     store = get_store(request)
-    first, last = period(start, end)
+    first, last, show, count, self_count = asked(start, end, show, rows, self_rows)
     context = {"start": first.isoformat(), "end": last.isoformat(), "backwards": first > last}
     if first > last:
         return render(request, "sales_tax.html", "sales_tax", **context)
-    count, self_count = shown_count(rows, ROWS_SHOWN), shown_count(self_rows, ROWS_SHOWN)
     view, rates = shown(store, first, last, show, count, self_count), store.fx_rates()
     itc, itc_hint = amounts(view["totals"][taxreturn.ITC], rates)
     itr, itr_hint = amounts(view["totals"][taxreturn.ITR], rates)

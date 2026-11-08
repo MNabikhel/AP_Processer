@@ -17,8 +17,16 @@ from ap_coder.erp import jde_ais, jde_sync
 from tests.erp.test_jde_sync import _coding, connect, quick  # noqa: F401  (the fixture that pauses nothing)
 from tests.fake_ais import FakeAis
 
-TODAY = dt.date.today()
 LONG_AGO = "2020-01-01"  # what a row's ``_changed`` says when it has not changed since the first sync
+
+
+@pytest.fixture(autouse=True)
+def _still_clock(monkeypatch):
+    """The sync's clock held at the test's start: the dates it asks and keeps, and the test's own (``_day``), are
+    counted from one day. The test's were from the day this file was imported, and a run crossing midnight had them
+    a day apart (CI, 00:11 UTC: what changed since 7 November, for 6)."""
+    now = dt.datetime.now()
+    monkeypatch.setattr(jde_sync, "_now", lambda: now)
 
 
 @pytest.fixture
@@ -33,7 +41,7 @@ def store(tmp_path):
 
 
 def _day(days_ago: int) -> str:
-    return (TODAY - dt.timedelta(days=days_ago)).isoformat()
+    return (jde_sync._now().date() - dt.timedelta(days=days_ago)).isoformat()
 
 
 def _vouchers(ais, count: int, days_ago: int = 3, start: int = 0, **values) -> list[dict]:
@@ -78,7 +86,7 @@ def test_the_next_night_reads_only_what_changed(store, ais, monkeypatch):
     asked = len(ais.calls)
     report = jde_sync.sync(store)
     assert report["ok"], report["errors"]
-    since = (TODAY - dt.timedelta(days=1)).isoformat()
+    since = _day(1)
     calls = {path.rsplit("/", 1)[-1]: inputs for path, inputs in ais.calls[asked:] if "/orchestrator/" in path}
     for name in ("APC_Suppliers_Read", "APC_Accounts_Read", "APC_OpenPOs_Read"):
         assert calls[name]["ChangedSince"] == since, name
@@ -93,7 +101,7 @@ def test_the_next_night_reads_only_what_changed(store, ais, monkeypatch):
     assert store.get_vendor("northern courier")["erp_hold"] == ""
     lines = jde_sync.report_lines(report)
     assert lines[0].startswith(f"Suppliers (what changed since {since}): 0 added, 1 changed"), lines
-    later = dt.datetime.now() + dt.timedelta(days=jde_sync.FULL_DAYS)
+    later = jde_sync._now() + dt.timedelta(days=jde_sync.FULL_DAYS)
     monkeypatch.setattr(jde_sync, "_now", lambda: later)
     assert jde_sync.sync(store)["parts"]["suppliers"]["read"] == 2  # a week on: everything again
 
@@ -279,7 +287,7 @@ def test_a_register_cleared_or_replaced_is_read_whole_again_the_next_night(store
     else:
         store.import_erp_register([{"vendor_name": "Other Co", "invoice_number": "X-1", "total": 5.0,
                                     "invoice_date": _day(3)}], replace_all=True, actor="ap")  # fmt: skip
-    night = dt.datetime.now() + dt.timedelta(days=1)
+    night = jde_sync._now() + dt.timedelta(days=1)
     monkeypatch.setattr(jde_sync, "_now", lambda: night)
     part = jde_sync.sync(store, parts=("vouchers",))["parts"]["vouchers"]
     assert part["mode"] == jde_sync.FULL and {"INV-7001", "B-0", "B-1", "B-2"} <= _numbers(store)
