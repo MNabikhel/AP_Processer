@@ -1038,8 +1038,12 @@ def test_a_web_worker_of_the_server_builds_its_memories_before_it_serves(store, 
     """D-204: a web worker's first open of an invoice built the learning memory, the vendor list and its vendor's
     lessons and invoices in that request (3-6 s at 300,000 invoices), its first Learning visit its latest lessons (2.2
     s). Each web worker of the company server builds them in uvicorn's factory (``worker_app``), before it serves,
-    each once through the page's own function: an invoice opened right after reads none of them again."""
+    each once through the page's own function, and the pages' templates and the GL suggestions' index of the
+    learning memory too (what a first open built still: 0.43 and 0.32 s at 60,000 invoices): an invoice and the review
+    queue opened right after read, compile and build none of them again."""
+    from ap_coder.ai import suggest
     from ap_coder.core.store import FEEDBACK_READ
+    from ap_coder.web import core
     from ap_coder.web.pages import learning
     from tests.webclient import client_for
 
@@ -1047,18 +1051,27 @@ def test_a_web_worker_of_the_server_builds_its_memories_before_it_serves(store, 
     name = store.get_invoice(invoice)["vendor_name"]
     _as_a_worker(store, tmp_path, monkeypatch)
     read = _reads(monkeypatch)
+    env, compile_, index = core.templates.env, core.templates.env.compile, suggest._build_memory
+    monkeypatch.setattr(env, "cache", type(env.cache)(env.cache.capacity))  # (none compiled yet in this process)
+    monkeypatch.setattr(env, "compile", lambda source, name=None, *a, **k: read.update([("compiled", name)])
+                        or compile_(source, name, *a, **k))  # fmt: skip
+    monkeypatch.setattr(suggest, "_build_memory", lambda *a: read.update(["the GL index"]) or index(*a))
     with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
         server.worker_app()
-    assert read == {("the learning memory", FEEDBACK_READ): 1, ("the learning memory", learning.MEMORY_READ): 1,
-                    "the vendor list": 1, ("the lessons of", key): 1, ("the invoices of", key, True): 1}  # fmt: skip
+    compiled = {what[1] for what in read if what[0] == "compiled"}
+    assert {"invoice.html", "review.html", "base.html"} <= compiled
+    assert {k: n for k, n in read.items() if k[0] != "compiled"} == {
+        ("the learning memory", FEEDBACK_READ): 1, ("the learning memory", learning.MEMORY_READ): 1, "the GL index": 1,
+        "the vendor list": 1, ("the lessons of", key): 1, ("the invoices of", key, True): 1}  # fmt: skip
     said = [r.getMessage() for r in caplog.records if "before it served" in r.getMessage()]
     assert len(said) == 1 and re.fullmatch(
-        rf"A web worker \(process {os.getpid()}\) built 8 of its memories before it served, in [\d.]+ s: the learning "
-        rf"memory, the vendor list, the vendors' ERP IDs, the vendors on hold's numbers, the reading status, "
-        rf"Learning's latest lessons, the lessons of {re.escape(name)}, the invoices of {re.escape(name)}\.",
-        said[0]), said  # fmt: skip
+        rf"A web worker \(process {os.getpid()}\) built 10 of its memories before it served, in [\d.]+ s: the "
+        rf"invoice's and the queue's templates, the learning memory, the GL suggestions' index, the vendor list, the "
+        rf"vendors' ERP IDs, the vendors on hold's numbers, the reading status, Learning's latest lessons, the lessons "
+        rf"of {re.escape(name)}, the invoices of {re.escape(name)}\.", said[0]), said  # fmt: skip
     read.clear()
-    assert client_for(store).get(f"/review/{invoice}").status_code == 200
+    client = client_for(store)
+    assert client.get(f"/review/{invoice}").status_code == 200 and client.get("/review").status_code == 200
     assert read == {}
 
 
@@ -1093,9 +1106,9 @@ def test_a_web_workers_memories_come_from_the_queues_biggest_vendors_first_withi
     monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 6)
     monkeypatch.setattr(server, "WARM_VENDORS", 2)
     steps = [what for what, _ in server.warm_steps(store, web_settings)]
-    assert steps[6:] == ["the lessons of Acme Supply", "the invoices of Acme Supply", "the lessons of Beta Ltd"]
+    assert steps[8:] == ["the lessons of Acme Supply", "the invoices of Acme Supply", "the lessons of Beta Ltd"]
     monkeypatch.setattr(server, "WARM_FIRST", 3)  # (the queue's first three: Acme's)
-    assert [what for what, _ in server.warm_steps(store, web_settings)][6:] == [
+    assert [what for what, _ in server.warm_steps(store, web_settings)][8:] == [
         "the lessons of Acme Supply", "the invoices of Acme Supply"]  # fmt: skip
 
 
@@ -1226,4 +1239,4 @@ def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers()
              "bench day": inspect.signature(day.Server.start).parameters["timeout"].default}  # fmt: skip
     assert all(wait >= first for wait in waits.values()), (first, waits)
     assert refresh.PREPARE_MOST + server.PREPARE_ENDS + server.WARM_MOST + 15 + 40 <= downtime.LIMIT
-    assert server.WARM_MOST <= 30 / 2  # (uvicorn waits 30 s for a worker started afresh to serve: restart_all)
+    assert server.WARM_MOST < 30  # (uvicorn's restart_all waits 30 s for a worker started afresh: AP Coder's is none)

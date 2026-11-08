@@ -658,7 +658,13 @@ def worker_app() -> Any:
 # company server builds them in uvicorn's factory (``worker_app``), before it takes a connection: the others serve
 # meanwhile, and the supervisor's "alive?" is answered on a thread of uvicorn's own. Each through the function the page
 # calls, so the page takes what it built. D-203 built them on a thread once the worker served: not kept.
-WARM_MOST = 15.0  # seconds, looked at before each step: well under the 30 s uvicorn gives a worker started afresh
+# Seconds, looked at before each step: 4 workers building at once at 300,000 invoices built 8-12 steps in 15 s. (The
+# 30 s uvicorn gives a worker started afresh to serve is restart_all's, on SIGHUP: AP Coder starts none so. A worker
+# started afresh by ``Recycle`` is replaced as one that ended, and the supervisor asks "alive?" of a uvicorn thread.)
+WARM_MOST = 25.0
+# The pages whose templates a worker compiles before it serves: an invoice's and the review queue's (each person's
+# first page), with every template they extend, include or import
+WARM_TEMPLATES = ("invoice.html", "review.html")
 WARM_FIRST = 50  # the review queue's first invoices (people open those at its top first): their vendors'
 WARM_VENDORS = 8  # lessons and invoices of so many of those vendors, the biggest first (VENDOR_LESSONS_KEPT: 32)
 # The vendors of those invoices, the biggest first, with how many invoices each has
@@ -675,19 +681,51 @@ def _held_numbers(store: Store) -> Any:
     return store.approved_numbers([v["vendor_key"] for v in held]) if held else None
 
 
+def _templates(names: tuple[str, ...]) -> None:
+    """Each of ``names`` compiled, and every template it extends, includes or imports: Jinja keeps them compiled (an
+    invoice's first open compiled its own, 0.43 s at 60,000 invoices)."""
+    from jinja2 import meta
+
+    from ap_coder.web.core import templates
+
+    env, left, seen = templates.env, list(names), set()
+    while left:
+        name = left.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        env.get_template(name)
+        source = env.loader.get_source(env, name)[0]  # type: ignore[union-attr]
+        left.extend(found for found in meta.find_referenced_templates(env.parse(source)) if found)
+
+
+def _suggestions_index(store: Store) -> None:
+    """The GL suggestions' index of the learning memory (``suggest._memory``: 0.32 s at 60,000 invoices), as an
+    invoice's first open with a line without an account builds it, asked through ``suggest_gl`` of one line."""
+    from ap_coder.ai.suggest import suggest_gl
+    from ap_coder.web.core import reference_or_none
+
+    reference = reference_or_none(store)
+    if reference is not None:
+        suggest_gl("the learning memory", "", store.feedback_rows(), reference)
+
+
 def warm_steps(store: Store, settings_factory: Callable[[], Any]) -> Any:
-    """What a web worker builds before it serves, in this order: (what, how). The learning memory (``FEEDBACK_READ``
-    lessons: every open and check of an invoice), the vendor list, the vendors' ERP IDs and the vendors on hold's
-    numbers (every open), the reading status (every page), Learning's latest lessons, then the lessons and invoices of
-    the biggest vendors (by their invoices) of the review queue's first ``WARM_FIRST`` invoices, ``WARM_VENDORS`` at
-    most, their invoices within half of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``): the other half for
-    those people ask."""
+    """What a web worker builds before it serves, in this order: (what, how). The templates of an invoice and of the
+    review queue (``WARM_TEMPLATES``: every person's first pages), the learning memory (``FEEDBACK_READ`` lessons:
+    every open and check of an invoice) and the GL suggestions' index of it (every open of an invoice with a line
+    without an account), the vendor list, the vendors' ERP IDs and the vendors on hold's numbers (every open), the
+    reading status (every page), Learning's latest lessons, then the lessons and invoices of the biggest vendors (by
+    their invoices) of the review queue's first ``WARM_FIRST`` invoices, ``WARM_VENDORS`` at most, their invoices
+    within half of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``): the other half for those people ask."""
     from ap_coder.core.store import REVIEW
     from ap_coder.core.store.vendors import VENDOR_ROWS_KEPT
     from ap_coder.web.core import reading_status_or_none
     from ap_coder.web.pages import invoice, learning
 
+    yield "the invoice's and the queue's templates", lambda: _templates(WARM_TEMPLATES)
     yield "the learning memory", store.feedback_rows
+    yield "the GL suggestions' index", lambda: _suggestions_index(store)
     yield "the vendor list", lambda: invoice.vendor_list(store)
     yield "the vendors' ERP IDs", store.vendor_ids
     yield "the vendors on hold's numbers", lambda: _held_numbers(store)
