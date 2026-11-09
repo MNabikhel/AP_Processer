@@ -188,6 +188,16 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
     from tests.webclient import sign_in, web_settings
 
     people = {p["role"]: p for p in json.loads((seeded / "users.json").read_text(encoding="utf-8"))}
+    from ap_coder.core import ui
+    from ap_coder.web import core as web_core
+
+    at, ago = dt.datetime.now(), ui.time_ago  # one clock for every render: Activity's "97 days ago" turns "98 days ago"
+
+    def time_ago(iso: str | None, now: dt.datetime | None = None) -> str:  # when a day's end passes between two renders
+        return ago(iso, now or at)  # a moment apart (the seed dates its events back from the moment it seeds)
+
+    monkeypatch.setattr(ui, "time_ago", time_ago)
+    monkeypatch.setitem(web_core.templates.env.filters, "time_ago", time_ago)
     monkeypatch.setattr(summary, "COUNTS_SETTLE", 0.0)  # (the rail's counts exact: their settle, D-164, not compared)
     with isolated(tmp_path):
         store = copy_database(seeded / "ap_coder.db", tmp_path / "private" / "ap_coder.db")
