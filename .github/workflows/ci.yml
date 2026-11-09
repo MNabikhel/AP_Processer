@@ -947,7 +947,7 @@ jobs:
     # start; service remove, and the unit is gone. scripts/ci/linux_service.py (it prints the service's log, the
     # journal and what systemd says on a failure, and removes the test unit).
     name: The server's service on Linux (systemd)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # the LTS the pilot workstation runs (docs/SERVER.md section 15)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

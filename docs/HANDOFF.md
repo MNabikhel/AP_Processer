@@ -2,8 +2,9 @@
 
 **Read this first, then `CLAUDE.md`.** This file is the brief for an AI coding agent (Claude Code or similar) that
 takes over AP Coder inside the company it was built for, to connect it to the company's own systems. The
-handoff is **one way**: whoever built AP Coder up to here cannot be asked anything. Everything known is in this
-repository: this file, `CLAUDE.md`, `docs/` (guides, decisions, bug log, their archives) and some 1,600 commit messages.
+handoff is **one way** for the code: the coding sessions that built AP Coder up to here can't be asked anything, and
+the analyst who ran them can answer questions about intent and the plan, not recall every detail. Everything known is in
+this repository: this file, `CLAUDE.md`, `docs/` (guides, decisions, bug log, their archives) and the commit messages.
 When this file and the code disagree, the code is right; fix this file.
 
 From the handoff on, **your copy is the main copy**. Nothing goes back to where it came from.
