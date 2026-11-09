@@ -1,13 +1,15 @@
 """The big reports as they were before they were made light for a year of invoices (D-156): every invoice, PO or
-event they needed read and decoded on each call; and Activity's counts and Settings → Automation's figures as they
-were read before D-206. The tests check the reports' results against these on the same data; the bodies are the old
-code as it was (only renamed)."""
+event they needed read and decoded on each call; Activity's counts and Settings → Automation's figures as they
+were read before D-206; a period's events as they were read before B-2076. The tests check the reports' results
+against these on the same data; the bodies are the old code as it was (only renamed)."""
 
 from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 from collections import Counter
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import Request
@@ -19,7 +21,7 @@ from ap_coder.core import ui
 from ap_coder.core.memory import AUTONOMOUS_REVIEWER
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.safe import neutralise_sheet, xlsx_row
-from ap_coder.core.store import APPROVED, FAILED, PENDING, Store
+from ap_coder.core.store import APPROVED, FAILED, PENDING, Store, accounts
 from ap_coder.core.store.accounts import _event_filter
 from ap_coder.erp import spend
 from ap_coder.erp.accruals import RECEIVED, Accrual
@@ -373,3 +375,40 @@ CONTROLS_TILES = """  <div class="apc-tiles">
     {{ ui.tile("Setup changes", report.setup | length, "", "blue", "accounts, tax, vendors, POs") }}
     {% if report.same_person is not none %}{{ ui.tile("One person, several steps", report.same_person | length, "", "amber" if report.same_person else "green", "approved, exported, posted") }}{% endif %}
   </div>"""  # noqa: E501
+
+
+def find_events(
+    store: Store, *, actions: Any = None, hidden: Any = (), actor: str | None = None, since: str | None = None,
+    until: str | None = None, before: int | None = None, matches: Any = None, limit: int | None = None,
+    detail_if: str | None = None,
+) -> Iterator[dict[str, Any]]:  # fmt: skip
+    """``Store.find_events`` before B-2076: each batch of a period's events read by asking for all of them again, the
+    newest below the batch before, sorted; each event's invoice read off the invoices' whole rows."""
+    actions = None if actions is None else list(actions)
+    by_action = since or until or actions is None or (actor is None and store._few_events(actions))
+    where, args = _event_filter(actions, hidden, actor, since, until, by_action=bool(by_action))
+    _EVENTS = ("SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "  # noqa: N806
+               "LEFT JOIN invoices i ON i.id = e.invoice_id")  # fmt: skip
+    select = _EVENTS if detail_if is None else _EVENTS.replace("e.*", "e.id, e.invoice_id, e.action, e.actor, CASE "
+                                                             f"WHEN {detail_if} THEN COALESCE(e.detail, '') END "
+                                                             "AS detail, e.created_at")  # fmt: skip
+    sql = f"{select} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
+    below, found = before if before is not None else 2**63 - 1, 0
+    if limit is not None and limit <= 0:
+        return
+    while True:
+        batch = accounts.EVENTS_BATCH if matches is not None or limit is None else min(accounts.EVENTS_BATCH,
+                                                                                       limit - found)  # fmt: skip
+        with store._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
+        for r in rows:
+            if r["detail"] is not None or detail_if is None:
+                r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+            if matches is None or matches(r):
+                yield r
+                found += 1
+                if limit is not None and found >= limit:
+                    return
+        if len(rows) < batch:
+            return
+        below = rows[-1]["id"]

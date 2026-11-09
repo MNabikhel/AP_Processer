@@ -4520,6 +4520,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       its next start, one read of the outcomes), read for the window and grouped after (`GROUP BY +invoice_id`:
       without statistics SQLite would rather walk the invoices' index in order). Small, as the audits are a sample of
       the touchless invoices; the reviews' outcomes never enter it.
+    - **A period's events** (`Store.find_events` with `since` or `until`: the controls report, Activity's tiles of a
+      period; B-2076): they come off an index by day, not in their order, so each batch of 2,000 asked for all of the
+      period's again, joined to each invoice's whole row, and sorted: the work grew with the square of the period's
+      events (a year's controls report, 596,000 events, 313 s at 300,000 invoices; 90 days 20 s). Their ids are read
+      in one go off that index (8 bytes each kept), then the events a batch at a time by id, each invoice's vendor and
+      number off the invoices' summary, which keeps them as they are (`summary.MIRROR`), brought up to date first:
+      the same events in the same order (`tests/reports_reference.py`). A year's events read in 3.9 s, the whole
+      report built in 15 s (one-person approvals over the limit 8.4 s, the duties 2.3 s).
   - **Measured** (`bench volume --only` on the seed, median of 3 warm requests, Admin / Clerk, before → after):
     `/exports` 0.574 / 0.724 → 0.046 / 0.048 s, `/exports?fmt=jde` 0.706 / 0.589 → 0.045 / 0.048 s, `/activity`
     0.523 / 0.719 → 0.017 / 0.057 s, `/activity?q=Birchwood` 0.605 / 0.699 → 0.056 / 0.079 s,

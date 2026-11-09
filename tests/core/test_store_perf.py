@@ -702,3 +702,76 @@ def test_the_touchless_audits_are_read_off_their_own_index_and_an_older_database
     assert "supplier_outcomes_audit" in _plans(store, monkeypatch, store.touchless_summary, "supplier_outcomes",
                                                "source = 'audit'")[0]  # fmt: skip
     assert store.touchless_summary() == summary
+
+
+def test_a_periods_events_are_read_once_not_again_for_each_batch_and_are_those_they_were(tmp_path, monkeypatch):
+    """B-2076: a period's events (the controls report, Activity's tiles of a period) come off their index by day, not
+    in their order, so each batch of them asked for all of the period's again, the newest below the batch before,
+    joined to their invoices' whole rows and sorted: the work grew with the square of the period's events (a year's
+    controls report, 313 s at 300,000 invoices; 90 days, 20 s). Their ids are read in one go, then the events a batch
+    at a time by id, each invoice's vendor and number off the invoices' summary (its own columns): the same events in
+    the same order whatever is asked (``tests/reports_reference.py``), an invoice changed or deleted in plain SQL too,
+    the work twice as much for twice the events."""
+    import json
+
+    from ap_coder.core.store import accounts
+    from ap_coder.erp.controls import _READ, REPORTED
+    from tests import reports_reference as old
+    from tests.webclient import add_clean
+
+    monkeypatch.setattr(accounts, "EVENTS_BATCH", 40)
+    store = Store(tmp_path / "ap.db")
+    for n in range(8):  # (ids 1 to 8; the events' invoices go up to 22)
+        add_clean(store, invoice_number=f"E-{n}", vendor_name=f"Vendor {n}")
+    actions = ["approved", "exported", "final_approved", "note", "login", "sent_back", "settings_changed"]
+
+    def add(first: int, last: int) -> None:
+        with store._conn() as conn:
+            for n in range(first, last):  # (their days not in the order of their ids)
+                day = f"2026-0{1 + n * 7 % 9}-{1 + n * 13 % 28:02d}T{n % 24:02d}:00:00"
+                conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES "
+                             "(?, ?, ?, ?, ?)", (n % 23 or None, actions[n % 7], ["Ann", "Bob", None, ""][n % 4],
+                                                 json.dumps({"n": n, "bulk": n % 5 == 0}), day))  # fmt: skip
+
+    report = {"actions": REPORTED, "since": "2026-01-01", "until": "2027-01-01", "detail_if": _READ}
+    asks = [report, {"since": "2026-02-01", "until": "2026-08-01"}, {"since": "2026-03-01"}, {"until": "2026-04-15"},
+            {"actions": ["approved"], "since": "2026-02-01", "until": "2026-06-01", "hidden": ["note"]},
+            {"since": "2026-01-01", "actor": "Ann"}, {"since": "2026-01-01", "limit": 55},
+            {"since": "2026-01-01", "before": 300}, {"since": "2026-01-01", "limit": 30,
+                                                      "matches": lambda e: e["id"] % 3 == 0},
+            {"since": "2026-01-01", "limit": 0}, {"actions": ["login"], "limit": 7},
+            {"since": "2030-01-01"}]  # fmt: skip
+
+    def work(find, asked: dict) -> tuple[list, int]:
+        """(the events found, SQLite's steps to find them, by the hundred)"""
+        steps, real = [0], sqlite3.connect
+
+        def counting(*args, **kwargs):
+            conn = real(*args, **kwargs)
+            conn.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1), 100)
+            return conn
+
+        monkeypatch.setattr(store_mod.sqlite3, "connect", counting)
+        try:
+            return list(find(**asked)), steps[0]
+        finally:
+            monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+
+    def old_find(**asked):
+        return old.find_events(store, **asked)
+
+    add(0, 600)
+    for asked in asks:
+        assert work(store.find_events, asked)[0] == work(old_find, asked)[0], asked
+    (found, some), (_, some_before) = work(store.find_events, report), work(old_find, report)
+    add(600, 1200)
+    with sqlite3.connect(store.path) as conn:  # (the summary behind them until it is read)
+        conn.execute("UPDATE invoices SET vendor_name = 'Renamed Ltd', invoice_number = 'R-1' WHERE id = 3")
+        conn.execute("DELETE FROM invoices WHERE id = 5")
+    for asked in asks:
+        assert work(store.find_events, asked)[0] == work(old_find, asked)[0], asked
+    (twice, more), (_, more_before) = work(store.find_events, report), work(old_find, report)
+    assert {(e["invoice_vendor"], e["invoice_number"]) for e in twice if e["invoice_id"] in (3, 4, 5)} == {
+        ("Renamed Ltd", "R-1"), ("Vendor 3", "E-3"), (None, None)}  # fmt: skip
+    assert 1.99 * len(found) < len(twice) < 2.01 * len(found) and len(found) > 400 and twice[0]["id"] > twice[-1]["id"]
+    assert more_before > 3 * some_before and more < 2.5 * some, (some_before, more_before, some, more)
