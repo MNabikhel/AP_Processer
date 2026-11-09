@@ -4651,3 +4651,72 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `docs/PILOT.md`, `docs/SCALE.md`, `docs/SCALE_GOAL.md`, `docs/MAILBOX_SETUP.md`, `docs/DEMO_RUN_SHEET.md`,
     `docs/WHATS_NEW.md` (its introduction), `README.md`, `ap_coder/bench/day.py`; comments in
     `tests/web/test_platform_security.py`, `tests/web/test_server_capacity.py`, `tests/web/test_server_scale.py`)
+- **D-208** · **The company server's service on Linux: a systemd unit that runs the service host from the `current`
+  link, started again by systemd only when it did not end on purpose** (the pilot's recommended machine, an Ubuntu
+  24.04 LTS workstation with an NVIDIA card; 9 Nov 2026).
+  - **Why:** `service` knew Windows' task and the Mac's LaunchDaemon, and refused on Linux ("for Windows and macOS"),
+    where server-update fell back to Windows' run.cmd, which nothing runs there. With the pilot on a Linux machine,
+    nothing would have started AP Coder at boot, brought it back after a crash, or kept it stopped once stopped.
+  - **What:** `ops/service_linux.py`, the third backend, built as the Mac's, whose shared parts it uses
+    (`service_macos`: root, the account's ids, `hand_over` and `hand_back`, the `current` link); `service.py` gains a
+    `LINUX` branch in `backend()` and `doctor_checks`. The unit is `/etc/systemd/system/<name>.service` (`apcoder` for
+    the default task name, any other `apcoder-<name>`: never a unit of the system's), written whole (`write_whole`,
+    0644): `User=` the service's account, `WorkingDirectory` and `ExecStart` through `<the code folders'
+    parent>/current`, `Environment` `AP_PRIVATE_DIR`, `AP_SERVER_MODE=1`, `PYTHONUNBUFFERED=1` (the plist's),
+    `Restart=on-failure`, `RestartSec=10`, `StartLimitIntervalSec=0` (never given up on, as launchd does),
+    `KillMode=mixed` with `KillSignal=SIGTERM` (SIGTERM to the host alone, which ends its dashboard; what is left once
+    it has ended is killed: the plist's `AbandonProcessGroup false`), `TimeoutStopSec=60` (more than the host's 45 s),
+    `LimitNOFILE=8192`, `After=` and `Wants=network-online.target`, `WantedBy=multi-user.target`. Its output goes to
+    the journal (`journalctl -u`), not to files in the data folder (systemd would open them as root). Its values are
+    quoted as systemd reads them back (a space, `%`, `$`, `"`, `\`). The account, `apcoder`, is made by `install`
+    when this computer has none, the default only (`useradd --system --user-group --no-create-home --home-dir
+    /nonexistent --shell /usr/sbin/nologin`; an account named with `--account` must exist; root refused unless
+    `--allow-root`). `install`: the account, the data folder handed over before server.json is written in it (so one
+    made now is the account's), the link, the unit, `daemon-reload`, `enable`, then `restart`; `start`: `enable` (a
+    unit disabled by hand starts at boot again) and `restart`; `remove`: stop, `disable`, the unit deleted,
+    `daemon-reload` (the data, the link and the account kept); `status`: `systemctl show` (LoadState, ActiveState,
+    SubState, MainPID, NRestarts, ExecMainStatus, Result, UnitFileState) and the host's own health. Every command but
+    `install --dry-run` needs sudo and a Linux that systemd runs (`/run/systemd/system`): said plainly.
+  - **Semantics, the Mac's:** the host's exit code is the contract with `Restart=on-failure` as with KeepAlive: 0 only
+    when stopped on purpose (left stopped), `again()` (75) to be started again 10 s later, a crash or a kill started
+    again. `service stop` (the `stopped` file, `/shutdown`, `systemctl stop`) **stays stopped across a reboot**, as on
+    a Mac and Windows, without being asked: the unit stays enabled, and the host systemd starts at boot ends at once
+    with 0. Disabling the unit on stop was not chosen: a stop would then mean one thing on Linux and another elsewhere,
+    and `service start` would have to enable it again. A `systemctl stop` of IT's own stops it until the next boot
+    (systemd's way). An update cut short that only root can finish ends with 0 and
+    stays stopped (D-188, B-1957).
+  - **server-update and its recovery:** nothing new. `switch_folder` points the `current` link (the Mac's
+    `point_current`); `can_switch` asks the link's folder (root's `/opt/apcoder`: the host can't, so it leaves the
+    switch to sudo server-update); `update_recovery._owned` hands root's marker to the service folder's owner as on a
+    Mac. The tests of server-update and its recovery that model Windows' run.cmd on Linux now say so (`LINUX` off in
+    their fixtures, as `test_service.py` had `MACOS`).
+  - **Proof:** `tests/ops/test_service_linux.py` (the unit read back, and by `systemd-analyze verify` where it is
+    installed; systemctl and useradd answered by a stand-in; the refusals; the data folder found in the unit; the
+    hand-back; `status --json`; a power cut before the unit's rename; the link switched by server-update; the CI
+    script's flow against a stand-in Ubuntu, which found its test unit left behind when install's own checks failed).
+    By hand on Ubuntu 24.04 (systemd not running there): `install` made `apcoder` and a data folder of its own;
+    the unit's command, environment and account (`HOME=/nonexistent`, a root-owned code folder through `current`)
+    answered `/healthz` in 3 s, both processes `apcoder`'s; SIGTERM ended its dashboard, then the host with 0; the
+    `stopped` file at a start ended it at once with 0; a second host ended with 75. On GitHub's Ubuntu runner, the CI
+    job `linux-service` (`scripts/ci/linux_service.py`), AP Coder in `/opt/apcoder`, root's, with Ubuntu's own Python
+    as SERVER.md section 15 sets it up: install as `apcoder` (made by it), `systemd-analyze verify`, enabled, the
+    host and dashboard `apcoder`'s, `kill -9` of the host (systemd brings it back, the old dashboard gone), `service
+    start` while it runs, `systemctl stop` (SIGTERM in the host's log, stays stopped), `service stop` (still stopped
+    60 s later, and after a `systemctl start` as at boot, its last exit code 0), start, an update cut short dealt with
+    at the unit's next start, remove (the unit gone, systemd's LoadState not-found).
+  - **SERVER.md section 15**, for IT: Ubuntu Server 24.04 LTS, the NVIDIA driver from `ubuntu-drivers --gpgpu`, what
+    AP Coder and LM Studio need from Ubuntu, the account, the bundle or the repository, `--workers 4` and 2 capture
+    processes for the pilot (the defaults on 20 cores and 32 GB, 16 and 8, are for a bigger load), ufw and SSH, LM
+    Studio's headless server as a unit of its own with `Restart=always` and a watchdog (its `/v1/models` asked every
+    30 s, three misses end it; LM Studio's own example watches nothing) and its logs deleted nightly by a timer,
+    encryption (LUKS, its key sealed in the TPM with Clevis: Ubuntu's own TPM-backed encryption does not support the
+    NVIDIA driver's kernel modules in 24.04), the AP inbox (MAILBOX_SETUP.md) and backups to a share mounted at boot.
+  - **Left:** the CI job has not run yet (it first runs with this change); the TPM unlock with Clevis and the NVIDIA
+    driver is not tried on the pilot's machine (its burn-in proves it: a power cut, back by itself, `nvidia-smi`
+    shows the card); `clevis-initramfs` 20 puts no `tss` account in the initramfs, which one guide says the TPM's
+    tools need (not confirmed); LM Studio's units are checked by `systemd-analyze` and the watchdog's loop was run
+    against a stand-in, never with LM Studio itself; a Linux offline bundle is built on Ubuntu itself (its "this
+    computer" packages): the builder offers no Linux `--platform`.
+  - (`ap_coder/ops/service_linux.py`, `ap_coder/ops/service.py`, `scripts/ci/linux_service.py`,
+    `.github/workflows/ci.yml`, `docs/SERVER.md`; `tests/ops/test_service_linux.py`, `tests/ops/test_service.py`,
+    `tests/ops/test_server_update.py`)

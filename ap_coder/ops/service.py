@@ -1,19 +1,19 @@
 """AP Coder run as the company server's service (D-100, D-186): ``python -m ap_coder service
 install|remove|start|stop|status``, on Windows a scheduled task (``service_windows.py``), on a Mac a LaunchDaemon
-(``service_macos.py``).
+(``service_macos.py``), on Linux a systemd unit (``service_linux.py``, D-208).
 
 What both share is here: the settings, the *service host* (``python -m ap_coder service run``, what the task or the
 daemon runs), the dashboard's own stop, ``status`` and the doctor's lines. The host starts the dashboard (``python -m
 ap_coder serve --server ...``) with the server settings, writes what it says to the rotating log ``<data
 folder>/logs/service.log``, and starts it again when it stops (after 5 s, then 10 s, ... up to 5 minutes), until the
 service is stopped: the ``stopped`` file ``service stop`` leaves, or, off Windows, SIGTERM or SIGINT (launchd's
-bootout, Ctrl+C), on which it stops the dashboard and ends with exit code 0 (launchd then leaves it stopped).
+bootout, systemd's stop, Ctrl+C), on which it stops the dashboard and ends with exit code 0 (left stopped).
 
 Settings: ``<data folder>/server.json`` (written by ``service install``; ``server-update`` keeps its record there
 too), each overridden by an environment variable (:data:`ENV_SETTINGS`; the data folder's .env, which ``service run``
 reads into its environment, too, but for the backup model servers: :data:`OVER_ENV_FILE`). Which folder the service
-runs is one thing ``server-update`` changes (``switch_folder``): Windows' ``run.cmd``, the Mac's ``current`` link, so
-the task or the daemon never has to be registered again. Standard library only.
+runs is one thing ``server-update`` changes (``switch_folder``): Windows' ``run.cmd``, elsewhere the ``current`` link:
+the task or the unit never has to be registered again. Standard library only.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from ..core.paths import PROJECT_DIR, private_dir, same_folder, try_lock
 
 WINDOWS = os.name == "nt"
 MACOS = sys.platform == "darwin"
+LINUX = sys.platform.startswith("linux")
 CONFIG_FILE = "server.json"  # in the data folder
 SERVICE_DIR = "service"  # in the data folder: host.json, host.lock, stopped (and Windows' run.cmd, the task's XML)
 LOG_DIR = "logs"
@@ -64,8 +65,9 @@ ENV_SETTINGS = {"port": "AP_SERVER_PORT", "host": "AP_DASHBOARD_ADDRESS", "certf
 OVER_ENV_FILE = ("llm_backup_url", "page_reader_backup_url")
 RESTART_FIRST, RESTART_MOST, STEADY = 5.0, 300.0, 600.0  # seconds: first wait, longest wait, a run that counts as fine
 STOP_WAIT = 45.0  # seconds the dashboard has to stop once the host is asked to (its workers give requests 25: D-111)
-# The host's exit code off Windows for "start me again" (EX_TEMPFAIL; ``again``): launchd's KeepAlive starts it again
-# 10 s later, where a 0 would leave it stopped. Another host runs, or the folder to run changed (an update's recovery).
+# The host's exit code off Windows for "start me again" (EX_TEMPFAIL; ``again``): launchd's KeepAlive (systemd's
+# Restart=on-failure) starts it again 10 s later, where a 0 would leave it stopped. Another host runs, or the folder
+# to run changed (an update's recovery).
 HOST_AGAIN = 75
 # Windows refuses a rename over a file another process has open (without delete sharing, as Python opens one; a
 # monitor's /readyz reading server.json, an antivirus): ``write_whole`` tries again after each of these (1.6 s in all).
@@ -622,8 +624,8 @@ def _wait(seconds: float, ended: Callable[[], bool], sleep: Callable[[float], No
 def again() -> int:
     """The host's exit code when it must not run now but be started again soon (another host runs; the folder to
     run changed, so the one it names starts next): 0 on Windows, as before, its task comes back every 5 minutes by
-    itself; elsewhere :data:`HOST_AGAIN`, as launchd's KeepAlive starts again only a host that ended with another
-    code than 0 (a 0 is a stop on purpose, left stopped)."""
+    itself; elsewhere :data:`HOST_AGAIN`, as launchd's KeepAlive (systemd's Restart=on-failure) starts again only a
+    host that ended with another code than 0 (a 0 is a stop on purpose, left stopped)."""
     return 0 if WINDOWS else HOST_AGAIN
 
 
@@ -723,7 +725,7 @@ def run_host(
 
 def backend() -> Any:
     """This computer's service: Windows' scheduled task (``service_windows``), the Mac's LaunchDaemon
-    (``service_macos``); None elsewhere."""
+    (``service_macos``), Linux's systemd unit (``service_linux``); None elsewhere."""
     if WINDOWS:
         from . import service_windows
 
@@ -732,6 +734,10 @@ def backend() -> Any:
         from . import service_macos
 
         return service_macos
+    if LINUX:
+        from . import service_linux
+
+        return service_linux
     return None
 
 
@@ -775,8 +781,8 @@ def installed(s: ServerSettings) -> bool:
 
 
 def switch_folder(data: Path, folder: Path) -> None:
-    """The service runs ``folder`` from its next start (``server-update``): the Mac's ``current`` link pointed at it,
-    elsewhere Windows' run.cmd rewritten."""
+    """The service runs ``folder`` from its next start (``server-update``): the ``current`` link pointed at it (a
+    Mac, Linux), Windows' run.cmd rewritten."""
     _backend().switch_folder(data, folder)
 
 
@@ -860,13 +866,13 @@ def _readable(path: str) -> str:
     return ""
 
 
-def doctor_checks(data: Path, env: dict | None = None, *, windows: bool | None = None,
-                  macos: bool | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
+def doctor_checks(data: Path, env: dict | None = None, *, windows: bool | None = None, macos: bool | None = None,
+                  linux: bool | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
     """(area, status, detail) of the server's own setup, as the doctor shows them: what it listens on, its HTTPS
-    files, the names staff type and the service: Windows' scheduled task, the Mac's LaunchDaemon (this computer's,
-    unless ``windows`` or ``macos`` is given). Reads files only (and asks schtasks or launchctl)."""
-    if windows is None and macos is None:
-        windows, macos = WINDOWS, MACOS
+    files, the names staff type and the service: Windows' scheduled task, the Mac's LaunchDaemon, Linux's systemd unit
+    (this computer's, unless one is given). Reads files only (and asks schtasks, launchctl or systemctl)."""
+    if windows is None and macos is None and linux is None:
+        windows, macos, linux = WINDOWS, MACOS, LINUX
     try:
         s = settings(data, env)
     except SettingsError as exc:
@@ -898,19 +904,25 @@ def doctor_checks(data: Path, env: dict | None = None, *, windows: bool | None =
         from . import service_macos
 
         return [*out, service_macos.doctor_check(data, s)]
-    out.append(("server service", "SKIP", "the service is a scheduled task on Windows, a LaunchDaemon on a Mac"))
+    if linux:
+        from . import service_linux
+
+        return [*out, service_linux.doctor_check(data, s)]
+    out.append(("server service", "SKIP", "the service is a scheduled task on Windows, a LaunchDaemon on a Mac, a "
+                "systemd unit on Linux"))  # fmt: skip
     return out
 
 
 def add_parser(sub: Any) -> None:
-    p = sub.add_parser("service", help="The company server: run AP Coder as a Windows scheduled task or a Mac's "
-                       "LaunchDaemon (docs/SERVER.md)")  # fmt: skip
+    p = sub.add_parser("service", help="The company server: run AP Coder as a Windows scheduled task, a Mac's "
+                       "LaunchDaemon or a Linux systemd unit (docs/SERVER.md)")  # fmt: skip
     p.add_argument("action", choices=["install", "remove", "start", "stop", "status", "run"],
-                   help="run: what the scheduled task (the LaunchDaemon) runs: the service host")  # fmt: skip
+                   help="run: what the scheduled task (the LaunchDaemon, the unit) runs: the service host")  # fmt: skip
     p.add_argument("--account", default=None, help=f"The account it runs as (default {DEFAULT_ACCOUNT} on Windows, "
-                   "_apcoder on a Mac)")  # fmt: skip
+                   "_apcoder on a Mac, apcoder on Linux)")  # fmt: skip
     p.add_argument("--task-name", default=None, help=f'The scheduled task\'s name (default "{TASK_NAME}"); on a Mac '
-                   "the LaunchDaemon's label is made from it (default com.apcoder.server)")  # fmt: skip
+                   "the LaunchDaemon's label (default com.apcoder.server), on Linux the unit's name (apcoder.service) "
+                   "is made from it")  # fmt: skip
     p.add_argument("--port", type=int, default=None, help=f"Default {DEFAULT_PORT}")
     p.add_argument("--host", default=None, help=f"Address to listen on (default {DEFAULT_HOST}: every network)")
     p.add_argument("--certfile", default=None, help="The HTTPS certificate (PEM)")
@@ -929,7 +941,7 @@ def add_parser(sub: Any) -> None:
                    help="Requests sent to LM Studio at once (default 1; docs/SERVER.md, step 8)")  # fmt: skip
     p.add_argument("--no-start", action="store_true", help="install: don't start it yet")
     p.add_argument("--dry-run", action="store_true", help="install: show what it would do, change nothing")
-    p.add_argument("--allow-root", action="store_true", help="install on a Mac: run it as root (a first test only)")
+    p.add_argument("--allow-root", action="store_true", help="install on a Mac or Linux: run it as root (a first test)")
     p.add_argument("--json", action="store_true", help="status: in JSON (for a monitoring script)")
 
 
@@ -938,8 +950,8 @@ def main(args: argparse.Namespace) -> int:
     if args.action == "run":
         return run_host(data)
     if backend() is None and not (args.action == "install" and args.dry_run):
-        print("The service is for Windows (Task Scheduler) and macOS (launchd). Elsewhere, run: python -m ap_coder "
-              "serve --server", file=sys.stderr)  # fmt: skip
+        print("The service is for Windows (Task Scheduler), macOS (launchd) and Linux (systemd). Elsewhere, run: "
+              "python -m ap_coder serve --server", file=sys.stderr)  # fmt: skip
         return 2
     way = _backend()
     refused = way.command_refusal(args)

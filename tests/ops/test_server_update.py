@@ -89,6 +89,7 @@ def server(tmp_path, monkeypatch):
     data = tmp_path / "APCoderData"
     data.mkdir()
     monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setattr(service, "LINUX", False)  # run.cmd, as on Windows (Linux's current link: test_service_linux.py)
     current = _folder(tmp_path / "apps" / "APProcessor", "0.3.0")
     service.write_config(data, folder=str(current), insecure_http=True)
     service.write_runner(data, current)
