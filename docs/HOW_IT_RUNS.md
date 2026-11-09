@@ -482,8 +482,9 @@ the launcher.
   duplicate audit's pairs, which its page and CSV share (`changes/register` and the generation, 1.7 MB); Spend's
   figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
   vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB);
-  Activity's approvals (the generation) and its controls report (the generation, the events' count and newest id,
-  the approval limit and the rates: D-206). Any
+  Activity's approvals (the generation, 148 bytes at 300,000 invoices) and the counts its controls tiles show (the
+  generation and the events' count and newest id; 725 bytes whatever the period, where the whole report is 0.5 MB
+  for 9 days and 18 MB for a year: D-206, B-2073). Any
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write (Spend and month-end's page, which only show them, at most every 30 s: D-166). Month-end, the audit, Spend,
   the recurring vendors and Insights are worked out once for every process (below).

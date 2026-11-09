@@ -4499,10 +4499,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       before, and making a batch checks its invoices afresh (`_create_batch`, `jde_check`). The settings' own
       problems (`settings_problems`) are read at each visit as before.
     - **Activity's approvals** (`insights.approval_counts`): a `summary_memo` on the generation (any invoice or
-      approval changed), exact. **Its controls report** (`activity.controls_report`, only its tiles' counts shown): a
-      `summary_memo` on the generation and, asked, the period, the duties, the approval limit, the rates and
-      `Store.events_stamp` (the events' count and newest id: events are only ever added; a deletion moves the count).
-      The download (`/activity/controls-report`) is built afresh as before.
+      approval changed), exact. **Its controls report** (`activity.controls_report`): only the counts its tiles show
+      (`TILE_COUNTS`, and `same_person`'s or None without the duties; the template draws them as it drew each list's
+      length), a few hundred bytes whatever the period (B-2073: the whole report of a year was 153 MB at 15,000
+      invoices, past `summary_memo`'s 112 MB), a `summary_memo` on the generation and, asked, the period, the duties
+      and `Store.events_stamp` (the events' count and newest id: events are only ever added; a deletion moves the
+      count). None of the counts is of the approvals over the limit, so the limit and the rates are not asked. The
+      download (`/activity/controls-report`) is built whole and afresh as before.
     - **Every event but the hidden ones** (`Store.count_events` with `hidden` alone): all the events counted
       (SQLite's count of a table decodes no row), less those of the hidden actions off `events_action` (an event's
       action is never NULL): 15 ms for 1.26 million, was 0.1-0.18 s. **The Person list** (`Store.event_actors`): each

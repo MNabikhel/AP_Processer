@@ -189,13 +189,21 @@ def distinct_people(actors: Iterable[str], events: Iterable[dict[str, Any]]) -> 
     return sorted({now(actor) for actor in actors if actor})
 
 
-def controls_report(store: Store, start: dt.date, end: dt.date, duties: bool) -> dict[str, Any]:
-    """The controls report the page's tiles count (``controls.build``), kept until an event is recorded, an invoice
-    changes or the approval limit or the rates do (0.2 s at 300,000 invoices, at every visit before: D-206). The
-    value is shared: read it, don't change it."""
-    asked = (start, end, duties, store.events_stamp(), store.approval_limit(), store.fx_rates())
-    return store.summary_memo("activity_controls", lambda: controls.build(store, start, end, duties=duties),
-                              asked=asked)  # fmt: skip
+TILE_COUNTS = ("overrides", "signals", "finals", "sent_back", "waiting", "setup")  # the report's lists the tiles count
+
+
+def controls_report(store: Store, start: dt.date, end: dt.date, duties: bool) -> dict[str, int | None]:
+    """How many of each list of the controls report (``controls.build``) the page's tiles show (``same_person``: None
+    without the duties), kept until an event is recorded or an invoice changes (0.2 s at 300,000 invoices, at every
+    visit before: D-206). Only the counts, none of them of the approvals over the limit: the whole report of a year was
+    153 MB at 15,000 invoices (B-2073); the download builds it whole. Shared: read it, don't change it."""
+
+    def counts() -> dict[str, int | None]:
+        report = controls.build(store, start, end, duties=duties)
+        same = report["same_person"]
+        return {**{name: len(report[name]) for name in TILE_COUNTS}, "same_person": None if same is None else len(same)}
+
+    return store.summary_memo("activity_controls", counts, asked=(start, end, duties, store.events_stamp()))
 
 
 @router.get("/activity", response_class=HTMLResponse)

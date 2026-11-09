@@ -362,3 +362,14 @@ def touchless_summary(store: Store, days: int = 30) -> dict[str, Any]:
         "touchless_rate": touchless / processed if processed else None,
         "audited": len(audits), "audit_errors": sum(1 for r in audits if not r["clean"]), "reopened": reopened,
     }  # fmt: skip
+
+
+# Activity's controls tiles as ``web/templates/activity.html`` drew them from the whole report (``controls.build``)
+# before B-2073: each list counted there.
+CONTROLS_TILES = """  <div class="apc-tiles">
+    {{ ui.tile("Errors overridden", report.overrides | length, "", "amber" if report.overrides else "green", "approved despite an error") }}
+    {{ ui.tile("Risk signals approved", report.signals | length, "", "amber" if report.signals else "green", "duplicates, vendor, PO") }}
+    {{ ui.tile("Second approvals", report.finals | length, "", "violet", (report.sent_back | length) ~ " sent back or reopened · " ~ (report.waiting | length) ~ " waiting") }}
+    {{ ui.tile("Setup changes", report.setup | length, "", "blue", "accounts, tax, vendors, POs") }}
+    {% if report.same_person is not none %}{{ ui.tile("One person, several steps", report.same_person | length, "", "amber" if report.same_person else "green", "approved, exported, posted") }}{% endif %}
+  </div>"""  # noqa: E501

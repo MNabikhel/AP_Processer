@@ -180,9 +180,8 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
 
     from ap_coder.core.memory import vendor_key
     from ap_coder.core.store import summary
-    from ap_coder.erp import controls, jde
+    from ap_coder.erp import jde
     from ap_coder.web.app import create_app
-    from ap_coder.web.pages import activity
     from ap_coder.web.pages import exports as exports_page
     from tests import reports_reference as old
     from tests.conftest import copy_database
@@ -228,9 +227,7 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
                           else shared(self, name, compute, *a, **k))  # fmt: skip
                 m.setattr(exports_page, "ready_problems",
                           lambda s, ids: exports_page.problem_rows(s, exports_page.jde_check(s, ids)[1]))  # fmt: skip
-                m.setattr(activity, "controls_report",
-                          lambda s, start, end, duties: controls.build(s, start, end, duties=duties))  # fmt: skip
-                return shown()
+                return shown()  # (the controls tiles as drawn before: tests/web/test_web_analytics.py, B-2073)
 
         last: list[dict[str, str]] = []
 

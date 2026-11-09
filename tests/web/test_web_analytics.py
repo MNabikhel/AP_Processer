@@ -376,6 +376,45 @@ def test_filter_events_and_controls_period_helpers(store):
     assert controls_period("bad", "2099-01-01", today) == (dt.date(2026, 3, 1), today)
 
 
+def test_activitys_controls_tiles_keep_only_their_counts_however_long_the_period_and_show_what_they_showed(store):
+    """B-2073: Activity kept its controls report whole (``controls.build``: the invoices waiting, those one person
+    approved over the limit with their coding decoded, the events): a year's held 153 MB at 15,000 invoices, past the
+    room of every answer a process keeps (112 MB), so each visit emptied the others and built it again (1.9 s). Only
+    the counts its tiles show are kept, a few hundred bytes whatever the period, and the tiles are what the page's
+    template drew from the whole report (``tests/reports_reference.py``), with the duties' tile and without."""
+    import datetime as dt
+
+    from ap_coder.core.caches import size_of
+    from ap_coder.core.store import summary
+    from ap_coder.erp import controls
+    from ap_coder.web.core import TEMPLATES_DIR, templates
+    from ap_coder.web.pages import activity
+    from tests import reports_reference as old
+    from tests.webclient import add_clean, client_for, gt
+
+    for n in range(40):
+        invoice = add_clean(store, invoice_number=f"OP-{n}")
+        store.approve_invoice(invoice, gt(invoice_number=f"OP-{n}"), "Jordan Lee")
+    store.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
+    store.set_setting("approval_limit", "50", actor="Ann")  # (each approved by one person, over it now)
+    today = dt.date.today()
+    start = today - dt.timedelta(days=365)
+    text = (TEMPLATES_DIR / "activity.html").read_text(encoding="utf-8")
+    tiles = text[text.index('  <div class="apc-tiles">\n    {{ ui.tile("Errors') :]
+    tiles = tiles[: tiles.index("\n  </div>") + len("\n  </div>")]  # (the page's own tiles, as drawn now)
+    for duties in (True, False):
+        report = controls.build(store, start, today, duties=duties)
+        assert len(report["one_person"]) == 40 and len(report["setup"]) == 2
+        kept = activity.controls_report(store, start, today, duties)
+        assert size_of(kept) < 1_000 < size_of(report) // 100, (size_of(kept), size_of(report))
+        assert summary._MEMO.sizes[(str(store.path), "activity_controls")] < 1_000
+        drawn = templates.env.from_string(tiles).render(report=kept)
+        assert drawn == templates.env.from_string(old.CONTROLS_TILES).render(report=report)
+        assert ("One person, several steps" in drawn) is duties and "Setup changes" in drawn
+    page = client_for(store).get(f"/activity?start={start}&end={today}").text  # (a laptop: no duties' tile)
+    assert templates.env.from_string(old.CONTROLS_TILES).render(report=report) in page
+
+
 # --- Learning: suppliers, memory, history, training export ---------------------------------------------------------
 
 

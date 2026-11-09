@@ -2374,10 +2374,11 @@ def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_proces
     assert shown("worker 2", ids[:1]) != shown("worker 2") and len(worked) == 7  # (another question: its own answer)
 
 
-def test_activitys_controls_report_follows_each_event_invoice_and_setting_it_is_worked_out_from(tmp_path, ground_truth):
-    """D-206: the controls report Activity's tiles count (0.2 s at 300,000 invoices, at every visit before) is kept in
-    each process and is what working it out afresh gives (``controls.build``) after each event recorded, an invoice
-    changed, the approval limit or the rates changed, whoever made the change, and for each period asked."""
+def test_activitys_controls_report_follows_each_event_and_invoice_it_is_worked_out_from(tmp_path, ground_truth):
+    """D-206: the counts of the controls report Activity's tiles show (0.2 s at 300,000 invoices, at every visit
+    before) are kept in each process and are what working the report out afresh gives (``controls.build``) after each
+    event recorded or deleted and each invoice changed, whoever made the change, and for each period asked; the
+    approval limit, which none of them counts by (B-2073), changes nothing."""
     from ap_coder.erp import controls
     from ap_coder.web.pages import activity
 
@@ -2385,6 +2386,7 @@ def test_activitys_controls_report_follows_each_event_invoice_and_setting_it_is_
     today = dt.date.today()
     period = (today - dt.timedelta(days=7), today, True)
     worked = []
+    none = dict.fromkeys(activity.TILE_COUNTS, 0)
 
     def shown(start: dt.date, end: dt.date, duties: bool) -> dict:
         def build(*args, **kwargs):
@@ -2393,28 +2395,31 @@ def test_activitys_controls_report_follows_each_event_invoice_and_setting_it_is_
 
         real, controls.build = controls.build, build
         try:
-            report = activity.controls_report(store, start, end, duties)
+            counts = activity.controls_report(store, start, end, duties)
         finally:
             controls.build = real
-        assert report == controls.build(store, start, end, duties=duties)
-        return report
+        report = controls.build(store, start, end, duties=duties)
+        same = report["same_person"]
+        assert counts == {**{name: len(report[name]) for name in activity.TILE_COUNTS},
+                          "same_person": None if same is None else len(same)}  # fmt: skip
+        return counts
 
-    assert shown(*period)["events"] == 0 and shown(*period)["events"] == 0 and len(worked) == 1
-    invoice = _approved(other, tmp_path, ground_truth, "C-1", currency="USD")
-    assert shown(*period)["approvals"] == 1 and len(worked) == 2
+    assert shown(*period) == shown(*period) == {**none, "same_person": 0} and len(worked) == 1
+    invoice = _approved(other, tmp_path, ground_truth, "C-1")
+    assert shown(*period)["same_person"] == 0 and len(worked) == 2
     other.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
     other.log_event("note", invoice, actor="Ann")
-    assert len(shown(*period)["setup"]) == 1 and len(worked) == 3
+    assert shown(*period)["setup"] == 1 and len(worked) == 3
     _plain(store, "UPDATE invoices SET status = 'pending_approval' WHERE id = ?", invoice)  # (no event)
-    assert len(shown(*period)["waiting"]) == 1 and len(worked) == 4
+    assert shown(*period)["waiting"] == 1 and len(worked) == 4
     _plain(store, "UPDATE invoices SET status = 'approved' WHERE id = ?", invoice)
     # (the look that brought the summary up to date keeps nothing, the next one does: ``summary_memo``)
-    assert shown(*period)["waiting"] == [] and shown(*period)["one_person"] == [] and len(worked) == 6
-    _plain(store, "INSERT INTO settings (key, value) VALUES ('approval_limit', '10000')")  # (no event)
-    assert [i["id"] for i in shown(*period)["one_person"]] == [invoice] and len(worked) == 7  # (no rate for USD)
-    _plain(store, "INSERT INTO settings (key, value) VALUES ('fx_rates', 'USD=0.5')")  # (18,017.85 USD: 9,008.93)
-    assert shown(*period)["one_person"] == [] and len(worked) == 8
+    assert shown(*period)["waiting"] == 0 and shown(*period)["waiting"] == 0 and len(worked) == 6
+    other.create_export_batch([invoice], "csv", actor="Jordan Lee")  # (who approved it)
+    assert shown(*period)["same_person"] == 1 and len(worked) == 7
     _plain(store, "DELETE FROM events WHERE action = 'vendor_added'")  # (not the newest: counted)
-    assert shown(*period)["setup"] == [] and len(worked) == 9
-    assert shown(period[0], today - dt.timedelta(days=1), True)["events"] == 0 and len(worked) == 10
-    assert shown(today, today, False)["same_person"] is None and len(worked) == 11
+    assert shown(*period)["setup"] == 0 and len(worked) == 8
+    assert shown(period[0], today - dt.timedelta(days=1), True) == {**none, "same_person": 0} and len(worked) == 9
+    assert shown(today, today, False)["same_person"] is None and len(worked) == 10
+    _plain(store, "INSERT INTO settings (key, value) VALUES ('approval_limit', '100')")  # (no event)
+    assert shown(today, today, False)["same_person"] is None and len(worked) == 10
