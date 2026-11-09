@@ -1503,10 +1503,10 @@ sudo useradd --create-home --shell /bin/bash --comment "LM Studio" lmstudio
 1. **Install llmster** as that account, once the NVIDIA driver is in (its installer then takes the CUDA build). Its
    installer downloads LM Studio, so run it while the machine is being set up, before it holds any invoice:
    `sudo -iu lmstudio sh -c 'curl -fsSL https://lmstudio.ai/install.sh | bash'`. It installs `lms` in
-   `/home/lmstudio/.lmstudio/bin`. LM Studio updates its headless server only with `lms daemon update` (step 8, point
+   `~lmstudio/.lmstudio/bin`. LM Studio updates its headless server only with `lms daemon update` (step 8, point
    8): update it on purpose, as AP Coder is.
-2. **Copy the models in** (nothing is downloaded), into `/home/lmstudio/.lmstudio/models`, as step 8, point 2 says:
-   OvisOCR2 and one chat model; then `sudo chown -R lmstudio:lmstudio /home/lmstudio/.lmstudio/models`, and `sudo -iu
+2. **Copy the models in** (nothing is downloaded), into `~lmstudio/.lmstudio/models`, as step 8, point 2 says:
+   OvisOCR2 and one chat model; then `sudo chown -R lmstudio:lmstudio ~lmstudio/.lmstudio/models`, and `sudo -iu
    lmstudio .lmstudio/bin/lms ls` lists them (the chat model's exact name, for point 3). The script of point 3 loads
    the chat model on the graphics card (`--gpu max`) with its 16,384 tokens; AP Coder loads OvisOCR2 itself, on the
    card too, with the 20,480 tokens a page needs, before it reads (docs/LM_STUDIO.md). Both are loaded on purpose, so
@@ -1566,7 +1566,8 @@ sudo useradd --create-home --shell /bin/bash --comment "LM Studio" lmstudio
    [Service]
    Type=oneshot
    User=lmstudio
-   ExecStart=/usr/bin/find /home/lmstudio/.lmstudio/server-logs -type f -mtime +7 -delete
+   Environment=HOME=/home/lmstudio
+   ExecStart=/usr/bin/find ${HOME}/.lmstudio/server-logs -type f -mtime +7 -delete
    ```
 
    and `/etc/systemd/system/lmstudio-logs.timer`:
