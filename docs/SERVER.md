@@ -1,16 +1,18 @@
-# AP Coder on a company Windows Server (for IT)
+# AP Coder on a company server (for IT)
 
-This guide sets AP Coder up on one Windows Server for the whole AP team. It runs as a Windows scheduled task (not a
-Windows service), staff open it in their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
+This guide sets AP Coder up on one company server for the whole AP team: a Windows Server, a Mac (section 14) or a
+Linux computer (section 15). On Windows it runs as a Windows scheduled task (not a Windows service). Staff open it in
+their browser over HTTPS and log in with their own account, and nothing is installed on their PCs. Everything stays
 offline: AP Coder and LM Studio run on the server and connect to nothing on the internet.
 
 Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
 On a Mac (a Mac mini, one of the pilot's layouts in section 1) AP Coder runs as a LaunchDaemon instead of a
-scheduled task: [section 14](#14-on-a-mac) says what is different there; the rest of this guide holds for it too.
+scheduled task: [section 14](#14-on-a-mac) says what is different there; on Linux it is a systemd unit:
+[section 15](#15-on-linux). The rest of this guide holds for them too.
 
-In this guide:
+In this guide (on Windows; sections 14 and 15 give the Mac's and Linux's own):
 
 - `C:\APCoder\APProcessor` is the AP Coder folder (the code), `D:\APCoderData` the data folder (the database,
   invoices, backups, logs, settings). Use your own paths; keep the data folder outside the code folder.
@@ -303,7 +305,7 @@ LM Studio's port (1234) stays closed: only AP Coder, on the server itself, talks
 
 AP Coder runs as a Windows *scheduled task* that starts when the server starts, under `APCoderService`, whether
 anyone is logged on or not. (Why a task and not a classic service, with nothing to download: docs/decisions.md D-100.
-On a Mac it is a LaunchDaemon: section 14.)
+On a Mac it is a LaunchDaemon: section 14; on Linux a systemd unit: section 15.)
 
 ```bat
 .venv\Scripts\python.exe -m ap_coder service install --certfile D:\APCoderData\tls\apcoder.pem --keyfile D:\APCoderData\tls\apcoder.key.pem --allowed-hosts apcoder.company.local
@@ -542,7 +544,7 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
    schtasks /create /tn "LM Studio logs" /sc daily /st 02:00 /ru APCoderService /rl LIMITED /tr C:\APCoder\lm-studio-logs.cmd
    ```
 
-   On a Mac, section 14 has the same with launchd.
+   On a Mac, section 14 has the same with launchd; on Linux, section 15 with a systemd timer.
 8. **Started again when it stops, and never updated by itself.** The task of point 4 runs once, at boot: a crash of
    LM Studio would leave the models down until someone starts them, and AP Coder neither starts nor watches LM Studio.
    So a second task, every 5 minutes, starts it again when its server doesn't answer: `C:\APCoder\lm-studio-watch.cmd`,
@@ -565,7 +567,7 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
    notes on version 0.3.9), and its headless server (llmster) updates only with `lms daemon update`. On a server
    meant to stay offline, turn the runtimes' automatic update off when you open LM Studio to set the models up
    (point 2), and update LM Studio on purpose, as AP Coder is (section 11): a new version tried first, then copied in.
-   On a Mac, section 14's LaunchDaemon watches LM Studio the same way.
+   On a Mac, section 14's LaunchDaemon watches LM Studio the same way; on Linux, section 15's systemd unit.
 
 ## 9. Backups
 
@@ -981,10 +983,10 @@ warn, and the system's log says so (step 6); once expired, the banner says so in
 what it checks on a laptop: *dashboard network* (the address and port the server listens on, and the address staff
 open), *server HTTPS certificate* and *private key* (set, there, and readable by the account you run it as; run it
 as `APCoderService` to check the service's own rights), *server names* (the allowed names, a warning when none is set)
-and *server service* (on Windows the scheduled task, on a Mac the LaunchDaemon: installed, its state, the account,
-and whether it was stopped on purpose); and (D-187) *server HTTPS certificate expiry*, *server time zone*, *data
-folder disk*, *backups* (the newest, and whether the last one failed) and *second backup folder* (set, reachable,
-on another disk).
+and *server service* (on Windows the scheduled task, on a Mac the LaunchDaemon, on Linux the systemd unit: installed,
+its state, the account, and whether it was stopped on purpose); and (D-187) *server HTTPS certificate expiry*,
+*server time zone*, *data folder disk*, *backups* (the newest, and whether the last one failed) and *second backup
+folder* (set, reachable, on another disk).
 
 ## 14. On a Mac
 
