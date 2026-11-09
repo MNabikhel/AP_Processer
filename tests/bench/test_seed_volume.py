@@ -358,6 +358,17 @@ def test_the_volume_bench_times_each_address_and_lists_the_full_scans(seeded, tm
     assert json.loads((out / "report.json").read_text(encoding="utf-8"))["summary"]["asked"] == len(asked)
 
 
+def test_the_volume_bench_asks_an_address_with_a_query_of_its_own(seeded, tmp_path):
+    """``--only`` an address the bench doesn't list, with a query of its own (a period's controls report, Activity of
+    a period): asked as it is, as its route's (its role rule, its target)."""
+    week = (dt.date.today() - dt.timedelta(days=7)).isoformat()
+    report = volume.run(seeded, tmp_path / "volume", roles=("admin",), repeat=1, big=100,
+                        only=(f"/activity/controls-report?start={week}", f"/activity?start={week}"))  # fmt: skip
+    assert {(r["route"], r["address"], r["kind"], r["status"]) for r in report["results"]} == {
+        ("/activity/controls-report", f"/activity/controls-report?start={week}", "report", 200),
+        ("/activity", f"/activity?start={week}", "page", 200)}  # fmt: skip
+
+
 def test_the_full_scans_are_read_from_the_plan_with_the_tables_aliases():
     conn = sqlite3.connect(":memory:")
     try:
