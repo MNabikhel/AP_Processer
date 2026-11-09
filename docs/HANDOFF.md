@@ -442,6 +442,12 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 
 ## 7. The company's information to gather
 
+**The data rule** (the company's AI team sets it before day one): you work on the code and on made-up invoices, on the
+developer's managed computer, never on the pilot's machine or with its data. Anything that touches the company's data
+(importing master data, a real invoice, a restore) is done by the company's people (IT, the JDE team, AP) from the
+steps you prepare; a fault on a real invoice is reproduced on a made-up copy. The one use the developer may ask the AI
+team for is the JD Edwards development environment.
+
 Nothing below is in the repository, and nothing of it may be committed. Collect it inside the company, keep it in
 the data folder or the company's own document store, and import it through the dashboard. The people are named
 nowhere in the code: ask whoever handed this over to you for the pilot tester, the AP lead who decides, the JDE /
@@ -526,7 +532,7 @@ approvals, not with the build.
    are reconciled before the first payment run that pays them. Touchless processing stays off (D-144). *Done when*
    the 5-part gate of `docs/PILOT_PLAN.md` is scored on live weeks 2 to 4 and the AP lead decides go or no-go.
 
-Then, if it goes well, Phase 2: AP Coder for more of AP's districts on a company server (6.10) that also becomes the
+Then, if it goes well, Phase 2: AP Coder for all of AP over about 12 months on a company server (6.10) that also becomes the
 Finance AI Hub, where finance runs its local-model and other workflows beside AP Coder (and the company's approved
 Claude where the AI team allows it); the whole company after that. And the Finance Hub feed (point the feed at the
 landing zone; the data team builds the reports. *Done when* the hub shows AP Coder's invoices and accuracy).

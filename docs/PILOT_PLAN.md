@@ -119,7 +119,7 @@ sample:
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 
-If the pilot goes well, **Phase 2** takes AP Coder to more of AP's districts: 300 to 400 people and about 25,000
+If the pilot goes well, **Phase 2** takes AP Coder to all of AP over about 12 months: 300 to 400 people and about 25,000
 invoices a month, on one company server (a Windows virtual machine with 32 vCPUs and 64 GB of memory,
 [SERVER.md](SERVER.md) section 1) that also hosts the Finance AI Hub (finance's local-model and other workflows). The
 AI models run on a model machine of their own on the network, with the pilot's machine as its backup (D-180).
