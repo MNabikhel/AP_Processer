@@ -52,8 +52,9 @@ def _start(tmp_path, *args: str, env: dict[str, str] | None = None) -> tuple[sub
                "--port", str(port), *args]  # fmt: skip
     environment = {**os.environ, "BROWSER": "none", **(env or {})}
     environment.pop(offline.SERVER_ENV, None)
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     proc = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True)  # fmt: skip
+                            text=True, **group)  # fmt: skip  # (its own group: ended whole if it won't stop)
     return proc, port
 
 
@@ -74,9 +75,14 @@ def _stop(proc: subprocess.Popen) -> str:
     proc.terminate()
     try:
         out, _ = proc.communicate(timeout=20)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, _ = proc.communicate()
+    except subprocess.TimeoutExpired:  # the server and every process it started: a worker left running holds the pipe
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            import signal
+
+            os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate(timeout=30)
     return out or ""
 
 

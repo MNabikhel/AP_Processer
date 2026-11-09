@@ -231,7 +231,13 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
                str(data / "ap_coder.db"), "serve", "--server", "--insecure-http", "--host", "127.0.0.1", "--port",
                str(port), "--workers", "2"]  # fmt: skip
     root = Path(__file__).resolve().parents[2]
-    proc = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # The server's window to a file, not a pipe: a worker left running (the server ended before it) holds a pipe
+    # open, and reading it to its end waited for good (Ubuntu CI: the job ended at its 45 minutes, no failure shown).
+    # Its own group of processes, so a failure ends the workers too.
+    window = tmp_path / "server.log"
+    out = window.open("w", encoding="utf-8")
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT, text=True, **group)
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         deadline = time.monotonic() + 90
@@ -244,9 +250,12 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
             except OSError:
                 assert time.monotonic() < deadline and proc.poll() is None
                 time.sleep(0.3)
-        while not (data / "logs" / "access-2.log").exists() and time.monotonic() < deadline:
+        # Each worker opens its access log once it serves, after building its memories (D-204): one may serve while
+        # the other still builds, so both are waited for.
+        logs = [data / "logs" / "access-1.log", data / "logs" / "access-2.log"]
+        while not all(log.exists() for log in logs) and time.monotonic() < deadline:
             time.sleep(0.2)
-        assert (data / "logs" / "access-1.log").exists() and (data / "logs" / "access-2.log").exists()
+        assert all(log.exists() for log in logs)
         while try_lock(data / ".ap_coder_background.lock") is not None:  # the background process holds it
             assert time.monotonic() < deadline
             time.sleep(0.3)
@@ -261,15 +270,24 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
         t0 = time.monotonic()
         proc.wait(40)
         took = time.monotonic() - t0
-        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {proc.stdout.read()}"
+        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {window.read_text()}"
         assert not (data / ".ap_coder_server.json").exists()
         held = try_lock(data / ".ap_coder_background.lock")
         assert held is not None  # the background process ended with it
         held.close()
+    except BaseException:
+        print("--- the server's window ---", window.read_text(encoding="utf-8", errors="replace"), sep="\n")
+        raise
     finally:
         if proc.poll() is None:
-            proc.kill()
-        proc.communicate()
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+            else:
+                import signal
+
+                os.killpg(proc.pid, signal.SIGKILL)  # (the server and every process it started)
+        proc.wait(30)
+        out.close()
 
 
 def test_a_worker_asked_to_stop_is_no_startup_failure_even_with_windows_exit_code(monkeypatch):
