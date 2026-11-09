@@ -4585,3 +4585,138 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/volume.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/bench/test_seed_volume.py`,
     `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`, `tests/reports_reference.py`,
     `tests/web/test_web_analytics.py`, `tests/web/test_downloads.py`)
+- **D-207** · **The pilot's hosting: one machine that does everything, recommended a Linux workstation with an
+  NVIDIA graphics card** (Phase 1, up to 10 people; 9 Nov 2026). Its pilot computer replaces D-145's (a laptop or
+  desktop on Windows 11 Pro) and the Mac mini with a Mac Studio planned since (D-186).
+  - **The choice** (`docs/SERVER.md` section 1, `docs/PILOT_PLAN.md`): one machine runs AP Coder and both AI models
+    (OvisOCR2 and the chat model, in LM Studio), each as it is. **Recommended:** a Linux workstation with an NVIDIA
+    graphics card of 16 GB or more, on Ubuntu LTS, AP Coder as a Linux service (SERVER.md section 15). **The
+    alternatives:** a Mac mini with memory enough for AP Coder and both models together (32 GB; SERVER.md section
+    14); a Windows Server virtual machine with a graphics card in a cloud region in the company's country (nothing to
+    buy; a site-to-site link to the company network, and the cloud's quota for a graphics card asked for first). The
+    split layout, a small Windows Server virtual machine for AP Coder (4 vCPUs, 16 GB) plus a model machine on the
+    network (SERVER.md section 8, point 5), stays possible but is no longer the recommendation.
+  - **Why the Linux workstation:** the cheapest on enterprise-grade hardware. No server licences or user licences on
+    Linux; the models in the graphics card's own memory, so the machine's memory is AP Coder's; its disk encrypted
+    and unlocked by the machine's TPM at boot, so it starts again by itself after a power cut; IT's standard Linux
+    tooling and SSH. **Why not the others first:** a Mac with FileVault waits to be unlocked after every restart, a
+    power cut at night included, until someone does it (at its screen, or over SSH on Apple silicon with macOS 26 or
+    later: Apple's Platform Security guide), so the Mac mini is an alternative, not the recommendation; Windows 11
+    Pro's licence (below) rules out a Windows PC as the server, and Windows Server brings its licences and user
+    licences, which put the split layout below the Linux workstation; the cloud virtual machine needs nothing bought
+    but a quota and a site-to-site link to wait for.
+  - **Memory on one machine:** AP Coder's own sizing (`default_workers`, `capture_processes` in
+    `ap_coder/web/server.py`) counts the whole machine as its own: on a 12-core 32 GB Mac 11 web workers and 8
+    capture processes, on a 20-core 32 GB workstation 16 and 8 (worked out with the functions, 9 Nov 2026). The pilot
+    sets `--workers 4` and `capture_processes` 2 to 3 (`server.json`), the configuration measured (below). On a Mac
+    the models share its memory (about 12 GB for both, estimated; AP Coder about 3 GB; macOS about 4 GB: 32 GB); with
+    a graphics card they sit in its memory.
+  - **Measured** (`.github/workflows/pilot-size.yml`, 9 Nov 2026, GitHub's Windows Server runner: 4 vCPUs, 16 GB, no
+    graphics card): 10 simulated people for 10 minutes on 20,000 invoices, 4 web workers, the benches' stand-in model:
+    pages p50 223 ms, p95 740 ms, p99 1.56 s; approvals and checks p95 156 ms; 0 errors, 0 "database is locked"; 2.0 GB
+    of memory for all of AP Coder's processes at the end of the run, 2.5 GB with each one's peak (web workers 0.25-0.29
+    GB each, the background process 0.6 GB). A day's 60 invoices (half scans) dropped at once, the real OCR on those 4
+    vCPUs: all 60 in the review queue in 4.1 minutes; with the stand-in model at a graphics card's assumed 8-20 s a
+    page, two at once, every page read and reviewed 30 minutes after the drop. Without a graphics card (the release
+    check of `v0.3.0-pilot9`, 4 Nov 2026, the same kind of runner, the real models in LM Studio: OvisOCR2 Q8_0 and Qwen
+    3.5 9B Q4_K_M): a page read in 4.4 to 5.5 minutes, a chat answer 1.8 to 8.6 minutes, the ten sample invoices 76
+    minutes. So a pilot reading 50-60 invoices a day needs a graphics card (about 16 GB) or Apple silicon with enough
+    memory on the machine that runs the models; its speed is estimated until the burn-in measures it. SERVER.md's
+    minimum (8 cores, 32 GB) stays for 25 people or more, with LM Studio on the same server.
+  - **Two corrections.** *Windows 11 Pro:* SERVER.md said it "allows at most 20 devices" for the server mode. AP Coder
+    runs its server mode there, but Microsoft's Windows 11 licence (OEM terms of April 2024, sections 2(c)(v) and
+    2(d)(iii)) bars using it "as server software or to operate the device as a server", except that up to 20 devices
+    may use its file, print, Internet information, connection-sharing and telephony services. Whether serving AP Coder
+    to the team is allowed is the company's licensing decision; the safe choice for anyone but its own user is Windows
+    Server. *LM Studio's log:* its server log (`%USERPROFILE%\.lmstudio\server-logs`, the folder the release workflow
+    copies; `~/.lmstudio/server-logs` on macOS and Linux) keeps each model answer in full and the start and end of
+    each request (invoice text, vendor names, amounts), so the model machine holds invoice content: an encrypted disk
+    (BitLocker, FileVault), the server's physical security, and the logs deleted on a schedule (LM Studio's docs name
+    no setting for how long it keeps them, checked 9 Nov 2026; a Task Scheduler and a launchd example in SERVER.md).
+    LM Studio's system requirements don't list Windows Server; the release check runs its headless server (llmster)
+    on GitHub's Windows Server machines for each pilot release, on the processor.
+  - **Also:** the rollout's steps are "Phase 0" (connect to the company), "Phase 1" (the pilot) and "Phase 2" (300 to
+    400 people, the company server) in the current docs, D-145's "stages" left as written; the pilot's team is up to
+    10 people (was the pilot tester and 3 to 4 clerks); the gate's sample is unchanged. From the review of these docs:
+    LM Studio started again when it stops (SERVER.md section 8, point 8, a Task Scheduler watch; section 14, a
+    LaunchDaemon with `KeepAlive`) and its runtimes' automatic update turned off on a server meant to stay offline;
+    on a Mac, FileVault's unlock named (someone must do it, over SSH too on macOS 26 with Apple silicon) and a backup
+    share mounted at boot by root (`_apcoder` has no password); MAILBOX_SETUP's last hop for a Linux or Mac server
+    (the emails to a Windows share, mounted at boot, moved by a systemd timer or a LaunchDaemon).
+  - **Left:** the pilot machine's real speed (Phase 0's burn-in); no measurement with a graphics card; the TPM unlock
+    with the NVIDIA driver on the workstation itself (its burn-in: a power cut, then the card working); the Mac's
+    share and watchdog recipes not tried on a Mac here; the licensing of Windows 11 Pro the company's call; LM Studio
+    on Windows Server tried only on the processor.
+  - (`docs/SERVER.md`, `docs/PILOT_PLAN.md`, `docs/HANDOFF.md`, `docs/KNOWN_LIMITS.md`, `docs/LM_STUDIO.md`,
+    `docs/PILOT.md`, `docs/SCALE.md`, `docs/SCALE_GOAL.md`, `docs/MAILBOX_SETUP.md`, `docs/DEMO_RUN_SHEET.md`,
+    `docs/WHATS_NEW.md` (its introduction), `README.md`, `ap_coder/bench/day.py`; comments in
+    `tests/web/test_platform_security.py`, `tests/web/test_server_capacity.py`, `tests/web/test_server_scale.py`)
+- **D-208** · **The company server's service on Linux: a systemd unit that runs the service host from the `current`
+  link, started again by systemd only when it did not end on purpose** (the pilot's recommended machine, an Ubuntu
+  24.04 LTS workstation with an NVIDIA card; 9 Nov 2026).
+  - **Why:** `service` knew Windows' task and the Mac's LaunchDaemon, and refused on Linux ("for Windows and macOS"),
+    where server-update fell back to Windows' run.cmd, which nothing runs there. With the pilot on a Linux machine,
+    nothing would have started AP Coder at boot, brought it back after a crash, or kept it stopped once stopped.
+  - **What:** `ops/service_linux.py`, the third backend, built as the Mac's, whose shared parts it uses
+    (`service_macos`: root, the account's ids, `hand_over` and `hand_back`, the `current` link); `service.py` gains a
+    `LINUX` branch in `backend()` and `doctor_checks`. The unit is `/etc/systemd/system/<name>.service` (`apcoder` for
+    the default task name, any other `apcoder-<name>`: never a unit of the system's), written whole (`write_whole`,
+    0644): `User=` the service's account, `WorkingDirectory` and `ExecStart` through `<the code folders'
+    parent>/current`, `Environment` `AP_PRIVATE_DIR`, `AP_SERVER_MODE=1`, `PYTHONUNBUFFERED=1` (the plist's),
+    `Restart=on-failure`, `RestartSec=10`, `StartLimitIntervalSec=0` (never given up on, as launchd does),
+    `KillMode=mixed` with `KillSignal=SIGTERM` (SIGTERM to the host alone, which ends its dashboard; what is left once
+    it has ended is killed: the plist's `AbandonProcessGroup false`), `TimeoutStopSec=60` (more than the host's 45 s),
+    `LimitNOFILE=8192`, `After=` and `Wants=network-online.target`, `WantedBy=multi-user.target`. Its output goes to
+    the journal (`journalctl -u`), not to files in the data folder (systemd would open them as root). Its values are
+    quoted as systemd reads them back (a space, `%`, `$`, `"`, `\`). The account, `apcoder`, is made by `install`
+    when this computer has none, the default only (`useradd --system --user-group --no-create-home --home-dir
+    /nonexistent --shell /usr/sbin/nologin`; an account named with `--account` must exist; root refused unless
+    `--allow-root`). `install`: the account, the data folder handed over before server.json is written in it (so one
+    made now is the account's), the link, the unit, `daemon-reload`, `enable`, then `restart`; `start`: `enable` (a
+    unit disabled by hand starts at boot again) and `restart`; `remove`: stop, `disable`, the unit deleted,
+    `daemon-reload` (the data, the link and the account kept); `status`: `systemctl show` (LoadState, ActiveState,
+    SubState, MainPID, NRestarts, ExecMainStatus, Result, UnitFileState) and the host's own health. Every command but
+    `install --dry-run` needs sudo and a Linux that systemd runs (`/run/systemd/system`): said plainly.
+  - **Semantics, the Mac's:** the host's exit code is the contract with `Restart=on-failure` as with KeepAlive: 0 only
+    when stopped on purpose (left stopped), `again()` (75) to be started again 10 s later, a crash or a kill started
+    again. `service stop` (the `stopped` file, `/shutdown`, `systemctl stop`) **stays stopped across a reboot**, as on
+    a Mac and Windows, without being asked: the unit stays enabled, and the host systemd starts at boot ends at once
+    with 0. Disabling the unit on stop was not chosen: a stop would then mean one thing on Linux and another elsewhere,
+    and `service start` would have to enable it again. A `systemctl stop` of IT's own stops it until the next boot
+    (systemd's way). An update cut short that only root can finish ends with 0 and
+    stays stopped (D-188, B-1957).
+  - **server-update and its recovery:** nothing new. `switch_folder` points the `current` link (the Mac's
+    `point_current`); `can_switch` asks the link's folder (root's `/opt/apcoder`: the host can't, so it leaves the
+    switch to sudo server-update); `update_recovery._owned` hands root's marker to the service folder's owner as on a
+    Mac. The tests of server-update and its recovery that model Windows' run.cmd on Linux now say so (`LINUX` off in
+    their fixtures, as `test_service.py` had `MACOS`).
+  - **Proof:** `tests/ops/test_service_linux.py` (the unit read back, and by `systemd-analyze verify` where it is
+    installed; systemctl and useradd answered by a stand-in; the refusals; the data folder found in the unit; the
+    hand-back; `status --json`; a power cut before the unit's rename; the link switched by server-update; the CI
+    script's flow against a stand-in Ubuntu, which found its test unit left behind when install's own checks failed).
+    By hand on Ubuntu 24.04 (systemd not running there): `install` made `apcoder` and a data folder of its own;
+    the unit's command, environment and account (`HOME=/nonexistent`, a root-owned code folder through `current`)
+    answered `/healthz` in 3 s, both processes `apcoder`'s; SIGTERM ended its dashboard, then the host with 0; the
+    `stopped` file at a start ended it at once with 0; a second host ended with 75. On GitHub's Ubuntu runner, the CI
+    job `linux-service` (`scripts/ci/linux_service.py`), AP Coder in `/opt/apcoder`, root's, with Ubuntu's own Python
+    as SERVER.md section 15 sets it up: install as `apcoder` (made by it), `systemd-analyze verify`, enabled, the
+    host and dashboard `apcoder`'s, `kill -9` of the host (systemd brings it back, the old dashboard gone), `service
+    start` while it runs, `systemctl stop` (SIGTERM in the host's log, stays stopped), `service stop` (still stopped
+    60 s later, and after a `systemctl start` as at boot, its last exit code 0), start, an update cut short dealt with
+    at the unit's next start, remove (the unit gone, systemd's LoadState not-found).
+  - **SERVER.md section 15**, for IT: Ubuntu Server 24.04 LTS, the NVIDIA driver from `ubuntu-drivers --gpgpu`, what
+    AP Coder and LM Studio need from Ubuntu, the account, the bundle or the repository, `--workers 4` and 2 capture
+    processes for the pilot (the defaults on 20 cores and 32 GB, 16 and 8, are for a bigger load), ufw and SSH, LM
+    Studio's headless server as a unit of its own with `Restart=always` and a watchdog (its `/v1/models` asked every
+    30 s, three misses end it; LM Studio's own example watches nothing) and its logs deleted nightly by a timer,
+    encryption (LUKS, its key sealed in the TPM with Clevis: Ubuntu's own TPM-backed encryption does not support the
+    NVIDIA driver's kernel modules in 24.04), the AP inbox (MAILBOX_SETUP.md) and backups to a share mounted at boot.
+  - **Left:** the CI job has not run yet (it first runs with this change); the TPM unlock with Clevis and the NVIDIA
+    driver is not tried on the pilot's machine (its burn-in proves it: a power cut, back by itself, `nvidia-smi`
+    shows the card); `clevis-initramfs` 20 puts no `tss` account in the initramfs, which one guide says the TPM's
+    tools need (not confirmed); LM Studio's units are checked by `systemd-analyze` and the watchdog's loop was run
+    against a stand-in, never with LM Studio itself; a Linux offline bundle is built on Ubuntu itself (its "this
+    computer" packages): the builder offers no Linux `--platform`.
+  - (`ap_coder/ops/service_linux.py`, `ap_coder/ops/service.py`, `scripts/ci/linux_service.py`,
+    `.github/workflows/ci.yml`, `docs/SERVER.md`; `tests/ops/test_service_linux.py`, `tests/ops/test_service.py`,
+    `tests/ops/test_server_update.py`)

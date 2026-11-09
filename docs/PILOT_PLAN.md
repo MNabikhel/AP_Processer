@@ -1,27 +1,41 @@
 # Pilot plan: connect first, then a live pilot
 
-The plan in two stages (D-145). **Stage 0** connects AP Coder to the company's systems: its inbox, its
-sign-in and JD Edwards. **Stage 1** is the pilot: the pilot tester and 3 to 4 AP clerks process real
-invoices end to end, and after four measured weeks a 5-part gate decides whether it goes on. Dates move
-with the approvals: the build is not what holds it up. If approvals slip, the pilot moves later.
+The plan in phases (D-145). **Phase 0** connects AP Coder to the company's systems: its inbox, its
+sign-in and JD Edwards. **Phase 1** is the pilot: up to 10 people, the pilot tester and AP clerks, process real
+invoices end to end, and after four measured weeks a 5-part gate decides whether it goes on. If it does, **Phase 2**
+takes AP Coder to 300 to 400 people (the end of this page). Dates move with the approvals: the build is not what
+holds it up. If approvals slip, the pilot moves later.
 
 A person approves every invoice throughout: **touchless processing stays off** for the pilot and until
 the company's AI team has done its model-risk review (D-144).
 
-## Stage 0: connect to the company
+## Phase 0: connect to the company
 
-Each item ends with something a person can check. The company's IT and the JDE team sign stage 0 off.
+Each item ends with something a person can check. The company's IT and the JDE team sign Phase 0 off.
 
 - [ ] **The code goes into the company's own repository** ([HANDOFF.md](HANDOFF.md) section 1), and its tests
       run green there.
-- [ ] **The pilot computers:** AP Coder runs in server mode on a Mac mini, as a macOS service (a LaunchDaemon:
-      [SERVER.md](SERVER.md) section 14), and its AI models (OvisOCR2 and the chat model, in LM Studio) on a Mac
-      Studio beside it on the company network. The Mac mini's own LM Studio, with the same models, is the backup:
-      when the Mac Studio stops answering, the calls go to it within a minute (section 8, point 5). Both machines are
-      never asleep, start again after a power cut, sit on a UPS in a locked spot and get a burn-in week (section 14).
-      The pilot tester and the clerks log in from their browsers, each with their own account (section 10).
+- [ ] **The pilot's machine** (D-207): AP Coder runs in server mode, as it is, on one machine that also runs both AI
+      models (OvisOCR2 and the chat model, in LM Studio) ([SERVER.md](SERVER.md) section 1, with what was measured).
+      **Recommended: a Linux workstation with an NVIDIA graphics card of 16 GB or more, on Ubuntu LTS**, AP Coder as a
+      Linux service (section 15): no server licences or user licences, the models in the card's own memory, its disk
+      unlocked by the machine's TPM at boot so it starts again by itself, and IT's usual Linux tools and SSH. **The
+      alternatives:** a Mac mini with memory enough for AP Coder and both models together (32 GB), as a macOS
+      service (a LaunchDaemon: section 14), which after every restart, a power cut included, waits until someone
+      unlocks FileVault; or a Windows Server virtual machine with a graphics card in a cloud region in the company's
+      country, nothing to buy, with a site-to-site link to the company network for the staff, JD Edwards and the AP
+      inbox's flow (ask for the cloud's quota for a graphics card first). A small Windows Server virtual machine for
+      AP Coder with a model machine on the network stays possible (section 1), no longer the recommendation. On one
+      machine AP Coder runs `--workers 4` and 2 to 3 capture processes, the configuration measured for 10 people: its
+      own sizing doesn't know the models' memory (section 1, *Memory on one machine*). Whichever machine: never asleep
+      and back after a power cut (on a UPS, in a locked spot), put on the company network by IT (a fixed address, the
+      name staff type), its disk encrypted (LM Studio's log holds invoice content: section 8, point 7), LM Studio
+      started again when it stops (section 8, point 8; on a Mac, section 14), and a burn-in week (as in section 14),
+      which also measures how fast it reads. The pilot tester and the clerks log in from their browsers, each with
+      their own account (section 10).
 - [ ] **The AP inbox:** a Power Automate flow saves the AP mailbox's emails into AP Coder's invoices folder
-      ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)). AP Coder never holds the mailbox's password. Check *Emails that
+      ([MAILBOX_SETUP.md](MAILBOX_SETUP.md); on a Linux or Mac server through a file share it mounts at boot).
+      AP Coder never holds the mailbox's password. Check *Emails that
       need a person* on Import invoices each day.
 - [ ] **Set up AP Coder's logins and authenticator codes for the pilot team** (D-146): an Admin adds the pilot
       tester and each clerk on *Users*; each signs in with the temporary password, chooses their own password and
@@ -37,14 +51,14 @@ Each item ends with something a person can check. The company's IT and the JDE t
 - [ ] **The company's master data:** the GL accounts and cost centers, how each sales tax posts, the vendor list
       with each vendor's address number (AN8), open POs, bank accounts, and last year's posted AP lines
       (*Learning & accuracy → Teach from past coding*), so each vendor is coded from its first invoice. Imported on
-      the pilot computer as soon as it is set up, before job costing ([HANDOFF.md](HANDOFF.md) section 8, step 2).
+      the pilot's machine as soon as it is set up, before job costing ([HANDOFF.md](HANDOFF.md) section 8, step 2).
 - [ ] **A security review** by the company's IT security team (to OWASP ASVS Level 2), and **a penetration test if
       IT requires one.** They are needed before AP Coder gets *production* write access only: read access and the
       work in PY go ahead meanwhile. If IT wants a penetration test, book it early: firms need weeks of notice.
 
-## Stage 1: the pilot
+## Phase 1: the pilot
 
-The pilot tester and 3 to 4 clerks, on real invoices from the AP inbox.
+Up to 10 people, the pilot tester and AP clerks, on real invoices from the AP inbox.
 
 ### Before the parallel week
 
@@ -105,8 +119,9 @@ sample:
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |
 
-If the pilot goes well, the next stage takes AP Coder to more of AP's districts: 300 to 400 people and about 25,000
+If the pilot goes well, **Phase 2** takes AP Coder to all of AP over about 12 months: 300 to 400 people and about 25,000
 invoices a month, on one company server (a Windows virtual machine with 32 vCPUs and 64 GB of memory,
 [SERVER.md](SERVER.md) section 1) that also hosts the Finance AI Hub (finance's local-model and other workflows). The
-AI models stay on the Mac Studio, with the Mac mini as their backup. The whole company comes after that. What AP
-Coder was made ready for at that size, and how it was measured: [SCALE.md](SCALE.md).
+AI models run on a model machine of their own on the network, with the pilot's machine as its backup (D-180).
+The whole company comes after that. What AP Coder was made ready for at that size, and how it was measured:
+[SCALE.md](SCALE.md).

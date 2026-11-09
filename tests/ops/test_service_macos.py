@@ -194,6 +194,15 @@ def test_install_writes_the_plist_points_current_hands_the_data_folder_over_and_
         "bootstrap system " + str(mac.plist))  # fmt: skip
 
 
+def test_a_data_folder_install_makes_is_the_accounts(mac, tmp_path, monkeypatch):
+    """A data folder ``service install`` makes (not there yet) is handed to the account, as on Linux: server.json was
+    written in it first, so it was there already when it was handed over, and it stayed root's."""
+    data = tmp_path / "Library" / "APCoderNew"
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    assert install(mac, "--no-start") == 0
+    assert ("APCoderNew", 450, 450) in mac.owned and (data / "server.json").is_file()
+
+
 def test_install_refuses_without_sudo_root_an_account_the_data_folder_or_a_set_up_folder(mac, monkeypatch, capsys):
     monkeypatch.setattr(service_macos, "is_root", lambda: False)
     assert install(mac) == 1 and "sudo" in capsys.readouterr().err
@@ -588,6 +597,8 @@ class FakeMac:
             code = 0 if self.misbehave == "keeps the marker of an update cut short" else 1
         elif cmd[0] == "grep":
             code = 1 if self.misbehave == "no SIGTERM in its log" else 0
+        elif cmd[:2] == ["plutil", "-lint"]:
+            code = 1 if self.misbehave == "a plist launchd does not read" else 0
         return subprocess.CompletedProcess(cmd, code, out, "")
 
 
@@ -605,7 +616,8 @@ def _ci_run(tmp_path, monkeypatch, misbehave: str) -> tuple[int, FakeMac]:
 @pytest.mark.parametrize("misbehave", ["", "stays dead", "keeps the old dashboard", "no SIGTERM in its log",
                                        "comes back", "the old dashboard never ends",
                                        "stays stopped after an update cut short",
-                                       "keeps the marker of an update cut short"])  # fmt: skip
+                                       "keeps the marker of an update cut short",
+                                       "a plist launchd does not read"])  # fmt: skip
 def test_the_ci_script_passes_a_service_that_behaves_and_fails_one_that_does_not(tmp_path, monkeypatch, misbehave):
     code, mac = _ci_run(tmp_path, monkeypatch, misbehave)
     assert code == (0 if not misbehave else 1)

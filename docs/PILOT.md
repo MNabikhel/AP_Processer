@@ -1,8 +1,9 @@
 # Pilot guide: AP Coder on one laptop, offline
 
 A short guide for running AP Coder on a Windows laptop (a Mac works the same way), to try it or show it. The
-company's pilot itself runs on one pilot computer in server mode (a docked laptop with an NVIDIA card, or a
-desktop), connected to the AP inbox and JD Edwards: [PILOT_PLAN.md](PILOT_PLAN.md) and [SERVER.md](SERVER.md).
+company's pilot itself runs in server mode on one machine that also runs the AI models (recommended: a Linux
+workstation with an NVIDIA graphics card), connected to the AP inbox and JD Edwards: [PILOT_PLAN.md](PILOT_PLAN.md) and
+[SERVER.md](SERVER.md) section 1.
 To show it to someone, follow [DEMO_RUN_SHEET.md](DEMO_RUN_SHEET.md): `scripts\demo.bat` runs AP Coder on a data
 folder of its own, so a demo never mixes with the pilot's invoices. What it does not do yet:
 [KNOWN_LIMITS.md](KNOWN_LIMITS.md).

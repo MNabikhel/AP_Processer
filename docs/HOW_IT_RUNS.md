@@ -359,8 +359,10 @@ service install` registers a **scheduled task** that starts at boot under its ow
 dashboard, starts it again when it stops, and writes what it says to `<data folder>\logs\service.log`. On a Mac it is
 a **LaunchDaemon** (`ap_coder/ops/service_macos.py:daemon`, D-186): launchd runs the same host from the `current` link
 beside the AP Coder folders, starts it again when it crashed or was killed, and leaves it stopped when it ended with 0
-(SIGTERM or the `stopped` file). Updates are `python -m ap_coder server-update <bundle>` (`--back` to go back), not
-the launcher.
+(SIGTERM or the `stopped` file). On Linux it is a **systemd unit** (`ap_coder/ops/service_linux.py:unit_text`, D-208):
+systemd runs the same host from the same `current` link, and its `Restart=on-failure` starts it again or leaves it
+stopped as launchd does. Updates are `python -m ap_coder server-update <bundle>` (`--back` to go back), not the
+launcher.
 
   **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
   `server.json`'s `workers`, default `server.default_workers`: for the cores and the memory, D-153):

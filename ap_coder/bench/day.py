@@ -53,7 +53,7 @@ from typing import Any
 from .fake_model import READER, FakeModel, page_key, seconds_range
 from .harness import default_workers, prepare_cases
 
-CHAT_MODEL = "gemma-4-12b-it"  # stage 2's chat model (Gemma 4); the swap drill brings Qwen 3.5
+CHAT_MODEL = "gemma-4-12b-it"  # the rollout's Phase 2 chat model (Gemma 4); the swap drill brings Qwen 3.5
 SWAP_CHAT = "qwen/qwen3.5-9b"
 SWAP_READER = "ath-maas_ovisocr2@q4_k_m"  # another build of OvisOCR2: its self-test runs before it reads
 DRILLS = ("none", "kill", "hang", "slow", "swap", "swap-reader")

@@ -388,12 +388,12 @@ def install(data: Path, s: ServerSettings, args: argparse.Namespace, say: Say = 
         stop(data, s, say)
     elif loaded(s.task_name) is not None:
         launchctl("bootout", target(s.task_name))  # launchd keeps the plist it loaded: the new one is loaded below
-    service.save_settings(data, s)
-    try:
+    try:  # (before server.json: a data folder made now is the account's)
         warning = hand_over(data, s.account, uid, gid)
     except OSError as exc:
         say(str(exc))
         return 1
+    service.save_settings(data, s)
     point_current(folder)
     write_plist(s.task_name, content)
     say(f"Installed the LaunchDaemon {name} ({plist}): it starts at boot as {s.account}, from {current_link(folder)}.")

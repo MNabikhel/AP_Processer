@@ -3,7 +3,7 @@
 Everything below was added after the first version (pull request #1). The fastest way to see it all is
 the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
-has a short tour, and the [pilot plan](PILOT_PLAN.md) connects AP Coder to the company first (stage 0), then
+has a short tour, and the [pilot plan](PILOT_PLAN.md) connects AP Coder to the company first (Phase 0), then
 runs a parallel week and four measured live weeks to a decision.
 
 Your existing data is safe. On first start the database upgrades itself (schema version 20), and a

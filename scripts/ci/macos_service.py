@@ -48,6 +48,7 @@ def run(cmd: list[str], timeout: float = 300) -> subprocess.CompletedProcess:
 class Check:
     def __init__(self, data: Path, port: int, account: str, python: str = sys.executable) -> None:
         self.data, self.port, self.account, self.python = data, port, account, python
+        self.plist = ""  # the plist, once install has said it (removed at the end, failed or not)
 
     def service(self, *args: str) -> subprocess.CompletedProcess:
         """``python -m ap_coder service ...`` as root (sudo), given the data folder (sudo leaves the environment)."""
@@ -85,7 +86,7 @@ class Check:
         if done.returncode:
             raise Failed(f"service install ended with exit code {done.returncode}")
         found = self.status()
-        plist = str(found.get("plist") or "")
+        plist = self.plist = str(found.get("plist") or "")
         if not found.get("installed") or not Path(plist).is_file():
             raise Failed(f"installed, but no plist at {plist or '(none said)'}")
         if run(["plutil", "-lint", plist]).returncode:
@@ -221,22 +222,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stays-stopped", type=float, default=60, help="Seconds it must stay stopped after stop")
     args = parser.parse_args(argv)
     check = Check(Path(args.data).resolve(), args.port, args.account)
-    plist, link = "", ROOT.parent / "current"
+    link = ROOT.parent / "current"
     made_link = not link.is_symlink()
     try:
-        plist = str(check.install()["plist"])
+        check.install()
         check.kill_the_host(args.back_within)
         check.restart()
         check.boot_out(stays=15)
         check.start()
         check.stop(args.stays_stopped)
         check.start()
-        check.cut_short(plist)
-        check.remove(plist)
+        check.cut_short(check.plist)
+        check.remove(check.plist)
     except (Failed, subprocess.TimeoutExpired, OSError, ValueError, KeyError) as exc:
         print(f"\nFAILED: {exc}", flush=True)
-        check.show_logs(plist)
-        if plist and Path(plist).exists():
+        check.show_logs(check.plist)
+        if check.plist and Path(check.plist).exists():
             check.service("remove")  # never a test daemon left running on the Mac
         return 1
     finally:

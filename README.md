@@ -16,7 +16,7 @@ of the [exceptions](#what-leaves-the-laptop).
 
 | | |
 |---|---|
-| **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: stage 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then a live pilot with a small AP team ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
+| **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: Phase 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then Phase 1, a live pilot with up to 10 people ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
 | **Company server** | Built, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
 | **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
@@ -107,7 +107,7 @@ Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS
 
 | For | Read |
 |---|---|
-| The pilot tester | [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (stage 0, then the pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
+| The pilot tester | [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (Phase 0, then the pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
 | IT, a laptop | [PILOT.md](docs/PILOT.md) (install, the offline bundle), [LM_STUDIO.md](docs/LM_STUDIO.md), [UPGRADING.md](docs/UPGRADING.md), [MAILBOX_SETUP.md](docs/MAILBOX_SETUP.md) |
 | IT, the company server | [SERVER.md](docs/SERVER.md) |
 | The JD Edwards team | [JDE_E1.md](docs/JDE_E1.md), [JDE_ORCHESTRATIONS.md](docs/JDE_ORCHESTRATIONS.md) |

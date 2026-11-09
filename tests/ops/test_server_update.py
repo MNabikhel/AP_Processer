@@ -89,6 +89,7 @@ def server(tmp_path, monkeypatch):
     data = tmp_path / "APCoderData"
     data.mkdir()
     monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setattr(service, "LINUX", False)  # run.cmd, as on Windows (Linux's current link: test_service_linux.py)
     current = _folder(tmp_path / "apps" / "APProcessor", "0.3.0")
     service.write_config(data, folder=str(current), insecure_http=True)
     service.write_runner(data, current)
@@ -306,6 +307,23 @@ def test_a_bundle_with_a_path_out_of_its_folder_is_refused(server, capsys):
     assert _install(bundle, server["data"], server["db"], server=FakeServer()) == 1
     assert "not an AP Coder offline bundle" in capsys.readouterr().err
     assert not (server["tmp"] / "apps" / "evil.txt").exists()
+
+
+@pytest.mark.parametrize("platform", ["WINDOWS", "MACOS", "LINUX"])
+def test_run_from_another_folder_it_says_this_computers_command(server, monkeypatch, platform):
+    """server.json names a folder that is not the one server-update runs from: the way to run it from the right one is
+    this computer's own, never Windows' ``cd /d`` and ``.venv\\Scripts\\python.exe`` on a Mac or on Linux."""
+    for name in ("WINDOWS", "MACOS", "LINUX"):
+        monkeypatch.setattr(service, name, name == platform)
+    monkeypatch.setattr(server_update, "running_folder", lambda: server["tmp"] / "elsewhere")
+    said = server_update.wrong_folder(service.settings(server["data"]))
+    assert "this command runs from" in said and "Nothing was changed" in said
+    if platform == "WINDOWS":
+        assert "cd /d into it, then .venv\\Scripts\\python.exe -m ap_coder server-update" in said
+    else:
+        assert "cd /d" not in said and "Scripts" not in said
+        assert "cd into it, then sudo AP_PRIVATE_DIR=<the data folder> .venv/bin/python -m ap_coder server-update" in (
+            said)  # fmt: skip
 
 
 def test_a_file_that_is_not_a_zip_is_refused(server, capsys):

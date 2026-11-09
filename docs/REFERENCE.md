@@ -85,8 +85,8 @@ JD Edwards on also adds the JD Edwards checks on every invoice. Setup: [docs/JDE
 ## Server mode
 
 For a team, AP Coder can run on a company server instead of one laptop: HTTPS, logins and four roles, each person
-with their own account. It runs as a scheduled task (`python -m ap_coder service`) and updates with
-`python -m ap_coder server-update`. Setup and questions: [docs/SERVER.md](SERVER.md).
+with their own account. It runs as a service (`python -m ap_coder service`: a scheduled task on Windows, a
+LaunchDaemon on a Mac, a systemd unit on Linux) and updates with `python -m ap_coder server-update`. Setup and questions: [docs/SERVER.md](SERVER.md).
 
 ## How every invoice is read
 
@@ -317,7 +317,7 @@ This is a memory of your team's decisions. No model is retrained.
 | Command | Purpose |
 |---|---|
 | `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. Server mode: `--server`, with `--certfile` and `--keyfile` (HTTPS), `--proxy` (a reverse proxy's address) or `--insecure-http` (a first test only); see [docs/SERVER.md](SERVER.md). |
-| `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task (not a Windows service). |
+| `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task on Windows (not a Windows service), a LaunchDaemon on a Mac, a systemd unit on Linux. |
 | `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
 | `users add\|list\|reset\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles. |
 | `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data (what changed since the last sync; `--full` everything, as once a week), show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
@@ -483,7 +483,8 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
   intake/            pictures.py (pictures to PDF) · mailbox.py · msgfile.py · triage.py · inbox.py
   ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py · pilot_score.py ·
                      service.py (server mode's service: its host, status) · service_windows.py (the
-                     scheduled task) · service_macos.py (the LaunchDaemon) · server_update.py · jde_cmd.py
+                     scheduled task) · service_macos.py (the LaunchDaemon) · service_linux.py (the systemd
+                     unit) · server_update.py · jde_cmd.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)
@@ -504,7 +505,7 @@ docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step 
                      (the pilot tester's one printable page), HOW_IT_RUNS.md
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
                      WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model), SALES_TAX.md
-                     (place of supply, taxes per line, the math), SERVER.md (a company Windows Server, for IT),
+                     (place of supply, taxes per line, the math), SERVER.md (a company server, for IT),
                      FINANCE_HUB.md (the hub feed), JDE_E1.md (JD Edwards: Z-files and the API),
                      JDE_ORCHESTRATIONS.md (the AIS orchestrations), LM_STUDIO.md (models and settings),
                      MAILBOX_SETUP.md (the AP mailbox), CAPTURE_DESIGN.md (how invoices are read, measured),

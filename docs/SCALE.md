@@ -31,7 +31,7 @@ Every number here was measured, with the machine, the command and the date. Esti
   - each page's time at 12k and at 100k;
   - no full scan of a big table on a hot path, guarded by tests.
   - A page that only seeks indexes adds about one B-tree level from 100k to 300k. A page that scans grows threefold, and the scaling check is what catches it.
-- **Stage 2's real server measures a year's database itself** (docs/SERVER.md).
+- **The real server of the rollout's Phase 2 measures a year's database itself** (docs/SERVER.md).
 
 ## Targets (the goal's "Done means")
 
@@ -45,7 +45,7 @@ Every number here was measured, with the machine, the command and the date. Esti
 | 6 | No SQL outside `core/store`; nested transactions; a PostgreSQL seam; meta tests | SQL run in 6 product files outside the store (55 lines); a write inside another transaction failed at 29 places; migrations one function of 197 lines, tested on made-up old schemas; `core` importing upward 53 times (file and module); three amount parsers | **Met (phase 7).** No SQL runs outside `core/store` but the bench's seed and probes (D-189, a meta test); writes nest: 21 join the caller's transaction, 8 that must commit on their own refuse in words (queue claims, logins; D-192); the migrations as numbered steps proven on the 22 real databases releases made, PR #1 to #99 (D-190); SQLite's own SQL named in `core/store/dialect.py`, the rest counted in docs/POSTGRES.md (a port about 19 days); `core` importing upward 32 times, each with its reason (D-192); one amount and one date parser (D-191); functions at most 120 lines, the 18 longer ones listed; each rule a meta test whose list may only shrink |
 | 7 | Every reproduced bug fixed test-first | 0 of about 20 | **Met.** 304 bugs fixed since the goal began, each with its failing test first and its line in BUGS.md (B-1578 to B-2077; the numbers never used are listed at its top): the digest's 20 reproduced bugs (phase 1, B-1578 to B-1607), what each phase's fresh reviewers found, and what the work, the load runs and CI found (each phase's section below). Phase 8: 14 (B-2025 to B-2027, B-2035 to B-2045): 9 found by its three fresh reviewers, 5 by the work and its load runs. Phase 8 part 2: 5 (B-2046 to B-2050): 3 found by its fresh reviewer, 1 by its load runs (the bench's memory table), 1 by the work after them. Phase 8 part 3: 6 (B-2052 to B-2057), all found by its two fresh reviewers. Phase 8 part 4: 6 (B-2058 to B-2063), found by its fresh reviewer. Phase 8 part 6: 3 (B-2064 to B-2066): 1 found by its load runs, 2 by its two fresh reviewers. Phase 8 part 7: 6 (B-2067 to B-2072): 5 found by its fresh reviewer, 1 by its CI (the OCR models' site too slow, no other source: a mirror, D-205). Phase 8 part 8: 5 (B-2073 to B-2077): 3 found by its fresh reviewer, 1 by the work (a year's controls report), 1 by its CI (the table finder's site, no other source: its author's GitHub release, D-205). |
 | 8 | Laptop mode unchanged; accuracy benches the same or better; `same_behaviour.py` identical | — | **Yes.** Each phase against main (`scripts/same_behaviour.py --ref origin/main`, Python 3.12 with both OCR models), the accuracy benches and a walk of the laptop: phase by phase below the table. Phase 8: tax, approve, read and pipeline the same; `migrate` different only by phase 8's new tables, index, column and two settings; `bench run` and `bench coding --quick` the same as main; phase 8 part 2: tax, approve, read and pipeline the same, `migrate` different only by D-198's new table; phase 8 part 3: all five the same; phase 8 part 4: all five the same; phase 8 part 5: all five the same |
-| 9 | Docs current | **Met.** SERVER.md's capacity measured again on 100,000 and 300,000 invoices (section 1), the next stage's layout (a 32-vCPU VM, the models on a Mac Studio with the Mac mini as their backup, about 1 TB), the database's and the backups' size, a worker's memory; the Mac section (14, phase 6); HANDOFF, PILOT_PLAN and KNOWN_LIMITS as today's plan (the pilot on a Mac mini, the next stage on the VM; KNOWN_LIMITS 11: sized on a test machine, one SQLite server); the test times stated once, in REFERENCE.md (the default tier about 7 minutes, the whole suite about 28), the others pointing to it or agreeing with it; POSTGRES.md's inventory counted again |
+| 9 | Docs current | **Met.** SERVER.md's capacity measured again on 100,000 and 300,000 invoices (section 1), the rollout's Phase 2 layout (a 32-vCPU VM, the models on a Mac Studio with the Mac mini as their backup, about 1 TB), the database's and the backups' size, a worker's memory; the Mac section (14, phase 6); HANDOFF, PILOT_PLAN and KNOWN_LIMITS as today's plan (the pilot on a Mac mini, the rollout's Phase 2 on the VM; KNOWN_LIMITS 11: sized on a test machine, one SQLite server); the test times stated once, in REFERENCE.md (the default tier about 7 minutes, the whole suite about 28), the others pointing to it or agreeing with it; POSTGRES.md's inventory counted again |
 
 ### Nothing worse, phase by phase (target 8)
 
@@ -264,7 +264,7 @@ Every number here was measured, with the machine, the command and the date. Esti
   - **Not done here, and why:** the batch-level orchestration (one R04110ZA a batch) is specified, not built: it needs
     the JDE team (items 15-22 of docs/JDE_ORCHESTRATIONS.md, among them the open period, the error for a closed one,
     and what AIS answers when it gives up). Failover was drilled on the stand-in; the real Mac Studio and Mac mini are
-    measured in stage 0 and stage 2.
+    measured in the rollout's Phase 0 and Phase 2.
 - **Phase 5, many people on one queue** (7 Nov 2026):
   - **What changes:**
     - who has an invoice open, on its screen and its queue row ("Ann Lee is working on this invoice too"), renewed
@@ -368,7 +368,8 @@ Every number here was measured, with the machine, the command and the date. Esti
       keep) work every report out once: on 100,000 invoices six requests took over 30 s in the first 90 s. The same
       background work, at a start, answers it (D-198: those asked in the last day; a database never served still
       works each out once, at its first ask).
-    - **200 people (the stretch):** not run; the real server's figures (32 vCPUs) are estimates until stage 2.
+    - **200 people (the stretch):** not run; the real server's figures (32 vCPUs) are estimates until the rollout's
+      Phase 2.
   - **Merged:** PR #103 (32 of 32 CI jobs green on the first run; the Windows update's downtime 16.0 s, was 38.8 s).
 - **Phase 8 part 2, target 1's p99 and target 3 at the final code** (7 Nov 2026):
   - **What changes:**
