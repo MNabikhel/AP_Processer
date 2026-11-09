@@ -206,8 +206,14 @@ def plan(args: argparse.Namespace) -> dict:
         ),
         "models": []
         if args.no_models
-        else [{"name": m.name, "url": m.url, "sha256": m.sha256} for m in offline.bundle_models()],  # fmt: skip
-        "download_hosts": download_hosts([] if args.no_models else [m.url for m in offline.bundle_models()]),
+        else [
+            {"name": m.name, "url": m.url, "sha256": m.sha256, **({"mirror": m.mirror} if m.mirror else {})}
+            for m in offline.bundle_models()
+        ],
+        # (an OCR model's mirror, D-205: asked only for a file its site fails to give)
+        "download_hosts": download_hosts(
+            [] if args.no_models else [u for m in offline.bundle_models() for u in (m.url, m.mirror) if u]
+        ),
         "not_in_the_bundle": "LM Studio and its models (OvisOCR2, the chat model): IT installs them on the laptop",
     }
 
@@ -422,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"The build downloads from: {', '.join(p['download_hosts'])} (HTTPS, port 443).", file=sys.stderr)
         for model in p["models"]:
             print(f"  {model['url']}", file=sys.stderr)
+            if model.get("mirror"):
+                print(f"  {model['mirror']} (its mirror, if that fails)", file=sys.stderr)
         print(f"Not in the bundle: {p['not_in_the_bundle']}.", file=sys.stderr)
         return 0
     return build(args)

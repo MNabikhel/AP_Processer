@@ -223,6 +223,7 @@ ALLOWED_HOSTS = {
     "github.com", "scripts.sil.org",  # the font licence text
     "www.nayuki.io",  # the licence header of the QR code generator kept as published (web/qrcodegen.py, D-146)
     "www.modelscope.cn",  # where scripts/fetch_models.py gets the OCR models at setup; never by the app
+    "huggingface.co",  # the OCR models' mirror, when www.modelscope.cn fails one at setup (D-205); never by the app
     "schemas.microsoft.com",  # the scheduled task's XML namespace (ops/service.py), not a download
     "schemas.openxmlformats.org", "purl.org",  # an Excel workbook's XML namespaces (erp/exports.py, D-169): names
     # The finance hub's push to OneLake (erp/hub/onelake.py): only with AP_ALLOW_INTERNET=1 and an Admin's opt-in.
@@ -365,6 +366,24 @@ def test_only_the_bundle_builder_opts_in_to_the_internet(monkeypatch):
     assert bundle.main(["--dry-run", "--no-models"]) == 0 and offline.internet_allowed()
 
 
+def test_each_pinned_ocr_model_has_its_mirror_at_the_same_path():
+    """D-205: the mirror carries the five pinned OCR files at modelscope's paths after ``.../resolve/v3.4.0/``, from
+    RapidOCR's own list or the built-in one; a file with another SHA-256 (a newer model) and the table finder have
+    none."""
+
+    def unreadable() -> dict:
+        raise ImportError("an older RapidOCR")
+
+    built_in = (*offline._model_files(unreadable, offline._PPOCRV4_FALLBACK),
+                *offline._model_files(unreadable, offline._PPOCRV5_FALLBACK))  # fmt: skip
+    for model in (*offline.ocr_files(), *built_in):
+        path = re.sub(r"^https://www\.modelscope\.cn/models/RapidAI/RapidOCR/resolve/[^/]+/", "", model.url)
+        assert model.sha256 and path != model.url and model.mirror == offline.MIRROR_BASE + path
+    assert len({m.mirror for m in built_in}) == 5 and offline.MIRROR_BASE.startswith("https://huggingface.co/")
+    assert offline.table_finder_file().mirror is None
+    assert offline.mirror_url("0" * 64) is None and offline.mirror_url(None) is None
+
+
 @pytest.fixture
 def fake_models(monkeypatch):
     contents = {"det.onnx": b"detector", "rec.onnx": b"recogniser"}
@@ -464,8 +483,12 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
         "name": "yolov8n_layout_general6.onnx",
         "url": "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/yolov8n_layout_general6.onnx",
         "sha256": "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95",
-    }
-    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn"]  # for IT's firewall
+    }  # (no mirror: the OCR models' only, D-205)
+    assert plan["models"][-2]["mirror"] == (
+        "https://huggingface.co/pitapo/rapidocr/resolve/main/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer.onnx"
+    )
+    # for IT's firewall
+    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co"]
     # --mac: one download per platform and Python version, Macs included.
     assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)

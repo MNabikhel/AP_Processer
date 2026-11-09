@@ -4432,3 +4432,35 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/web/server.py`, `web/refresh.py`, `core/store/reports.py`, `ops/server_update.py`, `bench/load.py`,
     `bench/day.py`, `scripts/ci/server_update_downtime.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
     `tests/web/test_refresh.py`, `tests/web/test_server_capacity.py`)
+- **D-205** · **The OCR models have a mirror, huggingface.co, tried only when www.modelscope.cn fails a download, and
+  kept only with their pinned SHA-256** (B-2072; approved by the user, 9 Nov 2026).
+  - **Why:** since 8 Nov 2026 about 22:30 UTC, www.modelscope.cn serves RapidOCR's OCR models at about 20 KB/s
+    (measured from a developer's machine and in GitHub Actions; 70 KB/s in a 25-second sample on 9 Nov): the 16.6 MB
+    `ch_PP-OCRv5_rec_mobile_infer.onnx` arrived cut off and failed its pinned SHA-256 three times, and every bundle
+    build (`scripts/build_offline_bundle.py`), the Windows installer and each first setup from GitHub's ZIP (the
+    launcher, D-94) failed: there was no other source.
+  - **The mirror:** `https://huggingface.co/pitapo/rapidocr/resolve/main/` plus the same path as under modelscope's
+    RapidOCR `resolve/v3.4.0/` (e.g. `onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer.onnx`). All five pinned OCR files
+    there (`ops/offline.py` `_PPOCRV4_FALLBACK`, `_PPOCRV5_FALLBACK`) were checked on 9 Nov 2026: byte for byte the
+    same, every SHA-256 the pinned one (16.6 MB in 1.6 s). It is a third party's copy: only the pinned SHA-256s make it
+    safe (a different file is refused, the model then reported missing), and nothing promises it stays up.
+  - **What:** `ModelFile.mirror` (`offline.mirror_url`), looked up by the pinned SHA-256, so a model RapidOCR's own
+    list names (the same five today) gets it only if it is one of those files; a newer model has none.
+    `fetch_models.fetch` tries the site as before (its tries, timeouts, `.part` file and SHA-256 check), then on any
+    failure (no answer, cut off, the wrong file) the mirror the same way, and says which host a file came from ("Got
+    ... from its mirror, huggingface.co, checked against its SHA-256."). A host that never answers is asked for nothing
+    more in that run (B-554), the mirror too. The launcher's notice and its "couldn't reach" / "Couldn't download"
+    lines name both hosts. The table finder (RapidLayout) has no mirror: no copy of it was verified.
+  - **Fallback only, never at run time:** www.modelscope.cn is always asked first. The app never downloads a model
+    (D-163); only `scripts/fetch_models.py` does, at the first setup from GitHub's ZIP (the launcher's opt-in for that
+    step) or the bundle build (`AP_ALLOW_INTERNET=1`). The offline guards allow the mirror's address in
+    `ops/offline.py` only and prove that without the opt-in neither host is asked.
+  - **What IT must allow** for a bundle build or a first setup from GitHub's ZIP: `huggingface.co` (HTTPS, port 443)
+    beside `pypi.org`, `files.pythonhosted.org` and `www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists
+    them, each model's mirror address too. Without it nothing changes while modelscope works.
+  - **Left:** no speed floor: a site that trickles a whole file without cutting it off is waited out (the 16.6 MB at
+    20 KB/s: about 14 minutes) before the next file; a file that came cut off is not asked of modelscope again before
+    the mirror.
+  - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
+    `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
+    `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)

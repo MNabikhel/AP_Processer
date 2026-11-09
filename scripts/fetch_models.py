@@ -11,8 +11,9 @@ Safe to run again: files already there (and intact) are kept.
     python scripts/fetch_models.py --to DIR   # put them in DIR instead (the offline bundle uses this)
     python scripts/fetch_models.py --table-finder  # developers online: also the table finder, into models/
 
-Downloading from the internet (www.modelscope.cn) happens only with the developers' / bundle builder's
-opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py sets it itself).
+Downloading from the internet (www.modelscope.cn; an OCR model it fails to give, from its mirror huggingface.co, D-205)
+happens only with the developers' / bundle builder's opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py
+sets it itself). A file downloaded is kept only if its SHA-256 is the one pinned for it.
 
 The PP-OCRv4 models (and the angle classifier both engines use) come inside RapidOCR's package: they are checked and
 kept, and copied from the bundle only if damaged.
@@ -31,6 +32,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -44,6 +46,7 @@ FIRST_TIMEOUT, LATER_TIMEOUT = 30.0, 10.0  # the launcher's patience for an answ
 # after these waits (seconds): 3 tries in all. A refusal by the server (404, 403) is not tried again.
 RETRY_WAITS = (3.0, 10.0)
 sleep = time.sleep  # (tests wait for nothing)
+MIRROR_HOST = urlsplit(offline.MIRROR_BASE).hostname or ""  # the OCR models' mirror, tried when their site fails
 
 
 @dataclass
@@ -54,13 +57,14 @@ class Result:
     failed: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)  # why each download failed, in plain words (plain_reason)
     unreachable: list[str] = field(default_factory=list)  # the hosts that could not be reached at all (unreached)
+    failed_hosts: list[str] = field(default_factory=list)  # the hosts a download failed from, once each
 
     @property
     def ok(self) -> bool:
         return not self.failed
 
     def add(self, other: Result) -> Result:
-        for name in ("kept", "copied", "downloaded", "failed", "reasons", "unreachable"):
+        for name in ("kept", "copied", "downloaded", "failed", "reasons", "unreachable", "failed_hosts"):
             getattr(self, name).extend(getattr(other, name))
         return self
 
@@ -85,6 +89,13 @@ def plain_reason(exc: BaseException) -> str:
     if "certificate" in text or "ssl" in text:
         return "the download site's certificate couldn't be checked (a company proxy?)"
     return "the download didn't finish"
+
+
+def sites(hosts: list[str]) -> str:
+    """The download sites in plain words, the mirror last: "www.modelscope.cn or its mirror, huggingface.co"."""
+    hosts = sorted(dict.fromkeys(hosts), key=lambda host: host == MIRROR_HOST)
+    return " or ".join((f"its mirror, {h}" if n else f"the OCR models' mirror, {h}") if h == MIRROR_HOST else h
+                       for n, h in enumerate(hosts))  # fmt: skip
 
 
 def unreached(exc: BaseException) -> bool:
@@ -131,11 +142,11 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
           skip_hosts: set[str] | None = None) -> Result:  # fmt: skip
     """Make ``target`` hold every model file of ``models`` (default: both OCR engines'), intact: keep what is there,
     copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
-    only with the ``AP_ALLOW_INTERNET=1`` opt-in). ``log``: where the error itself goes (the launcher's log), the
-    window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`). ``skip_hosts``:
-    the sites already found unreachable in this run (shared between calls, added to): nothing more is asked of them."""
-    from urllib.parse import urlsplit
-
+    only with the ``AP_ALLOW_INTERNET=1`` opt-in): from the model's site, or when that fails (no answer, cut off, the
+    wrong file) from its mirror (``ModelFile.mirror``, D-205), the same way; a file is kept only if its SHA-256 is the
+    one pinned for it. ``log``: where the error itself goes (the launcher's log), the window getting only the plain
+    reason. ``waits`` and ``timeout``: the download's (:func:`download`). ``skip_hosts``: the sites already found
+    unreachable in this run (shared between calls, added to): nothing more is asked of them."""
     skip_hosts = set() if skip_hosts is None else skip_hosts
     online = offline.internet_allowed() if online is None else online
     tries = len(RETRY_WAITS if waits is None else waits) + 1 if get is None else 1
@@ -147,41 +158,50 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
         if intact(dest, model):
             result.kept.append(model.name)
             continue
+        if source is not None and intact(source / model.name, model):
+            urls: list[str | None] = [None]  # (copied from the bundle's folder)
+        elif online:  # a site found unreachable is skipped (said once, for the site: see unreachable)
+            urls = [u for u in (model.url, model.mirror) if u and (urlsplit(u).hostname or "") not in skip_hosts]
+        else:
+            urls = []
         part = dest.with_name(dest.name + ".part")
-        try:
-            if source is not None and intact(source / model.name, model):
-                shutil.copyfile(source / model.name, part)
-                how = result.copied
-            elif online and (urlsplit(model.url).hostname or "") in skip_hosts:
-                result.failed.append(model.name)  # (said once, for the site: see unreachable)
-                continue
-            elif online:
-                say(f"Downloading {model.name} ...")
-                get(model.url, part)
-                how = result.downloaded
-            else:
-                result.failed.append(model.name)
-                continue
-            if not intact(part, model):
-                raise ValueError("the file does not match its checksum")
-            os.replace(part, dest)
-            how.append(model.name)
-        except Exception as exc:  # noqa: BLE001 - report each file and carry on
-            reason = plain_reason(exc)
-            tried = f", tried {tries} times" if online and tries > 1 and _retry(exc) else ""
-            if log is None:  # (run on its own: a developer, who reads the error too)
-                say(f"  Couldn't get {model.name}: {reason}{tried} ({type(exc).__name__}: {exc}).")
-            else:
-                say(f"  Couldn't get {model.name}: {reason}{tried}.")
-                log(f"  ({model.name}: {type(exc).__name__}: {exc})")
+        for url in urls:
+            host = (urlsplit(url).hostname or "") if url else ""
+            mirror = url is not None and url == model.mirror
+            where = f" from its mirror, {host}" if mirror else f" from {host}" if url and model.mirror else ""
+            came = False  # (the download finished: a wrong file is not tried again there)
+            try:
+                if url is None:
+                    shutil.copyfile(source / model.name, part)
+                else:
+                    say(f"Downloading {model.name}{where if mirror else ''} ...")
+                    get(url, part)
+                    came = True
+                if not intact(part, model):
+                    raise ValueError("the file does not match its checksum")
+                os.replace(part, dest)
+                (result.copied if url is None else result.downloaded).append(model.name)
+                if mirror:
+                    say(f"  Got {model.name}{where}, checked against its SHA-256.")
+                break
+            except Exception as exc:  # noqa: BLE001 - report each file and carry on
+                reason = plain_reason(exc)
+                tried = f", tried {tries} times" if url and not came and tries > 1 and _retry(exc) else ""
+                if log is None:  # (run on its own: a developer, who reads the error too)
+                    say(f"  Couldn't get {model.name}{where}: {reason}{tried} ({type(exc).__name__}: {exc}).")
+                else:
+                    say(f"  Couldn't get {model.name}{where}: {reason}{tried}.")
+                    log(f"  ({model.name}{where}: {type(exc).__name__}: {exc})")
+                result.reasons.append(reason)
+                if host and host not in result.failed_hosts:
+                    result.failed_hosts.append(host)
+                if host and unreached(exc) and host not in skip_hosts:
+                    skip_hosts.add(host)
+                    result.unreachable.append(host)
+            finally:
+                part.unlink(missing_ok=True)
+        else:  # (offline, every site skipped, or each one failed)
             result.failed.append(model.name)
-            result.reasons.append(reason)
-            host = urlsplit(model.url).hostname or ""
-            if online and host and unreached(exc) and host not in skip_hosts:
-                skip_hosts.add(host)
-                result.unreachable.append(host)
-        finally:
-            part.unlink(missing_ok=True)
     return result
 
 

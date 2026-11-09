@@ -150,8 +150,9 @@ In an offline bundle, the launcher, the installer and `scripts/fetch_models.py` 
 from the bundle's `wheelhouse/` (`pip --no-index`), OCR models only from its `models/`, no `git` update, no
 `winget` Python. From the code alone (GitHub's ZIP or a git checkout: no `bundle_manifest.json`, `wheelhouse/`
 or `models/`) the launcher's setup downloads what is missing, once, like CloseDesk: packages from PyPI, the
-PP-OCRv5 models from www.modelscope.cn, and APProcessor.bat offers Python 3.12 with `winget`; the dashboard it
-starts stays offline. `AP_ALLOW_INTERNET=0` forbids those downloads. **`AP_ALLOW_INTERNET=1`**
+PP-OCRv5 models from www.modelscope.cn (or, if that fails, their mirror huggingface.co, D-205), and APProcessor.bat
+offers Python 3.12 with `winget`; the dashboard it starts stays offline. `AP_ALLOW_INTERNET=0` forbids those
+downloads. **`AP_ALLOW_INTERNET=1`**
 (`set AP_ALLOW_INTERNET=1` in cmd, `export AP_ALLOW_INTERNET=1` in bash) also lets `APProcessor.bat
 --installer` update a git checkout and the app use a server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself (building the
 bundle is the one step that downloads). CI's online jobs set it; its offline-bundle job runs without it.

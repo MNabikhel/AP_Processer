@@ -196,8 +196,9 @@ goes online.
 >   default), so turning it on needs no download. It sends nothing unless AP turns it on with your organisation's
 >   own Azure endpoint and key. For a pilot without Azure, `--extras ocr dev` leaves them out; nothing else changes.
 > - **Where it downloads from** (HTTPS, port 443): `pypi.org` and `files.pythonhosted.org` (the packages) and
->   `www.modelscope.cn` (the models). `--dry-run` prints these hosts and each model's full address, without
->   downloading anything.
+>   `www.modelscope.cn` (the models), and `huggingface.co`, a mirror of the OCR models, asked only for one
+>   modelscope fails to give (each file is checked against its SHA-256, so a wrong one is refused). `--dry-run`
+>   prints these hosts and each model's full address, without downloading anything.
 > - **Not in the bundle:** LM Studio and its models (OvisOCR2, the chat model). IT installs them on the laptop
 >   (*What you need*). Python is not in it either.
 
@@ -406,8 +407,9 @@ section (the Azure check, the finance hub feed, the JD Edwards connection or ser
 The only outside connections are the ones someone chooses:
 
 - **The setup from GitHub's ZIP** (the code alone, no offline bundle): APProcessor.bat downloads the missing
-  packages from PyPI and the OCR models from www.modelscope.cn, once, and offers Python 3.12 with `winget`. The
-  dashboard it then starts stays offline. An offline bundle never does this; `AP_ALLOW_INTERNET=0` forbids it.
+  packages from PyPI and the OCR models from www.modelscope.cn (or, if that fails, their mirror huggingface.co),
+  once, and offers Python 3.12 with `winget`. The dashboard it then starts stays offline. An offline bundle never
+  does this; `AP_ALLOW_INTERNET=0` forbids it.
 - **`AP_ALLOW_INTERNET=1`**, the one opt-in, for developers and the bundle builder only. With it set in the
   terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
   server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never

@@ -30,8 +30,9 @@ the internet. Its setup gets the packages and OCR models from one of two places:
   there, never the internet. A package that is not in the wheelhouse is said plainly to be missing; AP Coder still
   starts when its core packages are there.
 * the code alone (GitHub's ZIP or a git checkout: no manifest, no wheelhouse): like CloseDesk, the setup downloads
-  them once (packages from PyPI, the OCR models from www.modelscope.cn; APProcessor.bat offers Python 3.12 with
-  winget), for its own steps only (:func:`plain_download`). ``AP_ALLOW_INTERNET=0`` forbids that.
+  them once (packages from PyPI, the OCR models from www.modelscope.cn or, when it fails, their mirror huggingface.co;
+  APProcessor.bat offers Python 3.12 with winget), for its own steps only (:func:`plain_download`).
+  ``AP_ALLOW_INTERNET=0`` forbids that.
 
 ``AP_ALLOW_INTERNET=1`` (developers, the bundle builder) also allows PyPI next to a wheelhouse built for another
 computer, and ``install.py``'s git update.
@@ -626,7 +627,7 @@ DOWNLOAD_NOTICE = (
     "its APProcessor), or set AP_ALLOW_INTERNET=0 (the setup then stops at what is missing)."
 )
 PACKAGE_SITE = "pypi.org (files.pythonhosted.org)"
-MODEL_SITE = "www.modelscope.cn (RapidAI's OCR models)"
+MODEL_SITE = "www.modelscope.cn (RapidAI's OCR models), or their mirror huggingface.co if that fails"
 
 
 def say_downloads(what: str, where: str) -> None:
@@ -1392,11 +1393,13 @@ def ensure_models(first: bool, state: dict) -> None:
     what = "the table finder's model" if finder_only else "the OCR models"
     meanwhile = "line items are still read without it" if finder_only else "scans are still read with one engine"
     if result.unreachable:  # no answer at all: said once, with whom to ask (B-554)
-        say(f"AP Coder couldn't reach {', '.join(result.unreachable)} (a firewall may block it): ask IT, or use the "
-            f"offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
+        them = "them" if len(result.unreachable) > 1 else "it"
+        say(f"AP Coder couldn't reach {fetch_models.sites(result.unreachable)} (a firewall may block {them}): ask IT, "
+            f"or use the offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
         return
     why = result.reasons[0] if result.reasons else "the download didn't finish"
-    say(f"Couldn't download {what} ({why}). AP Coder will try again {when}; {meanwhile} meanwhile.")
+    where = f" from {fetch_models.sites(result.failed_hosts)}" if result.failed_hosts else ""
+    say(f"Couldn't download {what}{where} ({why}). AP Coder will try again {when}; {meanwhile} meanwhile.")
 
 
 def models_said(result: Any) -> str:

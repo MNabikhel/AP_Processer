@@ -59,6 +59,11 @@ _PPOCRV5_FALLBACK = (
      "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5"),
 )  # fmt: skip
 _FALLBACK_BASE = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.4.0/"
+# Their mirror (D-205): a third party's copy of those five files on Hugging Face, at the same paths, each byte for byte
+# the same (every SHA-256 checked, 9 Nov 2026). scripts/fetch_models.py tries it only when www.modelscope.cn fails a
+# download, at setup or the bundle build (AP_ALLOW_INTERNET=1); a file not matching its pinned SHA-256 is refused.
+MIRROR_BASE = "https://huggingface.co/pitapo/rapidocr/resolve/main/"
+_MIRRORED = {sha: path for _name, path, sha in (*_PPOCRV4_FALLBACK, *_PPOCRV5_FALLBACK)}  # SHA-256 -> mirror's path
 
 # The table finder (capture/table_finder.py): RapidAI's YOLOv8n "general6" page layout model (RapidLayout, Apache-2.0),
 # 12 MB. Like the OCR models it comes in the offline bundle's models/ folder and is never downloaded by the app.
@@ -113,6 +118,7 @@ class ModelFile:
     name: str
     url: str
     sha256: str | None = None
+    mirror: str | None = None  # the same file elsewhere, tried when ``url`` fails (mirror_url)
 
 
 def _package_dir(module: str) -> Path | None:
@@ -192,12 +198,20 @@ def _model_files(params: Callable[[], dict], fallback: tuple[tuple[str, str, str
                                                        task_type=task.task_type, lang_type=task.lang_type,
                                                        model_type=task.model_type))  # fmt: skip
             url = str(info["model_dir"])
-            files.append(ModelFile(url.rsplit("/", 1)[-1], url, info.get("SHA256")))
+            files.append(ModelFile(url.rsplit("/", 1)[-1], url, info.get("SHA256"), mirror_url(info.get("SHA256"))))
         if files:
             return tuple(files)
     except Exception as exc:  # an older/newer RapidOCR with another layout: use the known list
         log.debug("RapidOCR model list not readable (%s); using the built-in list", exc)
-    return tuple(ModelFile(name, _FALLBACK_BASE + path, sha) for name, path, sha in fallback)
+    return tuple(ModelFile(name, _FALLBACK_BASE + path, sha, mirror_url(sha)) for name, path, sha in fallback)
+
+
+def mirror_url(sha256: str | None) -> str | None:
+    """The mirror's address of the model file with this SHA-256 (the same path as under modelscope's
+    ``.../resolve/v3.4.0/``), only for the five files pinned above: a file RapidOCR lists with another SHA-256 (a newer
+    model) has none."""
+    path = _MIRRORED.get(sha256 or "")
+    return MIRROR_BASE + path if path else None
 
 
 def sha256(path: Path) -> str:
