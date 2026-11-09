@@ -25,7 +25,7 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 [6. The service](#6-the-service) · [7. First admin](#7-the-first-admin) · [8. LM Studio](#8-lm-studio-on-the-same-server)
 · [9. Backups](#9-backups) · [10. Users and roles](#10-users-and-roles) · [11. Updating](#11-updating-and-going-back)
 · [12. Health and monitoring](#12-health-and-monitoring) · [13. Troubleshooting](#13-troubleshooting) ·
-[14. On a Mac](#14-on-a-mac)
+[14. On a Mac](#14-on-a-mac) · [15. On Linux](#15-on-linux)
 
 ## 1. What the server needs
 
@@ -1182,3 +1182,379 @@ and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms 
 | Nothing answers after a power cut | FileVault: the Mac waits at its unlock screen; or *Start up automatically after a power failure* is off. |
 | The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
 | launchd says "last exit code = 75" | The host asked to be started again: another service host runs (someone ran `service run` in Terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. launchd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |
+
+## 15. On Linux
+
+The pilot's recommended machine (section 1) is a Linux workstation with an NVIDIA graphics card: AP Coder and LM
+Studio's headless server on the same machine, the models in the card's own memory. On Linux, AP Coder's service is a
+*systemd unit*: systemd, the part of Linux that runs its services, starts it at boot under its own account, whether
+anyone is logged in or not. Everything else in this guide holds, with Linux's paths: the certificate (step 3), the
+name staff type (step 4), the first admin (step 7), backups (step 9), users (step 10), updates (step 11). How the
+unit behaves, and why: docs/decisions.md, D-208.
+
+In this section `/opt/apcoder/APProcessor` is the AP Coder folder, `/opt/apcoder/current` a link to the AP Coder folder
+that runs (the service runs that link; `server-update` points it at a new version), `/var/lib/apcoder` the data
+folder, `/var/lib/apcoder/invoices` its invoices folder, and `apcoder` the account AP Coder runs as (its group is
+`apcoder` too). IT works over SSH, as an administrator, with `sudo`. sudo leaves the environment out, so the data folder
+is given on each command line; once the service is installed, these two save the typing (put them in your
+`~/.bashrc`):
+
+```sh
+# The service and updates, as root:
+apc() { sudo AP_PRIVATE_DIR=/var/lib/apcoder AP_SERVER_MODE=1 /opt/apcoder/current/.venv/bin/python -m ap_coder "$@"; }
+# Everything else that opens the data folder (users, backup, doctor), as the service's account:
+apcu() { sudo -u apcoder AP_PRIVATE_DIR=/var/lib/apcoder AP_SERVER_MODE=1 /opt/apcoder/current/.venv/bin/python -m ap_coder "$@"; }
+```
+
+Then `apc service status`, `apcu users add --admin jsmith`, `apcu doctor`. A file made with sudo is root's, and the
+service's account could not change it: `apcu` makes it the account's from the start. What root makes in the data
+folder anyway (`server-update`'s backups and restores) is handed back to the account at each `service install` and
+`service start`: only root's own files and folders, never what a link there points at.
+
+### The machine
+
+- **Ubuntu Server 24.04 LTS** (its Python is 3.12, the one this guide uses, and its systemd 255). The server edition
+  has no desktop, so nothing puts the machine to sleep. In its installer: *Use an entire disk*, *Set up this disk as an
+  LVM group* and *Encrypt the LVM group with LUKS* (the passphrase goes in IT's password safe: *Encryption*, below),
+  and *Install OpenSSH server*.
+- **An NVIDIA graphics card with 16 GB of video memory or more**, 8 cores or more, 32 GB of memory, 200 GB on an SSD
+  (section 1).
+- **In its firmware** (BIOS/UEFI): the TPM 2.0 on, Secure Boot on, and the power restored after a power failure
+  (*Restore on AC power loss*: *Power On*, or the like), so the machine comes back by itself.
+- **On the company network** as any server: a fixed address (a DHCP reservation), the name staff type (step 4), on a
+  UPS, in a locked spot.
+
+**The NVIDIA driver**, from Ubuntu (Canonical's signed build, which works with Secure Boot and needs no key of your
+own). `list` shows the server drivers this card can have: take the newest, 550 or newer (LM Studio's Linux installer
+takes its CUDA 12 build from driver 550.54.14 on):
+
+```sh
+sudo ubuntu-drivers list --gpgpu
+sudo ubuntu-drivers install --gpgpu nvidia:<version>-server
+sudo apt install nvidia-utils-<version>-server
+sudo reboot
+nvidia-smi
+```
+
+`nvidia-smi` shows the card, its memory and the driver's version; once LM Studio runs (below), its process and the
+memory the model takes.
+
+**What AP Coder and LM Studio need from Ubuntu**: Python's `venv` (for AP Coder's `.venv`), the two libraries the OCR
+uses (`libgl1`, `libglib2.0-0t64`), LM Studio's `libatomic1`, `unzip` for the bundle and `cifs-utils` for the
+company's shares:
+
+```sh
+sudo apt install python3-venv libgl1 libglib2.0-0t64 libatomic1 unzip cifs-utils
+```
+
+### The service's account
+
+An account used for nothing else, with no password and no shell (it can't log in). `service install` makes it when
+this computer has none; make it first, so the data folder is its own before the setup:
+
+```sh
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --comment "AP Coder service" apcoder
+sudo install -d -o apcoder -g apcoder -m 750 /var/lib/apcoder
+```
+
+AP Coder refuses to run as root unless `--allow-root` is given, for a first test only: as root, every invoice and email
+it reads would be handled with all of the machine's rights.
+
+### Install AP Coder
+
+**From the offline bundle** (nothing is downloaded on the machine). Build it on an Ubuntu 24.04 computer that may reach
+the internet, with that Ubuntu's own Python, so it holds the packages for this kind of computer (its manifest lists
+"this computer (linux-x86_64, Python 3.12)"), from an AP Coder folder: `python3 -m venv ~/bundle-venv`, then
+`~/bundle-venv/bin/python scripts/build_offline_bundle.py --python 3.12`. Copy the ZIP in with its SHA-256
+(`sha256sum <zip>` shows a file's), then:
+
+```sh
+sudo mkdir -p /opt/apcoder
+sudo unzip -q ~/APProcessor-offline-0.4.0-20261101.zip -d /opt/apcoder
+cd /opt/apcoder/APProcessor
+sudo AP_SERVER_MODE=1 AP_PRIVATE_DIR=/var/lib/apcoder bash ./APProcessor.command --no-start --yes
+```
+
+This sets up `/opt/apcoder/APProcessor` from its `wheelhouse` (offline, a few minutes, ending with the self-check).
+**From the repository** instead: `sudo git clone <the repository's address> /opt/apcoder/APProcessor`, then the same
+`APProcessor.command` line, which then downloads the packages and the OCR models once, saying so first. The code folder
+stays root's: only administrators can change it, and the service's account reads and runs it (whoever can change the
+code can read every invoice). The data folder is the account's, nobody else's (the administrators reach it with sudo).
+Keep both on the machine's own disk. The certificate (step 3) goes in `/var/lib/apcoder/tls`, its key readable by
+`apcoder` only (`sudo chown apcoder:apcoder` and `sudo chmod 600` on it).
+
+### The service
+
+From the AP Coder folder, the first time:
+
+```sh
+cd /opt/apcoder/APProcessor
+sudo AP_PRIVATE_DIR=/var/lib/apcoder .venv/bin/python -m ap_coder service install --workers 4 --certfile /var/lib/apcoder/tls/apcoder.pem --keyfile /var/lib/apcoder/tls/apcoder.key.pem --allowed-hosts apcoder.company.local
+```
+
+`service install` makes the account when there is none, saves the settings in `/var/lib/apcoder/server.json`, makes
+the data folder's `service` and `logs` folders the account's, points `/opt/apcoder/current` at this folder, writes the
+unit `/etc/systemd/system/apcoder.service` (root's), and has systemd read it, start it at every boot (*enabled*) and
+start it now. Add `--dry-run` to see the unit and the commands first, changing nothing. The options are those of
+step 6, but: `--account` (default `apcoder`; `root` only with `--allow-root`), and `--task-name`, which names the unit
+(the default, `AP Coder`, gives `apcoder.service`; another name gives `apcoder-<name>.service`, so it never replaces
+one of the system's). There is no password to give. The data folder is kept in the unit, so the other service
+commands find it even when sudo left `AP_PRIVATE_DIR` out.
+
+**The pilot's size** (up to 10 people): `--workers 4` above, and 2 capture processes (3 on a day with many scans): add
+`"capture_processes": 2` to `/var/lib/apcoder/server.json` (`sudoedit` keeps the file the account's), then `apc
+service start`. Left to itself, AP Coder sizes these for the machine (step 6): on 20 cores and 32 GB, 16 web workers
+and 8 capture processes. That is far more than a pilot needs: section 1 measured 10 people on 4 web workers (95% of the
+pages within 0.74 s, no error) and a day's 60 invoices in the review queue 4.1 minutes after they came with 2 capture
+processes. Each process holds its own memory (a web worker 0.25 to 0.29 GB there, a capture process up to 320 MB) and
+its share of the cores, so the rest is left to the system, the database and the OCR.
+
+| To | Run |
+|---|---|
+| See whether it runs, its version and folder | `apc service status` (`--json` for a monitoring script: installed, running, the process, version, folder, address, the dashboard's answer, and systemd's state, process, restarts and last exit code) |
+| Stop it (it stays stopped, also after a restart of the machine) | `apc service stop` |
+| Start it again (when it runs, it is restarted) | `apc service start` |
+| Change a setting (port, certificate, names, workers) | `apc service install` with the new options (the others are kept, except `--account`, `--task-name` and `--folder`: give them again unless they are the defaults) |
+| Remove it (the data, settings, logs, the `current` link and the account are kept) | `apc service remove` |
+
+How it runs: systemd starts `/opt/apcoder/current/.venv/bin/python -m ap_coder service run` as `apcoder`, the service
+host of step 6, which starts the dashboard and starts it again if it stops. The unit's `Restart=on-failure`: systemd
+starts the host again 10 seconds after it crashed or was killed (and never gives up), and leaves it stopped when it
+ended on purpose (exit code 0) or when systemd stopped it. A host that was killed takes its dashboard with it (systemd
+ends what is left of it) and is back within seconds. `service stop` leaves a `stopped` file in the data folder's
+`service` folder, asks the dashboard to stop, and stops the unit (`systemctl stop`): systemd asks the host to stop
+(SIGTERM, to the host alone), which stops its dashboard (the requests under way get 25 seconds; it is ended after 45
+at most) and ends with exit code 0. The unit stays enabled: at the next boot systemd starts the host, which, seeing
+`stopped`, ends at once, so the service stays stopped until `service start`, which removes the file and restarts the
+unit. A `sudo systemctl stop apcoder` of your own stops it until the next boot; after a `service stop`, start it with
+`apc service start`, not `systemctl start` (the host would end at once).
+
+**Logs**: `/var/lib/apcoder/logs/service.log`, `access.log` and `background.log`, as in step 6; and systemd's journal,
+`sudo journalctl -u apcoder`, with what Python said before the host's own log was open (a Python that won't start, a
+folder it can't write). systemd's own view of it: `systemctl status apcoder` (its state, process and last exit code).
+
+**Updating** (section 11), from the folder that runs:
+
+```sh
+apc server-update ~/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits> --dry-run
+apc server-update ~/APProcessor-offline-0.5.0-20261201.zip --sha256 <the 64 digits>
+```
+
+It does the steps of section 11 with the unit: it unzips the bundle beside the current folder
+(`/opt/apcoder/APProcessor-0.5.0`), and once the new folder is set up and checked, stops the service, points
+`/opt/apcoder/current` at it in one step (a new link renamed over the old one) and starts the service again. The unit
+itself never changes. `apc server-update --back` points the link back. Leave the `current` link to `server-update`;
+never change it while the service runs. An update cut short (a power cut) is dealt with at the next start as section
+11 says, except what only root can do (the link): then the service stays stopped and its log says to run `apc
+server-update` again.
+
+Don't run `APProcessor.command` on the machine once the service runs: it would start a second AP Coder on the same
+data. Use `service stop` and `service start`.
+
+### The firewall and remote access
+
+Ubuntu's firewall, `ufw`, is off until turned on. Let in SSH and AP Coder's port from the company network only (its
+addresses, here `10.0.0.0/8`); LM Studio listens on `127.0.0.1` alone, so it needs no rule:
+
+```sh
+sudo ufw allow OpenSSH
+sudo ufw allow from 10.0.0.0/8 to any port 8501 proto tcp
+sudo ufw enable
+sudo ufw status verbose
+```
+
+IT reaches the machine by SSH only. Copy your key in (`ssh-copy-id`), then turn password logins off: a file
+`/etc/ssh/sshd_config.d/10-apcoder.conf` holding `PasswordAuthentication no` (the first file there to set it wins),
+then `sudo systemctl restart ssh`. Keep a second SSH session open while you do it, in case.
+
+### LM Studio's headless server
+
+AP Coder neither starts nor watches LM Studio: IT runs LM Studio's headless server (*llmster*) as a systemd unit of its
+own, which starts it at boot and again when it stops. LM Studio installs per account and keeps its models in that
+account's `~/.lmstudio/models`, so it runs as an account made for it, `lmstudio`, with its own home folder and no
+password (the administrators reach it with `sudo -iu lmstudio`):
+
+```sh
+sudo useradd --create-home --shell /bin/bash --comment "LM Studio" lmstudio
+```
+
+1. **Install llmster** as that account, once the NVIDIA driver is in (its installer then takes the CUDA build). Its
+   installer downloads LM Studio, so run it while the machine is being set up, before it holds any invoice:
+   `sudo -iu lmstudio sh -c 'curl -fsSL https://lmstudio.ai/install.sh | bash'`. It installs `lms` in
+   `/home/lmstudio/.lmstudio/bin`. LM Studio updates its headless server only with `lms daemon update` (step 8, point
+   8): update it on purpose, as AP Coder is.
+2. **Copy the models in** (nothing is downloaded), into `/home/lmstudio/.lmstudio/models`, as step 8, point 2 says:
+   OvisOCR2 and one chat model; then `sudo chown -R lmstudio:lmstudio /home/lmstudio/.lmstudio/models`, and `sudo -iu
+   lmstudio .lmstudio/bin/lms ls` lists them (the chat model's exact name, for point 3). The script of point 3 loads
+   the chat model on the graphics card (`--gpu max`) with its 16,384 tokens; AP Coder loads OvisOCR2 itself, on the
+   card too, with the 20,480 tokens a page needs, before it reads (docs/LM_STUDIO.md). Both are loaded on purpose, so
+   LM Studio's *auto-evict*, which unloads only the models it loaded just in time, leaves them loaded.
+3. **The start script and its watchdog**, `/opt/apcoder/lm-studio-start.sh` (root's: `sudo chmod 755`). It starts LM
+   Studio, then asks its server every 30 seconds whether it answers; after three misses in a row it stops what is left
+   of LM Studio and ends with an error, and systemd starts the script again 10 seconds later (point 4's
+   `Restart=always`), which starts LM Studio again:
+
+   ```sh
+   #!/bin/sh
+   # LM Studio's server for AP Coder, at boot and again when it stops (docs/SERVER.md, section 15).
+   LMS="$HOME/.lmstudio/bin/lms"
+   "$LMS" daemon up || exit 1
+   "$LMS" server start --port 1234 --bind 127.0.0.1 || exit 1
+   "$LMS" unload --all
+   "$LMS" load gemma-4-12b-it-qat --context-length 16384 --gpu max --yes || exit 1
+   misses=0
+   while sleep 30; do
+     if curl -s -f -m 20 -o /dev/null http://127.0.0.1:1234/v1/models; then misses=0; else misses=$((misses + 1)); fi
+     if [ "$misses" -ge 3 ]; then "$LMS" daemon down; exit 1; fi
+   done
+   ```
+
+   `unload --all` before the load: a start after a stop never loads the chat model twice.
+4. **Its unit**, `/etc/systemd/system/lmstudio.service`. LM Studio's own example (its *headless* page) starts the
+   server once and watches nothing; this one runs the script above, which stays up while LM Studio answers, and
+   `Restart=always` starts it again whenever it ends (a crash, the watchdog, a kill):
+
+   ```ini
+   [Unit]
+   Description=LM Studio's headless server for AP Coder (docs/SERVER.md, section 15)
+   After=network-online.target
+   Wants=network-online.target
+   StartLimitIntervalSec=0
+
+   [Service]
+   Type=simple
+   User=lmstudio
+   Environment=HOME=/home/lmstudio
+   ExecStart=/opt/apcoder/lm-studio-start.sh
+   Restart=always
+   RestartSec=10
+   TimeoutStopSec=60
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+5. **Its logs, deleted every night** (LM Studio's server log keeps each answer in full and the start and end of each
+   request: invoice content, step 8, point 7; on an encrypted disk, below). `/etc/systemd/system/lmstudio-logs.service`:
+
+   ```ini
+   [Unit]
+   Description=LM Studio's server logs older than 7 days deleted (they hold invoice content)
+
+   [Service]
+   Type=oneshot
+   User=lmstudio
+   ExecStart=/usr/bin/find /home/lmstudio/.lmstudio/server-logs -type f -mtime +7 -delete
+   ```
+
+   and `/etc/systemd/system/lmstudio-logs.timer`:
+
+   ```ini
+   [Unit]
+   Description=Every night at 2:00, LM Studio's old server logs deleted
+
+   [Timer]
+   OnCalendar=*-*-* 02:00:00
+   Persistent=true
+
+   [Install]
+   WantedBy=timers.target
+   ```
+
+6. **Start them**, and check: `sudo systemd-analyze verify /etc/systemd/system/lmstudio*` says nothing when the units
+   are right.
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now lmstudio.service lmstudio-logs.timer
+   systemctl status lmstudio
+   sudo -iu lmstudio .lmstudio/bin/lms ps
+   nvidia-smi
+   ```
+
+   `lms ps` shows the chat model loaded; `nvidia-smi`, LM Studio's process and the card's memory it holds. AP Coder
+   finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place: nothing to set (`AP_LLM_BASE_URL` in
+   `/var/lib/apcoder/.env` only when it is elsewhere, step 8, point 5). Then *Settings* → *Reading* → *Check again*.
+
+### Encryption
+
+The invoices, the database and LM Studio's logs are on the machine's disk, so it is encrypted (LUKS, chosen in the
+installer, above), and the machine's own TPM unlocks it at boot, so it comes back by itself after a power cut. Ubuntu's
+own TPM-backed encryption (the installer's) does not support the NVIDIA driver's kernel modules in 24.04, and
+*Clevis* is the way Ubuntu's forum gives for that case: it keeps the disk's key sealed in the TPM. Its packages are in
+Ubuntu 24.04 (*universe*):
+
+1. Install them, with the NVIDIA driver already in: `sudo apt install clevis clevis-luks clevis-tpm2
+   clevis-initramfs`.
+2. Find the encrypted partition: `lsblk -o NAME,FSTYPE,SIZE` shows it as `crypto_LUKS` (here `/dev/nvme0n1p3`).
+3. Seal its key in the TPM, bound to Secure Boot's state (PCR 7, which kernel and driver updates leave alone); it asks
+   the passphrase once:
+
+   ```sh
+   sudo clevis luks bind -d /dev/nvme0n1p3 tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'
+   sudo update-initramfs -u -k all
+   lsinitramfs /boot/initrd.img-$(uname -r) | grep -E "clevis|tpm2_unseal"
+   ```
+
+   The last line must list Clevis and `tpm2_unseal`: the boot's own small system (the initramfs) unseals the key with
+   them, and it holds them only when `clevis-tpm2` was installed before `update-initramfs` ran.
+4. Restart (`sudo reboot`): the machine must come back without asking the passphrase.
+
+**Not yet proven on the pilot's machine**: none of this has been tried with its TPM and its NVIDIA card. Prove it in the
+burn-in (below): a restart and a power cut, after which the machine comes back by itself, `nvidia-smi` shows the card
+and `apc service status` says the dashboard answers. When the firmware is updated, or Secure Boot's settings or its
+list of revoked keys change (some firmware and boot-loader updates do), the TPM refuses (PCR 7 changed) and the machine
+waits for the passphrase at boot: type it (at the machine), then seal again,
+`sudo clevis luks list -d /dev/nvme0n1p3` (the slot) and `sudo clevis luks regen -d /dev/nvme0n1p3 -s <slot>`. If the
+TPM won't do, Ubuntu 24.04 has two other ways, IT's choice: the key from a *Tang* server on the company network
+(`clevis luks bind ... tang`, the `tang` package on another server: the machine unlocks itself only while on that
+network), or an unlock by someone over SSH at boot (`dropbear-initramfs`). Without either, someone types the
+passphrase at the machine after every unplanned restart.
+
+### The invoices from the AP inbox
+
+The emails reach a company file share first (a Windows machine's job), and the machine moves them from there:
+docs/MAILBOX_SETUP.md, *The last hop on a Linux or Mac server* (the share mounted at boot, then a systemd timer that
+moves the new `.eml` files into the invoices folder as the service's account). Its `<...>` are, here: the account
+`apcoder`, its group `apcoder`, the data folder `/var/lib/apcoder`, the invoices folder `/var/lib/apcoder/invoices`.
+
+### Backups to a share
+
+The daily backup (step 9) is copied to a share on another server, mounted at boot as root with an account of its own
+for that share (a domain account with *Modify* there), its files the service's account's. `x-systemd.automount` mounts
+it at its first use, and again after the file server was away; the mount point itself stays root's, so while the
+share is not mounted nothing is written there (the copy fails, and *Settings* → *Data & backups* says so):
+
+1. The credentials, `/etc/apcoder-share.cred`, root's only (`sudo chmod 600`), holding the lines `username=`,
+   `password=` and `domain=`.
+2. A line in `/etc/fstab`:
+
+   ```
+   //fileserver.corp.example.com/Backups/APCoder /mnt/apcoder-backups cifs credentials=/etc/apcoder-share.cred,uid=apcoder,gid=apcoder,file_mode=0600,dir_mode=0700,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30 0 0
+   ```
+
+3. `sudo mkdir /mnt/apcoder-backups`, `sudo systemctl daemon-reload`, then `ls /mnt/apcoder-backups` mounts it (`mount
+   | grep apcoder-backups` shows it).
+4. Allow the folder (`apc service install --allowed-folders /mnt/apcoder-backups`, the other settings kept), then an
+   Admin sets *Settings* → *Data & backups* → *Also copy each backup to* `/mnt/apcoder-backups`.
+
+### The burn-in
+
+Before the pilot tester and AP staff rely on it, let the machine run the service for a week. Restart it once on
+purpose (`sudo reboot`); cut its power once (it comes back by itself, its disk unlocked by the TPM); kill its host once
+(`sudo kill -9` of the process `apc service status` names: systemd brings it back within seconds); stop LM Studio once
+(`sudo -iu lmstudio .lmstudio/bin/lms daemon down`: its watchdog starts it again within about two minutes); and, when
+you have a newer bundle, run one `server-update` and one `server-update --back`. After each, `apc service status`,
+`nvidia-smi`, `sudo -iu lmstudio .lmstudio/bin/lms ps` and the end of `logs/service.log`. Each morning, check that the
+night's backup is in `backups` and on the share (step 9) and that the disk keeps room.
+
+| On Linux, what you see | What to do |
+|---|---|
+| "Run it with sudo" | The service commands change systemd's own units: run them with sudo (`apc`). |
+| "This Linux is not run by systemd" | A container, or WSL without systemd: the service needs a machine (or a virtual machine) that systemd runs. |
+| "This computer has no account ..." | Leave `--account` out (`service install` makes `apcoder`), or make the account named (the `useradd` line it shows). |
+| "Give the data folder" | `sudo AP_PRIVATE_DIR=/var/lib/apcoder ...` on the command line (sudo leaves the environment out). |
+| `service status` says "not loaded" | `sudo systemctl daemon-reload`, then `apc service start`; `sudo journalctl -u apcoder` says why it stopped. |
+| Nothing answers after a power cut | The disk waits for its passphrase (*Encryption*: the TPM refused), or the firmware's power-on after a power failure is off. |
+| The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
+| `systemctl status apcoder` says "status=75" | The host asked to be started again: another service host runs (someone ran `service run` in a terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. systemd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |
