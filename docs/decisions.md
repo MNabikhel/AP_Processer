@@ -4451,17 +4451,19 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     from ("Got ... from its mirror, huggingface.co, checked against its SHA-256."). A host that never answers is asked
     for nothing more in that run (B-554), the mirror too. The launcher's notice and its "couldn't reach" / "Couldn't
     download" lines name both hosts. The table finder (RapidLayout) has no mirror: no copy of it was verified.
-  - **Far too slow is a failure** (`fetch_models.SLOW_AFTER`, `SLOW_LIMIT`): CI's `Installer on Windows` job was
-    cancelled at its own time limit while modelscope trickled the PP-OCRv5 models (the 4.7 MB detector from 22:29:58,
-    the 16.6 MB recogniser from 22:34:16, cancelled 22:44:02), the mirror never asked, since a trickle is no error.
-    After a file's first 30 s, one that would take more than 3 minutes in all at its average rate so far is given up
-    on: its `.part` deleted, not tried again there, and the mirror tried (which gets the same floor). 3 minutes lets
-    the largest model, 16.6 MB, come at 92 KB/s or more (a slow office link's 1 MB/s brings it in 17 s, a tenth of the
-    bound), while the detector at CI's 18 KB/s (4.3 minutes) and the recogniser at 20 KB/s (14 minutes) move on after
-    30 s; 5 minutes would have let the detector's 4.3 minutes through. A host far too slow did answer, so it is still
-    asked for the next file (not "couldn't reach"). Both too slow: the model is missing, said as a failure from both
-    hosts ("the download was far too slow"), and tried again at the next start. The floor needs the file's length,
-    which both hosts send (`Content-Length`, after their redirects); without it a download is waited out as before.
+  - **Far too slow means "try elsewhere"** (`fetch_models.SLOW_AFTER`, `SLOW_LIMIT`): CI's `Installer on Windows`
+    job was cancelled at its own time limit while modelscope trickled the PP-OCRv5 models (the 4.7 MB detector from
+    22:29:58, the 16.6 MB recogniser from 22:34:16, cancelled 22:44:02), the mirror never asked, since a trickle is no
+    error. While another source is left for a file (the site of an OCR model, which has the mirror), after the file's
+    first 30 s one that would take more than 3 minutes in all at its average rate so far is given up on: its `.part`
+    deleted, not tried again there, and the mirror tried. 3 minutes lets the largest model, 16.6 MB, come at 92 KB/s
+    or more (a slow office link's 1 MB/s brings it in 17 s, a tenth of the bound), while the detector at CI's 18 KB/s
+    (4.3 minutes) and the recogniser at 20 KB/s (14 minutes) move on after 30 s; 5 minutes would have let the
+    detector's 4.3 minutes through. A host far too slow did answer, so it is still asked for the next file (not
+    "couldn't reach"). The last source left for a file (the mirror; the site of a file with no mirror, as the table
+    finder, which CI's bundle builds did get from the trickling modelscope that day) is waited out as before, with its
+    timeouts: giving up there would leave the file nowhere to come from. The floor needs the file's length, which both
+    hosts send (`Content-Length`, after their redirects); without it a download is waited out as before.
   - **Fallback only, never at run time:** www.modelscope.cn is always asked first. The app never downloads a model
     (D-163); only `scripts/fetch_models.py` does, at the first setup from GitHub's ZIP (the launcher's opt-in for that
     step) or the bundle build (`AP_ALLOW_INTERNET=1`). The offline guards allow the mirror's address in
@@ -4469,11 +4471,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **What IT must allow** for a bundle build or a first setup from GitHub's ZIP: `huggingface.co` (HTTPS, port 443)
     beside `pypi.org`, `files.pythonhosted.org` and `www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists
     them, each model's mirror address too. Without it nothing changes while modelscope works.
-  - **Left:** a link slower than the floor at both hosts (under about 92 KB/s for the 16.6 MB model) no longer gets
-    the model at all, where it used to after a long wait: the offline bundle is its way. The table finder, with no
-    mirror, gets the same floor: far too slow, it is missing until a later start (line items read without it). A slow
-    site costs each missing file its first 30 s before the mirror. A file that came cut off is not asked of modelscope
-    again before the mirror.
+  - **Left:** a slow site costs each missing OCR model its first 30 s before the mirror, and a mirror as slow is waited
+    out (a slow link at both hosts takes as long as before, plus those 30 s). The table finder has no mirror (none at
+    huggingface.co: `pitapo/rapidocr`, `RapidAI/RapidLayout` and `SWHL/RapidLayout` answer 404/401), so a trickling
+    modelscope is still waited out for it. A file that came cut off is not asked of modelscope again before the mirror.
   - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
     `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
     `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)

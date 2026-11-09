@@ -47,8 +47,9 @@ FIRST_TIMEOUT, LATER_TIMEOUT = 30.0, 10.0  # the launcher's patience for an answ
 RETRY_WAITS = (3.0, 10.0)
 # A download far too slow to wait for (B-2072: www.modelscope.cn trickled at about 20 KB/s and CI's installer job ran
 # out of time): after its first SLOW_AFTER seconds, a file that would take more than SLOW_LIMIT seconds in all at its
-# rate so far is given up on, and its mirror tried. 3 minutes lets the largest model (16.6 MB) come at 92 KB/s or more
-# (a slow office link's 1 MB/s brings it in 17 s); at 20 KB/s each OCR model would take 4 to 14 minutes.
+# rate so far is given up on, and its mirror tried. Only where another source is left for the file: the last one (the
+# mirror, or the site of a file with no mirror) is waited out. 3 minutes lets the largest model (16.6 MB) come at
+# 92 KB/s or more (a slow office link's 1 MB/s brings it in 17 s); at 20 KB/s each OCR model would take 4 to 14 minutes.
 SLOW_AFTER, SLOW_LIMIT = 30.0, 180.0
 sleep = time.sleep  # (tests wait for nothing)
 MIRROR_HOST = urlsplit(offline.MIRROR_BASE).hostname or ""  # the OCR models' mirror, tried when their site fails
@@ -75,8 +76,8 @@ class Result:
 
 
 class TooSlow(Exception):
-    """A download far too slow to wait for (SLOW_LIMIT): not tried again there, and its site still asked for the next
-    file (it answers, slowly)."""
+    """A download far too slow to wait for while another source is left (SLOW_LIMIT): not tried again there, and its
+    site still asked for the next file (it answers, slowly)."""
 
 
 def plain_reason(exc: BaseException) -> str:
@@ -130,17 +131,18 @@ def intact(path: Path, model: offline.ModelFile) -> bool:
     return not model.sha256 or offline.sha256(path) == model.sha256
 
 
-def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeout: float | None = None) -> None:
+def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeout: float | None = None,
+             elsewhere: bool = False) -> None:  # fmt: skip
     """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does), tried again after each of
-    ``waits`` (default RETRY_WAITS) when the connection fails; one far too slow raises TooSlow (:func:`_copy`). Only
-    with the opt-in."""
+    ``waits`` (default RETRY_WAITS) when the connection fails. With ``elsewhere`` (another source is left for the
+    file), one far too slow raises TooSlow (:func:`_copy`); without, it is waited out. Only with the opt-in."""
     if not offline.internet_allowed():
         raise PermissionError(f"offline build: no download without {offline.INTERNET_ENV}=1")
     waits = RETRY_WAITS if waits is None else waits
     for attempt in range(len(waits) + 1):
         try:
             with urllib.request.urlopen(url, timeout=timeout or TIMEOUT) as response, open(dest, "wb") as out:  # noqa: S310
-                _copy(response, out)
+                _copy(response, out, elsewhere)
             return
         except Exception as exc:  # noqa: BLE001 - tried again, then raised as it came
             if attempt >= len(waits) or not _retry(exc):
@@ -148,11 +150,12 @@ def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeo
             sleep(waits[attempt])
 
 
-def _copy(response, out) -> None:
-    """Copy the download into ``out`` as it comes; once it has run SLOW_AFTER seconds, a file that would take more than
-    SLOW_LIMIT seconds in all at its rate so far raises TooSlow (only when the site says the file's length)."""
+def _copy(response, out, elsewhere: bool) -> None:
+    """Copy the download into ``out`` as it comes; with ``elsewhere``, once it has run SLOW_AFTER seconds, a file that
+    would take more than SLOW_LIMIT seconds in all at its rate so far raises TooSlow (only when the site says the file's
+    length)."""
     size = str(getattr(response, "headers", {}).get("Content-Length") or "")
-    length = int(size) if size.isdigit() else 0
+    length = int(size) if size.isdigit() and elsewhere else 0
     start, got = time.monotonic(), 0
     while chunk := response.read1(1 << 20):
         out.write(chunk)
@@ -170,15 +173,16 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
           skip_hosts: set[str] | None = None) -> Result:  # fmt: skip
     """Make ``target`` hold every model file of ``models`` (default: both OCR engines'), intact: keep what is there,
     copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
-    only with the ``AP_ALLOW_INTERNET=1`` opt-in): from the model's site, or when that fails (no answer, cut off, the
-    wrong file) from its mirror (``ModelFile.mirror``, D-205), the same way; a file is kept only if its SHA-256 is the
-    one pinned for it. ``log``: where the error itself goes (the launcher's log), the window getting only the plain
-    reason. ``waits`` and ``timeout``: the download's (:func:`download`). ``skip_hosts``: the sites already found
-    unreachable in this run (shared between calls, added to): nothing more is asked of them."""
+    only with the ``AP_ALLOW_INTERNET=1`` opt-in): from the model's site, or when that fails (no answer, cut off, far
+    too slow, the wrong file) from its mirror (``ModelFile.mirror``, D-205), the same way but waited out however slow;
+    a file is kept only if its SHA-256 is the one pinned for it. ``log``: where the error itself goes (the launcher's
+    log), the window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`).
+    ``skip_hosts``: the sites already found unreachable in this run (shared between calls, added to): nothing more is
+    asked of them."""
     skip_hosts = set() if skip_hosts is None else skip_hosts
     online = offline.internet_allowed() if online is None else online
     tries = len(RETRY_WAITS if waits is None else waits) + 1 if get is None else 1
-    get = get or functools.partial(download, waits=waits, timeout=timeout)
+    own_get = get  # (a caller's own, used as it is; else download, far too slow only where another source is left)
     result = Result()
     target.mkdir(parents=True, exist_ok=True)
     for model in offline.ocr_files() if models is None else models:
@@ -203,6 +207,8 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
                     shutil.copyfile(source / model.name, part)
                 else:
                     say(f"Downloading {model.name}{where if mirror else ''} ...")
+                    elsewhere = url != urls[-1]  # (the last source left is waited out)
+                    get = own_get or functools.partial(download, waits=waits, timeout=timeout, elsewhere=elsewhere)
                     get(url, part)
                     came = True
                 if not intact(part, model):
