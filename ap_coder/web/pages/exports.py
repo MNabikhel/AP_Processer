@@ -181,14 +181,15 @@ def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]
     vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
     or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
     checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
+    text = store.get_setting(jde.SETTING_KEY)  # (checked by the very settings it is kept for, not read again: B-2075)
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
-        problems = jde.validate(invoices, jde.load(store), store.vendor_ids(),
+        problems = jde.validate(invoices, jde.JdeSettings.from_json(text), store.vendor_ids(),
                                 jde.prior_records(store, invoices=invoices))  # fmt: skip
         return problem_rows(store, problems, invoices)
 
-    asked = (invoice_ids, store.get_setting(jde.SETTING_KEY), dt.date.today().isoformat(), store.rates_stamp())
+    asked = (invoice_ids, text, dt.date.today().isoformat(), store.rates_stamp())
     return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
 
 

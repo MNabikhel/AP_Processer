@@ -4493,13 +4493,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **What:**
     - **Exports' check** (`web/pages/exports.py:ready_problems`): the rows of the invoices that can't go
       (`problem_rows`, now of the invoices the check read, not read again) are a `shared_answer` (D-169) for the
-      invoices asked, JD Edwards' settings, the day and the tax-rate file's stamp (`asked`; `Store.rates_stamp`, as
-      `checks_stamp` compares it: the amount sent gross reads the rates, B-2074), under the summary's generation,
-      `changes/register` and `changes/vendors`: what the check reads (the invoices, the exported ones and the register
-      by number, the vendor master's ERP IDs; the open period by today). Exact, no settle: which invoices can be
-      ticked is shown as before, and making a batch checks its invoices afresh (`_create_batch`, `jde_check`). The
-      settings' own problems (`settings_problems`) are read at each visit as before. 0.7 MB kept for the 1,122 ready
-      at 300,000 invoices (in each process that shows it, and in `report_answers`).
+      invoices asked, JD Edwards' settings (their text, which the work checks by: B-2075), the day and the tax-rate
+      file's stamp (`asked`; `Store.rates_stamp`, as `checks_stamp` compares it: the amount sent gross reads the
+      rates, B-2074), under the summary's generation, `changes/register` and `changes/vendors`: what the check reads
+      (the invoices, the exported ones and the register by number, the vendor master's ERP IDs; the open period by
+      today). Exact, no settle: which invoices can be ticked is shown as before, and making a batch checks its
+      invoices afresh (`_create_batch`, `jde_check`). The settings' own problems (`settings_problems`) are read at
+      each visit as before. 0.7 MB kept for the 1,122 ready at 300,000 invoices (in each process that shows it,
+      and in `report_answers`).
     - **Activity's approvals** (`insights.approval_counts`): a `summary_memo` on the generation (any invoice or
       approval changed), exact. **Its controls report** (`activity.controls_report`): only the counts its tiles show
       (`TILE_COUNTS`, and `same_person`'s or None without the duties; the template draws them as it drew each list's

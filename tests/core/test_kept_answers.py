@@ -2408,6 +2408,35 @@ def test_the_jde_check_of_the_ready_invoices_follows_the_tax_rate_file(tmp_path,
     assert "with the gross amount only" not in reasons() and "works out" not in client.get("/exports?fmt=jde").text
 
 
+def test_the_jde_check_of_the_ready_invoices_is_by_the_settings_it_is_kept_for(tmp_path, ground_truth, monkeypatch):
+    """B-2075: the check read JD Edwards' settings for what it is kept for, then again for its work: settings saved in
+    between (another person on Settings → JD Edwards E1, another worker) were what it checked by, kept for the
+    settings before them and shown to every page asking with those. It checks by the very settings it is kept for."""
+    from dataclasses import replace
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    ids = [_approved(other, tmp_path, ground_truth, "S-1")]
+    settings = jde.load(store)
+    checked = page.problem_rows(store, page.jde_check(store, ids)[1])
+    overridden = replace(settings, an8_overrides={vendor_key(ground_truth["vendor_name"]): "ABC"})
+    reads = store.get_invoices
+
+    def saved_meanwhile(asked: list[int]) -> list[dict]:  # (the check's work under way: the settings saved)
+        monkeypatch.setattr(store, "get_invoices", reads)
+        jde.save(other, overridden, actor="Ann")
+        return reads(asked)
+
+    monkeypatch.setattr(store, "get_invoices", saved_meanwhile)
+    assert page.ready_problems(store, ids) == checked  # (by the settings it was asked with)
+    assert "supplier number 'ABC'" in page.ready_problems(store, ids)[0]["reasons"][0]  # (asked with the new ones)
+    jde.save(other, settings, actor="Ann")
+    assert page.ready_problems(store, ids) == checked  # (the one kept for the settings before, as they are again)
+
+
 def test_activitys_controls_report_follows_each_event_and_invoice_it_is_worked_out_from(tmp_path, ground_truth):
     """D-206: the counts of the controls report Activity's tiles show (0.2 s at 300,000 invoices, at every visit
     before) are kept in each process and are what working the report out afresh gives (``controls.build``) after each
