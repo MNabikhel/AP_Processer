@@ -471,9 +471,9 @@ class CaptureMixin:
                 "AND created_at >= ?",
                 (AUTONOMOUS_REVIEWER, since),
             ).fetchone()[0]
-            audits = conn.execute(
+            audits = conn.execute(  # (off the audits' own index, ``supplier_outcomes_audit``: grouped after, D-206)
                 "SELECT invoice_id, MIN(correct) AS clean FROM supplier_outcomes WHERE source = 'audit' AND at >= ? "
-                "GROUP BY invoice_id",
+                "GROUP BY +invoice_id",
                 (since,),
             ).fetchall()
             reopened = conn.execute(

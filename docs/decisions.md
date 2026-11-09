@@ -4478,3 +4478,55 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
     `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
     `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)
+- **D-206** · **Exports, Activity and Settings → Automation answer for one person at 300,000 invoices in under 300 ms:
+  Exports' JD Edwards check and Activity's approvals and controls report kept until what they come from changes,
+  the events counted and their people found off indexes, the touchless audits off an index of their own** (scale
+  goal, target 2; 9 Nov 2026).
+  - **Why:** `bench volume` on the 300,000-invoice seed (final code of phase 8 part 7, 64046fc), median of 3 warm
+    requests, Admin / Clerk: `/exports` 0.88 / 0.89 s and `/exports?fmt=jde` 0.79 / 0.82 s (0.57-0.72 s measured
+    again here), `/activity` 0.51 / 0.73 s, `/activity?q=Birchwood` 0.53 / 0.71 s, `/settings/automation` 0.35 s;
+    300 ms the target. Profiled: Exports checked its 1,122 invoices ready to export for JD Edwards at every visit
+    (each read and decoded twice: 0.55 s; its SQL 70 ms); Activity counted 1.26 million events by looking at each
+    one's action (0.1-0.18 s, twice for a Clerk), read every event's name off their index for the Person list (60-80
+    ms), counted the approvals in the summary (0.22 s) and built this month's controls report (0.2 s); Automation
+    looked for the last 30 days' audits among 3.4 million supplier outcomes (none of them audits: 0.28 s).
+  - **What:**
+    - **Exports' check** (`web/pages/exports.py:ready_problems`): the rows of the invoices that can't go
+      (`problem_rows`, now of the invoices the check read, not read again) are a `shared_answer` (D-169) for the
+      invoices asked, JD Edwards' settings and the day (`asked`), under the summary's generation, `changes/register`
+      and `changes/vendors`: what the check reads (the invoices, the exported ones and the register by number, the
+      vendor master's ERP IDs; the open period by today). Exact, no settle: which invoices can be ticked is shown as
+      before, and making a batch checks its invoices afresh (`_create_batch`, `jde_check`). The settings' own
+      problems (`settings_problems`) are read at each visit as before.
+    - **Activity's approvals** (`insights.approval_counts`): a `summary_memo` on the generation (any invoice or
+      approval changed), exact. **Its controls report** (`activity.controls_report`, only its tiles' counts shown): a
+      `summary_memo` on the generation and, asked, the period, the duties, the approval limit, the rates and
+      `Store.events_stamp` (the events' count and newest id: events are only ever added; a deletion moves the count).
+      The download (`/activity/controls-report`) is built afresh as before.
+    - **Every event but the hidden ones** (`Store.count_events` with `hidden` alone): all the events counted
+      (SQLite's count of a table decodes no row), less those of the hidden actions off `events_action` (an event's
+      action is never NULL): 15 ms for 1.26 million, was 0.1-0.18 s. **The Person list** (`Store.event_actors`): each
+      name after the one before off `events_actor` (a recursive query, one seek a name: 330 names in 2 ms, was 57
+      ms); `actor > ''` gives the names `actor != ''` gave (a TEXT column holds text, bytes or NULL; no text is below
+      '', bytes sort after text), each kept as before when one of its events is not hidden.
+    - **The audits** (`Store.touchless_summary`): a partial index of the audits alone, `supplier_outcomes_audit (at,
+      invoice_id, correct) WHERE source = 'audit'`, made at the start (`_SCHEMA`: a database made before gets it at
+      its next start, one read of the outcomes), read for the window and grouped after (`GROUP BY +invoice_id`:
+      without statistics SQLite would rather walk the invoices' index in order). Small, as the audits are a sample of
+      the touchless invoices; the reviews' outcomes never enter it.
+  - **Measured** (`bench volume --only` on the seed, median of 3 warm requests, Admin / Clerk, before → after):
+    `/exports` 0.574 / 0.724 → 0.046 / 0.048 s, `/exports?fmt=jde` 0.706 / 0.589 → 0.045 / 0.048 s, `/activity`
+    0.523 / 0.719 → 0.017 / 0.057 s, `/activity?q=Birchwood` 0.605 / 0.699 → 0.056 / 0.079 s,
+    `/settings/automation` 0.360 → 0.071 s: 9 addresses over target → 0. The pages are the same, byte for byte
+    (`tests/bench/test_seed_volume.py`: against the code before, `tests/reports_reference.py`, nothing kept, after
+    13 changes by another Store or plain SQL).
+  - **Left:** the first look after a change still does the work: Exports' check after any invoice, vendor or
+    register change (0.43-0.50 s here, once for every process), Activity's approvals after any invoice change
+    (0.47-0.60 s, and 0.24-0.28 s for the next look: the look that brought the summary up to date keeps nothing,
+    D-159) and its controls report after any event (0.27-0.29 s). Under a stream of changes these pages cost what
+    they did: nothing there settles. `SELECT COUNT(*) FROM events` still reads the table's pages (4 ms at 1.26
+    million, as the register's count does, 3 ms at 600,000). An event changed in place by plain SQL (AP Coder never
+    changes one) is not seen by the kept controls report until another event is recorded.
+  - (`ap_coder/web/pages/exports.py`, `web/pages/activity.py`, `core/store/accounts.py`, `core/store/capture.py`,
+    `core/store/_base.py`, `docs/HOW_IT_RUNS.md`; `tests/bench/test_seed_volume.py`, `tests/core/test_kept_answers.py`,
+    `tests/core/test_store_perf.py`, `tests/reports_reference.py`)

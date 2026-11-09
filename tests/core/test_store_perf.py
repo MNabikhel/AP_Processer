@@ -1,6 +1,7 @@
 """The database does no more work than a page needs: one-off clean-ups run once, indexes are used, the background
 workers reuse one store (the SQL statements and connections counted)."""
 
+import datetime as dt
 import re
 import sqlite3
 import threading
@@ -635,3 +636,69 @@ def test_the_parked_invoices_are_read_from_the_summary_not_the_invoices_whole_ro
     assert whole[2]["parked_reason"] == "changed by hand"
     (plan,) = _plans(store, monkeypatch, store.parked, "invoice_summary", "status")
     assert "SEARCH invoice_summary USING INDEX" in plan and "SCAN invoice_summary" not in plan, plan
+
+
+def test_activitys_events_counted_and_their_people_are_read_off_indexes_and_are_those_every_event_gives(
+    tmp_path, monkeypatch
+):
+    """D-206: Activity counted every event but the hidden ones (a Clerk's: the logins) by looking at each one's
+    action, twice a visit, and found its people by reading every event's name off their index (1.2 million at
+    300,000 invoices: 0.5 s a visit). The events are counted whole, less the hidden ones off their index by action,
+    and the people are looked up one after another off theirs: the same counts and names, whatever the names (empty,
+    none, digits, spaces, accents, bytes) and the hidden list (none, repeated, unknown)."""
+    from ap_coder.web.pages.activity import GROUPS
+    from tests import reports_reference as old
+
+    store = Store(tmp_path / "ap.db")
+    names = [None, "", " ", "0", "9 to 5", "A", "a", "Ann", "Ann ", "Élodie", "Zoë", "\x00x", b"\x01", "Bob", "Cy"]
+    actions = ["approved", "login", "logout", "note", "exported", "login_failed", "deleted"]
+    with store._conn() as conn:
+        for n in range(400):
+            conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, '{}', ?)",
+                         (n % 9 or None, actions[n % 7 if n % 11 else 1], names[n % len(names)],
+                          f"2026-0{1 + n % 9}-1{n % 10}T09:00:00"))  # fmt: skip
+        conn.execute("INSERT INTO events (action, actor, created_at) VALUES ('login', 'Only Logs In', '2026-01-01')")
+    logins = tuple(GROUPS["Logins"])
+    for hidden in ((), logins, ["login", "login"], ["no such action"], ["note", "approved", "exported", "deleted"]):
+        assert store.count_events(hidden=hidden) == old.count_events(store, hidden=hidden), hidden
+        assert store.event_actors(hidden) == old.event_actors(store, hidden), hidden
+        assert store.count_events(hidden=iter(hidden)) == old.count_events(store, hidden=hidden), hidden
+    assert store.count_events() == 401 and store.count_events(hidden=logins) < 401
+    assert "Only Logs In" in store.event_actors() and "Only Logs In" not in store.event_actors(logins)
+    assert {"0", " ", "A", "a", "\x00x", str(b"\x01")} <= set(store.event_actors()) and "" not in store.event_actors()
+    for asked in ({"actions": ["note"]}, {"actor": "Ann"}, {"since": "2026-05-01"}, {"until": "2026-03-01"}):
+        assert store.count_events(hidden=logins, **asked) == old.count_events(store, hidden=logins, **asked), asked
+    (counted,) = _plans(store, monkeypatch, lambda: store.count_events(hidden=logins), "events", "e.action IN")
+    assert "SEARCH e USING COVERING INDEX events_action (action=?)" in counted and "SCAN e " not in counted, counted
+    seen = _statements(monkeypatch)
+    store.event_actors(logins)
+    monkeypatch.undo()
+    (sql,) = [s for s in seen if s.startswith("WITH RECURSIVE")]
+    with sqlite3.connect(store.path) as conn:
+        people = " | ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + sql))
+    assert "events_actor (actor>?)" in people and "SCAN e" not in people, people
+
+
+def test_the_touchless_audits_are_read_off_their_own_index_and_an_older_database_gets_it(tmp_path, monkeypatch):
+    """D-206: Settings → Automation's audits of the last 30 days were found among every invoice's outcomes (3.4
+    million at 300,000 invoices, none of them audits: 0.3 s a visit). They are read off an index of the audits alone,
+    which a database made before gets at its next start: the same figures."""
+    from tests import reports_reference as old
+
+    store = Store(tmp_path / "ap.db")
+    now, long_ago = dt.datetime.now().isoformat(timespec="seconds"), "2020-01-01T00:00:00"
+    rows = [{"field": f, "ai_value": "1", "final_value": "1", "correct": True} for f in ("invoice_number", "total")]
+    for invoice_id, source, at, wrong in ((1, "audit", now, False), (2, "audit", now, True), (3, "audit", long_ago,
+                                          True), (4, "review", now, True), (None, "audit", now, True)):  # fmt: skip
+        store.record_outcomes(f"name:v{invoice_id}", invoice_id, [rows[0], {**rows[1], "correct": not wrong}],
+                              source=source, at=at)  # fmt: skip
+    summary = store.touchless_summary()
+    assert summary == old.touchless_summary(store) and (summary["audited"], summary["audit_errors"]) == (3, 2)
+    (plan,) = _plans(store, monkeypatch, store.touchless_summary, "supplier_outcomes", "source = 'audit'")
+    assert "COVERING INDEX supplier_outcomes_audit (at>?)" in plan and "SCAN" not in plan, plan
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX supplier_outcomes_audit")
+    store = Store(store.path)
+    assert "supplier_outcomes_audit" in _plans(store, monkeypatch, store.touchless_summary, "supplier_outcomes",
+                                               "source = 'audit'")[0]  # fmt: skip
+    assert store.touchless_summary() == summary

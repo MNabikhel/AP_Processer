@@ -165,6 +165,130 @@ def test_the_big_reports_give_what_they_gave_on_the_seed(seeded, tmp_path, monke
                                                                                             rates)  # fmt: skip
 
 
+def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_before_after_each_change(
+    seeded, tmp_path, monkeypatch
+):
+    """D-206: Exports (its JD Edwards check of the ready invoices, worked out once for every process), Activity (the
+    events counted and their people found off their indexes, its approvals and controls report kept) and Settings →
+    Automation (the audits off their own index) give an Admin and a Clerk the pages they gave before, byte for byte
+    (``tests/reports_reference.py``, nothing kept), on the seed and after each change that matters to them, made by
+    another Store or plain SQL; asked again, the same."""
+    import dataclasses
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.core.store import summary
+    from ap_coder.erp import controls, jde
+    from ap_coder.web.app import create_app
+    from ap_coder.web.pages import activity
+    from ap_coder.web.pages import exports as exports_page
+    from tests import reports_reference as old
+    from tests.conftest import copy_database
+    from tests.webclient import sign_in, web_settings
+
+    people = {p["role"]: p for p in json.loads((seeded / "users.json").read_text(encoding="utf-8"))}
+    monkeypatch.setattr(summary, "COUNTS_SETTLE", 0.0)  # (the rail's counts exact: their settle, D-164, not compared)
+    with isolated(tmp_path):
+        store = copy_database(seeded / "ap_coder.db", tmp_path / "private" / "ap_coder.db")
+        shutil.copy(seeded / "authenticator.key", store.path.parent / "authenticator.key")
+        other = Store(store.path)  # another web worker, or the background process
+        app = create_app(web_settings(), store, start_reader=False, server=True)
+        clients = {}
+        for role in ("admin", "clerk"):
+            clients[role] = TestClient(app, base_url="https://localhost", client=("10.0.0.5", 50000),
+                                       follow_redirects=False)  # fmt: skip
+            assert sign_in(clients[role], people[role]["username"], people[role]["password"]).status_code == 200
+        ready = store.unexported_approved()
+        word = ready[0]["vendor_name"].split()[0]
+        pages = {"admin": ["/exports", "/exports?fmt=jde", "/activity", f"/activity?q={word}", "/settings/automation"],
+                 "clerk": ["/exports", "/exports?fmt=jde", "/activity", f"/activity?q={word}"]}  # fmt: skip
+
+        def shown() -> dict[str, str]:
+            got = {}
+            for role, addresses in pages.items():
+                for address in addresses:
+                    answer = clients[role].get(address)
+                    assert answer.status_code == 200, (role, address)
+                    got[f"{role} {address}"] = answer.text
+            return got
+
+        mine = {"approval_counts", "activity_controls", "jde_ready"}  # (D-206's: worked out afresh before)
+        memo, shared = Store.summary_memo, Store.shared_answer
+
+        def before() -> dict[str, str]:
+            with monkeypatch.context() as m:
+                m.setattr(Store, "count_events", old.count_events)
+                m.setattr(Store, "event_actors", old.event_actors)
+                m.setattr(Store, "touchless_summary", old.touchless_summary)
+                m.setattr(Store, "summary_memo", lambda self, name, compute, *a, **k: compute() if name in mine
+                          else memo(self, name, compute, *a, **k))  # fmt: skip
+                m.setattr(Store, "shared_answer", lambda self, name, compute, *a, **k: compute() if name in mine
+                          else shared(self, name, compute, *a, **k))  # fmt: skip
+                m.setattr(exports_page, "ready_problems",
+                          lambda s, ids: exports_page.problem_rows(s, exports_page.jde_check(s, ids)[1]))  # fmt: skip
+                m.setattr(activity, "controls_report",
+                          lambda s, start, end, duties: controls.build(s, start, end, duties=duties))  # fmt: skip
+                return shown()
+
+        last: list[dict[str, str]] = []
+
+        def same(why: str, changed: bool = True) -> None:
+            now, was = shown(), before()
+            for page, text in now.items():
+                assert text == was[page], (why, page)
+            assert shown() == now, why  # (kept)
+            assert not changed or now != last[-1], why  # (a change the pages show)
+            last.append(now)
+
+        last.append(shown())
+        same("the seed", changed=False)
+        assert "Why not" in last[-1]["admin /exports?fmt=jde"]
+        *_, waiting, review = (r["id"] for r in store.list_invoices(REVIEW))
+        doc = store.get_invoice(review)["ai_output"]
+        other.approve_invoice(review, doc, "Jordan Lee")
+        same("an approval: one more ready, an event")
+        first = store.get_invoice(ready[0]["id"])["final_output"]
+        other.import_erp_register([{"vendor_name": first["vendor_name"], "invoice_number": first["invoice_number"],
+                                    "invoice_date": first["invoice_date"], "total": first["grand_total"]}])  # fmt: skip
+        same("a ready invoice's bill in the ERP register")
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE vendors SET erp_id = 'X' || erp_id WHERE erp_id != ''")
+        same("the vendor master's ERP IDs, in plain SQL")
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE invoices SET final_output = json_set(final_output, '$.invoice_number', ?, "
+                         "'$.vendor_name', ?) WHERE id = ?",
+                         (first["invoice_number"], first["vendor_name"], ready[1]["id"]))  # fmt: skip
+        same("a ready invoice the same bill as another, in plain SQL")
+        assert "already in the ERP" in last[-1]["clerk /exports?fmt=jde"]
+        settings = jde.load(other)
+        jde.save(other, dataclasses.replace(settings, company="ABC"), actor="Jordan Lee")
+        same("JD Edwards' settings: a company that stops every invoice")
+        overrides = {**settings.an8_overrides, vendor_key(ready[6]["vendor_name"]): "ABC"}
+        jde.save(other, dataclasses.replace(settings, an8_overrides=overrides), actor="Jordan Lee")
+        same("JD Edwards' settings: a vendor's supplier number")
+        assert "supplier number &#39;ABC&#39;" in last[-1]["admin /exports?fmt=jde"]
+        jde.save(other, settings, actor="Jordan Lee")
+        same("and back")
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE invoices SET status = 'pending_approval' WHERE id = ?", (waiting,))
+        same("an invoice waiting for its second approval, in plain SQL")
+        other.log_event("note", actor="Someone New")
+        same("an event by someone new")
+        other.log_event("login", actor="Only Logs In")
+        same("a login by someone new: the Admin's people only")
+        assert "Only Logs In" in last[-1]["admin /activity"] and "Only Logs In" not in last[-1]["clerk /activity"]
+        other.set_setting("approval_limit", "50", actor="Jordan Lee")
+        same("the approval limit")
+        other.create_export_batch([r["id"] for r in ready[2:5]], "csv", actor="Jordan Lee")
+        same("an export: three fewer ready")
+        other.record_outcomes("name:acme", ready[5]["id"], [{"field": "invoice_number", "ai_value": "1",
+                                                             "final_value": "2", "correct": False}],
+                              source="audit")  # fmt: skip
+        same("an audit of a touchless invoice, corrected")
+
+
 def test_each_clone_has_amounts_of_its_own_that_add_up(seeded):
     conn = sqlite3.connect(seeded / "ap_coder.db")
     try:

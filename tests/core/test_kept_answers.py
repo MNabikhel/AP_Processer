@@ -2311,3 +2311,110 @@ def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, 
     shown = {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries(settled=True)}
     assert shown == {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries()}
     assert shown.get("Brand New Supplier Ltd") == 1
+
+
+def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_process_and_follows_each_change(
+    tmp_path, ground_truth, monkeypatch
+):
+    """D-206: Exports' JD Edwards check of the invoices ready to export (0.6 s at 300,000 invoices with 1,100 ready, at
+    every visit before) is worked out once for every process, and is what checking them afresh gives (``jde_check``,
+    ``problem_rows``) after each change it depends on, whoever made it: the vendor master, the ERP register, an
+    invoice, JD Edwards' settings, the day, and which invoices are asked."""
+    import types
+    from dataclasses import replace
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+
+    worked, rows_of = [], page.problem_rows  # (the shared answer's work: its invoices given, read once)
+    monkeypatch.setattr(page, "problem_rows", lambda s, problems, invoices=None: (
+        worked.append(1) if invoices is not None else None) or rows_of(s, problems, invoices))  # fmt: skip
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    ids = [_approved(other, tmp_path, ground_truth, name) for name in ("J-1", "J-2", "J-3")]
+
+    def shown(name: str, asked: list[int] = ids) -> list[dict]:
+        process(name)
+        rows = page.ready_problems(store, asked)
+        assert rows == rows_of(store, page.jde_check(store, asked)[1])
+        return rows
+
+    def reasons(rows: list[dict]) -> str:
+        return " ".join(m for r in rows for m in r["reasons"])
+
+    first = shown("worker 1")
+    assert [r["id"] for r in first] == ids and all(r["an8"] for r in first) and len(worked) == 1
+    assert shown("worker 1") == first and shown("worker 2") == first and len(worked) == 1  # (worker 1's)
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, erp_id, updated_at) VALUES (?, 'Northwind', '1001', "
+           "?)", vendor_key(ground_truth["vendor_name"]), NOW)  # fmt: skip
+    found = shown("worker 2")
+    assert not any(r["an8"] for r in found) and len(worked) == 2
+    assert shown("worker 1") == found and len(worked) == 2  # (worker 2's)
+    other.import_erp_register([{"vendor_name": ground_truth["vendor_name"], "invoice_number": "J-2",
+                                "invoice_date": ground_truth["invoice_date"],
+                                "total": ground_truth["grand_total"]}])  # fmt: skip
+    assert "already in the ERP (invoice J-2" in reasons(shown("worker 1")) and len(worked) == 3
+    _plain(store, "UPDATE invoices SET final_output = json_set(final_output, '$.invoice_number', 'J-1') WHERE id = ?",
+           ids[2])  # fmt: skip
+    assert f"same supplier and invoice number as AP Coder #{ids[0]}" in reasons(shown("worker 2")) and len(worked) == 4
+    jde.save(other, replace(jde.load(other), gl_date=jde.GL_DATE_EXPORT, open_to=dt.date.today().isoformat()))
+    assert "after the open period" not in reasons(shown("worker 1")) and len(worked) == 5
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+
+    class Tomorrow(dt.date):
+        @classmethod
+        def today(cls) -> dt.date:
+            return tomorrow
+
+    later = types.SimpleNamespace(date=Tomorrow, datetime=dt.datetime, timedelta=dt.timedelta)
+    monkeypatch.setattr(page, "dt", later)
+    monkeypatch.setattr(jde, "dt", later)
+    assert reasons(shown("worker 1")).count("after the open period") == 3 and len(worked) == 6
+    assert shown("worker 2", ids[:1]) != shown("worker 2") and len(worked) == 7  # (another question: its own answer)
+
+
+def test_activitys_controls_report_follows_each_event_invoice_and_setting_it_is_worked_out_from(tmp_path, ground_truth):
+    """D-206: the controls report Activity's tiles count (0.2 s at 300,000 invoices, at every visit before) is kept in
+    each process and is what working it out afresh gives (``controls.build``) after each event recorded, an invoice
+    changed, the approval limit or the rates changed, whoever made the change, and for each period asked."""
+    from ap_coder.erp import controls
+    from ap_coder.web.pages import activity
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    today = dt.date.today()
+    period = (today - dt.timedelta(days=7), today, True)
+    worked = []
+
+    def shown(start: dt.date, end: dt.date, duties: bool) -> dict:
+        def build(*args, **kwargs):
+            worked.append(1)
+            return real(*args, **kwargs)
+
+        real, controls.build = controls.build, build
+        try:
+            report = activity.controls_report(store, start, end, duties)
+        finally:
+            controls.build = real
+        assert report == controls.build(store, start, end, duties=duties)
+        return report
+
+    assert shown(*period)["events"] == 0 and shown(*period)["events"] == 0 and len(worked) == 1
+    invoice = _approved(other, tmp_path, ground_truth, "C-1", currency="USD")
+    assert shown(*period)["approvals"] == 1 and len(worked) == 2
+    other.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
+    other.log_event("note", invoice, actor="Ann")
+    assert len(shown(*period)["setup"]) == 1 and len(worked) == 3
+    _plain(store, "UPDATE invoices SET status = 'pending_approval' WHERE id = ?", invoice)  # (no event)
+    assert len(shown(*period)["waiting"]) == 1 and len(worked) == 4
+    _plain(store, "UPDATE invoices SET status = 'approved' WHERE id = ?", invoice)
+    # (the look that brought the summary up to date keeps nothing, the next one does: ``summary_memo``)
+    assert shown(*period)["waiting"] == [] and shown(*period)["one_person"] == [] and len(worked) == 6
+    _plain(store, "INSERT INTO settings (key, value) VALUES ('approval_limit', '10000')")  # (no event)
+    assert [i["id"] for i in shown(*period)["one_person"]] == [invoice] and len(worked) == 7  # (no rate for USD)
+    _plain(store, "INSERT INTO settings (key, value) VALUES ('fx_rates', 'USD=0.5')")  # (18,017.85 USD: 9,008.93)
+    assert shown(*period)["one_person"] == [] and len(worked) == 8
+    _plain(store, "DELETE FROM events WHERE action = 'vendor_added'")  # (not the newest: counted)
+    assert shown(*period)["setup"] == [] and len(worked) == 9
+    assert shown(period[0], today - dt.timedelta(days=1), True)["events"] == 0 and len(worked) == 10
+    assert shown(today, today, False)["same_person"] is None and len(worked) == 11

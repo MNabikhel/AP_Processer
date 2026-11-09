@@ -229,18 +229,39 @@ class AccountsMixin:
         since: str | None = None, until: str | None = None,
     ) -> int:  # fmt: skip
         """How many audit events ``find_events`` gives for these (counted by SQLite, none read)."""
+        hidden = list(hidden)
+        if actions is None and actor is None and not since and not until:
+            # Every event but those of ``hidden`` actions: all of them counted (no row read), less those of ``hidden``
+            # off their index, not each event's action looked at (1.2 million at 300,000 invoices, D-206; an
+            # event's action is never NULL).
+            with self._conn() as conn:
+                if not hidden:
+                    return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+                return int(conn.execute(f"SELECT (SELECT COUNT(*) FROM events) - (SELECT COUNT(*) FROM events e WHERE "
+                                        f"{_in_list('e.action')})", (json.dumps(hidden),)).fetchone()[0])  # fmt: skip
         where, args = _event_filter(actions, hidden, actor, since, until)
         with self._conn() as conn:
             return int(conn.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0])
 
+    def events_stamp(self) -> str:
+        """How many audit events there are and the newest one's id ("count/id"): another once one is recorded or
+        deleted, so what is worked out from them is kept until then (``summary_memo``'s ``asked``, D-206). Read off the
+        table's size and its last row, not each event."""
+        with self._conn() as conn:
+            return str(conn.execute("SELECT (SELECT COUNT(*) FROM events) || '/' || "
+                                    "(SELECT COALESCE(MAX(id), '') FROM events)").fetchone()[0])  # fmt: skip
+
     def event_actors(self, hidden: Iterable[str] = ()) -> list[str]:
         """Everyone the audit events are by (but those of ``hidden`` actions only), by name, each once."""
         where, args = _event_filter(hidden=hidden)
-        # Each name off the index of the events by person (D-156), kept when one of its events is not of ``hidden``.
+        # Each name off the index of the events by person (D-156), the next one after another looked up (not every
+        # event's name read: 1.2 million at 300,000 invoices, D-206), kept when one of its events is not of ``hidden``.
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT a.actor FROM (SELECT DISTINCT actor FROM events WHERE actor != '') a WHERE EXISTS "
-                f"(SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})", args)  # fmt: skip
+                "WITH RECURSIVE a(actor) AS (SELECT MIN(actor) FROM events WHERE actor > '' UNION ALL SELECT (SELECT "
+                "MIN(actor) FROM events WHERE actor > a.actor) FROM a WHERE a.actor IS NOT NULL) SELECT a.actor FROM a "
+                f"WHERE a.actor IS NOT NULL AND EXISTS (SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})",
+                args)  # fmt: skip
             return sorted(str(r[0]) for r in rows)
 
     def event_values(self, action: str, field: str) -> set[str]:

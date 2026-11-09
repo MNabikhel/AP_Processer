@@ -1,6 +1,7 @@
 """The big reports as they were before they were made light for a year of invoices (D-156): every invoice, PO or
-event they needed read and decoded on each call. The tests check the reports' results against these on the same
-data; the bodies are the old code as it was (only renamed)."""
+event they needed read and decoded on each call; and Activity's counts and Settings → Automation's figures as they
+were read before D-206. The tests check the reports' results against these on the same data; the bodies are the old
+code as it was (only renamed)."""
 
 from __future__ import annotations
 
@@ -15,9 +16,11 @@ from fastapi.responses import HTMLResponse
 from ap_coder.coding.po import CLOSED, billed_by_line, po_label
 from ap_coder.coding.tax import PLACE_OF_SUPPLY
 from ap_coder.core import ui
+from ap_coder.core.memory import AUTONOMOUS_REVIEWER
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.safe import neutralise_sheet, xlsx_row
 from ap_coder.core.store import APPROVED, FAILED, PENDING, Store
+from ap_coder.core.store.accounts import _event_filter
 from ap_coder.erp import spend
 from ap_coder.erp.accruals import RECEIVED, Accrual
 from ap_coder.erp.controls import REPORTED, SETUP_ACTIONS, SIGNALS, _codes, same_person_steps
@@ -309,3 +312,53 @@ def workbook_contents(data: bytes) -> list[dict[str, Any]]:
         }
         for ws in wb.worksheets
     ]
+
+
+# --- Before D-206: what Activity and Settings → Automation read every event or outcome for -----------------------
+
+
+def count_events(store: Store, *, actions: Any = None, hidden: Any = (), actor: str | None = None,
+                 since: str | None = None, until: str | None = None) -> int:  # fmt: skip
+    """``Store.count_events``: each event's action looked at, for every event but those of ``hidden``."""
+    where, args = _event_filter(actions, hidden, actor, since, until)
+    with store._conn() as conn:
+        return int(conn.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0])
+
+
+def event_actors(store: Store, hidden: Any = ()) -> list[str]:
+    """``Store.event_actors``: every event's name read off its index for the names."""
+    where, args = _event_filter(hidden=hidden)
+    with store._conn() as conn:
+        rows = conn.execute(
+            "SELECT a.actor FROM (SELECT DISTINCT actor FROM events WHERE actor != '') a WHERE EXISTS "
+            f"(SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})", args)  # fmt: skip
+        return sorted(str(r[0]) for r in rows)
+
+
+def touchless_summary(store: Store, days: int = 30) -> dict[str, Any]:
+    """``Store.touchless_summary``: the audits found among every invoice's outcomes."""
+    since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
+    with store._conn() as conn:
+        processed = conn.execute(
+            "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'processed' AND created_at >= ?", (since,)
+        ).fetchone()[0]
+        touchless = conn.execute(
+            "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'approved' AND actor = ? AND created_at >= ?",
+            (AUTONOMOUS_REVIEWER, since),
+        ).fetchone()[0]
+        audits = conn.execute(
+            "SELECT invoice_id, MIN(correct) AS clean FROM supplier_outcomes WHERE source = 'audit' AND at >= ? "
+            "GROUP BY invoice_id",
+            (since,),
+        ).fetchall()
+        reopened = conn.execute(
+            "SELECT COUNT(DISTINCT r.invoice_id) FROM events r WHERE r.action = 'reopened' AND r.created_at >= ? "
+            "AND EXISTS (SELECT 1 FROM events a WHERE a.invoice_id = r.invoice_id AND a.action = 'approved' "
+            "AND a.actor = ?)",
+            (since, AUTONOMOUS_REVIEWER),
+        ).fetchone()[0]
+    return {
+        "days": days, "processed": processed, "touchless": touchless,
+        "touchless_rate": touchless / processed if processed else None,
+        "audited": len(audits), "audit_errors": sum(1 for r in audits if not r["clean"]), "reopened": reopened,
+    }  # fmt: skip

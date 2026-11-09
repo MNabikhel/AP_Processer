@@ -189,6 +189,15 @@ def distinct_people(actors: Iterable[str], events: Iterable[dict[str, Any]]) -> 
     return sorted({now(actor) for actor in actors if actor})
 
 
+def controls_report(store: Store, start: dt.date, end: dt.date, duties: bool) -> dict[str, Any]:
+    """The controls report the page's tiles count (``controls.build``), kept until an event is recorded, an invoice
+    changes or the approval limit or the rates do (0.2 s at 300,000 invoices, at every visit before: D-206). The
+    value is shared: read it, don't change it."""
+    asked = (start, end, duties, store.events_stamp(), store.approval_limit(), store.fx_rates())
+    return store.summary_memo("activity_controls", lambda: controls.build(store, start, end, duties=duties),
+                              asked=asked)  # fmt: skip
+
+
 @router.get("/activity", response_class=HTMLResponse)
 def activity_page(request: Request) -> HTMLResponse:
     store = get_store(request)
@@ -211,8 +220,8 @@ def activity_page(request: Request) -> HTMLResponse:
     today = dt.date.today()
     week = store.count_events(hidden=hidden, since=(today - dt.timedelta(days=7)).isoformat())
     # Each invoice's standing approval once, as on Insights and Learning (D-39): one taken back and given again is
-    # one, one taken back and not given again is none.
-    clean, approved, filled = insights.approval_counts(store)  # counted by SQLite (D-156)
+    # one, one taken back and not given again is none. Counted by SQLite (D-156), kept until an invoice changes (D-206).
+    clean, approved, filled = store.summary_memo("approval_counts", lambda: insights.approval_counts(store))
     people = store.event_actors(hidden)  # the Person filter: every name events carry
     persons = distinct_people(people, store.find_events(actions=["settings_changed"], hidden=hidden))
     tiles = [
@@ -234,7 +243,7 @@ def activity_page(request: Request) -> HTMLResponse:
                                       actor=None if person in ("", "Everyone") else person)  # fmt: skip
     else:
         matching = len(shown) if before is None and not older else None
-    report = controls.build(store, start, end, duties=server_mode(request)) if start <= end else None
+    report = controls_report(store, start, end, server_mode(request)) if start <= end else None
     return render(
         request,
         "activity.html",

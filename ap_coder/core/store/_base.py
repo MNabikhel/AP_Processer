@@ -216,6 +216,10 @@ CREATE TABLE IF NOT EXISTS supplier_outcomes (
     at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS supplier_outcomes_key_at ON supplier_outcomes (supplier_key, at);
 CREATE INDEX IF NOT EXISTS supplier_outcomes_invoice ON supplier_outcomes (invoice_id);
+-- the audits of touchless invoices since a day, read alone (Settings → Automation's figures: ``touchless_summary``),
+-- not every invoice's outcomes (3.4 million at 300,000 invoices, D-206)
+CREATE INDEX IF NOT EXISTS supplier_outcomes_audit ON supplier_outcomes (at, invoice_id, correct)
+    WHERE source = 'audit';
 CREATE TABLE IF NOT EXISTS vendor_aliases (
     id INTEGER PRIMARY KEY AUTOINCREMENT, alias_key TEXT NOT NULL, printed TEXT NOT NULL DEFAULT '',
     vendor_name TEXT NOT NULL, gst_number TEXT NOT NULL DEFAULT '', invoice_id INTEGER, at TEXT NOT NULL);

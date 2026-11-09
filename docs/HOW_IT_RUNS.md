@@ -481,12 +481,16 @@ the launcher.
   not invoiced PO lines for the period asked (`changes/purchase_orders` and the summary's generation, 0.2 MB); the
   duplicate audit's pairs, which its page and CSV share (`changes/register` and the generation, 1.7 MB); Spend's
   figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
-  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
+  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB);
+  Activity's approvals (the generation) and its controls report (the generation, the events' count and newest id,
+  the approval limit and the rates: D-206). Any
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write (Spend and month-end's page, which only show them, at most every 30 s: D-166). Month-end, the audit, Spend,
   the recurring vendors and Insights are worked out once for every process (below).
 
-  **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, month-end's received, not
+  **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, Exports' JD Edwards check of
+  the invoices ready to export (the generation, `changes/register`, `changes/vendors`, its settings and the day:
+  D-206), month-end's received, not
   invoiced lines (and each received PO's accruals, by the digest of what they come from, and what it reads of each
   invoice billing them, a row a vendor brought up to date from the vendors' change log: after a change only the
   invoices changed since are decoded again, D-177) and its invoices not in the ERP yet, Spend's figures and
