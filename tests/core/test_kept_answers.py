@@ -2374,6 +2374,40 @@ def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_proces
     assert shown("worker 2", ids[:1]) != shown("worker 2") and len(worked) == 7  # (another question: its own answer)
 
 
+def test_the_jde_check_of_the_ready_invoices_follows_the_tax_rate_file(tmp_path, ground_truth):
+    """B-2074: with the amount sent gross (Settings → JD Edwards E1, Amounts) the check reads the tax-rate file, the
+    data folder's copy when there is one: one copied in, changed or taken away left the check kept for every process
+    (D-206) as it was until an invoice, a vendor or the register changed, or the next day; a restart too. The rate
+    file's stamp, as ``checks_stamp`` compares it, is in what the answer is for."""
+    from dataclasses import replace
+
+    from ap_coder.core import tax_setup
+    from ap_coder.core.paths import private_dir
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+    from tests.webclient import client_for
+
+    store = Store(tmp_path / "ap.db")
+    ids = [_approved(store, tmp_path, ground_truth, "G-1")]
+    jde.save(store, replace(jde.load(store), amount_mode=jde.AMOUNT_GROSS))
+
+    def reasons() -> str:
+        rows = page.ready_problems(store, ids)
+        assert rows == page.problem_rows(store, page.jde_check(store, ids)[1])
+        return " ".join(m for r in rows for m in r["reasons"])
+
+    client = client_for(store)
+    assert "with the gross amount only" not in reasons() and "Why not" in client.get("/exports?fmt=jde").text
+    own = private_dir() / tax_setup.RATES_FILE
+    own.parent.mkdir(parents=True, exist_ok=True)
+    bundled = tax_setup.DEFAULT_RATES_PATH.read_text(encoding="utf-8")
+    own.write_text(bundled.replace("HST,ON,0.13", "HST,ON,0.15"), encoding="utf-8")  # Ontario's HST at 15%
+    assert "JD Edwards works out 15% tax for ON-HST" in reasons() and "works out 15% tax" in client.get(
+        "/exports?fmt=jde").text  # fmt: skip
+    own.unlink()
+    assert "with the gross amount only" not in reasons() and "works out" not in client.get("/exports?fmt=jde").text
+
+
 def test_activitys_controls_report_follows_each_event_and_invoice_it_is_worked_out_from(tmp_path, ground_truth):
     """D-206: the counts of the controls report Activity's tiles show (0.2 s at 300,000 invoices, at every visit
     before) are kept in each process and are what working the report out afresh gives (``controls.build``) after each

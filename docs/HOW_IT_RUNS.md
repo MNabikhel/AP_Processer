@@ -490,8 +490,8 @@ the launcher.
   the recurring vendors and Insights are worked out once for every process (below).
 
   **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, Exports' JD Edwards check of
-  the invoices ready to export (the generation, `changes/register`, `changes/vendors`, its settings and the day:
-  D-206), month-end's received, not
+  the invoices ready to export (the generation, `changes/register`, `changes/vendors`, its settings, the day and the
+  tax-rate file's stamp; 0.7 MB for the 1,122 ready at 300,000 invoices: D-206, B-2074), month-end's received, not
   invoiced lines (and each received PO's accruals, by the digest of what they come from, and what it reads of each
   invoice billing them, a row a vendor brought up to date from the vendors' change log: after a change only the
   invoices changed since are decoded again, D-177) and its invoices not in the ERP yet, Spend's figures and

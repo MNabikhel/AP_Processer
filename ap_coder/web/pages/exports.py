@@ -178,9 +178,9 @@ READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; 
 def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]:
     """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards, as the page lists them
     (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
-    vendor master, the ERP register, JD Edwards' settings or the day change (0.6 s at 300,000 invoices with 1,100
-    ready, at every visit before: D-206). Making a batch checks its invoices again (``_create_batch``). Shared: read
-    it, don't change it."""
+    vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
+    or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
+    checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
@@ -188,7 +188,7 @@ def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]
                                 jde.prior_records(store, invoices=invoices))  # fmt: skip
         return problem_rows(store, problems, invoices)
 
-    asked = (invoice_ids, store.get_setting(jde.SETTING_KEY), dt.date.today().isoformat())
+    asked = (invoice_ids, store.get_setting(jde.SETTING_KEY), dt.date.today().isoformat(), store.rates_stamp())
     return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
 
 

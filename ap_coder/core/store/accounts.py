@@ -601,6 +601,13 @@ class AccountsMixin:
                      *conn.execute(_CHECKS_STAMP).fetchone())  # fmt: skip
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
 
+    @staticmethod
+    def rates_stamp() -> tuple[str, tuple[int, int] | None]:
+        """The tax-rate file in use (the data folder's copy, else the bundled one) with its time and size, as
+        ``reference_data`` and ``checks_stamp`` compare it: another once a rate file is copied in, changed or taken
+        away (an answer worked out from the rates is kept for it, B-2074)."""
+        return _file_stamp(_tax.rates_path())
+
     def _reference_data(self, rates: TaxRateTable) -> ReferenceData:
         gl = self.list_accounts("gl_accounts")
         if not gl:
