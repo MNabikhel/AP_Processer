@@ -699,25 +699,42 @@ def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_da
 def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_thread_s_stack(tmp_path, monkeypatch):
     """Windows CI: the page reader's self-test waited 11 minutes on something no log line names, and no signal can
     ask a Windows process where it is. With AP_STACK_DUMP_SECONDS set (a bench, or IT on a developer's word), the
-    background process writes every thread's stack to logs/background-stacks.log that often; unset, never."""
-    import faulthandler
-    import time
+    background process writes every thread's stack to logs/background-stacks.log that often; unset, never. The
+    dumps run in a process of their own here, as in the background process: Python's faulthandler reads the other
+    threads' frames without stopping them, and in pytest's process (threads of other tests ending meanwhile) a dump
+    ended the run with an access violation on Windows CI."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
 
     from ap_coder.web import server
 
     monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
     assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
-    monkeypatch.setenv(server.STACK_DUMP_ENV, "0.2")
-    handle = server.stack_dumps(tmp_path / "logs")
-    try:
-        path = tmp_path / "logs" / server.STACK_DUMP_LOG
-        deadline = time.monotonic() + 10
-        while "test_server_scale.py" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert "test_server_scale.py" in path.read_text(encoding="utf-8")  # this test's own frame, as it waits
-    finally:
-        faulthandler.cancel_dump_traceback_later()
-        handle.close()
+    script = (
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from ap_coder.web import server\n"
+        "folder = Path(sys.argv[1])\n"
+        "def waiting_for_its_own_stack():\n"
+        "    handle = server.stack_dumps(folder)\n"
+        "    path = folder / server.STACK_DUMP_LOG\n"
+        "    deadline = time.monotonic() + 10\n"
+        "    while ('waiting_for_its_own_stack' not in path.read_text(encoding='utf-8')\n"
+        "           and time.monotonic() < deadline):\n"
+        "        time.sleep(0.1)\n"
+        "    import faulthandler\n"
+        "    faulthandler.cancel_dump_traceback_later()\n"
+        "    handle.close()\n"
+        "waiting_for_its_own_stack()\n"
+    )
+    env = {**os.environ, server.STACK_DUMP_ENV: "0.2"}
+    done = subprocess.run([sys.executable, "-c", script, str(tmp_path / "logs")],
+                          cwd=Path(__file__).resolve().parents[2], env=env, capture_output=True, text=True,
+                          timeout=60)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert "waiting_for_its_own_stack" in (tmp_path / "logs" / server.STACK_DUMP_LOG).read_text(encoding="utf-8")
 
 
 def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_close(tmp_path):
