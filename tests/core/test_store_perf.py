@@ -1,6 +1,7 @@
 """The database does no more work than a page needs: one-off clean-ups run once, indexes are used, the background
 workers reuse one store (the SQL statements and connections counted)."""
 
+import datetime as dt
 import re
 import sqlite3
 import threading
@@ -635,3 +636,142 @@ def test_the_parked_invoices_are_read_from_the_summary_not_the_invoices_whole_ro
     assert whole[2]["parked_reason"] == "changed by hand"
     (plan,) = _plans(store, monkeypatch, store.parked, "invoice_summary", "status")
     assert "SEARCH invoice_summary USING INDEX" in plan and "SCAN invoice_summary" not in plan, plan
+
+
+def test_activitys_events_counted_and_their_people_are_read_off_indexes_and_are_those_every_event_gives(
+    tmp_path, monkeypatch
+):
+    """D-206: Activity counted every event but the hidden ones (a Clerk's: the logins) by looking at each one's
+    action, twice a visit, and found its people by reading every event's name off their index (1.2 million at
+    300,000 invoices: 0.5 s a visit). The events are counted whole, less the hidden ones off their index by action,
+    and the people are looked up one after another off theirs: the same counts and names, whatever the names (empty,
+    none, digits, spaces, accents, bytes) and the hidden list (none, repeated, unknown)."""
+    from ap_coder.web.pages.activity import GROUPS
+    from tests import reports_reference as old
+
+    store = Store(tmp_path / "ap.db")
+    names = [None, "", " ", "0", "9 to 5", "A", "a", "Ann", "Ann ", "Élodie", "Zoë", "\x00x", b"\x01", "Bob", "Cy"]
+    actions = ["approved", "login", "logout", "note", "exported", "login_failed", "deleted"]
+    with store._conn() as conn:
+        for n in range(400):
+            conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, '{}', ?)",
+                         (n % 9 or None, actions[n % 7 if n % 11 else 1], names[n % len(names)],
+                          f"2026-0{1 + n % 9}-1{n % 10}T09:00:00"))  # fmt: skip
+        conn.execute("INSERT INTO events (action, actor, created_at) VALUES ('login', 'Only Logs In', '2026-01-01')")
+    logins = tuple(GROUPS["Logins"])
+    for hidden in ((), logins, ["login", "login"], ["no such action"], ["note", "approved", "exported", "deleted"]):
+        assert store.count_events(hidden=hidden) == old.count_events(store, hidden=hidden), hidden
+        assert store.event_actors(hidden) == old.event_actors(store, hidden), hidden
+        assert store.count_events(hidden=iter(hidden)) == old.count_events(store, hidden=hidden), hidden
+    assert store.count_events() == 401 and store.count_events(hidden=logins) < 401
+    assert "Only Logs In" in store.event_actors() and "Only Logs In" not in store.event_actors(logins)
+    assert {"0", " ", "A", "a", "\x00x", str(b"\x01")} <= set(store.event_actors()) and "" not in store.event_actors()
+    for asked in ({"actions": ["note"]}, {"actor": "Ann"}, {"since": "2026-05-01"}, {"until": "2026-03-01"}):
+        assert store.count_events(hidden=logins, **asked) == old.count_events(store, hidden=logins, **asked), asked
+    (counted,) = _plans(store, monkeypatch, lambda: store.count_events(hidden=logins), "events", "e.action IN")
+    assert "SEARCH e USING COVERING INDEX events_action (action=?)" in counted and "SCAN e " not in counted, counted
+    seen = _statements(monkeypatch)
+    store.event_actors(logins)
+    monkeypatch.undo()
+    (sql,) = [s for s in seen if s.startswith("WITH RECURSIVE")]
+    with sqlite3.connect(store.path) as conn:
+        people = " | ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + sql))
+    assert "events_actor (actor>?)" in people and "SCAN e" not in people, people
+
+
+def test_the_touchless_audits_are_read_off_their_own_index_and_an_older_database_gets_it(tmp_path, monkeypatch):
+    """D-206: Settings → Automation's audits of the last 30 days were found among every invoice's outcomes (3.4
+    million at 300,000 invoices, none of them audits: 0.3 s a visit). They are read off an index of the audits alone,
+    which a database made before gets at its next start: the same figures."""
+    from tests import reports_reference as old
+
+    store = Store(tmp_path / "ap.db")
+    now, long_ago = dt.datetime.now().isoformat(timespec="seconds"), "2020-01-01T00:00:00"
+    rows = [{"field": f, "ai_value": "1", "final_value": "1", "correct": True} for f in ("invoice_number", "total")]
+    for invoice_id, source, at, wrong in ((1, "audit", now, False), (2, "audit", now, True), (3, "audit", long_ago,
+                                          True), (4, "review", now, True), (None, "audit", now, True)):  # fmt: skip
+        store.record_outcomes(f"name:v{invoice_id}", invoice_id, [rows[0], {**rows[1], "correct": not wrong}],
+                              source=source, at=at)  # fmt: skip
+    summary = store.touchless_summary()
+    assert summary == old.touchless_summary(store) and (summary["audited"], summary["audit_errors"]) == (3, 2)
+    (plan,) = _plans(store, monkeypatch, store.touchless_summary, "supplier_outcomes", "source = 'audit'")
+    assert "COVERING INDEX supplier_outcomes_audit (at>?)" in plan and "SCAN" not in plan, plan
+    with sqlite3.connect(store.path) as conn:  # as a database made before it
+        conn.execute("DROP INDEX supplier_outcomes_audit")
+    store = Store(store.path)
+    assert "supplier_outcomes_audit" in _plans(store, monkeypatch, store.touchless_summary, "supplier_outcomes",
+                                               "source = 'audit'")[0]  # fmt: skip
+    assert store.touchless_summary() == summary
+
+
+def test_a_periods_events_are_read_once_not_again_for_each_batch_and_are_those_they_were(tmp_path, monkeypatch):
+    """B-2076: a period's events (the controls report, Activity's tiles of a period) come off their index by day, not
+    in their order, so each batch of them asked for all of the period's again, the newest below the batch before,
+    joined to their invoices' whole rows and sorted: the work grew with the square of the period's events (a year's
+    controls report, 313 s at 300,000 invoices; 90 days, 20 s). Their ids are read in one go, then the events a batch
+    at a time by id, each invoice's vendor and number off the invoices' summary (its own columns): the same events in
+    the same order whatever is asked (``tests/reports_reference.py``), an invoice changed or deleted in plain SQL too,
+    the work twice as much for twice the events."""
+    import json
+
+    from ap_coder.core.store import accounts
+    from ap_coder.erp.controls import _READ, REPORTED
+    from tests import reports_reference as old
+    from tests.webclient import add_clean
+
+    monkeypatch.setattr(accounts, "EVENTS_BATCH", 40)
+    store = Store(tmp_path / "ap.db")
+    for n in range(8):  # (ids 1 to 8; the events' invoices go up to 22)
+        add_clean(store, invoice_number=f"E-{n}", vendor_name=f"Vendor {n}")
+    actions = ["approved", "exported", "final_approved", "note", "login", "sent_back", "settings_changed"]
+
+    def add(first: int, last: int) -> None:
+        with store._conn() as conn:
+            for n in range(first, last):  # (their days not in the order of their ids)
+                day = f"2026-0{1 + n * 7 % 9}-{1 + n * 13 % 28:02d}T{n % 24:02d}:00:00"
+                conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES "
+                             "(?, ?, ?, ?, ?)", (n % 23 or None, actions[n % 7], ["Ann", "Bob", None, ""][n % 4],
+                                                 json.dumps({"n": n, "bulk": n % 5 == 0}), day))  # fmt: skip
+
+    report = {"actions": REPORTED, "since": "2026-01-01", "until": "2027-01-01", "detail_if": _READ}
+    asks = [report, {"since": "2026-02-01", "until": "2026-08-01"}, {"since": "2026-03-01"}, {"until": "2026-04-15"},
+            {"actions": ["approved"], "since": "2026-02-01", "until": "2026-06-01", "hidden": ["note"]},
+            {"since": "2026-01-01", "actor": "Ann"}, {"since": "2026-01-01", "limit": 55},
+            {"since": "2026-01-01", "before": 300}, {"since": "2026-01-01", "limit": 30,
+                                                      "matches": lambda e: e["id"] % 3 == 0},
+            {"since": "2026-01-01", "limit": 0}, {"actions": ["login"], "limit": 7},
+            {"since": "2030-01-01"}]  # fmt: skip
+
+    def work(find, asked: dict) -> tuple[list, int]:
+        """(the events found, SQLite's steps to find them, by the hundred)"""
+        steps, real = [0], sqlite3.connect
+
+        def counting(*args, **kwargs):
+            conn = real(*args, **kwargs)
+            conn.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1), 100)
+            return conn
+
+        monkeypatch.setattr(store_mod.sqlite3, "connect", counting)
+        try:
+            return list(find(**asked)), steps[0]
+        finally:
+            monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+
+    def old_find(**asked):
+        return old.find_events(store, **asked)
+
+    add(0, 600)
+    for asked in asks:
+        assert work(store.find_events, asked)[0] == work(old_find, asked)[0], asked
+    (found, some), (_, some_before) = work(store.find_events, report), work(old_find, report)
+    add(600, 1200)
+    with sqlite3.connect(store.path) as conn:  # (the summary behind them until it is read)
+        conn.execute("UPDATE invoices SET vendor_name = 'Renamed Ltd', invoice_number = 'R-1' WHERE id = 3")
+        conn.execute("DELETE FROM invoices WHERE id = 5")
+    for asked in asks:
+        assert work(store.find_events, asked)[0] == work(old_find, asked)[0], asked
+    (twice, more), (_, more_before) = work(store.find_events, report), work(old_find, report)
+    assert {(e["invoice_vendor"], e["invoice_number"]) for e in twice if e["invoice_id"] in (3, 4, 5)} == {
+        ("Renamed Ltd", "R-1"), ("Vendor 3", "E-3"), (None, None)}  # fmt: skip
+    assert 1.99 * len(found) < len(twice) < 2.01 * len(found) and len(found) > 400 and twice[0]["id"] > twice[-1]["id"]
+    assert more_before > 3 * some_before and more < 2.5 * some, (some_before, more_before, some, more)

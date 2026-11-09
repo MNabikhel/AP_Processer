@@ -384,7 +384,8 @@ the launcher.
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
   `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
   laptop's start; the queue page shows the earlier checks meanwhile and says so), the long downloads (search to
-  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs: `web/pages/downloads.py`, D-169; the jobs in
+  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs, the controls report (D-206):
+  `web/pages/downloads.py`, D-169; the jobs in
   `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the reports' settled
   answers worked out again (`ap_coder/web/refresh.py:Refresher`, D-198: below), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding
@@ -481,12 +482,17 @@ the launcher.
   not invoiced PO lines for the period asked (`changes/purchase_orders` and the summary's generation, 0.2 MB); the
   duplicate audit's pairs, which its page and CSV share (`changes/register` and the generation, 1.7 MB); Spend's
   figures and currencies for the period, currency, categories and rates asked (the generation, 0.6 MB); each
-  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB). Any
+  vendor's lesson counts (`changes/lessons`, 0.9 MB); the Lessons tab's rows (`changes/situations`, 1.1 MB);
+  Activity's approvals (the generation, 148 bytes at 300,000 invoices) and the counts its controls tiles show (the
+  generation and the events' count and newest id; 725 bytes whatever the period, where the whole report is 0.5 MB
+  for 9 days and 18 MB for a year: D-206, B-2073). Any
   invoice written moves the summary's generation, so month-end, the audit and Spend are worked out again after each
   write (Spend and month-end's page, which only show them, at most every 30 s: D-166). Month-end, the audit, Spend,
   the recurring vendors and Insights are worked out once for every process (below).
 
-  **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, month-end's received, not
+  **Worked out once for every process** (D-169, D-175): the duplicate audit's pairs, Exports' JD Edwards check of
+  the invoices ready to export (the generation, `changes/register`, `changes/vendors`, its settings, the day and the
+  tax-rate file's stamp; 0.7 MB for the 1,122 ready at 300,000 invoices: D-206, B-2074), month-end's received, not
   invoiced lines (and each received PO's accruals, by the digest of what they come from, and what it reads of each
   invoice billing them, a row a vendor brought up to date from the vendors' change log: after a change only the
   invoices changed since are decoded again, D-177) and its invoices not in the ERP yet, Spend's figures and
@@ -615,9 +621,9 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | --- | --- | --- | --- |
 | 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI from the code alone (no bundle: `scripts/launch.py:setup_online`) or with `AP_ALLOW_INTERNET=1`; never with `AP_ALLOW_INTERNET=0`; the Azure extra never from PyPI |
 | 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | from the code alone or with `AP_ALLOW_INTERNET=1`, never with `AP_ALLOW_INTERNET=0`; when no Python is found, and asked |
-| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models); an OCR model it fails to give (or far too slowly: over 3 minutes at its rate after 30 s), from its mirror huggingface.co (D-205), kept only with its pinned SHA-256 | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
+| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models); a model it fails to give (or far too slowly: over 3 minutes at its rate after 30 s), from its mirror: huggingface.co for an OCR model, github.com for the table finder (its author's own release; D-205, B-2077), kept only with its pinned SHA-256 | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
 | 4 | `scripts/install.py:update_code` | `git fetch` / `git pull` of a checkout | only with `AP_ALLOW_INTERNET=1` |
-| 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope, huggingface.co (the OCR models' mirror, D-205) | IT's online computer; sets the opt-in for itself |
+| 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope, huggingface.co (the OCR models' mirror, D-205), github.com (the table finder's mirror, B-2077) | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |
 | 7 | `ap_coder/web/server.py:_announce_when_up` | its own `/healthz` | direct, never through a proxy |
 | 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`, `probe`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`), and their backups `AP_LLM_BACKUP_URL` / `AP_PAGE_READER_BACKUP_URL` (D-180) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |

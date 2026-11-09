@@ -70,7 +70,8 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     p.add_argument("--repeat", type=int, default=3, help="timed requests after the warm one (default 3: the median)")
     p.add_argument("--slow", type=float, default=10.0, help="a warm request slower than this is its time (not again)")
     p.add_argument("--only", action="append", default=[], metavar="ROUTE",
-                   help="only this route (as the app names it, e.g. /review/{invoice_id:int}) or address; again for "
+                   help="only this route (as the app names it, e.g. /review/{invoice_id:int}) or address, or an "
+                        "address with a query of its own (e.g. '/activity?start=2025-11-01'); again for "
                         "more")  # fmt: skip
     p.add_argument("--big", type=int, default=BIG_TABLES_MIN, help="a table with this many rows or more is big")
     p.add_argument("--memory-limit", type=float, default=10.0,
@@ -381,7 +382,8 @@ def _run(data: Path, db: Path, out: Path, chosen: dict[str, dict[str, Any]], rep
     ids = _ids(store)
     listed, skipped = addresses(app, ids)
     if only:
-        listed = [(r, a) for r, a in listed if r in only or a in only]
+        own = [(a.split("?", 1)[0], a) for a in only if "?" in a and a not in {a for _, a in listed}]
+        listed = [(r, a) for r, a in listed if r in only or a in only] + own  # (an address with a query of its own too)
     tracer = Tracer()
     results: list[dict[str, Any]] = []
     plans: dict[str, list[dict[str, Any]]] = {}

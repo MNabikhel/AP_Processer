@@ -210,7 +210,7 @@ def plan(args: argparse.Namespace) -> dict:
             {"name": m.name, "url": m.url, "sha256": m.sha256, **({"mirror": m.mirror} if m.mirror else {})}
             for m in offline.bundle_models()
         ],
-        # (an OCR model's mirror, D-205: asked only for a file its site fails to give)
+        # (a model's mirror, D-205: asked only for a file its site fails to give)
         "download_hosts": download_hosts(
             [] if args.no_models else [u for m in offline.bundle_models() for u in (m.url, m.mirror) if u]
         ),

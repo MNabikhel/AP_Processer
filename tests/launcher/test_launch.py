@@ -730,9 +730,9 @@ def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypat
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     state: dict = {}
     launch.ensure_models(first=False, state=state)
-    # PP-OCRv4's 3 models (inside RapidOCR's package, but this folder is empty) and PP-OCRv5's 2, each from its site
-    # and then its mirror (D-205), and the table finder (no mirror)
-    assert len(downloads) == 5 * 2 * 3 + 3 and "Downloading the OCR models" in capsys.readouterr().out
+    # PP-OCRv4's 3 models (inside RapidOCR's package, but this folder is empty), PP-OCRv5's 2 and the table finder,
+    # each from its site and then its mirror (D-205)
+    assert len(downloads) == 6 * 2 * 3 and "Downloading the OCR models" in capsys.readouterr().out
 
 
 def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_models, monkeypatch, capsys):
@@ -754,15 +754,16 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     state: dict = {}
     launch.ensure_models(first=True, state=state)
     out = capsys.readouterr().out
-    # each file 3 times, from its site and then its mirror (D-205; the table finder has none)
-    assert len(downloads) == 11 * 3 and waited == list(fetch_models.RETRY_WAITS) * 11
+    # each file 3 times, from its site and then its mirror (D-205; the table finder's: github.com, B-2077)
+    assert len(downloads) == 12 * 3 and waited == list(fetch_models.RETRY_WAITS) * 12
     assert any("yolov8n_layout" in url for url in downloads)  # the table finder's model too
     assert "URLError" not in out and "Errno" not in out and "Run this again" not in out
     for where in ("www.modelscope.cn", "its mirror, huggingface.co"):
         assert f"Couldn't get ch_PP-OCRv5_mobile_det.onnx from {where}: the connection dropped, tried 3 times." in out
-    assert ("Couldn't download the OCR models from www.modelscope.cn or its mirror, huggingface.co (the connection "
-            "dropped). AP Coder will try again next time it starts; scans are still read with one engine meanwhile."
-            ) in out  # fmt: skip
+    assert "Couldn't get yolov8n_layout_general6.onnx from its mirror, github.com: the connection dropped" in out
+    assert ("Couldn't download the OCR models from www.modelscope.cn or its mirrors, huggingface.co and github.com "
+            "(the connection dropped). AP Coder will try again next time it starts; scans are still read with one "
+            "engine meanwhile.") in out  # fmt: skip
     assert "URLError" in launch.log_path().read_text(encoding="utf-8")  # the details: in the log, for IT
     assert "AP_ALLOW_INTERNET" not in launch.os.environ  # set for the download only
     assert "offline bundle" not in launch.one_engine(True) and "tries again" in launch.one_engine(True)
@@ -770,7 +771,7 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     downloads.clear()
     launch.ensure_models(first=False, state=state)  # the next start: tried again (once each, more briefly)
     out = capsys.readouterr().out
-    assert len(downloads) == 11 and "Downloading the OCR models again" in out
+    assert len(downloads) == 12 and "Downloading the OCR models again" in out
     launch.ensure_models(first=False, state=state)  # the third start today: the next try is tomorrow
     assert "AP Coder will try again tomorrow" in capsys.readouterr().out
     downloads.clear()
@@ -778,7 +779,7 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     assert downloads == []  # not a fourth time today
     state["models_tries"]["day"] = "2000-01-01"  # a later day
     launch.ensure_models(first=False, state=state)
-    assert len(downloads) == 11
+    assert len(downloads) == 12
 
     monkeypatch.setattr(fetch_models.urllib.request, "urlopen", lambda url, timeout=None: io.BytesIO(b"model"))
     monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.stat().st_size > 0)
@@ -789,8 +790,8 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
 
 def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models, monkeypatch, capsys):
     """B-554: on a network that drops www.modelscope.cn silently, every model waited out every try: about 10 minutes
-    of a first setup, 2 of every later start. The site is given up on after its first file, and said once; so is the
-    models' mirror (D-205)."""
+    of a first setup, 2 of every later start. The site is given up on after its first file, and said once; so is each
+    mirror (D-205: the OCR models', then the table finder's, B-2077)."""
     fetch_models, downloads = no_models
     monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
 
@@ -803,14 +804,15 @@ def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models
     launch.ensure_models(first=True, state=state)
     out = capsys.readouterr().out
     hosts = [url.split("/")[2] for url, _t in downloads]
-    assert hosts == ["www.modelscope.cn"] * 3 + ["huggingface.co"] * 3  # one file, 3 tries at each
+    # one file, 3 tries at each (the table finder: its mirror only, www.modelscope.cn not reached)
+    assert hosts == ["www.modelscope.cn"] * 3 + ["huggingface.co"] * 3 + ["github.com"] * 3
     assert {t for _u, t in downloads} == {fetch_models.FIRST_TIMEOUT}
-    assert out.count("Downloading ") == 3  # ("Downloading the OCR models", and the first file only, from each)
-    assert ("AP Coder couldn't reach www.modelscope.cn or its mirror, huggingface.co (a firewall may block them): ask "
-            "IT, or use the offline bundle." in out) and out.count("couldn't reach") == 1  # fmt: skip
+    assert out.count("Downloading ") == 4  # ("Downloading the OCR models", and the first file only, from each)
+    assert ("AP Coder couldn't reach www.modelscope.cn or its mirrors, huggingface.co and github.com (a firewall may "
+            "block them): ask IT, or use the offline bundle." in out) and out.count("couldn't reach") == 1  # fmt: skip
     downloads.clear()
     launch.ensure_models(first=False, state=state)  # a later start: one try at each, briefly
-    assert [t for _u, t in downloads] == [fetch_models.LATER_TIMEOUT] * 2 and downloads[0][0] != downloads[1][0]
+    assert [t for _u, t in downloads] == [fetch_models.LATER_TIMEOUT] * 3 and len({u for u, _t in downloads}) == 3
 
 
 @pytest.fixture
@@ -919,9 +921,91 @@ def test_a_model_its_site_sends_far_too_slowly_comes_from_its_mirror(launch, mod
     assert not result.unreachable and not list((tmp_path / "models").glob("*.part"))  # (it answered: asked next time)
 
 
+def test_the_table_finder_its_site_fails_comes_from_its_mirror_checked_against_its_sha256(launch, tmp_path,
+                                                                                          monkeypatch):  # fmt: skip
+    """B-2077: on 9 Nov 2026 www.modelscope.cn didn't answer for the table finder (WinError 10060, 3 tries) and CI's
+    bundle build stopped ("Could not get every OCR model"): it had no other source. It comes from its mirror, the model
+    author's own release on github.com, the same way, kept only if its pinned SHA-256 matches."""
+    from ap_coder.ops import offline
+
+    fetch_models = launch.fetch_models
+    finder = offline.table_finder_file()
+    release = "https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx"
+    assert finder.mirror == offline.TABLE_FINDER_MIRROR == release
+    assert finder.sha256 == "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95"  # (the same file)
+    data = b"table finder" * 1000  # (a small stand-in, pinned by its own SHA-256)
+    model = offline.ModelFile(finder.name, finder.url, hashlib.sha256(data).hexdigest(), finder.mirror)
+    asked: list[str] = []
+
+    def urlopen(url, timeout=None):
+        asked.append(url)
+        if url == finder.mirror:
+            return io.BytesIO(data)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(fetch_models, "sleep", lambda seconds: None)
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    said: list[str] = []
+    folder = tmp_path / "models"
+    result = fetch_models.fetch(folder, models=(model,), say=said.append, log=lambda _: None)
+    assert result.ok and result.downloaded == [finder.name] and (folder / finder.name).read_bytes() == data
+    assert asked == [finder.url] * 3 + [finder.mirror]
+    assert "  Got yolov8n_layout_general6.onnx from its mirror, github.com, checked against its SHA-256." in said
+    served = {finder.mirror: b"another file"}  # a mirror that gives another file: refused
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", lambda url, timeout=None: io.BytesIO(served[url]))
+    (folder / finder.name).unlink()
+    result = fetch_models.fetch(folder, models=(model,), say=said.append, log=lambda _: None,
+                                skip_hosts={"www.modelscope.cn"})  # fmt: skip
+    assert result.failed == [finder.name] and not list(folder.iterdir())
+
+
+@pytest.mark.parametrize("mirror", ["answers", "unreachable"])
+def test_the_launchers_table_finder_comes_from_its_mirror_when_its_site_never_answers(
+    launch, no_models, tmp_path, monkeypatch, capsys, mirror
+):
+    """B-2077: CI's first start of the pilot launcher on Windows, the OCR models in place, waited out the table finder
+    at www.modelscope.cn ("the connection timed out"), said it couldn't reach www.modelscope.cn, and its next start set
+    the models up again. The table finder comes from its mirror on github.com and the next start sets nothing up; when
+    neither answers, both are named."""
+    fetch_models, downloads = no_models
+    from ap_coder.ops import offline
+
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.stat().st_size > 0)
+    for model in offline.ocr_files():  # (in place)
+        (offline.model_dir() / model.name).write_bytes(b"model")
+    finder = tmp_path / "data_models" / offline.TABLE_FINDER_NAME
+    monkeypatch.setattr(offline, "table_finder_path", lambda: finder if finder.is_file() else None)
+
+    def urlopen(url, timeout=None):
+        downloads.append(url)
+        if mirror == "answers" and url == offline.TABLE_FINDER_MIRROR:
+            return io.BytesIO(b"table finder")
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)
+    out = capsys.readouterr().out
+    hosts = [url.split("/")[2] for url in downloads]
+    assert hosts == ["www.modelscope.cn"] * 3 + ["github.com"] * (1 if mirror == "answers" else 3)
+    if mirror == "unreachable":
+        assert ("AP Coder couldn't reach www.modelscope.cn or its mirror, github.com (a firewall may block them): ask "
+                "IT, or use the offline bundle. AP Coder will try again next time it starts; line items are still "
+                "read without it meanwhile.") in out  # fmt: skip
+        return
+    assert "  Got yolov8n_layout_general6.onnx from its mirror, github.com, checked against its SHA-256." in out
+    assert "OCR models ready: the table finder's downloaded" in out and "couldn't reach" not in out
+    assert finder.read_bytes() == b"table finder" and "models_failed" not in state
+    downloads.clear()
+    launch.ensure_models(first=False, state=state)  # the next start: nothing set up again
+    assert downloads == [] and capsys.readouterr().out == ""
+
+
 def test_a_model_with_no_mirror_is_waited_out_however_slow(launch, model_sites, tmp_path, monkeypatch):
-    """The table finder has no mirror: its site, the only source, is waited out as before (CI's bundle builds got it
-    from the trickling www.modelscope.cn on 8 Nov 2026); far too slow only ever means "try elsewhere"."""
+    """A model with no mirror (one RapidOCR lists with another SHA-256 than those pinned, a newer one): its site, the
+    only source, is waited out as before; far too slow only ever means "try elsewhere"."""
     monkeypatch.setattr(launch.fetch_models, "SLOW_AFTER", 0.2)
     monkeypatch.setattr(launch.fetch_models, "SLOW_LIMIT", 0.5)
     port, served, asked = model_sites
@@ -936,8 +1020,8 @@ def test_a_model_with_no_mirror_is_waited_out_however_slow(launch, model_sites, 
 
 def test_a_trickle_moves_each_ocr_model_to_its_mirror_and_the_last_source_is_waited_out(launch, no_models, monkeypatch,
                                                                                         capsys):  # fmt: skip
-    """The launcher's setup, every host trickling: each OCR model is given up on at www.modelscope.cn and waited out at
-    its mirror; the table finder (no mirror) is waited out at www.modelscope.cn. All come, slowly."""
+    """The launcher's setup, every host trickling: each model is given up on at www.modelscope.cn and waited out at
+    its mirror, the table finder's too (github.com, B-2077). All come, slowly."""
     fetch_models, downloads = no_models
     monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
     monkeypatch.setattr(fetch_models, "SLOW_AFTER", 0.0)
@@ -962,8 +1046,10 @@ def test_a_trickle_moves_each_ocr_model_to_its_mirror_and_the_last_source_is_wai
     launch.ensure_models(first=True, state=state)
     out = capsys.readouterr().out
     hosts = [url.split("/")[2] for url in downloads]
-    assert hosts == ["www.modelscope.cn", "huggingface.co"] * 5 + ["www.modelscope.cn"]  # (the last: the table finder)
-    assert out.count("from www.modelscope.cn: the download was far too slow.") == 5 and out.count("too slow") == 5
+    # (the last: the table finder, from its mirror, B-2077)
+    assert hosts == ["www.modelscope.cn", "huggingface.co"] * 5 + ["www.modelscope.cn", "github.com"]
+    assert out.count("from www.modelscope.cn: the download was far too slow.") == 6 and out.count("too slow") == 6
+    assert "  Got yolov8n_layout_general6.onnx from its mirror, github.com, checked against its SHA-256." in out
     assert "OCR models ready: 5 downloaded, and the table finder's." in out and "models_failed" not in state
 
 
@@ -1034,10 +1120,15 @@ def test_plain_reasons_for_a_failed_download():
     assert fetch_models.plain_reason(refused) == "the download site answered 404"
     assert not fetch_models._retry(error.HTTPError("u", 404, "Not Found", {}, None))  # a refusal: not tried again
     assert fetch_models._retry(error.HTTPError("u", 503, "Busy", {}, None)) and fetch_models._retry(OSError("x"))
-    # The sites named in plain words, the mirror last (D-205).
+    # The sites named in plain words, the mirrors last (D-205), each on its own saying whose it is (B-2077).
     both = fetch_models.sites(["huggingface.co", "www.modelscope.cn", "huggingface.co"])
     assert both == "www.modelscope.cn or its mirror, huggingface.co"
     assert fetch_models.sites(["huggingface.co"]) == "the OCR models' mirror, huggingface.co"
+    assert fetch_models.sites(["www.modelscope.cn", "github.com"]) == "www.modelscope.cn or its mirror, github.com"
+    assert fetch_models.sites(["github.com"]) == "the table finder's mirror, github.com"
+    every = fetch_models.sites(["www.modelscope.cn", "huggingface.co", "github.com"])
+    assert every == "www.modelscope.cn or its mirrors, huggingface.co and github.com"
+    assert fetch_models.sites(["huggingface.co", "github.com"]) == "the models' mirrors, huggingface.co and github.com"
 
 
 def test_the_table_finder_is_downloaded_into_the_data_folder(no_models, tmp_path, monkeypatch, capsys):
@@ -1123,8 +1214,9 @@ def test_the_first_setup_says_which_models_it_downloads_from_where(launch, no_mo
     monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
     launch.ensure_models(first=True, state={})
     out = capsys.readouterr().out
-    _says_the_downloads(out, "www.modelscope.cn (RapidAI's OCR models), or their mirror huggingface.co if that fails")
-    assert out.index("huggingface.co") < out.index("Downloading the OCR models")
+    _says_the_downloads(out, "www.modelscope.cn (RapidAI's OCR models), or their mirrors huggingface.co and github.com "
+                             "if that fails")  # fmt: skip
+    assert out.index("huggingface.co and github.com") < out.index("Downloading the OCR models")
 
 
 def test_the_page_reader_line_says_why_it_cant_be_used(launch, monkeypatch):

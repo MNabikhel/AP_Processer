@@ -172,8 +172,32 @@ def bank_accounts(store: Store) -> dict[str, dict[str, Any]]:
     return {a["code"]: a for a in store.bank_accounts()}
 
 
-def problem_rows(store: Store, problems: dict[int, list[str]]) -> list[dict[str, Any]]:
-    found = {i["id"]: i for i in store.get_invoices(list(problems))}
+READY_FORMAT = "ready-1"  # ``ready_problems``' rows as kept for every process; another when what is kept changes
+
+
+def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]:
+    """The invoices ready to export (``invoice_ids``) that cannot go to JD Edwards, as the page lists them
+    (``problem_rows``): ``jde_check``'s, worked out once for every process (D-169) and kept until an invoice, the
+    vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
+    or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
+    checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
+    text = store.get_setting(jde.SETTING_KEY)  # (checked by the very settings it is kept for, not read again: B-2075)
+
+    def work() -> list[dict[str, Any]]:
+        invoices = store.get_invoices(invoice_ids)
+        problems = jde.validate(invoices, jde.JdeSettings.from_json(text), store.vendor_ids(),
+                                jde.prior_records(store, invoices=invoices))  # fmt: skip
+        return problem_rows(store, problems, invoices)
+
+    asked = (invoice_ids, text, dt.date.today().isoformat(), store.rates_stamp())
+    return store.shared_answer("jde_ready", work, version=READY_FORMAT, changes=("register", "vendors"), asked=asked)
+
+
+def problem_rows(store: Store, problems: dict[int, list[str]],
+                 invoices: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """The page's rows of ``problems`` ({invoice: why it cannot go}), with each invoice's vendor and number (of
+    ``invoices``, when they were read already)."""
+    found = {i["id"]: i for i in (store.get_invoices(list(problems)) if invoices is None else invoices)}
     rows = []
     for inv_id, reasons in problems.items():
         inv = found.get(inv_id) or {}
@@ -259,11 +283,13 @@ def exports_page(
     live = [b for b in batches if not b["undone_at"]]
 
     # Ready to export: with JD Edwards, the invoices that cannot go are shown, not ticked.
-    problems: dict[int, list[str]] = {}
+    problems: list[dict[str, Any]] = []
     blocking: list[str] = []
     if fmt == jde.FORMAT and ready:
-        _, problems, blocking = jde_check(store, [r["id"] for r in ready])
-    rows = [{**r, "blocked": r["id"] in problems or bool(blocking)} for r in ready]
+        problems = ready_problems(store, [r["id"] for r in ready])
+        blocking = jde.settings_problems(jde.load(store))
+    held = {p["id"] for p in problems}
+    rows = [{**r, "blocked": r["id"] in held or bool(blocking)} for r in ready]
 
     # The batch just made, ready to download
     just = next((b for b in live if b["id"] == made), None)
@@ -323,7 +349,7 @@ def exports_page(
         formats={f: SHORT_FORMATS[f] for f in shown_formats(store, fmt) if f in SHORT_FORMATS},
         format_help=exports.FORMATS,
         jde_format=jde.FORMAT,
-        problems=problem_rows(store, problems),
+        problems=problems,
         blocking=blocking,
         selectable=sum(1 for r in rows if not r["blocked"]),
         just=just,

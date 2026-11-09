@@ -220,7 +220,7 @@ def test_lan_access_is_opt_in(monkeypatch, capsys):
 ALLOWED_HOSTS = {
     "www.w3.org",  # the SVG namespace, not a download
     "cognitiveservices.azure.com",  # the Azure sign-in scope, used only when Azure is set up
-    "github.com", "scripts.sil.org",  # the font licence text
+    "github.com", "scripts.sil.org",  # the font licence text; github.com: also the table finder's mirror (B-2077)
     "www.nayuki.io",  # the licence header of the QR code generator kept as published (web/qrcodegen.py, D-146)
     "www.modelscope.cn",  # where scripts/fetch_models.py gets the OCR models at setup; never by the app
     "huggingface.co",  # the OCR models' mirror, when www.modelscope.cn fails one at setup (D-205); never by the app
@@ -368,8 +368,8 @@ def test_only_the_bundle_builder_opts_in_to_the_internet(monkeypatch):
 
 def test_each_pinned_ocr_model_has_its_mirror_at_the_same_path():
     """D-205: the mirror carries the five pinned OCR files at modelscope's paths after ``.../resolve/v3.4.0/``, from
-    RapidOCR's own list or the built-in one; a file with another SHA-256 (a newer model) and the table finder have
-    none."""
+    RapidOCR's own list or the built-in one; a file with another SHA-256 (a newer model) has none. The table finder's
+    is the model author's own release on github.com (B-2077)."""
 
     def unreadable() -> dict:
         raise ImportError("an older RapidOCR")
@@ -380,7 +380,9 @@ def test_each_pinned_ocr_model_has_its_mirror_at_the_same_path():
         path = re.sub(r"^https://www\.modelscope\.cn/models/RapidAI/RapidOCR/resolve/[^/]+/", "", model.url)
         assert model.sha256 and path != model.url and model.mirror == offline.MIRROR_BASE + path
     assert len({m.mirror for m in built_in}) == 5 and offline.MIRROR_BASE.startswith("https://huggingface.co/")
-    assert offline.table_finder_file().mirror is None
+    assert offline.table_finder_file().mirror == offline.TABLE_FINDER_MIRROR
+    assert offline.TABLE_FINDER_MIRROR.startswith("https://github.com/RapidAI/RapidLayout/releases/download/")
+    assert offline.TABLE_FINDER_MIRROR.endswith("/" + offline.TABLE_FINDER_NAME)
     assert offline.mirror_url("0" * 64) is None and offline.mirror_url(None) is None
 
 
@@ -483,12 +485,14 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
         "name": "yolov8n_layout_general6.onnx",
         "url": "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/yolov8n_layout_general6.onnx",
         "sha256": "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95",
-    }  # (no mirror: the OCR models' only, D-205)
+        "mirror": "https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx",
+    }  # (its mirror: the model author's own release, B-2077)
     assert plan["models"][-2]["mirror"] == (
         "https://huggingface.co/pitapo/rapidocr/resolve/main/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer.onnx"
     )
     # for IT's firewall
-    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co"]
+    hosts = ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co", "github.com"]
+    assert plan["download_hosts"] == hosts
     # --mac: one download per platform and Python version, Macs included.
     assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)

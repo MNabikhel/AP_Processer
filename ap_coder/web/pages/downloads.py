@@ -1,8 +1,9 @@
 """The long downloads on the company server, made by its background process (D-169), not by the web worker asked.
 
-Search to Excel took 9-12 s at 100,000 invoices, the Activity CSV 11-16 s, the duplicate audit's first 11-15 s: each
-held its web worker's one running Python thread (the GIL) that long, and the light pages beside it in that worker
-waited. On the server each of ``KINDS`` is a job instead (``core/store/reports.py``):
+Search to Excel took 9-12 s at 100,000 invoices, the Activity CSV 11-16 s, the duplicate audit's first 11-15 s (a
+year's controls report 15 s at 300,000, D-206): each held its web worker's one running Python thread (the GIL) that
+long, and the light pages beside it in that worker waited. On the server each of ``KINDS`` is a job instead
+(``core/store/reports.py``):
 
 * The page's link asks for it with the page's header (``X-AP-Coder``, ``app.js``): the web worker reads what the file
   is of (the page's filters, the person's own default layout) and answers at once with the job, its status and its
@@ -71,6 +72,9 @@ KINDS = {
     "/activity/events.csv": Kind("activity", "csv_params", "write_csv", "text/csv; charset=utf-8", ".csv"),
     "/exports/duplicates.csv": Kind("exports", "duplicates_params", "write_duplicates", "text/csv", ".csv"),
     "/month-end/accruals.csv": Kind("month_end", "accruals_params", "write_accruals", "text/csv", ".csv"),
+    "/activity/controls-report": Kind(
+        "activity", "controls_params", "write_controls", "text/html; charset=utf-8", ".html"
+    ),
 }
 FORMAT = "downloads-1"  # what a job's params are (another: a job an older AP Coder left fails, asked again)
 AT_ONCE = 3  # a person's downloads waiting or being made at once

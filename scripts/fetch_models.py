@@ -11,9 +11,10 @@ Safe to run again: files already there (and intact) are kept.
     python scripts/fetch_models.py --to DIR   # put them in DIR instead (the offline bundle uses this)
     python scripts/fetch_models.py --table-finder  # developers online: also the table finder, into models/
 
-Downloading from the internet (www.modelscope.cn; an OCR model it fails to give, from its mirror huggingface.co, D-205)
-happens only with the developers' / bundle builder's opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py
-sets it itself). A file downloaded is kept only if its SHA-256 is the one pinned for it.
+Downloading from the internet (www.modelscope.cn; a model it fails to give, from its mirror: huggingface.co for the
+OCR models, github.com for the table finder, D-205) happens only with the developers' / bundle builder's opt-in,
+``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py sets it itself). A file downloaded is kept only if its SHA-256
+is the one pinned for it.
 
 The PP-OCRv4 models (and the angle classifier both engines use) come inside RapidOCR's package: they are checked and
 kept, and copied from the bundle only if damaged.
@@ -52,7 +53,9 @@ RETRY_WAITS = (3.0, 10.0)
 # 92 KB/s or more (a slow office link's 1 MB/s brings it in 17 s); at 20 KB/s each OCR model would take 4 to 14 minutes.
 SLOW_AFTER, SLOW_LIMIT = 30.0, 180.0
 sleep = time.sleep  # (tests wait for nothing)
-MIRROR_HOST = urlsplit(offline.MIRROR_BASE).hostname or ""  # the OCR models' mirror, tried when their site fails
+# The models' mirrors (D-205), tried when a model's site fails it, each said in plain words (sites).
+MIRRORS = {urlsplit(offline.MIRROR_BASE).hostname or "": "the OCR models' mirror",
+           urlsplit(offline.TABLE_FINDER_MIRROR).hostname or "": "the table finder's mirror"}  # fmt: skip
 
 
 @dataclass
@@ -105,10 +108,15 @@ def plain_reason(exc: BaseException) -> str:
 
 
 def sites(hosts: list[str]) -> str:
-    """The download sites in plain words, the mirror last: "www.modelscope.cn or its mirror, huggingface.co"."""
-    hosts = sorted(dict.fromkeys(hosts), key=lambda host: host == MIRROR_HOST)
-    return " or ".join((f"its mirror, {h}" if n else f"the OCR models' mirror, {h}") if h == MIRROR_HOST else h
-                       for n, h in enumerate(hosts))  # fmt: skip
+    """The download sites in plain words, the mirrors last: "www.modelscope.cn or its mirror, huggingface.co"; a mirror
+    on its own says whose it is ("the table finder's mirror, github.com")."""
+    hosts = list(dict.fromkeys(hosts))
+    named, mirrors = [h for h in hosts if h not in MIRRORS], [h for h in hosts if h in MIRRORS]
+    if mirrors:
+        one = "its mirror" if named else MIRRORS[mirrors[0]]
+        what = one if len(mirrors) == 1 else "its mirrors" if named else "the models' mirrors"
+        named.append(f"{what}, {' and '.join(mirrors)}")
+    return " or ".join(named)
 
 
 def unreached(exc: BaseException) -> bool:

@@ -1,12 +1,15 @@
 """The big reports as they were before they were made light for a year of invoices (D-156): every invoice, PO or
-event they needed read and decoded on each call. The tests check the reports' results against these on the same
-data; the bodies are the old code as it was (only renamed)."""
+event they needed read and decoded on each call; Activity's counts and Settings → Automation's figures as they
+were read before D-206; a period's events as they were read before B-2076. The tests check the reports' results
+against these on the same data; the bodies are the old code as it was (only renamed)."""
 
 from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 from collections import Counter
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import Request
@@ -15,9 +18,11 @@ from fastapi.responses import HTMLResponse
 from ap_coder.coding.po import CLOSED, billed_by_line, po_label
 from ap_coder.coding.tax import PLACE_OF_SUPPLY
 from ap_coder.core import ui
+from ap_coder.core.memory import AUTONOMOUS_REVIEWER
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.safe import neutralise_sheet, xlsx_row
-from ap_coder.core.store import APPROVED, FAILED, PENDING, Store
+from ap_coder.core.store import APPROVED, FAILED, PENDING, Store, accounts
+from ap_coder.core.store.accounts import _event_filter
 from ap_coder.erp import spend
 from ap_coder.erp.accruals import RECEIVED, Accrual
 from ap_coder.erp.controls import REPORTED, SETUP_ACTIONS, SIGNALS, _codes, same_person_steps
@@ -309,3 +314,101 @@ def workbook_contents(data: bytes) -> list[dict[str, Any]]:
         }
         for ws in wb.worksheets
     ]
+
+
+# --- Before D-206: what Activity and Settings → Automation read every event or outcome for -----------------------
+
+
+def count_events(store: Store, *, actions: Any = None, hidden: Any = (), actor: str | None = None,
+                 since: str | None = None, until: str | None = None) -> int:  # fmt: skip
+    """``Store.count_events``: each event's action looked at, for every event but those of ``hidden``."""
+    where, args = _event_filter(actions, hidden, actor, since, until)
+    with store._conn() as conn:
+        return int(conn.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0])
+
+
+def event_actors(store: Store, hidden: Any = ()) -> list[str]:
+    """``Store.event_actors``: every event's name read off its index for the names."""
+    where, args = _event_filter(hidden=hidden)
+    with store._conn() as conn:
+        rows = conn.execute(
+            "SELECT a.actor FROM (SELECT DISTINCT actor FROM events WHERE actor != '') a WHERE EXISTS "
+            f"(SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})", args)  # fmt: skip
+        return sorted(str(r[0]) for r in rows)
+
+
+def touchless_summary(store: Store, days: int = 30) -> dict[str, Any]:
+    """``Store.touchless_summary``: the audits found among every invoice's outcomes."""
+    since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
+    with store._conn() as conn:
+        processed = conn.execute(
+            "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'processed' AND created_at >= ?", (since,)
+        ).fetchone()[0]
+        touchless = conn.execute(
+            "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'approved' AND actor = ? AND created_at >= ?",
+            (AUTONOMOUS_REVIEWER, since),
+        ).fetchone()[0]
+        audits = conn.execute(
+            "SELECT invoice_id, MIN(correct) AS clean FROM supplier_outcomes WHERE source = 'audit' AND at >= ? "
+            "GROUP BY invoice_id",
+            (since,),
+        ).fetchall()
+        reopened = conn.execute(
+            "SELECT COUNT(DISTINCT r.invoice_id) FROM events r WHERE r.action = 'reopened' AND r.created_at >= ? "
+            "AND EXISTS (SELECT 1 FROM events a WHERE a.invoice_id = r.invoice_id AND a.action = 'approved' "
+            "AND a.actor = ?)",
+            (since, AUTONOMOUS_REVIEWER),
+        ).fetchone()[0]
+    return {
+        "days": days, "processed": processed, "touchless": touchless,
+        "touchless_rate": touchless / processed if processed else None,
+        "audited": len(audits), "audit_errors": sum(1 for r in audits if not r["clean"]), "reopened": reopened,
+    }  # fmt: skip
+
+
+# Activity's controls tiles as ``web/templates/activity.html`` drew them from the whole report (``controls.build``)
+# before B-2073: each list counted there.
+CONTROLS_TILES = """  <div class="apc-tiles">
+    {{ ui.tile("Errors overridden", report.overrides | length, "", "amber" if report.overrides else "green", "approved despite an error") }}
+    {{ ui.tile("Risk signals approved", report.signals | length, "", "amber" if report.signals else "green", "duplicates, vendor, PO") }}
+    {{ ui.tile("Second approvals", report.finals | length, "", "violet", (report.sent_back | length) ~ " sent back or reopened · " ~ (report.waiting | length) ~ " waiting") }}
+    {{ ui.tile("Setup changes", report.setup | length, "", "blue", "accounts, tax, vendors, POs") }}
+    {% if report.same_person is not none %}{{ ui.tile("One person, several steps", report.same_person | length, "", "amber" if report.same_person else "green", "approved, exported, posted") }}{% endif %}
+  </div>"""  # noqa: E501
+
+
+def find_events(
+    store: Store, *, actions: Any = None, hidden: Any = (), actor: str | None = None, since: str | None = None,
+    until: str | None = None, before: int | None = None, matches: Any = None, limit: int | None = None,
+    detail_if: str | None = None,
+) -> Iterator[dict[str, Any]]:  # fmt: skip
+    """``Store.find_events`` before B-2076: each batch of a period's events read by asking for all of them again, the
+    newest below the batch before, sorted; each event's invoice read off the invoices' whole rows."""
+    actions = None if actions is None else list(actions)
+    by_action = since or until or actions is None or (actor is None and store._few_events(actions))
+    where, args = _event_filter(actions, hidden, actor, since, until, by_action=bool(by_action))
+    _EVENTS = ("SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "  # noqa: N806
+               "LEFT JOIN invoices i ON i.id = e.invoice_id")  # fmt: skip
+    select = _EVENTS if detail_if is None else _EVENTS.replace("e.*", "e.id, e.invoice_id, e.action, e.actor, CASE "
+                                                             f"WHEN {detail_if} THEN COALESCE(e.detail, '') END "
+                                                             "AS detail, e.created_at")  # fmt: skip
+    sql = f"{select} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
+    below, found = before if before is not None else 2**63 - 1, 0
+    if limit is not None and limit <= 0:
+        return
+    while True:
+        batch = accounts.EVENTS_BATCH if matches is not None or limit is None else min(accounts.EVENTS_BATCH,
+                                                                                       limit - found)  # fmt: skip
+        with store._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
+        for r in rows:
+            if r["detail"] is not None or detail_if is None:
+                r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+            if matches is None or matches(r):
+                yield r
+                found += 1
+                if limit is not None and found >= limit:
+                    return
+        if len(rows) < batch:
+            return
+        below = rows[-1]["id"]

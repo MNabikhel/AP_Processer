@@ -376,6 +376,78 @@ def test_filter_events_and_controls_period_helpers(store):
     assert controls_period("bad", "2099-01-01", today) == (dt.date(2026, 3, 1), today)
 
 
+def test_activitys_controls_tiles_keep_only_their_counts_however_long_the_period_and_show_what_they_showed(store):
+    """B-2073: Activity kept its controls report whole (``controls.build``: the invoices waiting, those one person
+    approved over the limit with their coding decoded, the events): a year's held 153 MB at 15,000 invoices, past the
+    room of every answer a process keeps (112 MB), so each visit emptied the others and built it again (1.9 s). Only
+    the counts its tiles show are kept, a few hundred bytes whatever the period, and the tiles are what the page's
+    template drew from the whole report (``tests/reports_reference.py``), with the duties' tile and without."""
+    import datetime as dt
+
+    from ap_coder.core.caches import size_of
+    from ap_coder.core.store import summary
+    from ap_coder.erp import controls
+    from ap_coder.web.core import TEMPLATES_DIR, templates
+    from ap_coder.web.pages import activity
+    from tests import reports_reference as old
+    from tests.webclient import add_clean, client_for, gt
+
+    for n in range(40):
+        invoice = add_clean(store, invoice_number=f"OP-{n}")
+        store.approve_invoice(invoice, gt(invoice_number=f"OP-{n}"), "Jordan Lee")
+    store.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
+    store.set_setting("approval_limit", "50", actor="Ann")  # (each approved by one person, over it now)
+    today = dt.date.today()
+    start = today - dt.timedelta(days=365)
+    text = (TEMPLATES_DIR / "activity.html").read_text(encoding="utf-8")
+    tiles = text[text.index('  <div class="apc-tiles">\n    {{ ui.tile("Errors') :]
+    tiles = tiles[: tiles.index("\n  </div>") + len("\n  </div>")]  # (the page's own tiles, as drawn now)
+    for duties in (True, False):
+        report = controls.build(store, start, today, duties=duties)
+        assert len(report["one_person"]) == 40 and len(report["setup"]) == 2
+        kept = activity.controls_report(store, start, today, duties)
+        assert size_of(kept) < 1_000 < size_of(report) // 100, (size_of(kept), size_of(report))
+        assert summary._MEMO.sizes[(str(store.path), "activity_controls")] < 1_000
+        drawn = templates.env.from_string(tiles).render(report=kept)
+        assert drawn == templates.env.from_string(old.CONTROLS_TILES).render(report=report)
+        assert ("One person, several steps" in drawn) is duties and "Setup changes" in drawn
+    page = client_for(store).get(f"/activity?start={start}&end={today}").text  # (a laptop: no duties' tile)
+    assert templates.env.from_string(old.CONTROLS_TILES).render(report=report) in page
+
+
+def test_on_the_server_activitys_tiles_count_a_month_at_most_and_never_the_approvals_over_the_limit(store, monkeypatch):
+    """D-206: a year's tiles took 6.5 s at 300,000 invoices on the server (B-2076 done), where the events recorded all
+    day keep them for moments only (``controls_report``): there they count a month (31 days) at most, and a longer
+    period says to download the report, which the server makes in the background. A laptop counts any period, as
+    before. The approvals one person gave over the limit, which no tile shows, are never worked out for them (8.4 s of
+    a year's report)."""
+    import datetime as dt
+
+    from ap_coder.erp import controls
+    from tests.webclient import client_for, enrol, sign_in, web_settings
+
+    uid = store.add_user("boss", "correct horse battery", role="admin", display_name="Boss")
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)
+    store.set_setting("approval_limit", "50", actor="Ann")
+    monkeypatch.setattr(controls, "one_person", lambda *a, **k: pytest.fail("worked out for the tiles"))
+    server = TestClient(create_app(web_settings(), store, start_reader=False, server=True), base_url="https://localhost",
+                        client=("10.0.0.5", 50000), follow_redirects=False)  # fmt: skip
+    assert sign_in(server, "boss", "correct horse battery").status_code == 200
+    laptop, today = client_for(store), dt.date.today()
+    for days, counted in ((0, True), (30, True), (31, False), (365, False)):
+        start = today - dt.timedelta(days=days)
+        address = f"/activity?start={start}&end={today}"
+        page = server.get(address).text
+        assert ("Setup changes" in page) is counted and ("count a month at most" in page) is not counted, days
+        assert (f'href="/activity/controls-report?start={start}&amp;end={today}" download data-download-job'
+                in page), days  # fmt: skip
+        here = laptop.get(address).text
+        assert "Setup changes" in here and "count a month at most" not in here, days
+    assert "Pick the first and last day" in server.get(f"/activity?start={today}&end={start}").text
+
+
 # --- Learning: suppliers, memory, history, training export ---------------------------------------------------------
 
 

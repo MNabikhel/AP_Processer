@@ -2311,3 +2311,185 @@ def test_the_vendors_page_follows_a_laptop_persons_own_change_at_once(tmp_path, 
     shown = {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries(settled=True)}
     assert shown == {v["vendor_name"]: v["to_review"] for v in store.vendor_summaries()}
     assert shown.get("Brand New Supplier Ltd") == 1
+
+
+def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_process_and_follows_each_change(
+    tmp_path, ground_truth, monkeypatch
+):
+    """D-206: Exports' JD Edwards check of the invoices ready to export (0.6 s at 300,000 invoices with 1,100 ready, at
+    every visit before) is worked out once for every process, and is what checking them afresh gives (``jde_check``,
+    ``problem_rows``) after each change it depends on, whoever made it: the vendor master, the ERP register, an
+    invoice, JD Edwards' settings, the day, and which invoices are asked."""
+    import types
+    from dataclasses import replace
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+
+    worked, rows_of = [], page.problem_rows  # (the shared answer's work: its invoices given, read once)
+    monkeypatch.setattr(page, "problem_rows", lambda s, problems, invoices=None: (
+        worked.append(1) if invoices is not None else None) or rows_of(s, problems, invoices))  # fmt: skip
+    process = _Processes(monkeypatch)
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    ids = [_approved(other, tmp_path, ground_truth, name) for name in ("J-1", "J-2", "J-3")]
+
+    def shown(name: str, asked: list[int] = ids) -> list[dict]:
+        process(name)
+        rows = page.ready_problems(store, asked)
+        assert rows == rows_of(store, page.jde_check(store, asked)[1])
+        return rows
+
+    def reasons(rows: list[dict]) -> str:
+        return " ".join(m for r in rows for m in r["reasons"])
+
+    first = shown("worker 1")
+    assert [r["id"] for r in first] == ids and all(r["an8"] for r in first) and len(worked) == 1
+    assert shown("worker 1") == first and shown("worker 2") == first and len(worked) == 1  # (worker 1's)
+    _plain(store, "INSERT INTO vendors (vendor_key, display_name, erp_id, updated_at) VALUES (?, 'Northwind', '1001', "
+           "?)", vendor_key(ground_truth["vendor_name"]), NOW)  # fmt: skip
+    found = shown("worker 2")
+    assert not any(r["an8"] for r in found) and len(worked) == 2
+    assert shown("worker 1") == found and len(worked) == 2  # (worker 2's)
+    other.import_erp_register([{"vendor_name": ground_truth["vendor_name"], "invoice_number": "J-2",
+                                "invoice_date": ground_truth["invoice_date"],
+                                "total": ground_truth["grand_total"]}])  # fmt: skip
+    assert "already in the ERP (invoice J-2" in reasons(shown("worker 1")) and len(worked) == 3
+    _plain(store, "UPDATE invoices SET final_output = json_set(final_output, '$.invoice_number', 'J-1') WHERE id = ?",
+           ids[2])  # fmt: skip
+    assert f"same supplier and invoice number as AP Coder #{ids[0]}" in reasons(shown("worker 2")) and len(worked) == 4
+    jde.save(other, replace(jde.load(other), gl_date=jde.GL_DATE_EXPORT, open_to=dt.date.today().isoformat()))
+    assert "after the open period" not in reasons(shown("worker 1")) and len(worked) == 5
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+
+    class Tomorrow(dt.date):
+        @classmethod
+        def today(cls) -> dt.date:
+            return tomorrow
+
+    later = types.SimpleNamespace(date=Tomorrow, datetime=dt.datetime, timedelta=dt.timedelta)
+    monkeypatch.setattr(page, "dt", later)
+    monkeypatch.setattr(jde, "dt", later)
+    assert reasons(shown("worker 1")).count("after the open period") == 3 and len(worked) == 6
+    assert shown("worker 2", ids[:1]) != shown("worker 2") and len(worked) == 7  # (another question: its own answer)
+
+
+def test_the_jde_check_of_the_ready_invoices_follows_the_tax_rate_file(tmp_path, ground_truth):
+    """B-2074: with the amount sent gross (Settings → JD Edwards E1, Amounts) the check reads the tax-rate file, the
+    data folder's copy when there is one: one copied in, changed or taken away left the check kept for every process
+    (D-206) as it was until an invoice, a vendor or the register changed, or the next day; a restart too. The rate
+    file's stamp, as ``checks_stamp`` compares it, is in what the answer is for."""
+    from dataclasses import replace
+
+    from ap_coder.core import tax_setup
+    from ap_coder.core.paths import private_dir
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+    from tests.webclient import client_for
+
+    store = Store(tmp_path / "ap.db")
+    ids = [_approved(store, tmp_path, ground_truth, "G-1")]
+    jde.save(store, replace(jde.load(store), amount_mode=jde.AMOUNT_GROSS))
+
+    def reasons() -> str:
+        rows = page.ready_problems(store, ids)
+        assert rows == page.problem_rows(store, page.jde_check(store, ids)[1])
+        return " ".join(m for r in rows for m in r["reasons"])
+
+    client = client_for(store)
+    assert "with the gross amount only" not in reasons() and "Why not" in client.get("/exports?fmt=jde").text
+    own = private_dir() / tax_setup.RATES_FILE
+    own.parent.mkdir(parents=True, exist_ok=True)
+    bundled = tax_setup.DEFAULT_RATES_PATH.read_text(encoding="utf-8")
+    own.write_text(bundled.replace("HST,ON,0.13", "HST,ON,0.15"), encoding="utf-8")  # Ontario's HST at 15%
+    assert "JD Edwards works out 15% tax for ON-HST" in reasons() and "works out 15% tax" in client.get(
+        "/exports?fmt=jde").text  # fmt: skip
+    import os
+
+    own.write_text(bundled.replace("HST,ON,0.13", "HST,ON,0.17"), encoding="utf-8")  # the same file changed in place
+    later = own.stat().st_mtime + 5
+    os.utime(own, (later, later))  # (a later time, whatever the file system's clock steps)
+    assert "JD Edwards works out 17% tax for ON-HST" in reasons() and "works out 17% tax" in client.get(
+        "/exports?fmt=jde").text  # fmt: skip
+    own.unlink()
+    assert "with the gross amount only" not in reasons() and "works out" not in client.get("/exports?fmt=jde").text
+
+
+def test_the_jde_check_of_the_ready_invoices_is_by_the_settings_it_is_kept_for(tmp_path, ground_truth, monkeypatch):
+    """B-2075: the check read JD Edwards' settings for what it is kept for, then again for its work: settings saved in
+    between (another person on Settings → JD Edwards E1, another worker) were what it checked by, kept for the
+    settings before them and shown to every page asking with those. It checks by the very settings it is kept for."""
+    from dataclasses import replace
+
+    from ap_coder.core.memory import vendor_key
+    from ap_coder.erp import jde
+    from ap_coder.web.pages import exports as page
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    ids = [_approved(other, tmp_path, ground_truth, "S-1")]
+    settings = jde.load(store)
+    checked = page.problem_rows(store, page.jde_check(store, ids)[1])
+    overridden = replace(settings, an8_overrides={vendor_key(ground_truth["vendor_name"]): "ABC"})
+    reads = store.get_invoices
+
+    def saved_meanwhile(asked: list[int]) -> list[dict]:  # (the check's work under way: the settings saved)
+        monkeypatch.setattr(store, "get_invoices", reads)
+        jde.save(other, overridden, actor="Ann")
+        return reads(asked)
+
+    monkeypatch.setattr(store, "get_invoices", saved_meanwhile)
+    assert page.ready_problems(store, ids) == checked  # (by the settings it was asked with)
+    assert "supplier number 'ABC'" in page.ready_problems(store, ids)[0]["reasons"][0]  # (asked with the new ones)
+    jde.save(other, settings, actor="Ann")
+    assert page.ready_problems(store, ids) == checked  # (the one kept for the settings before, as they are again)
+
+
+def test_activitys_controls_report_follows_each_event_and_invoice_it_is_worked_out_from(tmp_path, ground_truth):
+    """D-206: the counts of the controls report Activity's tiles show (0.2 s at 300,000 invoices, at every visit
+    before) are kept in each process and are what working the report out afresh gives (``controls.build``) after each
+    event recorded or deleted and each invoice changed, whoever made the change, and for each period asked; the
+    approval limit, which none of them counts by (B-2073), changes nothing."""
+    from ap_coder.erp import controls
+    from ap_coder.web.pages import activity
+
+    store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
+    today = dt.date.today()
+    period = (today - dt.timedelta(days=7), today, True)
+    worked = []
+    none = dict.fromkeys(activity.TILE_COUNTS, 0)
+
+    def shown(start: dt.date, end: dt.date, duties: bool) -> dict:
+        def build(*args, **kwargs):
+            worked.append(1)
+            return real(*args, **kwargs)
+
+        real, controls.build = controls.build, build
+        try:
+            counts = activity.controls_report(store, start, end, duties)
+        finally:
+            controls.build = real
+        report = controls.build(store, start, end, duties=duties)
+        same = report["same_person"]
+        assert counts == {**{name: len(report[name]) for name in activity.TILE_COUNTS},
+                          "same_person": None if same is None else len(same)}  # fmt: skip
+        return counts
+
+    assert shown(*period) == shown(*period) == {**none, "same_person": 0} and len(worked) == 1
+    invoice = _approved(other, tmp_path, ground_truth, "C-1")
+    assert shown(*period)["same_person"] == 0 and len(worked) == 2
+    other.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
+    other.log_event("note", invoice, actor="Ann")
+    assert shown(*period)["setup"] == 1 and len(worked) == 3
+    _plain(store, "UPDATE invoices SET status = 'pending_approval' WHERE id = ?", invoice)  # (no event)
+    assert shown(*period)["waiting"] == 1 and len(worked) == 4
+    _plain(store, "UPDATE invoices SET status = 'approved' WHERE id = ?", invoice)
+    # (the look that brought the summary up to date keeps nothing, the next one does: ``summary_memo``)
+    assert shown(*period)["waiting"] == 0 and shown(*period)["waiting"] == 0 and len(worked) == 6
+    other.create_export_batch([invoice], "csv", actor="Jordan Lee")  # (who approved it)
+    assert shown(*period)["same_person"] == 1 and len(worked) == 7
+    _plain(store, "DELETE FROM events WHERE action = 'vendor_added'")  # (not the newest: counted)
+    assert shown(*period)["setup"] == 0 and len(worked) == 8
+    assert shown(period[0], today - dt.timedelta(days=1), True) == {**none, "same_person": 0} and len(worked) == 9
+    assert shown(today, today, False)["same_person"] is None and len(worked) == 10
+    _plain(store, "INSERT INTO settings (key, value) VALUES ('approval_limit', '100')")  # (no event)
+    assert shown(today, today, False)["same_person"] is None and len(worked) == 10

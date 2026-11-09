@@ -231,7 +231,13 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
                str(data / "ap_coder.db"), "serve", "--server", "--insecure-http", "--host", "127.0.0.1", "--port",
                str(port), "--workers", "2"]  # fmt: skip
     root = Path(__file__).resolve().parents[2]
-    proc = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # The server's window to a file, not a pipe: a worker left running (the server ended before it) holds a pipe
+    # open, and reading it to its end waited for good (Ubuntu CI: the job ended at its 45 minutes, no failure shown).
+    # Its own group of processes, so a failure ends the workers too.
+    window = tmp_path / "server.log"
+    out = window.open("w", encoding="utf-8")
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT, text=True, **group)
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         deadline = time.monotonic() + 90
@@ -244,9 +250,12 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
             except OSError:
                 assert time.monotonic() < deadline and proc.poll() is None
                 time.sleep(0.3)
-        while not (data / "logs" / "access-2.log").exists() and time.monotonic() < deadline:
+        # Each worker opens its access log once it serves, after building its memories (D-204): one may serve while
+        # the other still builds, so both are waited for.
+        logs = [data / "logs" / "access-1.log", data / "logs" / "access-2.log"]
+        while not all(log.exists() for log in logs) and time.monotonic() < deadline:
             time.sleep(0.2)
-        assert (data / "logs" / "access-1.log").exists() and (data / "logs" / "access-2.log").exists()
+        assert all(log.exists() for log in logs)
         while try_lock(data / ".ap_coder_background.lock") is not None:  # the background process holds it
             assert time.monotonic() < deadline
             time.sleep(0.3)
@@ -261,15 +270,24 @@ def test_the_server_runs_several_workers_and_one_background_process_and_stops_th
         t0 = time.monotonic()
         proc.wait(40)
         took = time.monotonic() - t0
-        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {proc.stdout.read()}"
+        assert took < 30 and proc.returncode == 0, f"{took:.1f} s, exit {proc.returncode}: {window.read_text()}"
         assert not (data / ".ap_coder_server.json").exists()
         held = try_lock(data / ".ap_coder_background.lock")
         assert held is not None  # the background process ended with it
         held.close()
+    except BaseException:
+        print("--- the server's window ---", window.read_text(encoding="utf-8", errors="replace"), sep="\n")
+        raise
     finally:
         if proc.poll() is None:
-            proc.kill()
-        proc.communicate()
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+            else:
+                import signal
+
+                os.killpg(proc.pid, signal.SIGKILL)  # (the server and every process it started)
+        proc.wait(30)
+        out.close()
 
 
 def test_a_worker_asked_to_stop_is_no_startup_failure_even_with_windows_exit_code(monkeypatch):
@@ -699,25 +717,42 @@ def test_the_background_process_writes_what_it_does_to_its_own_log_beside_the_da
 def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_thread_s_stack(tmp_path, monkeypatch):
     """Windows CI: the page reader's self-test waited 11 minutes on something no log line names, and no signal can
     ask a Windows process where it is. With AP_STACK_DUMP_SECONDS set (a bench, or IT on a developer's word), the
-    background process writes every thread's stack to logs/background-stacks.log that often; unset, never."""
-    import faulthandler
-    import time
+    background process writes every thread's stack to logs/background-stacks.log that often; unset, never. The
+    dumps run in a process of their own here, as in the background process: Python's faulthandler reads the other
+    threads' frames without stopping them, and in pytest's process (threads of other tests ending meanwhile) a dump
+    ended the run with an access violation on Windows CI."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
 
     from ap_coder.web import server
 
     monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
     assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
-    monkeypatch.setenv(server.STACK_DUMP_ENV, "0.2")
-    handle = server.stack_dumps(tmp_path / "logs")
-    try:
-        path = tmp_path / "logs" / server.STACK_DUMP_LOG
-        deadline = time.monotonic() + 10
-        while "test_server_scale.py" not in path.read_text(encoding="utf-8") and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert "test_server_scale.py" in path.read_text(encoding="utf-8")  # this test's own frame, as it waits
-    finally:
-        faulthandler.cancel_dump_traceback_later()
-        handle.close()
+    script = (
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from ap_coder.web import server\n"
+        "folder = Path(sys.argv[1])\n"
+        "def waiting_for_its_own_stack():\n"
+        "    handle = server.stack_dumps(folder)\n"
+        "    path = folder / server.STACK_DUMP_LOG\n"
+        "    deadline = time.monotonic() + 10\n"
+        "    while ('waiting_for_its_own_stack' not in path.read_text(encoding='utf-8')\n"
+        "           and time.monotonic() < deadline):\n"
+        "        time.sleep(0.1)\n"
+        "    import faulthandler\n"
+        "    faulthandler.cancel_dump_traceback_later()\n"
+        "    handle.close()\n"
+        "waiting_for_its_own_stack()\n"
+    )
+    env = {**os.environ, server.STACK_DUMP_ENV: "0.2"}
+    done = subprocess.run([sys.executable, "-c", script, str(tmp_path / "logs")],
+                          cwd=Path(__file__).resolve().parents[2], env=env, capture_output=True, text=True,
+                          timeout=60)  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert "waiting_for_its_own_stack" in (tmp_path / "logs" / server.STACK_DUMP_LOG).read_text(encoding="utf-8")
 
 
 def test_the_background_process_loads_a_library_while_it_waits_for_its_input_to_close(tmp_path):

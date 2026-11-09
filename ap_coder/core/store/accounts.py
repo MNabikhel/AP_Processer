@@ -11,6 +11,7 @@ import json
 import math
 import sqlite3
 import threading
+from array import array
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,10 @@ _EVENTS = (
     "SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "
     "LEFT JOIN invoices i ON i.id = e.invoice_id"
 )
+# The same, of many events at a time (``find_events``): each invoice's vendor and number off the invoices' summary,
+# which keeps them as they are (``summary.MIRROR``) in its narrow rows, not off each invoice's whole one (its coding,
+# checks and text: a year's 600,000 events, 18 s at 300,000 invoices, B-2076). Read with the summary brought up to date.
+_EVENTS_LISTED = _EVENTS.replace("LEFT JOIN invoices i", "LEFT JOIN invoice_summary i")
 EVENTS_BATCH = 2000  # the events ``find_events`` reads at a time: memory stays flat however many there are
 
 
@@ -182,27 +187,27 @@ class AccountsMixin:
         detail_if: str | None = None,
     ) -> Iterator[dict[str, Any]]:  # fmt: skip
         """Every audit event that matches, newest first and as ``events`` gives them, read a batch at a time (a year of
-        them is never held at once, nor a read kept open while the caller works): of ``actions`` (None: any) and none
-        of ``hidden``, by ``actor``, made from ``since`` up to, not including, ``until`` (ISO days or times), older than
-        event ``before``, and for which ``matches(event)`` holds (what SQL can't ask: the words an event is shown
-        with); ``limit``: that many at most. ``detail_if``: an SQL condition on ``events e``; an event for which it
-        doesn't hold comes with a detail of None, not read nor decoded (a year's report needs few of them, D-156)."""
+        them is never held at once, only a period's ids, 8 bytes each; nor a read kept open while the caller works): of
+        ``actions`` (None: any) and none of ``hidden``, by ``actor``, made from ``since`` up to, not including,
+        ``until`` (ISO days or times), older than event ``before``, and for which ``matches(event)`` holds (what SQL
+        can't ask: the words an event is shown with); ``limit``: that many at most. ``detail_if``: an SQL condition on
+        ``events e``; an event for which it doesn't hold comes with a detail of None, not read nor decoded (a year's
+        report needs few of them, D-156)."""
         actions = None if actions is None else list(actions)
         # Without a period, a page of a person's events comes off their index in order (D-156), and those of common
         # actions off the events newest first (``FEW_EVENTS``), not every one of them read and sorted for each batch.
         by_action = since or until or actions is None or (actor is None and self._few_events(actions))
         where, args = _event_filter(actions, hidden, actor, since, until, by_action=bool(by_action))
-        select = _EVENTS if detail_if is None else _EVENTS.replace("e.*", "e.id, e.invoice_id, e.action, e.actor, CASE "
-                                                                 f"WHEN {detail_if} THEN COALESCE(e.detail, '') END "
-                                                                 "AS detail, e.created_at")  # fmt: skip
+        select = _EVENTS_LISTED if detail_if is None else _EVENTS_LISTED.replace(
+            "e.*", f"e.id, e.invoice_id, e.action, e.actor, CASE WHEN {detail_if} THEN COALESCE(e.detail, '') END "
+            "AS detail, e.created_at")  # fmt: skip
         sql = f"{select} WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?"
         below, found = before if before is not None else 2**63 - 1, 0
         if limit is not None and limit <= 0:
             return  # none asked for (a batch of none would end the loop on no rows: B-1676)
-        while True:
-            batch = EVENTS_BATCH if matches is not None or limit is None else min(EVENTS_BATCH, limit - found)
-            with self._conn() as conn:
-                rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
+
+        def taken(rows: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+            nonlocal found
             for r in rows:
                 if r["detail"] is not None or detail_if is None:
                     r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
@@ -211,7 +216,33 @@ class AccountsMixin:
                     found += 1
                     if limit is not None and found >= limit:
                         return
-            if len(rows) < batch:
+
+        if since or until:
+            # A period's events come off an index by day, not in their order: their ids are read in one go off it, then
+            # the events a batch at a time by id, not all of the period's read, joined and sorted again for each batch
+            # (a year's controls report: 313 s at 300,000 invoices, B-2076).
+            most = -1 if matches is not None or limit is None else limit
+            with self._conn() as conn:
+                ids = array("q", (r[0] for r in conn.execute(
+                    f"SELECT e.id FROM events e WHERE {where} AND e.id < ? ORDER BY e.id DESC LIMIT ?",
+                    (*args, below, most))))  # fmt: skip
+            by_id = f"{select} WHERE {_in_list('e.id')} ORDER BY e.id DESC"
+            for start in range(0, len(ids), EVENTS_BATCH):
+                chunk = json.dumps(ids[start : start + EVENTS_BATCH].tolist())
+                with self._conn() as conn:
+                    self._summary_fresh(conn)
+                    rows = [dict(r) for r in conn.execute(by_id, (chunk,))]
+                yield from taken(rows)
+                if limit is not None and found >= limit:
+                    return
+            return
+        while True:
+            batch = EVENTS_BATCH if matches is not None or limit is None else min(EVENTS_BATCH, limit - found)
+            with self._conn() as conn:
+                self._summary_fresh(conn)
+                rows = [dict(r) for r in conn.execute(sql, (*args, below, batch))]
+            yield from taken(rows)
+            if (limit is not None and found >= limit) or len(rows) < batch:
                 return
             below = rows[-1]["id"]
 
@@ -229,18 +260,39 @@ class AccountsMixin:
         since: str | None = None, until: str | None = None,
     ) -> int:  # fmt: skip
         """How many audit events ``find_events`` gives for these (counted by SQLite, none read)."""
+        hidden = list(hidden)
+        if actions is None and actor is None and not since and not until:
+            # Every event but those of ``hidden`` actions: all of them counted (no row read), less those of ``hidden``
+            # off their index, not each event's action looked at (1.2 million at 300,000 invoices, D-206; an
+            # event's action is never NULL).
+            with self._conn() as conn:
+                if not hidden:
+                    return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+                return int(conn.execute(f"SELECT (SELECT COUNT(*) FROM events) - (SELECT COUNT(*) FROM events e WHERE "
+                                        f"{_in_list('e.action')})", (json.dumps(hidden),)).fetchone()[0])  # fmt: skip
         where, args = _event_filter(actions, hidden, actor, since, until)
         with self._conn() as conn:
             return int(conn.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0])
 
+    def events_stamp(self) -> str:
+        """How many audit events there are and the newest one's id ("count/id"): another once one is recorded or
+        deleted, so what is worked out from them is kept until then (``summary_memo``'s ``asked``, D-206). Read off the
+        table's size and its last row, not each event."""
+        with self._conn() as conn:
+            return str(conn.execute("SELECT (SELECT COUNT(*) FROM events) || '/' || "
+                                    "(SELECT COALESCE(MAX(id), '') FROM events)").fetchone()[0])  # fmt: skip
+
     def event_actors(self, hidden: Iterable[str] = ()) -> list[str]:
         """Everyone the audit events are by (but those of ``hidden`` actions only), by name, each once."""
         where, args = _event_filter(hidden=hidden)
-        # Each name off the index of the events by person (D-156), kept when one of its events is not of ``hidden``.
+        # Each name off the index of the events by person (D-156), the next one after another looked up (not every
+        # event's name read: 1.2 million at 300,000 invoices, D-206), kept when one of its events is not of ``hidden``.
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT a.actor FROM (SELECT DISTINCT actor FROM events WHERE actor != '') a WHERE EXISTS "
-                f"(SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})", args)  # fmt: skip
+                "WITH RECURSIVE a(actor) AS (SELECT MIN(actor) FROM events WHERE actor > '' UNION ALL SELECT (SELECT "
+                "MIN(actor) FROM events WHERE actor > a.actor) FROM a WHERE a.actor IS NOT NULL) SELECT a.actor FROM a "
+                f"WHERE a.actor IS NOT NULL AND EXISTS (SELECT 1 FROM events e WHERE e.actor = a.actor AND {where})",
+                args)  # fmt: skip
             return sorted(str(r[0]) for r in rows)
 
     def event_values(self, action: str, field: str) -> set[str]:
@@ -579,6 +631,13 @@ class AccountsMixin:
             parts = (*_file_stamp(_tax.rates_path()), *conn.execute(_REFERENCE_STAMP).fetchone(),
                      *conn.execute(_CHECKS_STAMP).fetchone())  # fmt: skip
         return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
+
+    @staticmethod
+    def rates_stamp() -> tuple[str, tuple[int, int] | None]:
+        """The tax-rate file in use (the data folder's copy, else the bundled one) with its time and size, as
+        ``reference_data`` and ``checks_stamp`` compare it: another once a rate file is copied in, changed or taken
+        away (an answer worked out from the rates is kept for it, B-2074)."""
+        return _file_stamp(_tax.rates_path())
 
     def _reference_data(self, rates: TaxRateTable) -> ReferenceData:
         gl = self.list_accounts("gl_accounts")

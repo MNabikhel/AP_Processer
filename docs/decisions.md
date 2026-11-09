@@ -4478,3 +4478,110 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
     `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
     `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)
+  - **Amended (B-2077, 9 Nov 2026): the table finder has a mirror too**, the model author's own release on GitHub,
+    `https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx`
+    (`offline.TABLE_FINDER_MIRROR`, on `table_finder_file()`): 12,242,304 bytes, byte for byte the pinned file (its
+    SHA-256 the pinned `927b6edc…8c95`, checked 9 Nov 2026; 12 MB in about a second, the file itself sent from
+    `release-assets.githubusercontent.com` after the redirect). **Why:** with no other source it was waited out at
+    www.modelscope.cn, and that day modelscope didn't answer for it at all (3 tries, WinError 10060): CI's bundle build
+    stopped ("Could not get every OCR model") and the pilot launcher's first start on Windows said it couldn't reach
+    www.modelscope.cn, so its next start set the models up again. It is tried the same way as the OCR models' mirror:
+    only after modelscope fails it (no answer, cut off, the wrong file, or far too slow: the speed floor now applies
+    to it, a source being left), kept only with its pinned SHA-256, and the mirror, the last source, is waited out. The
+    author's own release, at an address that names its version, is a safer copy than a third party's; the SHA-256 is
+    still what makes it safe. The launcher's lines name it ("www.modelscope.cn or its mirror, github.com"; both
+    mirrors: "its mirrors, huggingface.co and github.com"; on its own: "the table finder's mirror, github.com").
+    **What IT must allow** now includes `github.com` (and `release-assets.githubusercontent.com`, where it sends the
+    file), asked only when modelscope fails the table finder; a first setup from GitHub's ZIP already reached
+    github.com for the code. Offline at run time is unchanged: only `scripts/fetch_models.py` downloads, with the
+    opt-in. (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`,
+    `scripts/build_offline_bundle.py`, `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`;
+    `tests/launcher/test_launch.py`, `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`,
+    `tests/offline/test_offline_guard.py`)
+- **D-206** · **Exports, Activity and Settings → Automation answer for one person at 300,000 invoices in under 300 ms:
+  Exports' JD Edwards check and Activity's approvals and controls report kept until what they come from changes,
+  the events counted and their people found off indexes, the touchless audits off an index of their own** (scale
+  goal, target 2; 9 Nov 2026).
+  - **Why:** `bench volume` on the 300,000-invoice seed (final code of phase 8 part 7, 64046fc), median of 3 warm
+    requests, Admin / Clerk: `/exports` 0.88 / 0.89 s and `/exports?fmt=jde` 0.79 / 0.82 s (0.57-0.72 s measured
+    again here), `/activity` 0.51 / 0.73 s, `/activity?q=Birchwood` 0.53 / 0.71 s, `/settings/automation` 0.35 s;
+    300 ms the target. Profiled: Exports checked its 1,122 invoices ready to export for JD Edwards at every visit
+    (each read and decoded twice: 0.55 s; its SQL 70 ms); Activity counted 1.26 million events by looking at each
+    one's action (0.1-0.18 s, twice for a Clerk), read every event's name off their index for the Person list (60-80
+    ms), counted the approvals in the summary (0.22 s) and built this month's controls report (0.2 s); Automation
+    looked for the last 30 days' audits among 3.4 million supplier outcomes (none of them audits: 0.28 s).
+  - **What:**
+    - **Exports' check** (`web/pages/exports.py:ready_problems`): the rows of the invoices that can't go
+      (`problem_rows`, now of the invoices the check read, not read again) are a `shared_answer` (D-169) for the
+      invoices asked, JD Edwards' settings (their text, which the work checks by: B-2075), the day and the tax-rate
+      file's stamp (`asked`; `Store.rates_stamp`, as `checks_stamp` compares it: the amount sent gross reads the
+      rates, B-2074), under the summary's generation, `changes/register` and `changes/vendors`: what the check reads
+      (the invoices, the exported ones and the register by number, the vendor master's ERP IDs; the open period by
+      today). Exact, no settle: which invoices can be ticked is shown as before, and making a batch checks its
+      invoices afresh (`_create_batch`, `jde_check`). The settings' own problems (`settings_problems`) are read at
+      each visit as before. 0.7 MB kept for the 1,122 ready at 300,000 invoices (in each process that shows it,
+      and in `report_answers`).
+    - **Activity's approvals** (`insights.approval_counts`): a `summary_memo` on the generation (any invoice or
+      approval changed), exact. **Its controls report** (`activity.controls_report`): only the counts its tiles show
+      (`TILE_COUNTS`, and `same_person`'s or None without the duties; the template draws them as it drew each list's
+      length), a few hundred bytes whatever the period (B-2073: the whole report of a year was 153 MB at 15,000
+      invoices, past `summary_memo`'s 112 MB), a `summary_memo` on the generation and, asked, the period, the duties
+      and `Store.events_stamp` (the events' count and newest id: events are only ever added; a deletion moves the
+      count). None of the counts is of the approvals over the limit, so the limit and the rates are not asked. The
+      download (`/activity/controls-report`) is built whole and afresh as before.
+    - **Every event but the hidden ones** (`Store.count_events` with `hidden` alone): all the events counted
+      (SQLite's count of a table decodes no row), less those of the hidden actions off `events_action` (an event's
+      action is never NULL): 15 ms for 1.26 million, was 0.1-0.18 s. **The Person list** (`Store.event_actors`): each
+      name after the one before off `events_actor` (a recursive query, one seek a name: 330 names in 2 ms, was 57
+      ms); `actor > ''` gives the names `actor != ''` gave (a TEXT column holds text, bytes or NULL; no text is below
+      '', bytes sort after text), each kept as before when one of its events is not hidden.
+    - **The audits** (`Store.touchless_summary`): a partial index of the audits alone, `supplier_outcomes_audit (at,
+      invoice_id, correct) WHERE source = 'audit'`, made at the start (`_SCHEMA`: a database made before gets it at
+      its next start, one read of the outcomes), read for the window and grouped after (`GROUP BY +invoice_id`:
+      without statistics SQLite would rather walk the invoices' index in order). Small, as the audits are a sample of
+      the touchless invoices; the reviews' outcomes never enter it.
+    - **A period's events** (`Store.find_events` with `since` or `until`: the controls report, Activity's tiles of a
+      period; B-2076): they come off an index by day, not in their order, so each batch of 2,000 asked for all of the
+      period's again, joined to each invoice's whole row, and sorted: the work grew with the square of the period's
+      events (a year's controls report, 596,000 events, 313 s at 300,000 invoices; 90 days 20 s). Their ids are read
+      in one go off that index (8 bytes each kept), then the events a batch at a time by id, each invoice's vendor and
+      number off the invoices' summary, which keeps them as they are (`summary.MIRROR`), brought up to date first:
+      the same events in the same order (`tests/reports_reference.py`). A year's events read in 3.9 s, the whole
+      report built in 15 s (one-person approvals over the limit 8.4 s, the duties 2.3 s).
+    - **A long period's controls report**, still over a report's 3 s (a year's 15 s: the approvals one person gave
+      over the limit are found by reading every approved invoice's coding, 8.4 s, and no summary column is provably
+      the total and currency that check reads): on the company server it is a download its background process makes
+      (`downloads.KINDS`, D-169), as the Activity CSV: the link (`data-download-job`) says how far it got and the file
+      downloads once made; asked without the page's header (a bookmark), it is waited for. A laptop makes it as it is
+      asked for, as before.
+    - **Activity's tiles of a long period**: never the approvals over the limit (`controls.build(..., over=False)`:
+      no tile shows them), and on the company server a month at most (`activity.TILES_MOST_DAYS`, 31 days, the first
+      and last included): a year's tiles still took 6.5 s there, and the events recorded all day keep the kept counts
+      for moments only. A longer period on the server says "The tiles count a month at most on the server" and offers
+      the report's download. Chosen over D-201's "being worked out" for a kept answer: the counts follow every event,
+      so it would be worked out again at nearly every visit (and a page's first ask works it out itself), where a
+      month's are 0.4 s at 300,000 invoices. A laptop counts any period, as before.
+  - **Measured** (`bench volume --only` on the seed, median of 3 warm requests, Admin / Clerk, before → after):
+    `/exports` 0.574 / 0.724 → 0.046 / 0.048 s, `/exports?fmt=jde` 0.706 / 0.589 → 0.045 / 0.048 s, `/activity`
+    0.523 / 0.719 → 0.017 / 0.057 s, `/activity?q=Birchwood` 0.605 / 0.699 → 0.056 / 0.079 s,
+    `/settings/automation` 0.360 → 0.071 s: 9 addresses over target → 0. The pages are the same, byte for byte
+    (`tests/bench/test_seed_volume.py`: against the code before, `tests/reports_reference.py`, nothing kept, after
+    13 changes by another Store or plain SQL). A year (2025-11-09 to 2026-11-09, the code of bb40bf7 → after B-2076
+    and the two above): `/activity/controls-report?start=…&end=…` 316.7 / 317.0 → 16.3 / 15.9 s (now the server's
+    background job, which the bench waits for), `/activity?start=…&end=…` 322.3 / 322.0 → 0.018 / 0.062 s (its tiles
+    not counted on the server); 30 days, `/activity?start=2026-10-10&end=2026-11-09`: 0.020 / 0.073 s (its first
+    look, the counts worked out, 0.39 / 0.48 s).
+  - **Left:** the first look after a change still does the work: Exports' check after any invoice, vendor or
+    register change (0.43-0.50 s here, once for every process), Activity's approvals after any invoice change
+    (0.47-0.60 s, and 0.24-0.28 s for the next look: the look that brought the summary up to date keeps nothing,
+    D-159) and its controls report after any event (0.27-0.29 s). Under a stream of changes these pages cost what
+    they did: nothing there settles. `SELECT COUNT(*) FROM events` still reads the table's pages (4 ms at 1.26
+    million, as the register's count does, 3 ms at 600,000). An event changed in place by plain SQL (AP Coder never
+    changes one) is not seen by the kept controls report until another event is recorded. A year's controls report
+    is still 15 s of the background process's work, most of it the approvals over the limit (each approved invoice's
+    coding read); a laptop's, made in the request, as long for as many invoices.
+  - (`ap_coder/web/pages/exports.py`, `web/pages/activity.py`, `web/templates/activity.html`, `web/pages/downloads.py`,
+    `web/core.py`, `erp/controls.py`, `core/store/accounts.py`, `core/store/capture.py`, `core/store/_base.py`,
+    `bench/volume.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/bench/test_seed_volume.py`,
+    `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`, `tests/reports_reference.py`,
+    `tests/web/test_web_analytics.py`, `tests/web/test_downloads.py`)

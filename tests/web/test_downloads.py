@@ -393,6 +393,44 @@ def test_on_a_laptop_each_download_is_made_as_it_is_asked_for(store, monkeypatch
     assert _jobs(store) == []
 
 
+def test_on_the_server_the_controls_report_is_made_by_the_background_process_a_laptop_makes_it_as_asked(
+    store, monkeypatch
+):
+    """D-206: a year's controls report took 15 s at 300,000 invoices (313 s before B-2076), in the web worker asked.
+    On the server it is a download its background process makes (D-169), the report the web worker made, the duties
+    included; on a laptop it is made as it is asked for, as before."""
+    import datetime as dt
+    import re
+
+    from ap_coder.erp import controls
+
+    store.log_event("vendor_added", actor="Ann", detail={"vendor": "Acme"})
+    today = dt.date.today()
+    first = today - dt.timedelta(days=365)
+    address = f"/activity/controls-report?start={first}&end={today}"
+
+    def said(html: str) -> str:  # (made at its minute)
+        return re.sub(r"Generated \d{4}-\d\d-\d\d \d\d:\d\d", "Generated", html)
+
+    app = _app(store)
+    boss = _client(app, "boss")
+    job = _asked(boss, address)
+    assert job["ok"] and _followed(boss, job["status"])["state"] == "done"
+    report = controls.report_html(controls.build(store, first, today, duties=True))  # (before its download is)
+    made = boss.get(job["file"])
+    assert made.status_code == 200 and made.headers["content-type"].startswith("text/html")
+    named = f'attachment; filename="ap_coder_controls_{first}_{today}.html"'
+    assert made.headers["content-disposition"].startswith(named)
+    assert said(made.text) == said(report) and "and learning (" in made.text and "One person at" in made.text
+    app.state.downloads.stop()
+    monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+    report = controls.report_html(controls.build(store, first, today))
+    here = client_for(store).get(address, headers=PAGE)  # (even with the page's header)
+    assert here.status_code == 200 and here.headers["content-disposition"].startswith(named)
+    assert said(here.text) == said(report)
+    assert [row["kind"] for row in _jobs(store)] == ["/activity/controls-report"]
+
+
 def test_in_a_browser_on_the_server_a_long_download_says_how_far_it_got_then_downloads(chromium, store):
     """The search page's Excel link on the server: the link says the file is being made, then the browser downloads
     it; the laptop's link downloads at once (``app.js``, ``a[data-download-job]``)."""
