@@ -38,7 +38,7 @@ are dated June to October 2026, so their due dates have passed.
 | 4 | **Import invoices** → `samples\demo_day\pacific_BC_GST_PST_PO-77311.pdf` → **Process**, then **Go to the review queue** and open it (the last row) | "The same vendor's next invoice. Nobody touched it: toner and paper to 6000, the monitor to 6010, learned from the approval a minute ago. *Ready to approve*." **Approve & teach**. |
 | 5 | **Import** `…PO-77120_second_notice.pdf`, open it from the review queue | "The vendor sends the same invoice again. AP Coder stops it: *possible duplicate payment*. Approving it anyway takes a tick and a reason, kept in the audit trail." |
 | 6 | **Exports** → Excel workbook → **Export 2 invoices** → **Download batch 1**, open it | "Approved invoices go out in a batch for the ERP: invoices, GL lines and a GL summary. The JD Edwards format is built too: it shows here once it is set up with IT." |
-| 7 | — | "Next: stage 0 connects AP Coder to the company (the pilot computer in server mode, the AP inbox, sign-in, JD Edwards in its test environment, the company's own data), then a live pilot with a small AP team." |
+| 7 | — | "Next: Phase 0 connects AP Coder to the company (the pilot computers in server mode, the AP inbox, sign-in, JD Edwards in its test environment, the company's own data), then Phase 1, a live pilot with up to 10 people." |
 
 ## If something goes wrong
 

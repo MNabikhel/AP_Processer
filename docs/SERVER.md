@@ -7,7 +7,7 @@ offline: AP Coder and LM Studio run on the server and connect to nothing on the 
 Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
 logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
 
-On a Mac (the pilot's Mac mini, with the models on a Mac Studio) AP Coder runs as a LaunchDaemon instead of a
+On a Mac (a Mac mini, one of the pilot's layouts in section 1) AP Coder runs as a LaunchDaemon instead of a
 scheduled task: [section 14](#14-on-a-mac) says what is different there; the rest of this guide holds for it too.
 
 In this guide:
@@ -31,13 +31,16 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 
 | | Minimum | Better |
 |---|---|---|
-| Windows | Windows Server 2019, 2022 or 2025, 64-bit (or Windows 11 Pro: below) | |
+| Windows | Windows Server 2019, 2022 or 2025, 64-bit (Windows 11 Pro: its licence, below) | |
 | Processor | 8 cores (the OCR of scans runs on the processor) | 16 cores |
 | Memory | 32 GB | 64 GB |
 | Graphics card (for LM Studio) | NVIDIA with 12 GB of VRAM (an estimate) | 16 GB of VRAM or more (an estimate) |
 | Disk | 60 GB free on an SSD | 200 GB (about 1 TB for 25,000 invoices a month: below) |
 | Python | Python 3.12, 64-bit, installed for all users | |
 | LM Studio | 0.4.8 or newer, with its models copied in | |
+
+This table is for 25 people or more, with LM Studio on the same server (the last table below). A pilot of up to 10
+people runs on 4 vCPUs and 16 GB, measured, with its models on a machine of their own (*The pilot* below).
 
 Why these numbers:
 
@@ -46,7 +49,8 @@ Why these numbers:
   the room each needs for its context (16,384 and 20,480 tokens). Estimated from those sizes (none of the
   graphics-card figures in this section has been measured on a graphics card): on 8 GB of VRAM they spill into the
   server's memory and are slower; 12 GB holds them, 16 GB leaves room. Without a graphics card AP Coder still works,
-  but reading each page takes minutes on the processor instead of seconds (estimated) on a graphics card.
+  but reading each page takes minutes on the processor (4.5 to 5.5 minutes on 4 vCPUs, measured: *The pilot* below)
+  instead of seconds (estimated) on a graphics card.
 - **Disk**: each AP Coder version is 2 to 3 GB (its packages and OCR models), and two are kept (the current one and
   the previous one, to go back to). The models are about 10 GB. The data grows with the invoices: the database about
   34 KB an invoice (measured: 3.5 GB at 100,000 invoices, 10 GB at 300,000, a year at 25,000 a month), the invoice
@@ -80,21 +84,21 @@ Why these numbers:
   big database takes longer before the dashboard answers (below).
   Memory over the hour at 300,000: each web worker 0.7 to 0.75 GB at the end, flat in the second
   half (its caches bounded, D-195), the background process about 0.5 GB, each capture process 320 MB. 200 people at once
-  on these 4 cores (50 a core, four times what 400 people put on each of the next stage's 32) fill them: 95%
+  on these 4 cores (50 a core, four times what 400 people put on each of Phase 2's 32) fill them: 95%
   within 5.3 s, no error.
 
-  *Estimated* for the next stage (from those numbers: 100 people on 4 cores is twice the load a core of 400 people on
-  32; to be measured on the real server):
+  *Estimated* for Phase 2, the company server (from those numbers: 100 people on 4 cores is twice the load a core of
+  400 people on 32; to be measured on the real server), beside the pilot's (measured: below):
 
-  | | The pilot: 3 to 5 people | The next stage: 300 to 400 people, 25,000 invoices a month |
+  | | The pilot (Phase 1): up to 10 people | Phase 2: 300 to 400 people, 25,000 invoices a month |
   |---|---|---|
-  | AP Coder | a Mac mini (step 14) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
-  | The AI models | LM Studio on a Mac Studio, the Mac mini's own as the backup (step 8, point 5) | the same machines |
+  | AP Coder | a small Windows Server virtual machine, 4 vCPUs, 16 GB: 4 web workers by default (measured: below); or a Mac mini (step 14) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
+  | The AI models | LM Studio on a machine of their own on the company network, with a graphics card or Apple silicon (step 8, point 5) | a model machine of their own, the pilot's as its backup (step 8, point 5) |
   | Disk | 200 GB | about 1 TB on an SSD: a year's database 10 GB and its backups about 320 GB, a year's invoice files 150 GB, and room to grow |
-  | Reading 1,250 invoices a day | | in the review queue 64 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (stage 0 measures the Mac Studio; `--llm-parallel`, step 8) |
+  | Reading the day's invoices | 60 (half of them scans) in the review queue 4.1 minutes after they came, every page read 30 minutes after (measured: below, the model machine's speed assumed) | 1,250: in the review queue 64 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (Phase 0 measures the model machine; `--llm-parallel`, step 8) |
 
-  On one Windows Server with LM Studio on it instead (the first layout; the graphics card's rows estimated from an
-  assumed 15 s a page, not measured on a graphics card):
+  For 25 people or more, on one Windows Server with LM Studio on it (the layout first planned, D-111; the graphics
+  card's rows estimated from an assumed 15 s a page, not measured on a graphics card):
 
   | | 5,000 invoices a month, 25 people | 10,000 invoices a month, 50 people at once |
   |---|---|---|
@@ -104,13 +108,43 @@ Why these numbers:
   | The graphics card's day | 2 to 3 hours of reading (about 500 pages a working day, every invoice read) | 4 to 6 hours; about half with clean digital PDFs left out (step 6) |
 
   The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
-- **Windows 11 Pro** also runs the server mode (on the pilot's laptop or desktop, for example): the service is a Task Scheduler
-  task (step 6), not a Windows service, and Task Scheduler is part of Windows 11 too. CI tests AP Coder on Windows
-  Server only (GitHub's Windows machines; the task itself is not registered there, its commands are checked), so run
-  `service install` and `service status` on that computer before staff use it. Windows 11 Pro allows at most 20
-  devices connected to it at once; whether a laptop or desktop may serve the pilot is the company's IT's decision.
-  A laptop serving others stays docked and plugged in, with sleep off and its battery set to stop charging at about
-  80% (its battery then covers a power cut).
+- **The pilot: up to 10 people** (D-207). *Measured* on GitHub's Windows Server machine (4 vCPUs, 16 GB, no graphics
+  card), the size of the smallest server a pilot would get (`.github/workflows/pilot-size.yml`, 9 Nov 2026):
+  - **10 simulated people for 10 minutes on 20,000 invoices** (a year of a pilot's), the service's 4 web workers, the
+    benches' stand-in for the models: half the pages within 223 ms, 95% within 740 ms, 99% within 1.56 s;
+    approvals and checks 95% within 156 ms; no error and no "database is locked". All of AP Coder's processes
+    together used about 2.3 GB of memory (each web worker 0.25 to 0.29 GB, the background process 0.6 GB).
+  - **A day's 60 invoices (half of them scans) dropped at once**, the real OCR on those 4 vCPUs: all 60 in the
+    review queue in 4.1 minutes. With the stand-in model taking a graphics card's assumed 8 to 20 s a page, two at
+    once, every page was read and reviewed 30 minutes after the drop.
+  - **Without a graphics card** (the release check of `v0.3.0-pilot9`, 4 Nov 2026, `.github/workflows/release.yml`:
+    the same kind of machine, the real models in LM Studio, OvisOCR2 Q8_0 and Qwen 3.5 9B Q4_K_M): a page read in
+    about 4.5 to 5.5 minutes, a chat answer in 3.5 to 8.5 minutes; the ten sample invoices took 76 minutes. So a
+    pilot reading 50 to 60 invoices a day needs a graphics card (about 16 GB of VRAM, or Apple silicon with enough
+    memory) on the machine that runs the models. Its speed there is estimated (above), and the burn-in measures it.
+
+  Three layouts, each running AP Coder as it is (docs/PILOT_PLAN.md):
+  - **(a) A small Windows Server virtual machine on the company's own servers for AP Coder** (4 vCPUs, 16 GB, 200 GB
+    of disk), **and one small machine on the company network that only runs the AI models** in LM Studio, with a
+    graphics card or Apple silicon (step 8; on a Mac, step 14). AP Coder reaches it at `AP_LLM_BASE_URL` and
+    `AP_PAGE_READER_BASE_URL` (step 8, point 5), and in Phase 2 it becomes the backup model machine (D-180). The
+    recommended layout: the data stays on the company's own servers, it needs no cloud quota and no link to a
+    cloud, and it is Phase 2's layout, smaller. On Macs, for example: AP Coder on a Mac mini (step 14), the models
+    on a Mac Studio beside it, the Mac mini's own LM Studio as their backup.
+  - **(b) One Windows Server virtual machine with a graphics card in a cloud region in the company's country**,
+    everything on it (LM Studio as in step 8). It needs a site-to-site link to the company network, for JD Edwards
+    and the AP inbox's flow, and the cloud's quota for a virtual machine with a graphics card, asked for first.
+  - **(c) One machine for everything:** a Mac mini as a macOS service (step 14), its own LM Studio running the
+    models; or a Windows PC with a graphics card, which then needs Windows Server (Windows 11 Pro's licence, below).
+- **Windows 11 Pro** runs the server mode too, technically: the service is a Task Scheduler task (step 6), not a Windows
+  service, and Task Scheduler is part of Windows 11 too. But Microsoft's Windows 11 licence (its OEM terms of April
+  2024, sections 2(c)(v) and 2(d)(iii)) says you may not "use the software as server software or to operate the device
+  as a server", except that up to 20 other devices may use its file, print, Internet information, connection-sharing and
+  telephony services. Whether serving AP Coder to the team from it is allowed is the company's licensing decision; for
+  anyone but the computer's own user, the safe choice is Windows Server. CI tests AP Coder on Windows Server only
+  (GitHub's Windows machines; the task itself is not registered there, its commands are checked), so on Windows 11 run
+  `service install` and `service status` on that computer before staff use it. A laptop serving others stays docked and
+  plugged in, with sleep off and its battery set to stop charging at about 80% (its battery then covers a power cut).
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.
@@ -413,7 +447,9 @@ then add everyone else (step 10).
 ## 8. LM Studio on the same server
 
 LM Studio reads the pages and suggests GL accounts (docs/LM_STUDIO.md). On the server it runs headless, without its
-window, started at boot like AP Coder.
+window, started at boot like AP Coder. LM Studio's own system requirements (lmstudio.ai/docs) list Windows, macOS and
+Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.yml`) runs its headless server
+(llmster) on GitHub's Windows Server machines for each pilot release, on the processor (no graphics card there).
 
 1. **Install LM Studio** (0.4.8 or newer) as the account that will run it. LM Studio installs per user, and keeps its
    models in that user's `.lmstudio\models` folder. Use `APCoderService`: sign in as it once by Remote Desktop for the
@@ -467,6 +503,26 @@ window, started at boot like AP Coder.
    vLLM batches best but runs on Linux only (WSL2 on Windows Server is possible, not covered here). The KV cache of 4
    requests needs memory: with 16 GB of VRAM keep 4 for the chat model and 2 for OvisOCR2 (`--llm-parallel 2`), with
    24 GB or more, 4 for both.
+7. **LM Studio's log holds invoice content.** Its server log, in the folder `server-logs` of the account LM Studio
+   runs as (`%USERPROFILE%\.lmstudio\server-logs`; on a Mac or Linux `~/.lmstudio/server-logs`: the folder the
+   release check copies), keeps each model answer in full and the start and end of each request: an invoice's text,
+   its vendor's name, its amounts. So the machine that runs the models holds invoice content, as AP Coder's data
+   folder does: encrypt its disk (BitLocker; FileVault on a Mac, section 14), keep it as physically secure as AP
+   Coder's server, and keep the logs a short time. LM Studio's documentation names no setting for how long it keeps
+   them (checked 9 Nov 2026), so delete them on a schedule: for example, every night, those older than 7 days, with
+   `C:\APCoder\lm-studio-logs.cmd` holding (`%USERPROFILE%` is the profile of the account it runs as, as in point 3):
+
+   ```bat
+   forfiles /p "%USERPROFILE%\.lmstudio\server-logs" /s /d -7 /c "cmd /c if @isdir==FALSE del /q @path"
+   ```
+
+   and its task, as that account:
+
+   ```bat
+   schtasks /create /tn "LM Studio logs" /sc daily /st 02:00 /ru APCoderService /rl LIMITED /tr C:\APCoder\lm-studio-logs.cmd
+   ```
+
+   On a Mac, section 14 has the same with launchd.
 
 ## 9. Backups
 
@@ -889,11 +945,11 @@ on another disk).
 
 ## 14. On a Mac
 
-The pilot runs AP Coder on a Mac mini, and its AI models on a Mac Studio beside it. On a Mac, AP Coder's service is a
-*LaunchDaemon*: launchd, the part of macOS that runs its services, starts it at boot under its own account, whether
-anyone is logged in or not. Everything else in this guide holds, with the Mac's paths: the certificate (step 3), the name staff
-type (step 4), the first admin (step 7), backups (step 9), users (step 10), updates (step 11). Why a LaunchDaemon, and
-how it was chosen: docs/decisions.md, D-186.
+The pilot may run AP Coder on a Mac mini (section 1's layouts): with its AI models on a Mac Studio beside it, or on the
+Mac mini itself. On a Mac, AP Coder's service is a *LaunchDaemon*: launchd, the part of macOS that runs its services,
+starts it at boot under its own account, whether anyone is logged in or not. Everything else in this guide holds, with
+the Mac's paths: the certificate (step 3), the name staff type (step 4), the first admin (step 7), backups (step 9),
+users (step 10), updates (step 11). Why a LaunchDaemon, and how it was chosen: docs/decisions.md, D-186.
 
 In this section `/Library/APCoder/APProcessor` is the AP Coder folder, `/Library/APCoder/current` a link to the
 AP Coder folder that runs (the service runs that link; `server-update` points it at a new version), `/Library/APCoderData`
@@ -1086,6 +1142,26 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    status` and `... lms ps` (the model loaded); on the Mac mini, AP Coder's *Settings* → *Reading* → *Check again*.
    AP Coder is told where it is in the data folder's `.env` (`AP_LLM_BASE_URL=http://10.0.0.20:1234/v1`, and
    `AP_PAGE_READER_BASE_URL`), and the backup machine as in step 8, point 5.
+
+5. **Its logs, deleted on a schedule** (they hold invoice content: step 8, point 7; its disk encrypted with
+   FileVault, *The Mac itself* above says what that means at a restart). A LaunchDaemon that deletes, every night at
+   2:00, the logs older than 7 days, `/Library/LaunchDaemons/com.apcoder.lmstudio-logs.plist` (each `<account>`
+   replaced as in point 2), loaded as in point 3:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0">
+   <dict>
+     <key>Label</key><string>com.apcoder.lmstudio-logs</string>
+     <key>ProgramArguments</key><array>
+       <string>/usr/bin/find</string><string>/Users/<account>/.lmstudio/server-logs</string>
+       <string>-type</string><string>f</string><string>-mtime</string><string>+7</string><string>-delete</string>
+     </array>
+     <key>UserName</key><string><account></string>
+     <key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+   </dict>
+   </plist>
+   ```
 
 ### The Mac mini's burn-in
 

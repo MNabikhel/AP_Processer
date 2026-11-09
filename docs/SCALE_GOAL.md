@@ -1,8 +1,8 @@
 # Goal: AP Coder ready for 400 people and 25,000 invoices a month (measured, clean, efficient; 36+ hours)
 
 ## Why
-AP Coder works today for one person on a laptop, or about 50 people on a small server. Stage 2 needs 300–400 people
-at once and about 25,000 invoices a month (1,250 a day, 300,000 a year):
+AP Coder works today for one person on a laptop, or about 50 people on a small server. The rollout's Phase 2 (after
+the pilot) needs 300–400 people at once and about 25,000 invoices a month (1,250 a day, 300,000 a year):
 - AP Coder on one Windows VM, 32 vCPU and 64 GB;
 - the AI models on a Mac Studio over the company network, with the Mac mini as backup;
 - the pilot itself on a Mac mini (macOS).
@@ -36,7 +36,7 @@ This goal makes the code ready for that load, proves it with measurements, and l
    - **The targets:** pages p50 ≤ 300 ms, p95 ≤ 1.5 s, p99 ≤ 3 s; actions (approve, check, park) p95 ≤ 1 s; zero
      errors, zero "database is locked"; memory flat over an hour.
    - **Why 100 here:** it is twice the per-core load of 400 people on the 32-vCPU VM. The VM figure is a projection
-     until it is measured on the real server in stage 2.
+     until it is measured on the real server in the rollout's Phase 2.
    - **Stretch:** 200 people here.
 2. **Volume:** every page, search, report and export on the 300,000-invoice database (1M+ events, 600k JDE
    register rows):
@@ -261,7 +261,7 @@ This goal makes the code ready for that load, proves it with measurements, and l
 - **Job cost coding:** its own goal, once the company's job, cost code and cost type structure is known.
 - **Releases and tags:** none (see the decisions above).
 - **Anything that needs the real hardware or JDE:** the Mac Studio's real speed, the Mac mini burn-in and the DV
-  environment. They are measured in stage 0 and stage 2.
+  environment. They are measured in the rollout's Phase 0 and Phase 2.
 
 ## If time is left
 - Paging the finance hub's reads and making them truly incremental;

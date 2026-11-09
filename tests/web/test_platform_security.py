@@ -258,9 +258,10 @@ def company_dns(monkeypatch):
 
 @pytest.mark.parametrize("address, here", [("10.40.2.15", True), ("127.0.0.1", True), ("93.184.216.34", False)])
 def test_a_company_name_is_judged_by_the_address_it_resolves_to(company_dns, address, here):
-    """B-1605: a model server named by the company's DNS (the Mac Studio of stage 2, "macstudio.corp.acme-foods.ca")
-    was refused unless internet access was on: only bare names, .local, .lan and .home were judged by the addresses
-    they resolve to. A name under one of the company's DNS domains (AP_COMPANY_DOMAINS) is now judged so too."""
+    """B-1605: a model server named by the company's DNS (the Mac Studio of the rollout's Phase 2,
+    "macstudio.corp.acme-foods.ca") was refused unless internet access was on: only bare names, .local, .lan and .home
+    were judged by the addresses they resolve to. A name under one of the company's DNS domains (AP_COMPANY_DOMAINS)
+    is now judged so too."""
     from ap_coder.ai import local_llm
     from ap_coder.core import config
 

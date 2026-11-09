@@ -92,6 +92,20 @@ page reader stays OvisOCR2.
 On an 8 GB graphics card Gemma and OvisOCR2 together (about 8.2 GB) spill a little into the computer's memory:
 slightly slower, nothing else. To go back to Qwen, load Qwen and unload Gemma.
 
+## LM Studio's log holds invoice content
+
+LM Studio's server log (`~/.lmstudio/server-logs`; on Windows `%USERPROFILE%\.lmstudio\server-logs`) keeps each
+model answer in full and the start and end of each request: an invoice's text, its vendor's name, its amounts. So any
+computer that runs the models holds invoice content, as AP Coder's data folder does: keep its disk encrypted
+(BitLocker on Windows, FileVault on a Mac), a model machine as physically secure as AP Coder's server, and the logs a
+short time. LM Studio's documentation names no setting for how long it keeps them (checked 9 Nov 2026): delete them on
+a schedule ([SERVER.md](SERVER.md) section 8, point 7, with a Task Scheduler task; on a Mac, section 14's launchd
+job).
+
+LM Studio's system requirements list Windows, macOS and Linux, not Windows Server. AP Coder's release check
+(`.github/workflows/release.yml`) runs LM Studio's headless server (llmster) on GitHub's Windows Server machines for
+each pilot release, on the processor.
+
 ## Troubleshooting
 
 | What you see | What to do |
