@@ -984,6 +984,12 @@ jobs:
           if [ "$WHERE" = over ]; then B="$A"; else B="$T/AP Coder new/APProcessor"; fi
           bundle=(); if [ "$HOW" = launcher ]; then bundle=(--bundle); fi  # its offline bundle, else GitHub's ZIP
           ci extract "${{ matrix.old.sha }}" "$A" "${bundle[@]}"
+          # Its offline bundle held the OCR models in models/, which its launcher copies into place. They are put
+          # there by today's fetch_models.py, each checked against its pinned SHA-256, from www.modelscope.cn or its
+          # mirror (D-205): PR 8's own download has no mirror, and a slow modelscope stalled its start for 20 minutes.
+          if [ "$HOW" = launcher ]; then
+            AP_ALLOW_INTERNET=1 python "$GITHUB_WORKSPACE/scripts/fetch_models.py" --to "$A/models"
+          fi
           AP_ALLOW_INTERNET=1 ci install "$A" --how "$HOW"
           old_port=""
           if [ "$HOW" != cli ]; then
