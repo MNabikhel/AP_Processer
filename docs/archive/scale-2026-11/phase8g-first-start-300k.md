@@ -13,8 +13,9 @@ memories before it serves (25 s at most).
 | 1 (a first version) | 6696496 | Month-end's 3 of 14 in 121.3 s (bound 120 s) | 8-12 of 22 steps, cut at 15 s | 15,190 | 115 ms / 686 ms / 2.91 s | 347 ms | 0 | 0, 0 |
 | **2** | 24391d1 | **14 of 14 in 92.3 s** | **17, in about 13 s** | 14,784 | **132 ms / 1.06 s / 2.49 s** | **508 ms** | **0** | **0, 0** |
 | **3 (the final code)** | f6ce662 | **14 of 14 in 163.4 s** | **17, in 11.5-12.0 s** | 14,849 | **106 ms / 615 ms / 1.48 s** | **322 ms** | **0** | **0, 0** |
+| **4 (main after part 7, a third sample)** | 64046fc | **14 of 14 in 38.1 s** | **17** | 15,130 | **119 ms / 928 ms / 2.09 s** | **409 ms** | **0** | **0, 0** |
 
-**Target 1 is met in a database's first 10 minutes at 300,000 invoices** (runs 2 and 3; 24391d1 and f6ce662 differ
+**Target 1 is met in a database's first 10 minutes at 300,000 invoices** (runs 2, 3 and 4: p99 2.49, 1.48 and 2.09 s; 24391d1 and f6ce662 differ
 only in what a database that had the reports does: it is served at once). The server answers once that is done: 1.5
 to 3 minutes after its first start at 300,000 (the reports 92-163 s, then the workers' 12-13 s), once in a database's
 life. A restart or an update finds the reports kept (any version) and is served at once, its workers 12-13 s.
