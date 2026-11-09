@@ -369,11 +369,14 @@ def test_the_dry_run_names_every_address_the_build_downloads_from(capsys, monkey
     assert build_offline_bundle.main(["--dry-run", "--python", "3.12"]) == 0
     out = capsys.readouterr()
     plan = json.loads(out.out)
-    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co"]
+    hosts = ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co", "github.com"]
+    assert plan["download_hosts"] == hosts
     assert all(m["url"].startswith("https://") for m in plan["models"])
     mirrors = [m["mirror"] for m in plan["models"] if "mirror" in m]
-    assert len(mirrors) == 5 and all(u.startswith("https://huggingface.co/") and u in out.err for u in mirrors)
-    assert "pypi.org, files.pythonhosted.org, www.modelscope.cn, huggingface.co" in out.err and "LM Studio" in out.err
+    assert len(mirrors) == 6 and all(u in out.err for u in mirrors)
+    assert all(u.startswith("https://huggingface.co/") for u in mirrors[:5])
+    assert mirrors[5].startswith("https://github.com/RapidAI/RapidLayout/")  # the table finder's (B-2077)
+    assert ", ".join(hosts) in out.err and "LM Studio" in out.err
 
 
 def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):

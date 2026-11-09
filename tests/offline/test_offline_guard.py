@@ -226,6 +226,9 @@ def test_python_written_html_names_no_other_host():
                     continue  # the models' origin, for the bundle builder (fetch_models: AP_ALLOW_INTERNET=1)
                 if rel == "ap_coder/ops/offline.py" and url.startswith("https://huggingface.co/pitapo/rapidocr/"):
                     continue  # the OCR models' mirror (D-205), the same: fetch_models only, AP_ALLOW_INTERNET=1
+                finder = "https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx"
+                if rel == "ap_coder/ops/offline.py" and url == finder:
+                    continue  # the table finder's mirror (B-2077), the same: fetch_models only, AP_ALLOW_INTERNET=1
                 if rel == "ap_coder/ai/inference.py" and "cognitiveservices.azure.com/.default" in url:
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
                 task = "http://schemas.microsoft.com/windows/2004/02/mit/task"
@@ -459,7 +462,8 @@ def test_the_ocr_models_are_copied_never_downloaded(offline_guard, tmp_path, mon
     monkeypatch.setitem(sys.modules, name, fetch_models)
     spec.loader.exec_module(fetch_models)
     _bait(monkeypatch)
-    for url in ("https://www.modelscope.cn/x.onnx", offline.MIRROR_BASE + "x.onnx"):  # the models' site, its mirror
+    # the models' site, its mirrors
+    for url in ("https://www.modelscope.cn/x.onnx", offline.MIRROR_BASE + "x.onnx", offline.TABLE_FINDER_MIRROR):
         with pytest.raises(PermissionError):
             fetch_models.download(url, tmp_path / "x.onnx")
     source = tmp_path / "models"

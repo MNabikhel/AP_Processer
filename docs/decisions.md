@@ -4478,6 +4478,26 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
     `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
     `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)
+  - **Amended (B-2077, 9 Nov 2026): the table finder has a mirror too**, the model author's own release on GitHub,
+    `https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx`
+    (`offline.TABLE_FINDER_MIRROR`, on `table_finder_file()`): 12,242,304 bytes, byte for byte the pinned file (its
+    SHA-256 the pinned `927b6edc…8c95`, checked 9 Nov 2026; 12 MB in about a second, the file itself sent from
+    `release-assets.githubusercontent.com` after the redirect). **Why:** with no other source it was waited out at
+    www.modelscope.cn, and that day modelscope didn't answer for it at all (3 tries, WinError 10060): CI's bundle build
+    stopped ("Could not get every OCR model") and the pilot launcher's first start on Windows said it couldn't reach
+    www.modelscope.cn, so its next start set the models up again. It is tried the same way as the OCR models' mirror:
+    only after modelscope fails it (no answer, cut off, the wrong file, or far too slow: the speed floor now applies
+    to it, a source being left), kept only with its pinned SHA-256, and the mirror, the last source, is waited out. The
+    author's own release, at an address that names its version, is a safer copy than a third party's; the SHA-256 is
+    still what makes it safe. The launcher's lines name it ("www.modelscope.cn or its mirror, github.com"; both
+    mirrors: "its mirrors, huggingface.co and github.com"; on its own: "the table finder's mirror, github.com").
+    **What IT must allow** now includes `github.com` (and `release-assets.githubusercontent.com`, where it sends the
+    file), asked only when modelscope fails the table finder; a first setup from GitHub's ZIP already reached
+    github.com for the code. Offline at run time is unchanged: only `scripts/fetch_models.py` downloads, with the
+    opt-in. (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`,
+    `scripts/build_offline_bundle.py`, `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`;
+    `tests/launcher/test_launch.py`, `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`,
+    `tests/offline/test_offline_guard.py`)
 - **D-206** · **Exports, Activity and Settings → Automation answer for one person at 300,000 invoices in under 300 ms:
   Exports' JD Edwards check and Activity's approvals and controls report kept until what they come from changes,
   the events counted and their people found off indexes, the touchless audits off an index of their own** (scale

@@ -70,6 +70,9 @@ _MIRRORED = {sha: path for _name, path, sha in (*_PPOCRV4_FALLBACK, *_PPOCRV5_FA
 TABLE_FINDER_NAME = "yolov8n_layout_general6.onnx"
 TABLE_FINDER_URL = "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/" + TABLE_FINDER_NAME
 TABLE_FINDER_SHA256 = "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95"
+# Its mirror (D-205, B-2077): the model author's own release of it on GitHub, byte for byte the pinned file (its SHA-256
+# checked, 9 Nov 2026), tried only when www.modelscope.cn fails it, the same way as the OCR models' mirror.
+TABLE_FINDER_MIRROR = "https://github.com/RapidAI/RapidLayout/releases/download/v0.0.0/yolov8n_layout_general6.onnx"
 TABLE_FINDER_ENV = "AP_TABLE_FINDER_MODEL"  # a path to the model file elsewhere (still checked against its SHA-256)
 
 # The one opt-in to the internet, for developers and the bundle builder (scripts/build_offline_bundle.py):
@@ -314,7 +317,7 @@ def _ready(name: str, models: tuple[ModelFile, ...]) -> bool:
 
 
 def table_finder_file() -> ModelFile:
-    return ModelFile(TABLE_FINDER_NAME, TABLE_FINDER_URL, TABLE_FINDER_SHA256)
+    return ModelFile(TABLE_FINDER_NAME, TABLE_FINDER_URL, TABLE_FINDER_SHA256, TABLE_FINDER_MIRROR)
 
 
 def bundle_models() -> tuple[ModelFile, ...]:

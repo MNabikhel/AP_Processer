@@ -159,8 +159,9 @@ Windows" (it makes its own commit and archives it: it needs no history); with ro
 Linux and Windows runners (macOS for the Mac jobs) and these hosts: `pypi.org` and `files.pythonhosted.org`
 (packages, `pip-audit`'s advisories), Playwright's Chromium download (its CDN; for the browser tests:
 `pip install playwright` then `python -m playwright install --with-deps chromium`, not in the dev extra), and the OCR
-models' site (`www.modelscope.cn`) and their mirror (`huggingface.co`, D-205: asked only for a model the site fails
-to give; `build_offline_bundle.py --dry-run` lists them all). `release.yml` also needs
+models' site (`www.modelscope.cn`) and their mirrors (`huggingface.co` for the OCR models, `github.com` for the table
+finder, D-205: asked only for a model the site fails to give; `build_offline_bundle.py --dry-run` lists them all).
+`release.yml` also needs
 `lmstudio.ai` and `huggingface.co` (LM Studio and its models), the `gh` command, GitHub's artifacts API and a token
 that may push tags and create releases. **Before the first push of the whole history, switch Actions off (or delete
 `release.yml`)**: the first push runs every workflow, and `release.yml` would spend 60 to 90 minutes checking an old
