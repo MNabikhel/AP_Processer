@@ -1,0 +1,64 @@
+# The pilot's size measured on a small Windows Server: GitHub's standard Windows runner (4 vCPUs, 16 GB, no graphics
+# card), the size of the smallest server a pilot of up to 10 people would get. Two benches, one after the other:
+# - ten people for ten minutes on a year of a pilot's invoices (20,000), the server's own default web workers, the
+#   benches' stand-in model answering (python -m ap_coder.bench load; its gate as in the load-smoke job);
+# - a day's invoices (60, half of them scans) dropped at once and read through a real server with the real OCR, the
+#   stand-in model taking 8 to 20 s a page (a graphics card's assumed speed: docs/SERVER.md section 1), two at once
+#   (python -m ap_coder.bench day).
+# Slow (about 45 minutes), so it runs only when this file changes or by hand, never on every push.
+name: Pilot size
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/pilot-size.yml
+
+jobs:
+  measure:
+    name: Ten people and a day's invoices on 4 vCPUs, 16 GB (Windows Server)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      AP_ALLOW_INTERNET: "1"  # installs from PyPI and fetches the OCR models; the benches themselves stay local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: The machine
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          Write-Host "$($os.Caption) $($os.Version)"
+          Write-Host "$($cpu.Name): $([Environment]::ProcessorCount) logical processors"
+          Write-Host "Memory: $([math]::Round($os.TotalVisibleMemorySize / 1MB, 1)) GB"
+      - name: Install, with the OCR models and the table finder
+        run: |
+          python -m pip install -e ".[ocr,dev]"
+          python scripts/fetch_models.py --table-finder
+      - name: Ten people for ten minutes on 20,000 invoices, and the gate
+        run: >-
+          python -m ap_coder.bench load --users 10 --duration 600 --ramp 30 --think 10 --workers 4
+          --seed-invoices 20000 --sample-every 10 --out "${{ runner.temp }}/load"
+      - name: A day's invoices (60, half scans) read through a real server
+        if: always()
+        run: >-
+          python -m ap_coder.bench day --n 60 --scanned 0.5 --latency 8-20 --slots 2 --time-scale 1
+          --workers 4 --timeout 60 --out "${{ runner.temp }}/day"
+      - name: The reports
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content "${{ runner.temp }}/load/report.md" -ErrorAction SilentlyContinue
+          Get-Content "${{ runner.temp }}/day/report.md" -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pilot-size-reports
+          path: |
+            ${{ runner.temp }}/load/report.*
+            ${{ runner.temp }}/day/report.*
+          retention-days: 30
