@@ -2404,6 +2404,13 @@ def test_the_jde_check_of_the_ready_invoices_follows_the_tax_rate_file(tmp_path,
     own.write_text(bundled.replace("HST,ON,0.13", "HST,ON,0.15"), encoding="utf-8")  # Ontario's HST at 15%
     assert "JD Edwards works out 15% tax for ON-HST" in reasons() and "works out 15% tax" in client.get(
         "/exports?fmt=jde").text  # fmt: skip
+    import os
+
+    own.write_text(bundled.replace("HST,ON,0.13", "HST,ON,0.17"), encoding="utf-8")  # the same file changed in place
+    later = own.stat().st_mtime + 5
+    os.utime(own, (later, later))  # (a later time, whatever the file system's clock steps)
+    assert "JD Edwards works out 17% tax for ON-HST" in reasons() and "works out 17% tax" in client.get(
+        "/exports?fmt=jde").text  # fmt: skip
     own.unlink()
     assert "with the gross amount only" not in reasons() and "works out" not in client.get("/exports?fmt=jde").text
 

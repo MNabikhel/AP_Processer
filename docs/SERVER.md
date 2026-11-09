@@ -299,11 +299,13 @@ the requests under way 25 seconds, then ends them: the service is stopped within
   turn): one process works on one at a time anyway, and each request under way holds what it read (about 110 MB on
   a big database). With anyio's default of 40, 16 people at once took a worker to about 2 GB; with 4, to 1.3 GB, the
   same work done. A worker stays under 1 GB on 300,000 invoices (an hour of 100 people: 712-735 MB at the end, 814 MB at most).
-- **Reports and exports take turns**: the reports (Activity, the controls report, Spend, Month-end and its
-  accruals, Sales tax, Insights), the exports (the Exports page, a batch, its files, the duplicates CSV, search to
-  CSV or Excel, the JD Edwards worksheet), Report a problem, a backup or restore, and the buttons that wait on LM
-  Studio or JD Edwards run 2 at a time in each worker, beside its 4, so they never hold up the other pages. One that
-  waits more than 30 seconds for its turn says AP Coder is busy, to try again in a minute.
+- **Reports and exports take turns**: the reports (Activity, Spend and its workbook, Month-end, Sales tax and its
+  CSVs, Insights), the exports (the Exports page, a batch, its files, the JD Edwards dry run and worksheet, the
+  training ZIP), Report a problem, a backup or restore, and the buttons that wait on LM Studio or JD Edwards run 2 at
+  a time in each worker, beside its 4, so they never hold up the other pages. One that waits more than 30 seconds
+  for its turn says AP Coder is busy, to try again in a minute. The longest downloads (search to CSV or Excel, the
+  Activity CSV, the duplicates CSV, Month-end's accruals CSV and the controls report) are made by the background
+  process instead, the page saying how far the file got (D-169, D-206).
 - **A worker is started afresh** past its share of the memory (that 1.5 GB share, at least 2 GB; the variable
   `AP_WORKER_MAX_MB`, 0 for never) or after about 50,000 requests (a number of its own, so they don't all go
   together; `AP_WORKER_MAX_REQUESTS`). It takes no new requests, finishes those under way and what they started (an
