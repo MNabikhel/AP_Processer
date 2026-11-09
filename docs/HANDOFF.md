@@ -26,7 +26,7 @@ of the original repository. The tags themselves are in the bundle.
 
 | File | What it is | Use it when |
 |---|---|---|
-| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot10` (the laptop releases; pilot10 is the newest) and `v0.3.0-handoff10` (this handoff: pilot10 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff9` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
+| `AP_Coder.bundle` | A git bundle: `main` with its whole history and the tags `v0.3.0-pilot1` to `v0.3.0-pilot9` (the laptop releases; pilot9 is the newest) and `v0.3.0-handoff9` (this handoff: pilot9 and these docs, the same commit; `v0.3.0-handoff1` to `-handoff8` were earlier ones) | Git is available: keeps every commit message, which explains why the code is as it is |
 | `AP_Coder_source.zip` | The same files as `main`, no history | Only file transfers are allowed, or git isn't |
 | `HANDOFF.md` | This file | Read first |
 | `SHA256SUMS.txt` | The SHA-256 of the three files above | Check the transfer |
@@ -37,7 +37,7 @@ of the original repository. The tags themselves are in the bundle.
 git clone -b main AP_Coder.bundle AP_Processer   # a normal repository (cloning checks the bundle); origin = the bundle
 cd AP_Processer
 git bundle verify ../AP_Coder.bundle             # "The bundle records a complete history" (works only inside a repository)
-git tag                                          # v0.3.0-handoff1 to -handoff10, v0.3.0-pilot1 to -pilot10
+git tag                                          # v0.3.0-handoff1 to -handoff9, v0.3.0-pilot1 to -pilot9
 git log --oneline | head                         # the latest commits
 # Make the company's Git server the origin (an empty repository created there first):
 git remote set-url origin <the company's repository URL>
@@ -52,7 +52,7 @@ cd AP_Processer
 cat ap_coder/BUILD                               # the placeholder $Format:%h %cI$, or a commit and date if the zip
                                                  # came from git archive (then put the placeholder back, below)
 git config user.name "<you>" && git config user.email "<you@company>"   # a fresh machine has none
-git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff10), no history"
+git init -b main && git add -A && git commit -m "AP Coder at the handoff (v0.3.0-handoff9), no history"
 git remote add origin <the company's repository URL> && git push -u origin main
 ```
 
@@ -69,7 +69,7 @@ tag list names commits a route B repository doesn't have).
 the exact set this release was tested with is `docs/tested-packages.txt` (`pip install -c docs/tested-packages.txt
 -e ".[ocr,dev]"` when a newer package breaks something).
 With no internet, use a wheelhouse. The person who handed this over may also have given you the laptop release's
-offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot10`; Windows, Python
+offline install zip (`APProcessor-offline-0.3.0-<date>.zip` of the release `v0.3.0-pilot9`; Windows, Python
 3.11–3.14): its `wheelhouse/` folder installs everything on Windows with `pip install --no-index --find-links <that
 wheelhouse> -e ".[ocr,dev]"` (its wheels are Windows ones: a Linux agent or CI runner needs PyPI or a mirror).
 Without it, build one on any computer with internet: `AP_ALLOW_INTERNET=1 python scripts/build_offline_bundle.py`
@@ -109,7 +109,7 @@ Nothing connects to the internet at run time. It is a FastAPI web app on 127.0.0
 roles and HTTPS). Data lives in one SQLite database in a data folder outside the code. It is at pilot stage: built
 and tested on synthetic and public sample invoices, not yet on the company's invoices or systems.
 
-Status at the handoff (`v0.3.0-handoff10`: the laptop release `v0.3.0-pilot10` of 9 November 2026, the same commit,
+Status at the handoff (`v0.3.0-handoff9`: the laptop release `v0.3.0-pilot9` of 4 November 2026, the same commit,
 with these handoff docs; the build stamp `doctor` and `/healthz` report is that commit's). Each pilot release was
 checked by CI on Windows with the real LM Studio before it was tagged (`.github/workflows/release.yml`, D-129, D-130):
 
