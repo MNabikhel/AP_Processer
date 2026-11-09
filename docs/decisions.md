@@ -4614,12 +4614,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Measured** (`.github/workflows/pilot-size.yml`, 9 Nov 2026, GitHub's Windows Server runner: 4 vCPUs, 16 GB, no
     graphics card): 10 simulated people for 10 minutes on 20,000 invoices, 4 web workers, the benches' stand-in model:
     pages p50 223 ms, p95 740 ms, p99 1.56 s; approvals and checks p95 156 ms; 0 errors, 0 "database is locked";
-    about 2.3 GB of memory for all of AP Coder's processes (web workers 0.25-0.29 GB each, the background process
-    0.6 GB). A day's 60 invoices (half scans) dropped at once, the real OCR on those 4 vCPUs: all 60 in the review
+    2.0 GB of memory for all of AP Coder's processes at the end of the run, 2.5 GB with each one's peak (web workers
+    0.25-0.29 GB each, the background process 0.6 GB). A day's 60 invoices (half scans) dropped at once, the real OCR on those 4 vCPUs: all 60 in the review
     queue in 4.1 minutes; with the stand-in model at a graphics card's assumed 8-20 s a page, two at once, every page
     read and reviewed 30 minutes after the drop. Without a graphics card (the release check of `v0.3.0-pilot9`, 4 Nov
     2026, the same kind of runner, the real models in LM Studio: OvisOCR2 Q8_0 and Qwen 3.5 9B Q4_K_M): a page read
-    in about 4.5 to 5.5 minutes, a chat answer 3.5 to 8.5 minutes, the ten sample invoices 76 minutes. So a pilot
+    in 4.4 to 5.5 minutes, a chat answer 1.8 to 8.6 minutes, the ten sample invoices 76 minutes. So a pilot
     reading 50-60 invoices a day needs a graphics card (about 16 GB) or Apple silicon with enough memory on the
     machine that runs the models; its speed is estimated until the burn-in measures it. SERVER.md's minimum (8
     cores, 32 GB) stays for 25 people or more, with LM Studio on the same server.

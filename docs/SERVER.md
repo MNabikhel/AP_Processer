@@ -116,13 +116,15 @@ Why these numbers:
   - **10 simulated people for 10 minutes on 20,000 invoices** (a year of a pilot's), the service's 4 web workers, the
     benches' stand-in for the models: half the pages within 223 ms, 95% within 740 ms, 99% within 1.56 s;
     approvals and checks 95% within 156 ms; no error and no "database is locked". All of AP Coder's processes
-    together used about 2.3 GB of memory (each web worker 0.25 to 0.29 GB, the background process 0.6 GB).
+    together used 2.0 GB of memory at the end of the run, 2.5 GB if each one's peak is added (each web worker 0.25 to
+    0.29 GB, the background process 0.6 GB).
   - **A day's 60 invoices (half of them scans) dropped at once**, the real OCR on those 4 vCPUs: all 60 in the
     review queue in 4.1 minutes. With the stand-in model taking a graphics card's assumed 8 to 20 s a page, two at
     once, every page was read and reviewed 30 minutes after the drop.
   - **Without a graphics card** (the release check of `v0.3.0-pilot9`, 4 Nov 2026, `.github/workflows/release.yml`:
     the same kind of machine, the real models in LM Studio, OvisOCR2 Q8_0 and Qwen 3.5 9B Q4_K_M): a page read in
-    about 4.5 to 5.5 minutes, a chat answer in 3.5 to 8.5 minutes; the ten sample invoices took 76 minutes. So a
+    4.4 to 5.5 minutes, a chat answer in 1.8 to 8.6 minutes (a whole coding question 4.4 to 8.6); the ten sample
+    invoices took 76 minutes. So a
     pilot reading 50 to 60 invoices a day needs a graphics card (about 16 GB of VRAM, or Apple silicon with enough
     memory) on the machine that runs the models. Its speed there is estimated (above), and the burn-in measures it.
 
@@ -153,7 +155,7 @@ Why these numbers:
   pilot of up to 10 people sets `--workers 4` (`service install --workers 4`) and `"capture_processes": 2` (or 3) in
   the data folder's `server.json`, then restarts the service: the configuration measured above (4 web workers, and 2
   capture processes on those 4 vCPUs). On a Mac the models share the Mac's memory: about 12 GB for both (estimated
-  from their sizes, above), AP Coder about 3 GB (2.3 GB measured above, more while scans are read) and macOS about
+  from their sizes, above), AP Coder about 3 GB (2.0 to 2.5 GB measured above, more while scans are read) and macOS about
   4 GB, so 32 GB holds them with room for the database's cache. With a graphics card the models sit in the card's
   memory.
 - **Windows 11 Pro** runs the server mode too, technically: the service is a Task Scheduler task (step 6), not a Windows

@@ -13,7 +13,7 @@ pilot, Phase 1, with up to 10 people).
    with the company's accounts (Entra ID) is not built, a possible later option.
 2. **Speed without a graphics card.** OvisOCR2 reads a page in a few minutes on a laptop processor, in the
    background; the chat model takes 1 to 6 minutes for an invoice whose lines it must code. A line learned from an
-   approval needs no model. On a server's 4 vCPUs a page took 4.5 to 5.5 minutes and a chat answer 3.5 to 8.5 (the
+   approval needs no model. On a server's 4 vCPUs a page took 4.4 to 5.5 minutes and a chat answer 1.8 to 8.6 (the
    release check, [SERVER.md](SERVER.md) section 1): a pilot reading 50 to 60 invoices a day needs a graphics card
    (or Apple silicon) on the machine that runs the models. A graphics card is many times faster (estimated). The
    pilot machine's own speed is not measured yet: Phase 0's burn-in measures it.
