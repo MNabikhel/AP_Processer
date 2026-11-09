@@ -40,9 +40,13 @@ class Failed(Exception):
 
 
 def run(cmd: list[str], timeout: float = 300) -> subprocess.CompletedProcess:
-    """Run a command, printed with what it said (the one place commands run: the tests stand in for it)."""
+    """Run a command, printed with what it said (the one place commands run: the tests stand in for it). It runs in
+    this script's own copy of AP Coder (``ROOT``): ``python -m ap_coder`` takes the package from the folder it runs in,
+    and CI starts the script of the copy in /opt/apcoder from the checkout's folder."""
     print("$ " + " ".join(cmd), flush=True)
-    done = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout, check=False)  # noqa: S603
+    done = subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, errors="replace", timeout=timeout, check=False, cwd=ROOT
+    )
     for said in (done.stdout, done.stderr):
         if said.strip():
             print(said.rstrip(), flush=True)

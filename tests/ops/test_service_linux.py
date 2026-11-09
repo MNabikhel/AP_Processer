@@ -635,3 +635,19 @@ def test_the_ci_script_gives_the_old_dashboard_a_while_to_end(tmp_path, monkeypa
     a moment after the new one answers: it is asked again for 30 s, as on a Mac (B-1959)."""
     code, ubuntu = _ci_run(tmp_path, monkeypatch, "the old dashboard ends a few seconds later")
     assert code == 0 and max(ubuntu.asked.values()) == 3
+
+
+@needs_ci_script
+def test_the_ci_script_runs_its_commands_in_its_own_copy_of_ap_coder(monkeypatch):
+    """CI runs the script of the copy in /opt/apcoder from the checkout's folder: ``python -m ap_coder`` takes the
+    package from the folder it runs in, so each command runs in the script's own copy, whatever the caller's folder."""
+    ci = _ci()
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(ci.subprocess, "run", fake_run)
+    ci.run(["true"])
+    assert Path(seen.get("cwd", "")) == CI_SCRIPT.parents[2]
