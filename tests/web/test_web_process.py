@@ -116,14 +116,20 @@ def test_the_same_file_uploaded_twice_at_once_is_stored_once(app, client, store,
     file is read once, and the second upload's copy is skipped as already in AP Coder."""
     from ap_coder.ai.pipeline import InvoicePipeline
 
-    both, reads = threading.Barrier(2), []
+    both, reads, queued, in_line = threading.Barrier(2), [], [], threading.Event()
     real_queue, real_process = Store.queue_imports, InvoicePipeline.process
 
     def queue_imports(self, *args, **kwargs):  # the two uploads reach the queue together
         both.wait(30)
-        return real_queue(self, *args, **kwargs)
+        try:
+            return real_queue(self, *args, **kwargs)
+        finally:
+            queued.append(1)
+            if len(queued) == 2:
+                in_line.set()
 
-    def process(self, path, *args, **kwargs):
+    def process(self, path, *args, **kwargs):  # read once both are in line: a run takes the batches put in line
+        in_line.wait(30)  # while its files are, and an upload after the read was done would start a run of its own
         reads.append(path)
         return real_process(self, path, *args, **kwargs)
 
