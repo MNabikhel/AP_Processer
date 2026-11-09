@@ -123,9 +123,11 @@ def one_person(store: Store, first: str, last: str, limit: float, rates: dict[st
             and store.second_approval_reason(i["final_output"] or {}, limit, rates=rates)]  # fmt: skip
 
 
-def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -> dict[str, Any]:
+def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False, over: bool = True) -> dict[str, Any]:
     """Sections of the report for events from ``start`` to ``end`` (inclusive). ``duties``: also the invoices where
-    one person did several steps (the company server; on a laptop one person does them all)."""
+    one person did several steps (the company server; on a laptop one person does them all). ``over`` False: the
+    invoices one person approved over the limit are not looked for (``one_person`` empty), as Activity's tiles show
+    none of them (8.4 s of a year's report at 300,000 invoices, D-206)."""
     first, last = start.isoformat(), (end + dt.timedelta(days=1)).isoformat()
     # The period's events, picked by SQLite by their day, not the newest million filtered here: an older period kept
     # none (B-1598, the kind of B-1251).
@@ -138,7 +140,7 @@ def build(store: Store, start: dt.date, end: dt.date, *, duties: bool = False) -
     waiting = store.list_invoices(PENDING)
     limit = store.approval_limit()
     rates = store.fx_rates() if limit else {}  # read once, not once an approved invoice (B-1598)
-    alone = one_person(store, first, last, limit, rates) if limit else []
+    alone = one_person(store, first, last, limit, rates) if limit and over else []
     setup = [e for e in events if e["action"] in SETUP_ACTIONS]
     # Invoices each person approved: approving one invoice again (after a reopen or send-back) counts once.
     by_person = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals})

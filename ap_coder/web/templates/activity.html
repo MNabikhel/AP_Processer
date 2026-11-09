@@ -19,8 +19,11 @@
       <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Show</button>
     </form>
   </div>
-  {% if report is none %}
+  {% if report is none and not long_period %}
   {{ ui.empty_note("Pick the first and last day", " The first day is after the last one.", "event_busy") }}
+  {% else %}
+  {% if long_period %}
+  {{ ui.empty_note("The tiles count a month at most on the server", " For a longer period, download the controls report: the server makes it in the background.", "date_range") }}
   {% else %}
   <div class="apc-tiles">
     {{ ui.tile("Errors overridden", report.overrides, "", "amber" if report.overrides else "green", "approved despite an error") }}
@@ -29,7 +32,8 @@
     {{ ui.tile("Setup changes", report.setup, "", "blue", "accounts, tax, vendors, POs") }}
     {% if report.same_person is not none %}{{ ui.tile("One person, several steps", report.same_person, "", "amber" if report.same_person else "green", "approved, exported, posted") }}{% endif %}
   </div>
-  <a class="btn" href="/activity/controls-report?start={{ start.isoformat() }}&amp;end={{ end.isoformat() }}" download>
+  {% endif %}
+  <a class="btn" href="/activity/controls-report?start={{ start.isoformat() }}&amp;end={{ end.isoformat() }}" download data-download-job>
     <span class="ms" aria-hidden="true">download</span>Download the controls report</a>
   {% endif %}
 </section>

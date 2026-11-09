@@ -257,7 +257,7 @@ def one_connection(handler: Callable[..., Any]) -> Callable[..., Any]:
 # The long downloads made by the server's background process are not among them: their web worker only waits
 # (``pages/downloads.py``, D-169).
 HEAVY_ROUTES = frozenset({
-    ("GET", "/activity"), ("GET", "/activity/controls-report"),
+    ("GET", "/activity"),
     ("GET", "/spend"), ("GET", "/spend/data.xlsx"),
     ("GET", "/month-end"),
     ("GET", "/sales-tax"), ("GET", "/sales-tax/claims.csv"), ("GET", "/sales-tax/self-assessment.csv"),

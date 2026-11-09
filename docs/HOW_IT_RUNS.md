@@ -384,7 +384,8 @@ the launcher.
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
   `ephemeral` row `lease` "queue-recheck", let go of between two batches when AP Coder stops, and dropped at a
   laptop's start; the queue page shows the earlier checks meanwhile and says so), the long downloads (search to
-  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs: `web/pages/downloads.py`, D-169; the jobs in
+  Excel and to CSV, the Activity CSV, the duplicates and accruals CSVs, the controls report (D-206):
+  `web/pages/downloads.py`, D-169; the jobs in
   `report_jobs`, each its asker's, the files in `<data>/.cache/downloads/made/` for an hour), the reports' settled
   answers worked out again (`ap_coder/web/refresh.py:Refresher`, D-198: below), the daily
   backup and the finance hub's schedule (each minute instead of at each page), holding

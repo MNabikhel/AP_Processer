@@ -190,6 +190,10 @@ def distinct_people(actors: Iterable[str], events: Iterable[dict[str, Any]]) -> 
 
 
 TILE_COUNTS = ("overrides", "signals", "finals", "sent_back", "waiting", "setup")  # the report's lists the tiles count
+# On the company server the tiles count a period this long at most (days, the first and the last included): a
+# year's took 6.5 s at 300,000 invoices, and there the events recorded all day keep them for moments only; a
+# longer period's report is a download its background process makes (D-206). A laptop counts any period.
+TILES_MOST_DAYS = 31
 
 
 def controls_report(store: Store, start: dt.date, end: dt.date, duties: bool) -> dict[str, int | None]:
@@ -199,7 +203,7 @@ def controls_report(store: Store, start: dt.date, end: dt.date, duties: bool) ->
     153 MB at 15,000 invoices (B-2073); the download builds it whole. Shared: read it, don't change it."""
 
     def counts() -> dict[str, int | None]:
-        report = controls.build(store, start, end, duties=duties)
+        report = controls.build(store, start, end, duties=duties, over=False)
         same = report["same_person"]
         return {**{name: len(report[name]) for name in TILE_COUNTS}, "same_person": None if same is None else len(same)}
 
@@ -251,7 +255,9 @@ def activity_page(request: Request) -> HTMLResponse:
                                       actor=None if person in ("", "Everyone") else person)  # fmt: skip
     else:
         matching = len(shown) if before is None and not older else None
-    report = controls_report(store, start, end, server_mode(request)) if start <= end else None
+    duties = server_mode(request)
+    counted = start <= end and not (duties and (end - start).days >= TILES_MOST_DAYS)
+    report = controls_report(store, start, end, duties) if counted else None
     return render(
         request,
         "activity.html",
@@ -276,6 +282,7 @@ def activity_page(request: Request) -> HTMLResponse:
         end=end,
         today=today,
         report=report,
+        long_period=start <= end and not counted,
     )
 
 
@@ -317,9 +324,35 @@ def write_csv(store: Store, params: dict[str, Any], out: BinaryIO, step: Any) ->
 
 
 @router.get("/activity/controls-report")
-def activity_controls_report(request: Request, start: str = "", end: str = "") -> Response:
-    first, last = controls_period(start, end)
+async def activity_controls_report(request: Request) -> Response:
+    """The controls report of the period asked (all of it, ``controls.build``): on a laptop made as it is asked for,
+    as before; on the company server made by its background process (``downloads``, D-169), as a year's took 15 s at
+    300,000 invoices (D-206)."""
+    return await downloads.answer(request, "/activity/controls-report", _controls_now)
+
+
+def _controls_now(request: Request) -> Response:
+    params, name = controls_params(request)
+    return download(controls_html(get_store(request), params), name, "text/html; charset=utf-8")
+
+
+def controls_params(request: Request) -> tuple[dict[str, Any], str]:
+    """What the controls report is of (its period, the first day first, and whether it looks at the duties: on the
+    server) and its file's name."""
+    first, last = controls_period(request.query_params.get("start"), request.query_params.get("end"))
     if first > last:
         first, last = last, first
-    html = controls.report_html(controls.build(get_store(request), first, last, duties=server_mode(request)))
-    return download(html.encode("utf-8"), f"ap_coder_controls_{first}_{last}.html", "text/html; charset=utf-8")
+    return ({"start": first.isoformat(), "end": last.isoformat(), "duties": server_mode(request)},
+            f"ap_coder_controls_{first}_{last}.html")  # fmt: skip
+
+
+def write_controls(store: Store, params: dict[str, Any], out: BinaryIO, step: Any) -> None:
+    """The controls report (``controls_params``) to ``out``, as the laptop sends it."""
+    step(0, 0, "Reading the period's events")
+    out.write(controls_html(store, params))
+
+
+def controls_html(store: Store, params: dict[str, Any]) -> bytes:
+    report = controls.build(store, dt.date.fromisoformat(params["start"]), dt.date.fromisoformat(params["end"]),
+                            duties=params["duties"])  # fmt: skip
+    return controls.report_html(report).encode("utf-8")

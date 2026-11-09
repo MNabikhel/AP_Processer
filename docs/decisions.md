@@ -4528,19 +4528,40 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       number off the invoices' summary, which keeps them as they are (`summary.MIRROR`), brought up to date first:
       the same events in the same order (`tests/reports_reference.py`). A year's events read in 3.9 s, the whole
       report built in 15 s (one-person approvals over the limit 8.4 s, the duties 2.3 s).
+    - **A long period's controls report**, still over a report's 3 s (a year's 15 s: the approvals one person gave
+      over the limit are found by reading every approved invoice's coding, 8.4 s, and no summary column is provably
+      the total and currency that check reads): on the company server it is a download its background process makes
+      (`downloads.KINDS`, D-169), as the Activity CSV: the link (`data-download-job`) says how far it got and the file
+      downloads once made; asked without the page's header (a bookmark), it is waited for. A laptop makes it as it is
+      asked for, as before.
+    - **Activity's tiles of a long period**: never the approvals over the limit (`controls.build(..., over=False)`:
+      no tile shows them), and on the company server a month at most (`activity.TILES_MOST_DAYS`, 31 days, the first
+      and last included): a year's tiles still took 6.5 s there, and the events recorded all day keep the kept counts
+      for moments only. A longer period on the server says "The tiles count a month at most on the server" and offers
+      the report's download. Chosen over D-201's "being worked out" for a kept answer: the counts follow every event,
+      so it would be worked out again at nearly every visit (and a page's first ask works it out itself), where a
+      month's are 0.4 s at 300,000 invoices. A laptop counts any period, as before.
   - **Measured** (`bench volume --only` on the seed, median of 3 warm requests, Admin / Clerk, before → after):
     `/exports` 0.574 / 0.724 → 0.046 / 0.048 s, `/exports?fmt=jde` 0.706 / 0.589 → 0.045 / 0.048 s, `/activity`
     0.523 / 0.719 → 0.017 / 0.057 s, `/activity?q=Birchwood` 0.605 / 0.699 → 0.056 / 0.079 s,
     `/settings/automation` 0.360 → 0.071 s: 9 addresses over target → 0. The pages are the same, byte for byte
     (`tests/bench/test_seed_volume.py`: against the code before, `tests/reports_reference.py`, nothing kept, after
-    13 changes by another Store or plain SQL).
+    13 changes by another Store or plain SQL). A year (2025-11-09 to 2026-11-09, the code of bb40bf7 → after B-2076
+    and the two above): `/activity/controls-report?start=…&end=…` 316.7 / 317.0 → 16.3 / 15.9 s (now the server's
+    background job, which the bench waits for), `/activity?start=…&end=…` 322.3 / 322.0 → 0.018 / 0.062 s (its tiles
+    not counted on the server); 30 days, `/activity?start=2026-10-10&end=2026-11-09`: 0.020 / 0.073 s (its first
+    look, the counts worked out, 0.39 / 0.48 s).
   - **Left:** the first look after a change still does the work: Exports' check after any invoice, vendor or
     register change (0.43-0.50 s here, once for every process), Activity's approvals after any invoice change
     (0.47-0.60 s, and 0.24-0.28 s for the next look: the look that brought the summary up to date keeps nothing,
     D-159) and its controls report after any event (0.27-0.29 s). Under a stream of changes these pages cost what
     they did: nothing there settles. `SELECT COUNT(*) FROM events` still reads the table's pages (4 ms at 1.26
     million, as the register's count does, 3 ms at 600,000). An event changed in place by plain SQL (AP Coder never
-    changes one) is not seen by the kept controls report until another event is recorded.
-  - (`ap_coder/web/pages/exports.py`, `web/pages/activity.py`, `core/store/accounts.py`, `core/store/capture.py`,
-    `core/store/_base.py`, `docs/HOW_IT_RUNS.md`; `tests/bench/test_seed_volume.py`, `tests/core/test_kept_answers.py`,
-    `tests/core/test_store_perf.py`, `tests/reports_reference.py`)
+    changes one) is not seen by the kept controls report until another event is recorded. A year's controls report
+    is still 15 s of the background process's work, most of it the approvals over the limit (each approved invoice's
+    coding read); a laptop's, made in the request, as long for as many invoices.
+  - (`ap_coder/web/pages/exports.py`, `web/pages/activity.py`, `web/templates/activity.html`, `web/pages/downloads.py`,
+    `web/core.py`, `erp/controls.py`, `core/store/accounts.py`, `core/store/capture.py`, `core/store/_base.py`,
+    `bench/volume.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/bench/test_seed_volume.py`,
+    `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`, `tests/reports_reference.py`,
+    `tests/web/test_web_analytics.py`, `tests/web/test_downloads.py`)

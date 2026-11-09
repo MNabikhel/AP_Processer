@@ -281,7 +281,8 @@ and the service host only while it runs (it holds `service\host.lock`).
 the service runs N *web workers*, all answering on the same port, and one *background process* beside them for the work
 nobody waits on (OvisOCR2's reading, the AI reviewer, the Azure check, JD Edwards, the review queue checked again after
 a change of settings, the daily backup, the finance hub's schedule), and for the long downloads (search to Excel, the
-Activity CSV, the duplicate audit: the page says how far the file got and downloads it once made; each person's own,
+Activity CSV, the duplicate audit, the controls report: the page says how far the file got and downloads it once made;
+Activity's tiles count a month at most on the server, a longer period's report is that download; each person's own,
 kept an hour in `.cache\downloads\made`). The invoices brought in (uploads, the invoices folder, a scheduled watch) wait
 in an import queue in the database, kept over a restart, and are read by *capture processes* of their own, one per core
 but two (`server.json` `"capture_processes"`, 1 to 64, or `AP_CAPTURE_PROCESSES` in the .env to choose; D-168), never by

@@ -415,6 +415,39 @@ def test_activitys_controls_tiles_keep_only_their_counts_however_long_the_period
     assert templates.env.from_string(old.CONTROLS_TILES).render(report=report) in page
 
 
+def test_on_the_server_activitys_tiles_count_a_month_at_most_and_never_the_approvals_over_the_limit(store, monkeypatch):
+    """D-206: a year's tiles took 6.5 s at 300,000 invoices on the server (B-2076 done), where the events recorded all
+    day keep them for moments only (``controls_report``): there they count a month (31 days) at most, and a longer
+    period says to download the report, which the server makes in the background. A laptop counts any period, as
+    before. The approvals one person gave over the limit, which no tile shows, are never worked out for them (8.4 s of
+    a year's report)."""
+    import datetime as dt
+
+    from ap_coder.erp import controls
+    from tests.webclient import client_for, enrol, sign_in, web_settings
+
+    uid = store.add_user("boss", "correct horse battery", role="admin", display_name="Boss")
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (uid,))
+    enrol(store, uid)
+    store.set_setting("approval_limit", "50", actor="Ann")
+    monkeypatch.setattr(controls, "one_person", lambda *a, **k: pytest.fail("worked out for the tiles"))
+    server = TestClient(create_app(web_settings(), store, start_reader=False, server=True), base_url="https://localhost",
+                        client=("10.0.0.5", 50000), follow_redirects=False)  # fmt: skip
+    assert sign_in(server, "boss", "correct horse battery").status_code == 200
+    laptop, today = client_for(store), dt.date.today()
+    for days, counted in ((0, True), (30, True), (31, False), (365, False)):
+        start = today - dt.timedelta(days=days)
+        address = f"/activity?start={start}&end={today}"
+        page = server.get(address).text
+        assert ("Setup changes" in page) is counted and ("count a month at most" in page) is not counted, days
+        assert (f'href="/activity/controls-report?start={start}&amp;end={today}" download data-download-job'
+                in page), days  # fmt: skip
+        here = laptop.get(address).text
+        assert "Setup changes" in here and "count a month at most" not in here, days
+    assert "Pick the first and last day" in server.get(f"/activity?start={today}&end={start}").text
+
+
 # --- Learning: suppliers, memory, history, training export ---------------------------------------------------------
 
 
