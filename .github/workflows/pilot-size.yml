@@ -1,6 +1,6 @@
 # The pilot's size measured on a small Windows Server: GitHub's standard Windows runner (4 vCPUs, 16 GB, no graphics
 # card), the size of the smallest server a pilot of up to 10 people would get. Two benches, one after the other:
-# - ten people for ten minutes on a year of a pilot's invoices (20,000), the server's own default web workers, the
+# - ten people for ten minutes on a year of a pilot's invoices (20,000), 4 web workers (the server's default on that machine), the
 #   benches' stand-in model answering (python -m ap_coder.bench load; its gate as in the load-smoke job);
 # - a day's invoices (60, half of them scans) dropped at once and read through a real server with the real OCR, the
 #   stand-in model taking 8 to 20 s a page (a graphics card's assumed speed: docs/SERVER.md section 1), two at once
