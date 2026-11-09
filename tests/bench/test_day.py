@@ -194,6 +194,28 @@ def test_with_a_backup_the_drill_says_when_the_calls_moved_there_and_back(tmp_pa
         assert env["AP_LLM_BACKUP_URL"] == backup.base_url and env["AP_FAILOVER_SHARED"] == "0"
 
 
+def test_a_database_is_locked_said_at_info_is_no_failure_of_the_day(tmp_path):
+    """B-2070: the day's failures counted each "database is locked" in any line, and the background process's log and
+    (since B-2065) each web worker's are at INFO: "not kept for the other processes (database is locked)" (B-1808)
+    and "the hold on ... was not let go of (database is locked)", what is tried again by design, made false failures.
+    It counts on a warning's or an error's line and in a traceback, never on an INFO line."""
+    (tmp_path / "logs").mkdir()
+    kept = ("2026-11-08 09:00:00,001 INFO ap_coder.core.store.reports: not kept for the other processes (database is "
+            "locked)\n")  # fmt: skip
+    held = ("2026-11-08 09:00:00,002 INFO ap_coder.core.store.reports: the hold on answer/x was not let go of "
+            "(database is locked)\n")  # fmt: skip
+    warned = "2026-11-08 09:00:01,000 WARNING ap_coder.web.refresh: the x answer was not worked out again\n"
+    trace = "Traceback (most recent call last):\nsqlite3.OperationalError: database is locked\n"
+    (tmp_path / "logs" / "background.log").write_text(kept + held + warned + trace, encoding="utf-8")
+    (tmp_path / "logs" / "web-1.log").write_text(kept, encoding="utf-8")
+    locked = "2026-11-08 09:00:02,000 WARNING ap_coder.web.server: a page was slow (database is locked)\n"
+    (tmp_path / "logs" / "web-2.log").write_text(locked, encoding="utf-8")
+    window = tmp_path / "server.log"
+    window.write_text("", encoding="utf-8")
+    server = day.Server(tmp_path, window, 2, {})
+    assert server.log_counts() == {"database is locked": 2, "Traceback": 1, "ERROR": 0}
+
+
 def test_a_line_the_window_and_a_process_log_both_hold_is_counted_once(tmp_path):
     """B-2066: the server's window (``server.log``) repeats each warning or error a process also writes in its own
     log (the background process's, a capture process's, and since B-2065 each web worker's ``web-<n>.log``), so the

@@ -41,7 +41,7 @@ import anyio.to_thread
 
 from ap_coder import __version__
 from ap_coder.core import paths
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, dialect
 from ap_coder.ops import health, system_log
 from ap_coder.ops.offline import ADDRESS_ENV, browser_wanted, dashboard_address, server_mode
 from ap_coder.web.app import CODE_FOLDER, create_app, os_user, own_work_running
@@ -412,9 +412,16 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
                    proxy: str | None, insecure_http: bool, workers: int) -> int:  # fmt: skip
     store = store or Store(paths.env_path("AP_DB_PATH") or paths.default_db_path())  # (its upgrade runs here, once)
     token = secrets.token_urlsafe(24)
+    write_server_file(port, token)  # (a server working its reports out is one running: B-2069)
+    try:
+        prepare_reports(store)  # (the port still closed: nobody waits for them, D-204)
+    except KeyboardInterrupt:
+        remove_server_file(token)
+        return 0
     data = paths.private_dir()
     stop_file(data).unlink(missing_ok=True)
     (data / RECYCLE_PID).unlink(missing_ok=True)  # a worker of the last run ending: its number may be given again
+    (data / WARMING_NOTE).unlink(missing_ok=True)  # (and one of its replacements building its memories)
     from ap_coder.ai.local_llm import SLOTS_ENV
 
     os.environ[SLOTS_ENV] = str(data / "llm")  # llm_parallel holds for all the server's processes together
@@ -427,8 +434,11 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
     # time: one taken for hung is ended and started again.
     config = server_config("ap_coder.web.server:worker_app", host, port, certfile, keyfile, proxy, factory=True,
                            workers=workers, timeout_worker_healthcheck=30)  # fmt: skip
-    supervisor = Supervisor(config, sockets=[listening_socket(config)])
-    write_server_file(port, token)
+    try:
+        supervisor = Supervisor(config, sockets=[listening_socket(config)])
+    except BaseException:  # (its port taken meanwhile: no server runs)
+        remove_server_file(token)
+        raise
     count = capture_processes()
     background = Together([BackgroundWork(store.path),
                            *(CaptureWork(store.path, n, count) for n in range(1, count + 1))])  # fmt: skip
@@ -449,6 +459,114 @@ def _serve_workers(host: str, port: int, store: Store | None, certfile: str | No
         os.environ.pop(WORKER_ENV, None)
         os.environ.pop(SLOTS_ENV, None)
     return 1 if supervisor.failed else 0
+
+
+# Seconds past ``refresh.PREPARE_MOST`` the reports' process has to finish the view under way, then it is ended (D-204):
+# Month-end's, the longest, come first, so it is one of the quick ones (10 s at most at 300,000 invoices, estimated).
+PREPARE_ENDS = 15.0
+
+
+def _said(text: str) -> None:
+    """``text`` in the server's window (and the service's log), which shows warnings and up only (B-240): what its
+    start does, as its other lines there."""
+    print(text, file=sys.stderr, flush=True)
+
+
+def prepare_reports(store: Store) -> None:
+    """On a database that never had the reports' default views (``refresh.served_before``), each worked out before the
+    server answers (D-204, ``refresh.prepare``), kept for every process: the background process's refresher worked them
+    out after the start, while people already asked them. One that had them (a restart, an update) is served at once,
+    as before, its views worked out while it serves: an update's downtime stays as it was (D-188). In a process of its
+    own, started afresh ("spawn", as uvicorn's web workers), so this one, the server's as long as it runs, keeps none
+    of the memory the work peaked at; waited for ``PREPARE_MOST`` and ``PREPARE_ENDS`` at most, then ended. One that
+    fails or is ended is no reason not to serve: the refresher works out the rest, as before. Said in the window, by
+    that process and, when it did not finish, here."""
+    import multiprocessing
+    import signal
+
+    from ap_coder.web import refresh
+
+    try:
+        if refresh.served_before(store):
+            _said("The reports' default views are not worked out before the dashboard answers: this database has had "
+                  "them (by this version or an earlier one), and the background process brings them up to date while "
+                  "it serves.")  # fmt: skip
+            return
+    except Exception as exc:  # noqa: BLE001 - no reason not to serve (B-2071)
+        _not_prepared(exc)
+        return
+    most = refresh.PREPARE_MOST
+    process = multiprocessing.get_context("spawn").Process(target=_prepare_reports, args=(str(store.path), most),
+                                                           name="ap-coder-reports", daemon=True)  # fmt: skip
+
+    def end() -> None:
+        process.terminate()
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join(5)
+
+    def stopped(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt  # (as Ctrl+C: that process ended, then the server's start)
+
+    # A stop of the service before uvicorn's supervisor takes SIGTERM (B-2068); on Windows the service's job object
+    # ends that process with this one.
+    taken = os.name != "nt" and threading.current_thread() is threading.main_thread()
+    before = signal.signal(signal.SIGTERM, stopped) if taken else None
+    try:
+        try:
+            process.start()
+            process.join(most + PREPARE_ENDS)
+        except KeyboardInterrupt:  # (the server stopped as it starts: that process with it)
+            if process.pid is not None:
+                end()
+            raise
+        except Exception as exc:  # noqa: BLE001 - no process to be had: no reason not to serve (B-2071)
+            _not_prepared(exc)
+            return
+    finally:
+        if taken:
+            signal.signal(signal.SIGTERM, before)
+    left = "The reports' default views were not all worked out before the dashboard answers: their process"
+    if process.is_alive():
+        end()
+        _said(f"{left} was ended after {most + PREPARE_ENDS:g} s. The background process works out the rest.")
+    elif process.exitcode:
+        _said(f"{left} stopped (exit code {process.exitcode}). The background process works out the rest.")
+
+
+def _not_prepared(exc: Exception) -> None:
+    """Said in the window: the reports were not worked out before the server answers, because of ``exc``."""
+    _said(f"The reports' default views were not worked out before the dashboard answers ({exc or type(exc).__name__}): "
+          "the background process works them out while it serves.")  # fmt: skip
+
+
+def _prepare_reports(db: str, most: float) -> None:
+    """``prepare_reports``' own process: on its own Store, the company server's (``background_answers``: B-2050, the
+    Vendors page's totals kept for every process too), within ``most`` seconds; what it logs in the window with its
+    time (a process started afresh has no handler: B-2065); exit code 1 when it failed."""
+    from ap_coder.web import refresh
+
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.WARNING)
+    try:
+        prepared = Store(Path(db))
+        prepared.background_answers = True
+        refresh.prepare(prepared, _said, most, halted=_parent_gone)
+    except KeyboardInterrupt:  # (Ctrl+C in the window reaches this process too: it ends quietly, its server says why)
+        sys.exit(1)
+    except Exception:  # noqa: BLE001 - whatever stopped it: said, and the server answers all the same
+        logging.getLogger(__name__).warning("The reports' default views were not worked out before the dashboard "
+                                            "answers.", exc_info=True)  # fmt: skip
+        sys.exit(1)
+
+
+def _parent_gone() -> bool:
+    """Whether the process that started this one has ended: the reports' process, its server's process killed
+    outright, stops before its next view (B-2068)."""
+    import multiprocessing
+
+    parent = multiprocessing.parent_process()
+    return parent is not None and not parent.is_alive()
 
 
 def _stop_background_when_asked(should_exit: threading.Event, background: Any) -> None:
@@ -578,7 +696,127 @@ def worker_app() -> Any:
                      name="ap-coder-worker-stop", daemon=True).start()  # fmt: skip
     app.add_middleware(HandBack)  # a busy worker's connections go to the others (D-161)
     app.add_middleware(Recycle, state=app.state, data=Path(spec["data"]), **recycle_limits(int(spec["workers"])))
+    warm_worker(store, app.state.settings_factory)  # (before it serves: D-204)
+    with contextlib.suppress(OSError):  # (built: another worker may be started afresh, B-2067)
+        (Path(spec["data"]) / WARMING_NOTE).unlink(missing_ok=True)
     return app
+
+
+# --- A web worker's memories built before it serves (D-204) ------------------------------------------------------
+# A web worker keeps what its pages read again and again (core/caches.py CACHES). One just started has none of it, so
+# its first open of an invoice built the learning memory, the vendor list and the vendor's lessons and invoices in that
+# request (3-6 s at 300,000 invoices), and its first Learning visit its latest lessons (2.2 s). Each web worker of the
+# company server builds them in uvicorn's factory (``worker_app``), before it takes a connection: the others serve
+# meanwhile, and the supervisor's "alive?" is answered on a thread of uvicorn's own. Each through the function the page
+# calls, so the page takes what it built. D-203 built them on a thread once the worker served: not kept.
+# Seconds, looked at before each step: 4 workers building at once at 300,000 invoices built 8-12 steps in 15 s. (The
+# 30 s uvicorn gives a worker started afresh to serve is restart_all's, on SIGHUP: AP Coder starts none so. A worker
+# started afresh by ``Recycle`` is replaced as one that ended, and the supervisor asks "alive?" of a uvicorn thread.)
+WARM_MOST = 25.0
+# The pages whose templates a worker compiles before it serves: an invoice's and the review queue's (each person's
+# first page), with every template they extend, include or import
+WARM_TEMPLATES = ("invoice.html", "review.html")
+WARM_FIRST = 50  # the review queue's first invoices (people open those at its top first): their vendors'
+WARM_VENDORS = 8  # lessons and invoices of so many of those vendors, the biggest first (VENDOR_LESSONS_KEPT: 32)
+# The vendors of those invoices, the biggest first, with how many invoices each has
+_FIRST_VENDORS = ("SELECT MIN(q.vendor_name) AS vendor_name, MAX(q.gst_number) AS gst_number, (SELECT COUNT(*) FROM "
+                  "invoice_summary s WHERE s.vendor_key = q.vendor_key) AS invoices FROM invoice_summary q WHERE "
+                  f"{dialect.in_list('q.id')} AND q.vendor_name != '' GROUP BY q.vendor_key ORDER BY invoices DESC, "
+                  "MIN(q.id) LIMIT ?")  # fmt: skip
+
+
+def _held_numbers(store: Store) -> Any:
+    """What the vendors on hold's approved invoices carried, as the check of a held vendor's invoice moved to another
+    vendor reads it at every open (``coding.vendors.held_vendor``); None with no vendor on hold."""
+    held = store.held_vendors()
+    return store.approved_numbers([v["vendor_key"] for v in held]) if held else None
+
+
+def _templates(names: tuple[str, ...]) -> None:
+    """Each of ``names`` compiled, and every template it extends, includes or imports: Jinja keeps them compiled (an
+    invoice's first open compiled its own, 0.43 s at 60,000 invoices)."""
+    from jinja2 import meta
+
+    from ap_coder.web.core import templates
+
+    env, left, seen = templates.env, list(names), set()
+    while left:
+        name = left.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        env.get_template(name)
+        source = env.loader.get_source(env, name)[0]  # type: ignore[union-attr]
+        left.extend(found for found in meta.find_referenced_templates(env.parse(source)) if found)
+
+
+def _suggestions_index(store: Store) -> None:
+    """The GL suggestions' index of the learning memory (``suggest._memory``: 0.32 s at 60,000 invoices), as an
+    invoice's first open with a line without an account builds it, asked through ``suggest_gl`` of one line."""
+    from ap_coder.ai.suggest import suggest_gl
+    from ap_coder.web.core import reference_or_none
+
+    reference = reference_or_none(store)
+    if reference is not None:
+        suggest_gl("the learning memory", "", store.feedback_rows(), reference)
+
+
+def warm_steps(store: Store, settings_factory: Callable[[], Any]) -> Any:
+    """What a web worker builds before it serves, in this order: (what, how). The templates of an invoice and of the
+    review queue (``WARM_TEMPLATES``: every person's first pages), the learning memory (``FEEDBACK_READ`` lessons:
+    every open and check of an invoice) and the GL suggestions' index of it (every open of an invoice with a line
+    without an account), the vendor list, the vendors' ERP IDs and the vendors on hold's numbers (every open), the
+    reading status (every page), Learning's latest lessons, then the lessons and invoices of the biggest vendors (by
+    their invoices) of the review queue's first ``WARM_FIRST`` invoices, ``WARM_VENDORS`` at most, their invoices
+    within half of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``): the other half for those people ask."""
+    from ap_coder.core.store import REVIEW
+    from ap_coder.core.store.vendors import VENDOR_ROWS_KEPT
+    from ap_coder.web.core import reading_status_or_none
+    from ap_coder.web.pages import invoice, learning
+
+    yield "the invoice's and the queue's templates", lambda: _templates(WARM_TEMPLATES)
+    yield "the learning memory", store.feedback_rows
+    yield "the GL suggestions' index", lambda: _suggestions_index(store)
+    yield "the vendor list", lambda: invoice.vendor_list(store)
+    yield "the vendors' ERP IDs", store.vendor_ids
+    yield "the vendors on hold's numbers", lambda: _held_numbers(store)
+    yield "the reading status", lambda: reading_status_or_none(settings_factory(), store)
+    yield "Learning's latest lessons", lambda: store.feedback_rows(limit=learning.MEMORY_READ)
+    vendors = store.summary_fetch(_FIRST_VENDORS, (json.dumps(store.listed_ids(REVIEW)[:WARM_FIRST]), WARM_VENDORS))
+    rows = 0
+    for v in vendors:
+        name, key = v["vendor_name"], store.vendor_key_for(v["vendor_name"], v["gst_number"])
+        yield f"the lessons of {name}", lambda name=name, key=key: store.vendor_lessons(name, key)
+        if rows + v["invoices"] <= VENDOR_ROWS_KEPT // 2:
+            rows += v["invoices"]
+            yield f"the invoices of {name}", lambda key=key: store.vendor_invoices(key, shared=True)
+
+
+def warm_worker(store: Store, settings_factory: Callable[[], Any], most: float = WARM_MOST) -> list[str]:
+    """A web worker's memories built before it serves (``warm_steps``), one after the other, within ``most`` seconds
+    (looked at before each step), until the worker is asked to stop. A step that fails is logged and the next goes
+    on: nothing is lost, the page builds it when asked. Said in the worker's own log (``worker_log``). What was
+    built, in order."""
+    log, began, built, cut = logging.getLogger(__name__), time.monotonic(), [], ""
+    try:
+        for what, build in warm_steps(store, settings_factory):
+            if time.monotonic() - began >= most:
+                cut = f"; stopped at {most:g} s"
+                break
+            if (running := uvicorn_server()) is not None and running.should_exit:
+                cut = "; stopped: the worker stops"
+                break
+            try:
+                build()
+                built.append(what)
+            except Exception:  # noqa: BLE001 - any step's failure: logged, the next goes on
+                log.warning("A web worker did not build %s before it served.", what, exc_info=True)
+    except Exception:  # noqa: BLE001 - the steps themselves not found (a busy database): built where asked
+        log.warning("A web worker stopped building its memories before it served.", exc_info=True)
+        cut = "; stopped on an error"
+    log.info("A web worker (process %s) built %d of its memories before it served, in %.1f s%s: %s.", os.getpid(),
+             len(built), time.monotonic() - began, cut, ", ".join(built) or "none")  # fmt: skip
+    return built
 
 
 # --- A web worker started afresh now and then (D-153) ------------------------------------------------------------
@@ -586,13 +824,19 @@ def worker_app() -> Any:
 # memory, or past RECYCLE_REQUESTS requests (each worker a number of its own, up to a quarter more, so they don't all
 # go together), a worker takes no new requests, finishes those under way and ends; uvicorn's supervisor starts
 # another in its place (on Windows too: it ends as any process does, not by a signal). One worker at a time (a lock
-# in the data folder), and never while something of its own runs that would end with it: a job, a backup, imports
-# waiting their turn, the long routes' lane (core.run_heavy). Logins are kept in the database: nobody is signed out.
+# in the data folder, then its replacement's note until it serves: B-2067), and never while something of its own runs
+# that would end with it: a job, a backup, imports waiting their turn, the long routes' lane (core.run_heavy). Logins
+# are kept in the database: nobody is signed out.
 MEMORY_ENV, REQUESTS_ENV = "AP_WORKER_MAX_MB", "AP_WORKER_MAX_REQUESTS"
 RECYCLE_REQUESTS = 50_000  # about a working day for each of 16 workers answering 20-40 requests a second
 RECYCLE_LOCK = ".ap_coder_worker_restart.lock"
 RECYCLE_PID = ".ap_coder_worker_restart.pid"  # the worker being started afresh, for the supervisor
 LEAVING_SECONDS = 600  # how long that note is believed (one still waiting for its own work answers "alive?")
+# Its replacement building its memories before it serves (D-204), written by the supervisor as it starts it and dropped
+# by the replacement once built: no other worker is started afresh meanwhile (B-2067). Believed WARMING_SECONDS at most:
+# a replacement that never serves (it crashed) holds no other back for good.
+WARMING_NOTE = ".ap_coder_worker_warming"
+WARMING_SECONDS = WARM_MOST + 60.0  # (its start, its imports and app, its memories, the step under way)
 MEMORY_EVERY = 10  # requests between two looks at the memory
 DRAIN_SECONDS = 1.0
 RECYCLE_GRACE_SECONDS = 3600  # what an ending worker gives the requests under way (a service stop: GRACEFUL_SECONDS)
@@ -671,6 +915,10 @@ class Recycle:
         self.stopping = try_lock(self.data / RECYCLE_LOCK)
         if self.stopping is None:
             return  # another worker is being started afresh: this one's turn comes after
+        if _leaving(self.data) is not None or _warming(self.data):  # (or its replacement does not serve yet: B-2067)
+            self.stopping.close()  # type: ignore[attr-defined]
+            self.stopping = None
+            return
         with contextlib.suppress(OSError):
             (self.data / RECYCLE_PID).write_text(str(os.getpid()), encoding="ascii")
         logging.getLogger(__name__).warning("A web worker (process %s) is started afresh after %s.", os.getpid(),
@@ -704,10 +952,22 @@ def _leaving(data: Path) -> int | None:
 
 
 def _left(data: Path, pid: int) -> None:
-    """The note of the worker ``pid`` started afresh dropped once it has ended (if no other wrote its own since)."""
+    """The note of the worker ``pid`` started afresh dropped once it has ended (if no other wrote its own since), its
+    replacement, started now, noted as building its memories (``WARMING_NOTE``, B-2067) first."""
     if _leaving(data) == pid:
         with contextlib.suppress(OSError):
+            (data / WARMING_NOTE).write_text(str(pid), encoding="ascii")
+        with contextlib.suppress(OSError):
             (data / RECYCLE_PID).unlink()
+
+
+def _warming(data: Path) -> bool:
+    """Whether a worker started afresh still builds its memories before it serves (``WARMING_NOTE``, written at most
+    WARMING_SECONDS ago)."""
+    try:
+        return time.time() - (data / WARMING_NOTE).stat().st_mtime < WARMING_SECONDS
+    except OSError:
+        return False
 
 
 # --- A busy web worker hands its connections back (D-161) --------------------------------------------------------

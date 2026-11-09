@@ -4298,3 +4298,183 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     B-2064 (Month-end's invoices not in the ERP read in one moment, found by its load runs) and B-2065 (each web
     worker's own log, found by its review). The first 10 minutes at 300,000 stay at the edge (SCALE.md row 1); a next
     try starts from a profile of those minutes 6 to 8.
+- **D-204** · **The company server works its reports out before it first answers, and each web worker its memories
+  before it serves** (scale goal, target 1's last edge; 8 Nov 2026).
+  - **Why:** at 300,000 invoices a database's first 10 minutes with 100 people had the pages' p99 at 2.24 and 3.18 s
+    (3 s the target). Its slowest 1%: each web worker's first opens of an invoice and first Learning visit, which built
+    that worker's memories in the request (3-6 s: the learning memory of 50,000 lessons, the vendor list, the vendors'
+    ERP IDs, the queue's vendors' lessons and invoices; Learning's latest lessons 2.2 s), and the reports asked before
+    the background process's refresher had worked their default views out (D-200: about a minute under load, Month-end's
+    first build 12-50 s). D-203 built the memories on a thread once the worker served and made the whole worse: the
+    work competed with the requests. The user chose to do it before the server answers.
+  - **What:**
+    - **The reports, before the port opens, on a database that never had them** (`web/server.py:prepare_reports`,
+      `web/refresh.py:prepare`): in `_serve_workers`, before `listening_socket` (connections are refused meanwhile,
+      none held), each of `DEFAULTS` is worked out through `ahead`, as the refresher works it out, on a Store with
+      `background_answers` (B-2050: the Vendors page's totals kept for every process too), in `DEFAULTS`' order
+      (Month-end's three first). A view that fails, or whose arguments can't be found, is logged and the next goes on.
+    - **The rule: only a database that never had them** (`refresh.served_before`, `Store.answered_before`): no answer
+      of any of `DEFAULTS`' names kept by any AP Coder, and no Month-end billing facts (D-194). One that had them (a
+      restart; an update; one view's answer gone while the others are kept) is served at once, as before D-204, its
+      views worked out while it serves by the refresher (D-198, D-200; a report asked before says it is being worked
+      out, D-201), and the window says so in one line; no process is started. Why not each view with none kept for its
+      question (the first version, which asked each answer's caller for its key without working it out): every update
+      keeps none of the version before's answers (an answer's version is AP Coder's own, `reports._version`, and so is
+      Month-end's billing facts', `purchasing`'s `kept`), so every update worked them all out before it answered: at
+      300,000 its downtime would have been about 3.5 to 4 minutes instead of about 16 s (D-188's target 5). Nor each
+      name with none kept: simpler is one look, and a database served before has each name (the refresher works each
+      default view out at every start).
+    - **In a process of its own** (`server._prepare_reports`, started with multiprocessing's "spawn", as uvicorn's web
+      workers, on Windows and Linux alike): the server's own process (uvicorn's supervisor, which lives as long as the
+      server) did the work at first and its allocator kept what it peaked at (114 MB with the server's imports, 235-241
+      MB after the work at 60,000 invoices); now it waits for that process and keeps 118 MB (20,000 invoices). Its
+      bounds: `refresh.PREPARE_MOST`, 200 s, looked at before each view, the view under way finished, then
+      `server.PREPARE_ENDS`, 15 s more, after which the process is ended. Month-end's three, by far the longest (92-121
+      s together at 300,000), come first, so the view under way at 200 s is a quick one (about 10 s at most at 300,000,
+      estimated: the Vendors page's totals 7 s there, B-2050). A process that fails (exit code 1, its warning in the
+      window with its time) or is ended is no reason not to serve: the window says so and the refresher works out the
+      rest after the start.
+    - **Said in the window** (and `service.log`): "Working out the reports' default views before the dashboard answers
+      (this database never had them), 200 seconds at most..." then how many of the 14 were worked out, in how long (or
+      that its process stopped or was ended); on a database that had them, that they are worked out while it serves.
+      Printed, as the server's other lines at a start: the window shows warnings and up only (`cli.configure_logging`,
+      B-240; uvicorn at "warning"), so an INFO line would reach nobody.
+    - **Each web worker's memories, before it serves, at every start** (`server.warm_worker`, in `worker_app`,
+      uvicorn's factory): the templates of an invoice and of the review queue (`WARM_TEMPLATES`, with every template
+      they extend, include or import: 0.43 s a first open compiled at 60,000 invoices), the learning memory, the GL
+      suggestions' index of it (`suggest_gl` asked of one line: 0.32 s), the vendor list, the vendors' ERP IDs, what the
+      held vendors were paid with, the reading status, Learning's latest lessons, then the lessons and invoices of the
+      biggest vendors of the review queue's first 50 invoices (8 at most, their invoices within half of
+      `VENDOR_ROWS_KEPT`): D-203's `warm_steps` and those two, each through the page's own function, run in turn with
+      no thread and no request to yield to. `WARM_MOST` (25 s, looked at before each step) bounds it; uvicorn's pong
+      thread answers the supervisor's "alive?" meanwhile. The 30 s uvicorn gives a new worker to serve
+      (`timeout_worker_healthcheck`) is `restart_all`'s alone, on SIGHUP, which AP Coder never sends: a worker that
+      ended (`Recycle`, D-153) is replaced with no such wait. A step that fails is logged and the next goes on; a worker
+      asked to stop stops building. Said in its own `logs/web-<n>.log` (B-2065). The other workers serve meanwhile (a
+      worker started afresh by `Recycle`); at a start none does for those seconds, and connections wait in the port's
+      queue. After an update too: about 13 s more of downtime at 300,000, and the first opens after it are fast.
+    - **The waits for a server started:** server-update's for the new version (`UP_WAIT`, before it goes back to the
+      old one) 180 → 300 s, `bench load`'s 180 → 300 s (`START_WAIT`), `bench day`'s 120 → 300 s, CI's update job's
+      300 s made a constant (`UP_WAIT`); `test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers`
+      holds each at `PREPARE_MOST + PREPARE_ENDS + WARM_MOST` + 30 s or more (270 s), and even an update of a database
+      that never had the reports within D-188's 5 minutes (200 + 15 + 25 + 15 for the processes' starts and the step
+      under way + 40 for server-update's own stop, copy and update).
+  - **What stays the same:** a laptop and the server in one process (`--workers 1`) prepare and build nothing ahead;
+    the refresher's start, its wants and its views kept warm are as they were (on a database just prepared it takes
+    the answers kept, a cheap take); a restart or an update works no report out before it answers, so the first
+    minutes after an update are as before D-204 (the reports worked out while it serves, a report asked meanwhile
+    shown as being worked out, D-201), but for the workers starting with their memories built; what a page shows.
+  - **Tests:** `tests/web/test_refresh.py` (on a database that never had them each view worked out once and nothing
+    more, kept for every process: a web worker's pages work none out; a database with this version's answers, only an
+    earlier version's, one view's answer gone, only Month-end's billing facts: served before; only another report's
+    answers: not; the bound, said so; a failing view and arguments not found logged, the next going on),
+    `tests/web/test_server_capacity.py` (prepared before the port is bound, only by `_serve_workers`: `serve` with one
+    process and a laptop prepare nothing; in another process, none of the work in this one; a database that had them
+    (an earlier version's answers) served at once, no process started, one line said; the process failing or ended at
+    its bound, the window saying so and the server answering; `worker_app` builds each memory once before it returns,
+    the templates compiled and the GL index built, and an invoice and the queue opened right after read, compile and
+    build none again; only a server's web worker builds them; the queue's biggest vendors within their bounds; the
+    bound, a stop, a failing step and steps not found; the real two-worker server: its window's line, each
+    `web-<n>.log`'s, it serves, and started again it answers at once, the workers' memories built again; the waits).
+  - **Measured** (4 cores shared with another seed's build, Python 3.12, a 60,000-invoice seed of my own,
+    `bench seed --invoices 60000`, 2 web workers; the first version, which looked at each view's question):
+    - the reports before the port opens, on the database never served: 7.9 s in the server; 12.5 s timed view by view
+      with the other build busier, Month-end's received POs 6.2 s of it, the next longest Spend's figures 1.3 s and
+      Learning's corrections 1.1 s; with Month-end's billing lines kept already (D-194), 5.3 s;
+    - each web worker's memories: 2.9-3.1 s (22 steps; the learning memory 1.0 s, the vendor list 0.5 s, Learning's
+      latest lessons 0.4 s, the reading status 0.2 s, the biggest vendor's lessons 0.4 s);
+    - the server answered 13.0 s after its start on the database never served, 5.0 s started again, where the code
+      before took 1.6 s;
+    - first opens (the access log's server time, the queue's first four invoices, then Learning): before, each
+      worker's first open 2.44 and 2.29 s, Learning 0.47 s; with the memories built 0.51-0.59 s, then 0.06-0.14 s,
+      Learning 0.09-0.18 s. What a first open still built (a profile): Jinja's templates, 0.43 s, and the GL
+      suggestions' index, 0.32 s: since, two steps of the workers' own;
+    - a process doing the same as the server's own (uvicorn's supervisor), after the reports: 235-241 MB, where the
+      server's imports alone take 114 MB (hence their own process).
+  - **At 300,000 invoices** (the lead's runs: a seed never served each time, 100 people for 10 minutes from its first
+    start, 4 web workers, 4 cores):
+    - 6696496 (the reports' bound 120 s, each worker's 15 s, in the server's own process): "3 of the 3 with none kept
+      (14 in all), in 121.3 s; past 120 s, 11 left to the background process": Month-end's three alone 121.3 s (their
+      billing facts, D-194, built from nothing); each worker stopped at 15 s with 8-12 of its steps (4 workers building
+      at once). Pages p50 115 ms, p95 686 ms, p99 2.91 s, actions p95 347 ms, no error, none over 30 s; the slow ones
+      left in the first 2 minutes were the quick reports the bound left out (Sales tax p95 3.44 s, Insights, Vendors).
+      Hence the bounds 200 s and 25 s, the reports' own process and the two steps more;
+    - 24391d1 (all of those): "14 of the 14 ... in 92.3 s"; each worker 17 of its memories in about 13 s. Pages p50
+      132 ms, p95 1.06 s, p99 2.49 s (2.24-3.18 s before D-204: the target met), actions p95 508 ms, no error, none
+      over 30 s.
+    - **After an update** (estimated from those): no report worked out before it answers (the rule), so its downtime
+      is as before D-204 (about 16 s on CI's Windows runner at 20,000 invoices) and each worker's memories, about 13 s
+      at 300,000; its first minutes are as before D-204, the workers warm.
+  - **After the rule** (a 20,000-invoice seed of my own, 2 web workers, a first start): the reports 3.6 s in their own
+    process, the server answering 9.4 s after its start, its own process 118 MB; each worker 2.5-2.7 s for 24 steps;
+    a first open after them 0.25 s in a worker's process, half of it importing the PDF library (`capture.layout`,
+    once a process), then 0.07 s.
+  - **Where each half applies** (the review's point): in production a database is mostly first served empty, its
+    invoices brought in through the dashboard's own pages, and a laptop pilot's database counts as served once its
+    review queue or a report was opened: the reports' half mostly covers a database built without being served
+    (`ap_coder process`, a bulk load) and the bench's seed. The workers' half applies at every start, an update's too.
+  - **The 5 minutes, tightened** (an update of a database that never had the reports, the only one that works them
+    out first): no view is begun past 200 s, and Month-end's three, by far the longest, come first, so the one under
+    way then is a quick one (about 10 s at 300,000, estimated); `PREPARE_ENDS` (15 s) is its time to finish, then its
+    process is ended (SIGTERM ends it at once; 5 s more, then a kill, for one that doesn't); the workers begin no step
+    past 25 s (each step 1-3 s at 300,000). The start is then within about 260 s, inside server-update's `UP_WAIT`
+    (300 s: a start that overran it would roll the update back), and the downtime, with server-update's own 16-40 s,
+    within the 5 minutes; the reports only near 200 s far above 300,000 invoices (92-121 s there).
+  - **After its review** (a fresh reviewer, 5a40c17..f6ce662): B-2067 (a worker started afresh: no other one stopped
+    until its replacement serves, `WARMING_NOTE`), B-2068 (a SIGTERM while the reports are worked out ends their
+    process too; that process stops once its server is gone), B-2069 (the server file written before the reports),
+    B-2070 (the day bench counts "database is locked" on no INFO line), B-2071 (an error looking at the reports or
+    starting their process: said, and the server answers). Ctrl+C ends the reports' process quietly.
+  - **Left:** a database that had the reports and was updated waits for the refresher for its first minute or two,
+    as before D-204 (D-201 says "being worked out"); a database restored from a backup keeps its answers, of another
+    database, until they are swept, and counts as served. A start's workers serve nothing for their seconds of
+    building, all at once. The PDF library's import (0.12 s) is still a worker's first open's.
+  - (`ap_coder/web/server.py`, `web/refresh.py`, `core/store/reports.py`, `ops/server_update.py`, `bench/load.py`,
+    `bench/day.py`, `scripts/ci/server_update_downtime.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`;
+    `tests/web/test_refresh.py`, `tests/web/test_server_capacity.py`)
+- **D-205** · **The OCR models have a mirror, huggingface.co, tried only when www.modelscope.cn fails a download, and
+  kept only with their pinned SHA-256** (B-2072; approved by the user, 9 Nov 2026).
+  - **Why:** since 8 Nov 2026 about 22:30 UTC, www.modelscope.cn serves RapidOCR's OCR models at about 20 KB/s
+    (measured from a developer's machine and in GitHub Actions; 70 KB/s in a 25-second sample on 9 Nov): the 16.6 MB
+    `ch_PP-OCRv5_rec_mobile_infer.onnx` arrived cut off and failed its pinned SHA-256 three times, and every bundle
+    build (`scripts/build_offline_bundle.py`), the Windows installer and each first setup from GitHub's ZIP (the
+    launcher, D-94) failed: there was no other source.
+  - **The mirror:** `https://huggingface.co/pitapo/rapidocr/resolve/main/` plus the same path as under modelscope's
+    RapidOCR `resolve/v3.4.0/` (e.g. `onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile_infer.onnx`). All five pinned OCR files
+    there (`ops/offline.py` `_PPOCRV4_FALLBACK`, `_PPOCRV5_FALLBACK`) were checked on 9 Nov 2026: byte for byte the
+    same, every SHA-256 the pinned one (16.6 MB in 1.6 s). It is a third party's copy: only the pinned SHA-256s make it
+    safe (a different file is refused, the model then reported missing), and nothing promises it stays up.
+  - **What:** `ModelFile.mirror` (`offline.mirror_url`), looked up by the pinned SHA-256, so a model RapidOCR's own
+    list names (the same five today) gets it only if it is one of those files; a newer model has none.
+    `fetch_models.fetch` tries the site as before (its tries, timeouts, `.part` file and SHA-256 check), then on any
+    failure (no answer, cut off, far too slow, the wrong file) the mirror the same way, and says which host a file came
+    from ("Got ... from its mirror, huggingface.co, checked against its SHA-256."). A host that never answers is asked
+    for nothing more in that run (B-554), the mirror too. The launcher's notice and its "couldn't reach" / "Couldn't
+    download" lines name both hosts. The table finder (RapidLayout) has no mirror: no copy of it was verified.
+  - **Far too slow means "try elsewhere"** (`fetch_models.SLOW_AFTER`, `SLOW_LIMIT`): CI's `Installer on Windows`
+    job was cancelled at its own time limit while modelscope trickled the PP-OCRv5 models (the 4.7 MB detector from
+    22:29:58, the 16.6 MB recogniser from 22:34:16, cancelled 22:44:02), the mirror never asked, since a trickle is no
+    error. While another source is left for a file (the site of an OCR model, which has the mirror), after the file's
+    first 30 s one that would take more than 3 minutes in all at its average rate so far is given up on: its `.part`
+    deleted, not tried again there, and the mirror tried. 3 minutes lets the largest model, 16.6 MB, come at 92 KB/s
+    or more (a slow office link's 1 MB/s brings it in 17 s, a tenth of the bound), while the detector at CI's 18 KB/s
+    (4.3 minutes) and the recogniser at 20 KB/s (14 minutes) move on after 30 s; 5 minutes would have let the
+    detector's 4.3 minutes through. A host far too slow did answer, so it is still asked for the next file (not
+    "couldn't reach"). The last source left for a file (the mirror; the site of a file with no mirror, as the table
+    finder, which CI's bundle builds did get from the trickling modelscope that day) is waited out as before, with its
+    timeouts: giving up there would leave the file nowhere to come from. The floor needs the file's length, which both
+    hosts send (`Content-Length`, after their redirects); without it a download is waited out as before.
+  - **Fallback only, never at run time:** www.modelscope.cn is always asked first. The app never downloads a model
+    (D-163); only `scripts/fetch_models.py` does, at the first setup from GitHub's ZIP (the launcher's opt-in for that
+    step) or the bundle build (`AP_ALLOW_INTERNET=1`). The offline guards allow the mirror's address in
+    `ops/offline.py` only and prove that without the opt-in neither host is asked.
+  - **What IT must allow** for a bundle build or a first setup from GitHub's ZIP: `huggingface.co` (HTTPS, port 443)
+    beside `pypi.org`, `files.pythonhosted.org` and `www.modelscope.cn`; `build_offline_bundle.py --dry-run` lists
+    them, each model's mirror address too. Without it nothing changes while modelscope works.
+  - **Left:** a slow site costs each missing OCR model its first 30 s before the mirror, and a mirror as slow is waited
+    out (a slow link at both hosts takes as long as before, plus those 30 s). The table finder has no mirror (none at
+    huggingface.co: `pitapo/rapidocr`, `RapidAI/RapidLayout` and `SWHL/RapidLayout` answer 404/401), so a trickling
+    modelscope is still waited out for it. A file that came cut off is not asked of modelscope again before the mirror.
+  - (`ap_coder/ops/offline.py`, `scripts/fetch_models.py`, `scripts/launch.py`, `scripts/build_offline_bundle.py`,
+    `docs/HOW_IT_RUNS.md`, `docs/HANDOFF.md`, `docs/PILOT.md`, `docs/REFERENCE.md`; `tests/launcher/test_launch.py`,
+    `tests/launcher/test_launch_build.py`, `tests/offline/test_offline.py`, `tests/offline/test_offline_guard.py`)

@@ -364,10 +364,21 @@ the launcher.
 
   **Several processes on the server** (D-111; `serve --server --workers N`, which the service host passes from
   `server.json`'s `workers`, default `server.default_workers`: for the cores and the memory, D-153):
-  `ap_coder/web/server.py:_serve_workers` opens the port
+  `ap_coder/web/server.py:_serve_workers` first works out the reports' default views on a database that never had
+  them, the port still closed (`server.prepare_reports`, `ap_coder/web/refresh.py:prepare`, D-204: no answer of any
+  of `DEFAULTS`' names kept by any AP Coder and no Month-end billing facts, `refresh.served_before`; a restart or an
+  update is served at once, its views worked out while it serves; in a process of its own,
+  `server._prepare_reports`, started with "spawn", so the server's own keeps none of its memory; 200 s at most,
+  `refresh.PREPARE_MOST`, looked at before each view, then 15 s more, `server.PREPARE_ENDS`, before that process is
+  ended; one that fails or is ended is no reason not to serve; said in the window and `service.log`), then opens the
+  port
   and runs uvicorn's own supervisor, which starts N web workers with "spawn" (Windows and Linux alike: each is a fresh
-  Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over), and starts again a worker that
-  stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
+  Python, `worker_app` builds the app from `AP_SERVE_WORKER`, the port handed over, then the worker's memories before
+  it serves: an invoice's and the queue's templates, the learning memory and its GL suggestions' index, the vendor
+  list, the vendors' ERP IDs and on-hold numbers, the reading status, Learning's latest lessons, the queue's biggest
+  vendors' lessons and invoices, each through the page's own function, 25 s at most, `server.warm_worker`, at every
+  start, said in its `web-<n>.log`; the others serve meanwhile), and starts again a worker
+  that stops. Beside them one **background process** (`serve --background-work`, `server.run_background`, started again
   when it stops, 5 s doubling to a minute) does what the laptop's dashboard does in its own process: the page
   reader and the AI reviewer, the Azure check, JD Edwards, the review queue checked again after a change of settings
   (`bulk.QueueRecheck`, D-155: in batches of 50 kept in one short write each, one process at a time by the
@@ -422,7 +433,8 @@ the launcher.
   connections, then uvicorn stops it gracefully (the requests under way given up to an hour, `RECYCLE_GRACE_SECONDS`)
   and its supervisor starts another (`_Supervisor` does not ask the ending one "alive?",
   `.ap_coder_worker_restart.pid`, for ten minutes at most, dropped once it has ended); one at a time
-  (`.ap_coder_worker_restart.lock`), never while a job, a backup, waiting imports or the lane are busy. One that a
+  (`.ap_coder_worker_restart.lock`, then until its replacement has built its memories and serves,
+  `.ap_coder_worker_warming`, 85 s at most: B-2067), never while a job, a backup, waiting imports or the lane are busy. One that a
   request started after that look is waited for as the worker ends (its lifespan, `app.own_work_running`); a stop of
   the service still ends it at its deadline. The workers share one socket, and the first free one takes each new
   connection; a busy one (requests waiting for its threads or its lane) hands its connections back
@@ -497,7 +509,8 @@ the launcher.
   lease "answers/refresher", which the askers count on) works the wants out one at a time, oldest first, through
   `ap_coder/web/refresh.py:ANSWERS` (each answer's own caller, so its format, stamp and settle), and at its start
   those asked in the last day, then each page's default view, as the page itself picks it, Month-end's first
-  (`refresh.py:DEFAULTS`, D-200); from then on it keeps those and the latest question asked of each answer in the
+  (`refresh.py:DEFAULTS`, D-200; on a database that never had them, worked out before the server answered, D-204);
+  from then on it keeps those and the latest question asked of each answer in the
   last day warm (`refresh.py:_Warm`: asked again once its answer is 15 minutes old, a cheap take while it holds), so
   the first person to open a report, in the morning too, takes a kept answer; a database restored while it runs gets
   its own start. A request with nothing to show (the first ask, another format after an update) works it out, or
@@ -602,9 +615,9 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | --- | --- | --- | --- |
 | 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI from the code alone (no bundle: `scripts/launch.py:setup_online`) or with `AP_ALLOW_INTERNET=1`; never with `AP_ALLOW_INTERNET=0`; the Azure extra never from PyPI |
 | 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | from the code alone or with `AP_ALLOW_INTERNET=1`, never with `AP_ALLOW_INTERNET=0`; when no Python is found, and asked |
-| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models) | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
+| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models); an OCR model it fails to give (or far too slowly: over 3 minutes at its rate after 30 s), from its mirror huggingface.co (D-205), kept only with its pinned SHA-256 | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
 | 4 | `scripts/install.py:update_code` | `git fetch` / `git pull` of a checkout | only with `AP_ALLOW_INTERNET=1` |
-| 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope | IT's online computer; sets the opt-in for itself |
+| 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope, huggingface.co (the OCR models' mirror, D-205) | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |
 | 7 | `ap_coder/web/server.py:_announce_when_up` | its own `/healthz` | direct, never through a proxy |
 | 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`, `probe`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`), and their backups `AP_LLM_BACKUP_URL` / `AP_PAGE_READER_BACKUP_URL` (D-180) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |

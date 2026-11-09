@@ -1,13 +1,17 @@
 """What one web worker of the company server runs at once (D-153): its thread pool capped, the long routes in a lane
-of their own, a worker started afresh past its memory or requests, and how many workers the server runs."""
+of their own, a worker started afresh past its memory or requests, how many workers the server runs, and what the
+server and each worker do before they answer (D-204)."""
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
+import logging
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -570,6 +574,53 @@ def test_a_worker_past_its_memory_ends_and_one_worker_at_a_time(tmp_path, monkey
     assert found.should_exit
 
 
+def test_no_worker_is_started_afresh_while_the_one_started_before_it_builds_its_memories(store, tmp_path, monkeypatch):
+    """B-2067: "one worker at a time" (``RECYCLE_LOCK``) lasted only until the worker started afresh had ended; its
+    replacement then built its memories before it served (D-204, up to ``WARM_MOST``) while another worker due
+    meanwhile ended too: no worker served (9.7 s in a probe with two). No other is started afresh until the
+    replacement serves: from the end of the one before (its note, ``RECYCLE_PID``) through the replacement's start
+    (``WARMING_NOTE``, the supervisor's as it starts it) to its memories built; a replacement that never gets there
+    (it crashed) lets the others go after ``WARMING_SECONDS``."""
+    from ap_coder.core.paths import try_lock
+
+    ending = try_lock(tmp_path / server.RECYCLE_LOCK)  # (a worker started afresh, finishing its requests)
+    (tmp_path / server.RECYCLE_PID).write_text("4242", encoding="ascii")
+    worker, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(worker)
+    assert not found.should_exit
+    ending.close()  # (it has ended; the supervisor has not started its replacement yet)
+    _serve(worker)
+    assert not found.should_exit and worker.stopping is None
+    lock = try_lock(tmp_path / server.RECYCLE_LOCK)  # (let go of: another worker may look in its turn)
+    assert lock is not None
+    lock.close()
+    server._left(tmp_path, 4242)  # (the supervisor starts its replacement)
+    assert server._leaving(tmp_path) is None
+    seen = []
+
+    def steps(store, settings_factory):  # (the replacement building its memories: a slow step)
+        def slow():
+            _serve(worker)  # (the worker due asks again meanwhile)
+            seen.append(found.should_exit)
+
+        yield "a slow step", slow
+
+    monkeypatch.setattr(server, "warm_steps", steps)
+    _as_a_worker(store, tmp_path, monkeypatch)
+    server.worker_app()
+    assert seen == [False]
+    _serve(worker)
+    assert found.should_exit  # (the replacement serves: the next one goes)
+
+    worker.stopping.close()  # (it has ended)
+    server._left(tmp_path, os.getpid())  # (its replacement started, and never served: it crashed)
+    old = time.time() - server.WARMING_SECONDS - 1
+    os.utime(tmp_path / server.WARMING_NOTE, (old, old))
+    late, _, found = _recycle(tmp_path, monkeypatch, max_requests=1)
+    _serve(late)
+    assert found.should_exit
+
+
 def test_the_limits_come_from_the_memory_and_the_settings(monkeypatch):
     monkeypatch.delenv(server.MEMORY_ENV, raising=False)
     monkeypatch.delenv(server.REQUESTS_ENV, raising=False)
@@ -873,3 +924,538 @@ def test_the_default_number_of_workers_follows_the_cores_and_the_memory(cores, g
     if gb is None:
         monkeypatch.setattr(server, "memory_total_mb", lambda: None)  # memory unknown: by the cores
     assert server.default_workers(cores, gb * 1000 if gb else None) == workers
+
+
+# --- What the company server does before it answers (D-204) -------------------------------------------------------
+
+
+def test_the_server_works_its_reports_out_before_its_port_opens_and_only_with_several_workers(
+    store, tmp_path, monkeypatch
+):
+    """D-204: the company server with several web workers works the reports' default views out (``prepare_reports``)
+    before its port is bound, so a connection meanwhile is refused (nobody waits on a socket nothing answers yet); a
+    laptop and the server in one process work none out at their start, as before."""
+    done: list = []
+    monkeypatch.setattr(server, "prepare_reports", lambda store: done.append(("prepared", store.path)))
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            done.append("served")
+            self.should_exit.set()
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    socket_ = SimpleNamespace(listen=lambda n: None)
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(
+        bind_socket=lambda: done.append("bound") or socket_, backlog=2048))  # fmt: skip
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "Together", lambda works: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert done == [("prepared", store.path), "bound", "served"]
+
+    import uvicorn
+
+    done.clear()
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: done.append("served"))
+    monkeypatch.setattr(server, "fewer_malloc_arenas", lambda: None)
+    for on_server in (False, True):
+        if on_server:
+            monkeypatch.setenv("AP_SERVER_MODE", "1")
+        else:
+            monkeypatch.delenv("AP_SERVER_MODE", raising=False)
+        server.serve("127.0.0.1", _free_port(), open_browser=False, store=store, insecure_http=True, workers=1)
+    assert done == ["served", "served"]
+
+
+def test_a_server_working_its_reports_out_is_running_by_its_server_file(store, tmp_path, monkeypatch):
+    """B-2069: the server file (``.ap_coder_server.json``) was written once the reports had been worked out (D-204), so
+    for up to 215 s a server starting said nothing: the launcher's "never two versions on one database" and
+    ``dashboard_stopped`` saw none running. It is written before them, and removed as before, a stop meanwhile too."""
+    seen = []
+
+    def prepared(store):
+        seen.append(json.loads(server.server_file().read_text(encoding="utf-8"))["pid"])
+
+    class Supervisor:
+        failed = False
+
+        def __init__(self, config, sockets):
+            self.should_exit = threading.Event()
+
+        def run(self):
+            self.should_exit.set()
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(server, "server_config", lambda *a, **k: SimpleNamespace(
+        bind_socket=lambda: SimpleNamespace(listen=lambda n: None), backlog=2048))  # fmt: skip
+    monkeypatch.setattr(server, "Supervisor", Supervisor)
+    monkeypatch.setattr(server, "Together", lambda works: SimpleNamespace(start=lambda: None, stop=lambda: None))
+    monkeypatch.setattr(server, "_announce_when_up", lambda *a: None)
+    monkeypatch.setattr(server, "prepare_reports", prepared)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [os.getpid()] and not server.server_file().exists()
+
+    def stopped(store):
+        prepared(store)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server, "prepare_reports", stopped)
+    assert server._serve_workers("127.0.0.1", 8599, store, None, None, None, True, 2) == 0
+    assert seen == [os.getpid()] * 2 and not server.server_file().exists()
+
+
+def test_the_servers_reports_are_worked_out_in_a_process_of_its_own_before_it_answers(store, monkeypatch, capfd):
+    """D-204: the reports' default views worked out before the server answers peaked the memory of the server's own
+    process (uvicorn's supervisor, which lives as long as the server: 114 MB with its imports, 235-241 MB after the
+    work at 60,000 invoices), and its allocator kept it. They are worked out in a process of its own, started afresh
+    ("spawn", as uvicorn's web workers): nothing of them in this one, each kept for every process, and the window
+    says what was done, as before."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+    from tests.webclient import add_clean
+
+    add_clean(store)
+    worked, real = [], Store.shared_answer
+    monkeypatch.setattr(Store, "shared_answer", lambda self, name, *a, **k: worked.append(name) or real(
+        self, name, *a, **k))  # fmt: skip
+    server.prepare_reports(store)
+    assert worked == [] and multiprocessing.active_children() == []
+    with sqlite3.connect(store.path) as conn:
+        kept = {name for (name,) in conn.execute("SELECT name FROM report_answers")}
+    assert kept >= {name for name, _ in refresh.DEFAULTS}
+    said = [line for line in capfd.readouterr().err.splitlines() if "default views" in line]
+    every = len(refresh.DEFAULTS)
+    assert len(said) == 2 and said[0].startswith("Working out the reports' default views before the dashboard answers")
+    assert said[1].startswith(f"The reports' default views worked out before the dashboard answers: {every} of "
+                              f"{every}, in "), said  # fmt: skip
+
+
+def test_a_database_that_had_the_reports_is_served_at_once_with_none_worked_out_before(store, monkeypatch, capfd):
+    """D-204: on a database that has had the reports' default views (kept by this version or an earlier one: a restart,
+    an update), the server answers at once, as before D-204: no process is started for them, and the window says in
+    one line why and that they are worked out while it serves. An update's downtime stays as it was (D-188)."""
+    import multiprocessing
+
+    from ap_coder.core.store import reports
+    from ap_coder.web import refresh
+
+    for name, _ in refresh.DEFAULTS:
+        store.keep_answer(name, reports.asked_key(name), "t-1", [None], [name])
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE report_answers SET version = '0.1.0/t-1'")  # (only an earlier version's)
+
+    def started(method):
+        raise AssertionError("a process was started")
+
+    monkeypatch.setattr(multiprocessing, "get_context", started)
+    server.prepare_reports(store)
+    said = [line for line in capfd.readouterr().err.splitlines() if line.strip()]
+    assert said == ["The reports' default views are not worked out before the dashboard answers: this database has had "
+                    "them (by this version or an earlier one), and the background process brings them up to date "
+                    "while it serves."]  # fmt: skip
+
+
+def test_the_server_answers_though_its_reports_process_failed_or_was_ended_past_its_bound(store, tmp_path, monkeypatch,
+                                                                                          capfd):  # fmt: skip
+    """D-204: the reports' process failing (its database unreadable) or still working past ``PREPARE_MOST`` and
+    ``PREPARE_ENDS`` (ended then) is no reason not to serve: the window says so, the server goes on to answer, and the
+    background process's refresher works out what is left, as before D-204. No process is left behind."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+
+    broken = tmp_path / "broken.db"
+    broken.write_bytes(b"not a database " * 1000)
+    server.prepare_reports(SimpleNamespace(path=broken, answered_before=lambda names: False))
+    err = capfd.readouterr().err
+    assert re.search(r"WARNING ap_coder\.web\.server: The reports' default views were not worked out", err), err
+    assert ("The reports' default views were not all worked out before the dashboard answers: their process stopped "
+            "(exit code 1). The background process works out the rest.") in err  # fmt: skip
+
+    monkeypatch.setattr(refresh, "PREPARE_MOST", 0.0)
+    monkeypatch.setattr(server, "PREPARE_ENDS", 0.05)  # (ended while it starts)
+    began = time.monotonic()
+    server.prepare_reports(store)
+    assert time.monotonic() - began < 10 and multiprocessing.active_children() == []
+    assert ("The reports' default views were not all worked out before the dashboard answers: their process was "
+            "ended after 0.05 s. The background process works out the rest.") in capfd.readouterr().err  # fmt: skip
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows: the service's job object ends the reports' process with it")
+def test_a_stop_of_the_server_while_it_works_its_reports_out_ends_their_process_too(store, monkeypatch):
+    """B-2068: SIGTERM (the service's stop, launchd's) while the reports were worked out before the server answered,
+    before uvicorn's supervisor takes that signal, ended the server's process at once and left the reports' process
+    running, holding the window's pipe: the service host's read went on until it ended (on a Mac, ``service stop`` up
+    to launchd's 60 s). The signal now ends that process, then the server's start, as Ctrl+C does, and the signal's
+    handler is given back."""
+    import multiprocessing
+    import signal
+
+    ended: list[str] = []
+
+    class Process:  # (the reports' process: still working when the signal comes)
+        exitcode, pid = None, 4242
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            if not ended:
+                time.sleep(timeout)
+
+        def is_alive(self):
+            return not ended
+
+        def terminate(self):
+            ended.append("ended")
+
+        def kill(self):
+            ended.append("killed")
+
+    def untaken(signum, frame):
+        raise RuntimeError("SIGTERM not taken while the reports are worked out")
+
+    monkeypatch.setattr(multiprocessing, "get_context", lambda method: SimpleNamespace(Process=Process))
+    before = signal.signal(signal.SIGTERM, untaken)
+    try:
+        threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGTERM)).start()
+        with pytest.raises(KeyboardInterrupt):
+            server.prepare_reports(store)
+        assert ended == ["ended"] and signal.getsignal(signal.SIGTERM) is untaken
+    finally:
+        signal.signal(signal.SIGTERM, before)
+
+
+def test_the_reports_process_whose_server_is_gone_stops_before_its_next_view(monkeypatch):
+    """B-2068: the reports' process, its server's process killed outright (no signal to take), went on with its views
+    for minutes; it looks before each view whether the process that started it still runs (``_parent_gone``)."""
+    import multiprocessing
+
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: SimpleNamespace(is_alive=lambda: False))
+    assert server._parent_gone()
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: SimpleNamespace(is_alive=lambda: True))
+    assert not server._parent_gone()
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: None)  # (started by nobody: this test's process)
+    assert not server._parent_gone()
+
+
+def test_the_reports_process_ends_quietly_on_ctrl_c(store, monkeypatch, capsys):
+    """D-204's review: a Ctrl+C in the server's window reaches the reports' process too, which printed "Process
+    ap-coder-reports:" and a traceback cut short there; it ends with exit code 1 and says nothing (its server says
+    why it stops)."""
+    from ap_coder.web import refresh
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(refresh, "prepare", interrupted)
+    with pytest.raises(SystemExit) as ended:
+        server._prepare_reports(str(store.path), refresh.PREPARE_MOST)
+    assert ended.value.code == 1 and capsys.readouterr().err == ""
+
+
+def test_the_server_answers_though_its_reports_could_not_be_looked_at_or_started(store, monkeypatch, capsys):
+    """B-2071: an error looking whether the database had the reports (a database too busy) or starting their process
+    (no process to be had) stopped the server's start, where its reports are no reason not to serve: it says so in
+    one line of the window and the server answers, the refresher working them out while it serves."""
+    import multiprocessing
+
+    from ap_coder.web import refresh
+
+    def locked(store):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(refresh, "served_before", locked)
+    server.prepare_reports(store)
+    assert capsys.readouterr().err.splitlines() == [
+        "The reports' default views were not worked out before the dashboard answers (database is locked): the "
+        "background process works them out while it serves."]  # fmt: skip
+
+    def unstarted():
+        raise OSError("no process to be had")
+
+    monkeypatch.setattr(refresh, "served_before", lambda store: False)
+    monkeypatch.setattr(multiprocessing, "get_context", lambda method: SimpleNamespace(
+        Process=lambda **kwargs: SimpleNamespace(start=unstarted, pid=None)))  # fmt: skip
+    server.prepare_reports(store)
+    assert capsys.readouterr().err.splitlines() == [
+        "The reports' default views were not worked out before the dashboard answers (no process to be had): the "
+        "background process works them out while it serves."]  # fmt: skip
+
+
+def _queue_with_lessons(store: Store) -> tuple[int, str]:
+    """An invoice in the review queue, a line of it without an account (its screen suggests one from the learning
+    memory), and lessons of its vendor: (the invoice, its vendor's key)."""
+    from tests.webclient import add_clean, gt
+
+    lines = gt()["line_items"]
+    invoice = add_clean(store, line_items=[{**lines[0], "predicted_gl_code": "UNASSIGNED"}, *lines[1:]])
+    found = store.get_invoice(invoice)
+    with store._conn() as conn:
+        conn.executemany("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, suggested_gl, outcome, "
+                         "created_at) VALUES (?, ?, ?, '5000', '5000', 'accepted', '2026-01-02T03:04:05')",
+                         [(found["vendor_key"], found["vendor_name"], f"Part {n}") for n in range(20)])  # fmt: skip
+    return invoice, found["vendor_key"]
+
+
+def _reads(monkeypatch) -> collections.Counter:
+    """What is read from the database from now on, of what a web worker builds before it serves: the learning memory
+    and Learning's latest lessons (by how many), the vendor list, each vendor's lessons and invoices (by its key; its
+    invoices all of them, or those changed since)."""
+    from ap_coder.core.store import learning as lessons
+    from ap_coder.web.pages import invoice as invoice_page
+
+    read: collections.Counter = collections.Counter()
+    fetch, vendor_list, vendor_invoices = lessons.fetch_rows, invoice_page._vendor_list, Store._vendor_invoices
+
+    def fetching(conn, sql, params=()):
+        if sql.startswith("SELECT * FROM feedback ORDER BY"):
+            read["the learning memory", params[0]] += 1
+        elif sql.startswith(f"SELECT {lessons._VENDOR_COLUMNS} FROM feedback WHERE vendor_key"):
+            read["the lessons of", params[0]] += 1
+        return fetch(conn, sql, params)
+
+    def listing(store):
+        read["the vendor list"] += 1
+        return vendor_list(store)
+
+    def invoices(self, key, ids=None, **kw):
+        read["the invoices of", key, ids is None] += 1
+        return vendor_invoices(self, key, ids, **kw)
+
+    monkeypatch.setattr(lessons, "fetch_rows", fetching)
+    monkeypatch.setattr(invoice_page, "_vendor_list", listing)
+    monkeypatch.setattr(Store, "_vendor_invoices", invoices)
+    return read
+
+
+def _as_a_worker(store: Store, tmp_path, monkeypatch) -> None:
+    """``worker_app`` to be made as uvicorn makes one of the company server's web workers, on ``store``."""
+    spec = {"db": str(store.path), "address": "127.0.0.1", "insecure_http": True, "workers": 2, "secret": "00" * 32,
+            "proxy": "", "port": 8501, "token": "t", "data": str(tmp_path), "parent": os.getpid()}  # fmt: skip
+    monkeypatch.setenv(server.WORKER_ENV, json.dumps(spec))
+    monkeypatch.setattr(server, "_stop_worker_when_asked", lambda *a: None)
+    monkeypatch.setattr(server, "worker_log", lambda folder: None)  # (no log of its own in pytest's)
+
+
+def test_a_web_worker_of_the_server_builds_its_memories_before_it_serves(store, tmp_path, monkeypatch, caplog):
+    """D-204: a web worker's first open of an invoice built the learning memory, the vendor list and its vendor's
+    lessons and invoices in that request (3-6 s at 300,000 invoices), its first Learning visit its latest lessons (2.2
+    s). Each web worker of the company server builds them in uvicorn's factory (``worker_app``), before it serves,
+    each once through the page's own function, and the pages' templates and the GL suggestions' index of the
+    learning memory too (what a first open built still: 0.43 and 0.32 s at 60,000 invoices): an invoice and the review
+    queue opened right after read, compile and build none of them again."""
+    from ap_coder.ai import suggest
+    from ap_coder.core.store import FEEDBACK_READ
+    from ap_coder.web import core
+    from ap_coder.web.pages import learning
+    from tests.webclient import client_for
+
+    invoice, key = _queue_with_lessons(store)
+    name = store.get_invoice(invoice)["vendor_name"]
+    _as_a_worker(store, tmp_path, monkeypatch)
+    read = _reads(monkeypatch)
+    env, compile_, index = core.templates.env, core.templates.env.compile, suggest._build_memory
+    monkeypatch.setattr(env, "cache", type(env.cache)(env.cache.capacity))  # (none compiled yet in this process)
+    monkeypatch.setattr(env, "compile", lambda source, name=None, *a, **k: read.update([("compiled", name)])
+                        or compile_(source, name, *a, **k))  # fmt: skip
+    monkeypatch.setattr(suggest, "_build_memory", lambda *a: read.update(["the GL index"]) or index(*a))
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        server.worker_app()
+    compiled = {what[1] for what in read if what[0] == "compiled"}
+    assert {"invoice.html", "review.html", "base.html"} <= compiled
+    assert {k: n for k, n in read.items() if k[0] != "compiled"} == {
+        ("the learning memory", FEEDBACK_READ): 1, ("the learning memory", learning.MEMORY_READ): 1, "the GL index": 1,
+        "the vendor list": 1, ("the lessons of", key): 1, ("the invoices of", key, True): 1}  # fmt: skip
+    said = [r.getMessage() for r in caplog.records if "before it served" in r.getMessage()]
+    assert len(said) == 1 and re.fullmatch(
+        rf"A web worker \(process {os.getpid()}\) built 10 of its memories before it served, in [\d.]+ s: the "
+        rf"invoice's and the queue's templates, the learning memory, the GL suggestions' index, the vendor list, the "
+        rf"vendors' ERP IDs, the vendors on hold's numbers, the reading status, Learning's latest lessons, the lessons "
+        rf"of {re.escape(name)}, the invoices of {re.escape(name)}\.", said[0]), said  # fmt: skip
+    read.clear()
+    client = client_for(store)
+    assert client.get(f"/review/{invoice}").status_code == 200 and client.get("/review").status_code == 200
+    assert read == {}
+
+
+def test_only_a_web_worker_of_the_company_server_builds_its_memories_before_it_serves(store, tmp_path, monkeypatch):
+    """D-204: a laptop's dashboard and the server in one process build nothing ahead (with its background work, each
+    page builds what it reads, as before); each web worker of the company server (``worker_app``) on its database."""
+    built: list = []
+    monkeypatch.setattr(server, "warm_worker", lambda store, settings_factory: built.append(store.path))
+    for on_server in (False, True):
+        with TestClient(create_app(web_settings(), store, start_reader=False, server=on_server),
+                        base_url="http://127.0.0.1") as client:  # fmt: skip
+            assert client.get("/healthz").status_code == 200
+    assert built == []
+    _as_a_worker(store, tmp_path, monkeypatch)
+    server.worker_app()
+    assert built == [store.path]
+
+
+def test_a_web_workers_memories_come_from_the_queues_biggest_vendors_first_within_their_bounds(store, monkeypatch):
+    """D-204: people open the review queue's first invoices first: of their vendors (``WARM_FIRST`` invoices), the
+    biggest first by their invoices, ``WARM_VENDORS`` at most, a vendor's invoices only while those built fit in half
+    of what a worker keeps of the vendors' (``VENDOR_ROWS_KEPT``: the other half for the vendors people ask). A vendor
+    with no invoice in the queue is not taken, however big."""
+    from ap_coder.core.store import vendors as vendors_module
+    from tests.webclient import add_clean
+
+    for name, numbers in (("Acme Supply", 3), ("Beta Ltd", 1), ("Gamma Inc", 1), ("Delta Corp", 5)):
+        for n in range(numbers):
+            add_clean(store, vendor_name=name, invoice_number=f"{name[0]}-{n}")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET status = 'approved' WHERE vendor_name = 'Delta Corp'")
+    monkeypatch.setattr(vendors_module, "VENDOR_ROWS_KEPT", 6)
+    monkeypatch.setattr(server, "WARM_VENDORS", 2)
+    steps = [what for what, _ in server.warm_steps(store, web_settings)]
+    assert steps[8:] == ["the lessons of Acme Supply", "the invoices of Acme Supply", "the lessons of Beta Ltd"]
+    monkeypatch.setattr(server, "WARM_FIRST", 3)  # (the queue's first three: Acme's)
+    assert [what for what, _ in server.warm_steps(store, web_settings)][8:] == [
+        "the lessons of Acme Supply", "the invoices of Acme Supply"]  # fmt: skip
+
+
+def test_a_web_workers_memories_stop_at_their_bound_or_its_stop_and_a_step_that_fails_is_logged(
+    store, monkeypatch, caplog
+):
+    """D-204: a worker builds its memories within ``WARM_MOST`` (looked at before each step), well under the 30 s
+    uvicorn gives a worker started afresh to serve; a worker asked to stop meanwhile stops; a step that fails is logged
+    and the next goes on (the page builds it when asked), and steps that can't even be listed (a busy database) are
+    logged too. Each time it says what it built."""
+    done: list[str] = []
+
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+
+    def steps(store, settings_factory):
+        yield "the first", lambda: done.append("the first")
+        yield "the failing", locked
+        yield "the slow", lambda: (time.sleep(0.3), done.append("the slow"))
+        yield "the late", lambda: done.append("the late")
+
+    monkeypatch.setattr(server, "warm_steps", steps)
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings, most=0.2) == ["the first", "the slow"] == done
+    said = [r.getMessage() for r in caplog.records]
+    assert said[0] == "A web worker did not build the failing before it served."
+    assert re.fullmatch(r"A web worker \(process \d+\) built 2 of its memories before it served, in [\d.]+ s; stopped "
+                        r"at 0.2 s: the first, the slow\.", said[1]), said  # fmt: skip
+
+    caplog.clear()
+    monkeypatch.setattr(server, "uvicorn_server", lambda: SimpleNamespace(should_exit=True))
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings) == []
+    assert "built 0 of its memories before it served, in" in caplog.text and "stopped: the worker stops: none" in (
+        caplog.text)  # fmt: skip
+
+    def unlisted(store, settings_factory):
+        yield "the first", lambda: None
+        locked()
+
+    monkeypatch.setattr(server, "uvicorn_server", lambda: None)
+    monkeypatch.setattr(server, "warm_steps", unlisted)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="ap_coder.web.server"):
+        assert server.warm_worker(store, web_settings) == ["the first"]
+    assert "A web worker stopped building its memories before it served." in caplog.text
+    assert "built 1 of its memories before it served" in caplog.text and "stopped on an error: the first." in (
+        caplog.text)  # fmt: skip
+
+
+def test_the_real_server_works_its_reports_and_each_workers_memories_out_then_serves_and_again_works_none_out(
+    tmp_path,
+):
+    """D-204: the real server, two web workers, on a database never served: its window says the reports' default
+    views were worked out before it answered, each web worker's own log (``logs/web-<n>.log``, B-2065) that it built
+    its memories before it served, and it serves. Started again, it answers at once, the reports worked out while it
+    serves (this database has had them), each web worker's memories built again."""
+    from ap_coder.web import refresh
+    from tests.webclient import add_clean
+
+    data, port = tmp_path / "data", _free_port()
+    add_clean(Store(data / "ap_coder.db"))
+    every = len(refresh.DEFAULTS)
+    (tmp_path / "empty.env").write_text("", encoding="utf-8")
+    env = {**os.environ, "AP_PRIVATE_DIR": str(data), "BROWSER": "none", "AP_ALLOWED_HOSTS": "127.0.0.1",
+           server.CAPTURE_ENV: "1"}  # fmt: skip
+    command = [sys.executable, "-m", "ap_coder", "--env-file", str(tmp_path / "empty.env"), "--db",
+               str(data / "ap_coder.db"), "serve", "--server", "--insecure-http", "--host", "127.0.0.1", "--port",
+               str(port), "--workers", "2"]  # fmt: skip
+    root = Path(__file__).resolve().parents[2]
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = f"http://127.0.0.1:{port}"
+
+    def started(n: int) -> str:
+        """The server started, until it answered and was stopped: its window."""
+        window = tmp_path / f"server-{n}.log"  # a file, not a pipe: a worker left running can't hold the test up
+        with window.open("w") as out:
+            proc = subprocess.Popen(command, cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 120
+                while True:
+                    try:
+                        with direct.open(base + "/healthz", timeout=2) as answer:
+                            assert answer.status == 200
+                            break
+                    except OSError:
+                        assert time.monotonic() < deadline and proc.poll() is None, window.read_text()
+                        time.sleep(0.3)
+                token = json.loads((data / ".ap_coder_server.json").read_text(encoding="utf-8"))["token"]
+                stop = urllib.request.Request(base + "/shutdown", data=b"", method="POST",
+                                              headers={"X-AP-Coder-Token": token})  # fmt: skip
+                direct.open(stop, timeout=10).close()
+                proc.wait(40)
+                assert proc.returncode == 0
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(10)
+        return window.read_text(encoding="utf-8")
+
+    first = started(1)
+    assert f"worked out before the dashboard answers: {every} of {every}, in " in first, first
+    for n in (1, 2):
+        own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
+        assert re.search(r"INFO ap_coder\.web\.server: A web worker \(process \d+\) built [1-9]\d* of its memories "
+                         r"before it served", own) and "did not build" not in own, own  # fmt: skip
+    again = started(2)
+    assert "The reports' default views are not worked out before the dashboard answers: this database has had them" in (
+        again), again  # fmt: skip
+    assert "Working out the reports' default views" not in again
+    for n in (1, 2):
+        own = (data / "logs" / f"web-{n}.log").read_text(encoding="utf-8")
+        assert own.count("of its memories before it served") == 2, own
+
+
+def test_every_wait_for_a_server_started_covers_what_it_does_before_it_answers():
+    """D-204: a first start on a database that never had the reports works them out before the server answers, then
+    at each start each web worker builds its memories: server-update's wait for the new version (before it goes back
+    to the old one), the load and day benches' and CI's update job's waits for the server they start cover both bounds
+    (the reports' process ended ``PREPARE_ENDS`` past its own), the step under way at the workers', and the processes'
+    own start. An update of a database that had them works none out; one that never had them still stays within
+    D-188's 5 minutes: those and server-update's own stop, copy and update (16-40 s measured)."""
+    import inspect
+
+    from ap_coder.bench import day, load
+    from ap_coder.ops import server_update
+    from ap_coder.web import refresh
+    from tests.scripts import load_script
+
+    first = refresh.PREPARE_MOST + server.PREPARE_ENDS + server.WARM_MOST + 30
+    downtime = load_script("ci/server_update_downtime", "ap_script_server_update_downtime_waits")
+    waits = {"server-update": server_update.UP_WAIT, "bench load": load.START_WAIT, "CI's update job": downtime.UP_WAIT,
+             "bench day": inspect.signature(day.Server.start).parameters["timeout"].default}  # fmt: skip
+    assert all(wait >= first for wait in waits.values()), (first, waits)
+    assert refresh.PREPARE_MOST + server.PREPARE_ENDS + server.WARM_MOST + 15 + 40 <= downtime.LIMIT
+    assert server.WARM_MOST < 30  # (uvicorn's restart_all waits 30 s for a worker started afresh: AP Coder's is none)

@@ -361,17 +361,19 @@ def test_a_venv_made_with_an_older_python_is_made_again(launch, monkeypatch, cap
 
 
 def test_the_dry_run_names_every_address_the_build_downloads_from(capsys, monkeypatch):
-    """For IT's firewall: pip's hosts and each model's address, on stderr (stdout stays the JSON plan)."""
+    """For IT's firewall: pip's hosts and each model's address (and its mirror's, D-205), on stderr (stdout stays the
+    JSON plan)."""
     import build_offline_bundle
 
     monkeypatch.setenv("AP_ALLOW_INTERNET", "0")  # (the builder opts in for itself: put back after the test)
     assert build_offline_bundle.main(["--dry-run", "--python", "3.12"]) == 0
     out = capsys.readouterr()
     plan = json.loads(out.out)
-    assert plan["download_hosts"][:2] == ["pypi.org", "files.pythonhosted.org"]
-    assert "www.modelscope.cn" in plan["download_hosts"]
+    assert plan["download_hosts"] == ["pypi.org", "files.pythonhosted.org", "www.modelscope.cn", "huggingface.co"]
     assert all(m["url"].startswith("https://") for m in plan["models"])
-    assert "pypi.org, files.pythonhosted.org, www.modelscope.cn" in out.err and "LM Studio" in out.err
+    mirrors = [m["mirror"] for m in plan["models"] if "mirror" in m]
+    assert len(mirrors) == 5 and all(u.startswith("https://huggingface.co/") and u in out.err for u in mirrors)
+    assert "pypi.org, files.pythonhosted.org, www.modelscope.cn, huggingface.co" in out.err and "LM Studio" in out.err
 
 
 def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):

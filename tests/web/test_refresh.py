@@ -1442,3 +1442,154 @@ def test_a_job_started_by_a_pages_read_waits_for_its_answers_as_anywhere(tmp_pat
         assert job.start(lambda j: {"rows": asked()})
     assert job._finished.wait(10)
     assert job.state == DONE and job.result == {"rows": []} and asked.worked == 1, job.error
+
+
+# --- The reports' default views worked out before the server answers (D-204) -----------------------------------------
+
+
+def _counting(monkeypatch) -> list[str]:
+    """The settled answers worked out from now on (their work run, in any process), by name, in turn."""
+    worked, real = [], Store.shared_answer
+
+    def counted(self, name, compute, **kwargs):
+        def work():
+            worked.append(name)
+            return compute()
+
+        return real(self, name, work, **kwargs)
+
+    monkeypatch.setattr(Store, "shared_answer", counted)
+    return worked
+
+
+def test_a_database_that_never_had_the_reports_has_each_default_view_worked_out_before_the_server_answers(
+    tmp_path, ground_truth, clock, monkeypatch, capsys
+):
+    """D-204: at 300,000 invoices the reports asked before the background process's warm-up reached them (D-200, about
+    a minute) were worked out in their request or said "being worked out" (Month-end's first build 12 to 50 s). On a
+    database that never had them, the company server's start works out each default view before it answers, kept for
+    every process (the Vendors page's totals too: B-2050), each once, and says so in its window; then a web worker
+    opening each page works none out, and the database has had them."""
+    from ap_coder.web import server
+    from ap_coder.web.pages import insights as insights_page
+    from tests.webclient import client_for
+
+    monkeypatch.setattr(insights_page, "MIN_APPROVALS", 1)  # (Insights' operations shown too)
+    store = Store(tmp_path / "ap.db")
+    for n in range(3):
+        _approved(store, tmp_path, ground_truth, f"A-{n}")
+    _invoice(store, tmp_path, ground_truth, "Q-1")
+    worked, process = _counting(monkeypatch), _Processes(monkeypatch)
+    process("the server, before it answers")
+    assert not refresh.served_before(store)
+    server._prepare_reports(str(store.path), refresh.PREPARE_MOST)  # (its own process's work, here: its own Store)
+    said = capsys.readouterr().err.splitlines()
+    every = len(refresh.DEFAULTS)
+    assert sorted(worked) == sorted(name for name, _ in refresh.DEFAULTS)  # (each default view once, nothing more)
+    assert len(said) == 2 and said[0] == ("Working out the reports' default views before the dashboard answers (this "
+                                          "database never had them), "
+                                          f"{refresh.PREPARE_MOST:g} seconds at most...")  # fmt: skip
+    assert re.fullmatch(rf"The reports' default views worked out before the dashboard answers: {every} of {every}, in "
+                        rf"[\d.]+ s\.", said[1]), said  # fmt: skip
+    assert _wants(store) == [] and refresh.served_before(store)  # (nobody asked)
+
+    process("a web worker")
+    monkeypatch.setattr(store, "background_answers", True)
+    worked.clear()
+    client = client_for(store)
+    for page in ("/review", "/month-end", "/spend", "/sales-tax", "/insights", "/vendors", "/learning"):
+        assert client.get(page).status_code == 200, page
+    assert not set(worked) & set(refresh.ANSWERS), worked
+
+
+def test_a_database_that_had_the_reports_before_is_served_at_once_after_a_restart_or_an_update(tmp_path, monkeypatch):
+    """D-204: every update keeps none of the answers of the version before (an answer's version is AP Coder's own, and
+    so are Month-end's billing facts), so working out each view with none kept for its question before the server
+    answered made an update's downtime at 300,000 invoices 3.5 to 4 minutes instead of about 16 s (D-188). A database
+    that has had them, by this version or any before, kept answers of any of the default views' names or Month-end's
+    billing facts, is served at once, its views worked out while it serves, as before D-204: after a restart (one
+    view's answer gone while the others are kept included) or an update. Only one that never had them is not."""
+    store = Store(tmp_path / "ap.db")
+    names = sorted({name for name, _ in refresh.DEFAULTS})
+    assert not refresh.served_before(store)
+    for name in names:
+        store.keep_answer(name, reports.asked_key(name), "t-1", [None], [name])
+    assert refresh.served_before(store)  # (a restart)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE report_answers SET version = '0.1.0/t-1'")
+    assert refresh.served_before(store)  # (an update: only an earlier version's kept)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM report_answers WHERE name = ?", (names[0],))
+    assert refresh.served_before(store)  # (one view's answer gone, the others kept)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM report_answers")
+        conn.execute("INSERT INTO billing_facts (vendor_key, id, facts) VALUES ('v', 1, '[]')")
+    assert refresh.served_before(store)  # (Month-end's billing facts alone)
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM billing_facts")
+        conn.execute("INSERT INTO report_answers (name, asked, version, stamp, value, made_at) VALUES "
+                     "('duplicate_pairs', 'k', 'v', '[]', '[]', 1)")  # fmt: skip
+    assert not refresh.served_before(store)  # (another answer: not one of the default views')
+
+
+def test_the_servers_start_stops_working_the_views_out_at_its_bound_and_goes_on_past_a_failure(
+    tmp_path, clock, monkeypatch, caplog
+):
+    """D-204: the start's work is bounded (``PREPARE_MOST``, looked at before each view): past it the server answers
+    and the rest is left to the background process's refresher, said so. A view whose work fails, or whose arguments
+    can't be found, is logged and the next goes on."""
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    order = []
+
+    def answer(name: str, seconds: float = 0.0, fails: bool = False):
+        def run(store, args):
+            def work():
+                order.append(name)
+                time.sleep(seconds)
+                if fails:
+                    raise ValueError("no such page")
+                return [name]
+
+            return store.shared_answer(name, work, version="t-1", settle=30, asked=args, again=args)
+
+        return run
+
+    def no_question(store):
+        raise sqlite3.OperationalError("database is locked")
+
+    for name, work in (
+        ("fails", answer("fails", fails=True)),
+        ("unasked", answer("unasked")),
+        ("slow", answer("slow", 0.3)),
+        ("next", answer("next", 1.0)),
+        ("left", answer("left")),
+    ):
+        monkeypatch.setitem(refresh.ANSWERS, name, work)
+    monkeypatch.setattr(refresh, "DEFAULTS", (("fails", lambda s: [1]), ("unasked", no_question),
+                                              ("slow", lambda s: [2]), ("next", lambda s: [3]),
+                                              ("left", lambda s: [4]), ("left", lambda s: [5])))  # fmt: skip
+    said = []
+    with caplog.at_level(logging.WARNING, logger="ap_coder.web.refresh"):
+        made, left, seconds = refresh.prepare(store, said.append, most=1.0)  # ("next" begins at 0.3 s, ends at 1.3)
+    assert order == ["fails", "slow", "next"] and (made, left) == (2, 2) and 1.3 <= seconds < 10
+    warned = [r.getMessage() for r in caplog.records]
+    assert warned == ["the fails answer's default view was not worked out ahead of its page",
+                      "the unasked answer's default view was not worked out ahead of its page"]  # fmt: skip
+    assert re.fullmatch(r"The reports' default views worked out before the dashboard answers: 2 of 6, in [\d.]+ s; "
+                        r"past 1 s, 2 left to the background process\.", said[-1]), said  # fmt: skip
+    assert store.answer_made("slow", reports.asked_key([2])) and store.answer_made("left", reports.asked_key([4])) is (
+        None)  # fmt: skip
+
+
+def test_the_servers_start_stops_working_the_views_out_once_the_server_is_gone(tmp_path, monkeypatch):
+    """B-2068: the reports' process stops before its next view once ``halted`` says its server is gone, the rest
+    left to the background process of the next start."""
+    store = _server(Store(tmp_path / "ap.db"), monkeypatch)
+    order = []
+    for name in ("first", "second", "third"):
+        monkeypatch.setitem(refresh.ANSWERS, name, lambda store, args, name=name: order.append(name))
+    monkeypatch.setattr(refresh, "DEFAULTS", tuple((name, lambda s: []) for name in ("first", "second", "third")))
+    said = []
+    made, left, _ = refresh.prepare(store, said.append, halted=lambda: bool(order))
+    assert order == ["first"] and (made, left) == (1, 2)
+    assert said[-1].endswith("; its server stopped, 2 left to the background process.")

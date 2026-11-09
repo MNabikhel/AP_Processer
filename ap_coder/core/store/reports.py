@@ -42,7 +42,7 @@ from contextlib import contextmanager, nullcontext
 from typing import Any
 
 from ..caches import MB, Bounded, size_of
-from .dialect import begin_write
+from .dialect import begin_write, in_list
 
 ANSWER_MOST_BYTES = 16 * 1024 * 1024  # an answer bigger than this as JSON is not kept for the other processes
 ANSWERS_KEPT = 8  # of each name (a report asked for a few period ends), the latest made kept
@@ -454,6 +454,14 @@ class ReportsMixin:
             row = conn.execute("SELECT made_at FROM report_answers WHERE name = ? AND asked = ?",
                                (name, key)).fetchone()  # fmt: skip
         return None if row is None else float(row[0])
+
+    def answered_before(self, names: list[str]) -> bool:
+        """Whether this database has kept an answer of any of ``names``, by this AP Coder or any before it, or
+        Month-end's billing facts (D-194): it has had those reports (D-204)."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(f"SELECT EXISTS (SELECT 1 FROM report_answers WHERE {in_list('name')}) OR "
+                               "EXISTS (SELECT 1 FROM billing_facts)", (json.dumps(names),)).fetchone()  # fmt: skip
+        return bool(row[0])
 
     def asked_lately(self, since: float) -> list[dict[str, Any]]:
         """The latest question asked of each answer on this database since ``since`` (``wall``): ``name``, ``asked``

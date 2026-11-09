@@ -114,6 +114,9 @@ JOB_POLL = 0.8  # app.js pollJob's interval
 # keeps its own for minutes (Chrome up to 5, Firefox about 2), which keeps people on the worker that took them (D-161).
 KEEP_ALIVE = 5.0
 JOB_MOST = 180.0  # an upload's job polled for at most this long; a download's too
+# Seconds the server has to answer once started: on a database never served it works the reports' default views
+# out before it answers (D-204: 200 s at most, ``refresh.PREPARE_MOST``) and each web worker its memories
+START_WAIT = 300.0
 DOWNLOAD_POLL, DOWNLOAD_POLL_MOST = 0.5, 5.0  # app.js: a download's job looked at every 0.5 s, up to 5 s apart
 NOT_MADE = "search exports not made"  # its job failed or is gone, or its file was not there: the gate fails (B-1813)
 BULK_MOST = 50  # invoices in one bulk approval (the page would post every candidate)
@@ -406,7 +409,7 @@ class Server:
         (self.out / "user").mkdir(parents=True, exist_ok=True)
         out = self.log.open("w", encoding="utf-8")
         self.proc = subprocess.Popen(self.command, cwd=PROJECT_DIR, env=self.env, stdout=out, stderr=subprocess.STDOUT)
-        if not _ready(f"http://127.0.0.1:{self.port}/healthz", time.monotonic() + 180, self.proc):
+        if not _ready(f"http://127.0.0.1:{self.port}/healthz", time.monotonic() + START_WAIT, self.proc):
             self.stop()
             raise RuntimeError(f"the server did not start: see {self.log}")
         self.started_in = round(time.monotonic() - t0, 2)

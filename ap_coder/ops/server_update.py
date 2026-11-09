@@ -66,7 +66,9 @@ if TYPE_CHECKING:
 Say = Callable[[str], None]
 REQUIRED = ("bundle_manifest.json", "pyproject.toml", "ap_coder/__init__.py", "scripts/launch.py")
 HISTORY_KEPT = 20
-UP_WAIT = 180.0  # seconds the new dashboard has to answer
+# Seconds the new dashboard has to answer: each web worker builds its memories before it serves (D-204: 25 s at most),
+# and a database that never had the reports has them worked out first (200 s at most, ``refresh.PREPARE_MOST``)
+UP_WAIT = 300.0
 CHECK_TIMEOUT = 900  # the self-check: about 10 s, much longer on a busy server's first OCR
 
 

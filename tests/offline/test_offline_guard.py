@@ -224,6 +224,8 @@ def test_python_written_html_names_no_other_host():
                     continue
                 if rel == "ap_coder/ops/offline.py" and "modelscope.cn" in url:
                     continue  # the models' origin, for the bundle builder (fetch_models: AP_ALLOW_INTERNET=1)
+                if rel == "ap_coder/ops/offline.py" and url.startswith("https://huggingface.co/pitapo/rapidocr/"):
+                    continue  # the OCR models' mirror (D-205), the same: fetch_models only, AP_ALLOW_INTERNET=1
                 if rel == "ap_coder/ai/inference.py" and "cognitiveservices.azure.com/.default" in url:
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
                 task = "http://schemas.microsoft.com/windows/2004/02/mit/task"
@@ -457,12 +459,14 @@ def test_the_ocr_models_are_copied_never_downloaded(offline_guard, tmp_path, mon
     monkeypatch.setitem(sys.modules, name, fetch_models)
     spec.loader.exec_module(fetch_models)
     _bait(monkeypatch)
-    with pytest.raises(PermissionError):
-        fetch_models.download("https://www.modelscope.cn/x.onnx", tmp_path / "x.onnx")
+    for url in ("https://www.modelscope.cn/x.onnx", offline.MIRROR_BASE + "x.onnx"):  # the models' site, its mirror
+        with pytest.raises(PermissionError):
+            fetch_models.download(url, tmp_path / "x.onnx")
     source = tmp_path / "models"
     source.mkdir()
     for model in offline.bundle_models():
         (source / model.name).write_bytes(b"damaged")  # a bad copy: not used, and not downloaded instead
+    assert any(model.mirror for model in offline.bundle_models())  # (the mirror not asked either)
     result = fetch_models.fetch(tmp_path / "dest", source=source, say=lambda text: None)  # online: the default (off)
     assert not result.downloaded and result.failed
     assert offline_guard.attempts == []
