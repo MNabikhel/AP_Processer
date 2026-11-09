@@ -935,6 +935,34 @@ jobs:
       - name: Install, kill, stop, start and remove the LaunchDaemon
         run: .venv/bin/python scripts/ci/macos_service.py --data "$RUNNER_TEMP/APCoderData" --port 8597
 
+  linux-service:
+    # The company server's service on Linux (D-208), for real, set up as docs/SERVER.md section 15 has it: AP Coder in
+    # /opt/apcoder (root's, its .venv from Ubuntu's own Python), the systemd unit installed with sudo (GitHub's runner
+    # asks no password) under a test name, as the account apcoder that service install makes, on 127.0.0.1 over plain
+    # HTTP; the unit read by systemd-analyze verify and enabled; the dashboard answers, its processes apcoder's; its
+    # host is killed with kill -9 and systemd starts it again; service start while it runs restarts it; systemctl stop
+    # (systemd's SIGTERM: the host ends its dashboard, then itself, and stays stopped); service stop, still stopped a
+    # minute later and after systemd starts the unit as at boot; service start, and it answers; an update cut short
+    # (root's marker and stopped file, as sudo server-update leaves them) dealt with by the host at the unit's next
+    # start; service remove, and the unit is gone. scripts/ci/linux_service.py (it prints the service's log, the
+    # journal and what systemd says on a failure, and removes the test unit).
+    name: The server's service on Linux (systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: AP Coder in /opt/apcoder, root's, its .venv from Ubuntu's own Python, as the service runs it
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q python3-venv
+          sudo mkdir -p /opt/apcoder
+          sudo cp -a "$GITHUB_WORKSPACE" /opt/apcoder/APProcessor
+          sudo chown -R root:root /opt/apcoder
+          sudo python3 -m venv /opt/apcoder/APProcessor/.venv
+          sudo /opt/apcoder/APProcessor/.venv/bin/python -m pip install -q -e /opt/apcoder/APProcessor
+      - name: Install, kill, stop, start and remove the systemd unit
+        run: /opt/apcoder/APProcessor/.venv/bin/python /opt/apcoder/APProcessor/scripts/ci/linux_service.py --data /var/lib/apcoder-ci --port 8597
+
   update-over-older-install:
     # The update a user does, from the oldest versions of main and from the last one before the web app, each really
     # installed the way its README said (scripts/ci/old_versions.py: its commit's files, its packages from PyPI),

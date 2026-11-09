@@ -30,6 +30,7 @@ def data(tmp_path, monkeypatch):
     folder = tmp_path / "APCoderData"
     folder.mkdir()
     monkeypatch.setenv("AP_PRIVATE_DIR", str(folder))
+    monkeypatch.setattr(service, "LINUX", False)  # Windows' task, shown anywhere (Linux's unit: test_service_linux.py)
     for name in (*service.ENV_SETTINGS.values(), "AP_DASHBOARD_ADDRESS"):
         monkeypatch.delenv(name, raising=False)
     return folder
@@ -340,7 +341,7 @@ def test_the_data_folder_never_picks_the_task_its_account_its_folder_or_a_proces
 
 def test_off_windows_the_service_commands_say_so(data, monkeypatch, capsys):
     monkeypatch.setattr(service, "WINDOWS", False)
-    monkeypatch.setattr(service, "MACOS", False)  # (a Mac has its own: tests/ops/test_service_macos.py)
+    monkeypatch.setattr(service, "MACOS", False)  # (a Mac and Linux have their own: test_service_macos.py, _linux.py)
     assert main("status") == 2
     assert "Windows" in capsys.readouterr().err
 
