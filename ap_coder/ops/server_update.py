@@ -385,11 +385,13 @@ def wrong_folder(s: service.ServerSettings) -> str:
     here = running_folder()
     if paths.same_folder(s.code_folder, here):
         return ""
+    run = "cd /d into it, then .venv\\Scripts\\python.exe -m ap_coder server-update ..."
+    if not service.WINDOWS:  # a Mac, Linux
+        run = "cd into it, then sudo AP_PRIVATE_DIR=<the data folder> .venv/bin/python -m ap_coder server-update ..."
     return (f"server.json says the service runs {s.code_folder}, but this command runs from {here}. Run "
-            "server-update from the folder the service runs (cd /d into it, then .venv\\Scripts\\python.exe -m "
-            "ap_coder server-update ...). If nobody moved it, server.json was changed by someone: check it, then "
-            "install the service again from the right folder (service install --folder). Nothing was "
-            "changed.")  # fmt: skip
+            f"server-update from the folder the service runs ({run}). If nobody moved it, server.json was changed by "
+            "someone: check it, then install the service again from the right folder (service install --folder). "
+            "Nothing was changed.")  # fmt: skip
 
 
 def outside_install(folder: Path) -> str:

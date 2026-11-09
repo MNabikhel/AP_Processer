@@ -309,6 +309,23 @@ def test_a_bundle_with_a_path_out_of_its_folder_is_refused(server, capsys):
     assert not (server["tmp"] / "apps" / "evil.txt").exists()
 
 
+@pytest.mark.parametrize("platform", ["WINDOWS", "MACOS", "LINUX"])
+def test_run_from_another_folder_it_says_this_computers_command(server, monkeypatch, platform):
+    """server.json names a folder that is not the one server-update runs from: the way to run it from the right one is
+    this computer's own, never Windows' ``cd /d`` and ``.venv\\Scripts\\python.exe`` on a Mac or on Linux."""
+    for name in ("WINDOWS", "MACOS", "LINUX"):
+        monkeypatch.setattr(service, name, name == platform)
+    monkeypatch.setattr(server_update, "running_folder", lambda: server["tmp"] / "elsewhere")
+    said = server_update.wrong_folder(service.settings(server["data"]))
+    assert "this command runs from" in said and "Nothing was changed" in said
+    if platform == "WINDOWS":
+        assert "cd /d into it, then .venv\\Scripts\\python.exe -m ap_coder server-update" in said
+    else:
+        assert "cd /d" not in said and "Scripts" not in said
+        assert "cd into it, then sudo AP_PRIVATE_DIR=<the data folder> .venv/bin/python -m ap_coder server-update" in (
+            said)  # fmt: skip
+
+
 def test_a_file_that_is_not_a_zip_is_refused(server, capsys):
     bogus = server["tmp"] / "bundle.zip"
     bogus.write_text("not a zip")
