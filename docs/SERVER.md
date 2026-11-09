@@ -40,7 +40,8 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 | LM Studio | 0.4.8 or newer, with its models copied in | |
 
 This table is for 25 people or more, with LM Studio on the same server (the last table below). A pilot of up to 10
-people runs on 4 vCPUs and 16 GB, measured, with its models on a machine of their own (*The pilot* below).
+people runs on one machine that does everything, AP Coder and both AI models: AP Coder's part measured on 4 vCPUs and
+16 GB (*The pilot* below).
 
 Why these numbers:
 
@@ -92,10 +93,10 @@ Why these numbers:
 
   | | The pilot (Phase 1): up to 10 people | Phase 2: 300 to 400 people, 25,000 invoices a month |
   |---|---|---|
-  | AP Coder | a small Windows Server virtual machine, 4 vCPUs, 16 GB: 4 web workers by default (measured: below); or a Mac mini (step 14) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
-  | The AI models | LM Studio on a machine of their own on the company network, with a graphics card or Apple silicon (step 8, point 5) | a model machine of their own, the pilot's as its backup (step 8, point 5) |
+  | AP Coder | one machine for everything (below), recommended a Linux workstation with an NVIDIA graphics card (section 15): `--workers 4` and 2 to 3 capture processes (measured on 4 vCPUs, 16 GB: below) | a Windows virtual machine, 32 vCPUs, 64 GB: 28 web workers and 20 capture processes by default (step 6) |
+  | The AI models | LM Studio on the same machine, in the graphics card's memory (step 8; *Memory on one machine*, below) | a model machine of their own, the pilot's machine as its backup (step 8, point 5) |
   | Disk | 200 GB | about 1 TB on an SSD: a year's database 10 GB and its backups about 320 GB, a year's invoice files 150 GB, and room to grow |
-  | Reading the day's invoices | 60 (half of them scans) in the review queue 4.1 minutes after they came, every page read 30 minutes after (measured: below, the model machine's speed assumed) | 1,250: in the review queue 64 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (Phase 0 measures the model machine; `--llm-parallel`, step 8) |
+  | Reading the day's invoices | 60 (half of them scans) in the review queue 4.1 minutes after they came, every page read 30 minutes after (measured: below, the graphics card's speed assumed) | 1,250: in the review queue 64 minutes after they came (half of them scans, on the 4-core test machine, the stand-in model's time shortened); at full speed *estimated* 3.5 hours to come in and 8 hours of the model machine's reading with 2 requests at once: its speed decides (Phase 0 measures the model machine; `--llm-parallel`, step 8) |
 
   For 25 people or more, on one Windows Server with LM Studio on it (the layout first planned, D-111; the graphics
   card's rows estimated from an assumed 15 s a page, not measured on a graphics card):
@@ -109,7 +110,7 @@ Why these numbers:
 
   The reading runs in the background: nobody waits on it, but invoices come into the queue later on a busy day.
 - **The pilot: up to 10 people** (D-207). *Measured* on GitHub's Windows Server machine (4 vCPUs, 16 GB, no graphics
-  card), the size of the smallest server a pilot would get (`.github/workflows/pilot-size.yml`, 9 Nov 2026):
+  card), the size of the smallest machine a pilot would get (`.github/workflows/pilot-size.yml`, 9 Nov 2026):
   - **10 simulated people for 10 minutes on 20,000 invoices** (a year of a pilot's), the service's 4 web workers, the
     benches' stand-in for the models: half the pages within 223 ms, 95% within 740 ms, 99% within 1.56 s;
     approvals and checks 95% within 156 ms; no error and no "database is locked". All of AP Coder's processes
@@ -123,19 +124,36 @@ Why these numbers:
     pilot reading 50 to 60 invoices a day needs a graphics card (about 16 GB of VRAM, or Apple silicon with enough
     memory) on the machine that runs the models. Its speed there is estimated (above), and the burn-in measures it.
 
-  Three layouts, each running AP Coder as it is (docs/PILOT_PLAN.md):
-  - **(a) A small Windows Server virtual machine on the company's own servers for AP Coder** (4 vCPUs, 16 GB, 200 GB
-    of disk), **and one small machine on the company network that only runs the AI models** in LM Studio, with a
-    graphics card or Apple silicon (step 8; on a Mac, step 14). AP Coder reaches it at `AP_LLM_BASE_URL` and
-    `AP_PAGE_READER_BASE_URL` (step 8, point 5), and in Phase 2 it becomes the backup model machine (D-180). The
-    recommended layout: the data stays on the company's own servers, it needs no cloud quota and no link to a
-    cloud, and it is Phase 2's layout, smaller. On Macs, for example: AP Coder on a Mac mini (step 14), the models
-    on a Mac Studio beside it, the Mac mini's own LM Studio as their backup.
-  - **(b) One Windows Server virtual machine with a graphics card in a cloud region in the company's country**,
-    everything on it (LM Studio as in step 8). It needs a site-to-site link to the company network, for JD Edwards
-    and the AP inbox's flow, and the cloud's quota for a virtual machine with a graphics card, asked for first.
-  - **(c) One machine for everything:** a Mac mini as a macOS service (step 14), its own LM Studio running the
-    models; or a Windows PC with a graphics card, which then needs Windows Server (Windows 11 Pro's licence, below).
+  **The pilot's machine: one machine that does everything**, AP Coder and both AI models (OvisOCR2 and the chat
+  model, in LM Studio), each running as it is (docs/PILOT_PLAN.md):
+  - **Recommended: a Linux workstation with an NVIDIA graphics card of 16 GB or more, on Ubuntu LTS**, AP Coder as a
+    Linux service (section 15) and LM Studio's headless server beside it; 8 cores or more, 32 GB of memory, 200 GB on
+    an SSD. The models sit in the card's own memory, so the machine's memory is AP Coder's and the system's; Linux
+    needs no server licences or user licences; its disk is encrypted and unlocked by the machine's own TPM at boot,
+    so it starts again by itself after a power cut; IT runs it with its usual Linux tools, over SSH. IT puts it on
+    the company network as it would any server (a fixed address, the name staff type of step 4, a firewall that lets
+    in only AP Coder's port and SSH), in a locked spot, on a UPS.
+  - **Or a Mac mini** with memory enough for AP Coder and both models together (32 GB: *Memory on one machine*,
+    below), as a macOS service (section 14). After every restart, a power cut included, FileVault waits until
+    someone unlocks the Mac (section 14): a power cut at night leaves AP Coder down until then.
+  - **Or a Windows Server virtual machine with a graphics card in a cloud region in the company's country**,
+    everything on it (LM Studio as in step 8). Nothing to buy, but it needs a site-to-site link to the company
+    network (for the staff's browsers, JD Edwards and the AP inbox's flow) and the cloud's quota for a virtual
+    machine with a graphics card, asked for first.
+
+  Still possible, no longer the recommendation: a small Windows Server virtual machine for AP Coder (4 vCPUs, 16 GB:
+  measured above) and a machine on the network that only runs the models (step 8, point 5): two machines to run, and
+  Windows Server's licences. A Windows PC with a graphics card would need Windows Server too (*Windows 11 Pro*,
+  below). Whichever machine runs the models holds invoice content in LM Studio's log (step 8, point 7).
+- **Memory on one machine.** AP Coder's own sizing (step 6; `default_workers` and `capture_processes` in
+  `ap_coder/web/server.py`) counts the whole machine as AP Coder's: it doesn't know the models' memory. On a 12-core
+  Mac with 32 GB it starts 11 web workers and 8 capture processes; on a 20-core workstation with 32 GB, 16 and 8. A
+  pilot of up to 10 people sets `--workers 4` (`service install --workers 4`) and `"capture_processes": 2` (or 3) in
+  the data folder's `server.json`, then restarts the service: the configuration measured above (4 web workers, and 2
+  capture processes on those 4 vCPUs). On a Mac the models share the Mac's memory: about 12 GB for both (estimated
+  from their sizes, above), AP Coder about 3 GB (2.3 GB measured above, more while scans are read) and macOS about
+  4 GB, so 32 GB holds them with room for the database's cache. With a graphics card the models sit in the card's
+  memory.
 - **Windows 11 Pro** runs the server mode too, technically: the service is a Task Scheduler task (step 6), not a Windows
   service, and Task Scheduler is part of Windows 11 too. But Microsoft's Windows 11 licence (its OEM terms of April
   2024, sections 2(c)(v) and 2(d)(iii)) says you may not "use the software as server software or to operate the device
@@ -461,10 +479,12 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
    docs/PILOT.md and docs/LM_STUDIO.md. Open LM Studio once: *My Models* → the chat model → *Context Length* 16384, GPU
    offload at the maximum; OvisOCR2 → 20480, left unloaded (AP Coder loads it when it reads).
 3. **The command it starts with**: `C:\APCoder\lm-studio-start.cmd`, holding (`%USERPROFILE%` is the profile of the
-   account it runs as; the model's exact name is the one `lms ls` shows):
+   account it runs as; the model's exact name is the one `lms ls` shows; `unload --all` first, so a second start,
+   point 8's, never loads the chat model twice):
 
    ```bat
    "%USERPROFILE%\.lmstudio\bin\lms.exe" server start --port 1234
+   "%USERPROFILE%\.lmstudio\bin\lms.exe" unload --all
    "%USERPROFILE%\.lmstudio\bin\lms.exe" load gemma-4-12b-it-qat --context-length 16384 --gpu max
    ```
 
@@ -477,17 +497,17 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
 
 5. **Check it**: `lms server status` and `lms ps` (as that account) show the server and the loaded model; in AP Coder,
    *Settings* → *Reading* → *Check again*. AP Coder finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place.
-   On another computer of the company network instead (a Mac Studio), give its address in the .env
-   (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS (`macstudio.corp.example.com`) also
-   needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several: comma-separated): such a name is used
-   while every address it has is private, AP Coder connects to the very addresses it checked (never to a second
-   lookup's), and no other name is looked up. **A second model machine as the backup** (a Mac mini beside the Mac
-   Studio, the same models in its LM Studio): its address in `AP_LLM_BACKUP_URL` (and `AP_PAGE_READER_BACKUP_URL` for
-   a page reader on a server of its own), in *Settings* → *Reading* → *For IT*, or server.json's `llm_backup_url` and
-   `page_reader_backup_url`. After two calls in a row the main one doesn't answer, the calls go to the backup (the
-   calls under way are asked again there); the main one is asked every few seconds and taken back once it answered
-   three times, after a minute at least (D-180). The Reading tab and `python -m ap_coder doctor` say which one answers,
-   and how fast.
+   On another computer of the company network instead (section 1's split layout, or Phase 2's model machine), give
+   its address in the .env (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`). A name in the company's DNS
+   (`macstudio.corp.example.com`) also needs that DNS domain named, `AP_COMPANY_DOMAINS=corp.example.com` (several:
+   comma-separated): such a name is used while every address it has is private, AP Coder connects to the very
+   addresses it checked (never to a second lookup's), and no other name is looked up. **A second model machine as the
+   backup** (in Phase 2, the pilot's machine, the same models in its LM Studio): its address in `AP_LLM_BACKUP_URL`
+   (and `AP_PAGE_READER_BACKUP_URL` for a page reader on a server of its own), in *Settings* → *Reading* → *For IT*,
+   or server.json's `llm_backup_url` and `page_reader_backup_url`. After two calls in a row the main one doesn't
+   answer, the calls go to the backup (the calls under way are asked again there); the main one is asked every few
+   seconds and taken back once it answered three times, after a minute at least (D-180). The Reading tab and
+   `python -m ap_coder doctor` say which one answers, and how fast.
 6. **Several requests at once** (for 5,000 invoices a month and more). One request at a time leaves most of a
    graphics card idle; a server that answers several together (continuous batching) reads 2 to 4 pages in about
    the time of one and a half (estimated, from llama.cpp's published batching figures; not measured here). Two
@@ -523,6 +543,29 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
    ```
 
    On a Mac, section 14 has the same with launchd.
+8. **Started again when it stops, and never updated by itself.** The task of point 4 runs once, at boot: a crash of
+   LM Studio would leave the models down until someone starts them, and AP Coder neither starts nor watches LM Studio.
+   So a second task, every 5 minutes, starts it again when its server doesn't answer: `C:\APCoder\lm-studio-watch.cmd`,
+   holding (`curl.exe` comes with Windows Server 2019 and newer)
+
+   ```bat
+   @echo off
+   curl.exe -s -f -m 30 -o NUL http://127.0.0.1:1234/v1/models && exit /b 0
+   "%USERPROFILE%\.lmstudio\bin\lms.exe" daemon down
+   call C:\APCoder\lm-studio-start.cmd
+   ```
+
+   and its task, as the account of point 4:
+
+   ```bat
+   schtasks /create /tn "LM Studio watch" /sc minute /mo 5 /ru APCoderService /rl LIMITED /tr C:\APCoder\lm-studio-watch.cmd
+   ```
+
+   **Its updates:** LM Studio updates its runtimes by itself unless that is turned off in its settings (lmstudio.ai's
+   notes on version 0.3.9), and its headless server (llmster) updates only with `lms daemon update`. On a server
+   meant to stay offline, turn the runtimes' automatic update off when you open LM Studio to set the models up
+   (point 2), and update LM Studio on purpose, as AP Coder is (section 11): a new version tried first, then copied in.
+   On a Mac, section 14's LaunchDaemon watches LM Studio the same way.
 
 ## 9. Backups
 
@@ -945,11 +988,13 @@ on another disk).
 
 ## 14. On a Mac
 
-The pilot may run AP Coder on a Mac mini (section 1's layouts): with its AI models on a Mac Studio beside it, or on the
-Mac mini itself. On a Mac, AP Coder's service is a *LaunchDaemon*: launchd, the part of macOS that runs its services,
-starts it at boot under its own account, whether anyone is logged in or not. Everything else in this guide holds, with
-the Mac's paths: the certificate (step 3), the name staff type (step 4), the first admin (step 7), backups (step 9),
-users (step 10), updates (step 11). Why a LaunchDaemon, and how it was chosen: docs/decisions.md, D-186.
+One of the pilot's alternatives (section 1) is a Mac mini that does everything: AP Coder and both AI models, with
+memory enough for them together (32 GB: section 1, *Memory on one machine*). On a Mac, AP Coder's service is a
+*LaunchDaemon*: launchd, the part of macOS that runs its services, starts it at boot under its own account, whether
+anyone is logged in or not. Everything else in this guide holds, with the Mac's paths: the certificate (step 3), the
+name staff type (step 4), the first admin (step 7), backups (step 9; their second copy on a network share: *A network
+share*, below), users (step 10), updates (step 11). Why a LaunchDaemon, and how it was chosen: docs/decisions.md,
+D-186.
 
 In this section `/Library/APCoder/APProcessor` is the AP Coder folder, `/Library/APCoder/current` a link to the
 AP Coder folder that runs (the service runs that link; `server-update` points it at a new version), `/Library/APCoderData`
@@ -973,12 +1018,16 @@ folder anyway (`server-update`'s backups and restores) is handed back to the acc
 
 - **Never asleep, and back after a power cut**: *System Settings* → *Energy*: *Prevent automatic sleeping when the
   display is off*, *Wake for network access*, *Start up automatically after a power failure* on (or `sudo pmset -a
-  sleep 0 disksleep 0 womp 1 autorestart 1`). Put the Mac mini, and the Mac Studio, on a UPS.
-- **FileVault** (its disk encrypted): a Mac with FileVault on waits at its unlock screen after every restart, a power
-  cut included, until someone types a password; until then nothing of AP Coder runs (nor LM Studio). IT decides:
-  FileVault on, with someone who unlocks the Mac after an unplanned restart, and `sudo fdesetup authrestart` for the
-  planned ones (it restarts once without the unlock screen: use it for macOS updates too); or FileVault off, on a Mac
-  in a locked room (the invoices are then not encrypted on its disk). `fdesetup status` says which.
+  sleep 0 disksleep 0 womp 1 autorestart 1`). Put the Mac on a UPS.
+- **FileVault** (its disk encrypted): a Mac with FileVault on waits after every restart, a power cut included, until
+  someone unlocks it with the password of an account that may unlock FileVault: at its unlock screen, or, on a Mac
+  with Apple silicon and macOS 26 or later, over SSH from another computer, when *Remote Login* was turned on
+  beforehand (*System Settings* → *General* → *Sharing*) and the Mac is on the network (Apple's Platform Security
+  guide, *Managing FileVault in macOS*). Until then nothing of AP Coder runs (nor LM Studio): a power cut at night
+  leaves AP Coder down until someone unlocks the Mac in the morning. So IT names who unlocks it after an unplanned
+  restart, and who stands in for them; `sudo fdesetup authrestart` serves the planned ones (it restarts once without
+  the unlock: use it for macOS updates too). Or FileVault off, on a Mac in a locked room (the invoices are then not
+  encrypted on its disk). `fdesetup status` says which.
 - **macOS updates**: turn off the automatic install of macOS updates (*General* → *Software Update* → *Automatic
   updates*), so the Mac restarts when you choose, at a quiet time.
 - **A fixed address** on the company network (a DHCP reservation), and the DNS alias staff type (step 4).
@@ -1084,28 +1133,92 @@ says to run `apc server-update` again.
 Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
 the same data. Use `service stop` and `service start`.
 
-### LM Studio on the Mac Studio (a recipe for IT)
+### A network share (the backups' second copy, the AP inbox)
 
-AP Coder neither starts nor watches LM Studio: on the Mac Studio (and on the Mac mini, when it is the backup model
-machine) IT runs it as a LaunchDaemon of its own. LM Studio installs per account and keeps its models in that
-account's `~/.lmstudio/models`, so it runs as a standard account made for it, here `lmstudio` (with its own home
-folder). Install LM Studio as that account (copied in: nothing is downloaded), open it once to set the models up
-(step 8, point 2), and turn off its own *run the LLM server on login*.
+`_apcoder` has no password and can't log in, so it can't connect to a network share itself, and macOS mounts none at
+boot by itself. So root mounts it at every boot, and AP Coder writes there as `_apcoder`. What IT does:
 
-1. **The start script**, `/Library/APCoder/lm-studio-start.sh` (the model's exact name is the one `lms ls` shows):
+1. **A folder only `_apcoder` can open**, with the mount point in it. The mount point stays root's, so while the
+   share is not mounted nothing is written there (the copy fails, and *Settings* → *Data & backups* says so):
+
+   ```sh
+   sudo mkdir -p /Library/APCoderShare/backups
+   sudo chown _apcoder:_apcoder /Library/APCoderShare
+   sudo chmod 700 /Library/APCoderShare
+   ```
+
+2. **A script that mounts the share when it isn't mounted**, `/Library/APCoder/mount-shares.sh`, root's only
+   (`sudo chown root:wheel` and `sudo chmod 700`: it holds the password of the share's own account, a domain account
+   with *Modify* on that share folder; an `@`, `:` or `/` in the password is written `%40`, `%3A`, `%2F`). The modes
+   `-d 0777 -f 0666` let `_apcoder` write there; the folder above keeps every other account of the Mac out.
 
    ```sh
    #!/bin/sh
-   # LM Studio's server at boot, for AP Coder (docs/SERVER.md, section 14).
-   LMS="$HOME/.lmstudio/bin/lms"
-   "$LMS" daemon up
-   "$LMS" server start --port 1234 --bind 10.0.0.20
-   "$LMS" load gemma-4-12b-it-qat --context-length 16384 --gpu max --yes
+   # The network shares AP Coder writes to, mounted at boot and every 5 minutes (docs/SERVER.md, section 14).
+   mount_share() {  # the share, the folder
+     /sbin/mount | /usr/bin/grep -q " on $2 (" || /sbin/mount_smbfs -o nobrowse,soft -d 0777 -f 0666 "$1" "$2"
+   }
+   mount_share '//CORP;apcoder-share:<password>@fileserver.corp.example.com/Backups/APCoder' /Library/APCoderShare/backups
    ```
 
-   `--bind`: the Mac Studio's own address on the company network, so the Mac mini reaches it (`127.0.0.1` when AP
-   Coder runs on the same Mac). Anything else on the network can reach that port too: let the Mac's firewall, or the
-   network, allow only the Mac mini.
+3. **Its LaunchDaemon**, as root (no `UserName`), `/Library/LaunchDaemons/com.apcoder.shares.plist`, loaded as in
+   *LM Studio on the Mac*, point 3, below; `StartInterval` mounts the share again when the file server was away:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0">
+   <dict>
+     <key>Label</key><string>com.apcoder.shares</string>
+     <key>ProgramArguments</key><array><string>/Library/APCoder/mount-shares.sh</string></array>
+     <key>RunAtLoad</key><true/>
+     <key>StartInterval</key><integer>300</integer>
+   </dict>
+   </plist>
+   ```
+
+4. **Name it to AP Coder and check it after a restart**:
+   `apc service install --allowed-folders /Library/APCoderShare/backups` (step 9), then *Settings* → *Data & backups*
+   → *Also copy each backup to* `/Library/APCoderShare/backups`. After a restart,
+   `sudo -u _apcoder touch /Library/APCoderShare/backups/check` works (then `sudo -u _apcoder rm` it), and the next
+   backup's line on *Data & backups* says its copy was made.
+
+The AP inbox's share, when the emails come through one (docs/MAILBOX_SETUP.md), is a second `mount_share` line, to
+`/Library/APCoderShare/inbox` (made as `backups` was).
+
+### LM Studio on the Mac (a recipe for IT)
+
+AP Coder neither starts nor watches LM Studio: IT runs it as a LaunchDaemon of its own, which starts it at boot and
+again when it stops. LM Studio installs per account and keeps its models in that account's `~/.lmstudio/models`, so it
+runs as a standard account made for it, here `lmstudio` (with its own home folder). Install LM Studio as that account
+(copied in: nothing is downloaded), open it once to set the models up (step 8, point 2), turn off its own *run the
+LLM server on login*, and turn off its runtimes' automatic update (step 8, point 8).
+
+1. **The start script and its watchdog**, `/Library/APCoder/lm-studio-start.sh` (the model's exact name is the one
+   `lms ls` shows). It starts LM Studio, then asks its server every 30 seconds whether it answers; after three
+   misses in a row it stops what is left of LM Studio and ends with an error, and launchd starts the script again
+   (point 2's `KeepAlive`), which starts LM Studio again:
+
+   ```sh
+   #!/bin/sh
+   # LM Studio's server at boot, and again when it stops, for AP Coder (docs/SERVER.md, section 14).
+   LMS="$HOME/.lmstudio/bin/lms"
+   ADDRESS=127.0.0.1
+   "$LMS" daemon up
+   "$LMS" server start --port 1234 --bind "$ADDRESS"
+   "$LMS" unload --all
+   "$LMS" load gemma-4-12b-it-qat --context-length 16384 --gpu max --yes
+   misses=0
+   while sleep 30; do
+     if /usr/bin/curl -s -f -m 20 -o /dev/null "http://$ADDRESS:1234/v1/models"; then misses=0; else misses=$((misses + 1)); fi
+     if [ "$misses" -ge 3 ]; then "$LMS" daemon down; exit 1; fi
+   done
+   ```
+
+   `ADDRESS`: `127.0.0.1`, AP Coder running on the same Mac, so nothing else on the network reaches the models. On a
+   Mac that only runs the models for AP Coder on another machine (section 1's split layout, step 8, point 5), its own
+   address on the company network instead; anything else on the network can reach that port too, so let the Mac's
+   firewall, or the network, allow only AP Coder's machine. `unload --all` before the load: a start after a stop
+   never loads the chat model twice.
 
 2. **Its LaunchDaemon**, `/Library/LaunchDaemons/com.apcoder.lmstudio.plist` (replace each `<account>`, brackets
    too, with the account it runs as, `lmstudio` above; `plutil -lint` finds one left):
@@ -1119,6 +1232,7 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
      <key>UserName</key><string><account></string>
      <key>EnvironmentVariables</key><dict><key>HOME</key><string>/Users/<account></string></dict>
      <key>RunAtLoad</key><true/>
+     <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
      <key>AbandonProcessGroup</key><true/>
      <key>StandardOutPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
      <key>StandardErrorPath</key><string>/Users/<account>/Library/Logs/lm-studio-start.log</string>
@@ -1126,8 +1240,9 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    </plist>
    ```
 
-   `AbandonProcessGroup` keeps LM Studio's own daemon running once the script has ended (launchd would otherwise end
-   what it started).
+   `KeepAlive` with `SuccessfulExit` false: launchd starts the script again whenever it ends with an error or is
+   killed (at most every 10 seconds), as AP Coder's own LaunchDaemon does. `AbandonProcessGroup` keeps LM Studio's
+   own daemon running if the script itself is ended (launchd would otherwise end what it started).
 
 3. **Load it**:
 
@@ -1139,9 +1254,9 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
    ```
 
 4. **Check it after a restart with nobody logged in**: `sudo -u <account> /Users/<account>/.lmstudio/bin/lms server
-   status` and `... lms ps` (the model loaded); on the Mac mini, AP Coder's *Settings* → *Reading* → *Check again*.
-   AP Coder is told where it is in the data folder's `.env` (`AP_LLM_BASE_URL=http://10.0.0.20:1234/v1`, and
-   `AP_PAGE_READER_BASE_URL`), and the backup machine as in step 8, point 5.
+   status` and `... lms ps` (the model loaded), and AP Coder's *Settings* → *Reading* → *Check again*. On the same
+   Mac, AP Coder finds LM Studio at `http://127.0.0.1:1234/v1`, its usual place; a model machine of its own is named
+   in AP Coder's `.env` (`AP_LLM_BASE_URL`, `AP_PAGE_READER_BASE_URL`: step 8, point 5).
 
 5. **Its logs, deleted on a schedule** (they hold invoice content: step 8, point 7; its disk encrypted with
    FileVault, *The Mac itself* above says what that means at a restart). A LaunchDaemon that deletes, every night at
@@ -1167,11 +1282,14 @@ folder). Install LM Studio as that account (copied in: nothing is downloaded), o
 
 Before the pilot tester and AP staff rely on it, let the Mac mini run the service for a week. Restart it once on
 purpose (`sudo fdesetup authrestart` with FileVault on, else `sudo shutdown -r now`); cut its power once (it comes
-back by itself with *Start up automatically after a power failure*; with FileVault on it waits at its unlock screen);
+back by itself with *Start up automatically after a power failure*; with FileVault on it waits to be unlocked: unlock
+it as *The Mac itself* says, over SSH too if that is the plan);
 kill its host once (`sudo kill -9` of the process `apc service status` names: launchd brings it back within seconds);
 and, when you have a newer bundle, run one `server-update` and one `server-update --back`. After each, `apc service
 status` and the end of `logs/service.log`. Each morning, check that the night's backup is in `backups` (section 9)
-and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms ps` after its restart).
+and that the disk keeps room, and that the backup's copy on the share was made. LM Studio too: `lms ps` after each
+restart, and stop it once (`sudo -u <account> /Users/<account>/.lmstudio/bin/lms daemon down`): its watchdog starts it
+again within a few minutes.
 
 | On a Mac, what you see | What to do |
 |---|---|
@@ -1179,6 +1297,6 @@ and that the disk keeps room. Do the same with the Mac Studio's LM Studio (`lms 
 | "This Mac has no account _apcoder" | Make it (above), or name another with `--account`. |
 | "Give the data folder" | `sudo AP_PRIVATE_DIR=/Library/APCoderData ...` on the command line (sudo leaves the environment out). |
 | `service status` says "not loaded" | Stopped on purpose (`apc service start`), or it could not load: `sudo launchctl print system/com.apcoder.server`, and `logs/launchd.err.log`. |
-| Nothing answers after a power cut | FileVault: the Mac waits at its unlock screen; or *Start up automatically after a power failure* is off. |
+| Nothing answers after a power cut | FileVault: the Mac waits to be unlocked (*The Mac itself*); or *Start up automatically after a power failure* is off. |
 | The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
 | launchd says "last exit code = 75" | The host asked to be started again: another service host runs (someone ran `service run` in Terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. launchd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |

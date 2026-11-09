@@ -4585,22 +4585,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `bench/volume.py`, `docs/HOW_IT_RUNS.md`, `docs/SERVER.md`; `tests/bench/test_seed_volume.py`,
     `tests/core/test_kept_answers.py`, `tests/core/test_store_perf.py`, `tests/reports_reference.py`,
     `tests/web/test_web_analytics.py`, `tests/web/test_downloads.py`)
-- **D-207** · **The pilot's hosting: a small Windows Server VM for AP Coder plus a model machine on the network**
-  (Phase 1, up to 10 people; 9 Nov 2026). Its pilot computer replaces D-145's (a laptop or desktop on Windows 11 Pro)
-  and the Mac mini with a Mac Studio planned since (D-186), which stays as one example.
-  - **Three layouts**, each running AP Coder as it is (`docs/SERVER.md` section 1, `docs/PILOT_PLAN.md`):
-    - **(a)** a small Windows Server virtual machine on the company's own servers for AP Coder (4 vCPUs, 16 GB), plus
-      one small machine on the company network with a graphics card (or Apple silicon) that only runs the AI models in
-      LM Studio. AP Coder reaches it at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (already built: SERVER.md
-      section 8, point 5), and in Phase 2 it becomes the backup model machine (D-180). Recommended.
-    - **(b)** one Windows Server virtual machine with a graphics card in a cloud region in the company's country,
-      everything on it: a site-to-site link to the company network for JD Edwards and the inbox flow, and the cloud's
-      quota for a graphics card asked for first.
-    - **(c)** one machine for everything: a Mac mini as a macOS service (SERVER.md section 14), or a Windows PC, which
-      then needs Windows Server (below). The Mac mini running AP Coder with the models on a Mac Studio is (a) on Macs.
-  - **Why (a):** the cheapest of the three on enterprise-grade hardware; the data stays on the company's own servers;
-    no cloud quota or site-to-site link to wait for; the same layout as Phase 2 (the company server, the models on a
-    machine of their own), smaller.
+- **D-207** · **The pilot's hosting: one machine that does everything, recommended a Linux workstation with an
+  NVIDIA graphics card** (Phase 1, up to 10 people; 9 Nov 2026). Its pilot computer replaces D-145's (a laptop or
+  desktop on Windows 11 Pro) and the Mac mini with a Mac Studio planned since (D-186).
+  - **The choice** (`docs/SERVER.md` section 1, `docs/PILOT_PLAN.md`): one machine runs AP Coder and both AI models
+    (OvisOCR2 and the chat model, in LM Studio), each as it is. **Recommended:** a Linux workstation with an NVIDIA
+    graphics card of 16 GB or more, on Ubuntu LTS, AP Coder as a Linux service (SERVER.md section 15). **The
+    alternatives:** a Mac mini with memory enough for AP Coder and both models together (32 GB; SERVER.md section
+    14); a Windows Server virtual machine with a graphics card in a cloud region in the company's country (nothing to
+    buy; a site-to-site link to the company network, and the cloud's quota for a graphics card asked for first). The
+    split layout, a small Windows Server virtual machine for AP Coder (4 vCPUs, 16 GB) plus a model machine on the
+    network (SERVER.md section 8, point 5), stays possible but is no longer the recommendation.
+  - **Why the Linux workstation:** the cheapest on enterprise-grade hardware. No server licences or user licences on
+    Linux; the models in the graphics card's own memory, so the machine's memory is AP Coder's; its disk encrypted
+    and unlocked by the machine's TPM at boot, so it starts again by itself after a power cut; IT's standard Linux
+    tooling and SSH. **Why not the others first:** a Mac with FileVault waits to be unlocked after every restart, a
+    power cut at night included, until someone does it (at its screen, or over SSH on Apple silicon with macOS 26 or
+    later: Apple's Platform Security guide), so the Mac mini is an alternative, not the recommendation; Windows 11
+    Pro's licence (below) rules out a Windows PC as the server, and Windows Server brings its licences and user
+    licences, which put the split layout below the Linux workstation; the cloud virtual machine needs nothing bought
+    but a quota and a site-to-site link to wait for.
+  - **Memory on one machine:** AP Coder's own sizing (`default_workers`, `capture_processes` in
+    `ap_coder/web/server.py`) counts the whole machine as its own: on a 12-core 32 GB Mac 11 web workers and 8
+    capture processes, on a 20-core 32 GB workstation 16 and 8 (worked out with the functions, 9 Nov 2026). The pilot
+    sets `--workers 4` and `capture_processes` 2 to 3 (`server.json`), the configuration measured (below). On a Mac
+    the models share its memory (about 12 GB for both, estimated; AP Coder about 3 GB; macOS about 4 GB: 32 GB); with
+    a graphics card they sit in its memory.
   - **Measured** (`.github/workflows/pilot-size.yml`, 9 Nov 2026, GitHub's Windows Server runner: 4 vCPUs, 16 GB, no
     graphics card): 10 simulated people for 10 minutes on 20,000 invoices, 4 web workers, the benches' stand-in model:
     pages p50 223 ms, p95 740 ms, p99 1.56 s; approvals and checks p95 156 ms; 0 errors, 0 "database is locked";
@@ -4610,9 +4620,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     read and reviewed 30 minutes after the drop. Without a graphics card (the release check of `v0.3.0-pilot9`, 4 Nov
     2026, the same kind of runner, the real models in LM Studio: OvisOCR2 Q8_0 and Qwen 3.5 9B Q4_K_M): a page read
     in about 4.5 to 5.5 minutes, a chat answer 3.5 to 8.5 minutes, the ten sample invoices 76 minutes. So a pilot
-    reading 50-60 invoices a day needs a graphics card (about 16 GB) or Apple silicon with enough memory on the model
-    machine; its speed is estimated until the burn-in measures it. SERVER.md's minimum (8 cores, 32 GB) stays for 25
-    people or more, with LM Studio on the same server.
+    reading 50-60 invoices a day needs a graphics card (about 16 GB) or Apple silicon with enough memory on the
+    machine that runs the models; its speed is estimated until the burn-in measures it. SERVER.md's minimum (8
+    cores, 32 GB) stays for 25 people or more, with LM Studio on the same server.
   - **Two corrections.** *Windows 11 Pro:* SERVER.md said it "allows at most 20 devices" for the server mode. AP Coder
     runs its server mode there, but Microsoft's Windows 11 licence (OEM terms of April 2024, sections 2(c)(v) and
     2(d)(iii)) bars using it "as server software or to operate the device as a server", except that up to 20 devices
@@ -4627,9 +4637,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     on GitHub's Windows Server machines for each pilot release, on the processor.
   - **Also:** the rollout's steps are "Phase 0" (connect to the company), "Phase 1" (the pilot) and "Phase 2" (300 to
     400 people, the company server) in the current docs, D-145's "stages" left as written; the pilot's team is up to
-    10 people (was the pilot tester and 3 to 4 clerks); the gate's sample is unchanged.
-  - **Left:** the model machine's real speed (Phase 0's burn-in); no measurement with a graphics card; the licensing
-    of Windows 11 Pro the company's call; LM Studio on Windows Server tried only on the processor.
+    10 people (was the pilot tester and 3 to 4 clerks); the gate's sample is unchanged. From the review of these docs:
+    LM Studio started again when it stops (SERVER.md section 8, point 8, a Task Scheduler watch; section 14, a
+    LaunchDaemon with `KeepAlive`) and its runtimes' automatic update turned off on a server meant to stay offline;
+    on a Mac, FileVault's unlock named (someone must do it, over SSH too on macOS 26 with Apple silicon) and a backup
+    share mounted at boot by root (`_apcoder` has no password); MAILBOX_SETUP's last hop for a Linux or Mac server
+    (the emails to a Windows share, mounted at boot, moved by a systemd timer or a LaunchDaemon).
+  - **Left:** the pilot machine's real speed (Phase 0's burn-in); no measurement with a graphics card; the TPM unlock
+    with the NVIDIA driver on the workstation itself (its burn-in: a power cut, then the card working); the Mac's
+    share and watchdog recipes not tried on a Mac here; the licensing of Windows 11 Pro the company's call; LM Studio
+    on Windows Server tried only on the processor.
   - (`docs/SERVER.md`, `docs/PILOT_PLAN.md`, `docs/HANDOFF.md`, `docs/KNOWN_LIMITS.md`, `docs/LM_STUDIO.md`,
     `docs/PILOT.md`, `docs/SCALE.md`, `docs/SCALE_GOAL.md`, `docs/MAILBOX_SETUP.md`, `docs/DEMO_RUN_SHEET.md`,
     `docs/WHATS_NEW.md` (its introduction), `README.md`, `ap_coder/bench/day.py`; comments in

@@ -5,9 +5,10 @@ that turns them into decisions: [PILOT_PLAN.md](PILOT_PLAN.md) (Phase 0 connects
 pilot, Phase 1, with up to 10 people).
 
 1. **On a laptop, one person at a time.** The central server version (logins, roles, HTTPS, a Windows or macOS service:
-   [SERVER.md](SERVER.md)) is built and tested but not set up anywhere yet: Phase 0 sets it up for the pilot, on a
-   small Windows Server virtual machine (4 vCPUs and 16 GB carry up to 10 people, measured) with the AI models on a
-   machine of their own on the network (the recommended layout of three: [SERVER.md](SERVER.md) section 1). People
+   [SERVER.md](SERVER.md); on Linux, its section 15) is built and tested but not set up anywhere yet: Phase 0 sets it
+   up for the pilot, on one machine that also runs the AI models (recommended: a Linux workstation with an NVIDIA
+   graphics card of 16 GB or more; the alternatives, a Mac mini or a cloud virtual machine with a graphics card:
+   [SERVER.md](SERVER.md) section 1). AP Coder's part was measured on 4 vCPUs and 16 GB for up to 10 people. People
    sign in with AP Coder's own accounts and a code from an authenticator app on their phone (D-146); single sign-on
    with the company's accounts (Entra ID) is not built, a possible later option.
 2. **Speed without a graphics card.** OvisOCR2 reads a page in a few minutes on a laptop processor, in the
@@ -15,7 +16,7 @@ pilot, Phase 1, with up to 10 people).
    approval needs no model. On a server's 4 vCPUs a page took 4.5 to 5.5 minutes and a chat answer 3.5 to 8.5 (the
    release check, [SERVER.md](SERVER.md) section 1): a pilot reading 50 to 60 invoices a day needs a graphics card
    (or Apple silicon) on the machine that runs the models. A graphics card is many times faster (estimated). The
-   pilot's model machine's own speed is not measured yet: Phase 0's burn-in measures it.
+   pilot machine's own speed is not measured yet: Phase 0's burn-in measures it.
 3. **Sample data only.** Made-up GL accounts, cost centers, vendors and purchase orders, for the demo. A company's
    own GL accounts, cost centers, vendor master, tax accounts and POs are imported from CSV or Excel.
 4. **JD Edwards E1 not tried against a real E1.** The batch-voucher files (F0411Z1 / F0911Z1 for R04110ZA) and the

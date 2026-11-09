@@ -366,21 +366,24 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 - **What:** `AP_SERVER_MODE=1`: logins (AP Coder's own accounts, with a code from an authenticator app at every
   login, D-146), four roles
   (Read-only, Clerk, Approver, Admin, enforced per route in `web/roles.py`), HTTPS with the company's certificate, an
-  allowed-hosts list, a service (`python -m ap_coder service install ...`: a Windows scheduled task, or a macOS
-  LaunchDaemon), `server-update <bundle.zip> --sha256` with rollback. All in `docs/SERVER.md`, step by step for IT.
-- **IT supplies:** for the pilot (Phase 1, up to 10 people), one of three layouts (`docs/SERVER.md` section 1,
-  D-207): recommended, a small Windows Server virtual machine on the company's own servers for AP Coder (4 vCPUs and
-  16 GB, measured for 10 people) and one small machine on the company network with a graphics card or Apple silicon
-  that only runs LM Studio and the models (it becomes the backup model machine in Phase 2); or one Windows Server
-  virtual machine with a graphics card in a cloud region in the company's country, with a site-to-site link to the
-  company network; or one machine for everything (a Mac mini, `docs/SERVER.md` section 14; a Windows PC with Windows
-  Server, Windows 11 Pro's licence restricting server use, section 1). A Mac mini for AP Coder with the models on a
-  Mac Studio is the first layout on Macs. For Phase 2 (300 to 400 people, about 25,000 invoices a month), a Windows
-  virtual machine with 32 vCPUs and 64 GB of memory (`docs/SERVER.md` section 1), the models on a model machine of
-  their own, the pilot's as its backup. On either: an SSD (200 GB for the pilot, about 1 TB for Phase 2), Python
-  3.12, a service account, a DNS name and a certificate for it, a firewall rule for the port. What was measured for
-  that size: `docs/SCALE.md`.
-- **Not done:** never installed anywhere (Phase 0 sets it up on the pilot's server); the company's security review
+  allowed-hosts list, a service (`python -m ap_coder service install ...`: a Windows scheduled task, a macOS
+  LaunchDaemon, or on Linux `docs/SERVER.md` section 15), `server-update <bundle.zip> --sha256` with rollback. All in
+  `docs/SERVER.md`, step by step for IT.
+- **IT supplies:** for the pilot (Phase 1, up to 10 people), one machine that runs AP Coder and both AI models
+  (`docs/SERVER.md` section 1, D-207): recommended, a Linux workstation with an NVIDIA graphics card of 16 GB or more,
+  on Ubuntu LTS (AP Coder's Linux service, `docs/SERVER.md` section 15; 8 cores or more, 32 GB of memory); or a Mac
+  mini with memory enough for AP Coder and both models together (32 GB, `docs/SERVER.md` section 14; FileVault waits
+  to be unlocked after every restart); or a Windows Server virtual machine with a graphics card in a cloud region in
+  the company's country, with a site-to-site link to the company network. AP Coder's own sizing doesn't know the
+  models' memory: the pilot runs `--workers 4` and 2 to 3 capture processes (`docs/SERVER.md` section 1, *Memory on
+  one machine*). A small Windows Server virtual machine for AP Coder with a model machine on the network stays
+  possible, no longer the recommendation (a Windows PC would need Windows Server: Windows 11 Pro's licence restricts
+  server use, `docs/SERVER.md` section 1). For Phase 2 (300 to 400 people, about 25,000 invoices a month), a Windows virtual machine with 32 vCPUs and
+  64 GB of memory (`docs/SERVER.md` section 1), the models on a model machine of their own, the pilot's machine as its
+  backup. On either: an SSD (200 GB for the pilot, about 1 TB for Phase 2), Python (the offline bundle's packages are
+  for 3.11 to 3.14; 3.12 on Windows), a service account, a DNS name and a certificate for it, a firewall rule for the
+  port. What was measured for that size: `docs/SCALE.md`.
+- **Not done:** never installed anywhere (Phase 0 sets it up on the pilot's machine); the company's security review
   (and a penetration test if IT requires one) is in Phase 0, before production write access to JD Edwards; no single
   sign-on with the company's accounts.
 - **Sign-in: built** (D-146, the user's call; single sign-on set aside for now). AP Coder's own accounts: an Admin
@@ -405,12 +408,15 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   background after passing a self-test. Both through LM Studio's OpenAI-compatible server at
   `AP_LLM_BASE_URL` (default `http://127.0.0.1:1234/v1`); refused if it isn't on this computer or the office
   network. Chosen as `ai/local_llm.py` `pick_model` says. Setup: `docs/LM_STUDIO.md`.
-- **For the pilot**, the models run on a machine of their own on the company network (a graphics card or Apple
-  silicon: on 4 vCPUs without one a page took 4.5 to 5.5 minutes, `docs/SERVER.md` section 1), reached at
+- **For the pilot**, the models run on AP Coder's own machine (D-207): in the NVIDIA graphics card's memory on the
+  recommended Linux workstation, in a Mac mini's shared memory, or on the cloud virtual machine's graphics card
+  (without one, a page took 4.5 to 5.5 minutes on 4 vCPUs, `docs/SERVER.md` section 1). AP Coder finds LM Studio at
+  its usual `http://127.0.0.1:1234/v1`; models on a machine of their own (the split layout, Phase 2) are reached at
   `AP_LLM_BASE_URL` and `AP_PAGE_READER_BASE_URL`. LM Studio's server log keeps the models' answers and the start
   and end of each request, so that machine holds invoice content: its disk encrypted, the logs deleted on a schedule
-  (`docs/SERVER.md` section 8, point 7). LM Studio's docs don't list Windows Server; the release check runs its
-  headless server there for each pilot release.
+  (`docs/SERVER.md` section 8, point 7). LM Studio is started again when it stops and not updated by itself
+  (`docs/SERVER.md` section 8, point 8; on a Mac, section 14). LM Studio's docs don't list Windows Server; the release check runs its headless
+  server there for each pilot release.
 - **Optional Azure Document Intelligence check:** off by default; contacts only its configured endpoint.
 
 ### 6.12 Excel/CSV and custom exports
@@ -438,7 +444,7 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
 Nothing below is in the repository, and nothing of it may be committed. Collect it inside the company, keep it in
 the data folder or the company's own document store, and import it through the dashboard. The people are named
 nowhere in the code: ask whoever handed this over to you for the pilot tester, the AP lead who decides, the JDE /
-CNC contact, IT's contact for the pilot's computers and the server, and who owns the company's repository and CI.
+CNC contact, IT's contact for the pilot's machine and the server, and who owns the company's repository and CI.
 
 | What | From | Goes to |
 |---|---|---|
@@ -456,7 +462,7 @@ CNC contact, IT's contact for the pilot's computers and the server, and who owns
 | AIS address, environment, service user and role; the seven orchestrations | JDE / CNC team | Settings → API connection (6.2) |
 | How emails reach the invoices folder | The developer builds the flow; IT / M365 admin gives its account access to the AP mailbox | `docs/MAILBOX_SETUP.md` (6.8) |
 | Finance Hub landing zone or share | Data team | Settings → Finance hub (6.9) |
-| The pilot's server and model machine (one of three layouts), certificate, service account, DNS name | IT | `docs/SERVER.md` section 1 (6.10) |
+| The pilot's machine (recommended: a Linux workstation with an NVIDIA graphics card), certificate, service account, DNS name | IT | `docs/SERVER.md` section 1 (6.10) |
 | Coding policy; meals accounts; approval limit | AP lead | GL accounts & tax → Coding policy; Settings → Review |
 | The rule that says which invoices AP Coder owns in the pilot; today's touch time an invoice, timed | AP lead | `docs/PILOT_PLAN.md` |
 | E1's vouchers for the parallel week (F0411, and F0911 for the distribution; the columns are in `docs/JDE_E1.md`) | JDE team | `python -m ap_coder pilot-score` (the pilot's parallel week) |
@@ -478,19 +484,21 @@ approvals, not with the build.
    `pilot_check.py`, get CI running in the company's system (section 3: the runners and hosts it needs). Replace the
    README's CI badge and links, which point at the original GitHub repository. *Done when* the tests are green on
    the company's CI and the dashboard opens.
-2. **The pilot computers in server mode.** One of the three layouts of `docs/SERVER.md` section 1 (D-207);
-   recommended, a small Windows Server virtual machine on the company's own servers for AP Coder (4 vCPUs, 16 GB) and
-   one small machine on the company network with a graphics card or Apple silicon that only runs LM Studio and the
-   models (`docs/SERVER.md` section 8, point 5), its disk encrypted and LM Studio's logs deleted on a schedule (point
-   7). Never asleep, in a locked spot or the company's data centre (`docs/SERVER.md` section 14 has the Mac mini and
-   Mac Studio as an example). IT gives them a burn-in week, which measures the model machine's speed too, then sets
-   AP Coder up in server mode: the service, the first Admin, the users. Import the company's master data there
-   (section 7), the vendors' AN8s included. *Done when* the pilot tester and the clerks log in from their browsers
-   and a real invoice is read and coded.
+2. **The pilot's machine in server mode.** One machine that runs AP Coder and both AI models (`docs/SERVER.md`
+   section 1, D-207): recommended, a Linux workstation with an NVIDIA graphics card of 16 GB or more, on Ubuntu LTS
+   (`docs/SERVER.md` section 15); or a Mac mini with 32 GB (`docs/SERVER.md` section 14); or a Windows Server
+   virtual machine with a graphics card in a cloud region in the company's country. AP Coder runs `--workers 4` and
+   2 to 3 capture processes there (`docs/SERVER.md` section 1, *Memory on one machine*); its disk is encrypted, LM
+   Studio's logs deleted on a schedule and LM Studio started again when it stops (`docs/SERVER.md` section 8, points
+   7 and 8). Never asleep, in a locked spot or the company's data centre, on a UPS, put on the company network by IT
+   (a fixed address, the name staff type). IT gives it a burn-in week (a restart, a power cut, the services killed,
+   as `docs/SERVER.md` section 14 does on a Mac; it measures how fast it reads too), then sets AP Coder up in server mode: the service, the first Admin, the users. Import the company's
+   master data there (section 7), the vendors' AN8s included. *Done when* the pilot tester and the clerks log in from
+   their browsers and a real invoice is read and coded.
 3. **The AP inbox.** The developer builds the Power Automate flow of `docs/MAILBOX_SETUP.md` (D-147), and IT
-   gives the flow's account access to the AP shared mailbox (AP Coder never holds the mailbox's password); schedule
-   `python -m ap_coder watch`. *Done when* a week of AP's mailbox lands in the review
-   queue with nothing lost.
+   gives the flow's account access to the AP shared mailbox (AP Coder never holds the mailbox's password; on a Linux
+   or Mac server the emails come through a file share it mounts at boot); schedule `python -m ap_coder watch`.
+   *Done when* a week of AP's mailbox lands in the review queue with nothing lost.
 4. **AP Coder's logins and authenticator codes for the pilot team** (built, D-146; 6.10). The first Admin, then an
    Admin adds the pilot tester and each clerk on *Users*; each signs in with the temporary password, chooses their
    own, and sets up an authenticator app on their phone. *Done when* every one of them has signed in with a code
@@ -571,14 +579,14 @@ production:
 
 `docs/KNOWN_LIMITS.md` (eleven points) and, for JD Edwards, the open questions in `docs/JDE_E1.md` and the "To confirm"
 list in `docs/JDE_ORCHESTRATIONS.md`. In short: the server mode not set up anywhere yet (Phase 0 sets it up on the
-pilot's server: a small Windows Server virtual machine, the models on a machine of their own, `docs/SERVER.md`
-section 1); minutes a page without a graphics card (4.5 to 5.5 on 4 vCPUs), so the pilot's model machine needs one
-or Apple silicon; sample data until the company's is imported; JD Edwards never tried against a real E1 (Phase 0
-tests read and write in PY); the mailbox flow set up in Phase 0, no direct mailbox connection by design; AP Coder's
-own logins with authenticator codes (D-146), no single sign-on with the company's accounts (Entra ID a possible later
-option); accuracy measured on samples only; job cost coding to build in Phase 0; Python installed by IT; the security
-review (and a penetration test if IT requires one) in Phase 0, before production write access; the pilot's size (up
-to 10 people) measured on 4 vCPUs and 16 GB, and the capacity for 300 to 400 people on a 4-core test machine, the
+pilot's machine, which also runs the models: recommended, a Linux workstation with an NVIDIA graphics card,
+`docs/SERVER.md` sections 1 and 15); minutes a page without a graphics card (4.5 to 5.5 on 4 vCPUs), so the pilot's
+machine needs one or Apple silicon; sample data until the company's is imported; JD Edwards never tried against a real
+E1 (Phase 0 tests read and write in PY); the mailbox flow set up in Phase 0, no direct mailbox connection by design; AP
+Coder's own logins with authenticator codes (D-146), no single sign-on with the company's accounts (Entra ID a possible
+later option); accuracy measured on samples only; job cost coding to build in Phase 0; Python installed by IT; the
+security review (and a penetration test if IT requires one) in Phase 0, before production write access; the pilot's size
+(up to 10 people) measured on 4 vCPUs and 16 GB, and the capacity for 300 to 400 people on a 4-core test machine, the
 real server's figures estimates until Phase 2 (`docs/SCALE.md`).
 
 ---
