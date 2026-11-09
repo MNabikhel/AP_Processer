@@ -45,6 +45,11 @@ FIRST_TIMEOUT, LATER_TIMEOUT = 30.0, 10.0  # the launcher's patience for an answ
 # A download that fails on the way (2 of 4 first setups from GitHub's ZIP: "Connection reset by peer") is tried again
 # after these waits (seconds): 3 tries in all. A refusal by the server (404, 403) is not tried again.
 RETRY_WAITS = (3.0, 10.0)
+# A download far too slow to wait for (B-2072: www.modelscope.cn trickled at about 20 KB/s and CI's installer job ran
+# out of time): after its first SLOW_AFTER seconds, a file that would take more than SLOW_LIMIT seconds in all at its
+# rate so far is given up on, and its mirror tried. 3 minutes lets the largest model (16.6 MB) come at 92 KB/s or more
+# (a slow office link's 1 MB/s brings it in 17 s); at 20 KB/s each OCR model would take 4 to 14 minutes.
+SLOW_AFTER, SLOW_LIMIT = 30.0, 180.0
 sleep = time.sleep  # (tests wait for nothing)
 MIRROR_HOST = urlsplit(offline.MIRROR_BASE).hostname or ""  # the OCR models' mirror, tried when their site fails
 
@@ -69,10 +74,17 @@ class Result:
         return self
 
 
+class TooSlow(Exception):
+    """A download far too slow to wait for (SLOW_LIMIT): not tried again there, and its site still asked for the next
+    file (it answers, slowly)."""
+
+
 def plain_reason(exc: BaseException) -> str:
     """Why a download failed, in a few plain words ("the connection dropped"): urllib's own message
     ("URLError: <urlopen error [Errno 104] Connection reset by peer>") means nothing to the pilot tester."""
     text = f"{exc} {getattr(exc, 'reason', '')}".lower()
+    if isinstance(exc, TooSlow):
+        return "the download was far too slow"
     if isinstance(exc, urllib.error.HTTPError):
         return f"the download site answered {exc.code}"
     if isinstance(exc, ConnectionResetError) or "reset by peer" in text or "10054" in text or "errno 104" in text:
@@ -120,19 +132,35 @@ def intact(path: Path, model: offline.ModelFile) -> bool:
 
 def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeout: float | None = None) -> None:
     """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does), tried again after each of
-    ``waits`` (default RETRY_WAITS) when the connection fails. Only with the opt-in."""
+    ``waits`` (default RETRY_WAITS) when the connection fails; one far too slow raises TooSlow (:func:`_copy`). Only
+    with the opt-in."""
     if not offline.internet_allowed():
         raise PermissionError(f"offline build: no download without {offline.INTERNET_ENV}=1")
     waits = RETRY_WAITS if waits is None else waits
     for attempt in range(len(waits) + 1):
         try:
             with urllib.request.urlopen(url, timeout=timeout or TIMEOUT) as response, open(dest, "wb") as out:  # noqa: S310
-                shutil.copyfileobj(response, out, 1 << 20)
+                _copy(response, out)
             return
         except Exception as exc:  # noqa: BLE001 - tried again, then raised as it came
             if attempt >= len(waits) or not _retry(exc):
                 raise
             sleep(waits[attempt])
+
+
+def _copy(response, out) -> None:
+    """Copy the download into ``out`` as it comes; once it has run SLOW_AFTER seconds, a file that would take more than
+    SLOW_LIMIT seconds in all at its rate so far raises TooSlow (only when the site says the file's length)."""
+    size = str(getattr(response, "headers", {}).get("Content-Length") or "")
+    length = int(size) if size.isdigit() else 0
+    start, got = time.monotonic(), 0
+    while chunk := response.read1(1 << 20):
+        out.write(chunk)
+        got += len(chunk)
+        elapsed = time.monotonic() - start
+        if length and elapsed >= SLOW_AFTER and elapsed * length / got > SLOW_LIMIT:
+            raise TooSlow(f"{got:,} of {length:,} bytes in {elapsed:.0f} s: the whole file would take about "
+                          f"{elapsed * length / got / 60:.0f} minutes")  # fmt: skip
 
 
 def fetch(target: Path, source: Path | None = None, *, online: bool | None = None,

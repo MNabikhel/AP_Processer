@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -815,7 +816,8 @@ def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models
 @pytest.fixture
 def model_sites(monkeypatch):
     """A model's site and its mirror on this computer (``http://127.0.0.1:<port>`` and ``http://localhost:<port>``):
-    ``served`` maps each path to its file; a path under /cut/ says the whole file's length, sends half and hangs up."""
+    ``served`` maps each path to its file; a path under /cut/ says the whole file's length, sends half and hangs up; one
+    under /slow/ sends it at about 12 KB/s (5 s for 60 KB) until the other end hangs up."""
     served: dict[str, bytes] = {}
     asked: list[str] = []
 
@@ -829,8 +831,17 @@ def model_sites(monkeypatch):
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body[: len(body) // 2] if self.path.startswith("/cut/") else body)
             self.close_connection = True
+            if not self.path.startswith("/slow/"):
+                self.wfile.write(body[: len(body) // 2] if self.path.startswith("/cut/") else body)
+                return
+            for at in range(0, len(body), 600):
+                try:
+                    self.wfile.write(body[at : at + 600])
+                    self.wfile.flush()
+                except OSError:  # (given up on)
+                    return
+                time.sleep(0.05)
 
         def log_message(self, *args):
             pass
@@ -845,14 +856,15 @@ def model_sites(monkeypatch):
     server.server_close()
 
 
-def _fetch_rec(launch, port: int, data: bytes, folder: Path, said: list[str]):
-    """``rec.onnx`` (pinned: ``data``'s SHA-256) from /cut/ on 127.0.0.1, its mirror /mirror/ on localhost."""
+def _fetch_rec(launch, port: int, data: bytes, folder: Path, said: list[str], site: str = "/cut/"):
+    """``rec.onnx`` (pinned: ``data``'s SHA-256) from ``site`` on 127.0.0.1, its mirror /mirror/ on localhost; each
+    download tried 3 times when its connection fails (no waits)."""
     from ap_coder.ops import offline
 
     sha = hashlib.sha256(data).hexdigest()
-    model = offline.ModelFile("rec.onnx", f"http://127.0.0.1:{port}/cut/rec.onnx", sha,
+    model = offline.ModelFile("rec.onnx", f"http://127.0.0.1:{port}{site}rec.onnx", sha,
                               f"http://localhost:{port}/mirror/rec.onnx")  # fmt: skip
-    return launch.fetch_models.fetch(folder, models=(model,), say=said.append, log=lambda _: None, waits=())
+    return launch.fetch_models.fetch(folder, models=(model,), say=said.append, log=lambda _: None, waits=(0.0, 0.0))
 
 
 def test_a_model_its_site_cuts_off_comes_from_its_mirror_checked_against_its_sha256(launch, model_sites, tmp_path):
@@ -882,6 +894,61 @@ def test_a_mirror_that_gives_another_file_is_refused_and_the_model_is_missing(la
     assert result.failed == ["rec.onnx"] and not result.downloaded and not list((tmp_path / "models").iterdir())
     assert "  Couldn't get rec.onnx from its mirror, localhost: the file that came was damaged." in said
     assert result.failed_hosts == ["127.0.0.1", "localhost"]
+
+
+def test_a_model_its_site_sends_far_too_slowly_comes_from_its_mirror(launch, model_sites, tmp_path, monkeypatch):
+    """B-2072: CI's installer job ran out of time while www.modelscope.cn trickled the PP-OCRv5 models (4 minutes for
+    the 4.7 MB one, 10 more for the next before the job was cancelled), the mirror never asked. A file that, after its
+    first 30 s, would take more than 3 minutes in all at its rate is given up on at once and its mirror tried, the
+    same way (here after 0.2 s, more than 1 s in all: the trickle would take 5 s)."""
+    monkeypatch.setattr(launch.fetch_models, "SLOW_AFTER", 0.2)
+    monkeypatch.setattr(launch.fetch_models, "SLOW_LIMIT", 1.0)
+    port, served, asked = model_sites
+    data = b"PP-OCRv5 rec" * 5000
+    served["/slow/rec.onnx"] = served["/mirror/rec.onnx"] = data
+    said: list[str] = []
+    start = time.monotonic()
+    result = _fetch_rec(launch, port, data, tmp_path / "models", said, site="/slow/")
+    assert time.monotonic() - start < 4
+    assert result.ok and result.downloaded == ["rec.onnx"] and (tmp_path / "models" / "rec.onnx").read_bytes() == data
+    assert asked == ["127.0.0.1/slow/rec.onnx", "localhost/mirror/rec.onnx"]  # (not tried again there)
+    assert "  Couldn't get rec.onnx from 127.0.0.1: the download was far too slow." in said
+    assert "  Got rec.onnx from its mirror, localhost, checked against its SHA-256." in said
+    assert not result.unreachable and not list((tmp_path / "models").glob("*.part"))  # (it answered: asked next time)
+
+
+def test_models_far_too_slow_from_both_sites_are_said_plainly(launch, no_models, monkeypatch, capsys):
+    """The mirror gets the same floor: both far too slow, the models are missing, both sites named, and each site is
+    still asked for the next model (it answered, slowly: not "couldn't reach")."""
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    monkeypatch.setattr(fetch_models, "SLOW_AFTER", 0.0)
+    monkeypatch.setattr(fetch_models, "SLOW_LIMIT", 0.5)
+
+    class Trickle(io.BytesIO):
+        """A download of 1 MB (as said) that comes 10 bytes at a time."""
+
+        headers = {"Content-Length": "1000000"}
+
+        def read1(self, size=-1):
+            time.sleep(0.01)
+            return b"x" * 10
+
+    def urlopen(url, timeout=None):
+        downloads.append(url)
+        return Trickle()
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)
+    out = capsys.readouterr().out
+    assert len(downloads) == 5 * 2 + 1  # each OCR model once at its site and once at its mirror; the table finder
+    for where in ("www.modelscope.cn", "its mirror, huggingface.co"):
+        assert f"Couldn't get ch_PP-OCRv5_rec_mobile_infer.onnx from {where}: the download was far too slow." in out
+    assert ("Couldn't download the OCR models from www.modelscope.cn or its mirror, huggingface.co (the download was "
+            "far too slow). AP Coder will try again next time it starts; scans are still read with one engine "
+            "meanwhile.") in out  # fmt: skip
+    assert "couldn't reach" not in out and state["models_failed"]
 
 
 @pytest.mark.parametrize("site", ["the wrong file", "no answer"])
