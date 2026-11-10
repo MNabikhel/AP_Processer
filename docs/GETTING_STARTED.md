@@ -168,6 +168,14 @@ Things to try:
   exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
   setup stay (replace them when you import yours: tick *Replace my current list*).
 
+**A made-up company with JD Edwards account strings.** To look at AP Coder as a department that codes each line to
+one account string (`business unit.object.subsidiary`) uses it, before loading your own exports: in
+`scripts\terminal.bat`, `set AP_PRIVATE_DIR=C:\APCoderDemo` (a new, empty folder), then `python -m ap_coder demo
+--company` and `python -m ap_coder serve`. It loads an invented company's chart of accounts, business units,
+supplier list, last year's Transaction Journal and voucher list as JD Edwards exports them (the files are kept in
+the folder's `demo_company`, with the seven invoices it puts in the review queue), and sets JD Edwards up for
+vouchers typed by hand. It only loads into a new database; delete the folder when you are done.
+
 **Reading the samples for real:** first tick *Yes, remove the demo invoices* and click *Remove demo invoices* if you loaded the demo (the same
 sample files would otherwise be recognised as already processed).
 
@@ -343,7 +351,7 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `dashboard` | the review app (what the desktop shortcut and `APProcessor.bat` start) |
 | `doctor [--online]` | setup check (with `--online`, also asks the chat model in LM Studio for two lines' accounts); safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
-| `demo [--remove]` | load or remove the demo invoices |
+| `demo [--remove]` | load or remove the demo invoices; `demo --company` makes a new data folder a made-up company's, coded to JD Edwards account strings |
 | `watch [--every 60]` | keep processing new files dropped in the invoices folder; with `--once` it checks once (for Windows Task Scheduler: program `<AP Coder folder>\.venv\Scripts\python.exe`, arguments `-m ap_coder watch --once`, start in the AP Coder folder) |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
