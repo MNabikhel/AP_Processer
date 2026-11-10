@@ -4893,19 +4893,33 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     most used, else the home business unit) and must be offered by `AccountPairs`: never a reserved subsidiary, a
     closed or DO NOT USE business unit, a title account. A past line on a business unit since closed gives its
     account on another, saying why, or nothing. `suggest_gl` returns the first of these when a chart is imported or a
-    journal loaded.
+    journal loaded. For a line left for a person, the supplier's accounts on a business unit the line names come
+    first, saying so (`supplier_prior.units_named`, B-2253: the line has every word of the unit's name that at most
+    3 units' names have, "Smartphone device balance - IT - Data Centre"); this orders the list and codes nothing.
+    On the made-up company's fifteen-line invoice the account AP keys is first on 15 lines of 15 (it was on 1, and
+    among the first three on 4).
   - **What, deciding alone** (`ai/offline_coder.py`): a line is coded with no one picking by this vendor's own
     approved lines as before, or when one account has 90% of the supplier's lines (by weight) of 3 lines or more and
-    the last line a person approved here did not go elsewhere (`SURE_SHARE`, `SURE_LINES`). Never on a guessed
+    the last line a person approved here did not go elsewhere (`SURE_SHARE`, `SURE_LINES`). For both, a line a
+    person approved here to another account counts only for a new line alike to it (`Prior.sure(line)`, B-2252): a
+    lunch coded by hand on a courier's invoice is evidence about the next lunch, not about the waybills, which are
+    coded alone as before; it still ranks the accounts offered. Never on a guessed
     business unit, never from another vendor's line, and not when the same words went to several business units
     (who ordered decides: `UNIT_SURE_LINES` approvals on one unit settle it) or to several accounts of one voucher of
     the past coding. Nor does the supplier's one account code a line that plainly says another kind of thing
-    (B-2228, `suggest._unless_another_kind`): one that reads as a meal while nothing of the account does, or that is
-    `ANOTHER_ALIKE` (0.5) to the name of another account offered, and in both cases is not alike to AP's remarks
+    (B-2228, `suggest._unless_another_kind`): one that reads as a meal while nothing of the account does, that is
+    `ANOTHER_ALIKE` (0.5) to the name of another account offered, or that says the name of another account of the
+    chart, offered or not (B-2251, `supplier_prior.reads_like`: every word of one of the things the name lists,
+    "laptop" for "Laptops & Desktops", or nothing but words of the name, "Consulting services" for "Management
+    Consulting", one of them a word at most 3 names have), and in each case is not alike to AP's remarks
     for the account, the lines approved to it here or its name. It is left with "This supplier's lines usually go to
     X, but this line reads like Y: check it" and both offered; a supplier's own words that name no account ("waybill
-    77812") are still coded (the journal bench's one-account lines: 77% coded alone, 88 of 88 right, before and
-    after). A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
+    77812", and "Fuel surcharge" beside "Fleet Fuel": one word of two is not the name) are still coded, and so is a
+    line no account is named for ("Ergonomic office chair", "Late payment interest" where the chart has neither):
+    words cannot tell those. The journal bench's one-account lines: 77% coded alone, 88 of 88 right before B-2251;
+    76%, 87 of 87 after ("Paper cups" from a coffee supplier reads like "Printer Toner & Paper"); all lines 14%, 117
+    of 117 and 116 of 116.
+    A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
     "A new supplier: not in last year's journal", "The supplier's usual account … is no longer in the chart (business
     unit … is no longer active)") and keeps up to 5 `candidates`. Every line with an account keeps `decided_by`
     (`core/schema.decided`): `source` rule, vendor, supplier, others, words, model or person, with the rule's id, the

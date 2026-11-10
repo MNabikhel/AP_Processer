@@ -7,6 +7,7 @@ import pytest
 from ap_coder.ai import supplier_prior as sp
 from ap_coder.ai.offline_coder import code_from_capture
 from ap_coder.ai.supplier_prior import prior_for, rank, remark_shape
+from ap_coder.bench.jde_invoices import printed_name
 from ap_coder.core.caches import size_of
 from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
 
@@ -137,7 +138,9 @@ def test_a_supplier_with_one_line_last_year_is_counted_in_the_singular(store):
     )
 
 
-def test_thirty_lines_of_history_are_not_sure_once_a_person_coded_a_line_elsewhere(store, tmp_path):
+def test_thirty_lines_of_history_are_not_sure_for_a_line_like_one_a_person_coded_elsewhere(store, tmp_path):
+    """A line a person coded to another account is evidence about lines like it, which are no longer coded alone;
+    a line worded otherwise still is, on the thirty lines of history (B-2252: it was left too)."""
     reference = load_chart(store)
     _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
     printed = "BRIGHTWAY JANITORIAL LTD."
@@ -146,14 +149,23 @@ def test_thirty_lines_of_history_are_not_sure_once_a_person_coded_a_line_elsewhe
                          *monthly(740075, printed, JANITOR, "{month} janitorial", 6, year=2023)])  # fmt: skip
     coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Steam clean boardroom carpets"), reference,
                                store.feedback_rows(), store).coding  # fmt: skip
-    assert coding.line_items[0].predicted_gl_code == "7340.3307"  # 30 of 30 lines
+    # 30 of 30 lines, but the line names the "Carpet" of another account of the chart (B-2251: it was coded alone).
+    assert coding.line_items[0].predicted_gl_code == "UNASSIGNED" and coding.line_items[0].reasoning_justification == (
+        f"This supplier's lines usually go to {JANITOR}, but this line reads like Carpet & Window Cleaning "
+        f"({CARPET}): check it.")  # fmt: skip
     approve(store, tmp_path, coding, [CARPET])
     prior = prior_for(store, "Brightway Janitorial Ltd.")
     assert prior.accounts[0].account == JANITOR and round(prior.accounts[0].share, 3) == round(30 / 35, 3)
-    assert prior.sure() is None  # 86%, and the last line approved here went elsewhere
-    line = code_from_capture(captured("Brightway Janitorial Ltd.", "Day porter service", number="INV-2"), reference,
-                             store.feedback_rows(), store).coding.line_items[0]  # fmt: skip
-    assert line.predicted_gl_code == "UNASSIGNED" and [c["account"] for c in line.candidates[:2]] == [JANITOR, CARPET]
+    assert prior.sure() is None  # of all its lines: 86%, and the last line approved here went elsewhere
+    alike = "Steam clean the lobby and stair carpets on two floors"
+    assert prior.sure("Day porter service").account == JANITOR and prior.sure(alike) is None
+    porter, carpets = code_from_capture(captured("Brightway Janitorial Ltd.", "Day porter service", alike,
+                                                 number="INV-2"), reference, store.feedback_rows(),
+                                        store).coding.line_items  # fmt: skip
+    assert porter.predicted_gl_code == "7340.3307"
+    assert porter.reasoning_justification == "30 of this supplier's 31 lines (30 last year, 1 approved here)"
+    assert carpets.predicted_gl_code == "UNASSIGNED"
+    assert [c["account"] for c in carpets.candidates[:2]] == [CARPET, JANITOR]
 
 
 def test_rank_orders_by_share_and_words_and_says_why_with_the_counts(store):
@@ -233,3 +245,102 @@ def test_a_meal_on_the_invoice_of_a_supplier_of_meals_is_coded_to_its_one_accoun
     line = _line_of(store, reference, "Harvest Table Catering Inc.", "Sandwich platters - board lunch")
     assert line.predicted_gl_code == "7410.4107"
     assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")
+
+
+# --- the made-up company (``chart_company``): what a reviewer of its first day found --------------------------------
+
+
+def _courier(chart_company):
+    """(the name its invoices print, its one account) of the supplier whose eight lines last year went to one
+    account, Courier - Cross Border."""
+    supplier = chart_company.invoices["one_line"][0].supplier
+    return printed_name(supplier.name), supplier.accounts[0]
+
+
+def _coded(chart_company, vendor, *texts, number="INV-1"):
+    store = chart_company.store
+    return code_from_capture(captured(vendor, *texts, number=number), store.reference_data(), store.feedback_rows(),
+                             store).coding  # fmt: skip
+
+
+def _account(line):
+    return "" if line.predicted_gl_code == "UNASSIGNED" else f"{line.predicted_cost_center}.{line.predicted_gl_code}"
+
+
+def test_a_line_that_names_another_account_of_the_chart_is_not_coded_to_the_suppliers_one_account(chart_company):
+    """B-2251: a laptop, a hotel, a software subscription, consulting and a pizza on a courier's invoice arrived on
+    the courier account with no one picking: a line was compared only with the few accounts already offered for it,
+    and with a short list of meal words. A line that names another account of the chart, anywhere in it, is left
+    with that account offered next; one whose words name no account is the supplier's own, as before."""
+    vendor, courier = _courier(chart_company)
+    reads_like = {
+        "Dell Latitude 5540 laptop": "Laptops & Desktops",
+        "Hotel accommodation 2 nights": "Hotels & Lodging",
+        "Annual software subscription renewal": "Software Subscriptions",
+        "Consulting services - October": "Management Consulting",
+        "Pizza for staff meeting": "",
+        "Refreshments for training day": "",
+    }
+    for line in _coded(chart_company, vendor, *reads_like).line_items:
+        name = reads_like[line.description]
+        assert _account(line) == "" and line.candidates[0]["account"] == courier, line.description
+        if name:
+            other = line.candidates[1]
+            assert other["name"] == name and line.reasoning_justification == (
+                f"This supplier's lines usually go to {courier}, but this line reads like {name} "
+                f"({other['account']}): check it.")  # fmt: skip
+        else:
+            assert line.reasoning_justification == (
+                f"This supplier's lines usually go to {courier}, but this line reads like a meal: check it."
+            )
+    # No account of this chart is named for a chair, interest or a golf tournament, and "ground" and "fuel" alone are
+    # not "Ground Transport" or "Fleet Fuel": nothing says these are not the courier's, and they are coded.
+    own = ("Courier service downtown", "Ground shipment waybill 77812", "Fuel surcharge", "Golf tournament tickets",
+           "Ergonomic office chair", "Late payment interest")  # fmt: skip
+    for line in _coded(chart_company, vendor, *own, number="INV-2").line_items:
+        assert _account(line) == courier, line.description
+        assert line.reasoning_justification.startswith("8 of this supplier's 8 lines last year")
+
+
+def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_ordinary_lines(chart_company, tmp_path):
+    """B-2252: one lunch approved to Meals on the courier's invoice, and every later line of the supplier arrived
+    empty ("69% / 31%: pick the account"), "Courier service airport" too: a person's pick weighs 5. It is evidence
+    about lines like it: the courier lines are coded alone again, and the next lunch is not."""
+    vendor, courier = _courier(chart_company)
+    meals = next(a for a in chart_company.truth.suggestable() if a.description == "Meals - Travel").string
+    lunch = "Working lunch for the project kickoff, 12 people"
+    first = _coded(chart_company, vendor, "Courier service downtown", lunch)
+    approve(chart_company.store, tmp_path, first, [courier, meals])
+    prior = prior_for(chart_company.store, vendor)
+    assert prior.shares() == "69% / 31%" and prior.sure() is None  # of all its lines, as before
+    board = "Working lunch with the board, quarterly review"
+    assert prior.sure("Courier service airport").account == courier and prior.sure(board) is None
+    later = _coded(chart_company, vendor, "Courier service airport", "Ground shipment waybill 77812", board,
+                   "Working lunch", "Team dinner", number="INV-2").line_items  # fmt: skip
+    assert [_account(line) for line in later] == [courier, courier, "", meals, ""]
+    assert later[0].reasoning_justification.startswith("9 of this supplier's 10 lines (8 last year, 2 approved here)")
+    # A lunch like the one approved: the supplier's two accounts, and the shares say why no one is sure.
+    assert [c["account"] for c in later[2].candidates[:2]] == [meals, courier]
+    assert later[2].reasoning_justification == (
+        "This supplier's 10 lines (8 last year, 2 approved here) went to 2 accounts: 69% / 31%: pick the account."
+    )
+    assert later[3].reasoning_justification.startswith("coded this way 1 time for similar lines from this vendor")
+    # A meal worded otherwise: left as a meal, the meals account this supplier's lunch went to offered next.
+    assert [c["account"] for c in later[4].candidates[:2]] == [courier, meals]
+    assert later[4].reasoning_justification == (
+        f"This supplier's lines usually go to {courier}, but this line reads like a meal: check it."
+    )
+
+
+def test_the_business_unit_a_line_names_puts_the_suppliers_account_on_it_first(chart_company):
+    """B-2253: each line of the fifteen-line invoice names its business unit ("Smartphone device balance - IT - Data
+    Centre"), and every line was offered the same five accounts in the same order, the one AP keys first on 1 line
+    of 15 and among the five on 7. The supplier's account on the unit named is now first; no line is coded by it."""
+    invoice, invoice_id = chart_company.invoices["fifteen_lines"]
+    lines = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"]
+    keyed = [line.parts[0].account for line in invoice.lines]
+    assert [line["candidates"][0]["account"] for line in lines] == keyed
+    assert all(line["predicted_gl_code"] == "UNASSIGNED" for line in lines)
+    unit = chart_company.store.reference_data().pairs.name_of(lines[0]["candidates"][0]["business_unit"])
+    assert lines[0]["description"].endswith(f" - {unit}")
+    assert lines[0]["candidates"][0]["reason"].startswith(f"the line names the business unit {unit}; ")

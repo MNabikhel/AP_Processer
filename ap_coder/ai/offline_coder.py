@@ -543,7 +543,7 @@ def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evid
     if best is not None:
         why = "; ".join(best.reasons)
     elif by_pairs(reference, ev.prior):
-        why = why_left(ev.prior, found, reference)
+        why = why_left(ev.prior, found, reference, description)
         offered[number] = found
     else:
         why = not_sure(top) if top is not None else NO_HISTORY

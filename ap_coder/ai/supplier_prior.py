@@ -69,6 +69,7 @@ NAME_CUT = 26  # characters of a supplier's name the journal prints
 REMARKS_KEPT = 3  # shapes of remark kept for an account, the commonest
 TEXTS_KEPT = 24  # different remarks (and approved lines) of an account a new line is compared with
 SAID_ALIKE = 0.2  # a likeness from which the words are named in the reason
+DISTINCT = 3  # a word the names of more accounts (or business units) than this have says little of any one of them
 
 _MONTHS = (
     "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|"
@@ -121,6 +122,9 @@ class AccountUse:
     remarked: int = 0  # the lines that have a remark: the journal's and the ones approved here with one
     remark_keys: tuple[frozenset[str], ...] = ()  # the words of each different remark (``line_match.keys``)
     line_keys: tuple[frozenset[str], ...] = ()  # the words of each different invoice line approved to it here
+    # Each of those lines: (its words, what it counts for, the id of its latest lesson), for ``Prior.sure``.
+    approved_lines: tuple[tuple[frozenset[str], float, int], ...] = ()
+    newest: int = 0  # the id of the latest lesson of a line a person approved to it here (0: none)
 
 
 @dataclass(frozen=True)
@@ -151,14 +155,23 @@ class Prior:
     def use(self, account: str) -> AccountUse | None:
         return next((u for u in self.accounts if u.account == account), None)
 
-    def sure(self) -> AccountUse | None:
+    def sure(self, line_text: str | None = None) -> AccountUse | None:
         """The one account a line of this supplier may be coded to with no one picking, or None: it has
         ``SURE_SHARE`` of the supplier's lines (by weight), of ``SURE_LINES`` lines at least, and the latest line a
-        person approved here did not go elsewhere."""
+        person approved here did not go elsewhere. For the line ``line_text``, the lines a person approved here to
+        another account that are not alike to it (under ``SAID_ALIKE``) are left out of both: a lunch coded by hand
+        on a courier's invoice is evidence about the next lunch, not about the supplier's ordinary lines (B-2252)."""
         top = self.accounts[0] if self.accounts else None
-        if top is None or self.lines < SURE_LINES or top.share < SURE_SHARE:
+        if top is None or self.lines < SURE_LINES:
             return None
-        if self.latest_approved and self.latest_approved != top.account:
+        line = None if line_text is None else keys(line_text)
+        weight, latest = self.weight, 0  # (the latest lesson of a line approved to another account that counts)
+        for use in self.accounts[1:]:
+            lessons = {n: w for _, w, n in use.approved_lines}
+            unlike = {n for k, _, n in use.approved_lines if line is not None and similarity(line, k) < SAID_ALIKE}
+            weight -= sum(lessons[n] for n in unlike)
+            latest = max([latest, *(n for n in (use.newest, *lessons) if n not in unlike)])
+        if top.weight / weight < SURE_SHARE or latest > top.newest:
             return None
         return top
 
@@ -328,7 +341,7 @@ class _Count:
     """One account's use while it is counted."""
 
     def __init__(self) -> None:
-        self.journal_lines = self.approved = self.other = self.invoices = 0
+        self.journal_lines = self.approved = self.other = self.invoices = self.newest = 0
         self.weight = 0.0
         self.vouchers: set[Any] = set()
         self.last = ""
@@ -337,7 +350,7 @@ class _Count:
         self.kept: Counter[str] = Counter()  # the remarks approved here, by shape: lines...
         self.kept_weight: Counter[str] = Counter()  # ...and what they count for
         self.typed: set[str] = set()  # the shapes a person typed here
-        self.line_texts: dict[str, None] = {}
+        self.line_texts: dict[str, list[float]] = {}  # a line a person approved: [what it counts for, its lesson]
 
 
 class _Counted:
@@ -386,6 +399,7 @@ class _Counted:
             use.other += 0 if by_person else n
             use.invoices += int(row["invoices"] or 0)
             use.last = max(use.last, str(row["last_at"] or "")[:10])
+            use.newest = max(use.newest, row["newest"] if by_person else 0)
             if by_person and row["newest"] > self.latest[0]:
                 self.latest = (row["newest"], join_account(*pair), str(row["last_at"] or "")[:10])
         for row in counted["descriptions"]:
@@ -395,7 +409,9 @@ class _Counted:
                 continue
             self.said(pair, row["description"], int(row["lines"]))
             if row["outcome"] in WEIGHTS:
-                use.line_texts.setdefault(row["description"])
+                had = use.line_texts.setdefault(row["description"], [0.0, 0])
+                had[0] += int(row["lines"]) * WEIGHTS[row["outcome"]]
+                had[1] = max(had[1], row["newest"])
                 continue
             shape = remark_shape(row["description"])  # imported past coding: the department's words, as a remark is
             if shape:
@@ -424,6 +440,11 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
     shapes = u.shapes.most_common(TEXTS_KEPT)
     said = u.shapes + u.kept  # the journal's remarks and the ones approved here, the heaviest shape first
     usual = sorted(said, key=lambda shape: u.shapes[shape] * JOURNAL_WEIGHT + u.kept_weight[shape], reverse=True)
+    lines: dict[frozenset[str], list[float]] = {}  # the lines a person approved to it, by their words
+    for text, (counts, lesson) in list(u.line_texts.items())[:TEXTS_KEPT]:
+        if k := keys(text):
+            had = lines.setdefault(k, [0.0, 0])
+            had[0], had[1] = had[0] + counts, max(had[1], lesson)
     return AccountUse(
         account=join_account(*pair), business_unit=pair[0], code=pair[1],
         lines=u.journal_lines + u.approved + u.other, vouchers=len(u.vouchers) + u.invoices,
@@ -431,7 +452,8 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
         last_date=u.last, remarks=tuple(Remark(shape, said[shape], u.example[shape], shape in u.typed)
                                         for shape in usual[:REMARKS_KEPT]), remarked=sum(said.values()),
         remark_keys=tuple(dict.fromkeys(k for shape, _ in shapes if (k := keys(shape)))),
-        line_keys=tuple(dict.fromkeys(k for text in list(u.line_texts)[:TEXTS_KEPT] if (k := keys(text)))),
+        line_keys=tuple(lines), approved_lines=tuple((k, counts, int(lesson)) for k, (counts, lesson) in lines.items()),
+        newest=u.newest,
     )  # fmt: skip
 
 
@@ -524,6 +546,68 @@ def name_words(reference: ReferenceData, business_unit: str, code: str) -> froze
     listed = _listed_names(reference).get(code, ("", ""))[1]
     own = reference.pairs.description(business_unit, code) if reference.pairs is not None and business_unit else ""
     return keys(f"{own} {listed}" if own else listed)
+
+
+_LISTED = re.compile(r"\s*(?:[&/,;+]|\band\b|\bet\b)\s*", re.I)  # between the things an account's name lists
+
+
+def _told(reference: ReferenceData) -> tuple[Mapping[str, tuple[str, ...]], Mapping[str, tuple[Any, ...]]]:
+    """What the names of the GL account list say, for ``reads_like``: ({a telling word: the codes whose name has
+    it}, {a code: (the words of its name, the things the name lists)}). A word tells when at most ``DISTINCT`` names
+    have it ("Laptops", not "Fees"). What a name lists is the name before a dash ("Courier - Domestic" is a courier
+    account), cut at "&", "/", "," and "and" ("Laptops & Desktops" lists two things), each as its words; a thing
+    with no telling word is left out."""
+    names = {code: name for code, (name, _) in _listed_names(reference).items()}
+    words = {code: keys(name) for code, name in names.items()}
+    common = Counter(word for found in words.values() for word in found)
+    by_word: dict[str, list[str]] = {}
+    told = {}
+    for code, name in names.items():
+        telling = {word for word in words[code] if common[word] <= DISTINCT}
+        things = (keys(thing) for thing in _LISTED.split(name.partition(" - ")[0]))
+        told[code] = (words[code], tuple(thing for thing in things if thing & telling))
+        for word in telling:
+            by_word.setdefault(word, []).append(code)
+    return {word: tuple(codes) for word, codes in by_word.items()}, told
+
+
+def reads_like(reference: ReferenceData, line_text: str) -> list[str]:
+    """The GL codes of the GL account list whose name a line says, the name with most of the line's words first: the
+    line has every word of one of the things the name lists ("Dell Latitude 5540 laptop" has the "Laptops" of
+    "Laptops & Desktops", "Annual software subscription renewal" both words of "Software Subscriptions"), or says
+    nothing but words of the name ("Consulting services - October" for "Management Consulting"); and one of those
+    words is a telling one (``_told``). One word of two is not the name: "Ground shipment waybill" is not "Ground
+    Transport", nor "Fuel surcharge" "Fleet Fuel", nor "Duties and brokerage" "Brokerage Fees". Singular and plural
+    are one word (``line_match.keys``). The names are read once for a list, as ``_listed_names``."""
+    table = reference.chart_of_accounts
+    by_word, told = _kept(("told", id(table)), weakref.ref(table), lambda: _told(reference))
+    line = keys(line_text)
+    found = []
+    for code in dict.fromkeys(code for word in sorted(line) for code in by_word.get(word, ())):
+        words, things = told[code]
+        if line <= words or any(thing <= line for thing in things):
+            found.append((len(line & words), code))
+    return [code for _, code in sorted(found, key=lambda f: -f[0])]
+
+
+def units_named(reference: ReferenceData, line_text: str) -> dict[str, int]:
+    """{a business unit a line names: how many words of its name the line has}: the line has every word of the
+    unit's name, the words more than ``DISTINCT`` business units' names have aside ("Smartphone device balance - IT
+    - Data Centre" names IT - Data Centre; "Prairie" is Prairie Administration where four units are an
+    Administration). Of the business units with an account offered; none with no chart imported."""
+    pairs = reference.pairs
+    if pairs is None:
+        return {}
+
+    def read() -> dict[str, frozenset[str]]:
+        names = {unit: keys(pairs.name_of(unit)) for unit in pairs.business_units()}
+        common = Counter(word for found in names.values() for word in found)
+        told = {unit: frozenset(w for w in found if common[w] <= DISTINCT) for unit, found in names.items()}
+        return {unit: words for unit, words in told.items() if words}
+
+    line = keys(line_text)
+    told = _kept(("units", id(pairs)), weakref.ref(pairs), read)
+    return {unit: len(words) for unit, words in told.items() if words <= line}
 
 
 def _shared(line: frozenset[str], words: frozenset[str]) -> list[str]:
