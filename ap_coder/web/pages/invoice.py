@@ -973,10 +973,11 @@ def account_seed(store: Store, reference: ReferenceData, vendor_name: str) -> di
 def accounts_json(request: Request, v: str = "") -> Response:
     """The accounts the review screen's Account boxes pick from (``account_list``), fetched as the screen opens,
     not printed in every page. Kept by the browser as the vendor list is (``vendors_json``, D-160): for good on a
-    laptop while ``v`` is its version, ``no-store`` behind the company server's login. 404 without a chart."""
+    laptop while ``v`` is its version, ``no-store`` behind the company server's login. An empty list without a
+    chart (no page asks for it then)."""
     kept = account_list(get_store(request), reference_or_none(get_store(request)))
     if kept is None:
-        raise HTTPException(status_code=404, detail="No chart of accounts is imported.")
+        return JSONResponse({"list": []}, headers={"Cache-Control": "no-store"})
     tag = f'"{kept.version}"'
     headers = {
         "ETag": f"W/{tag}",

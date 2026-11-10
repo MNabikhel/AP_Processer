@@ -356,7 +356,7 @@ def test_the_page_offers_the_suppliers_accounts_and_each_lines_candidates(chart_
 def test_an_install_without_a_chart_has_no_account_list(demo_template, tmp_path):
     store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
     client = client_for(store)
-    assert client.get("/review/accounts.json").status_code == 404
+    assert client.get("/review/accounts.json").json() == {"list": []}  # no page asks for it without a chart
     text = client.get(f"/review/{store.list_invoices()[0]['id']}").text
     assert 'id="account-seed"' not in text and 'id="gl-options"' in text
 
