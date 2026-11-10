@@ -5185,8 +5185,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     work (the laptop's own; on the server its background process, never a web worker), and it reads the time again
     once a minute, so a time saved on the page is followed with no restart. The free-space check, the second folder
     and the retention are `backup_now`'s and `drop_old`'s, unchanged.
+    - *A time changed while AP Coder runs (B-2295):* one moved to a time the clock already passed today is followed
+      at the watch's next read, within a minute (it waited for the hourly check, with the reason "asleep or busy"):
+      a new time that the clock showed more lately than the one before it has come (`DailyBackup._time_came`), and
+      `auto_backup` makes the day's backup when none was made since. The page saves the time through
+      `Store.save_backup_at`, which keeps when (`backup_at_changed`), so the reason says what happened: "made after
+      the time was changed to 14:00 at 15:00". A time moved later also makes one backup at the change, as the rule
+      (none since that time last passed) always did. The watch's first read counts from when the process began: a
+      start half a minute before the time does not wait a day for it.
+    - *On a company server (B-2296):* the page shows no time that nobody chose. With IT's hours it says them and
+      where they are set (`AP_BACKUP_HOURS`, the `.env`) in place of the box; without them and with no time saved,
+      the box is empty and the page says that 17:30, AP Coder's own time, applies until one is saved, and that it
+      is in working hours. What applies is unchanged: the 17:30 stays for a shared laptop that never saw the page.
     - *Not chosen:* a time that also governs a server whose IT set `AP_BACKUP_HOURS`: those hours were chosen on
-      purpose (B-1671), so they decide, the page shows the time greyed and says so. A Windows scheduled task for
+      purpose (B-1671), so they decide, and the page says so in place of the time. A Windows scheduled task for
       the backup: it needs AP Coder closed or a second process on the database, and administrator rights.
   - **`python -m ap_coder share`** (`ops/share.py`), the short way through docs/SERVER.md section 16. It checks,
     in order: an AP Coder already running on this data (shared: says the address; the owner's own window: asks to
@@ -5194,7 +5206,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     one made with this computer's `openssl`, as section 3 already allowed by hand); the first Admin (asked for at
     the console: the name on the owner's approvals, a username, a password); then writes `server.json`, allows the
     second backup folder chosen in laptop mode (`allowed_folders`, D-109: from the console, by the person who chose
-    it, and only while the data has no account yet; later `--allow-folder`), says the firewall rule and the address,
+    it, and only while the data has no account yet; later `--allow-folder`, which also works while AP Coder is being
+    shared, the list being read each time a folder is saved, B-2297), says the firewall rule and the address,
     and runs `serve --server` as the service's host does (`serve_command`, `serve_env`), in its window, with 2 web
     workers unless `server.json` says. `share --stop` asks that server to stop (`dashboard_stopped`).
     - *Never:* a start without sign-in or over plain HTTP (`insecure_http` in `server.json` is ignored here); a

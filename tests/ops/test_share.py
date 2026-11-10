@@ -226,3 +226,35 @@ def test_share_stop_asks_the_running_server_to_stop(laptop, monkeypatch, capsys)
     finally:
         httpd.shutdown()
     assert asked == [data] and "Stopped: nobody can sign in" in capsys.readouterr().out
+
+
+def test_allow_folder_allows_the_folder_while_ap_coder_is_shared_and_says_so(laptop, capsys, tmp_path_factory):
+    """B-2297: `share --allow-folder "<folder>"`, the command `share` itself prints, did nothing while AP Coder was
+    being shared (the usual moment the owner finds the folder refused on Settings), said nothing of it and ended 0."""
+    data, db = laptop
+    Store(db).add_user("pat", GOOD, role="admin")
+    target = str(tmp_path_factory.mktemp("second copies"))
+    assert service.folder_refusal(target, data, server=True)
+    httpd, _ = team_server_stand_in(data)  # shared, its window open
+    try:
+        assert cli.main(["share", "--allow-folder", target]) == 0
+        said = capsys.readouterr().out
+        assert "shared from this computer already" in said
+        assert f"{target} may be used for the backups' second copy" in said and "with no restart" in said
+        assert service.folder_refusal(target, data, server=True) == ""  # the running server reads it at each check
+        assert service.read_config(data)["allowed_folders"] == [target]
+        assert cli.main(["share", "--allow-folder", target]) == 0  # again: said, nothing written twice
+        assert f"{target} is allowed already" in capsys.readouterr().out
+        assert service.read_config(data)["allowed_folders"] == [target]
+    finally:
+        httpd.shutdown()
+    # Beside the owner's own window (laptop mode) nothing is started or allowed: said, and it does not end 0.
+    other = str(tmp_path_factory.mktemp("other"))
+    httpd, _ = team_server_stand_in(data, https=False, server_mode=False)
+    try:
+        assert cli.main(["share", "--allow-folder", other]) == 1
+        said = capsys.readouterr().out
+        assert "Close it first" in said and f"{other} is not allowed yet" in said
+        assert service.folder_refusal(other, data, server=True)
+    finally:
+        httpd.shutdown()

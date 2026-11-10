@@ -128,12 +128,14 @@ class DailyBackup:
     14 kept. ``now``: one asked for on Settings, on the same thread (never two at once). With a time of day set
     (Settings → Data & backups, ``Store.backup_at``, D-218) a check as the clock passes it makes the day's backup
     then; ``watch`` checks every half minute with no page asked for, and reads the time set (a check for a page
-    asked for never reads the database). ``clock``, ``monotonic``: the time, for a test to set."""
+    asked for never reads the database). A time saved while AP Coder runs that has already passed today is followed
+    at that look, not at the next hourly check (B-2295). ``clock``, ``monotonic``: the time, for a test to set."""
 
     def __init__(self, store: Store, every: float = 3600, clock: Callable[[], dt.datetime] = dt.datetime.now,
                  monotonic: Callable[[], float] = time.monotonic) -> None:  # fmt: skip
         self.store, self.every, self.clock, self.monotonic = store, every, clock, monotonic
         self.last = monotonic()  # the start's own backup is ``start``'s
+        self.began = clock()  # (a set time that comes before the watch first reads it is still this day's)
         self.thread: threading.Thread | None = None
         self.outcome: Path | Exception | None = None  # what the last one asked for (``now``) gave
         self.at: tuple[int, int] | None = None  # the set time as last read, and when it comes next
@@ -160,18 +162,25 @@ class DailyBackup:
 
     def _time_came(self, now: float, look: bool) -> bool:
         """Whether the clock passed the backup's set time since the last check. With ``look`` the time is read
-        again once a minute: one saved on Settings, in this process or another, is followed without a restart."""
+        again once a minute: one saved on Settings, in this process or another, is followed without a restart. A
+        time saved that the clock showed more lately than the one before it (moved earlier, to one already passed
+        today) has come: the check is made now, and ``auto_backup`` makes the day's backup when none was made since."""
         wall = self.clock()
         if look and (self._read is None or now - self._read >= 60):
-            self._read = now
+            first, self._read = self._read is None, now
             try:
                 at = self.store.backup_at()
             except Exception:  # noqa: BLE001 - a busy database: the time as last read
                 at = self.at
             if at != self.at:
-                from ap_coder.core.store.backups import next_backup_due
+                from ap_coder.core.store.backups import backup_due, next_backup_due
 
-                self.at, self.next_at = at, (next_backup_due(wall, at) if at else None)
+                came = not first and at is not None and (
+                    self.at is None or backup_due(wall, at) > backup_due(wall, self.at))  # fmt: skip
+                self.at = at
+                self.next_at = next_backup_due(self.began if first else wall, at) if at else None
+                if came:
+                    return True
         if self.at is None or self.next_at is None or wall < self.next_at:
             return False
         from ap_coder.core.store.backups import next_backup_due

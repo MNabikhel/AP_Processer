@@ -60,6 +60,7 @@ RESTORE_HOURS = 2  # a restore marker older than this is not believed (a restore
 # BACKUP_AT_OFF, no set time: once a day when AP Coder starts, as before.
 BACKUP_AT, BACKUP_AT_DEFAULT, BACKUP_AT_OFF = "backup_at", "17:30", "off"
 BACKUP_LAST = "backup_last"  # the last backup made at its set time, as JSON: {"at", "file", "why"}
+BACKUP_AT_CHANGED = "backup_at_changed"  # when the set time was last saved (this computer's clock): ``_why_then``
 ON_TIME = dt.timedelta(minutes=10)  # a backup started this long after its time was made at its time
 
 
@@ -159,9 +160,18 @@ def next_backup_due(now: dt.datetime, at: tuple[int, int]) -> dt.datetime:
     return backup_due(now + dt.timedelta(days=1), at)
 
 
-def _why_then(now: dt.datetime, due: dt.datetime, at: tuple[int, int], started: bool, first: bool) -> str:
-    """Why a backup with a set time was made when it was, for Settings → Data & backups."""
+def _why_then(now: dt.datetime, due: dt.datetime, at: tuple[int, int], started: bool, first: bool,
+              changed: dt.datetime | None = None) -> str:  # fmt: skip
+    """Why a backup with a set time was made when it was, for Settings → Data & backups. ``changed``: when the time
+    was last saved; after the clock last showed it, the change is why (a time moved to one already passed, B-2295),
+    said on the clock the time itself is on (the business time zone's, where there is one)."""
     said = f"{at[0]:02d}:{at[1]:02d}"
+    if changed is not None and due < changed <= now:
+        from ...ops.health import business_zone
+
+        zone = business_zone()
+        there = changed.astimezone(zone) if zone is not None else changed
+        return f"made after the time was changed to {said} at {there:%H:%M}"
     if now - due <= ON_TIME:
         return f"made at its time, {said}"
     if first:
@@ -591,6 +601,13 @@ class BackupsMixin:
         saved); None with no set time: once a day when AP Coder starts."""
         return backup_time(self.get_setting(BACKUP_AT) or BACKUP_AT_DEFAULT)
 
+    def save_backup_at(self, time: tuple[int, int] | None, actor: str | None = None,
+                       now: dt.datetime | None = None) -> None:  # fmt: skip
+        """The daily backup's time of day as Settings saves it (None: no set time), and when it was saved: a backup
+        the change itself makes due says so (``_why_then``)."""
+        self.set_setting(BACKUP_AT, f"{time[0]:02d}:{time[1]:02d}" if time else BACKUP_AT_OFF, actor=actor)
+        self.set_setting(BACKUP_AT_CHANGED, (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M:%S"))
+
     def last_timed_backup(self) -> dict[str, str]:
         """The last backup made at its set time: {"at": when, "file": its name, "why": why then}; {} when none
         was."""
@@ -633,8 +650,12 @@ class BackupsMixin:
             return None
         made_now = self._daily_backup(keep)
         with contextlib.suppress(OSError, sqlite3.Error):  # (a busy database: the backup is made all the same)
+            changed = None
+            with contextlib.suppress(ValueError):  # (never saved, or not a time: no change to say)
+                changed = dt.datetime.fromisoformat(self.get_setting(BACKUP_AT_CHANGED) or "")
+            why = _why_then(now, due, at, started, first, changed)
             self.set_setting(BACKUP_LAST, json.dumps({"at": now.strftime("%Y-%m-%d %H:%M"), "file": made_now.name,
-                                                      "why": _why_then(now, due, at, started, first)}))  # fmt: skip
+                                                      "why": why}))  # fmt: skip
         return made_now
 
     def _daily_backup(self, keep: Retention | None) -> Path:

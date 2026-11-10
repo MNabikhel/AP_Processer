@@ -49,16 +49,24 @@
     </form>
   </div>
 
+  {% if backup_hours %}{# IT's hours decide: no time is shown that nobody chose (B-2296) #}
+  <p class="muted">On this server the daily backup is made from {{ backup_hours }}: IT set those hours
+    (AP_BACKUP_HOURS in the server's .env file, docs/SERVER.md section 9), and they decide. No time of day is set here
+    while they do.</p>
+  {% else %}
+  {% set own = server_mode and not backup_at_chosen %}
   <form method="post" action="/settings/data/backup-time" class="row st-end" data-busy="Saving…">
     <label class="field">Back up every day at
-      <input type="time" name="at" value="{{ backup_at }}"{% if backup_hours %} disabled{% endif %}
+      <input type="time" name="at" value="{{ '' if own else backup_at }}"
              title="On the 24-hour clock, like {{ backup_at_default }}. Empty: no set time, once a day when AP Coder starts."></label>
-    <button class="btn" type="submit"{% if backup_hours %} disabled{% endif %}><span class="ms" aria-hidden="true">save</span>Save</button>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
-  {% if backup_hours %}
-  <p class="muted">This server's backup hours are set by IT ({{ backup_hours }}, AP_BACKUP_HOURS): the daily backup is
-    made in those hours, and the time above is not used.</p>
-  {% else %}
+  {% if own %}
+  <p class="muted">Nobody has chosen a time on this server: until one is saved here, the daily backup is made at
+    {{ backup_at_default }}, AP Coder's own time, which is in working hours. Save the time you want above (saved empty:
+    no set time), or have IT set the hours in the server's .env file (AP_BACKUP_HOURS, docs/SERVER.md section 9): those
+    then decide.</p>
+  {% endif %}
   <p class="muted">The day's backup is made at that time while AP Coder is running{% if server_mode %} (the business time
     zone's, where the server has one){% endif %}. A computer asleep or AP Coder closed at that time makes it at the next
     start instead, and says so here. Empty: no set time, one is made once a day when AP Coder starts.

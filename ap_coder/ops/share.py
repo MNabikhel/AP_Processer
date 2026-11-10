@@ -200,6 +200,23 @@ def firewall_note(port: int, run: Callable[..., Any] = service.run_command, wind
     )
 
 
+def allow_folder(data: Path, folder: str, say: Say, now: bool = False) -> None:
+    """``folder`` (``--allow-folder``; nothing for an empty one) added to the folders server.json allows for the
+    backups' second copy (D-109), and said, also when it was allowed already: the command never ends having said
+    nothing of it (B-2297). ``now``: AP Coder is being shared; it reads the list each time a folder is saved, so the
+    folder can be chosen with no restart."""
+    folder = folder.strip().strip('"')
+    if not folder:
+        return
+    then = " AP Coder follows it now, with no restart: save the folder there." if now else ""
+    if not service.folder_refusal(folder, data, server=True):
+        say(f"Backups: {folder} is allowed already for the backups' second copy (Settings → Data & backups).{then}")
+        return
+    allowed = list(service._folders(service.read_config(data).get("allowed_folders")))
+    service.write_config(data, allowed_folders=[*allowed, folder])
+    say(f"Backups: {folder} may be used for the backups' second copy (Settings → Data & backups).{then}")
+
+
 def backup_folder(data: Path, db: Path, first: bool, say: Say, allow: str = "") -> None:
     """The backups' second folder in server mode, where Admins may name only the folders server.json allows (D-109):
     ``allow`` (``--allow-folder``) is added to them, and so is, the first time (``first``: no account yet, the data
@@ -207,11 +224,9 @@ def backup_folder(data: Path, db: Path, first: bool, say: Say, allow: str = "") 
     from ..core.store.backups import setting_in
 
     chosen = (setting_in(db, "backup_copy_dir") or "").strip() if db.is_file() else ""
-    for folder in filter(None, (allow.strip().strip('"'), chosen if first else "")):
-        if service.folder_refusal(folder, data, server=True):
-            allowed = list(service._folders(service.read_config(data).get("allowed_folders")))
-            service.write_config(data, allowed_folders=[*allowed, folder])
-            say(f"Backups: {folder} may be used for the backups' second copy (Settings → Data & backups).")
+    allow_folder(data, allow, say)
+    if first and chosen and service.folder_refusal(chosen, data, server=True):
+        allow_folder(data, chosen, say)
     if not chosen:
         say(
             "Backups: there is no second backup folder yet, so a lost or broken laptop loses everything. Choose one "
@@ -311,9 +326,11 @@ def add_parser(sub: Any) -> None:
     p = sub.add_parser("share", help="Let a few colleagues use this laptop's AP Coder, with sign-in: checks what is "
                        "missing, says the next step, then serves until its window is closed (docs/SERVER.md, "
                        "section 16)")  # fmt: skip
-    p.add_argument("--stop", action="store_true", help="Stop sharing (as closing its window does)")
-    p.add_argument("--allow-folder", default="", metavar="FOLDER",
-                   help="Let Admins choose this folder for the backups' second copy, on Settings")  # fmt: skip
+    one = p.add_mutually_exclusive_group()  # (a folder named with --stop would be allowed by nothing)
+    one.add_argument("--stop", action="store_true", help="Stop sharing (as closing its window does)")
+    one.add_argument("--allow-folder", default="", metavar="FOLDER",
+                     help="Let Admins choose this folder for the backups' second copy, on Settings (also while AP "
+                     "Coder is being shared: no restart)")  # fmt: skip
 
 
 def main(args: argparse.Namespace, say: Say = print) -> int:
@@ -324,6 +341,10 @@ def main(args: argparse.Namespace, say: Say = print) -> int:
         if args.stop:
             return stop(data, s, say)
         code = running(data, s, say)
+        if code == 0:  # shared now: the folder is allowed all the same, and the server follows it (B-2297)
+            allow_folder(data, args.allow_folder, say, now=True)
+        elif code is not None and args.allow_folder.strip():
+            say(f"Backups: {args.allow_folder.strip()} is not allowed yet: run this again once that window is closed.")
         if code is not None:
             return code
         s = prepare(data, db, say, allow=args.allow_folder)
