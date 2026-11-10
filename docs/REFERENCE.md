@@ -218,7 +218,7 @@ has LM Studio load it when there is a page to read. Nothing is downloaded: AP Co
 internet. Before it reads any invoice it tests itself on a scan of a sample invoice whose answers are known
 (10 to 20 minutes on a laptop, once per model), on its own, with no button to press; a failed test is tried
 again a day later, or with *Run the self-test again* in *Settings → Reading*. No other model reads pages instead: without OvisOCR2 the invoices are read by the PDF's text and
-OCR alone, they wait for a person, and a banner on the Process and Review pages says so.
+OCR alone, they wait for a person, and a banner on the Import invoices and Review pages says so.
 
 It reads in the background while the dashboard is open (or overnight: `python -m ap_coder read-pages
 --minutes 240`) and never holds up *Import invoices*. An invoice is in the review queue at once, read by the
@@ -319,7 +319,8 @@ This is a memory of your team's decisions. No model is retrained.
 | `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. Server mode: `--server`, with `--certfile` and `--keyfile` (HTTPS), `--proxy` (a reverse proxy's address) or `--insecure-http` (a first test only); see [docs/SERVER.md](SERVER.md). |
 | `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task on Windows (not a Windows service), a LaunchDaemon on a Mac, a systemd unit on Linux. |
 | `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
-| `users add\|list\|reset\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles. |
+| `users add\|list\|reset\|reset-2fa\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles (`reset-2fa`: forget a person's authenticator app, a phone lost or replaced). |
+| `backup now\|list\|check\|restore [name] [--from FOLDER] [--yes]` | Backups of the database and the invoice files: make one now, list them, check that every file of one (or of each) is there and undamaged, restore one. `--from`: the backups in another folder (the second backup folder on a network share). See [docs/SERVER.md](SERVER.md). |
 | `jde test\|sync\|status [--retry]` | The JD Edwards API connection (AIS): test it, sync the master data (what changed since the last sync; `--full` everything, as once a week), show the vouchers waiting (and send them now). See [docs/JDE_E1.md](JDE_E1.md). |
 | `hub export\|status [--full] [--dry-run]` | The finance hub feed: send what changed, or show how the last run went. See [docs/FINANCE_HUB.md](FINANCE_HUB.md). |
 | `pilot-score --vouchers FILE [--distribution FILE]` | The pilot's score: what AP Coder approved against what AP posted in JD Edwards (the parallel week against production, the live weeks against what AP posted after review). |
@@ -515,7 +516,7 @@ tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
 Check a change with `python scripts/check.py` (ruff on the changed files, then their tests: a minute or two).
-`pytest` runs all but the slow tests: about 5,200 tests in about 7 minutes. `pytest -m ""` runs everything, the
+`pytest` runs all but the slow tests: about 5,400 tests in about 7 minutes. `pytest -m ""` runs everything, the
 browser tests included, as CI does: about 6,000 tests in about 28 minutes. Both serially, on a 4-core machine
 (November 2026); CI splits the whole suite across its machines. Lint with `ruff check ap_coder tests scripts && ruff
 format --check ap_coder tests scripts`.

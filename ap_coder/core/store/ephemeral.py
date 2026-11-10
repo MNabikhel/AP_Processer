@@ -55,7 +55,6 @@ class EphemeralMixin:
     # --- A dashboard job seen by every web worker of the company server (D-111) -------------------------------------
     # One row per job name: "job-running:<owner>" while a worker runs it (renewed every second, gone after ``stale``
     # seconds without renewal: that worker stopped), then "job" with its last snapshot (kept ``keep`` seconds).
-    # "job-waiting:<owner>" is how many files a worker holds queued behind it.
 
     def claim_job(self, name: str, owner: str, snapshot: bytes, stale: float) -> bool:
         """Mark job ``name`` as run by ``owner``; False (nothing changed) while another worker runs it."""
@@ -95,20 +94,6 @@ class EphemeralMixin:
             return None
         kind, value = rows[0]["kind"], bytes(rows[0]["value"])
         return kind.partition(":")[2], value
-
-    def set_job_waiting(self, name: str, owner: str, files: int, stale: float) -> None:
-        now = time.time()
-        with self._conn() as conn:
-            conn.execute("DELETE FROM ephemeral WHERE kind = ? AND token = ?", (f"job-waiting:{owner}", name))
-            if files:
-                conn.execute(f"INSERT INTO ephemeral {_COLUMNS} VALUES (?, ?, ?, ?, ?)",
-                             (f"job-waiting:{owner}", name, str(files).encode(), now, now + stale))  # fmt: skip
-
-    def jobs_waiting(self, name: str) -> int:
-        with self._conn() as conn:
-            rows = conn.execute("SELECT value FROM ephemeral WHERE token = ? AND kind LIKE 'job-waiting:%' AND "
-                                "expires_at >= ?", (name, time.time())).fetchall()  # fmt: skip
-        return sum(int(bytes(r["value"]) or b"0") for r in rows)
 
     # --- A lease: one process at a time does a piece of work, across the server's processes (D-155) -----------------
     # One row "lease" under the work's name, its owner as value, gone after ``seconds`` without renewal (that process

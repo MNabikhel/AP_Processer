@@ -508,7 +508,7 @@ its `mmproj`, about 1 GB).
   Until the model in use has passed, the page reader reads nothing and invoices wait for a person; another model
   needs its own test, and a failed test is tried again after a day (or with *Run the self-test again* in Settings
   → Reading). No general vision model reads pages instead of OvisOCR2. While it isn't ready, a banner on the
-  Process and Review pages says so.
+  Import invoices and Review pages says so.
 - **Every invoice, digital PDFs too:** on a digital PDF the transcription is checked against the PDF's hidden
   text (``TEXT_LAYER_MATCHES_PAGE``, `capture/__init__.py`). Editing the hidden text of a PDF is a known way to
   slip another amount past a system that reads the text alone. The check fails when 8 or more figures were

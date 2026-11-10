@@ -1,5 +1,5 @@
 # The Python packages AP Coder v0.3.0 was tested with on 29 October 2026 (Python 3.12, Linux: the default test
-# tier, 3,976 passed). pyproject.toml asks only for minimum versions; if a newer package breaks something, install
+# tier passed). pyproject.toml asks only for minimum versions; if a newer package breaks something, install
 # this tested set: pip install -c docs/tested-packages.txt -e ".[ocr,dev]"  (see docs/HANDOFF.md, section 1).
 annotated-doc==0.0.5
 annotated-types==0.8.0

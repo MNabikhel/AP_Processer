@@ -17,10 +17,10 @@ of the [exceptions](#what-leaves-the-laptop).
 | | |
 |---|---|
 | **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: Phase 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then Phase 1, a live pilot with up to 10 people ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
-| **Company server** | Built, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for about 500 users, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
+| **Company server** | Built, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for 300 to 400 people, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
 | **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
-| **Quality** | About 4,900 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
+| **Quality** | About 6,000 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
 
 ## What it does
 
@@ -72,7 +72,7 @@ shortcut. Each start then checks the setup and opens the dashboard in your brows
 ```
 AP Coder readiness:
   ✓ Python 3.12.10
-  ✓ Packages: all 16 in place
+  ✓ Packages: all 15 in place
   ✓ OCR for scanned invoices
   ✓ Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
   ✓ Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)

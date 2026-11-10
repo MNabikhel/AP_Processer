@@ -130,7 +130,7 @@ python -m ap_coder serve          # the dashboard on http://127.0.0.1:8501 or th
 python -m ap_coder doctor         # what is set up and what is missing
 python scripts/pilot_check.py     # reads the 10 sample invoices, compares with samples/ground_truth (no AI needed)
 python scripts/check.py           # after a change: ruff on the changed files, then their tests (a minute or two)
-python -m pytest -q               # the default test tier: all but the slow tests (about 5,200, about 7 minutes)
+python -m pytest -q               # the default test tier: all but the slow tests (about 5,400, about 7 minutes)
 python -m pytest -q -m ""         # everything, browser tests included (about 6,000, about 28 minutes; needs Playwright)
 ruff check ap_coder tests scripts && ruff format --check ap_coder tests scripts
 ```

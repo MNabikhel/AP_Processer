@@ -145,14 +145,6 @@ class ManagersMixin:
             rows = conn.execute(sql + " ORDER BY m.id", params).fetchall()
         return [_row(r) for r in rows]
 
-    def waiting_manager_map(self) -> dict[int, dict[str, Any]]:
-        """invoice id -> its waiting request (name and when), for the lists that say who an invoice waits for."""
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT invoice_id, manager_name, sent_at FROM manager_requests WHERE status = ?", (WAITING,)
-            ).fetchall()
-        return {r["invoice_id"]: dict(r) for r in rows}
-
     def answer_manager_request(
         self,
         request_id: int,
