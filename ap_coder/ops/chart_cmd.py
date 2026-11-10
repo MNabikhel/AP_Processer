@@ -20,6 +20,7 @@ from ..core.store import Store
 from ..core.ui import plural
 
 ACTOR = "the console (chart import)"
+SHOWN = 10  # the business units held back for their name that are listed one by one
 
 
 def add_parser(sub: Any) -> None:
@@ -33,7 +34,7 @@ def add_parser(sub: Any) -> None:
 
 
 def _left_out(skipped: dict[str, int]) -> list[str]:
-    return [f"  Left out: {n:,} {why}." for why, n in skipped.items()]
+    return [f"  Left out ({why}): {n:,}." for why, n in skipped.items()]
 
 
 def _changed(name: str, result: dict[str, Any]) -> str:
@@ -78,12 +79,18 @@ def _lists(store: Store, results: list[dict[str, Any]]) -> list[str]:
         closed = pairs.closed_units()
         said.append(f"  Not used: {plural(tally[chart.BU_INACTIVE], 'account')} on a business unit that is not "
                     f"active ({', '.join(closed[:5])}{' …' if len(closed) > 5 else ''}).")  # fmt: skip
-    for bu, word in pairs.skipped_units().items():
+    named = list(pairs.skipped_units().items())
+    for bu, word in named[:SHOWN]:
         said.append(f"  Never offered: business unit {bu}, whose name says {word}.")
+    if len(named) > SHOWN:
+        said.append(f"  Never offered: {len(named) - SHOWN:,} more business units, for their name.")
     if pairs.settings.never_offered:
-        listed = ", ".join(pairs.settings.never_offered)
-        said.append(f"  Never offered: the accounts on the never-offered list ({listed}); with the business units "
-                    f"named above, {plural(tally[chart.RESERVED], 'account')}.")  # fmt: skip
+        said.append("  Never offered: the accounts on the never-offered list "
+                    f"({', '.join(pairs.settings.never_offered)}).")  # fmt: skip
+    if tally[chart.RESERVED]:
+        said.append(f"  In all, {plural(tally[chart.RESERVED], 'account')} may be posted to but "
+                    f"{'is' if tally[chart.RESERVED] == 1 else 'are'} never offered: a line coded to one by hand is "
+                    "flagged for a person to confirm.")  # fmt: skip
     return said
 
 

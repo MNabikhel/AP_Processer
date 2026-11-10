@@ -189,7 +189,8 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store._base:_NOT_FOUND": Kept(24 * MB, "LOOKED_KEPT invoices (B-2026)"),
     "ap_coder.core.store._base:_FOUND": Kept(12 * MB, "LOOKED_KEPT files"),
     "ap_coder.core.store.accounts:_REFERENCE": Kept(8 * MB, "8 databases' reference data (a chart of 1,500 "
-                                                            "accounts: 0.7 MB)"),
+                                                            "accounts: 0.7 MB; the pairs of a JD Edwards chart of "
+                                                            "14,700 rows, D-209: 2 MB more)"),
     "ap_coder.ai.suggest:_ACCOUNT_STEMS": Kept(8 * MB, "4 charts of accounts"),
     "ap_coder.web.pages.process:_LISTED": Kept(8 * MB, "8 folders' new files, LISTED_SECONDS (a laptop's: the "
                                                        "company server's are kept for every process)", web=False),
