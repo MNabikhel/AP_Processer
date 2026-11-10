@@ -59,6 +59,9 @@ MEASURE = """() => {
   return {
     inner: innerWidth, client: de.clientWidth, scroll: de.scrollWidth, height: innerHeight,
     outside: outside.slice(0, 6),
+    spill: [...document.querySelectorAll('[data-grid="lines"] td.c-cap, [data-grid="lines"] td.c-rcap .rm-note')]
+      .filter((e) => seen(e) && e.scrollWidth > e.clientWidth + 1)
+      .map((e) => `${e.className}: ${e.scrollWidth} of ${e.clientWidth} px`).slice(0, 4),
     line: box(document.querySelector('[data-grid="lines"] [data-row] input[data-account]')),
     approve: box(document.querySelector("[data-approve]")),
     bar: box(document.querySelector(".inv-actionbar")),
@@ -113,6 +116,8 @@ def _faults(measures: list[dict]) -> list[str]:
         if m["scroll"] > m["client"]:
             faults.append(f"{m['window']}: the page scrolls sideways ({m['scroll']} of {m['client']} px)")
         faults += [f"{m['window']}: outside its card: {what}" for what in m["outside"]]
+        # a caption under a line's boxes wraps in its own cell: it never runs over the caption beside it (B-2212)
+        faults += [f"{m['window']}: a caption runs out of its cell: {what}" for what in m["spill"]]
     return faults
 
 
@@ -132,7 +137,7 @@ def test_a_long_sentence_under_a_line_wraps_in_every_window(chromium, chart_comp
     assert not faults, "\n".join(faults[:25])
 
 
-@pytest.mark.parametrize("name", ["four_lines", "fifteen_lines"])
+@pytest.mark.parametrize("name", ["one_line", "four_lines", "fifteen_lines"])
 def test_the_review_screen_with_a_chart_fits_every_window(chromium, chart_company, name):
     measures = _sweep(chromium, chart_company.store, chart_company.invoices[name][1])
     faults = _faults(measures)

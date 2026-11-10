@@ -720,7 +720,8 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .icon-btn.acct-menu:hover {background: var(--lg-nav-hover); color: var(--lg-text);}
 /* The caption reads as one sentence and wraps: the name, the business unit and the reason are never cut. */
 .inv-lines-grid.acct .c-cap {min-width: 0; padding: 0 2px 1px; font-size: 11.5px; line-height: 15px;
-  color: var(--lg-muted); overflow-wrap: anywhere;}
+  color: var(--lg-muted); white-space: normal; overflow-wrap: anywhere;}
+.inv-lines-grid.acct .c-rcap, .inv-lines-grid.acct .c-taxcap, .inv-lines-grid.acct .c-keyed {white-space: normal;}
 .c-cap .acct-name {font-weight: 600; color: var(--lg-text);}
 .c-cap .acct-unit::before, .c-cap .acct-why::before {content: " · ";}
 .c-cap .acct-why .ms {font-size: 13px; vertical-align: -2px; margin-right: 2px;}
