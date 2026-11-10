@@ -412,12 +412,15 @@ class LineItem(BaseModel):
 
     @model_serializer(mode="wrap")
     def _without_empty(self, handler: Any) -> dict[str, Any]:
-        # An invoice with no candidates and no decision recorded is stored as it always was: the two keys are there
-        # only when they say something.
+        # An invoice with no candidates, no decision recorded and no tax read on a line is stored as it always was:
+        # the three keys are there only when they say something. The model's one serializer: only the last one
+        # defined on a model is used (B-2183).
         data = handler(self)
         for name in ("candidates", "decided_by"):
             if not data.get(name):
                 data.pop(name, None)
+        if data.get("taxes_read") is None:
+            data.pop("taxes_read", None)
         return data
 
     @field_validator("taxes_read", mode="before")
@@ -429,13 +432,6 @@ class LineItem(BaseModel):
         if unknown := [k for k in out if k not in TAX_TYPES]:
             raise ValueError(f"taxes_read entries must be one of {TAX_TYPES}, got {unknown[0]!r}")
         return {t: out[t] for t in TAX_TYPES if t in out}
-
-    @model_serializer(mode="wrap")
-    def _without_taxes_not_read(self, handler: Any) -> dict[str, Any]:
-        out = handler(self)
-        if out.get("taxes_read") is None:
-            out.pop("taxes_read", None)
-        return out
 
     @field_validator("taxes_applied")
     @classmethod

@@ -113,7 +113,7 @@ def _left(invoice_lines: list[dict], reason: str, first: list[str]) -> None:
     and accounts offered of which the first is ``first``'s (in the lines' order)."""
     assert [line["predicted_gl_code"] for line in invoice_lines] == ["UNASSIGNED"] * len(first)
     assert [line["reasoning_justification"] for line in invoice_lines] == [reason] * len(first)
-    assert not any(line.get("decided_by") for line in invoice_lines)
+    assert not any("decided_by" in line for line in invoice_lines)  # the key itself is left out
     assert [line["candidates"][0]["account"] for line in invoice_lines] == first
 
 
@@ -169,7 +169,7 @@ def test_an_invoice_of_a_supplier_always_coded_to_one_account_arrives_coded_and_
     assert all(row.reason == counted or row.reason.startswith(f"{counted}; ") for row in page.lines)
     by = {"source": "supplier", "lines": lines, "of": lines, "share": 1.0}
     assert [line["decided_by"] for line in stored] == [by] * len(invoice.lines)
-    assert not any(line.get("candidates") for line in stored)
+    assert not any("candidates" in line for line in stored)  # the key itself is left out
     assert (page.findings, page.not_ready) == ({}, "")
     assert page.check()["allow"] and page.approve()["ok"]  # nothing picked, nothing typed
     assert chart_company.store.get_invoice(page.id)["status"] == APPROVED
@@ -245,7 +245,7 @@ def test_the_new_suppliers_line_is_left_with_no_account_offered(chart_company, c
     invoice, page, stored = _arrived(chart_company, chart_company_client, "usd_new_supplier")
     assert [(row.account, row.reason) for row in page.lines] == [("", NEW_SUPPLIER)]
     assert [line["predicted_gl_code"] for line in stored] == ["UNASSIGNED"]
-    assert not any(line.get("candidates") or line.get("decided_by") for line in stored)
+    assert not any("candidates" in line or "decided_by" in line for line in stored)
     assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED", "VENDOR_NOT_IN_MASTER", "JDE_NO_AN8",
                                    "NO_TAX_CHARGED"]  # fmt: skip
     assert page.not_ready == "JD Edwards: this vendor has no supplier number (AN8)"

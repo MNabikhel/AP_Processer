@@ -121,6 +121,19 @@ def test_a_tax_amount_read_on_a_line_is_kept_and_an_invoice_without_one_is_store
     assert all("taxes_read" not in line for line in out["line_items"][1:])
 
 
+def test_a_line_stores_each_of_its_optional_keys_only_when_it_says_something(ground_truth):
+    """``taxes_read``, ``candidates`` and ``decided_by`` are each left out of a stored line that has none, by one
+    serializer: a model keeps only the last one defined, and with two (one for the tax read, one for the other two)
+    every line stored was given ``"candidates": []`` and ``"decided_by": {}`` (B-2183)."""
+    line = InvoiceCoding.model_validate(ground_truth).line_items[0]
+    assert list(line.model_dump()) == TARGET_LINE
+    assert list(InvoiceCoding.model_validate(ground_truth).model_dump()["line_items"][0]) == TARGET_LINE
+    for name, value in (("taxes_read", {"GST": 1.0}), ("candidates", [{"account": "100.7340.3307"}]),
+                        ("decided_by", {"source": "person"})):  # fmt: skip
+        kept = line.model_copy(update={name: value}).model_dump()
+        assert set(kept) - set(TARGET_LINE) == {name} and kept[name] == value, name
+
+
 @pytest.mark.parametrize("bad", [{"VAT": 1.0}, {"GST": "a lot"}, ["GST"]])
 def test_a_tax_amount_read_that_is_no_tax_or_no_amount_is_rejected(ground_truth, bad):
     ground_truth["line_items"][0]["taxes_read"] = bad
