@@ -1122,7 +1122,7 @@ def cmd_users(args: argparse.Namespace) -> int:
     if action == "list":
         found = store.list_users()
         if not found:
-            print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
+            print("No accounts yet. Add the first Admin: python -m ap_coder users add --admin <username>")
         for u in found:
             state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
             codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
