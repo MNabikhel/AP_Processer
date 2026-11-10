@@ -13,7 +13,7 @@ import zipfile
 
 import pytest
 
-from ap_coder.erp import jde, jde_ais, jde_post
+from ap_coder.erp import jde_ais, jde_post, jde_settings
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import ON, QC
 from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
@@ -149,7 +149,8 @@ def test_an_unknown_voucher_stays_unknown_while_jde_is_down(tmp_path, ais):
 
 def test_a_changed_unknown_voucher_stays_unknown_while_jde_cant_be_asked(tmp_path, ais):
     store, batch = lost_answer(tmp_path, ais)
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, user="OTHER"))  # payload changes
+    # payload changes
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False, user="OTHER"))
     connect(store, ais, base_url="https://jde-ais.invalid:9300", timeout=0.15)  # off the VPN: the name not found
     jde_post.retry_queue(store)
     assert statuses(store, batch)[1] == jde_post.UNKNOWN and jde_post.undo_problem(store, batch)

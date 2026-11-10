@@ -307,7 +307,7 @@ def _plain(html: str) -> str:
 def test_the_vendor_master_step_counts_the_supplier_numbers_set_in_jd_edwards_settings(client, store):
     """B-1002: "no address number (AN8)" while every vendor had one in Settings → JD Edwards → Supplier address
     numbers."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
     from tests.web.test_web_review_signoff import _jde_on
 
@@ -316,9 +316,9 @@ def test_the_vendor_master_step_counts_the_supplier_numbers_set_in_jd_edwards_se
     assert vendors
     with store._conn() as conn:
         conn.execute("UPDATE vendors SET erp_id = '' WHERE in_master = 1")
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     settings.an8_overrides = {v["vendor_key"]: str(1000 + n) for n, v in enumerate(vendors)}
-    jde.save(store, settings)
+    jde_settings.save(store, settings)
     state, _, text = next(s for s in pilot_steps(store) if s[1] == VENDOR_STEP)
     assert state == "ok" and f"{len(vendors)} with an address number (AN8)" in text, text
 

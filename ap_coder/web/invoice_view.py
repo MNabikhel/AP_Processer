@@ -327,11 +327,11 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         doc[PLACE_OF_SUPPLY] = output[PLACE_OF_SUPPLY]
     mail = _vendor_mail(doc, report.issues, draft.mail_lang, signature)
 
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_accounts, jde_review, jde_settings
 
-    js = jde.load(store) if jde.in_use(store) else None  # JD Edwards is the export in use (D-75)
+    js = jde_settings.load(store) if jde_settings.in_use(store) else None  # JD Edwards is the export in use (D-75)
     taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None  # once a draw (D-214)
-    an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
+    an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,
         "account": taxes is not None,  # a chart of accounts: the review screen of D-214
@@ -359,7 +359,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
                              dates.notes),
         "flag_errors": flag_errors(errors, dates.notes),
         "help": field_help(store, coding, draft, capture, dates, report.issues),
-        "jde": jde.voucher_view(output, js, an8) if js is not None else None,
+        "jde": jde_review.voucher_view(output, js, an8) if js is not None else None,
         "an8": an8 if js is not None else None,
         "from_vendor": from_list,
         "bar": {

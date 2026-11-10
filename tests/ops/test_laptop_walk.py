@@ -9,7 +9,7 @@ import re
 import pytest
 
 from ap_coder.core.store import REVIEW
-from ap_coder.erp import jde
+from ap_coder.erp import jde_accounts, jde_review, jde_settings
 from tests.browser import wait_until
 from tests.web.test_web_review_signoff import _jde_on, browser, demo_db, me, store
 
@@ -27,11 +27,11 @@ def test_the_demo_vendors_have_jd_edwards_address_numbers(client, store):
     """B-1180: ticking "Show JD Edwards settings" blocked every demo invoice: "supplier number V10104 is not an address
     number". The demo vendor master's numbers are JD Edwards address numbers; About says the checks come with it."""
     _jde_on(store)
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     for inv in store.list_invoices(REVIEW):
         output = store.get_invoice(inv["id"])["ai_output"]
-        codes = [f[1] for f in jde.voucher_findings(output, settings, jde.resolve_an8(output, store.vendor_ids(),
-                                                                                       settings))]  # fmt: skip
+        an8 = jde_accounts.resolve_an8(output, store.vendor_ids(), settings)
+        codes = [f[1] for f in jde_review.voucher_findings(output, settings, an8)]
         assert "JDE_BAD_AN8" not in codes, inv["vendor_name"]
     about = _plain(client.get("/settings/about").text)
     assert "adds the JD Edwards checks to every invoice" in about
@@ -155,8 +155,8 @@ def test_the_jd_edwards_setup_findings_say_where_to_set_it_or_whom_to_ask():
     told = "Settings → JD Edwards E1, or ask whoever sets up AP Coder"
     exempt = coded(doc([line(1, 100.0, taxes=["HST"]), line(2, 50.0, exempt=["HST"], status="exempt")],
                        [tl("HST", "ON", 0.13, 100.0, 13.0)]))["final_output"]  # fmt: skip
-    settings = jde.JdeSettings(company="x", amount_mode=jde.AMOUNT_GROSS)
-    found = {code: text for _, code, text, _ in jde.voucher_findings(exempt, settings, "V1")}
+    settings = jde_settings.JdeSettings(company="x", amount_mode=jde_settings.AMOUNT_GROSS)
+    found = {code: text for _, code, text, _ in jde_review.voucher_findings(exempt, settings, "V1")}
     for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_GROSS_TAX"):
         assert told in found[code] and "pilot tester" not in found[code], found[code]
     for code in ("JDE_SETTINGS", "JDE_BAD_AN8", "JDE_MEALS_GROSS"):

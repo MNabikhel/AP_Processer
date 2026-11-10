@@ -8,7 +8,7 @@ from ap_coder.coding import taxreturn
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from tests.erp.test_jde_gl_mode import doc, line, tl
 
 
@@ -82,7 +82,8 @@ def test_the_self_assessment_tile_leaves_out_what_jd_edwards_accrues(tmp_path):
     from ap_coder.web.pages.sales_tax import self_tiles
 
     store = _store(tmp_path)
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))  # code B: E1 accrues the PST
+    # code B: E1 accrues the PST
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))
     bc = dict(prov="BC", supplier_province="AB", invoice_date="2026-09-10")
     _approve(store, tmp_path, doc([line(1, 1000.0, taxes=["GST"], cc="CC400")], [tl("GST", "", 0.05, 1000.0, 50.0)],
                                   invoice_number="B-1", **bc), fmt="jde")  # fmt: skip
@@ -100,6 +101,6 @@ def test_the_self_assessment_tile_leaves_out_what_jd_edwards_accrues(tmp_path):
     assert notes["B-2"] == taxreturn.JDE_WILL_ACCRUE  # JD Edwards in use, the mode accrues it: said before export
     assert self_tiles(items) == []  # neither is to book from the report
     # The tax coded to G/L accounts: E1 will accrue nothing, the report has the one not exported yet to book
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_GL))
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GL))
     items = taxreturn.self_assessment(store, dt.date(2026, 7, 1), dt.date(2026, 9, 30))
     assert {s.invoice_number: s.note for s in items}["B-2"] == ""  # not exported yet: to book from the report

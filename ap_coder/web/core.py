@@ -675,10 +675,10 @@ def jde_shown(store: Store) -> bool:
         value = store.get_setting(SHOW_JDE, "unset")
         if value != "unset":
             return value == "1"
-        from ap_coder.erp import jde
+        from ap_coder.erp import jde_settings
 
-        used = bool(store.get_setting(jde.SETTING_KEY)) or any(
-            b["format"] == jde.FORMAT for b in store.export_batches()
+        used = bool(store.get_setting(jde_settings.SETTING_KEY)) or any(
+            b["format"] == jde_settings.FORMAT for b in store.export_batches()
         )
         if used:
             store.set_setting(SHOW_JDE, "1")
@@ -713,16 +713,16 @@ def hidden_in_simple(store: Store, page: str, tab: Any = None) -> bool:
 
 def first_run(db: Path, *, server: bool) -> Store:
     """The database the dashboard starts on. A laptop's new data folder (no database file there before this start)
-    begins the department's way: the Simple screens, and its JD Edwards settings (``erp.jde.use_prototype``: the
-    settings saved, JD Edwards shown, the QST added to the expense line). A database that exists already, and the
+    begins the department's way: the Simple screens, and its JD Edwards settings (``erp.jde_prototype.use_prototype``:
+    the settings saved, JD Edwards shown, the QST added to the expense line). A database that exists already, and the
     company server's, are opened as they are."""
     new = not db.exists()
     store = Store(db)
     if new and not server:
-        from ap_coder.erp import jde
+        from ap_coder.erp import jde_prototype
 
         store.set_setting(SCREENS, SIMPLE)
-        jde.use_prototype(store)
+        jde_prototype.use_prototype(store)
     return store
 
 

@@ -5437,6 +5437,31 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ops/chart_cmd.py`; `_demo_card.html`, `settings_data.html`, `web/pages/process.py`; `_screens_card.html`,
     `web/core.py`, `web/pages/settings.py`, `review.py`; `tests/core/test_by_hand.py`,
     `tests/web/test_web_jde_loaded.py`, `test_web_process.py`, `test_simple_screens.py`)
+- **D-222** · **`erp/jde.py` is split by subject, each definition moved whole; a new JD Edwards function goes in
+  the module of its subject.** At 2,271 lines every task on JD Edwards read around it, and work done side by side
+  met in it. Nothing was rewritten: each of its 150 top-level definitions is word for word in one module (checked
+  by script: the same text, one home each), `scripts/same_behaviour.py` says SAME (tax, approve, read, pipeline)
+  and the tests pass.
+  - *The cut, lowest first: a module imports only the ones before it, so there is no cycle.* `jde_formats.py`
+    (E1's dates and amounts, the small readers of a value), `jde_settings.py` (`JdeSettings`, `load`, `save`,
+    `settings_problems`, `in_use`, a voucher's G/L date in the open period), `jde_prototype.py` (the department's
+    preset: `use_prototype`), `jde_accounts.py` (`resolve_an8`, `account_for`, the mapping import),
+    `jde_voucher.py` (one voucher worked out once, `_prepare`, and what holds it back), `jde_remarks.py`,
+    `jde_zfiles.py` (the Z-files' columns, `voucher_rows`, `export_batch`), `jde_review.py` (`voucher_findings`,
+    `voucher_view`, the tax on the pay item), then `jde.py`: a batch as a whole (`validate`,
+    `duplicate_problems`, `readme`, `build_zip`, `dry_run`). The top of `jde.py` keeps the list.
+  - *The rule.* A function goes in the module of its subject, a new subject in a new `jde_<subject>.py` placed
+    in that order. Other code imports a name from its home (`jde_settings.load`, not `jde.load`), and a test
+    patches the module where the code looks the name up (`jde_zfiles._keys`, `jde_settings.RESEND_MARGIN`). No
+    module hands another's names on.
+  - `web/invoice_view.py` and `web/pages/invoice.py` were being split at the same time (D-223) and reached six
+    names as `jde.<name>`; when the two splits were joined their new modules took each name from its home, so
+    `jde.py` hands nothing on.
+  - Older entries, here and in BUGS.md, that say `jde.<name>` or `erp/jde.py` mean the module the name is in now.
+  - (`ap_coder/erp/jde.py`, `jde_formats.py`, `jde_settings.py`, `jde_prototype.py`, `jde_accounts.py`,
+    `jde_voucher.py`, `jde_remarks.py`, `jde_zfiles.py`, `jde_review.py`; their importers in `ap_coder/` and
+    `tests/`; `core/caches.py`, `tests/meta/test_function_length.py`, `tests/ops/test_help.py`;
+    `docs/REFERENCE.md`, `JDE_E1.md`, `HANDOFF.md`)
 - **D-223** · **The review screen's two big modules are split by subject, one subject a module, nothing changed.**
   `web/invoice_view.py` (2,486 lines) and `web/pages/invoice.py` (1,899) were read and edited by nearly every task
   on the review screen: each task paid to read around them, and parallel work collided in them. A pure move: no

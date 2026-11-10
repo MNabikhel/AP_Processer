@@ -485,7 +485,11 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
     review.py        grid edits → InvoiceCoding
     bulk.py · rules.py · taxmath.py · taxreturn.py · vendor_mail.py
   erp/               ERP files and reports
-    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export;  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
+    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export: a batch's checks, its ZIP and the dry run. Its parts, one
+                     subject each (D-222): jde_formats.py (dates, amounts) · jde_settings.py · jde_prototype.py
+                     (the department's preset) · jde_accounts.py (supplier numbers, accounts) · jde_voucher.py
+                     (one voucher) · jde_remarks.py · jde_zfiles.py (columns, rows, CSVs) · jde_review.py (the
+                     review screen);  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
     hub/             the finance hub feed (tables, landing folder, OneLake)
     statements.py    vendor statement reconciliation;  accruals.py: month-end accruals
     recurring.py     recurring vendors

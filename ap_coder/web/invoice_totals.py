@@ -219,7 +219,7 @@ def spend_split(output: dict[str, Any], reference: ReferenceData) -> list[dict[s
 def distribution(output: dict[str, Any], reference: ReferenceData | None, js: Any = None) -> dict[str, Any]:
     """The journal lines approval sends to the ERP, their total and whether it balances with the invoice; ``js``: the
     JD Edwards settings when it is the export in use, for each line's E1 account (BU.Object.Subsidiary)."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_accounts
 
     rows = []
     for e in output.get("gl_distribution") or []:
@@ -228,7 +228,7 @@ def distribution(output: dict[str, Any], reference: ReferenceData | None, js: An
             # except with the tax coded to G/L accounts, where it goes to its tax account (D-93, B-1022)
             recoverable = e["kind"] == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
             recoverable = recoverable and not getattr(js, "tax_on_gl", False)
-            mapped = jde.account_text(e["gl_code"] or "", e.get("cost_center") or "", js)
+            mapped = jde_accounts.account_text(e["gl_code"] or "", e.get("cost_center") or "", js)
             account = "posted by JD Edwards" if recoverable else mapped or "not mapped"
         rows.append({
             "account": account,

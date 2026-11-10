@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from ap_coder.bench import jde_invoices
 from ap_coder.coding import banks
-from ap_coder.erp import jde, jde_keying
+from ap_coder.erp import jde_keying, jde_settings, jde_zfiles
 from ap_coder.web import core, roles
 from ap_coder.web.app import create_app
 from tests.erp.test_jde_keying import field
@@ -121,10 +121,12 @@ def test_the_keying_sheet_and_the_batch_file_carry_the_bank_account(chart_compan
     assert field(block, "G/L bank account").value == ACCOUNT  # as typed in JD Edwards
     assert field(block, "Bank account").value == "Operating account"
     # the batch file: its VLGLBA column, once the JDE team's value is mapped in Settings (as before, D-66)
-    settings = jde.load(store)
-    assert "VLGLBA" not in jde.header_columns(settings)
+    settings = jde_settings.load(store)
+    assert "VLGLBA" not in jde_zfiles.header_columns(settings)
     settings.bank_glba = {ACCOUNT: "00012345"}
-    assert "VLGLBA" in jde.header_columns(settings) and jde.glba(inv["final_output"], settings) == "00012345"
+    assert (
+        "VLGLBA" in jde_zfiles.header_columns(settings) and jde_zfiles.glba(inv["final_output"], settings) == "00012345"
+    )
     ready, _held = jde_keying.vouchers([inv], settings, store.vendor_ids(),
                                        bank_accounts={a["code"]: a for a in store.bank_accounts()})  # fmt: skip
     assert ready[0].bank == ("00012345", "Operating account")  # the sheet shows what the file sends

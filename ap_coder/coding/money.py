@@ -4,7 +4,7 @@ An amount is the decimal it is printed as: a float is taken as the shortest deci
 2.67499999999999982...), and a tax, a share or a sum is worked out on those decimals and rounded half up (half away
 from zero: a credit note rounds as the invoice it reverses) to the cent, or to the whole unit of a currency without
 cents (``places`` 0: the yen). Python's ``round`` on a float is half-even on its binary value: 2.50 x 5% gave 0.12 and
-0.30 x 5% gave 0.01, where the vendor's arithmetic and JD Edwards' (``erp.jde.jde_amount``) give 0.13 and 0.02
+0.30 x 5% gave 0.01, where the vendor's arithmetic and JD Edwards' (``erp.jde_formats.jde_amount``) give 0.13 and 0.02
 (B-1864).
 
 What counts as equal is named once, below: the tax checks (``tax.check_taxes``), the Tax check

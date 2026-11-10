@@ -19,7 +19,7 @@ SOURCES = [
     "coding/claim.py",
     "web/invoice_view.py",
     "web/invoice_fields.py",
-    "erp/jde.py",
+    "erp/jde_review.py",
     "erp/jde_sync.py",
 ]
 

@@ -113,16 +113,18 @@ def test_the_limiteds_invoices_are_its_own_history(tmp_path):
 def test_the_posting_preview_shows_the_tax_account_in_the_gl_tax_mode():
     """B-1022: with the tax coded to G/L accounts the preview said "posted by JD Edwards" on the tax line that goes to
     the tax account, and a tax line with no account never said "not mapped"."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.invoice_totals import distribution
     from tests.erp.test_jde_gl_mode import coded, doc, line, tl
 
     inv = coded(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
     out = inv["final_output"]
-    gl = jde.JdeSettings(amount_mode=jde.AMOUNT_GL, default_bu="100")
+    gl = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GL, default_bu="100")
     assert [r["account"] for r in distribution(out, None, gl)["rows"]] == ["CC100.6010", "100.2310"]
     assert (
-        distribution(out, None, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, default_bu="100"))["rows"][1]["account"]
+        distribution(out, None, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, default_bu="100"))[
+            "rows"
+        ][1]["account"]
         == "posted by JD Edwards"
     )  # E1 posts it by its tax AAIs in the other modes
     for e in out["gl_distribution"]:
@@ -137,16 +139,19 @@ def test_the_posting_preview_shows_the_tax_account_in_the_gl_tax_mode():
 def test_pilot_score_compares_the_tax_with_the_tax_account_lines_in_the_gl_tax_mode(tmp_path):
     """B-1023: with the tax coded to G/L accounts, a voucher's F0411 carries RPSTAM 0 (exempt code E), and pilot-score
     compared it with the tax on our G/L lines: a false tax difference on every voucher."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_formats, jde_settings
     from ap_coder.ops import pilot_score
     from tests.erp.test_jde_gl_mode import doc, line, tl
     from tests.ops.test_pilot_score_jde import _store
 
     store = _store(tmp_path, doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
-    (o,) = pilot_score.our_invoices(store, jde.JdeSettings(amount_mode=jde.AMOUNT_GL, default_bu="HQ"))
+    (o,) = pilot_score.our_invoices(
+        store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GL, default_bu="HQ")
+    )
     o.an8 = "10023"
     voucher = {"RPDOC": "7001", "RPDCT": "PV", "RPKCO": "00001", "RPAN8": "10023", "RPVINV": "A-1",
-               "RPDIVJ": str(jde.julian("2026-05-01")), "RPAG": "1130.00", "RPSTAM": "0.00", "RPEXR1": "E"}  # fmt: skip
+               "RPDIVJ": str(jde_formats.julian("2026-05-01")), "RPAG": "1130.00", "RPSTAM": "0.00",
+               "RPEXR1": "E"}  # fmt: skip
     gl = [{"GLDOC": "7001", "GLDCT": "PV", "GLKCO": "00001", "GLANI": "CC100.6010", "GLAA": "1000.00"},
           {"GLDOC": "7001", "GLDCT": "PV", "GLKCO": "00001", "GLANI": "HQ.2310", "GLAA": "130.00"}]  # fmt: skip
     posted, notes = pilot_score.posted_vouchers([voucher], gl)

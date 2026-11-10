@@ -354,7 +354,7 @@
 {%- endmacro %}
 
 {# With a chart of accounts (D-214): what is keyed on the voucher's pay item, in one read-only line
-   (jde.voucher_view's ``keyed``: "Keyed on the pay item: …", or "Not ready to key: …" with the first reason). #}
+   (jde_review.voucher_view's ``keyed``: "Keyed on the pay item: …", or "Not ready to key: …" with the first reason). #}
 {% macro keyed(live, invoice_id) -%}
 {% set j = live.jde %}
 {% if j and j.keyed %}{% set said = j.keyed.partition(": ") %}

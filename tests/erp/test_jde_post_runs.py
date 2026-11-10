@@ -12,7 +12,7 @@ import zipfile
 
 import pytest
 
-from ap_coder.erp import jde, jde_ais, jde_post
+from ap_coder.erp import jde, jde_ais, jde_formats, jde_post, jde_review, jde_settings, jde_zfiles
 from ap_coder.web.pages import exports
 from tests.erp.test_jde import AB, BC, ON, QC
 from tests.erp.test_jde_post import batch_of, connect, long_after_the_loss
@@ -41,7 +41,9 @@ def statuses(store, batch) -> dict[int, str]:
 
 def settings(store, **changes) -> None:
     """Settings → JD Edwards E1 with these changed (as saved JSON: what the page keeps)."""
-    store.set_setting(jde.SETTING_KEY, json.dumps({**json.loads(jde.load(store).to_json()), **changes}))
+    store.set_setting(
+        jde_settings.SETTING_KEY, json.dumps({**json.loads(jde_settings.load(store).to_json()), **changes})
+    )
 
 
 # --- A late answer ---------------------------------------------------------------------------------------------------
@@ -94,12 +96,12 @@ def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wa
     an answer lost after 15 minutes was "not there" at its first lookup and sent again while JD Edwards could still
     be making the first. It is counted from when the answer was lost, and is never less than a voucher's wait and a
     margin (here the voucher's wait 0.5 s, the margin 2 s, the resend wait set to 0.1 s; kept to the second)."""
-    monkeypatch.setattr(jde, "RESEND_MARGIN", 2.0)
+    monkeypatch.setattr(jde_settings, "RESEND_MARGIN", 2.0)
     with FakeAis(slow_seconds=1.8) as ais:  # JD Edwards makes it 1.8 s after the request arrived
         store, batch = batch_of(tmp_path, ais)
         connect(store, ais, timeout=0.5)
         settings(store, resend_minutes=0.1 / 60)
-        assert jde.load(store).resend_seconds == 2.5
+        assert jde_settings.load(store).resend_seconds == 2.5
         jde_post.dry_run(store, batch)
         ais.script("voucher_create", "late-made")
         jde_post.post(store, batch)
@@ -110,7 +112,10 @@ def test_a_lost_answer_waits_from_when_it_was_lost_never_less_than_a_vouchers_wa
         time.sleep(max(0.0, 2.6 - (time.monotonic() - lost)))  # past the wait from the loss: JD Edwards made it
         jde_post.retry_queue(store)
         assert statuses(store, batch)[1] == jde_post.POSTED and len(finals(ais)) == 1
-    assert jde.JdeSettings(voucher_timeout=900, resend_minutes=10).resend_seconds == 900 + jde.RESEND_MARGIN
+    assert (
+        jde_settings.JdeSettings(voucher_timeout=900, resend_minutes=10).resend_seconds
+        == 900 + jde_settings.RESEND_MARGIN
+    )
 
 
 def test_a_live_send_is_nobody_elses_for_as_long_as_it_can_take_its_retries_included(tmp_path, ais):
@@ -126,7 +131,7 @@ def test_a_live_send_is_nobody_elses_for_as_long_as_it_can_take_its_retries_incl
     with store._conn() as conn:  # a go-ahead's send, its request turned away busy twice and tried a third time
         conn.execute("UPDATE jde_postings SET status = 'sending', maybe_sent = 1, approved_at = ?, sending_at = ?",
                      (began, began))  # fmt: skip
-    assert jde_post.send_seconds(jde.load(store), jde_ais.load(store)) > 3 * 900
+    assert jde_post.send_seconds(jde_settings.load(store), jde_ais.load(store)) > 3 * 900
     assert jde_post.waiting(store) == []
     jde_post.retry_queue(store)
     assert finals(ais) == [] and ais.orchestration_calls("voucher_status") == []
@@ -234,19 +239,19 @@ def test_a_queued_voucher_changed_since_its_go_ahead_waits_for_a_new_dry_run_not
     go-ahead lost, though JD Edwards never had it. It is held back for a new dry run, saying why, its go-ahead kept
     for month end until then; the dry run and a go-ahead send it."""
     store, batch = batch_of(tmp_path, ais, QC)
-    new_keys = jde._keys
+    new_keys = jde_zfiles._keys
 
     def old_keys(prefix, settings, batch, invoice, inv_id, site=""):  # VLEDBT / VLEDTN before D-182
         keys = new_keys(prefix, settings, batch, invoice, inv_id, site)
         keys[f"{prefix}EDBT"], keys[f"{prefix}EDTN"] = f"{settings.batch_prefix.strip()}{batch}"[:15], f"APC{inv_id}"
         return keys
 
-    monkeypatch.setattr(jde, "_keys", old_keys)
+    monkeypatch.setattr(jde_zfiles, "_keys", old_keys)
     jde_post.dry_run(store, batch)
     ais.script("voucher_create", 503, 503, 503)  # JD Edwards busy: queued
     jde_post.post(store, batch)
     assert statuses(store, batch)[1] == jde_post.QUEUED
-    monkeypatch.setattr(jde, "_keys", new_keys)  # the upgrade
+    monkeypatch.setattr(jde_zfiles, "_keys", new_keys)  # the upgrade
     result = jde_post.retry_queue(store)
     row = jde_post.postings(store, batch)[0]
     assert row["status"] == jde_post.CHECKED and result["held"] == 1 and result["failed"] == 0
@@ -364,10 +369,11 @@ def test_500_vouchers_post_in_one_run_through_slow_and_late_answers_none_twice(t
     from tests.erp.test_jde import _invoice
 
     monkeypatch.setattr(jde_post, "LOOK_AFTER", 2.0)
-    monkeypatch.setattr(jde, "RESEND_MARGIN", 1.0)  # scaled as the waits are: a voucher's 0.3 s, the resend 3 s
+    # scaled as the waits are: a voucher's 0.3 s, the resend 3 s
+    monkeypatch.setattr(jde_settings, "RESEND_MARGIN", 1.0)
     store = Store(tmp_path / "ap_coder.db")
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, voucher_timeout=0.3,
-                                    resend_minutes=0.05))  # fmt: skip
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False,
+                                                      voucher_timeout=0.3, resend_minutes=0.05))  # fmt: skip
     final = _invoice(ON, 1)["final_output"]
     store.import_vendor_master([{"vendor_name": final["vendor_name"], "erp_id": "4001"}])
     began = time.perf_counter()
@@ -376,7 +382,7 @@ def test_500_vouchers_post_in_one_run_through_slow_and_late_answers_none_twice(t
         doc = {**final, "invoice_number": f"P-{n:04d}"}
         ids.append(store.add_invoice(tmp_path / f"{n}.pdf", doc, {}))
         store.approve_invoice(ids[-1], doc, "Jane")
-    batch = store.create_export_batch(ids, jde.FORMAT)
+    batch = store.create_export_batch(ids, jde_settings.FORMAT)
     for line in next(iter(jde_post.payloads(store, batch)[0].values()))["gl_lines"]:
         bu, obj = line["VNANI"].split(".")[:2]
         ais.data["gl_accounts"].append(
@@ -482,16 +488,19 @@ def test_an_invoice_dated_in_a_closed_period_is_posted_in_the_open_one_said_and_
     assert rows[1]["status"] == jde_post.CHECKED and rows[1]["error"].startswith("G/L date moved to 2026-10-01")
     assert "2026-09-14" in rows[1]["error"] and rows[2]["error"] == ""
     jde_post.post(store, batch, actor="sam")
-    assert _sent_gl_dates(ais) == {"NW-2026-0912": jde.julian("2026-10-01"), "SIL-4471": jde.julian("2026-10-01")}
-    assert finals(ais)[0]["PayItems"][0]["VLDIVJ"] == jde.julian("2026-09-14")  # the invoice date stays
-    assert {line["VNDGJ"] for line in finals(ais)[0]["GLLines"]} == {jde.julian("2026-10-01")}
+    assert _sent_gl_dates(ais) == {
+        "NW-2026-0912": jde_formats.julian("2026-10-01"),
+        "SIL-4471": jde_formats.julian("2026-10-01"),
+    }
+    assert finals(ais)[0]["PayItems"][0]["VLDIVJ"] == jde_formats.julian("2026-09-14")  # the invoice date stays
+    assert {line["VNDGJ"] for line in finals(ais)[0]["GLLines"]} == {jde_formats.julian("2026-10-01")}
     (approved,) = store.events(actions=["jde_api_approved"])
     assert approved["detail"]["gl_moved"] == [1]
 
 
 def test_with_closed_periods_held_an_invoice_in_one_is_never_posted(tmp_path, ais):
     store, batch = batch_of(tmp_path, ais, ON, QC)
-    settings(store, open_from="2026-10-01", closed_period=jde.CLOSED_HOLD)
+    settings(store, open_from="2026-10-01", closed_period=jde_settings.CLOSED_HOLD)
     rows = {r["invoice_id"]: r for r in jde_post.dry_run(store, batch)["rows"]}
     assert rows[1]["status"] == jde_post.REFUSED and "closed period" in rows[1]["error"]
     assert rows[2]["status"] == jde_post.CHECKED
@@ -519,7 +528,7 @@ def test_a_period_closed_while_a_batch_is_posted_holds_the_rest_back_saying_why(
     ais.plan = None
     jde_post.dry_run(store, batch)  # its G/L date then moves to 1 November
     jde_post.post(store, batch)
-    assert _sent_gl_dates(ais)["PO-77120"] == jde.julian("2026-11-01")
+    assert _sent_gl_dates(ais)["PO-77120"] == jde_formats.julian("2026-11-01")
 
 
 def test_jd_edwards_refusing_a_g_l_date_in_a_closed_period_holds_back_the_others_of_that_month(tmp_path, ais):
@@ -539,20 +548,24 @@ def test_the_open_period_on_the_files_and_the_review_screen():
     from tests.erp.test_jde import AN8, _invoice
 
     sept, nov = _invoice(ON, 1), _invoice(QC, 2, invoice_date="2026-11-02")
-    moved = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, open_from="2026-10-01", open_to="2026-10-31")
-    files = jde.export_batch([sept], moved, AN8, batch=7)
-    head = files[jde.HEADER_FILE].decode().splitlines()
-    assert str(jde.julian("2026-10-01")) in head[1] and str(jde.julian("2026-09-14")) in head[1]
-    found = {code: (severity, text) for severity, code, text, _ in jde.voucher_findings(sept["final_output"], moved,
-                                                                                         "4001")}  # fmt: skip
-    assert found["JDE_GL_DATE_MOVED"][0] == jde.WARNING and "2026-10-01" in found["JDE_GL_DATE_MOVED"][1]
+    moved = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_GROSS, open_from="2026-10-01", open_to="2026-10-31"
+    )
+    files = jde_zfiles.export_batch([sept], moved, AN8, batch=7)
+    head = files[jde_zfiles.HEADER_FILE].decode().splitlines()
+    assert str(jde_formats.julian("2026-10-01")) in head[1] and str(jde_formats.julian("2026-09-14")) in head[1]
+    findings = jde_review.voucher_findings(sept["final_output"], moved, "4001")
+    found = {code: (severity, text) for severity, code, text, _ in findings}
+    assert found["JDE_GL_DATE_MOVED"][0] == jde_review.WARNING and "2026-10-01" in found["JDE_GL_DATE_MOVED"][1]
     assert "after the open period" in " ".join(jde.validate([nov], moved, AN8)[2])  # never moved forward or back
-    held = jde.JdeSettings.from_json(json.dumps({**json.loads(moved.to_json()), "closed_period": jde.CLOSED_HOLD}))
+    held = jde_settings.JdeSettings.from_json(
+        json.dumps({**json.loads(moved.to_json()), "closed_period": jde_settings.CLOSED_HOLD})
+    )
     assert "closed period" in " ".join(jde.validate([sept], held, AN8)[1])
-    found = {code: severity for severity, code, _, _ in jde.voucher_findings(sept["final_output"], held, "4001")}
-    assert found["JDE_PERIOD_CLOSED"] == jde.ERROR and "JDE_GL_DATE_MOVED" not in found
-    assert jde.JdeSettings.from_json('{"open_from": "soon", "closed_period": "x"}').open_from == ""
-    assert jde.settings_problems(jde.JdeSettings(open_from="2026-11-01", open_to="2026-10-31"))
+    found = {code: severity for severity, code, _, _ in jde_review.voucher_findings(sept["final_output"], held, "4001")}
+    assert found["JDE_PERIOD_CLOSED"] == jde_review.ERROR and "JDE_GL_DATE_MOVED" not in found
+    assert jde_settings.JdeSettings.from_json('{"open_from": "soon", "closed_period": "x"}').open_from == ""
+    assert jde_settings.settings_problems(jde_settings.JdeSettings(open_from="2026-11-01", open_to="2026-10-31"))
 
 
 # --- The Z-tables' keys ----------------------------------------------------------------------------------------------
@@ -579,7 +592,7 @@ def test_two_data_folders_and_a_restore_never_send_the_same_z_table_keys(tmp_pat
     assert ka[0].startswith("APC1-") and len(ka[0]) <= 15 and ka[1].startswith("APC1-") and len(ka[1]) <= 22
     assert _zkeys(a, ba) == [ka]  # the same each time (the dry run, the go-ahead, the queue, the ZIP)
     with zipfile.ZipFile(io.BytesIO(exports.jde_file(a, ba)[0])) as zf:
-        header = zf.read(jde.HEADER_FILE).decode().splitlines()[1]
+        header = zf.read(jde_zfiles.HEADER_FILE).decode().splitlines()[1]
         readme = zf.read("README.txt").decode()
     assert ka[0] in header and ka[1] in header and f"Batch (EDBT): {ka[0]}" in readme
     backup = a.backup_now("before batch 2")
@@ -587,12 +600,12 @@ def test_two_data_folders_and_a_restore_never_send_the_same_z_table_keys(tmp_pat
     final = a.get_invoice(1)["final_output"]
     second = a.add_invoice(tmp_path / "laptop1" / "2.pdf", {**final, "invoice_number": "NW-2"}, {})
     a.approve_invoice(second, {**final, "invoice_number": "NW-2"}, "Jane")
-    before = _zkeys(a, a.create_export_batch([second], jde.FORMAT))
+    before = _zkeys(a, a.create_export_batch([second], jde_settings.FORMAT))
     a.restore_from(backup)
     (tmp_path / "laptop1" / "2b.pdf").write_bytes(b"another invoice, after the restore")
     again = a.add_invoice(tmp_path / "laptop1" / "2b.pdf", {**final, "invoice_number": "NW-3"}, {})
     a.approve_invoice(again, {**final, "invoice_number": "NW-3"}, "Jane")
-    batch = a.create_export_batch([again], jde.FORMAT)
+    batch = a.create_export_batch([again], jde_settings.FORMAT)
     assert (again, batch) == (second, 2)  # the same numbers handed out again
     (after,) = _zkeys(a, batch)
     assert after[0] != before[0][0] and after[1] != before[0][1], (before, after)
@@ -604,6 +617,6 @@ def test_a_voucher_waits_as_long_as_r04110za_may_take_not_the_connections_timeou
     settings(store, voucher_timeout=3)  # R04110ZA takes longer than a read
     jde_post.dry_run(store, batch)
     ais.latency = 0.5
-    assert jde_post.post(store, batch)["posted"] == 1 and jde.load(store).voucher_timeout == 3
-    assert jde.JdeSettings().voucher_timeout == 120
-    assert jde.JdeSettings.from_json('{"voucher_timeout": "x", "post_minutes": -1}').voucher_timeout == 120
+    assert jde_post.post(store, batch)["posted"] == 1 and jde_settings.load(store).voucher_timeout == 3
+    assert jde_settings.JdeSettings().voucher_timeout == 120
+    assert jde_settings.JdeSettings.from_json('{"voucher_timeout": "x", "post_minutes": -1}').voucher_timeout == 120

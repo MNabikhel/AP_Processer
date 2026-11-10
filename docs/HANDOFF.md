@@ -183,7 +183,7 @@ About 78,000 lines of Python in `ap_coder/` (plus 13,700 of HTML/JS/CSS), 7,800 
 | `ap_coder/capture` | 11,800 | Reading a document: layout, the rule reader (`capture/reader/`), normalising amounts and dates, supplier learning |
 | `ap_coder/ai` | 9,400 | One invoice start to end (`ai/pipeline.py`), LM Studio (`local_llm.py`), the page reader, the AI reviewer, the optional Azure check |
 | `ap_coder/coding` | 5,900 | Checks: tax (`tax.py`, `taxmath.py`, `line_tax.py`, `taxreturn.py`), vendors, POs, terms, rules, banks, the line grid's edits (`review.py`: splitting) |
-| `ap_coder/erp` | 9,400 | Exports (`exports.py`), JD Edwards (`jde.py`, `jde_ais.py`, `jde_sync.py`, `jde_post.py`, `jde_worksheet.py`), reports, the Finance Hub (`erp/hub/`) |
+| `ap_coder/erp` | 9,400 | Exports (`exports.py`), JD Edwards (`jde.py` and its parts by subject, `jde_settings.py`, `jde_voucher.py`, `jde_zfiles.py`, `jde_review.py`… listed at its top; `jde_ais.py`, `jde_sync.py`, `jde_post.py`, `jde_worksheet.py`), reports, the Finance Hub (`erp/hub/`) |
 | `ap_coder/intake` | 1,900 | Emails (.eml/.msg), triage, pictures to PDF, the "needs a person" inbox |
 | `ap_coder/ops` | 6,200 | The command line (`python -m ap_coder ...`), doctor, Help's check catalogue, server service and update, users |
 | `ap_coder/web` | 15,900 | The dashboard: one module a page in `web/pages/`, templates, static JS/CSS; roles in `web/roles.py` |
@@ -255,7 +255,8 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   `python -m ap_coder pilot-score --vouchers F0411.xlsx [--distribution F0911.xlsx]` (writes `pilot_score/`).
 - **A person's final check stays in E1:** in the pilot the vouchers go in as *pending* batches; under E1's batch
   approval (*Manager Approval of Input*) AP approves each batch and posts it in E1.
-- **Code and tests:** `erp/jde.py`, `erp/jde_worksheet.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`;
+- **Code and tests:** `erp/jde.py` and the `erp/jde_<subject>.py` beside it (the settings, one voucher, the
+  Z-files, the review screen: D-222), `erp/jde_worksheet.py`, `web/pages/settings_jde.py`, `web/pages/exports.py`;
   `tests/erp/test_jde*.py`, `tests/ops/test_laptop_walk_jde.py`, `tests/ops/test_pilot_score_jde.py`. Guide:
   `docs/JDE_E1.md`.
 

@@ -264,7 +264,7 @@ def test_the_review_and_export_pages_do_not_ask_the_database_once_per_invoice(tm
 
     from ap_coder.core import store as store_mod
     from ap_coder.core.store import load_sample_setup
-    from ap_coder.erp.jde import FORMAT as JDE
+    from ap_coder.erp.jde_settings import FORMAT as JDE
     from tests.webclient import add_clean, client_for
 
     monkeypatch.setenv("AP_REVIEWER", "Sam")

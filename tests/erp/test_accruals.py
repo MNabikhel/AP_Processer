@@ -59,14 +59,14 @@ def test_exported_rejected_and_closed_are_left_out(tmp_path):
 def test_an_invoice_exported_after_the_period_end_is_accrued_for_that_period(tmp_path):
     # Dated 14 September, exported on 2 October with the export day as its G/L date: JD Edwards has it in October,
     # so at 30 September it is accrued, and says why (D-133). Exported by 30 September, it was in the ERP then.
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from tests.webclient import client_for
 
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
-    settings = jde.load(store)
-    settings.gl_date = jde.GL_DATE_EXPORT
-    jde.save(store, settings)
+    settings = jde_settings.load(store)
+    settings.gl_date = jde_settings.GL_DATE_EXPORT
+    jde_settings.save(store, settings)
     nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
     a = store.add_invoice(tmp_path / "a.pdf", nw, {})
     store.approve_invoice(a, nw, "Jane")
@@ -107,17 +107,18 @@ def test_an_invoice_whose_g_l_date_is_moved_past_the_period_end_is_accrued_in_it
     September's ledger ("with the invoice date as its G/L date a voucher exported later lands in its own month"): in
     neither September's ledger nor its accruals. A batch made after the period end is late then, as with the export
     day as the G/L date; one made by the period end, or with the open period from within it, is not."""
-    from ap_coder.erp import jde, jde_post
+    from ap_coder.erp import jde_formats, jde_post, jde_settings
 
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-10-01",
-                                    closed_period=jde.CLOSED_MOVE))  # fmt: skip
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False,
+                                                      open_from="2026-10-01",
+                                                      closed_period=jde_settings.CLOSED_MOVE))  # fmt: skip
     nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
     store.import_vendor_master([{"vendor_name": nw["vendor_name"], "erp_id": "4001"}])
     a = store.add_invoice(tmp_path / "a.pdf", nw, {})
     store.approve_invoice(a, nw, "Jane")
-    batch = store.create_export_batch([a], jde.FORMAT)
+    batch = store.create_export_batch([a], jde_settings.FORMAT)
 
     def made_on(when):
         with store._conn() as conn:
@@ -125,11 +126,15 @@ def test_an_invoice_whose_g_l_date_is_moved_past_the_period_end_is_accrued_in_it
         return [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]
 
     late = made_on("2026-10-02T09:15:00")
-    assert jde.from_julian(jde_post.payloads(store, batch)[0][a]["pay_items"][0]["VLDGJ"]) == dt.date(2026, 10, 1)
+    assert jde_formats.from_julian(jde_post.payloads(store, batch)[0][a]["pay_items"][0]["VLDGJ"]) == dt.date(
+        2026, 10, 1
+    )
     assert late and {x.note for x in late} == {accruals.EXPORTED_LATE}
     assert made_on("2026-09-30T16:40:00") == []  # made in September, while it was open: in September's ledger
     made_on("2026-10-02T09:15:00")
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-09-01"))
+    jde_settings.save(
+        store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False, open_from="2026-09-01")
+    )
     assert not [x for x in accruals.build(store, END) if f"(#{a})" in x.reference]  # September open: not moved
 
 
@@ -719,7 +724,7 @@ def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_p
     CSV (``build`` without ``settle``) always follows."""
     from ap_coder.coding.tax import EXPENSE_TO_LINE
     from ap_coder.core.store import reports, summary
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from tests.core.test_kept_answers import _plain, _po_line
 
     clock = [1000.0]
@@ -747,9 +752,9 @@ def test_the_month_end_page_settles_after_an_invoice_changes_but_never_after_a_p
     assert shown() == ({accruals.NOT_IN_ERP}, {approved}, 2)
     other.set_tax_treatment("GST", EXPENSE_TO_LINE)
     assert shown()[2] == 3  # (the tax setup: at once)
-    settings = jde.load(store)
-    settings.gl_date = jde.GL_DATE_EXPORT
-    jde.save(other, settings)
+    settings = jde_settings.load(store)
+    settings.gl_date = jde_settings.GL_DATE_EXPORT
+    jde_settings.save(other, settings)
     assert shown()[2] == 4  # (the G/L date: at once)
     other.import_purchase_orders([_po_line(1, 4.0)])
     assert shown()[0] == {accruals.RECEIVED, accruals.NOT_IN_ERP}  # (a PO: at once)

@@ -16,7 +16,7 @@ from ap_coder.coding.review import coding_from_inputs
 from ap_coder.coding.validation import validate_coding
 from ap_coder.config import Settings
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
 
 JANITOR = f"{MAIN}.7340.3307"
@@ -261,12 +261,12 @@ def test_an_install_with_no_chart_stores_its_invoices_as_before_unless_remarks_g
     output, _ = finalise_coding(coding, reference, Settings(), store=store)
     assert output["line_items"] == before["line_items"] and not any("remark" in li for li in output["line_items"])
     # JD Edwards shown, its remarks still AP Coder's references: nothing either.
-    store.set_setting(jde.SHOW_SETTING, "1")
-    jde.save(store, jde.JdeSettings())
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_settings.JdeSettings())
     output, _ = finalise_coding(InvoiceCoding.model_validate(ground_truth), reference, Settings(), store=store)
     assert output["line_items"] == before["line_items"]
     # The remarks go as typed: each line gets one, from the invoice's line (no history).
-    jde.save(store, jde.JdeSettings(remarks=jde.REMARKS_TYPED))
+    jde_settings.save(store, jde_settings.JdeSettings(remarks=jde_settings.REMARKS_TYPED))
     output, _ = finalise_coding(InvoiceCoding.model_validate(ground_truth), reference, Settings(), store=store)
     for li, was in zip(output["line_items"], before["line_items"], strict=True):
         assert li["remark"] == shortened(was["description"]) and li["remark_from"] == "invoice"

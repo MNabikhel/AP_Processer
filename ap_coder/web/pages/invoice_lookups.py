@@ -25,7 +25,7 @@ from ap_coder.core import chart
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import Store
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.web import account_lines, identity
 from ap_coder.web.access import is_admin, may_lift_hold
 from ap_coder.web.core import get_store, message, reference_or_none, refuse, reviewer
@@ -225,9 +225,9 @@ def add_vendor(
         return refuse(str(exc))
     said = f"Added {name} to the vendor list"
     if an8:
-        settings = copy(jde.load(store))
+        settings = copy(jde_settings.load(store))
         settings.an8_overrides = {**settings.an8_overrides, vendor_key(name): an8}
-        jde.save(store, settings, actor=reviewer())
+        jde_settings.save(store, settings, actor=reviewer())
         said += f", with JD Edwards address number {an8}"
     return message(f"{said}. Set it up in JD Edwards before it is paid: until then a person approves each of its "
                    "invoices with “Approve anyway”.", "ok", icon="person_add", vendor=name,

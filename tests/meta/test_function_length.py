@@ -18,7 +18,7 @@ LONG_FUNCTIONS = {
     "ap_coder/bench/coding.py::simulate": 203,
     "ap_coder/bench/learning.py::_simulate": 167,
     "ap_coder/capture/reader/entry.py::_read_fields": 151,
-    "ap_coder/erp/jde.py::voucher_rows": 148,
+    "ap_coder/erp/jde_zfiles.py::voucher_rows": 148,
     "ap_coder/bench/learning.py::render_markdown": 146,
     "ap_coder/core/schema.py::build_json_schema": 140,
     "ap_coder/bench/harness.py::render_markdown": 138,

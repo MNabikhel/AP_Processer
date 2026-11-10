@@ -6,7 +6,7 @@ from ap_coder.coding.validation import Issue
 from ap_coder.coding.vendors import master_columns, master_rows, master_vendor_id
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
-from ap_coder.erp import jde
+from ap_coder.erp import jde_accounts, jde_settings
 from ap_coder.web.invoice_findings import is_hard
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
 
@@ -86,7 +86,7 @@ def test_two_suppliers_with_different_address_numbers_stay_two_vendors(tmp_path)
             gst_hst_registration_number="897654321RT0001",
         )
     )
-    assert jde.resolve_an8(inv["final_output"], ids, jde.JdeSettings()) == "40219"
+    assert jde_accounts.resolve_an8(inv["final_output"], ids, jde_settings.JdeSettings()) == "40219"
     # imported again: still two, nothing doubled
     store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
     assert len([v for v in store.master_vendors() if v["display_name"].startswith("Great Lakes")]) == 2

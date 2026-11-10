@@ -36,7 +36,7 @@ from ..core.paths import PROJECT_DIR
 from ..core.schema import InvoiceCoding
 from ..core.store import Store, load_sample_purchase_orders, load_sample_setup, load_sample_vendor_master
 from ..core.tax_setup import EXPENSE_TO_LINE, RECOVERABLE
-from ..erp import jde
+from ..erp import jde_prototype, jde_settings
 
 SAMPLES_DIR = PROJECT_DIR / "samples"
 DEMO_POS_SETTING = "demo_purchase_orders"  # PO keys the demo loaded, removed with it
@@ -296,21 +296,23 @@ def _company_setup(store: Store, company: Any) -> None:
     """The settings a person makes after the lists are in: the chart's (its reserved subsidiaries never offered, its
     home business unit), the tax setup (the GST and HST recovered, to the company's clearing account; a PST kept in
     the expense line) and JD Edwards': the company's own values (its company number, its terms code), then the way a
-    department that types its vouchers keys them (``jde.use_prototype``: the one definition; it shows JD Edwards and
-    keeps the QST in the expense line), with the company's GST-only tax area where that has its placeholder."""
+    department that types its vouchers keys them (``jde_prototype.use_prototype``: the one definition; it shows JD
+    Edwards and keeps the QST in the expense line), with the company's GST-only tax area where that has its
+    placeholder."""
     never = tuple(f"*.{subsidiary}" for subsidiary in company.reserved_subsidiaries)
     store.save_chart_settings(replace(store.chart_settings(), never_offered=never,
                                       home_business_unit=company.main_business_unit), actor=COMPANY_ACTOR)  # fmt: skip
     for tax_type in ("GST", "HST"):
         store.set_tax_treatment(tax_type, RECOVERABLE, company.gst_object, actor=COMPANY_ACTOR)
     store.set_tax_treatment("PST", EXPENSE_TO_LINE, actor=COMPANY_ACTOR)
-    jde.save(store, jde.JdeSettings(company=company.number, terms_codes={"Net 30": company.payment_terms}),
-             actor=COMPANY_ACTOR)  # fmt: skip
-    settings = jde.use_prototype(store, actor=COMPANY_ACTOR)
+    jde_settings.save(store, jde_settings.JdeSettings(company=company.number,
+                                                      terms_codes={"Net 30": company.payment_terms}),
+                      actor=COMPANY_ACTOR)  # fmt: skip
+    settings = jde_prototype.use_prototype(store, actor=COMPANY_ACTOR)
     for province, area in settings.tax_map.items():
-        if area.tax_area == jde.PROTOTYPE_GST_AREA:
-            settings.tax_map[province] = jde.TaxArea(company.tax_area, area.code)
-    jde.save(store, settings, actor=COMPANY_ACTOR)
+        if area.tax_area == jde_prototype.PROTOTYPE_GST_AREA:
+            settings.tax_map[province] = jde_settings.TaxArea(company.tax_area, area.code)
+    jde_settings.save(store, settings, actor=COMPANY_ACTOR)
 
 
 def load_company(store: Store, settings: Settings | None = None, on: dt.date | None = None) -> dict[str, Any]:

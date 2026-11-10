@@ -240,7 +240,7 @@ def settle_absent(issues: list[Any], absent: list[str]) -> list[Any]:
 # --- What keeps Approve closed ------------------------------------------------------------------------------------
 
 # The findings that make a voucher invalid: "Approve anyway" never covers them (D-75). Every JD Edwards finding
-# (JDE_..., erp/jde.voucher_findings) is one too: the batch would hold the voucher back.
+# (JDE_..., erp/jde_review.voucher_findings) is one too: the batch would hold the voucher back.
 HARD_CODES = frozenset({
     "MISSING_VENDOR", "MISSING_INVOICE_NUMBER", "NO_LINE_ITEMS", "SUBTOTAL_MISMATCH", "TOTAL_MISMATCH",
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",

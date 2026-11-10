@@ -8,7 +8,7 @@ import re
 import shutil
 
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.erp import jde
+from ap_coder.erp import jde_prototype, jde_settings
 from ap_coder.web import core
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import settings as settings_page
@@ -111,7 +111,9 @@ def test_a_laptops_new_data_folder_starts_simple_with_the_departments_jd_edwards
     db = tmp_path / "new" / "ap_coder.db"
     store = core.first_run(db, server=False)
     assert db.exists() and store.get_setting(core.SCREENS) == core.SIMPLE
-    assert core.jde_shown(store) and jde.load(store) == jde.prototype_settings(jde.JdeSettings())
+    assert core.jde_shown(store) and jde_settings.load(store) == jde_prototype.prototype_settings(
+        jde_settings.JdeSettings()
+    )
     store.set_setting(core.SCREENS, core.EVERYTHING)  # chosen since: the next start leaves it
     assert core.first_run(db, server=False).get_setting(core.SCREENS) == core.EVERYTHING
 
@@ -121,7 +123,7 @@ def test_an_existing_database_and_the_company_server_start_as_they_are(tmp_path)
     Store(old).set_setting("something", "kept")
     for db, server in ((old, False), (tmp_path / "server" / "ap_coder.db", True)):
         store = core.first_run(db, server=server)
-        assert store.get_setting(core.SCREENS) == "" and not store.get_setting(jde.SETTING_KEY), db
+        assert store.get_setting(core.SCREENS) == "" and not store.get_setting(jde_settings.SETTING_KEY), db
         assert not core.simple_screens(store) and store.get_setting(core.SHOW_JDE, "unset") == "unset", db
 
 

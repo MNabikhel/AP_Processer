@@ -4,7 +4,7 @@ orchestration, next to the batch files, which stay the fallback.
 The flow, per export batch made in the JD Edwards format (Exports):
 
 1. **Dry run** (``dry_run``, a Clerk or more): each voucher's rows exactly as the Z-files would hold them
-   (``jde.voucher_rows``: the same field mapping), checked here (``jde.validate``) and, when JDE answers, by the
+   (``jde_zfiles.voucher_rows``: the same field mapping), checked here (``jde.validate``) and, when JDE answers, by the
    voucher orchestration in proof mode (``ProcessingMode`` PROOF: nothing is committed). Each invoice gets a row in
    ``jde_postings``: *checked* (with the fingerprint of what was shown, ``payload_hash``, and who the voucher is for,
    ``expect``) or *refused* (the reasons). Only VALID passes: EXISTS is "already in JD Edwards" (locked for a person).
@@ -67,7 +67,7 @@ from ..core.store.postings import (  # the rows' statuses, kept with the table (
     SENDING,
     UNKNOWN,
 )
-from . import jde, jde_ais
+from . import jde, jde_ais, jde_formats, jde_settings, jde_voucher, jde_zfiles
 
 LABELS = {CHECKED: "Dry run passed", REFUSED: "Refused in the dry run", QUEUED: "Waiting: JD Edwards not reached",
           SENDING: "Being sent", POSTED: "Posted", FAILED: "Refused by JD Edwards",
@@ -136,12 +136,12 @@ def _batch(store: Any, batch: int) -> dict[str, Any]:
     known = store.export_batch(batch)
     if known is None or known["undone_at"]:
         raise ValueError(f"Batch {batch} is unknown or undone.")
-    if known["format"] != jde.FORMAT:
+    if known["format"] != jde_settings.FORMAT:
         raise ValueError(f"Batch {batch} was made as {known['format']}: only a JD Edwards batch goes through the API.")
     return known
 
 
-def _expect(inv: dict[str, Any], headers: list[dict[str, Any]], settings: jde.JdeSettings) -> dict[str, Any]:
+def _expect(inv: dict[str, Any], headers: list[dict[str, Any]], settings: jde_settings.JdeSettings) -> dict[str, Any]:
     """Who the voucher is for, to check JDE's record of a key against (supplier, invoice number, gross)."""
     head = headers[0] if headers else {}
     gross: list[float] = []
@@ -149,14 +149,14 @@ def _expect(inv: dict[str, Any], headers: list[dict[str, Any]], settings: jde.Jd
     if total is not None:
         gross.append(round(total, 2))
     # Implied decimals are the currency's own: whole yen are written as they are (B-1372).
-    places = jde.NO_DECIMAL_CURRENCIES.get(str(head.get("VLCRCD") or "").upper(), 2)
+    places = jde_formats.NO_DECIMAL_CURRENCIES.get(str(head.get("VLCRCD") or "").upper(), 2)
     for foreign in (False, True):
         try:
             raw = sum(float(jde._gross_of(h, foreign) or 0) for h in headers)
         except (TypeError, ValueError):
             continue
         if raw:
-            gross.append(round(raw / 10**places if settings.decimals == jde.IMPLIED else raw, 2))
+            gross.append(round(raw / 10**places if settings.decimals == jde_settings.IMPLIED else raw, 2))
     return {"an8": str(head.get("VLAN8") or ""), "invoice_number": str(head.get("VLVINV") or ""),
             "gross": sorted(set(gross))}  # fmt: skip
 
@@ -171,28 +171,29 @@ def _payloads(store: Any, batch: int) -> tuple[dict[int, dict[str, Any]], dict[i
     """``payloads``, and what they were made with (for the dry run's report: not read or prepared again): {"settings",
     "lookup", "on", "fx_rates", "site", "vouchers": {invoice: (AN8, voucher)}}."""
     known = _batch(store, batch)
-    settings, lookup, fx_rates = jde.load(store), store.vendor_ids(), store.fx_rates()
+    settings, lookup, fx_rates = jde_settings.load(store), store.vendor_ids(), store.fx_rates()
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
-    blocking = jde.settings_problems(settings)
-    prepared = jde._vouchers(invoices, settings, lookup)
+    blocking = jde_settings.settings_problems(settings)
+    prepared = jde_voucher._vouchers(invoices, settings, lookup)
     problems = jde.validate(invoices, settings, lookup, prepared=prepared)
     on = dt.date.fromisoformat(known["created_at"][:10])
-    installation, site = installation_id(store), jde.batch_site(known, invoices)
+    installation, site = installation_id(store), jde_zfiles.batch_site(known, invoices)
     out: dict[int, dict[str, Any]] = {}
     for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if blocking:
             problems.setdefault(inv["id"], []).extend(blocking)
-        day, moved = jde.gl_date_of(inv.get("final_output") or {}, settings, on)  # the batch's day, when that is it
-        if inv["id"] not in problems and (closed := jde.period_problem(day, settings)):
+        # the batch's day, when that is it
+        day, moved = jde_settings.gl_date_of(inv.get("final_output") or {}, settings, on)
+        if inv["id"] not in problems and (closed := jde_settings.period_problem(day, settings)):
             problems[inv["id"]] = [closed]
         if inv["id"] in problems:
             continue
-        headers, dists, matches = jde.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
-                                                   prepared=v, site=site)  # fmt: skip
+        headers, dists, matches = jde_zfiles.voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on,
+                                                          prepared=v, site=site)  # fmt: skip
         out[inv["id"]] = {"key": idem_key(inv["id"], batch, installation), "pay_items": headers, "gl_lines": dists,
                           "matches": matches, "_expect": _expect(inv, headers, settings),
                           "_timeout": settings.voucher_timeout, "_vendor": inv.get("vendor_key") or "",
-                          "_moved": jde.moved_note(day, moved) if moved else ""}  # fmt: skip
+                          "_moved": jde_settings.moved_note(day, moved) if moved else ""}  # fmt: skip
     made = {"settings": settings, "lookup": lookup, "on": on, "fx_rates": fx_rates, "site": site,
             "vouchers": {inv["id"]: pv for inv, pv in zip(invoices, prepared, strict=True)}}  # fmt: skip
     return out, problems, invoices, made
@@ -350,7 +351,7 @@ def downloaded_message(batch: int, found: list[dict[str, str]]) -> str:
             "there twice: tick that it was not loaded and say what you checked.")  # fmt: skip
 
 
-def send_seconds(settings: jde.JdeSettings, cfg: jde_ais.AisSettings) -> float:
+def send_seconds(settings: jde_settings.JdeSettings, cfg: jde_ais.AisSettings) -> float:
     """The longest one voucher's send can take (B-1881): each try of its request a voucher's wait, AIS busy (503)
     answered at the end of it and tried again after its pause (``jde_ais``), a sign-in before it (each try the
     connection's wait), and all of it twice over when the sign-in token expired meanwhile."""
@@ -362,15 +363,15 @@ def send_seconds(settings: jde.JdeSettings, cfg: jde_ais.AisSettings) -> float:
 def _live_seconds(store: Any) -> float:
     """How long a row stays someone's live send: ``SENDING_MINUTES``, or the longest a send can take and a margin."""
     cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
-    return max(SENDING_MINUTES * 60, send_seconds(jde.load(store), cfg) + jde.RESEND_MARGIN)
+    return max(SENDING_MINUTES * 60, send_seconds(jde_settings.load(store), cfg) + jde_settings.RESEND_MARGIN)
 
 
 def _run_over(store: Any) -> str:
     """When a go-ahead's run is over at the latest (its time, the last send it began, a margin), as a next try: a
     voucher it approved and had not sent by then was left by a run cut short, and the queue sends it (B-1886)."""
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
-    seconds = settings.post_minutes * 60 + send_seconds(settings, cfg) + jde.RESEND_MARGIN
+    seconds = settings.post_minutes * 60 + send_seconds(settings, cfg) + jde_settings.RESEND_MARGIN
     return (dt.datetime.now() + dt.timedelta(seconds=seconds)).isoformat(timespec="seconds")
 
 
@@ -768,8 +769,8 @@ class _Run:
     queue)."""
 
     def __init__(self, store: Any, total: int, progress: Callable[[dict[str, Any]], None] | None) -> None:
-        self.text = store.get_setting(jde.SETTING_KEY)
-        self.settings = settings = jde.JdeSettings.from_json(self.text)
+        self.text = store.get_setting(jde_settings.SETTING_KEY)
+        self.settings = settings = jde_settings.JdeSettings.from_json(self.text)
         self.refused: tuple[dt.date, int, dt.date, str] | None = None  # (through, invoice, its G/L date, JDE's words)
         # a lost answer's "not there" believed only this long after it was lost (or after the send's longest), B-1880
         cfg = jde_ais.AisSettings.from_json(store.get_setting(jde_ais.SETTING_KEY))
@@ -800,10 +801,10 @@ class _Run:
         """Why the voucher's G/L date can't be posted now ("" when it can): its period closed since its dry run (the
         open period moved on in Settings: read again when it changes), or JD Edwards refused one of this run's vouchers
         as in a closed period, dated in the same month or later (D-182)."""
-        text = store.get_setting(jde.SETTING_KEY)
+        text = store.get_setting(jde_settings.SETTING_KEY)
         if text != self.text:
-            self.text, self.settings = text, jde.JdeSettings.from_json(text)
-        day = jde.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+            self.text, self.settings = text, jde_settings.JdeSettings.from_json(text)
+        day = jde_formats.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
         if day is None:
             return ""
         if self.refused and day <= self.refused[0]:
@@ -811,7 +812,7 @@ class _Run:
             return (f"JD Edwards refused AP Coder #{invoice}'s G/L date {refused} as in a closed period ({words}): "
                     f"this one, dated {day}, waits. Set JD Edwards' open period in Settings → JD Edwards E1, then dry "
                     "run again")  # fmt: skip
-        if jde.period_problem(day, self.settings):
+        if jde_settings.period_problem(day, self.settings):
             return (
                 f"the period of its G/L date {day} was closed since its dry run (Settings → JD Edwards E1's open "
                 f"period: from {self.settings.open_from or '…'} to {self.settings.open_to or '…'}): dry run again"
@@ -821,7 +822,7 @@ class _Run:
     def refusal(self, row: dict[str, Any] | None, payload: dict[str, Any]) -> None:
         """JD Edwards refused this voucher: as in a closed period, the rest of its month and before it wait."""
         words = str((row or {}).get("error") or "")
-        day = jde.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
+        day = jde_formats.from_julian((payload["pay_items"] or [{}])[0].get("VLDGJ"))
         if day is None or not PERIOD_REFUSED.search(words):
             return
         through = (day.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)  # its month's end

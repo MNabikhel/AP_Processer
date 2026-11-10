@@ -85,7 +85,7 @@ def test_vendor_keys_stored_by_an_older_version_are_recomputed(tmp_path):
     assert conn.execute("SELECT supplier_key FROM supplier_outcomes").fetchone() == ("name:energir",)
     conn.close()
     assert store.vendor_terms(vendor_key("Énergir")) == "Net 15"
-    from ap_coder.erp.jde import JdeSettings  # JDE address numbers saved by vendor key in the settings
+    from ap_coder.erp.jde_settings import JdeSettings
 
     assert JdeSettings.from_json('{"an8_overrides": {"energir sec": "77"}}').an8_overrides == {"energir": "77"}
 

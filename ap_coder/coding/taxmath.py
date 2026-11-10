@@ -331,8 +331,8 @@ def _total_row(coding: InvoiceCoding, taxes_total: float) -> dict[str, Any]:
 # when the printed tax is not right for the lines taxed, as the line x the RATE.
 READ, SHARE, RATE = "read", "share", "rate"
 # Where a tax goes, by the Tax setup's treatment: RECOVERED (on the JD Edwards pay item under code V, D-210; a G/L
-# line of its own where JD Edwards works out no tax: ``erp.jde`` says which), kept INSIDE the line's expense, or on
-# the tax's own expense account (OWN_LINE).
+# line of its own where JD Edwards works out no tax: ``erp.jde_review`` says which), kept INSIDE the line's expense, or
+# on the tax's own expense account (OWN_LINE).
 RECOVERED, INSIDE, OWN_LINE = "recovered", "inside", "own_line"
 _WHERE = {RECOVERABLE: RECOVERED, EXPENSE_TO_LINE: INSIDE, EXPENSE_SEPARATE: OWN_LINE}
 _PARTS = (RECOVERED, INSIDE, OWN_LINE)  # the order of a line's parts of a tax (``_posted``)
