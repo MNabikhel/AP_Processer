@@ -57,6 +57,7 @@ from ap_coder.coding.line_tax import (
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
+from ap_coder.coding.remark import typed as typed_remark
 from ap_coder.coding.review import (
     codes_to_pick,
     coding_from_inputs,
@@ -130,7 +131,8 @@ FIELD_LABELS = {
 }  # fmt: skip
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",
                 "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
-                "reasoning_justification")  # fmt: skip
+                "reasoning_justification", "remark", "remark_from")  # fmt: skip
+LINE_REMARK = "line_remark"  # a line's remark for JD Edwards, one box a row, posted in order (D-213)
 LINE_TAX_CODE = "line_tax_code"  # a line's tax code, one dropdown a row (D-64)
 TAX_COLUMNS = ("tax_type", "province", "rate_pct", "taxable_amount", "tax_amount")
 # The posted names of a grid row's cells (repeated once per row, in order).
@@ -331,6 +333,13 @@ class Draft:
                     row["taxes_applied"] = [t for t in form.getlist(f"line_tax_{key}") if t in TAX_TYPES]
                     row["tax_exempt"], row["tax_status"] = None, ""  # read as the vendor meant it
                 lines.append(row)
+            # The remark's box (D-213): as posted, a person's once it is not what the line had (``remark.typed``);
+            # a form without the box keeps each line's remark.
+            remarks = form.getlist(LINE_REMARK)
+            for i, (before, row) in enumerate(pair_lines(base.lines, lines)):
+                row["remark"], row["remark_from"] = (
+                    typed_remark(remarks[i], before) if i < len(remarks)
+                    else ((before or {}).get("remark"), (before or {}).get("remark_from")))  # fmt: skip
             tcols = {c: form.getlist(name) for c, name in TAX_INPUTS.items()}
             taxes = [{c: (tcols[c][i] if i < len(tcols[c]) else "") for c in TAX_INPUTS}
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
@@ -1301,9 +1310,11 @@ _BLANK_CODES = {None, "", UNASSIGNED}
 def _comparable(output: dict[str, Any], ignore: set[str], cost_centers: bool = True) -> dict[str, Any]:
     out = {k: v for k, v in output.items() if k not in ignore}
     blank = ("predicted_gl_code", "predicted_cost_center")
+    # A remark only a person's: one suggested again (the account changed, the supplier's usual one did) is no edit.
+    remark = ("remark", "remark_from")
     out["line_items"] = [
         {k: ("" if k in blank and (v in _BLANK_CODES or (k == blank[1] and not cost_centers)) else v)
-         for k, v in li.items()}
+         for k, v in li.items() if k not in remark or li.get("remark_from") == "person"}
         for li in out.get("line_items") or []
     ]  # fmt: skip
     return out

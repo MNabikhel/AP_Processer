@@ -383,3 +383,74 @@ def test_a_large_excel_export_is_asked_for_as_csv(tmp_path):
         pilot_score.read_table(path)
     assert "This Excel file is too large to open safely; export it as CSV instead" in str(err.value)
     assert "damaged" not in str(err.value)
+
+
+# The voucher list as JD Edwards' Supplier Ledger Inquiry grid exports it (``bench.jde_exports.HEADERS_HEADER``).
+GRID = ["Document Number", "Doc Type", "Doc Co", "Invoice Date", "G/L Date", "Gross Amount", "Open Amount",
+        "Foreign Amount", "Supplier Number", "Supplier Number Desc", "Invoice Number", "Pay Item",
+        "Curr Code"]  # fmt: skip
+
+
+def _grid(*values) -> dict[str, str]:
+    return dict(zip(GRID, [str(v) for v in values], strict=True))
+
+
+def test_the_voucher_lists_totals_row_is_no_voucher():
+    rows = [_grid(7001, "PV", "00210", "2026-09-01", "2026-09-03", "50.00", "", "", 1002, "ACME LTD", "INV-1", "001",
+                  "CAD"),
+            _grid("", "", "", "", "", "50.00", "0.00", "", "", "", "", "", "")]  # fmt: skip
+    posted, _ = pilot_score.posted_vouchers(rows)
+    assert [(p.document, p.gross) for p in posted] == [("7001", 50.0)]
+    report = pilot_score.score([_ours(1, "INV-1", 50.0)], posted)
+    assert report["invoices"]["jd_edwards_only"] == 0 and _found(report) == []
+
+
+def test_the_grids_currency_company_gl_date_and_supplier_name_columns_are_known():
+    rows = [_grid(7002, "PV", "00210", "2026-09-01", "2026-09-03", "137.00", "", "100.00", 1002, "ACME LTD", "US-1",
+                  "001", "USD")]  # fmt: skip
+    posted, notes = pilot_score.posted_vouchers(rows)
+    p = posted[0]
+    # a foreign voucher's gross is its foreign amount: what the invoice says, not its Canadian dollars
+    assert (p.currency, p.gross, p.domestic_gross) == ("USD", 100.0, 137.0) and not any("RPACR" in n for n in notes)
+    assert (p.gl_date, p.vendor_name, p.key) == ("2026-09-03", "ACME LTD", "7002|PV|210")
+    report = pilot_score.score([_ours(1, "US-1", 100.0, currency="USD")], posted)
+    assert report["header"]["grand_total"] == report["header"]["currency"] == {"n": 1, "right": 1}
+    assert _found(report) == []
+
+
+def _line(n, amount, account, proposed=None, description="line"):
+    gl, cc = f"{account[1]}.{account[2]}".rstrip("."), account[0]
+    proposed = proposed or account
+    return {"line_number": n, "description": description, "amount": amount, "kind": "expense",
+            "recoverable_tax": False, "gl": gl, "cc": cc, "account": account,
+            "proposed_gl": f"{proposed[1]}.{proposed[2]}".rstrip("."), "proposed_cc": proposed[0],
+            "proposed_account": proposed}  # fmt: skip
+
+
+def test_lines_are_compared_by_account_not_paired_by_their_amounts():
+    """Three lines on the right account against AP's one line for their sum were none compared, three "not posted"
+    and one "posted only"."""
+    x, y = ("CC100", "6000", ""), ("CC100", "6010", "")
+    o = _ours(1, "D-1", 300.0)
+    o.lines = [_line(1, 100.0, x), _line(2, 120.0, x), _line(3, 80.0, x)]
+    p = _voucher_with_lines("300.00", ("CC100.6000", "300.00"), ("CC100.2000", "-300.00"))
+    report = pilot_score.score([o], [p])
+    c = report["coding"]
+    assert (c["lines"], c["compared"], c["gl_right"], c["cc_right"], c["proposed_right"]) == (3, 3, 3, 3, 3)
+    assert c["not_posted"] == c["posted_only"] == 0 and _found(report) == []
+    # one line of AP Coder against AP's split of it over two business units: the account right, a unit apart
+    o.lines = [_line(1, 300.0, x)]
+    p = _voucher_with_lines("300.00", ("CC100.6000", "180.00"), ("CC200.6000", "120.00"), ("CC100.2000", "-300.00"))
+    report = pilot_score.score([o], [p])
+    assert (report["coding"]["gl_right"], report["coding"]["posted_only"]) == (1, 0)
+    assert _found(report) == [("line", "Amount by business unit")]
+    # a line on another account is still shown beside the posted line of its amount; the amounts of an account
+    # right on both sides are compared added up
+    o.lines = [_line(1, 100.0, x), _line(2, 120.0, x), _line(3, 80.0, y)]
+    p = _voucher_with_lines("300.00", ("CC100.6000", "200.00"), ("CC100.7000", "80.00"), ("CC100.2000", "-300.00"))
+    report = pilot_score.score([o], [p])
+    c = report["coding"]
+    assert (c["lines"], c["compared"], c["gl_right"], c["not_posted"], c["posted_only"]) == (3, 3, 2, 0, 0)
+    assert _found(report) == [("line", "Amount on the account"), ("line", "GL account")]
+    amounts = next(d for d in report["differences"] if d["field"] == "Amount on the account")
+    assert (amounts["ap_coder"], amounts["jd_edwards"], amounts["note"]) == ("220.00", "200.00", "CC100.6000")

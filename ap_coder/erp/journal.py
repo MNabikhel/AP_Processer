@@ -371,6 +371,13 @@ def _control_note(totals: Totals) -> str:
     return f"The lines read add up to the report's Grand Total: {read}."
 
 
+def journal_of(vouchers: Iterable[Voucher]) -> Journal:
+    """A journal of these vouchers alone (a part of a file's, or the ones a database keeps): no notes, and no control
+    total to add up to."""
+    kept = tuple(vouchers)
+    return Journal(kept, (), _totals(kept, _Seen()))
+
+
 def looks_like_journal(data: bytes) -> bool:
     """True for a Transaction Journal saved as CSV: its first cell is the report's number, or its header row is
     there (only the start of the file is read)."""

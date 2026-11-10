@@ -673,8 +673,8 @@ class InvoicesMixin:
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code,
-                   tax_source, tax_province, tax_uncollected)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   tax_source, tax_province, tax_uncollected, final_remark, remark_from)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts
@@ -777,6 +777,8 @@ class InvoicesMixin:
                     ),
                     province,
                     missing,
+                    " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
+                    str(li.get("remark_from") or ""),
                 )  # fmt: skip
             )
         return out

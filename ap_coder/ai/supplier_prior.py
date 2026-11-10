@@ -23,7 +23,9 @@ accents or punctuation and "&" as "and":
 What counts for how much. A coding line of the journal counts 1 (``JOURNAL_WEIGHT``; so does a line of imported past
 coding or one approved in bulk, which nobody looked at); a line a person approved here as proposed counts 3
 (``APPROVAL_WEIGHT``); a line a person coded or changed here counts 5 (``CORRECTION_WEIGHT``): a correction outweighs
-history. An account's ``share`` is its weight over the supplier's.
+history. An account's ``share`` is its weight over the supplier's. The remarks AP approved here are counted with the
+journal's the same way (``_Counted.remarked``, D-213): one a person typed counts 5, one a person approved as
+suggested 3, one nobody looked at 1, so an account's commonest remark (``AccountUse.remarks``) follows what AP types.
 
 ``rank(prior, line_text, reference)`` orders the supplier's accounts for one invoice line: the log of the share, plus
 how alike the line is to the remarks AP wrote for that account, to the lines AP approved to it here, and to the
@@ -98,6 +100,7 @@ class Remark:
     shape: str
     lines: int
     example: str
+    typed: bool = False  # a person typed it here for a line approved (D-213)
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,7 @@ class AccountUse:
     share: float  # ``weight`` over the supplier's
     last_date: str  # the latest G/L date or approval, YYYY-MM-DD
     remarks: tuple[Remark, ...] = ()  # the commonest shapes of AP's remark, ``REMARKS_KEPT`` at most
+    remarked: int = 0  # the lines that have a remark: the journal's and the ones approved here with one
     remark_keys: tuple[frozenset[str], ...] = ()  # the words of each different remark (``line_match.keys``)
     line_keys: tuple[frozenset[str], ...] = ()  # the words of each different invoice line approved to it here
 
@@ -163,10 +167,12 @@ class Prior:
         return " / ".join(f"{100 * u.share:.0f}%" for u in self.accounts[:most])
 
     def total_said(self) -> str:
-        """How many lines it is counted from: "24 lines last year", "27 lines (24 last year, 3 approved here)"."""
+        """How many lines it is counted from: "24 lines last year", "27 lines (24 last year, 3 approved here)", "1
+        line last year"."""
         if self.approved and self.journal_lines:
             return f"{self.lines} lines ({self.journal_lines} last year, {self.approved} approved here)"
-        return f"{self.lines} lines {'approved here' if self.approved else 'last year'}"
+        lines = "1 line" if self.lines == 1 else f"{self.lines} lines"
+        return f"{lines} {'approved here' if self.approved else 'last year'}"
 
 
 EMPTY = Prior()
@@ -328,6 +334,9 @@ class _Count:
         self.last = ""
         self.shapes: Counter[str] = Counter()
         self.example: dict[str, str] = {}
+        self.kept: Counter[str] = Counter()  # the remarks approved here, by shape: lines...
+        self.kept_weight: Counter[str] = Counter()  # ...and what they count for
+        self.typed: set[str] = set()  # the shapes a person typed here
         self.line_texts: dict[str, None] = {}
 
 
@@ -392,15 +401,35 @@ class _Counted:
             if shape:
                 use.shapes[shape] += int(row["lines"])
                 use.example.setdefault(shape, str(row["description"]).strip())
+        self.remarked(counted.get("remarks") or [], pair_of)
+
+    def remarked(self, rows: list[dict[str, Any]], pair_of: Any) -> None:
+        """The remarks approved here with the vendor's lines (the newest first), counted with the journal's: one a
+        person typed counts as a correction does, one a person approved as suggested as an approval, one nobody
+        looked at (approved in bulk) as a line of the journal. The latest wording is the shape's example."""
+        for row in reversed(rows):
+            use, shape = self.uses.get(pair_of(row)), remark_shape(row["final_remark"])
+            if use is None or not shape:
+                continue
+            by_person, typed = row["outcome"] in WEIGHTS, row["remark_from"] == "person"
+            weight = CORRECTION_WEIGHT if typed else APPROVAL_WEIGHT if by_person else JOURNAL_WEIGHT
+            use.kept[shape] += int(row["lines"])
+            use.kept_weight[shape] += int(row["lines"]) * weight
+            use.example[shape] = str(row["final_remark"]).strip()
+            if typed:
+                use.typed.add(shape)
 
 
 def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
     shapes = u.shapes.most_common(TEXTS_KEPT)
+    said = u.shapes + u.kept  # the journal's remarks and the ones approved here, the heaviest shape first
+    usual = sorted(said, key=lambda shape: u.shapes[shape] * JOURNAL_WEIGHT + u.kept_weight[shape], reverse=True)
     return AccountUse(
         account=join_account(*pair), business_unit=pair[0], code=pair[1],
         lines=u.journal_lines + u.approved + u.other, vouchers=len(u.vouchers) + u.invoices,
         journal_lines=u.journal_lines, approved=u.approved, weight=u.weight, share=u.weight / weight,
-        last_date=u.last, remarks=tuple(Remark(shape, n, u.example[shape]) for shape, n in shapes[:REMARKS_KEPT]),
+        last_date=u.last, remarks=tuple(Remark(shape, said[shape], u.example[shape], shape in u.typed)
+                                        for shape in usual[:REMARKS_KEPT]), remarked=sum(said.values()),
         remark_keys=tuple(dict.fromkeys(k for shape, _ in shapes if (k := keys(shape)))),
         line_keys=tuple(dict.fromkeys(k for text in list(u.line_texts)[:TEXTS_KEPT] if (k := keys(text)))),
     )  # fmt: skip
