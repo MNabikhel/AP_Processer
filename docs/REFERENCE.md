@@ -95,6 +95,11 @@ too) go through the same steps:
 
 - **Every invoice becomes a PDF.** A photo or scan (JPG, PNG, HEIC, TIFF) is turned into a PDF when it
   arrives; the original is kept next to it, and a photo sent twice is still caught as a duplicate.
+- **Several files, one voucher.** The pages of one invoice scanned or photographed one by one, or the receipts
+  of one expense claim: tick them on the Add invoices page and say which. They are joined into one PDF in the
+  order shown and read as one (a claim: each receipt on its own, then one voucher of their lines, each with its
+  own receipt's tax); the files are kept and listed on the invoice, and can be made separate invoices again
+  while it is in review (D-216).
 - **The page's own words.** A digital PDF's text layer is read as it is; a scan or a photo is read by OCR on
   the laptop, with two engines (tilted scans are straightened first).
 - **The table finder** (a small layout model, as in CloseDesk, in the offline bundle) finds the line-item

@@ -870,6 +870,31 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))
 
 
+@router.post("/review/{invoice_id:int}/separate")
+def review_separate(request: Request, invoice_id: int) -> JSONResponse:
+    """Make these separate invoices again (D-216): a voucher made of several files and not approved yet is removed,
+    and its files go back in the invoices folder and in line, each to be read as an invoice of its own."""
+    from ap_coder.core.store.folder import read_file
+    from ap_coder.intake.joined import CannotJoin, separate
+    from ap_coder.web.pages.invoice import forget_everyones_draft
+    from ap_coder.web.pages.process import queue_files
+
+    store = get_store(request)
+    inv = store.get_invoice(invoice_id)
+    if inv is None:
+        return refuse("That invoice is no longer in AP Coder.", 404)
+    if inv["status"] not in (REVIEW, FAILED):
+        return refuse("Only an invoice still in review can be made separate invoices again: reopen it first.", 409)
+    try:
+        files = separate(store, inv, reviewer())
+    except (CannotJoin, ValueError) as exc:
+        return refuse(str(exc), 409)
+    forget_everyones_draft(request, invoice_id)
+    queue_files(request, [read_file(path) for path in files], source="upload")
+    return done(request, "/process", flash_message(f"{ui.plural(len(files), 'file')} are being read again, each as "
+                                                   "an invoice of its own.", "info", icon="call_split"))  # fmt: skip
+
+
 @router.post("/review/{invoice_id}/unpark")
 def review_unpark(request: Request, invoice_id: int) -> JSONResponse:
     try:

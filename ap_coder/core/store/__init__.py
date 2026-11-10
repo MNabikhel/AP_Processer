@@ -35,8 +35,8 @@ accounts and the business units as JD Edwards exports them, and the GL accounts 
 them, D-209), ``journal`` (last year's coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
 apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
 a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
-lines each coded, D-217). A test that patches a module-level name (``_now``, ``json``...) patches
-it in the part that uses it.
+lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216). A test that patches a
+module-level name (``_now``, ``json``...) patches it in the part that uses it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
 tools excepted), so moving to another database changes this folder only.
@@ -127,6 +127,7 @@ from .folder import FolderMixin
 from .hub import HubMixin
 from .imports import ImportsMixin
 from .invoices import InvoicesMixin
+from .joined import JoinedMixin
 from .journal import JournalMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
@@ -176,6 +177,7 @@ class Store(
     ChartMixin,
     JournalMixin,
     PriorMixin,
+    JoinedMixin,
     RulesMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""

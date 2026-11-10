@@ -51,6 +51,10 @@
       <ul>{% for text in doc.lessons %}<li>{{ text }}</li>{% endfor %}</ul></details>{% endif %}
     {% if doc.lines_note %}<div class="inv-note"><span class="ms" aria-hidden="true">table_rows</span><span>{{ doc.lines_note }}</span></div>{% endif %}
     {% if doc.original %}<div class="inv-note"><span class="ms" aria-hidden="true">photo</span><span>{% if (doc.original.file or "").lower().endswith(".pdf") %}Shown upright: the scan <b>{{ doc.original.file }}</b> was scanned turned, and is kept as it came in{% else %}Made into a PDF from the picture <b>{{ doc.original.file }}</b>, kept as it came in{% endif %}, in the <code>{{ doc.original.folder }}</code> folder beside the PDF.</span></div>{% endif %}
+    {% if doc.joined %}<div class="inv-note" id="joined-files"><span class="ms" aria-hidden="true">file_copy</span><span><b>{{ doc.joined.kind }}</b>, joined from {{ doc.joined.files | length }} files:
+      {% for f in doc.joined.files %}{{ f.pages }} is from <b>{{ f.name }}</b>{{ ", " if not loop.last else "." }}{% endfor %}
+      The files are kept as they came in, in the <code>originals</code> folder beside the PDF.</span>
+      {% if doc.joined.separable and can("/review/1/separate") %}<form method="post" action="/review/{{ inv.id }}/separate" class="inv-inline" data-confirm="Make these separate invoices again? This invoice is removed, with any edits made on it, and each file is read as an invoice of its own."><button class="btn sm ghost" type="submit"><span class="ms" aria-hidden="true">call_split</span>Make these separate invoices again</button></form>{% endif %}</div>{% endif %}
     {% if doc.problem %}<div class="inv-note warn"><span class="ms" aria-hidden="true">broken_image</span><span>{{ doc.problem }}</span></div>{% endif %}
   </div>
   {% if doc.viewer %}

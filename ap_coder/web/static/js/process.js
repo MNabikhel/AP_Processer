@@ -18,11 +18,32 @@ function kb(size) {
   return `${Math.max(1, Math.round(size / 1024)).toLocaleString()} KB`;
 }
 
+/* Several files that are one voucher (D-216): with two files or more chosen, the person may say they are the pages of
+   one invoice or the receipts of one claim; they are then joined in the order listed, which the arrows change. */
+const voucher = document.getElementById("upload-voucher");
+const voucherRow = document.getElementById("voucher-row");
+
+function arrows(name, i) {
+  const one = (by, word, icon) =>
+    `<button type="button" class="btn sm ghost" data-pick="${i}" data-by="${by}" aria-label="Move ${escapeHtml(name)} ${word}"><span class="ms" aria-hidden="true">${icon}</span></button>`;
+  return one(-1, "up", "arrow_upward") + one(1, "down", "arrow_downward");
+}
+
 function showPicked() {
-  picked.hidden = files.length === 0;
-  picked.innerHTML = files.map((f) => `<li><span>${escapeHtml(f.name)}</span><span>${kb(f.size)}</span></li>`).join("");
   const n = files.length;
-  label.textContent = n ? `Process ${n} uploaded invoice${n === 1 ? "" : "s"}` : "Process uploaded invoices";
+  if (voucherRow) {
+    voucherRow.hidden = n < 2;
+    if (n < 2) voucher.value = "";
+    document.getElementById("voucher-hint").hidden = !voucher.value;
+  }
+  const one = voucher && voucher.value;
+  picked.hidden = n === 0;
+  picked.innerHTML = files
+    .map((f, i) => `<li><span>${escapeHtml(f.name)}</span><span>${one ? arrows(f.name, i) : ""}${kb(f.size)}</span></li>`)
+    .join("");
+  label.textContent = one
+    ? `Process ${n} files as one voucher`
+    : n ? `Process ${n} uploaded invoice${n === 1 ? "" : "s"}` : "Process uploaded invoices";
   go.disabled = !n || go.dataset.ready !== "yes";
 }
 
@@ -82,6 +103,7 @@ async function follow_job(statusUrl) {
 function upload() {
   const body = new FormData();
   for (const f of files) body.append("files", f, f.name);
+  if (voucher && voucher.value && files.length > 1) body.append("voucher", voucher.value);
   go.disabled = true;
   go.classList.add("busy");
   return new Promise((resolve) => {
@@ -132,6 +154,16 @@ if (form) {
     e.preventDefault();
     take(e.dataTransfer.files);
   });
+  voucher?.addEventListener("change", showPicked);
+  picked.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-pick]");
+    if (!button) return;
+    const from = Number(button.dataset.pick);
+    const to = from + Number(button.dataset.by);
+    if (to < 0 || to >= files.length) return;
+    [files[from], files[to]] = [files[to], files[from]];
+    showPicked();
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!files.length) return;
@@ -145,6 +177,24 @@ if (form) {
       return;
     }
     if (!follow(answer)) showPicked();
+  });
+}
+
+// The invoices folder's list: the files ticked as one voucher are sent in the order shown (D-216); an arrow moves a
+// row, and the button opens once two are ticked.
+const listed = document.getElementById("folder-files");
+const voucherGo = document.getElementById("voucher-go");
+if (listed && voucherGo) {
+  listed.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-move]");
+    const row = button?.closest("tr");
+    if (!row) return;
+    if (button.dataset.move === "-1") row.previousElementSibling?.before(row);
+    else row.nextElementSibling?.after(row);
+    button.focus();
+  });
+  listed.addEventListener("change", () => {
+    voucherGo.disabled = listed.querySelectorAll("input[name=names]:checked").length < 2 || voucherGo.dataset.ready !== "yes";
   });
 }
 

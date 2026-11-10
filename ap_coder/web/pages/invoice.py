@@ -651,7 +651,21 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
         if original.get("file") else None,
+        "joined": joined_files(store, inv),
     }  # fmt: skip
+
+
+def joined_files(store: Store, inv: dict[str, Any]) -> dict[str, Any] | None:
+    """The files a person joined into this voucher (D-216), as the document card lists them: what they are ("Pages of
+    one invoice"), each file with its pages ("page 3"), and whether they can still be made separate invoices again;
+    None for an invoice made of one file."""
+    from ap_coder.intake.joined import KINDS, pages_said
+
+    files = store.joined_files(invoice_id=inv["id"])
+    if not files:
+        return None
+    return {"kind": KINDS.get(files[0]["kind"], ""), "separable": inv["status"] in (REVIEW, FAILED),
+            "files": [{"name": f["name"], "pages": pages_said(f)} for f in files]}  # fmt: skip
 
 
 UNDONE = "undone right after approving"  # the reason an approval undone from its banner is reopened with

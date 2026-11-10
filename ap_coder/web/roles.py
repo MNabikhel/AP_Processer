@@ -104,6 +104,8 @@ RULES: dict[tuple[str, str], str] = {
         CLERK,
         # Bringing invoices in.
         "GET /process", "POST /process/upload", "POST /process/folder", "GET /process/status",
+        # Several files that are one voucher, and making them separate invoices again while in review (D-216).
+        "POST /process/voucher", "POST /review/{invoice_id:int}/separate",
         "POST /spend/data",  # the Spend data workbook made in the background, for everyone (D-156)
         "GET /process/inbox/{entry_id}/file/{n}", "POST /process/inbox/{entry_id}/to-queue/{n}",
         "POST /process/inbox/{entry_id}/done", "POST /review/{invoice_id}/retry",

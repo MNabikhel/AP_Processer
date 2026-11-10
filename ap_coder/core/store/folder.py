@@ -22,11 +22,13 @@ from pathlib import Path
 from typing import Any
 
 from ..keys import register_keys
+from .joined import PART_SEEN
 
-# A file whose content AP Coder has (``seen_files`` as ``f``): an invoice was made from it, or it is in line.
+# A file whose content AP Coder has (``seen_files`` as ``f``): an invoice was made from it (or from a voucher it is one
+# of the files of, D-216), or it is in line.
 _KNOWN = ("EXISTS (SELECT 1 FROM invoices AS i WHERE i.file_sha256 = f.sha256 UNION ALL SELECT 1 FROM invoices AS i "
           "WHERE i.original_sha256 = f.sha256 UNION ALL SELECT 1 FROM import_files AS q WHERE q.status IN ('waiting', "
-          "'reading') AND q.sha256 = f.sha256)")  # fmt: skip
+          f"'reading') AND q.sha256 = f.sha256 UNION ALL {PART_SEEN})")  # fmt: skip
 _AT_ONCE_FROM = 1000  # files of a folder's listing from which what the pick-up read there is read at once
 # The latest listing of each folder (D-176): its resolved place, when it began (``time.time``), the folder's time then
 # (nanoseconds) and what it found (JSON: {"files": [[name, size, time], ...] the invoice files new then, "emails":
