@@ -625,7 +625,7 @@ def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[st
         return refuse(f"No voucher of this list can be kept: nothing was imported, the list is as it was. {said}")
     total = store.import_erp_vouchers(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
-    text = f"{total:,} ERP invoices known. {said}"
+    text = f"{ui.plural(total, 'ERP invoice')} known. {said}"
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
@@ -654,7 +654,7 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
                       "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
-    text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
+    text = f"{ui.plural(total, 'ERP invoice')} known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))

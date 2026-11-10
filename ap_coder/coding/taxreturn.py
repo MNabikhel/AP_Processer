@@ -251,7 +251,7 @@ def setup_key(store: Store) -> tuple[Any, ...]:
     is one for these (the Sales tax page's, D-179), so that a change of one of them is worked out at once."""
     from ..erp import jde
 
-    batches = [b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")]
+    batches = [b["id"] for b in store.export_batches() if b.get("format") in jde.FORMATS and not b.get("undone_at")]
     return (store.tax_treatments(), TaxRateTable.load(), store.our_province(), store.site_provinces(), batches,
             jde.in_use(store), store.get_setting(jde.SETTING_KEY))  # fmt: skip
 
@@ -391,7 +391,7 @@ def _jde_accruing(store: Store) -> Any:
     JD Edwards (in a batch not undone), or not exported yet while JD Edwards is the export in use ("" otherwise)."""
     from ..erp import jde
 
-    batches = {b["id"] for b in store.export_batches() if b.get("format") == jde.FORMAT and not b.get("undone_at")}
+    batches = {b["id"] for b in store.export_batches() if b.get("format") in jde.FORMATS and not b.get("undone_at")}
     pending = jde.in_use(store)
     if not batches and not pending:
         return lambda batch, doc: ""

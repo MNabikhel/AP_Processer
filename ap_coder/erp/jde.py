@@ -80,6 +80,9 @@ from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
+# The formats of a batch whose vouchers go into JD Edwards: loaded as Z-files, or typed from the keying sheet
+# (``jde_keying.FORMAT``, D-210). What JD Edwards does with a voucher (the PST it accrues itself) holds for both.
+FORMATS = (FORMAT, "jde_keying")
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"

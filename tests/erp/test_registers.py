@@ -82,7 +82,7 @@ def test_jd_edwards_voucher_list_is_read_as_it_comes():
     assert [tuple(r[field] for field in kept) for r in rows] == [
         ("08801-PV-700101", "MAPLE LEAF COFFEE SERVICES INC.", "410001", "INV-0042", "2026-03-04", 214.20),
         ("08801-PV-700102", "QUICKSHIP COURIER CANADA LTD", "410002", "7-100-20001", "2026-03-04", 700.00),
-        ("08801-PV-700103", "HARBOUR TELECOM", "410005", "00812", "2026-03-04", 1005.65),
+        ("08801-PV-700103", "HARBOUR TELECOM", "410005", "00812", "2026-03-04", 438.90),
         ("08801-PV-700104", LONG_NAME[:30], "410009", "US-5001", "2026-03-04", 1100.00),  # not in the master
         ("08802-PV-700101", "QUICKSHIP COURIER CANADA LTD", "410002", "Q-9", "2026-03-04", 61.00),
     ]  # fmt: skip

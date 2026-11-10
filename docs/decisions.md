@@ -4798,9 +4798,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     two places to say it can disagree); the same rule under codes C and B (it would take the PST out of the tax
     amount of every code C voucher sent today); a keying sheet built from the Excel export's rows (it knows no tax
     area, explanation code or account string).
-  - **Left:** the Sales tax page takes only a batch made as "JD Edwards E1" for one whose self-assessed PST JD Edwards
-    accrues (code B): a keying-sheet batch typed with code B is not known to it. The worksheet for the JDE team has
-    no question yet for the open one above, nor for the remarks.
+  - **Left:** the worksheet for the JDE team has no question yet for the open one above, nor for the remarks. (The
+    Sales tax page now counts a keying-sheet batch typed with code B as one whose PST JD Edwards accrues: B-2153.)
   - (`ap_coder/erp/jde.py`, `ap_coder/erp/jde_keying.py`, `ap_coder/erp/exports.py`,
     `ap_coder/web/pages/exports.py`, `ap_coder/web/pages/settings_jde.py`, `docs/JDE_E1.md`;
     `tests/erp/test_jde.py`, `tests/erp/test_jde_keying.py`, `tests/web/test_web_settings.py`)

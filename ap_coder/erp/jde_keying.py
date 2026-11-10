@@ -36,7 +36,7 @@ from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde
 from .exports import _sheet
 
-FORMAT = "jde_keying"  # the export format (``exports.FORMATS`` says what it is)
+FORMAT = jde.FORMATS[1]  # "jde_keying": the export format (``exports.FORMATS`` says what it is)
 SHEET, NOT_READY = "Keying sheet", "Not ready"
 # The G/L distribution's columns, named on the frozen first row and at the top of each printed page.
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]

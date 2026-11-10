@@ -589,3 +589,34 @@ def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_ty
         titles, held = sheet()
         assert titles == ["No voucher to type: see the sheet “Not ready”."]
         assert [(row[0], row[7]) for row in held] == [(1, "already posted to JD Edwards through the API")]
+
+
+def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_the_pst(tmp_path):
+    """B-2153: the Self-assessment report knew only a batch made as Z-files for one whose PST JD Edwards accrues
+    itself (code B): a voucher typed from a keying sheet with code B was listed to book again by journal entry."""
+    from ap_coder.coding import taxreturn
+    from ap_coder.core.store import Store
+    from tests.conftest import SAMPLES
+    from tests.erp.test_jde import SK
+    from tests.erp.test_jde import _invoice as sample
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    final = sample(SK)["final_output"]  # Saskatchewan, the PST not charged: self-assessed
+    final["tax_lines"] = [t for t in final["tax_lines"] if t["tax_type"] != "PST"]
+    final["tax_total"] = sum(t["tax_amount"] for t in final["tax_lines"])
+    final["grand_total"] = round(final["subtotal"] + final["tax_total"], 2)
+    for li in final["line_items"]:
+        li["taxes_applied"], li["tax_exempt"] = ["GST"], []
+    ids = []
+    for _ in range(2):
+        ids.append(store.add_invoice(SAMPLES / f"{SK}.pdf", final, {"requires_review": True}))
+        store.approve_invoice(ids[-1], final, "Pat Tester")
+    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))
+    day = dt.date.fromisoformat(final["invoice_date"])
+    before = taxreturn.setup_key(store)
+    store.create_export_batch([ids[0]], jde_keying.FORMAT, actor="Pat Tester")
+    assert taxreturn.setup_key(store) != before  # an answer kept for the page is worked out again
+    notes = {s.invoice_id: s.note for s in taxreturn.self_assessment(store, day, day)}
+    assert notes == {ids[0]: taxreturn.JDE_ACCRUES, ids[1]: taxreturn.JDE_WILL_ACCRUE}
+    store.create_export_batch([ids[1]], "xlsx", actor="Pat Tester")  # an Excel batch: not in JD Edwards
+    assert {s.invoice_id: s.note for s in taxreturn.self_assessment(store, day, day)}[ids[1]] == ""
