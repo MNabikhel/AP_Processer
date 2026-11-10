@@ -5,6 +5,8 @@ each PDF or picture locally, codes the GL accounts and cost centers, checks GST/
 what AP approves, and exports approved invoices to JD Edwards E1 or Excel/CSV. People review on a local dashboard
 (FastAPI) at 127.0.0.1 (or a company server: docs/SERVER.md).
 
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.
+
 Taking AP Coder over in a new place (the company's own repository)? Start with `docs/HANDOFF.md`: how to get the
 code in, the connection points, the company's information to gather, and the order of work.
 
