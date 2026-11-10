@@ -341,7 +341,7 @@
         {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
-      {% if can("/review/1/manager") %}
+      {% if can("/review/1/manager") and not simple_screens %}{# (manager confirmations: hidden in Simple screens) #}
       {# Or ask the manager of the cost centers to confirm the coding (D-138): the fields belong to the invoice's
          form, posted to /manager instead of /approve, so the lines on screen go with the request. Inside Park: both
          set the invoice aside while someone else answers, and the action bar keeps its width. #}
@@ -448,7 +448,7 @@
     <div class="row end">
       {% if can_stamp %}<a class="btn" href="/review/{{ inv.id }}/approved.pdf" title="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file."><span class="ms" aria-hidden="true">approval</span>Approved PDF</a>{% endif %}
       {% if inv.export_batch %}
-      <span class="muted">Exported in batch {{ inv.export_batch }}: to correct it, undo the batch on the Exports page first.</span>
+      <span class="muted">{% if on_keying_sheet %}On keying sheet {{ inv.export_batch }} (to type into JD Edwards){% else %}Exported in batch {{ inv.export_batch }}{% endif %}: to correct it, undo the batch on the Exports page first.</span>
       {% elif can("/review/1/correct") %}
       <details class="pop">
         <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Reopen for correction…</summary>

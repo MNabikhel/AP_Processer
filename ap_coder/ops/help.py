@@ -40,7 +40,7 @@ CLOUD_CHECKS = frozenset(
 )
 # How the four checks of an account on its business unit begin (D-209): they are only made with a chart loaded.
 CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
-CHART_IMPORT = "python -m ap_coder chart import: docs/JDE_E1.md"
+CHART_IMPORT = "Setup → JD Edwards files"
 
 CHECKS: dict[str, CheckHelp] = {
     # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
@@ -113,10 +113,21 @@ CHECKS: dict[str, CheckHelp] = {
     "JDE_GROSS_TAX": CheckHelp(
         ERP, "JD Edwards would work out a different tax",
         "With the gross amount only, JD Edwards works the tax out itself from the tax area's rate on the whole gross. "
-        "This invoice has a line with no tax on it (exempt or zero-rated), or charges another tax than the area's "
-        "rate, so JD Edwards would post a tax the vendor did not charge.",
+        "This invoice has a line with no tax on it (exempt or zero-rated), charges another tax than the area's "
+        "rate, or carries a tax that GL accounts & tax leaves in the expense (a QST that is not recovered), so JD "
+        "Edwards would post a tax the vendor did not charge, or work the tax out of an amount that holds another.",
         "Check the tax lines and each line's tax code. If they are right, ask the pilot tester to code the tax to G/L "
         "accounts, or to send tax amounts (Settings → JD Edwards E1, Amounts).",
+    ),
+    "JDE_TAX_NOT_RECOVERED": CheckHelp(
+        ERP, "GST/HST not recovered on the JD Edwards voucher",
+        "GL accounts & tax keeps this invoice's GST or HST in the expense (not recoverable), so its JD Edwards "
+        "voucher claims no input tax credit: the tax is inside the G/L lines and off the pay item. Most companies "
+        "recover the GST/HST, so this is asked before it goes out. A provincial tax left in the expense (a QST that is "
+        "not recovered) is not asked.",
+        "If the company does not recover it, approve as usual. If it should be recovered, set the tax to recoverable "
+        "with its account in GL accounts & tax (the pilot tester does), then save the invoice again so its posting "
+        "is worked out anew.",
     ),
     "JDE_MEALS_PO": CheckHelp(
         ERP, "Meals on a PO-matched JD Edwards voucher",
@@ -152,11 +163,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the currency on the page; if it is right, ask the pilot tester to add it in Settings → JD Edwards E1.",
     ),
     "JDE_TAX_AREA": CheckHelp(
-        ERP, "No JD Edwards tax area",
+        ERP, "No JD Edwards tax area, or two on one invoice",
         "JD Edwards needs a tax area and explanation code for the province of supply, and there is none for this "
-        "invoice.",
+        "invoice. Or the invoice charges the GST/HST at two rates (lines supplied in two provinces: GST on some, HST "
+        "on others): a voucher's pay item has one tax area, so it is two pay items, which AP Coder does not make "
+        "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
-        "Edwards E1.",
+        "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
+        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",

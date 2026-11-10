@@ -532,6 +532,10 @@ def exported_reason(store: Store, inv: dict[str, Any] | None) -> str:
     batch = inv["export_batch"]
     if any(p["invoice_id"] == inv["id"] for p in jde_post.postings(store, batch, (jde_post.POSTED,))):
         return f"it was posted to JD Edwards (batch {batch}): it stays approved in AP Coder"
+    from ap_coder.erp import jde_keying
+
+    if batch in jde_keying.keying_batches(store):  # to type by hand: not in JD Edwards until someone has
+        return f"it is on keying sheet {batch}: undo the batch on the Exports page first"
     return f"it was exported in batch {batch}: undo the batch on the Exports page first"
 
 

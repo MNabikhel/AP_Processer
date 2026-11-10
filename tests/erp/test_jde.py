@@ -1000,3 +1000,175 @@ def test_the_remarks_stay_as_they_were_or_carry_what_a_person_types():
     assert jde.JdeSettings.from_json(json.dumps({"company": "00002"})).remarks == jde.REMARKS_REFERENCE
     assert jde.JdeSettings.from_json(json.dumps({"remarks": "both"})).remarks == jde.REMARKS_REFERENCE
     assert jde.JdeSettings.from_json(typed.to_json()).remarks == jde.REMARKS_TYPED
+
+
+def test_code_v_with_the_gst_left_in_the_expense_is_said_before_it_goes_out():
+    """B-2150: GST set to "not recoverable" by mistake under code V went out as "V, the tax area, no tax amounts"
+    with nothing said: typed so, JD Edwards works the tax out itself; loaded, the input tax credit is never claimed.
+    The review screen warns (JDE_TAX_NOT_RECOVERED), and a voucher with no tax left on its pay item goes with the
+    exempt code, as one that charges no tax does."""
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    inv = _invoice(AB, setup=_setup(GST=TaxTreatment("GST", "expense_to_line")))
+    assert jde.validate([inv], settings, AN8) == {}  # a warning, not a hold
+    (found,) = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1].startswith("JDE_TAX")]
+    assert found[:2] == (jde.WARNING, "JDE_TAX_NOT_RECOVERED")
+    assert "the GST (87.30) is not recovered" in found[2] and "GL accounts & tax" in found[2]
+    files = _files([inv], settings)
+    (head,) = files[jde.HEADER_FILE]
+    assert (head["VLEXR1"], head["VLTXA1"]) == ("E", "AB-GST")
+    assert (head["VLATXA"], head["VLATXN"], head["VLSTAM"]) == ("0", "183330", "0")
+    assert sum(int(r["VNAA"]) for r in files[jde.DIST_FILE]) == 183330
+    # Both Quebec taxes in the expense: the same, the federal one named.
+    both = _invoice(QC, setup=_setup(GST=TaxTreatment("GST", "expense_to_line"),
+                                     QST=TaxTreatment("QST", "expense_to_line")))  # fmt: skip
+    (found,) = [f for f in jde.voucher_findings(both["final_output"], settings, "10023") if f[1].startswith("JDE_TAX")]
+    assert "the GST (120.00) is not recovered" in found[2]
+    assert _files([both], settings)[jde.HEADER_FILE][0]["VLEXR1"] == "E"
+    # With the gross amount only and the exempt code JD Edwards works out no tax: it balances, nothing to hold.
+    assert jde.validate([both], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
+    # The QST alone left in the expense is the Tax setup's choice (D-210): code V stays, and nothing is warned.
+    qst, on_gst_area = _quebec_qst_in_the_expense()
+    for fine, js in ((qst, on_gst_area), (_invoice(AB), settings)):
+        assert "JDE_TAX_NOT_RECOVERED" not in {f[1] for f in jde.voucher_findings(fine["final_output"], js, "10023")}
+
+
+def test_the_rule_for_a_tax_left_in_the_expense_is_code_vs_alone_and_counts_a_meals_cent_as_recovered():
+    """D-210's edges, each a deliberate break no test noticed: code C still holds a GST the Tax setup expenses; a
+    cent of GST all on a meal (nothing left to claim, so no tax line) is still a recovered tax; and the taxable
+    amount is the recovered tax's base, not a wider one of the tax left in the expense."""
+    tax_amounts = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    expensed = _invoice(BC, setup=_setup(GST=TaxTreatment("GST", "expense_to_line")))
+    assert "unbalanced" in jde.validate([expensed], tax_amounts, AN8)[1][0]  # BC is code C: as before D-210
+    # A meal of 0.10 with a cent of GST, among other lines: the cent is in the meal's line and no GST line is left.
+    from tests.erp.test_jde_gl_mode import _setup as meals_setup
+    from tests.erp.test_jde_gl_mode import coded, doc, line, tl
+
+    meal = coded(doc([line(1, 0.10, "6300", ["GST"], desc="Coffee")], [tl("GST", "", 0.05, 0.10, 0.01)], prov="AB"),
+                 meals_setup(meals=["6300"]))  # fmt: skip
+    assert not [e for e in meal["final_output"]["gl_distribution"] if e["kind"] == "tax"]
+    v = jde._prepare(meal, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, default_bu="HQ"), "10023")
+    assert v.expensed == frozenset() and v.recoverable_types >= {"GST"} and (v.stam, v.recoverable) == (0, 0)
+    assert v.tax_code == "V" and not v.problems
+    # The QST charged on more than the GST (a line the GST does not apply to): the taxable amount is the GST's base.
+    lines = [line(1, 1000.0, "6010", ["GST", "QST"]), line(2, 500.0, "6010", ["QST"], exempt=["GST"])]
+    wider = coded(doc(lines, [tl("GST", "", 0.05, 1000.0, 50.0), tl("QST", "QC", 0.09975, 1500.0, 149.63)], prov="QC"),
+                  _setup(QST=TaxTreatment("QST", "expense_to_line")))  # fmt: skip
+    _inv, on_gst_area = _quebec_qst_in_the_expense()
+    assert jde.validate([wider], on_gst_area, AN8) == {}
+    (head,) = _files([wider], on_gst_area)[jde.HEADER_FILE]
+    assert (head["VLATXA"], head["VLSTAM"], head["VLATXN"]) == ("100000", "5000", "64963")
+    # One pay item per line: the taxable amount follows the GST's lines, not the QST's wider ones.
+    on_gst_area.line_numbering = jde.MATCH_HEADER
+    each = _files([wider], on_gst_area)[jde.HEADER_FILE]
+    assert [(h["VLATXA"], h["VLSTAM"]) for h in each] == [("100000", "5000"), ("0", "0")]
+
+
+def test_a_mapping_rows_own_subsidiary_wins_over_the_gl_codes_when_it_names_no_object():
+    """B-2085's corner: a mapping row that gives a subsidiary and no object keeps its subsidiary; the object is the
+    GL code's."""
+    mapped = jde.JdeSettings(gl_map=[jde.GlMap("6420.2210", sub="9001"), jde.GlMap("6431", sub="77")])
+    assert jde.ani(jde.account_for("6420.2210", "0312005561", mapped)) == "0312005561.6420.9001"
+    assert jde.ani(jde.account_for("6431", "0312005561", mapped)) == "0312005561.6431.77"
+
+
+def _two_provinces(taxes, lines=None, **kw):
+    from tests.erp.test_jde_gl_mode import coded, doc, line
+
+    lines = lines or [line(1, 2400.0, "6010", ["GST"]), line(2, 600.0, "6010", ["GST"]),
+                      line(3, 1000.0, "6010", ["HST"])]  # fmt: skip
+    return coded(doc(lines, taxes, prov="AB", **kw))
+
+
+def test_two_federal_rates_on_one_invoice_are_two_pay_items_spelled_out_and_the_voucher_is_held():
+    """B-2152: lines supplied in two provinces (GST on some, HST on others) went out as one pay item on one tax
+    area, the two taxes added up ("GST of 9.33%"), with nothing holding it. A pay item has one tax area: the voucher
+    is held (JDE_TAX_AREA) and the reason spells out the two pay items to key by hand."""
+    from tests.erp.test_jde_gl_mode import line, tl
+
+    tax_amounts = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    inv = _two_provinces([tl("GST", "", 0.05, 3000.0, 150.0), tl("HST", "ON", 0.13, 1000.0, 130.0)])
+    (reason,) = jde.validate([inv], tax_amounts, AN8)[1]
+    assert reason == (
+        "GST 5% and HST 13% are both charged (lines supplied in two provinces): a pay item has one tax area, so this "
+        "voucher is two pay items, to key by hand with the G/L lines as coded. Pay item 001: tax area AB-GST, code V, "
+        "taxable amount 3,000.00, tax amount 150.00 (GST 5%: lines 1, 2). Pay item 002: tax area ON-HST, code V, "
+        "taxable amount 1,000.00, tax amount 130.00 (HST 13%: line 3)"
+    )
+    (found,) = [f for f in jde.voucher_findings(inv["final_output"], tax_amounts, "10023") if f[0] == jde.ERROR]
+    assert found[1] == "JDE_TAX_AREA" and found[2].startswith("JD Edwards: GST 5% and HST 13% are both charged")
+    assert jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8)[1][0] == reason
+    from ap_coder.erp import jde_keying
+
+    ready, held = jde_keying.vouchers([inv], tax_amounts, AN8)
+    assert not ready and held[0].why == [reason]
+    # HST at two rates (Ontario and Nova Scotia): the lines of each cannot be told from the lines' tax codes.
+    lines = [line(1, 1000.0, "6010", ["HST"]), line(2, 500.0, "6010", ["HST"])]
+    two_hst = _two_provinces([tl("HST", "ON", 0.13, 1000.0, 130.0), tl("HST", "NS", 0.14, 500.0, 70.0)], lines,
+                             ship_to_province="ON", supplier_province="ON")  # fmt: skip
+    (reason,) = jde.validate([two_hst], tax_amounts, AN8)[1]
+    assert reason.startswith("HST 13% and HST 14% are both charged (lines supplied in two provinces)")
+    assert "Pay item 001: tax area ON-HST, code V, taxable amount 1,000.00, tax amount 130.00 (HST 13%)." in reason
+    assert reason.endswith("Pay item 002: tax area NS-HST, code V, taxable amount 500.00, tax amount 70.00 (HST 14%)")
+    # One federal rate is one pay item: the same tax printed twice (goods, freight), a tax line with no rate read,
+    # GST with a provincial tax; and with the tax coded to G/L accounts there is no tax area to split by.
+    one = [line(1, 1000.0, "6010", ["GST"]), line(2, 100.0, "6010", ["GST"])]
+    twice = _two_provinces([tl("GST", "", 0.05, 1000.0, 50.0), tl("GST", "", 0.05, 100.0, 5.0)], one)
+    no_rate = _two_provinces([tl("HST", "ON", 0.13, 1000.0, 130.0), tl("HST", "", 0.0, 100.0, 13.0)],
+                             [line(1, 1000.0, "6010", ["HST"]), line(2, 100.0, "6010", ["HST"])],
+                             ship_to_province="ON", supplier_province="ON")  # fmt: skip
+    for fine in (twice, no_rate, _invoice(QC), _invoice(BC)):
+        assert jde.validate([fine], tax_amounts, AN8) == {}
+    assert jde.validate([inv], jde.JdeSettings(default_bu="HQ"), AN8) == {}
+
+
+def test_the_voucher_view_says_what_is_keyed_on_the_pay_item_or_why_it_is_not_ready():
+    """The review screen's JD Edwards block: beside its rows, the pay item's G/L date, tax explanation code, tax
+    rate/area, taxable and tax amounts, and when the voucher is held, why it is not ready to key."""
+    from tests.erp.test_jde_gl_mode import tl
+
+    tax_amounts = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    final = _invoice(AB)["final_output"]
+    view = jde.voucher_view(final, tax_amounts, "10023")
+    assert {"rows", "settings_url", "terms_sent", "terms_code", "terms_note"} <= set(view)  # as before
+    assert (view["gl_date"], view["tax_code"], view["tax_area"]) == (final["invoice_date"], "V", "AB-GST")
+    assert (view["taxable"], view["tax"], view["not_ready"]) == (1746.0, 87.3, [])
+    assert view["keyed"] == (f"Keyed on the pay item: G/L date {final['invoice_date']} · Tax Ex V · Tax Rate/Area "
+                             "AB-GST · taxable amount 1,746.00 · tax amount 87.30")  # fmt: skip
+    # The tax coded to G/L accounts: no tax on the pay item.
+    on_gl = jde.voucher_view(final, jde.JdeSettings(default_bu="HQ"), "10023")
+    assert (on_gl["tax_code"], on_gl["tax_area"], on_gl["taxable"], on_gl["tax"]) == ("E", "", None, None)
+    assert on_gl["keyed"] == (f"Keyed on the pay item: G/L date {final['invoice_date']} · Tax Ex E · no tax (it is "
+                              "on its own G/L lines)")  # fmt: skip
+    # A G/L date in a closed period, moved to the open one's first day (D-182).
+    moved = jde.voucher_view(final, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, open_from="2027-01-01"), "10023")
+    assert moved["gl_date"] == "2027-01-01" and "G/L date 2027-01-01" in moved["keyed"]
+    # Held back: every reason, and the first in the line.
+    held = jde.voucher_view(final, tax_amounts, "")
+    assert len(held["not_ready"]) == 1 and held["not_ready"][0].startswith("no JDE supplier number (AN8)")
+    assert held["keyed"] == f"Not ready to key: {held['not_ready'][0]}"
+    two = _two_provinces([tl("GST", "", 0.05, 3000.0, 150.0), tl("HST", "ON", 0.13, 1000.0, 130.0)])
+    view = jde.voucher_view(two["final_output"], tax_amounts, "10023")
+    assert view["keyed"].startswith("Not ready to key: GST 5% and HST 13% are both charged")
+
+
+def test_the_prototype_settings_are_the_way_of_a_department_that_types_its_vouchers():
+    """`JdeSettings()` keeps its defaults (existing installs); `prototype_settings()` is the tax on the pay item
+    with code V, a tax rate/area a province, the remarks as typed and the identity account rule."""
+    from ap_coder.bench import jde_company
+
+    assert (jde.JdeSettings().amount_mode, jde.JdeSettings().remarks) == (jde.AMOUNT_GL, jde.REMARKS_REFERENCE)
+    js = jde.prototype_settings()
+    assert (js.amount_mode, js.remarks) == (jde.AMOUNT_TAX, jde.REMARKS_TYPED)
+    assert (js.use_default_rule, js.bu_from_cost_center, js.gl_map) == (True, True, [])
+    assert {p: (a.tax_area, a.code) for p, a in js.tax_map.items()} == {
+        **{p: (jde_company.TAX_AREA, "V") for p in ("AB", "BC", "MB", "SK", "QC", "NT", "NU", "YT")},
+        **{p: (f"{p}HST", "V") for p in ("ON", "NB", "NL", "NS", "PE")},
+        "OUTSIDE_CANADA": ("", ""),
+    }
+    assert jde.settings_problems(js) == []
+    # What a setup already saved (the company, a supplier's number) is kept.
+    saved = jde.JdeSettings(company="00042", an8_overrides={"acme": "77"}, amount_mode=jde.AMOUNT_GROSS)
+    kept = jde.prototype_settings(saved)
+    assert (kept.company, kept.an8_overrides, kept.amount_mode) == ("00042", {"acme": "77"}, jde.AMOUNT_TAX)
+    assert saved.amount_mode == jde.AMOUNT_GROSS  # not changed in place
+    assert jde.JdeSettings.from_json(js.to_json()) == js

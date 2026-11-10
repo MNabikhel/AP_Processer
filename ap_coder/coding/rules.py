@@ -17,7 +17,7 @@ from typing import Any
 
 from ..core.keys import plain as _plain
 from ..core.memory import vendor_key
-from ..core.schema import InvoiceCoding
+from ..core.schema import InvoiceCoding, decided
 
 
 def _has_words(name: str, wanted: str) -> bool:
@@ -73,21 +73,33 @@ def rule_for(rules: list[Rule], vendor: str, description: str) -> Rule | None:
 RULE_REASON = "Coded by the coding rule"
 
 
+def decided_by_rule(rule: Rule, was: Any = None, agreed: bool = False) -> dict[str, Any]:
+    """What a line a rule coded keeps of it (``LineItem.decided_by``, D-212): the rule's id (0: not saved yet) and
+    its words as they were, the source of the proposal it replaced (``was``), and whether it only agreed with it."""
+    return decided("rule", rule_id=rule.id, rule=rule.label, was=(was or {}).get("source"), agreed=agreed or None)
+
+
 def apply(coding: InvoiceCoding, rules: list[Rule]) -> tuple[InvoiceCoding, list[dict[str, Any]]]:
     """The coding with the rules applied, and what each rule changed:
-    [{line_number, rule, gl_from, gl_to, cc_from, cc_to}]."""
+    [{line_number, rule, gl_from, gl_to, cc_from, cc_to}]. Every line a rule matches says so (``decided_by``), also
+    one the rule only agrees with: such a line is in no change, and keeps its reasoning."""
     if not rules:
         return coding, []
     changes = []
     lines = []
+    matched = False
     for li in coding.line_items:
         rule = rule_for(rules, coding.vendor_name, li.description)
         if rule is None:
             lines.append(li)
             continue
+        matched = True
         gl = rule.gl_code.strip()
         cc = rule.cost_center.strip() or li.predicted_cost_center
-        if gl != li.predicted_gl_code or cc != li.predicted_cost_center:
+        if gl == li.predicted_gl_code and cc == li.predicted_cost_center:
+            if (li.decided_by or {}).get("source") != "rule":
+                li = li.model_copy(update={"decided_by": decided_by_rule(rule, li.decided_by, agreed=True)})
+        else:
             from ..ai.offline_coder import guessed
 
             changes.append(
@@ -103,10 +115,13 @@ def apply(coding: InvoiceCoding, rules: list[Rule]) -> tuple[InvoiceCoding, list
                 }  # fmt: skip
             )
             # The rule's coding, said so: no longer the chat model's guess on the review screen (B-475).
-            li = li.model_copy(update={"predicted_gl_code": gl, "predicted_cost_center": cc,
-                                       "reasoning_justification": f"{RULE_REASON} “{rule.label}”"})  # fmt: skip
+            li = li.model_copy(update={
+                "predicted_gl_code": gl, "predicted_cost_center": cc, "candidates": [],
+                "reasoning_justification": f"{RULE_REASON} “{rule.label}”",
+                "decided_by": decided_by_rule(rule, li.decided_by),
+            })  # fmt: skip
         lines.append(li)
-    if not changes:
+    if not matched:
         return coding, []
     return coding.model_copy(update={"line_items": lines}), changes
 

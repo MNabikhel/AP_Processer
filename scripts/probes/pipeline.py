@@ -55,10 +55,16 @@ VOLATILE = {
 }
 
 
+# What a coded line records since D-212 beside its account (the accounts offered, what decided it): a tree from
+# before has neither, so they are left out of the comparison; the account, the cost center and the words are compared.
+RECORDED_ON_A_LINE = {"candidates", "decided_by"}
+
+
 def clean(obj):
     """Drop what differs from run to run (``VOLATILE``), in JSON stored as text too; the work folder as <work>."""
     if isinstance(obj, dict):
-        return {k: clean(v) for k, v in obj.items() if k not in VOLATILE}
+        drop = VOLATILE | RECORDED_ON_A_LINE if "predicted_gl_code" in obj else VOLATILE
+        return {k: clean(v) for k, v in obj.items() if k not in drop}
     if isinstance(obj, list):
         return [clean(v) for v in obj]
     if isinstance(obj, str):

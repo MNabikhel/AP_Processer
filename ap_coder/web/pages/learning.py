@@ -825,6 +825,8 @@ def _history_teach(request: Request, form: Any) -> JSONResponse:
         + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)"
            if result["skipped"] + skipped else "")
         + (f"; {result['unknown_gl']:,} with a GL account that is not in your list" if result["unknown_gl"] else "")
+        + (f"; {result['unknown_cc']:,} kept without their cost center, which is not in your list"
+           if result.get("unknown_cc") else "")
         + "."
     )  # fmt: skip
     return done(request, "/learning#history", text)

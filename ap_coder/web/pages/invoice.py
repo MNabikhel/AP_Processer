@@ -54,6 +54,7 @@ from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, coded_blanks
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
+from ap_coder.erp.jde_keying import keying_batches
 from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
 from ap_coder.web.access import is_admin, key_of, may_lift_hold, person_key
@@ -971,6 +972,7 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
                 f"; AP coded {ui.plural(n, 'line')} the AI left blank" if n else "; AP coded lines the AI left blank"
             )
         out["can_stamp"] = stamp.can_stamp(inv)
+        out["on_keying_sheet"] = bool(inv.get("export_batch")) and inv["export_batch"] in keying_batches(store)
     if inv["status"] == PENDING:
         me, my_login = reviewer(), login()
         first = next(iter(store.events(inv["id"], ["approved"], limit=1)), None)
@@ -1305,7 +1307,8 @@ def undo_approve(request: Request, invoice_id: int) -> JSONResponse:
     store = get_store(request)
     inv = _invoice(store, invoice_id)
     if inv.get("export_batch"):
-        return refuse(f"It can't be undone now: it was exported in batch {inv['export_batch']}. To correct it, undo "
+        how = "is on keying sheet" if inv["export_batch"] in keying_batches(store) else "was exported in batch"
+        return refuse(f"It can't be undone now: it {how} {inv['export_batch']}. To correct it, undo "
                       "the batch on the Exports page first.")  # fmt: skip
     if inv["status"] not in (APPROVED, PENDING):  # the real reason (B-803): rejected, parked, back in the queue
         now = {REVIEW: "it is back in the review queue already", REJECTED: "it was rejected since",

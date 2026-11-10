@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{# JD Edwards files (pages/jde_files.py): JD Edwards' own exports, a card each in the order they are loaded. #}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% macro file_form(action, label, accept, busy) %}
+<form method="post" action="{{ action }}" enctype="multipart/form-data" class="row upload-row" data-busy="{{ busy }}" data-long>
+  <input type="file" name="file" accept="{{ accept }}" required aria-label="{{ label }}">
+  <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload_file</span>{{ caller() }}</button>
+</form>
+{% endmacro %}
+{# What the load just made said, a line each. #}
+{% macro what_was_said(card) %}
+{% if said and said.card == card %}
+<div class="flash ok" role="status" id="{{ card }}-said"><span class="ms" aria-hidden="true">task_alt</span>
+  <div><ul>{% for line in said.lines %}<li>{{ line }}</li>{% endfor %}</ul></div></div>
+{% endif %}
+{% endmacro %}
+{# What is loaded now: how much, when and by whom. #}
+{% macro loaded_now(card, count, what, last) %}
+<p id="{{ card }}-now">{% if count %}{{ ui.pill("Loaded", "ok", "check") }} <b>{{ count | plural(what) }}</b>{% if last %}
+  <span class="muted">· last loaded {{ last.when }}{% if last.by %} by {{ last.by }}{% endif %}</span>{% endif %}
+  {% else %}{{ ui.pill("Not yet", "gray") }} <span class="muted">Nothing is loaded.</span>{% endif %}</p>
+{% endmacro %}
+{% block content %}
+<div class="narrow">
+<section class="card" id="checklist">
+  <h4>What is loaded</h4>
+  <dl class="apc-kv">
+    {% for item in checklist %}
+    <dt>{{ loop.index }}. <a href="#{{ item.card }}">{{ item.name }}</a></dt>
+    <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  <p class="muted">{{ order }}</p>
+  {% if not can("/jde-files/chart") %}<p class="muted">An Admin loads these files.</p>{% endif %}
+</section>
+
+<section class="card stack" id="chart">
+  <h4>1. Chart of accounts</h4>
+  <p class="muted">The account master: every business unit's accounts with their posting edit codes. In JD Edwards,
+    list your company's accounts in the account master's grid and export the grid to Excel (.xlsx), every column.</p>
+  {{ loaded_now("chart", loaded.chart, "account", last.chart) }}
+  {{ what_was_said("chart") }}
+  {% if loaded.chart %}
+  <p class="muted">On {{ chart_units | plural("business unit") }}. A newer export replaces the chart whole.</p>
+  <ul id="chart-tally">{% for line in tally %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if can("/jde-files/chart") %}
+  {% call file_form("/jde-files/chart", "Chart of accounts (.xlsx)", ".xlsx", "Reading the chart (10 to 20 seconds)…") %}Load the chart{% endcall %}
+  {% endif %}
+  {% if can("/jde-files/chart/settings") %}
+  <form method="post" action="/jde-files/chart/settings" class="stack" id="chart-settings" data-busy="Saving…">
+    <h4>The chart's settings</h4>
+    <label class="field">Accounts never offered: reserved subsidiaries and the like (commas between; * stands for any
+      characters, so *.7701 is that subsidiary of any object)
+      <input type="text" name="never_offered" value="{{ chart_settings.never_offered }}" autocomplete="off"></label>
+    <label class="field">Words in a name that retire a business unit or a supplier (commas between)
+      <input type="text" name="skip_words" value="{{ chart_settings.skip_words }}" autocomplete="off"></label>
+    <label class="field">Home business unit: where a line goes when nothing says otherwise{% if home_name %} (now {{ home_name }}){% endif %}
+      <input type="text" name="home_business_unit" value="{{ chart_settings.home_business_unit }}" autocomplete="off"></label>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save the settings</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card stack" id="units">
+  <h4>2. Business units</h4>
+  <p class="muted">The business unit master: which business units are open and what they are called. Export its grid
+    from JD Edwards to Excel (.xlsx), every column.</p>
+  {{ loaded_now("units", loaded.units, "business unit", last.units) }}
+  {{ what_was_said("units") }}
+  {% if loaded.units %}<p class="muted">A newer export replaces the business units whole.</p>{% endif %}
+  {% if can("/jde-files/units") %}
+  {% call file_form("/jde-files/units", "Business units (.xlsx)", ".xlsx", "Reading…") %}Load the business units{% endcall %}
+  {% endif %}
+</section>
+
+<section class="card stack" id="suppliers">
+  <h4>3. Suppliers</h4>
+  <p class="muted">The supplier master: each supplier's number, name, tax number, payment terms and hold code. Export
+    its grid from JD Edwards to Excel (.xlsx).</p>
+  {{ loaded_now("suppliers", loaded.suppliers, "supplier", last.suppliers) }}
+  {{ what_was_said("suppliers") }}
+  {% if suppliers %}
+  <div id="suppliers-summary" class="stack">
+    {% if suppliers.name %}
+    <p><b>{{ suppliers.name }}</b> · nothing is loaded yet.</p>
+    {% if suppliers.rows is defined %}
+    <ul>
+      <li>{{ suppliers.rows | plural("row") }} read{% if not suppliers.problem %}: {{ suppliers.kept | plural("supplier") }} to load{% if suppliers.left_out %}, {{ suppliers.left_out | plural("row") }} left out (no name){% endif %}{% endif %}.</li>
+      {% if suppliers.found %}<li>Columns found: {% for label, column in suppliers.found %}{{ label }} (“{{ column }}”){% if not loop.last %}, {% endif %}{% endfor %}.</li>{% endif %}
+      {% if suppliers.missing %}<li>No column found for: {{ suppliers.missing | join(", ") }}.</li>{% endif %}
+    </ul>
+    {% endif %}
+    {% endif %}
+    {% if suppliers.problem %}{{ ui.empty_note("This file cannot be loaded as it is.", " " ~ suppliers.problem, "warning") }}{% endif %}
+    {% if suppliers.token and can("/jde-files/suppliers/load") %}
+    <div class="row">
+      {% if not suppliers.problem %}
+      <form method="post" action="/jde-files/suppliers/load" data-busy="Loading…" data-long>
+        <input type="hidden" name="token" value="{{ suppliers.token }}">
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">storefront</span>Load these suppliers</button>
+      </form>
+      {% endif %}
+      <a class="btn" href="/vendors?file={{ suppliers.token }}#import">Pick the columns on Vendors</a>
+      <a class="btn" href="/jde-files#suppliers">Cancel</a>
+    </div>
+    {% endif %}
+  </div>
+  {% elif can("/jde-files/suppliers/upload") %}
+  {% call file_form("/jde-files/suppliers/upload", "Suppliers (.xlsx)", ".xlsx,.csv", "Reading…") %}Read the suppliers{% endcall %}
+  {% endif %}
+  <p class="muted">A newer list adds the new suppliers and updates the others. Holds, notes and each supplier's details
+    are on <a href="/vendors">Vendors</a>.</p>
+</section>
+
+<section class="card stack" id="journal">
+  <h4>4. Last year's coding</h4>
+  <p class="muted">The Transaction Journal: how each supplier's invoices were coded before. Run report R09321 for
+    document type PV (vouchers), your company and 12 months of G/L dates, and save it as CSV.</p>
+  {{ loaded_now("journal", loaded.journal, "journal", none) }}
+  {{ what_was_said("journal") }}
+  {% if upload_gone %}{{ ui.empty_note("That upload has expired.", " Upload the file again.", "warning") }}{% endif %}
+  {% if journal %}
+  <div id="journal-summary" class="stack">
+    <p><b>{{ journal.name }}</b> · nothing is loaded yet.</p>
+    {% if journal.said %}
+    <ul>{% for a in journal.said %}
+      <li>{{ a.text }}{% if a.sub %}<ul>{% for b in a.sub %}<li>{{ b.text }}{% if b.sub %}<ul>{% for c in b.sub %}<li class="apc-muted">{{ c.text }}</li>{% endfor %}</ul>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>
+    {% endfor %}</ul>
+    {% endif %}
+    {% if journal.problem %}{{ ui.empty_note(journal.note, " " ~ journal.problem, "warning") }}{% endif %}
+    {% if can("/jde-files/journal/load") %}
+    <form method="post" action="/jde-files/journal/load" class="stack" data-busy="Loading…" data-long>
+      <input type="hidden" name="token" value="{{ journal.token }}">
+      {% if journal.state == "differs" %}
+      <label class="check"><input type="checkbox" name="anyway" value="1" required> Load it though its lines do not add up to the report's Grand Total</label>
+      {% endif %}
+      <div class="row">
+        {% if journal.read and journal.state not in ("same_file", "refused") %}
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>Load this journal</button>
+        {% endif %}
+        {% if journal.read %}<a class="btn" href="/learning?journal={{ journal.token }}#history">Change the payable or tax objects on Learning</a>{% endif %}
+        <a class="btn" href="/jde-files#journal">Cancel</a>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  {% elif can("/jde-files/journal/upload") %}
+  {% call file_form("/jde-files/journal/upload", "Transaction Journal (.csv)", ".csv", "Reading…") %}Read the journal{% endcall %}
+  {% endif %}
+  {% if journals %}
+  <div class="table-wrap"><table class="apc-table" aria-label="JD Edwards journals loaded">
+    <thead><tr><th>File</th><th>G/L dates</th><th class="r">Vouchers</th><th class="r">Coding lines to learn from</th><th>Loaded</th><th></th></tr></thead>
+    <tbody>{% for f in journals %}
+      <tr><td>{{ f.name }}</td><td>{{ f.first_date }} to {{ f.last_date }}</td>
+        <td class="r">{{ f.vouchers | num }}{% if f.counted != f.vouchers %}<br><span class="apc-muted">{{ f.counted | num }} in no other file</span>{% endif %}</td>
+        <td class="r">{{ f.learned_lines | num }}</td>
+        <td>{{ f.when }}{% if f.loaded_by %}<br><span class="apc-muted">{{ f.loaded_by }}</span>{% endif %}</td>
+        <td>{% if can("/jde-files/journal/forget") %}
+          <form method="post" action="/jde-files/journal/forget" data-confirm="Forget {{ f.name }}? Its {{ f.vouchers | num }} vouchers are no longer learned from.">
+            <input type="hidden" name="file_id" value="{{ f.id }}">
+            <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete</span>Forget</button>
+          </form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  <p class="muted">What was learned from it is on <a href="/learning#history">Learning</a>.</p>
+</section>
+
+<section class="card stack" id="vouchers">
+  <h4>5. Vouchers already in JD Edwards</h4>
+  <p class="muted">The voucher list: an invoice entered in JD Edwards already is then caught as a duplicate. Export the
+    supplier ledger inquiry's grid (a row for each pay item) to Excel (.xlsx).</p>
+  {{ loaded_now("vouchers", loaded.vouchers, "voucher", last.vouchers) }}
+  {{ what_was_said("vouchers") }}
+  {% if vouchers %}
+  <div id="vouchers-summary" class="stack">
+    {% if vouchers.name %}<p><b>{{ vouchers.name }}</b> · nothing is loaded yet.</p>{% endif %}
+    {% if vouchers.said %}<ul><li>{{ vouchers.said }}</li></ul>{% endif %}
+    {% if vouchers.problem %}{{ ui.empty_note("This file cannot be loaded as it is.", " " ~ vouchers.problem, "warning") }}{% endif %}
+    {% if vouchers.token and can("/jde-files/vouchers/load") %}
+    <form method="post" action="/jde-files/vouchers/load" class="stack" data-busy="Loading…" data-long>
+      <input type="hidden" name="token" value="{{ vouchers.token }}">
+      {% if not vouchers.problem %}
+      {% if loaded.vouchers %}<label class="check"><input type="checkbox" name="replace" value="1"> Replace the list loaded now (otherwise these vouchers are added to it)</label>{% endif %}
+      {% endif %}
+      <div class="row">
+        {% if not vouchers.problem %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">receipt_long</span>Load these vouchers</button>{% endif %}
+        {% if vouchers.other %}<a class="btn" href="/exports?register={{ vouchers.token }}#register">Pick its columns on Exports</a>{% endif %}
+        <a class="btn" href="/jde-files#vouchers">Cancel</a>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  {% elif can("/jde-files/vouchers/upload") %}
+  {% call file_form("/jde-files/vouchers/upload", "Voucher list (.xlsx)", ".xlsx,.csv", "Reading…") %}Read the voucher list{% endcall %}
+  {% endif %}
+  <p class="muted">The list is cleared on <a href="/exports#register">Exports, under Invoices already in the ERP</a>.</p>
+</section>
+</div>
+{% endblock %}

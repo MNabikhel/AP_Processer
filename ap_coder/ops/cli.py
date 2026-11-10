@@ -167,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
+    p.add_argument("--company", action="store_true",
+                   help="Instead, make a new database a made-up company's that codes to JD Edwards account strings: "
+                   "its chart of accounts, business units, suppliers and last year's journal loaded, seven invoices "
+                   "to review. For a data folder of its own (set AP_PRIVATE_DIR to an empty folder first)")  # fmt: skip
 
     _add_users_command(sub)
 
@@ -463,7 +467,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if server_mode() and workers > 1:
         network["workers"] = workers
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
-    return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
+    from ..web.core import first_run
+
+    store = first_run(Path(args.db), server=server_mode())  # a laptop's new data folder starts with Simple screens
+    return server.serve(host, port, open_browser=not args.no_browser, store=store, **extra)
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Any], bool, int] | None:
@@ -1089,6 +1096,19 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(args.db)
     if args.remove:
         print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
+        return 0
+    if args.company:
+        from .demo import COMPANY_FOLDER, load_company
+
+        try:
+            made = load_company(store, settings)
+        except ValueError as exc:
+            print(f"Not loaded: {exc}", file=sys.stderr)
+            return 1
+        print(f"The made-up company is loaded: {made['truth'].company.name}, {len(made['invoices'])} invoices to "
+              f"review. Its JD Edwards exports and its invoices are in {store.path.parent / COMPANY_FOLDER}. Start "
+              "the dashboard on this data folder to look at it; delete the folder when you are done.",
+              file=sys.stderr)  # fmt: skip
         return 0
     result = load_demo(store, settings)
     print(

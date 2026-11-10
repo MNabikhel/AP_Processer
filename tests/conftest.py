@@ -328,6 +328,44 @@ def cost_centers_demo_template(tmp_path_factory) -> Path:
     return _template(tmp_path_factory, "cost-centers-demo", _sample_cost_centers, _demo)
 
 
+@pytest.fixture(scope="session")
+def chart_company_template(tmp_path_factory) -> SimpleNamespace:
+    """A made-up company that codes each line to a JD Edwards account string (``ops.demo.load_company`` on a new
+    database, with no chat model): its chart of accounts, business units, supplier master, last year's journal and
+    voucher list imported, JD Edwards set the way a department that types its vouchers keys them, and seven invoices
+    read into the review queue by the pipeline. ``path``: the database; ``truth``: the company's books
+    (``bench.jde_company.Truth``); ``invoices``: {name: (the invoice with what AP should key, its id)}, the names
+    ``bench.jde_invoices.NAMED``; ``folder``: the exports and the invoices as files."""
+    made: dict = {}
+
+    def load(store) -> None:
+        from ap_coder.ops.demo import load_company
+        from tests.webclient import web_settings
+
+        made.update(load_company(store, web_settings()))
+
+    path = _template(tmp_path_factory, "chart-company", load)
+    return SimpleNamespace(path=path, folder=path.parent / "demo_company", truth=made["truth"],
+                           invoices=made["invoices"])  # fmt: skip
+
+
+@pytest.fixture
+def chart_company(chart_company_template, tmp_path) -> SimpleNamespace:
+    """The made-up company in a database of the test's own (a copy of ``chart_company_template``, with its ``truth``,
+    ``invoices`` and ``folder``): ``store``."""
+    store = copy_database(chart_company_template.path, tmp_path / "private" / "ap_coder.db")
+    return SimpleNamespace(**{**vars(chart_company_template), "store": store})
+
+
+@pytest.fixture
+def chart_company_client(chart_company):
+    """The dashboard on the made-up company's database (``chart_company.store``), as this computer's browser opens
+    it."""
+    from tests.webclient import client_for
+
+    return client_for(chart_company.store)
+
+
 @pytest.fixture
 def demo_db(demo_template):
     """The demo invoices, made once a run: what a test file's ``store`` copies (tests/stores.py ``demo_store``). A

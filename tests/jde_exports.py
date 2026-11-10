@@ -67,17 +67,18 @@ LONG_NAME = "GREAT PLAINS INDUSTRIAL EQUIPMENT RENTAL"  # 40 characters; the vou
 
 def sample_pay_items() -> list[dict[str, Any]]:
     """Eleven pay items of seven vouchers: one of three pay items (one negative: 700.00 in all), one in USD (1,100.00
-    by its foreign amounts), one with a purchase order, the same document number in a second company, one with no
+    by its foreign amounts, with a purchase order), the same document number in a second company, one with no
     invoice number and one adding up to nothing."""
     courier = (410002, "QUICKSHIP COURIER CANADA LTD")
+    usd = {"currency": "USD", "order": "00051234"}
     return [
         pay_item(700101, "001", 214.20, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "INV-0042"),
         pay_item(700102, "001", 300.00, *courier, "7-100-20001", batch=5550002),
         pay_item(700102, "002", 494.25, *courier, "7-100-20001", batch=5550002),
         pay_item(700102, "003", -94.25, *courier, "7-100-20001", batch=5550002),
-        pay_item(700103, "001", 642.90, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "ML-3318", order="00007731"),
-        pay_item(700104, "001", 1370.00, 410009, LONG_NAME, "US-5001", foreign=1000.00, currency="USD"),
-        pay_item(700104, "002", 137.00, 410009, LONG_NAME, "US-5001", foreign=100.00, currency="USD"),
+        pay_item(700103, "001", 642.90, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "ML-3318"),
+        pay_item(700104, "001", 1370.00, 410009, LONG_NAME, "US-5001", foreign=1000.00, **usd),
+        pay_item(700104, "002", 137.00, 410009, LONG_NAME, "US-5001", foreign=100.00, **usd),
         pay_item(700105, "001", 50.00, 410001, "MAPLE LEAF COFFEE SERVICES INC.", BLANK),
         pay_item(700106, "001", 80.00, *courier, "V-77"),
         pay_item(700106, "002", -80.00, *courier, "V-77"),

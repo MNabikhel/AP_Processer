@@ -111,6 +111,8 @@ TOUCHPOINTS = {
     "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
     "ap_coder/core/paths.py": "git log -1 on this checkout, for its build (no network)",
+    "ap_coder/ops/safety.py": "socket.gethostname: this computer's own name, for the address of the team's server "
+    "in a refusal (D-211); whether that server answers is asked through scripts/running.py on 127.0.0.1",
     "ap_coder/ops/service.py": "the company server's service: urllib to its own dashboard on 127.0.0.1 (/healthz, "
     "/shutdown; no proxy)",
     "ap_coder/bench/load.py": "the load test (a developer's bench, never run by the launcher): httpx and urllib to the "

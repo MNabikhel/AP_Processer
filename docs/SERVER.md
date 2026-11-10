@@ -1767,7 +1767,7 @@ the *Users* page, so add the second approver from the console (`users add`), or 
 2. **Say where the data is, and that this is the server**, in an administrator Command Prompt (then open a new one):
 
    ```bat
-   setx /M AP_PRIVATE_DIR C:\Users\pat\APCoder
+   setx /M AP_PRIVATE_DIR C:\Users\you\APCoder
    setx /M AP_SERVER_MODE 1
    ```
 
@@ -1776,7 +1776,7 @@ the *Users* page, so add the second approver from the console (`users add`), or 
 4. **Start AP Coder as the server**, one of two ways:
    - *The guide's way, a service* (steps 2 and 6): it runs as its own account, `APCoderService`, whether anyone is
      logged on or not, and comes back after a restart. That account can't open a folder inside the owner's profile
-     (`C:\Users\pat\...`): give it the permissions of step 2 on the AP Coder folder and the data folder, or, with AP
+     (`C:\Users\you\...`): give it the permissions of step 2 on the AP Coder folder and the data folder, or, with AP
      Coder closed, move both out of the profile first (`C:\APCoder\APProcessor`, `C:\APCoderData`: copy the whole
      data folder, and give step 2 of this list the new place). Then:
 
@@ -1789,8 +1789,8 @@ the *Users* page, so add the second approver from the console (`users add`), or 
      on and the window is open, and nothing starts it again after a restart. Write `server.json` in the data folder:
 
      ```json
-     {"port": 8501, "host": "0.0.0.0", "certfile": "C:\\Users\\pat\\APCoder\\tls\\apcoder.pem",
-      "keyfile": "C:\\Users\\pat\\APCoder\\tls\\apcoder.key.pem", "workers": 4, "capture_processes": 2,
+     {"port": 8501, "host": "0.0.0.0", "certfile": "C:\\Users\\you\\APCoder\\tls\\apcoder.pem",
+      "keyfile": "C:\\Users\\you\\APCoder\\tls\\apcoder.key.pem", "workers": 4, "capture_processes": 2,
       "allowed_folders": ["<the second backup folder>"], "time_zone": "America/Toronto"}
      ```
 
