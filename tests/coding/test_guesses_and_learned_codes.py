@@ -252,17 +252,41 @@ def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnin
     )
 
 
-# --- B-468: the demo before the first real import ---------------------------------------------------------------------
+# --- The demo invoices on Import invoices: said while they are loaded, never asked to be removed (was B-468) ----------
 
 
-def test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice(tmp_path, demo_template):
+def _demo_notice(client) -> str:
+    """Import invoices' notice that demo invoices are loaded ("" when it shows none)."""
+    page = client.get("/process").text
+    return page.split('id="demo-loaded"', 1)[1].split("</div></div>", 1)[0] if 'id="demo-loaded"' in page else ""
+
+
+def test_the_import_page_says_demo_invoices_are_loaded_and_never_asks_to_remove_them(tmp_path, demo_template):
+    from ap_coder.ops.demo import remove_demo
+    from tests.web.test_server_web import account, log_in, server_client
 
     store = copy_database(demo_template, tmp_path / "private" / "ap.db")
     client = client_for(store)
-    assert "Remove the demo invoices before you import your own" in client.get("/process").text
     line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
-    store.add_invoice(tmp_path / "real.pdf", _invoice([line]), {"requires_review": True})
-    assert "Remove the demo invoices before you import your own" not in client.get("/process").text
+    for own in (False, True):  # the demo alone, then with an invoice of your own beside it
+        if own:
+            store.add_invoice(tmp_path / "real.pdf", _invoice([line]), {"requires_review": True})
+        notice = _demo_notice(client)
+        assert "<b>10 demo invoices loaded.</b>" in notice, own
+        assert "in the review queue, the exports and what AP Coder learns, beside your own" in notice
+        assert 'href="/settings/data#demo"' in notice  # where they can be removed, for those who may
+        page = client.get("/process").text
+        assert "Remove the demo invoices before" not in page and "Ask an Admin" not in page  # a flag, never an order
+        assert 'id="upload-form"' in page  # and nothing is blocked
+    assert store.demo_count() == 10  # nor removed
+    account(store, "ann", "clerk", "Ann Lee")  # where people sign in, a Clerk may not remove them: told who can
+    ann = server_client(store)
+    log_in(ann, "ann")
+    notice = _demo_notice(ann)
+    assert "<b>10 demo invoices loaded.</b>" in notice and "An Admin can remove them in Settings" in notice
+    assert "href=" not in notice
+    remove_demo(store)
+    assert _demo_notice(client) == ""  # none loaded: nothing to say
 
 
 # --- B-469: long overdue, and an invoice dated more than a year back --------------------------------------------------

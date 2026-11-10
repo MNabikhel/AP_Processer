@@ -821,14 +821,11 @@ def process_page(request: Request) -> HTMLResponse:
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     steps, coming, links = shown_setup(request, steps, next_step(steps))
-    demo_count = store.demo_count()
     files, not_read, folder_note = (shared_files if server_mode(request) else folder_files)(store)
     return render(
         request, "process.html", "process",
-        # The demo still loaded and none of your own invoices yet: asked to remove it first (in Settings → Data &
-        # backups, where it was loaded: D-221), so its reviewer, lessons and vendors don't mix into your numbers
-        # (B-468).
-        demo_first=bool(demo_count) and demo_count >= total,
+        # (Demo invoices loaded are said on the page from every page's ``demo_count``: a notice, never asked to be
+        # removed, with your own invoices there or not; removed in Settings → Data & backups, D-221.)
         steps=steps,
         step_links=links,
         steps_done=steps_done,

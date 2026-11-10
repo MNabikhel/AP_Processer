@@ -430,7 +430,7 @@ def _demo_section(client) -> str:
 
 def test_demo_invoices_load_and_remove(client, store):
     """D-221: the demo invoices are loaded and removed in Settings → Data & backups, which says how many are loaded;
-    a first start, the queue and Import invoices say nothing of them."""
+    a first start, the queue and Import invoices say nothing of them while none is loaded."""
     for page in ("/review", "/process"):
         assert "demo invoices" not in client.get(page).text.lower(), page
     section = _demo_section(client)
@@ -445,7 +445,7 @@ def test_demo_invoices_load_and_remove(client, store):
     for page in ("/review", "/process"):  # the pages keep to their work: no card to load or remove them
         text = client.get(page).text
         assert "/demo/remove" not in text and "/demo/load" not in text, page
-    assert 'href="/settings/data#demo"' in client.get("/process").text  # (B-468's warning says where to remove them)
+    assert 'href="/settings/data#demo"' in client.get("/process").text  # (its notice says where they can be removed)
     back = re.search(r'name="back" value="([^"]+)"', section).group(1)
     assert client.post("/demo/remove", data={"back": back}, headers=PAGE).status_code == 400  # not ticked
     assert store.demo_count() == 10

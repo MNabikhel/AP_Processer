@@ -5416,6 +5416,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     which says how many are loaded; the routes and their roles are unchanged (an Admin's in server mode), and so
     is `python -m ap_coder demo`. Import invoices still warns while the demo is loaded and none of your own
     invoices are (B-468), and points to Settings.
+    - **Amended (10 Nov 2026): a flag, never an order.** That warning said "Remove the demo invoices before you
+      import your own" and went away with the first invoice of your own, when the demo was still loaded. Import
+      invoices now says, for as long as any demo invoice is loaded (your own there or not): how many are loaded,
+      that demo invoices are in the review queue, the exports and what AP Coder learns beside your own, and where
+      they can be removed (the link to Settings → Data & backups for those who may; "An Admin can remove them"
+      for the others). A plain notice: nobody is told to remove them, and nothing is refused, removed or sent
+      elsewhere because they are loaded. `/demo/load` still refuses to add the samples beside invoices of your
+      own (D-137), and `/demo/remove` removes them only when asked, ticked.
+      (`ap_coder/web/templates/process.html`, every page's `demo_count`;
+      `tests/coding/test_guesses_and_learned_codes.py`)
   - *An older data folder* keeps showing every page (`first_run` leaves an existing database as it is), so after an
     update the person saw the old menu and wondered whether it had worked. A laptop's database on which the
     Screens choice was never saved shows a card on the queue page, once: what is new, "Use the simple screens" or
