@@ -20,8 +20,9 @@ SCROLLBAR = 17
 WIDTHS = (1000, 1100, 1183, 1200, 1217, 1280, 1366, 1440, 1536, 1819, 1920, 2560)
 HEIGHTS = (640, 800, 1080)
 TWO_PANES = 1200  # the window's width from which the invoice and the form are side by side
-BAR = ("html {overflow-y: scroll !important;} ::-webkit-scrollbar {width: %dpx; height: %dpx; background: #e5e7eb;} "
-       "::-webkit-scrollbar-thumb {background: #9ca3af;}") % (SCROLLBAR, SCROLLBAR)  # fmt: skip
+BAR = ("html {overflow-y: scroll !important;} "
+       f"::-webkit-scrollbar {{width: {SCROLLBAR}px; height: {SCROLLBAR}px; background: #e5e7eb;}} "
+       "::-webkit-scrollbar-thumb {background: #9ca3af;}")  # fmt: skip
 
 # What one window shows: the page's widths, what is drawn outside its card (a box, a button, a cell or a label whose
 # edge is past its card's and that nothing of the card clips), and where the first line and Approve are.
@@ -43,14 +44,21 @@ MEASURE = """() => {
       if (!seen(e) || e.closest(".pop-body, [hidden]") || clipped(e, card)) continue;
       const r = e.getBoundingClientRect();
       if (r.width && (r.right > c.right + 1 || r.left < c.left - 1)) {
-        outside.push(`${e.tagName.toLowerCase()}.${e.className || e.name || ""} ${Math.round(r.left)}-${Math.round(r.right)}` +
-          ` of ${card.className.split(" ").slice(0, 3).join(".")} ${Math.round(c.left)}-${Math.round(c.right)}`);
+        const what = `${e.tagName.toLowerCase()}.${e.className || e.name || ""}`;
+        const of = card.className.split(" ").slice(0, 3).join(".");
+        const at = (x) => `${Math.round(x.left)}-${Math.round(x.right)}`;
+        outside.push(`${what} ${at(r)} of ${of} ${at(c)}`);
       }
     }
   }
-  const box = (e) => { if (!seen(e)) return null; const r = e.getBoundingClientRect(); return [r.top, r.bottom, r.left, r.right]; };
+  const box = (e) => {
+    if (!seen(e)) return null;
+    const r = e.getBoundingClientRect();
+    return [r.top, r.bottom, r.left, r.right];
+  };
   return {
-    inner: innerWidth, client: de.clientWidth, scroll: de.scrollWidth, height: innerHeight, outside: outside.slice(0, 6),
+    inner: innerWidth, client: de.clientWidth, scroll: de.scrollWidth, height: innerHeight,
+    outside: outside.slice(0, 6),
     line: box(document.querySelector('[data-grid="lines"] [data-row] input[data-account]')),
     approve: box(document.querySelector("[data-approve]")),
     bar: box(document.querySelector(".inv-actionbar")),
