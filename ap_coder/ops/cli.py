@@ -167,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
+    p.add_argument("--company", action="store_true",
+                   help="Instead, make a new database a made-up company's that codes to JD Edwards account strings: "
+                   "its chart of accounts, business units, suppliers and last year's journal loaded, seven invoices "
+                   "to review. For a data folder of its own (set AP_PRIVATE_DIR to an empty folder first)")  # fmt: skip
 
     _add_users_command(sub)
 
@@ -177,6 +181,14 @@ def build_parser() -> argparse.ArgumentParser:
     from . import backup_cmd
 
     backup_cmd.add_parser(sub)  # the backups from the console (D-143)
+
+    from . import chart_cmd
+
+    chart_cmd.add_parser(sub)  # the chart of accounts and the business units from JD Edwards' exports (D-209)
+
+    from . import journal_cmd
+
+    journal_cmd.add_parser(sub)  # last year's coding from JD Edwards' Transaction Journal
 
     _add_hub_command(sub)
 
@@ -219,6 +231,11 @@ def _add_serve_commands(sub: Any) -> None:
         p.add_argument("--new-database", action="store_true",
                        help="Server mode: begin with a new, empty database although this data folder had one (its "
                        "file is missing): only on purpose; else restore a backup (D-188)")  # fmt: skip
+        p.add_argument("--without-sign-in", action="store_true",
+                       help="Open, in laptop mode again, a data folder that was set up to serve a team (it has "
+                       "sign-in accounts, or server settings): on purpose, with no sign-in for whoever uses this "
+                       "computer. The accounts stay in the database, unused. Only while the server is stopped "
+                       "(D-211)")  # fmt: skip
         p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
         p.add_argument("--capture-work", action="store_true", help=argparse.SUPPRESS)  # (its capture processes)
 
@@ -298,8 +315,21 @@ def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
     p = sub.add_parser(
         "pilot-score", help="The pilot's score: compare what AP Coder approved with what AP posted in JD Edwards"
     )
-    p.add_argument("--vouchers", required=True, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
+    p.add_argument("--vouchers", default=None, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
     p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")
+    p.add_argument(
+        "--journal", nargs="?", const="", default=None, metavar="FILE",
+        help="How AP Coder would have coded last year's vouchers: the last months of the Transaction Journal "
+             "(R09321 as CSV; no FILE: the journal loaded here) held out and coded from the months before. With "
+             "--proposed: the journal the keyed accounts are read from",
+    )  # fmt: skip
+    p.add_argument("--hold-out", type=int, default=2, metavar="N",
+                   help="With --journal: how many of the journal's last months are held out (default 2)")  # fmt: skip
+    p.add_argument(
+        "--proposed", action="store_true",
+        help="Score what AP Coder proposed for the invoices here, in review or approved, against the vouchers keyed "
+             "for them: --vouchers the voucher list, the accounts from the journal (--journal FILE, or loaded here)",
+    )  # fmt: skip
     p.add_argument("-o", "--out", default=None, help="Folder for the report (default: pilot_score in the data folder)")
     p.add_argument("--implied-decimals", action="store_true", help="Amounts without a decimal point (550 = 5.50)")
     p.add_argument("--from", dest="start", default="", help="Only invoices dated on or after this day (YYYY-MM-DD)")
@@ -400,12 +430,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return server.run_background(Store(Path(args.db)))
     if args.capture_work:  # one of its capture processes, which read the import queue (D-168)
         return server.run_capture(Store(Path(args.db)))
-    from .safety import serve_refusal
+    from .safety import serve_refusal, team_server
 
     refused = serve_refusal(Path(args.db), server_mode(), args.new_database)  # its folder checked first (D-188)
     if refused:
         print(refused, file=sys.stderr)
         return 2
+    # Laptop mode never opens, by accident, the data a server-mode AP Coder serves with sign-in (D-211).
+    team = None if server_mode() else team_server(private_dir(), Path(args.db))
+    if team:
+        why, to_do = team.refusal(args.without_sign_in)
+        if why:
+            print(f"{why} {to_do}.", file=sys.stderr)
+            if team.running and not args.no_browser:
+                server.open_in_browser(team.address)
+            return 2
+        print(team.on_purpose(), file=sys.stderr)
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
@@ -440,7 +480,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if server_mode() and workers > 1:
         network["workers"] = workers
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
-    return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
+    from ..web.core import first_run
+
+    store = first_run(Path(args.db), server=server_mode())  # a laptop's new data folder starts with Simple screens
+    return server.serve(host, port, open_browser=not args.no_browser, store=store, **extra)
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Any], bool, int] | None:
@@ -1038,9 +1081,43 @@ def cmd_export_training(args: argparse.Namespace) -> int:
     return 0 if counts["invoices"] else 1
 
 
+def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
+    """``pilot-score --journal`` (last year's journal, its last months held out) and ``pilot-score --proposed`` (what
+    AP Coder proposed for real invoices against the vouchers keyed for them): the report's first paragraph, said."""
+    from . import journal_score, proposed_score
+    from .pilot_score import ExportError
+
+    store = Store(args.db)
+    if args.proposed and not args.vouchers:
+        print("pilot-score --proposed needs the voucher list: --vouchers HEADERS.xlsx", file=sys.stderr)
+        return 2
+    try:
+        if args.proposed:
+            report, folder = proposed_score.run(store, args.vouchers, args.journal or None, args.out,
+                                                implied_decimals=args.implied_decimals)  # fmt: skip
+            said, module = [proposed_score.paragraph(report)], proposed_score
+        else:
+            report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
+            said = [journal_score.paragraph(report), journal_score.figures_said(report), journal_score.UPPER_BOUND]
+            module = journal_score
+    except ExportError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print("\n".join(said))
+    print(f"Report: {folder / module.REPORT}")
+    print(f"The misses, one per row: {folder / module.MISSES}")
+    return 0
+
+
 def cmd_pilot_score(args: argparse.Namespace) -> int:
     from .pilot_score import ExportError, run
 
+    if args.proposed or args.journal is not None:
+        return _pilot_score_of_past_vouchers(args)
+    if not args.vouchers:
+        print("pilot-score needs the voucher export: --vouchers F0411.xlsx (or --journal, for last year's journal)",
+              file=sys.stderr)  # fmt: skip
+        return 2
     try:
         report, folder = run(Store(args.db), args.vouchers, args.distribution, args.out,
                              implied_decimals=args.implied_decimals, start=args.start, end=args.end,
@@ -1066,6 +1143,22 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(args.db)
     if args.remove:
         print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
+        return 0
+    if args.company:
+        from .demo import COMPANY_FOLDER, load_company
+
+        try:
+            made = load_company(store, settings)
+        except ValueError as exc:
+            print(f"Not loaded: {exc}", file=sys.stderr)
+            return 1
+        from ..web.core import SCREENS, SIMPLE
+
+        store.set_setting(SCREENS, SIMPLE)  # as a new laptop installation starts: the short menu
+        print(f"The made-up company is loaded: {made['truth'].company.name}, {len(made['invoices'])} invoices to "
+              f"review. Its JD Edwards exports and its invoices are in {store.path.parent / COMPANY_FOLDER}. Start "
+              "the dashboard on this data folder to look at it; delete the folder when you are done.",
+              file=sys.stderr)  # fmt: skip
         return 0
     result = load_demo(store, settings)
     print(
@@ -1103,7 +1196,7 @@ def cmd_users(args: argparse.Namespace) -> int:
     if action == "list":
         found = store.list_users()
         if not found:
-            print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
+            print("No accounts yet. Add the first Admin: python -m ap_coder users add --admin <username>")
         for u in found:
             state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
             codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
@@ -1169,6 +1262,18 @@ def _backup(args: argparse.Namespace) -> int:
     from . import backup_cmd
 
     return backup_cmd.main(args)
+
+
+def _chart(args: argparse.Namespace) -> int:
+    from . import chart_cmd
+
+    return chart_cmd.main(args)
+
+
+def _journal(args: argparse.Namespace) -> int:
+    from . import journal_cmd
+
+    return journal_cmd.main(args)
 
 
 def cmd_hub(args: argparse.Namespace) -> int:
@@ -1258,6 +1363,8 @@ def main(argv: list[str] | None = None) -> int:
         "users": lambda: cmd_users(args),
         "jde": lambda: _jde(args),
         "backup": lambda: _backup(args),
+        "chart": lambda: _chart(args),
+        "journal": lambda: _journal(args),
         "hub": lambda: cmd_hub(args),
     }
     try:

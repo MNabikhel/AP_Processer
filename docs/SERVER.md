@@ -6,7 +6,9 @@ their browser over HTTPS and log in with their own account, and nothing is insta
 offline: AP Coder and LM Studio run on the server and connect to nothing on the internet.
 
 Laptop mode is not changed by any of this: a laptop still runs AP Coder for one person at 127.0.0.1, with no
-logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2).
+logins. The server mode is switched on by `AP_SERVER_MODE=1` (step 2). A laptop that ran AP Coder for one person and
+now lets a few colleagues in, on the same data:
+[section 16](#16-from-one-persons-laptop-to-a-few-people-on-the-same-laptop).
 
 On a Mac (a Mac mini, one of the pilot's layouts in section 1) AP Coder runs as a LaunchDaemon instead of a
 scheduled task: [section 14](#14-on-a-mac) says what is different there; on Linux it is a systemd unit:
@@ -27,7 +29,8 @@ Contents: [1. What the server needs](#1-what-the-server-needs) · [2. Install](#
 [6. The service](#6-the-service) · [7. First admin](#7-the-first-admin) · [8. LM Studio](#8-lm-studio-on-the-same-server)
 · [9. Backups](#9-backups) · [10. Users and roles](#10-users-and-roles) · [11. Updating](#11-updating-and-going-back)
 · [12. Health and monitoring](#12-health-and-monitoring) · [13. Troubleshooting](#13-troubleshooting) ·
-[14. On a Mac](#14-on-a-mac) · [15. On Linux](#15-on-linux)
+[14. On a Mac](#14-on-a-mac) · [15. On Linux](#15-on-linux) ·
+[16. From a laptop to a few people](#16-from-one-persons-laptop-to-a-few-people-on-the-same-laptop)
 
 ## 1. What the server needs
 
@@ -158,15 +161,21 @@ Why these numbers:
   from their sizes, above), AP Coder about 3 GB (2.0 to 2.5 GB measured above, more while scans are read) and macOS about
   4 GB, so 32 GB holds them with room for the database's cache. With a graphics card the models sit in the card's
   memory.
-- **Windows 11 Pro** runs the server mode too, technically: the service is a Task Scheduler task (step 6), not a Windows
-  service, and Task Scheduler is part of Windows 11 too. But Microsoft's Windows 11 licence (its OEM terms of April
-  2024, sections 2(c)(v) and 2(d)(iii)) says you may not "use the software as server software or to operate the device
-  as a server", except that up to 20 other devices may use its file, print, Internet information, connection-sharing and
-  telephony services. Whether serving AP Coder to the team from it is allowed is the company's licensing decision; for
-  anyone but the computer's own user, the safe choice is Windows Server. CI tests AP Coder on Windows Server only
-  (GitHub's Windows machines; the task itself is not registered there, its commands are checked), so on Windows 11 run
-  `service install` and `service status` on that computer before staff use it. A laptop serving others stays docked and
-  plugged in, with sleep off and its battery set to stop charging at about 80% (its battery then covers a power cut).
+- **Windows 11 Pro and Windows 11 Enterprise** run the server mode too, technically: the service is a Task Scheduler
+  task (step 6), not a Windows service, and Task Scheduler is part of Windows 11 too. But Microsoft's Windows 11
+  licence (its OEM terms of April 2024, sections 2(c)(v) and 2(d)(iii)) says you may not "use the software as server
+  software or to operate the device as a server", except that up to 20 other devices may use its file, print, Internet
+  information, connection-sharing and telephony services. Those are Windows 11 Pro's terms as it comes with a
+  computer. Windows 11 Enterprise is licensed under the company's own volume licensing agreement (Microsoft's Product
+  Terms for the Windows desktop operating system), which this guide has not read for this use: do not take it to
+  allow more than Pro's terms without checking. Whether serving AP Coder to the team from a Windows 11 computer,
+  Pro or Enterprise, is allowed is the company's licensing decision (its licensing contact or IT knows which
+  agreement applies); for anyone but the computer's own user, the safe choice is Windows Server. CI tests AP Coder
+  on Windows Server only (GitHub's Windows machines; the task itself is not registered there, its commands are
+  checked), so on Windows 11 run `service install` and `service status` on that computer before staff use it. A
+  laptop serving others stays docked and plugged in, with sleep and hibernation off, closing the lid set to do
+  nothing, and its battery set to stop charging at about 80% (its battery then covers a power cut);
+  [section 16](#16-from-one-persons-laptop-to-a-few-people-on-the-same-laptop) has the steps.
 - **Python**: the offline bundle has packages for Python 3.11 to 3.14. Install Python 3.12 from python.org's offline
   installer (copy it in): *Customize installation* → *Install for all users*, and *Add Python to environment
   variables*.
@@ -263,6 +272,42 @@ move apcoder.key.pem D:\APCoderData\tls\apcoder.key.pem
 (With OpenSSL 3 and an old `.pfx`, add `-legacy` to each `pkcs12` command if it says "unsupported".) If the CA gave a
 `.cer` file and the key separately, `certutil -encode apcoder.cer apcoder.crt.pem` turns the certificate into PEM;
 `certutil` can't write the private key as PEM, so use `openssl` for that. Delete the copies left on the IT PC.
+
+### Without a company CA: a self-signed certificate (a prototype)
+
+For a prototype among a few colleagues, before IT is asked for a certificate, AP Coder runs with one you make
+yourself. AP Coder makes no certificate, and neither Windows nor the bundle's Python writes the two PEM files on its
+own (PowerShell's `New-SelfSignedCertificate` makes one in the Windows certificate store, whose private key still
+needs `openssl` to become a PEM file). So use `openssl`: Git for Windows has it
+(`C:\Program Files\Git\usr\bin\openssl.exe`, version 1.1.1 or newer for `-addext`), and so has any Mac or Linux
+computer, where the two files can be made and copied over. In the data folder's `tls` folder (make it first):
+
+```bat
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=AP-LAPTOP" -addext "subjectAltName=DNS:AP-LAPTOP,DNS:ap-laptop.company.local" -keyout apcoder.key.pem -out apcoder.pem
+```
+
+It writes `apcoder.pem` (the certificate) and `apcoder.key.pem` (its private key: it never leaves the data folder).
+
+- **The name** is the one colleagues type: the computer's own name (`hostname` shows it) and, when the office DNS
+  gives it one, its full name. Not its address: a laptop's changes between the Wi-Fi and the dock. AP Coder answers to
+  the computer's own names without `--allowed-hosts` (step 4).
+- **825 days, and the same two files all that time.** AP Coder tells each browser to come back over HTTPS only, for
+  a year (HSTS): once a browser trusts this certificate, another one it does not trust is an error with no way
+  past. An Admin sees a banner on every page from 30 days before the certificate ends.
+- **What colleagues see** at `https://AP-LAPTOP:8501`: the browser's warning page ("Your connection isn't private",
+  `NET::ERR_CERT_AUTHORITY_INVALID` in Edge and Chrome), because nobody their PC trusts signed the certificate.
+  *Advanced* → *Continue to AP-LAPTOP (unsafe)* opens AP Coder, the connection encrypted all the same; the warning
+  comes back in each new browser session. Someone who clicks past it can't tell the laptop from another computer
+  answering in its name, so this is for a few people on the office network, for a short time.
+- **To trust it on a few PCs** (no warning): give each colleague `apcoder.pem` (never the key file) and, in their own
+  Command Prompt, `certutil -user -addstore Root apcoder.pem`. Windows asks them to confirm and shows the
+  certificate's thumbprint: it must be the one `openssl x509 -in apcoder.pem -noout -fingerprint -sha1` prints on the
+  laptop. Edge and Chrome then open AP Coder without a warning once they are started again (Firefox keeps its own
+  list). A company policy may forbid adding a certificate this way: then it is IT's to do, or to give a real one.
+  This was not tried on Windows for this guide: try it on one colleague's PC first.
+- **Ask IT for a real certificate** (above) before more than a handful of people use AP Coder, when colleagues may
+  not trust a certificate on their own PCs, and at the latest when AP Coder moves to a server of its own: a
+  certificate from the company's CA for a name in its DNS shows no warning and needs nothing on anyone's PC.
 
 For a first test only, AP Coder can run without HTTPS (`--insecure-http` in step 6): passwords then cross the network
 readable. Never leave it that way.
@@ -449,8 +494,12 @@ up to 200 files and 250 MB per upload, each file up to 50 MB (a saved email 100 
 120 uploads an hour; more is refused with a plain message. A larger batch: an Admin puts the files in the invoices
 folder.
 
-Don't double-click `APProcessor.bat` on the server once the service runs: it would start a second AP Coder on the same
-data. Use `service stop` / `service start`.
+A double-click on `APProcessor.bat` on the server (or on a desktop shortcut left from before it was the server) starts
+no second AP Coder on the server's data: while the server runs it opens the server's address in the browser, and
+while it is stopped it says so and starts nothing, since the data has sign-in accounts (or the sign-in codes' key, or
+its `server.json`). The same holds for `python -m ap_coder serve` without `--server`. Stop and start the server with
+`service stop` / `service start`. To open that data on this computer alone again, with no sign-in, takes a step made
+on purpose: `python -m ap_coder serve --without-sign-in`, only while the server is stopped (D-211).
 
 ## 7. The first admin
 
@@ -650,10 +699,14 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
   backup (`backup list`, then `backup restore <name>`, as above), or put the file back. To begin again with an empty
   database on purpose, run `.venv\Scripts\python.exe -m ap_coder serve --server --new-database` once (it makes the
   database; stop it with Ctrl+C), then `service start`.
-- **A new server** (the old one lost): install AP Coder (step 2) and the service, then restore from the share alone,
-  **before making the first Admin (step 7)**:
+- **A new server** (the old one lost, or AP Coder moving from a laptop to a server of its own): install AP Coder
+  (step 2) and the service **without starting it** (`service install ... --no-start`, step 6), then restore from the
+  share alone, **before making the first Admin (step 7)**:
   `.venv\Scripts\python.exe -m ap_coder backup list --from \\fileserver\Backups\APCoder`, then
-  `backup restore <name> --from \\fileserver\Backups\APCoder`. The database and every file come back into the new
+  `backup restore <name> --from \\fileserver\Backups\APCoder`, then `service start`. A restore from the console
+  needs AP Coder stopped: when the service runs already (`service install` starts it), the restore says "AP Coder is
+  running on D:\APCoderData: stop it first" and changes nothing, so run `service stop` first; the empty database
+  that first start made is then replaced like any other. The database and every file come back into the new
   data folder, and the backup's accounts with it, because the new server has none yet to keep. Once an account
   exists, a restore keeps the accounts as they are (above): restored after step 7, only that new Admin could log
   in, and the backup's other people would have to be added again. Set again what a backup does not hold: the
@@ -1134,8 +1187,8 @@ LaunchDaemon itself never changes. `apc server-update --back` points the link ba
 next start as section 11 says, except what only root can do (the link): then the service stays stopped and its log
 says to run `apc server-update` again.
 
-Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
-the same data. Use `service stop` and `service start`.
+A double-click on `APProcessor.command` on the Mac mini starts no second AP Coder on the server's data (step 6 of the
+Windows steps says what it does instead). Use `service stop` and `service start`.
 
 ### A network share (the backups' second copy, the AP inbox)
 
@@ -1470,8 +1523,8 @@ never change it while the service runs. An update cut short (a power cut) is dea
 11 says, except what only root can do (the link): then the service stays stopped and its log says to run `apc
 server-update` again.
 
-Don't run `APProcessor.command` on the machine once the service runs: it would start a second AP Coder on the same
-data. Use `service stop` and `service start`.
+`APProcessor.command` run on the machine starts no second AP Coder on the server's data (step 6 of the Windows steps
+says what it does instead). Use `service stop` and `service start`.
 
 ### The firewall and remote access
 
@@ -1681,3 +1734,113 @@ night's backup is in `backups` and on the share (step 9) and that the disk keeps
 | Nothing answers after a power cut | The disk waits for its passphrase (*Encryption*: the TPM refused), or the firmware's power-on after a power failure is off. |
 | The log says it can't write a file in the data folder | A file root made there: `apc service start` hands root's files back to the account; else `ls -l` shows whose it is. |
 | `systemctl status apcoder` says "status=75" | The host asked to be started again: another service host runs (someone ran `service run` in a terminal: end it), or an update cut short was dealt with as it started and the folder to run changed. systemd starts it again within 10 seconds; when it keeps coming back to 75, the end of `logs/service.log` says why. |
+
+## 16. From one person's laptop to a few people on the same laptop
+
+A prototype often starts as one person's AP Coder on a Windows 11 laptop (laptop mode: no logins, 127.0.0.1) and
+then lets a few colleagues in, from the same laptop and the same data folder, during working hours. This section
+is that path. It is a prototype's set-up: the licence question of section 1 comes first, and a server of its own
+(the rest of this guide) comes after.
+
+**What happens to the data.** Nothing is converted or copied: server mode opens the same data folder and database.
+The invoices, their approvals, the parked ones, the lessons, the GL accounts and the tax setup are all there when the
+first Admin signs in. The names on past approvals stay as they were written ("Approved by Pat Lee"); an account
+whose name is the same is taken for that person (their approvals of the day count as theirs, and they may undo
+them), so give the laptop's owner an account with the name they used in laptop mode. The same holds the other way:
+the data folder opens in laptop mode again with everything done in server mode, the accounts left in the database,
+unused (`serve --without-sign-in`, below).
+
+**The one thing lost.** What was typed on a review screen in laptop mode and not yet saved (a draft, kept for "this
+computer") is shown to nobody in server mode, where drafts belong to accounts. It is not deleted, and shows again in
+laptop mode. So approve, park or finish what is open before the change.
+
+**Decide first:** the licence (section 1: Windows 11 Pro and Enterprise); who the Admin is (the laptop's owner, as a
+rule); where the backups' second copy goes (a folder that is not on the laptop's disk); how long a session may sit
+unused (30 minutes unless `server.json` says more, section 10); and, when a second-approval limit is set, who gives
+the second approval: for 7 days an account can't give it to invoices first approved by the Admin who added it from
+the *Users* page, so add the second approver from the console (`users add`), or name a second Admin.
+
+**The ten steps:**
+
+1. **Close laptop mode cleanly.** Finish or approve what is open on a review screen, press *Settings* → *Data &
+   backups* → *Back up now*, and close AP Coder's window. Note the data folder that page names.
+2. **Say where the data is, and that this is the server**, in an administrator Command Prompt (then open a new one):
+
+   ```bat
+   setx /M AP_PRIVATE_DIR C:\Users\you\APCoder
+   setx /M AP_SERVER_MODE 1
+   ```
+
+3. **The certificate**, by the laptop's name: the self-signed one of section 3 (*Without a company CA*), its two files
+   in the data folder's `tls` folder.
+4. **Start AP Coder as the server**, one of two ways:
+   - *The guide's way, a service* (steps 2 and 6): it runs as its own account, `APCoderService`, whether anyone is
+     logged on or not, and comes back after a restart. That account can't open a folder inside the owner's profile
+     (`C:\Users\you\...`): give it the permissions of step 2 on the AP Coder folder and the data folder, or, with AP
+     Coder closed, move both out of the profile first (`C:\APCoder\APProcessor`, `C:\APCoderData`: copy the whole
+     data folder, and give step 2 of this list the new place). Then:
+
+     ```bat
+     .venv\Scripts\python.exe -m ap_coder service install --workers 4 --certfile C:\APCoderData\tls\apcoder.pem --keyfile C:\APCoderData\tls\apcoder.key.pem --allowed-folders "<the second backup folder>"
+     .venv\Scripts\python.exe -m ap_coder service status
+     ```
+
+   - *The prototype's way, a window the owner opens each morning*: it runs as the owner, only while they are logged
+     on and the window is open, and nothing starts it again after a restart. Write `server.json` in the data folder:
+
+     ```json
+     {"port": 8501, "host": "0.0.0.0", "certfile": "C:\\Users\\you\\APCoder\\tls\\apcoder.pem",
+      "keyfile": "C:\\Users\\you\\APCoder\\tls\\apcoder.key.pem", "workers": 4, "capture_processes": 2,
+      "allowed_folders": ["<the second backup folder>"], "time_zone": "America/Toronto"}
+     ```
+
+     and a file `AP Coder server.cmd` holding the two lines `cd /d <the AP Coder folder>` and
+     `.venv\Scripts\python.exe -m ap_coder service run`. Double-click it to start; close its window to stop. (It is
+     the program the service's task runs, started by hand. Don't stop it with `service stop`: that leaves the
+     file `service\stopped` in the data folder, and the next start then ends at once until the file is deleted.)
+     This way was run on Linux for this guide, not on Windows: check on the laptop that closing the window leaves no
+     `python.exe` of AP Coder in Task Manager.
+5. **The firewall**, for the office network only (step 5). A laptop also joins other networks: limit the rule to
+   the profile the office network has (`Get-NetConnectionProfile` in PowerShell shows it: *Domain* only on a
+   computer joined to the company's domain) and to its address range:
+
+   ```bat
+   netsh advfirewall firewall add rule name="AP Coder" dir=in action=allow protocol=TCP localport=8501 profile=domain remoteip=10.0.0.0/16
+   ```
+
+6. **The first Admin** (step 7), with the name the owner used in laptop mode, then the others:
+
+   ```bat
+   .venv\Scripts\python.exe -m ap_coder users add --admin pat --name "Pat Lee"
+   ```
+
+   The owner opens `https://AP-LAPTOP:8501`, chooses a password and sets up the authenticator app, then adds the
+   colleagues on the *Users* page (Clerk; an Approver when a second approval is used), giving each their temporary
+   password in person: it works for 3 days.
+7. **Backups** (step 9): *Settings* → *Data & backups* → *Also copy each backup to* the second folder. The automatic
+   backup is made when AP Coder starts and once a day while it runs, so on a laptop started each morning the day's
+   work is in no backup until the next morning: set `AP_BACKUP_HOURS=15-18` in the data folder's `.env` (a wide
+   window: a closed laptop misses a narrow one), or press *Back up now* before leaving. After any restore, set the
+   second folder again: a restore clears it, and the page says so.
+8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*;
+   Windows Update's restarts outside working hours. A laptop asleep answers nobody; awake again it goes on, and
+   whoever was away longer than the session's idle time logs in again, their typed edits kept. LM Studio: started
+   in the owner's session, or as the task of step 8.
+9. **Colleagues** open `https://AP-LAPTOP:8501` (the name, not an address) and accept the certificate's warning, or
+   trust the certificate first (section 3). Try from one colleague's PC, on the Wi-Fi and on the dock, before telling
+   the others.
+10. **Later, a server of its own**: install AP Coder there with the service not started, restore the newest backup
+    from the second folder before any `users add`, start the service, and set again the `.env`, the allowed folders
+    and the second backup folder (step 9, *A new server*). Everyone signs in there with the same password and the same
+    authenticator app.
+
+**The old desktop shortcut** (and `APProcessor.bat`) is safe to keep: while the server runs, a double-click opens
+`https://AP-LAPTOP:8501` in the browser and starts nothing; while it is stopped, it says so and starts nothing
+(step 6). To go back to laptop mode for good, stop the server (and `service remove`), take `AP_SERVER_MODE` out of
+the system's environment variables, and start with `APProcessor.bat --without-sign-in`: the data has sign-in
+accounts, so each laptop-mode start asks for that option, on purpose (D-211).
+
+**Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
+`service install` and `service status` there, and the task coming back after a Windows Update restart with nobody
+logged on; the hand-started window; the firewall rule's profile on the office Wi-Fi and the dock, and that the port
+is closed on a home network; that colleagues' PCs find the laptop by its name; the lid, sleep and the dock.

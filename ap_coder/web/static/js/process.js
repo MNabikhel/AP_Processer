@@ -55,6 +55,7 @@ function drawJob(snap) {
     ? snap.total ? `Processing ${snap.total} invoice${snap.total === 1 ? "" : "s"}…` : "Processing…"
     : snap.state === "error" ? "Processing stopped" : (snap.result && snap.result.label) || "Processed";
   const pct = snap.total ? Math.round((100 * snap.done) / snap.total) : running ? 5 : 100;
+  if (running) card.querySelector("#job-when").textContent = ""; // (when the run before ended: not this one's)
   bar.style.width = `${pct}%`;
   bar.parentElement.setAttribute("aria-valuenow", String(snap.done));
   bar.parentElement.setAttribute("aria-valuemax", String(snap.total));

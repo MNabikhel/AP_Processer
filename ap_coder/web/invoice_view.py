@@ -34,9 +34,10 @@ import pandas as pd
 
 from ap_coder.ai import verifier
 from ap_coder.ai.extraction import TEXT_EXTENSIONS, ExtractionResult
-from ap_coder.ai.offline_coder import renamed_from
+from ap_coder.ai.offline_coder import renamed_from, supplier_evidence
 from ap_coder.ai.pipeline import finalise_coding
-from ap_coder.ai.suggest import suggest_gl
+from ap_coder.ai.suggest import by_pairs, suggest_gl
+from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.capture.bridge import currency_read, review_issues
 from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date, parse_dates
 from ap_coder.capture.types import DATE_FIELDS, MISSING, Box, CaptureResult
@@ -54,8 +55,10 @@ from ap_coder.coding.line_tax import (
     tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
-from ap_coder.coding.money import tax_right
+from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
+from ap_coder.coding.remark import PERSON, one_line
+from ap_coder.coding.remark import typed as typed_remark
 from ap_coder.coding.review import (
     codes_to_pick,
     coding_from_inputs,
@@ -83,11 +86,12 @@ from ap_coder.coding.tax import (
     supply_source,
     tax_line_ways,
 )
-from ap_coder.coding.taxmath import math_check
+from ap_coder.coding.taxmath import invoice_taxes, math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, expected_tax_numbers, moved_off_hold
+from ap_coder.core.chart import join_account
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
@@ -97,7 +101,7 @@ from ap_coder.core.store.accounts import CURRENCY_CHANGED
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
-from ap_coder.web import identity
+from ap_coder.web import account_lines, identity
 from ap_coder.web.access import may_lift_hold
 from ap_coder.web.document import clean_boxes
 
@@ -128,7 +132,8 @@ FIELD_LABELS = {
 }  # fmt: skip
 LINE_COLUMNS = ("line_number", "description", "quantity", "unit_price", "amount", "predicted_gl_code",
                 "predicted_cost_center", "taxes_applied", "tax_exempt", "tax_status",
-                "reasoning_justification")  # fmt: skip
+                "reasoning_justification", "remark", "remark_from")  # fmt: skip
+LINE_REMARK = "line_remark"  # a line's remark for JD Edwards, one box a row, posted in order (D-213)
 LINE_TAX_CODE = "line_tax_code"  # a line's tax code, one dropdown a row (D-64)
 TAX_COLUMNS = ("tax_type", "province", "rate_pct", "taxable_amount", "tax_amount")
 # The posted names of a grid row's cells (repeated once per row, in order).
@@ -226,19 +231,20 @@ NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount"
 
 
 def _number_cell(value: Any) -> str:
-    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity),
-    which the checks and the page could not use."""
+    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity) or
+    is longer than any amount (27 digits, B-2096), which the checks and the page could not use."""
     text = str(value or "").strip()
     return text if _finite(text) is not None else ""
 
 
 def _finite(value: Any) -> float | None:
-    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number."""
+    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number, or one beyond the largest
+    amount (``money.LARGEST``)."""
     try:
         number = float(str(value or 0).replace(",", "").replace("$", ""))
     except ValueError:
         return None
-    return number if math.isfinite(number) else None
+    return number if abs(number) < LARGEST else None  # (a NaN is under nothing)
 
 
 def _line_number(value: Any) -> int | None:
@@ -303,9 +309,11 @@ class Draft:
                    pay_from_for=pay_from_for)  # fmt: skip
 
     @classmethod
-    def from_form(cls, form: Any, base: Draft) -> Draft:
+    def from_form(cls, form: Any, base: Draft, pairs: Any = None) -> Draft:
         """The screen as posted. A header field missing from the form keeps ``base``'s value; the grids are taken
-        from the form when it says it has them (``grids``), so deleting the last row is an edit too."""
+        from the form when it says it has them (``grids``), so deleting the last row is an edit too. A row's Account
+        box (``account_lines.LINE_ACCOUNT``, with a chart of accounts: ``pairs``) is the line's two codes, whatever
+        the row's hidden cells say: what was typed is kept and checked, never the account the line had."""
         header = {name: str(form.get(name)) if form.get(name) is not None and name not in READ_ONLY
                   else base.header.get(name, "") for name in FORM_FIELDS}  # fmt: skip
         lines, taxes = base.lines, base.taxes
@@ -313,9 +321,12 @@ class Draft:
             keys = form.getlist("line_key")
             cols = {c: form.getlist(name) for c, name in LINE_INPUTS.items()}
             codes = form.getlist(LINE_TAX_CODE)
+            accounts = form.getlist(account_lines.LINE_ACCOUNT)
             lines = []
             for i, key in enumerate(keys):
                 row: dict[str, Any] = {c: (cols[c][i] if i < len(cols[c]) else "") for c in LINE_INPUTS}
+                if i < len(accounts):
+                    row["predicted_gl_code"], row["predicted_cost_center"] = account_lines.posted(accounts[i], pairs)
                 row["line_number"] = _line_number(row["line_number"])
                 row.update({c: _number_cell(row[c]) for c in NUMBER_CELLS if c in row})
                 # The line's tax code (one dropdown a row, posted in order: "GST+PST", "EXEMPT", D-64); a form of
@@ -328,6 +339,13 @@ class Draft:
                     row["taxes_applied"] = [t for t in form.getlist(f"line_tax_{key}") if t in TAX_TYPES]
                     row["tax_exempt"], row["tax_status"] = None, ""  # read as the vendor meant it
                 lines.append(row)
+            # The remark's box (D-213): as posted, a person's once it is not what the line had (``remark.typed``);
+            # a form without the box keeps each line's remark.
+            remarks = form.getlist(LINE_REMARK)
+            for i, (before, row) in enumerate(pair_lines(base.lines, lines)):
+                row["remark"], row["remark_from"] = (
+                    typed_remark(remarks[i], before) if i < len(remarks)
+                    else ((before or {}).get("remark"), (before or {}).get("remark_from")))  # fmt: skip
             tcols = {c: form.getlist(name) for c, name in TAX_INPUTS.items()}
             taxes = [{c: (tcols[c][i] if i < len(tcols[c]) else "") for c in TAX_INPUTS}
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
@@ -600,8 +618,9 @@ def header_values(header: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
                 number = to_number(text)
             except ValueError:
                 number = math.nan
-            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit).
-            if math.isfinite(number):
+            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit); nor
+            # 27 digits, longer than any amount (B-2096).
+            if abs(number) < LARGEST:
                 out[name] = number
             else:
                 problems.append(f"{FIELD_LABELS[name]}: “{text}” is not an amount")
@@ -634,8 +653,7 @@ def gl_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tu
     labels = {UNASSIGNED: NEEDS_GL}
     for row in reference.chart_of_accounts.rows:
         labels[row["gl_code"]] = f"{row['gl_code']} · {short_name(row.get('description', ''))[:44]}"
-    tax_gls = reference.tax.tax_gl_codes()
-    codes = [UNASSIGNED] + [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    codes = [UNASSIGNED, *reference.line_accounts()]
     for li in lines:
         code = _text(li.get("predicted_gl_code"))
         if code and code not in codes:
@@ -644,18 +662,19 @@ def gl_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tu
 
 
 def cc_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """(code, label) of the cost centers ([] when the organisation has none)."""
+    """(code, label) of the cost centers a line may be offered ([] when the organisation has none:
+    ``ReferenceData.line_cost_centers``); one a line has that is not offered, or not in the list, is kept, so it
+    shows and can be fixed."""
     if reference.cost_centers is None:
         return []
-    out = [(UNASSIGNED, NEEDS_CC)] + [
-        (row["cost_center"], f"{row['cost_center']} · {row.get('description', '')[:30]}")
-        for row in reference.cost_centers.rows
-    ]
+    labels = {row["cost_center"]: f"{row['cost_center']} · {row.get('description', '')[:30]}"
+              for row in reference.cost_centers.rows}  # fmt: skip
+    out = [(UNASSIGNED, NEEDS_CC)] + [(code, labels[code]) for code in reference.line_cost_centers() or ()]
     known = {c for c, _ in out}
     for li in lines:
         code = _text(li.get("predicted_cost_center"))
         if code and code not in known:
-            out.append((code, code))
+            out.append((code, labels.get(code, code)))
             known.add(code)
     return out
 
@@ -710,11 +729,13 @@ def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]
 
 
 def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None,
-         vendor_gls: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+         vendor_gls: list[str] | None = None, checked: Analysis | None = None) -> dict[str, Any]:  # fmt: skip
     """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell. ``ai``: the
     invoice as read: a row whose account is still the one the AI only guessed for its line is marked (B-463), not one
     whose account the reviewer, a coding rule or the PO coding put there (B-475). ``vendor_gls``: the accounts the
-    vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list."""
+    vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list.
+    With a chart of accounts imported (``account``) each row is one Account box: what it shows is its ``acct``
+    (``account_lines.row_views``), with the findings and the taxes of ``checked``, the draft's analysis."""
     paired = list(pair_lines((ai or {}).get("line_items") or [], draft.lines))
     guesses = {
         id(row)
@@ -734,7 +755,20 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
     printed = {id(row): renamed_from(before.get("reasoning_justification")) for before, row in paired
                if before and row and before.get("description") == row.get("description")}  # fmt: skip
     codes = tax_choices(draft, reference.tax)
+    account = account_lines.in_use(reference)
+    views = account_lines.row_views(
+        reference, draft.lines, (ai or {}).get("line_items") or [],
+        checked.report.issues if checked is not None and checked.report is not None else (),
+        checked.taxes if checked is not None else None,
+        (checked.output.get("line_items") if checked is not None and checked.coding is not None else None),
+        meals_note(codes["province"]),
+    ) if account else []  # fmt: skip
+    for shown, row in zip(views, draft.lines, strict=False):  # still the model's own guess: to check (B-463)
+        if id(row) in guesses and not shown["state"] and shown["name"]:
+            shown.update(state=account_lines.CHECK, note=account_lines.GUESS)
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
+        "account": account,
+        "acct_empty": account_lines.EMPTY,
         "lines": [
             {
                 **row,
@@ -745,6 +779,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "tax_learned": tax_learned(row),  # taken from what AP approved on the vendor's similar lines (D-70)
                 "tax_inferred": inferred.get(id(row), ""),
                 "read_as": printed.get(id(row), ""),
+                **({"acct": views[i]} if account else {}),
             }
             for i, row in enumerate(draft.lines)
         ],
@@ -1136,9 +1171,10 @@ BLOCK, FIX, LOOK = "block", "err", "warn"
 GROUP_TITLES = {BLOCK: "Before you can approve", FIX: "Must be fixed", LOOK: "Check before approving"}
 
 
-def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[str, Any]:
+def checks_summary(report: Any, errors: list[Any], warnings: list[Any], account: bool = False) -> dict[str, Any]:
     """All the checks as one status: passed, or what needs attention (one line each; details below), grouped:
-    before you can approve (what keeps Approve closed), must be fixed, check before approving."""
+    before you can approve (what keeps Approve closed), must be fixed, check before approving. ``account``: a line
+    is one Account box (a chart of accounts), so a line without its account is one finding, not one a code."""
     low = low_confidence(report) if not errors else []
     items: list[dict[str, Any]] = []
     for bad, text, code, lines in grouped_issues(errors + warnings):
@@ -1149,13 +1185,15 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
                  if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
         field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
         items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
-                      "field": field})  # fmt: skip
+                      "field": field, "lines": lines})  # fmt: skip
     for text in low:
         items.append({"bad": False, "kind": LOOK, "text": text})
+    if account:
+        account_lines.said_once(items)
     if not items:
         return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [], "groups": [],
                 "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
-    counts = {k: sum(1 for i in items if i["kind"] == k) for k in GROUP_TITLES}
+    counts = {k: sum(1 for i in items if i["kind"] == k and not i.get("folded")) for k in GROUP_TITLES}
     groups = [{"kind": k, "title": f"{GROUP_TITLES[k]} ({counts[k]})",
                "items": [i for i in items if i["kind"] == k]} for k in GROUP_TITLES if counts[k]]  # fmt: skip
     title = " · ".join(g["title"] for g in groups)
@@ -1197,6 +1235,32 @@ def checks_details(report: Any) -> list[dict[str, str]]:
             }
         )
     return items
+
+
+def coding_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """What an approval changed of the lines' coding proposed, as the approved invoice says it ("changed: …"): the
+    GL accounts, the cost centers, or both, where it said "GL coding" of a cost center alone (B-2104). "GL coding"
+    still when neither differs from what was proposed (a line changed after a reopen)."""
+    gl = cc = False
+    for before, li in pair_lines(ai.get("line_items") or [], final.get("line_items") or []):
+        s_gl, s_cc = ((before.get("predicted_gl_code"), before.get("predicted_cost_center") or "") if before
+                      else (None, ""))  # fmt: skip
+        gl = gl or (s_gl not in (None, "", UNASSIGNED) and li.get("predicted_gl_code") != s_gl)
+        cc = cc or (bool(s_cc) and (li.get("predicted_cost_center") or "") != s_cc)
+    return {(True, True): "GL accounts and cost centers", (True, False): "GL accounts",
+            (False, True): "cost centers"}.get((gl, cc), EDIT_LABELS["line_coding"])  # fmt: skip
+
+
+def remarks_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """The lines whose remark a person typed over the one suggested, as the approved invoice says it: "remark changed
+    on line 1", "remarks changed on lines 1, 3"; "" when none was."""
+    paired = pair_lines(ai.get("line_items") or [], final.get("line_items") or [])
+    numbers = [str(li.get("line_number")) for before, li in paired if li.get("remark_from") == PERSON
+               and one_line(li.get("remark")) != one_line((before or {}).get("remark"))]  # fmt: skip
+    if not numbers:
+        return ""
+    s = "s" if len(numbers) > 1 else ""
+    return f"remark{s} changed on line{s} {', '.join(numbers)}"
 
 
 def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:
@@ -1283,9 +1347,11 @@ _BLANK_CODES = {None, "", UNASSIGNED}
 def _comparable(output: dict[str, Any], ignore: set[str], cost_centers: bool = True) -> dict[str, Any]:
     out = {k: v for k, v in output.items() if k not in ignore}
     blank = ("predicted_gl_code", "predicted_cost_center")
+    # A remark only a person's: one suggested again (the account changed, the supplier's usual one did) is no edit.
+    remark = ("remark", "remark_from")
     out["line_items"] = [
         {k: ("" if k in blank and (v in _BLANK_CODES or (k == blank[1] and not cost_centers)) else v)
-         for k, v in li.items()}
+         for k, v in li.items() if k not in remark or li.get("remark_from") == "person"}
         for li in out.get("line_items") or []
     ]  # fmt: skip
     return out
@@ -1408,7 +1474,9 @@ def reasons(coding: InvoiceCoding, ai: dict[str, Any], report: Any, reference: R
 
 
 def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -> list[dict[str, Any]]:
-    """One-click GL accounts for lines without a usable one, from past decisions and the account list."""
+    """One-click GL accounts for lines without a usable one, from past decisions and the account list. With a chart
+    of accounts imported or a journal loaded each is a whole account string that may be posted to (``account``; the
+    GL code in ``gl``, its business unit in ``cc``), the supplier's coding last year among them (D-212)."""
     accounts = reference.chart_of_accounts
     lines = [(pos, li) for pos, li in enumerate(coding.line_items)
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
@@ -1416,18 +1484,37 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
         return []
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)  # its own of two (B-1021)
     feedback = store.learning_rows(coding.vendor_name, key)
-    default_gl = (store.get_vendor(key) or {}).get("default_gl") or ""
+    vendor = store.get_vendor(key)
+    default_gl = (vendor or {}).get("default_gl") or ""
+    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference)
+    whole = by_pairs(reference, prior)
     out = []
     for pos, li in lines:
-        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key)
+        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key,
+                           prior=prior, units=units)  # fmt: skip
         if found:
             out.append({
                 "position": pos, "number": li.line_number, "description": li.description,
-                "options": [{"gl": s.gl_code, "label": f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}",
+                "options": [{"gl": s.gl_code, "label": f"{_shown(s, whole)} · {_name(reference, s) or s.gl_code}",
                              "cc": s.cost_center or "", "why": "; ".join(s.reasons).capitalize(),
-                             "first": s.reasons[0] if s.reasons else ""} for s in found],
+                             "first": s.reasons[0] if s.reasons else "",
+                             **({"account": join_account(s.cost_center, s.gl_code)} if whole else {})}
+                            for s in found],
             })  # fmt: skip
     return out
+
+
+def _shown(suggestion: Any, whole: bool) -> str:
+    """A suggestion's account as its button says it: the whole account string, or the GL code as before."""
+    return join_account(suggestion.cost_center, suggestion.gl_code) if whole else suggestion.gl_code
+
+
+def _name(reference: ReferenceData, suggestion: Any) -> str:
+    """A suggested account's name: its own on that business unit when a chart of accounts was imported."""
+    if reference.pairs is not None and suggestion.cost_center:
+        return reference.pairs.description(suggestion.cost_center, suggestion.gl_code) or gl_name(
+            reference, suggestion.gl_code)  # fmt: skip
+    return gl_name(reference, suggestion.gl_code)
 
 
 def _fmt_qty(value: float | None) -> str:
@@ -1638,6 +1725,18 @@ class Analysis:
     changed: bool = False  # differs from the stored coding (an edit not approved yet)
     live: dict[str, Any] = field(default_factory=dict)
     filled: dict[str, str] = field(default_factory=dict)  # details the server filled in (``settle_header``)
+    taxes: Any = None  # each line's taxes (``taxmath.invoice_taxes``), worked out once, with a chart of accounts
+
+
+def keep_taxes_read(coding: InvoiceCoding, stored: list[dict[str, Any]]) -> None:
+    """A line's tax amounts as the invoice prints them on it (``LineItem.taxes_read``) stay with the line through
+    the review screen, whose form posts no such field: each line takes those of the stored line it pairs with, while
+    its amount is the one printed (a part of a split line, or a line whose amount was corrected, has no printed tax
+    of its own: its tax is worked out)."""
+    for before, li in pair_lines(stored, list(coding.line_items)):
+        read = (before or {}).get("taxes_read")
+        if read and li.taxes_read is None and abs(_number(before.get("amount")) - li.amount) < 0.005:
+            li.taxes_read = dict(read)
 
 
 def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
@@ -1657,6 +1756,21 @@ def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     adds_up = abs(cents(coding.subtotal) + cents(coding.tax_total) - cents(coding.grand_total)) <= 1
     taxes = abs(sum(cents(t.tax_amount) for t in coding.tax_lines) - cents(coding.tax_total)) <= 1
     return changed and adds_up and (taxes or not coding.tax_lines)
+
+
+def lines_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether a person changed the lines' amounts as read and they now add up to the subtotal: the reading's "the
+    lines add up to …, the invoice says …" no longer says anything about the lines on screen (B-2210)."""
+
+    def cents(value: Any) -> int:
+        try:
+            return round(float(value or 0) * 100)
+        except (TypeError, ValueError):
+            return 0
+
+    now = [cents(li.amount) for li in coding.line_items]
+    changed = now != [cents(li.get("amount")) for li in ai.get("line_items") or []]
+    return changed and abs(sum(now) - cents(coding.subtotal)) <= 1
 
 
 _UNREAD: Any = object()  # analyse without a capture given: it reads the invoice's own
@@ -1685,6 +1799,8 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
             if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
                 continue
             if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
+                continue
+            if code == "LINE_AMOUNTS_TO_CHECK" and lines_settled(coding, ai):  # the lines were made to add up
                 continue
             report.issues.append(Issue(severity, code, message))
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
@@ -1719,6 +1835,20 @@ def _vendor_mail(doc: dict[str, Any], issues: list[Any], lang: str, signature: s
     return {"chosen": chosen, "drafts": drafts}
 
 
+def _rebuilt(header: dict[str, Any], problems: list[str], draft: Draft, ai: dict[str, Any], start: dict[str, Any],
+             has_cc: bool, coding_rules: Any) -> tuple[InvoiceCoding | None, list[str]]:  # fmt: skip
+    """The coding rebuilt from the screen's header (with ``problems``, what its fields already have wrong) and its
+    grids, each line keeping the tax amounts the invoice prints on it; None with what keeps it from being built, in
+    plain words."""
+    coding = None
+    if not problems:
+        coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
+                                              UNASSIGNED if has_cc else "", coding_rules)  # fmt: skip
+    if coding is not None:
+        keep_taxes_read(coding, start.get("line_items") or [])
+    return coding, [plain_problem(p) for p in problems]
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "", capture: CaptureResult | None = _UNREAD) -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1732,11 +1862,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     dates = settle_dates(header, {**ai, **{k: v for k, v in start.items() if k in DATE_FIELDS}})
     header = dates.header
     filled.update(dates.filled)
-    coding = None
-    if not problems:
-        coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
-                                              UNASSIGNED if has_cc else "")  # fmt: skip
-    problems = [plain_problem(p) for p in problems]
+    coding_rules = store.coding_rules()
+    coding, problems = _rebuilt(header, problems, draft, ai, start, has_cc, coding_rules)
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
@@ -1779,7 +1906,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         hard += [Issue(i.severity, i.code, f"Only an Approver can approve it. {i.message[:1].upper()}{i.message[1:]}")
                  for i in soft if i.code == MOVED_OFF_HOLD]  # fmt: skip
         soft = [i for i in soft if i.code != MOVED_OFF_HOLD]
-    blockers = ordered_blockers(line_pick, bank, hard)
+    blockers = ordered_blockers(line_pick, bank, hard, account_lines.bar_words(coding.line_items, reference))
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
@@ -1788,7 +1915,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     second = store.approval_reason(inv, output)[0] if coding.currency != (ai.get("currency") or "CAD") else ""
     changed = ai_changes(coding, ai, cc)
     lines_n = len(coding.line_items)
-    _, rule_changes = rules.apply(coding, store.coding_rules())
+    _, rule_changes = rules.apply(coding, coding_rules)
     doc = coding.model_dump()
     if PLACE_OF_SUPPLY in output:  # worked out, no ship-to printed: the vendor is told where it is delivered
         doc[PLACE_OF_SUPPLY] = output[PLACE_OF_SUPPLY]
@@ -1797,13 +1924,16 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     from ap_coder.erp import jde
 
     js = jde.load(store) if jde.in_use(store) else None  # JD Edwards is the export in use (D-75)
+    taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None  # once a draw (D-214)
     an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,
+        "account": taxes is not None,  # a chart of accounts: the review screen of D-214
+        "tax_said": account_lines.tax_said(taxes, report.issues) if taxes is not None else None,
         "problems": [],
         "amount_line": _amount_line(header),
         "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax),
-        "checks": checks_summary(report, errors, warnings),
+        "checks": checks_summary(report, errors, warnings, taxes is not None),
         "details": checks_details(report),
         "rules_applied": [rules.describe(c) for c in meta.get("rules_applied") or []],
         "rule_changes": {
@@ -1838,7 +1968,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
                     allow=allow, changed=differs_from_stored(coding, start, cost_centers=has_cc, filled=auto),
-                    live=live, filled=filled)  # fmt: skip
+                    live=live, filled=filled, taxes=taxes)  # fmt: skip
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:
@@ -1931,6 +2061,9 @@ HARD_CODES = frozenset({
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
     # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
     "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
+    # With a chart of accounts imported, an account its business unit does not have or that takes no postings is said
+    # in place of the two above (D-209): JD Edwards would refuse the line.
+    "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE",
     # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
     "VENDOR_ON_HOLD",
 })  # fmt: skip
@@ -2119,16 +2252,17 @@ SCREEN_ORDER = (
 _CODE_PLACES = {"NO_LINE_ITEMS": "lines", "POSTING_UNBALANCED": "posting"}
 
 
-def ordered_blockers(line_pick: str, bank: str, hard: list[Any]) -> list[dict[str, str]]:
+def ordered_blockers(line_pick: str, bank: str, hard: list[Any], said: str = "") -> list[dict[str, str]]:
     """Everything that keeps Approve closed, in the order of the screen: {"text", "kind"} (``pick``: a line's account
-    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid)."""
+    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid).
+    ``said``: the pick as a screen with one Account box a line says it (``account_lines.bar_words``), its ``said``."""
     place = {name: i for i, name in enumerate(SCREEN_ORDER)}
     found: list[tuple[int, int, dict[str, str]]] = []
     for n, (_bad, text, code, lines) in enumerate(grouped_issues(hard)):
         where = "lines" if lines else CODE_FIELDS.get(code) or _CODE_PLACES.get(code) or "posting"
         found.append((place.get(where, len(place)), n, {"text": _short_reason(text), "kind": "hard"}))
     if line_pick:
-        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick"}))
+        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick", **({"said": said} if said else {})}))
     if bank:
         found.append((place["pay_from_account"], -1, {"text": bank, "kind": "bank"}))
     return [b for _, _, b in sorted(found, key=lambda f: (f[0], f[1]))]
@@ -2277,19 +2411,26 @@ def usual_cost_center(store: Store, reference: ReferenceData, vendor_name: str) 
     if not uses_cost_centers(reference) or not (vendor_name or "").strip():
         return ""
     used = store.vendor_lessons(vendor_name).cost_centers
+    if not used:  # nothing approved here yet: the one business unit the supplier's lines went to last year (D-212)
+        used = frozenset(u.business_unit for u in prior_for(store, vendor_name).accounts)
     only = next(iter(used)) if len(used) == 1 else ""
+    if reference.pairs is not None and only not in reference.pairs.business_units():
+        return ""  # a business unit since closed, or one no account is offered on
     return only if only != UNASSIGNED and reference.cost_centers.get(only) is not None else ""
 
 
 def use_suggestion(reference: ReferenceData, coding: InvoiceCoding, draft: Draft, position: int, gl: str,
                    cc: str) -> list[dict[str, Any]]:  # fmt: skip
-    """Code the ``position``-th line with a suggested GL account (and its cost center, when the line has none)."""
+    """Code the ``position``-th line with a suggested GL account (and its cost center, when the line has none).
+    With a chart of accounts imported a suggestion is a whole account string: the line takes its business unit too,
+    since the account may not exist on the one the line had (D-212)."""
     if not 0 <= position < len(coding.line_items):
         raise ValueError("that line is no longer on the invoice")
     li = coding.line_items[position]
     frame = numbered_lines(lines_frame(draft.lines))
     at = grid_row(frame, coding, position)
     frame.loc[at, "predicted_gl_code"] = gl
-    if cc and li.predicted_cost_center in ("", UNASSIGNED) and reference.cost_centers is not None:
+    takes_unit = reference.pairs is not None or li.predicted_cost_center in ("", UNASSIGNED)
+    if cc and takes_unit and reference.cost_centers is not None:
         frame.loc[at, "predicted_cost_center"] = cc
     return lines_records(frame)

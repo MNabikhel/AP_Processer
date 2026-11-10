@@ -53,6 +53,7 @@ class Answer:
     status: int
     type: str
     body: bytes
+    download: bool = False  # sent as a file to save (Content-Disposition: attachment), not a page to show
 
     @property
     def text(self) -> str:
@@ -77,7 +78,8 @@ def request(
     req = urllib.request.Request(url, data=data, method=method, headers=sent)
     try:
         with _OPENER.open(req, timeout=timeout) as response:
-            return Answer(response.status, response.headers.get("Content-Type", ""), response.read())
+            return Answer(response.status, response.headers.get("Content-Type", ""), response.read(),
+                          "attachment" in response.headers.get("Content-Disposition", "").lower())  # fmt: skip
     except urllib.error.HTTPError as exc:
         return Answer(exc.code, exc.headers.get("Content-Type", ""), exc.read())
 
@@ -218,7 +220,7 @@ def crawl(base: str, report: Report, start: tuple[str, ...] = ("/",)) -> None:
             continue
         answer = request(base, "GET", path)
         report.fetched[path] = answer.status
-        if answer.status == 200 and "text/html" in answer.type:
+        if answer.status == 200 and "text/html" in answer.type and not answer.download:  # (a report to save is no page)
             report.pages.append(path)
         if answer.status >= 500:
             report.errors.append(f"GET {path}: {answer.status} {answer.text[:300]}")

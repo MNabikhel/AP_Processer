@@ -837,6 +837,28 @@ def test_authenticator_codes_still_work_after_a_restore_here_and_on_a_new_comput
     assert new.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="on Windows the data folder's own permissions cover the key")
+def test_the_key_a_restore_puts_back_and_its_copy_in_a_backup_are_this_accounts_only(tmp_path, ground_truth):
+    """B-2114: the sign-in codes' key is made readable by its account only (0600), but a restore onto a new server
+    wrote it readable by everyone on the machine (0644), and so was its copy in the backups' files."""
+    import stat
+
+    from ap_coder.core import authenticator, paths
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    store.authenticator_secret(store.add_user("boss", "correct horse battery", role="admin"))
+    key = data / authenticator.KEY_FILE
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
+    backup = store.backup_now()
+    kept = backup_files.object_path(store.backup_dir(), paths.file_sha256(key))
+    assert kept.read_bytes() == key.read_bytes() and stat.S_IMODE(kept.stat().st_mode) == 0o600
+    new = Store(tmp_path / "new" / "ap_coder.db")
+    new.restore_state(backup, keep_accounts=True)
+    restored = tmp_path / "new" / authenticator.KEY_FILE
+    assert restored.read_bytes() == key.read_bytes() and stat.S_IMODE(restored.stat().st_mode) == 0o600
+
+
 def test_a_restore_never_replaces_or_sets_aside_the_key_of_the_accounts_here(tmp_path, ground_truth, monkeypatch):
     """A backup made before anyone set up an authenticator app, or on another computer, does not hold this server's
     key: the accounts a restore keeps here are sealed with it."""

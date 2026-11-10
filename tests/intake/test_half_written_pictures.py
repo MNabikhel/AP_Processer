@@ -30,11 +30,23 @@ def test_a_tiff_cut_part_way_looks_incomplete(tmp_path):
     assert not looks_incomplete(done)
 
 
+def _raised_in(module: str, exc: Exception) -> Exception:
+    """``exc`` as it comes back once raised by code of ``module``."""
+    try:
+        exec("raise exc", {"__name__": module, "exc": exc})  # noqa: S102 - a frame of that module, for its traceback
+    except Exception as raised:  # noqa: BLE001
+        return raised
+    return exc
+
+
 def test_a_damaged_picture_is_said_plainly_whatever_pillow_raises():
     """Pillow raises OSError ("Truncated File Read"), TypeError ("Missing dimensions") or SyntaxError for a picture it
     can't decode: the Failed tab said the Python error."""
     for exc in (OSError("Truncated File Read"), TypeError("Missing dimensions"), SyntaxError("not a TIFF file")):
-        said = plain_error(exc, Path("photo.JPG"))
+        said = plain_error(_raised_in("PIL.TiffImagePlugin", exc), Path("photo.JPG"))
         assert said.startswith("photo.JPG can't be opened as a picture"), said
+        # The same kind of error raised by AP Coder's own code is a bug, said as the error it is (B-2204).
+        ours = _raised_in("ap_coder.intake.pictures", type(exc)(*exc.args))
+        assert plain_error(ours, Path("photo.JPG")) == f"{type(exc).__name__}: {exc}"
     disk = OSError(28, "No space left on device")  # a system error is said as it is
     assert "No space left" in plain_error(disk, Path("photo.jpg"))

@@ -16,9 +16,11 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..ai.extraction import ExtractionResult
+from ..core import chart
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
+from .remark import long_remarks
 from .tax import build_gl_distribution, check_taxes
 from .vendors import norm_tax_number  # letters and digits, lower case
 
@@ -31,9 +33,11 @@ SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 # Confidence is two numbers (D-89): the Reading (how sure the header is: the coding's ``confidence_score``) and the
 # Coding (how sure the lines' accounts, cost centers and tax codes are: ``coding_confidence``); the invoice's is the
 # lower. A line to code, or coded to an account or cost center not in the lists, already counts 0 in the Coding: its
-# finding keeps Approve closed but takes nothing more off (as setup findings, D-86).
+# finding keeps Approve closed but takes nothing more off (as setup findings, D-86). So does a line coded to an account
+# its business unit does not have, or that is not to be posted to there, with a chart of accounts imported (D-209).
 COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
-                               "PST_EXEMPTION_TO_CONFIRM"})  # fmt: skip
+                               "PST_EXEMPTION_TO_CONFIRM", "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE",
+                               "BU_INACTIVE", "ACCOUNT_RESERVED"})  # fmt: skip
 # Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
 # possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
 # are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
@@ -41,6 +45,7 @@ COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "
 BUSINESS_PREFIXES = ("PO_", "DUPLICATE_")
 BUSINESS_CODES = frozenset({"VENDOR_NOT_IN_MASTER", "VENDOR_ON_HOLD", "VENDOR_CHANGED_FROM_HELD", "VENDOR_ADDED_HERE",
                             "VENDOR_BANK_CHANGED", "VENDOR_BANK_NOT_JDE", "POSSIBLE_DUPLICATE_AMOUNT",
+                            "VENDOR_PAYMENTS_HELD",
                             "AMOUNT_UNUSUAL"})  # fmt: skip
 # Findings that doubt the lines' coding rather than the reading: they take their share off the Coding.
 ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_LINE_TAXED", "TAX_NOT_ALLOCATED",
@@ -48,6 +53,10 @@ ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_L
 # A line's account the chat model chose or a weak match (``offline_coder.unsure``), and a tax code worked out from
 # several possible sets of lines or an exemption to confirm: about one chance in two (the coding bench measures it).
 GUESS_SURE = 0.5
+# What decided a line's account (``LineItem.decided_by``) when nothing AP approved, keyed or ruled backs it: the chat
+# model, the words of an account's name, other vendors' lines. An invoice whose every account is one is not approved
+# in one click (ACCOUNTS_ALL_GUESSED, B-2218).
+GUESS_SOURCES = ("model", "words", "others")
 _LOW_OCR_CONFIDENCE = 0.90
 
 
@@ -70,6 +79,9 @@ class ValidationReport:
     checks: dict[str, Any] = field(default_factory=dict)
     reading_confidence: float = 0.0  # how sure the header is (D-89)
     coding_confidence: float = 0.0  # how sure the lines' accounts, cost centers and tax codes are (D-89)
+    # Which reference data the checks were made with (``ReferenceData.stamp``; "" when it was read from files): the
+    # store reads it to stamp what the invoice was checked against, and does not keep it (B-2094).
+    reference_stamp: str = ""
 
     @property
     def errors(self) -> list[Issue]:
@@ -80,13 +92,45 @@ class ValidationReport:
         return [i for i in self.issues if i.severity == WARNING]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        if not out["reference_stamp"]:
+            del out["reference_stamp"]
+        return out
 
 
-def duplicate_message(duplicate_of: list[int]) -> str:
-    """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number."""
-    ids = ", ".join(f"#{i}" for i in duplicate_of)
-    return f"same vendor and invoice number as invoice {ids}: possible duplicate payment"
+_DUPLICATE_STANDS = {"review": "waiting for review", "parked": "set aside", "approved": "approved",
+                     "pending_approval": "waiting for a second approval"}  # fmt: skip
+
+
+def duplicate_message(duplicate_of: list[Any]) -> str:
+    """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number. Each is its number, or
+    what is known of it (``pipeline.duplicates_known``: {"id", "first": received before this one, "status",
+    "approved": when, "exported"}): the message then says which was received first and where the other stands, and
+    which of the two to reject, where both said "reject this one" (B-2101)."""
+    import datetime as dt
+
+    known = [d for d in duplicate_of if isinstance(d, dict)]
+    if len(known) != len(duplicate_of) or not known:
+        ids = ", ".join(f"#{d['id'] if isinstance(d, dict) else d}" for d in duplicate_of)
+        return f"same vendor and invoice number as invoice {ids}: possible duplicate payment"
+    said = []
+    for other in known:
+        stands = _DUPLICATE_STANDS.get(other.get("status") or "", "")
+        if other.get("status") == "approved" and other.get("approved"):
+            day = dt.datetime.fromisoformat(str(other["approved"]))
+            year = f", {day.year}" if day.year != dt.date.today().year else ""
+            stands = f"approved on {day:%b} {day.day}{year}"
+        stands += " and exported" if stands and other.get("exported") else ""
+        order = "received first" if other.get("first") else "received after this one"
+        said.append(f"#{other['id']} ({', '.join(filter(None, [order, stands]))})")
+    if any(o.get("first") for o in known):
+        advice = "If it is the same bill, reject this one"
+    elif any(o.get("status") == "approved" for o in known):
+        advice = "It is approved already: if it is the same bill, reject this one"
+    else:
+        others = "the other" if len(known) == 1 else "the others"
+        advice = f"This one came first: if it is the same bill, reject {others}"
+    return f"same vendor and invoice number as invoice {', '.join(said)}: possible duplicate payment. {advice}"
 
 
 def validate_coding(
@@ -99,9 +143,12 @@ def validate_coding(
     vendor_findings: list[tuple[str, str, str]] | None = None,
     po_findings: list[tuple[str, str, str, int | None]] | None = None,
     erp_findings: list[tuple[str, str, str, int | None]] | None = None,
+    remarks_typed: bool = False,
+    erp_posts_tax: frozenset[str] = frozenset(),
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
-    with the same vendor and invoice number."""
+    with the same vendor and invoice number; ``remarks_typed``: the lines' remarks go to JD Edwards as typed;
+    ``erp_posts_tax``: the taxes JD Edwards posts itself from the pay item (no sales-tax GL account of ours)."""
     issues: list[Issue] = []
 
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
@@ -120,16 +167,23 @@ def validate_coding(
     _header_issues(coding, add)
     # --- Line items -------------------------------------------------------
     _line_issues(coding, reference, add)
+    guesses = [li for li in coding.line_items if (li.decided_by or {}).get("source") in GUESS_SOURCES]
+    if guesses and len(guesses) == len(coding.line_items):
+        # Not one account a person, a rule, last year's journal or an approval decided: "Approve anyway" with a
+        # reason passes it, or changing an account (then a person decided that one).
+        add(ERROR, "ACCOUNTS_ALL_GUESSED", guessed_message(len(guesses)))
+    for line, message in long_remarks(coding):  # held back only where the remark goes to JD Edwards (D-213)
+        add(ERROR if remarks_typed else WARNING, "REMARK_LONG", message, line)
     # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
     checks = _totals_checks(coding, reference, add)
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
-    for f in check_taxes(coding, reference.tax, known):
+    for f in check_taxes(coding, reference.tax, known, erp_posts_tax):
         add(f.severity, f.code, f.message, f.line_number)
     checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
 
     # --- Reviewer history -------------------------------------------------------------
-    _history_issues(history, add, checks)
+    _history_issues(coding, history, add, checks)
 
     # --- Cross-checks against Document Intelligence ---------------------------
     if extraction is not None:
@@ -150,7 +204,17 @@ def validate_coding(
         coding_confidence=coded,
         issues=issues,
         checks=checks,
+        reference_stamp=getattr(reference, "stamp", ""),
     )
+
+
+def guessed_message(n: int) -> str:
+    """ACCOUNTS_ALL_GUESSED's words for an invoice of ``n`` lines."""
+    if n == 1:
+        return ("its account is still a guess: look at it. Nothing AP approved, keyed last year or set as a rule "
+                "backs it; change it, or tick “Approve anyway” and say why to keep it")  # fmt: skip
+    return (f"{n} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+            "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them")  # fmt: skip
 
 
 def _header_issues(coding: InvoiceCoding, add: Any) -> None:
@@ -165,8 +229,54 @@ def _header_issues(coding: InvoiceCoding, add: Any) -> None:
         add(ERROR, "NO_LINE_ITEMS", "No line items were read: add a line for what the invoice charges")
 
 
+def _named(business_units: tuple[str, ...], first: str = "") -> str:
+    """Up to three business units by code, the home one first: "A, B and C", or "A, B, C and 12 more"."""
+    found = sorted(business_units, key=lambda bu: bu != first)
+    if len(found) > 3:
+        return f"{', '.join(found[:3])} and {len(found) - 3} more"
+    return " and ".join(filter(None, (", ".join(found[:-1]), found[-1])))
+
+
+def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, str, str] | None:
+    """With a chart of accounts imported (D-209), what is wrong with a line's account on its business unit (its cost
+    center), as (severity, code, message). None with no chart, for a line not coded to both yet or coded to a tax
+    account (said on its own), and for a pair that exists and may be posted to. Words or part of a number typed in
+    the Account box (kept as typed in the business unit, which the chart does not have) are no account."""
+    pairs, gl, cc = reference.pairs, str(li.predicted_gl_code or ""), str(li.predicted_cost_center or "")
+    if pairs is None or reference.cost_centers is None:
+        return None
+    if gl in ("", UNASSIGNED) and cc not in ("", UNASSIGNED) and reference.cost_centers.get(cc) is None:
+        return ERROR, "ACCOUNT_NOT_IN_CHART", f"“{cc}” is not an account: pick one from the list"
+    if gl in ("", UNASSIGNED) or cc in ("", UNASSIGNED):
+        return None
+    status = chart.OK if gl in tax_gls else pairs.status(cc, gl)
+    account = chart.join_account(cc, gl)
+    if status == chart.RESERVED:
+        return (WARNING, "ACCOUNT_RESERVED", f"account {account} exists but is not offered for invoices: "
+                f"{pairs.why_reserved(cc, gl)}. Check it is the one meant")  # fmt: skip
+    if status == chart.BU_INACTIVE:
+        return (ERROR, "BU_INACTIVE", f"business unit {cc} is not active in JD Edwards, so nothing can be posted to "
+                "it: pick another business unit")  # fmt: skip
+    if status == chart.NOT_POSTABLE:
+        return (ERROR, "ACCOUNT_NOT_POSTABLE", f"account {account} cannot be posted to (its posting edit code is "
+                f"{pairs.posting_edit(cc, gl)}): pick an account that takes postings")  # fmt: skip
+    if status != chart.NOT_IN_CHART:
+        return None
+    others = pairs.bus_of(gl)
+    if not pairs.has_business_unit(cc):
+        why = f"the chart has no business unit {cc} (pick one from the list)"
+    elif others:
+        why = f"business unit {cc} has no account {gl}; it is on {_named(others, pairs.settings.home_business_unit)}"
+    elif pairs.has_code(gl):
+        why = f"business unit {cc} has no account {gl}, and no business unit has one that may be posted to"
+    else:
+        why = f"no business unit has an account {gl}: pick one from the list"
+    return ERROR, "ACCOUNT_NOT_IN_CHART", f"account {account} is not in the chart of accounts: {why}"
+
+
 def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:
-    """Each line's numbering, arithmetic, GL account and cost center."""
+    """Each line's numbering, arithmetic, GL account and cost center; with a chart of accounts imported, the two
+    together (``_pair_issue``)."""
     numbers = [li.line_number for li in coding.line_items]
     if sorted(numbers) != list(range(1, len(numbers) + 1)):  # the parts of a split line sit under it (B-1188)
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
@@ -186,9 +296,14 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
                 li.line_number,
             )
 
+        pair = _pair_issue(reference, li, tax_gls)
+        if pair is not None:
+            add(*pair, li.line_number)
+        told = pair is not None and pair[0] == ERROR  # the pair's error says why: not one more for each of its codes
         if li.predicted_gl_code == UNASSIGNED:
-            add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
-        elif reference.chart_of_accounts.get(li.predicted_gl_code) is None:
+            if not told:
+                add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
+        elif not told and reference.chart_of_accounts.get(li.predicted_gl_code) is None:
             add(
                 ERROR,
                 "GL_UNKNOWN",
@@ -207,7 +322,7 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
             pass  # cost centers not configured
         elif li.predicted_cost_center == UNASSIGNED:
             add(WARNING, "CC_UNASSIGNED", "no cost center yet: pick one", li.line_number)
-        elif reference.cost_centers.get(li.predicted_cost_center) is None:
+        elif not told and reference.cost_centers.get(li.predicted_cost_center) is None:
             add(
                 ERROR,
                 "CC_UNKNOWN",
@@ -255,12 +370,15 @@ def _totals_checks(coding: InvoiceCoding, reference: ReferenceData, add: Any) ->
     return checks
 
 
-def _history_issues(history: list[dict[str, Any]] | None, add: Any, checks: dict[str, Any]) -> None:
-    """Lines coded otherwise than reviewers coded the vendor's similar lines (``memory.compare_with_history``)."""
+def _history_issues(coding: InvoiceCoding, history: list[dict[str, Any]] | None, add: Any,
+                    checks: dict[str, Any]) -> None:  # fmt: skip
+    """Lines coded otherwise than reviewers coded the vendor's similar lines (``memory.compare_with_history``); a
+    line with no account yet is not coded otherwise: it has its own finding."""
     if history:
         checks["history"] = history
+        uncoded = {li.line_number for li in coding.line_items if li.predicted_gl_code in ("", UNASSIGNED)}
         for h in history:
-            if h["status"] == "conflict":
+            if h["status"] == "conflict" and h["line_number"] not in uncoded:
                 add(
                     WARNING,
                     "HISTORY_CONFLICT",
@@ -311,11 +429,13 @@ def doubtless(code: str) -> bool:
 
 
 def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: Any = None, cc_known: Any = None,
-                           tax_gls: Any = ()) -> float:  # fmt: skip
+                           tax_gls: Any = (), pairs: Any = None) -> float:  # fmt: skip
     """How sure one line's coding is: its account (none, or one not in the GL accounts or a tax account: 0; a guess:
     ``GUESS_SURE``; else sure), its cost center where they are used (none or unknown: 0), and its tax code when the
     invoice charges a tax (worked out from several possible sets of lines, an exemption to confirm, or none:
-    ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``)."""
+    ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``);
+    ``pairs``: the chart of accounts' (``chart.AccountPairs``, D-209): an account its cost center, a business unit,
+    does not have, or that is not to be posted to there, is 0 as an unknown code is."""
     from ..ai.offline_coder import unsure
     from .line_tax import CODE_NONE, exemption_to_confirm, tax_code_of, tax_guessed
 
@@ -326,6 +446,8 @@ def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: An
     if cost_centers:
         cc = str(line.predicted_cost_center or "")
         if cc in ("", UNASSIGNED) or (cc_known is not None and cc_known.get(cc) is None):
+            return 0.0
+        if pairs is not None and pairs.status(cc, gl) != chart.OK:
             return 0.0
     if taxed and (tax_code_of(line) == CODE_NONE or tax_guessed(line) or exemption_to_confirm(line)):
         sure *= GUESS_SURE
@@ -341,8 +463,8 @@ def coding_confidence(coding: InvoiceCoding, reference: ReferenceData) -> float:
     taxed = any(t.tax_amount for t in coding.tax_lines)
     tax_gls = reference.tax.tax_gl_codes()
     ccs = reference.cost_centers
-    sure = [line_coding_confidence(li, ccs is not None, taxed, reference.chart_of_accounts, ccs, tax_gls)
-            for li in coding.line_items]  # fmt: skip
+    sure = [line_coding_confidence(li, ccs is not None, taxed, reference.chart_of_accounts, ccs, tax_gls,
+                                   reference.pairs) for li in coding.line_items]  # fmt: skip
     return round(sum(sure) / len(sure), 4)
 
 

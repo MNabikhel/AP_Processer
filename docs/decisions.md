@@ -4720,3 +4720,354 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/service_linux.py`, `ap_coder/ops/service.py`, `scripts/ci/linux_service.py`,
     `.github/workflows/ci.yml`, `docs/SERVER.md`; `tests/ops/test_service_linux.py`, `tests/ops/test_service.py`,
     `tests/ops/test_server_update.py`)
+- **D-209** · **A line is coded to one JD Edwards account string, `business unit.object.subsidiary`, kept as its two
+  codes: the cost center is the business unit and the GL code is `object.subsidiary`; which pairs exist and may be
+  posted to comes from the chart of accounts as JD Edwards exports it** (a head-office overhead department's prototype;
+  10 Nov 2026).
+  - **Why:** The department types one string into JD Edwards for each line ("0880133142.7340.2210"). An account exists
+    on some business units and not on others, and only some may be posted to (the chart's posting edit code, the
+    business unit's status). AP Coder knew a list of GL codes and a list of cost centers, each checked alone: a line
+    coded to an account of another business unit, to a closed one, or to a header account had no finding. The chart is
+    far too long for a model's list of choices or one drop-down (about 14,700 rows on 134 business units; about 720
+    strings used in a year, on 77 business units).
+  - **What:** The two fields stay (`predicted_cost_center`, `predicted_gl_code`), as the JD Edwards sync already writes
+    them. `core/chart.py` alone joins and splits the string (`join_account`, `split_account`, `code_of`, `split_code`).
+    Two tables hold the chart's rows and the business units as exported; the GL account and cost center lists are worked
+    out from them on import, so every reader of those lists is unchanged. `ReferenceData` gets an optional `pairs`: with
+    it, a line's pair is checked (not in the chart, not postable, a business unit that is not active, a reserved
+    subsidiary), suggestions and the model choose among a short list of valid strings for each line (never the whole
+    chart), and the review screen's picker shows the suggested accounts, the vendor's, and the business unit's before
+    the rest. The JD Edwards files split a code at its dot with no mapping row. An install with no chart loaded has no
+    `pairs` and behaves as before.
+  - **Not chosen:** One field holding the whole string (the learning index is by account: the same expense on two
+    business units would become two accounts, and a vendor's usual account and usual business unit are two separate
+    habits); a third field for the subsidiary (about 60 files for nothing the pair does not say: object and subsidiary
+    are never chosen apart); a mapping row for each account (it translates, it does not say which pairs exist).
+  - **Room for job costing:** the same three parts under other names (job, cost type, cost code): lists and labels,
+    since one module owns the string. A subledger for each line would be a new field.
+  - **Built in steps:** this entry is written with the first (`core/chart.py`); the tables, checks, importers, short
+    lists, picker and exports follow, each with its tests. The audit behind it measured today's behaviour on files made
+    up in the exports' layouts.
+  - (`ap_coder/core/chart.py`; `tests/core/test_chart.py`)
+- **D-210** · **Under tax explanation code V the pay item of a JD Edwards voucher carries only the taxes the Tax
+  setup recovers, with no new switch; and a keying sheet for vouchers typed by hand** (a head-office overhead
+  department's prototype; 10 Nov 2026).
+  - **Why:** The department claims the GST/HST only. It types the tax on the voucher's pay item (code V, a GST-only
+    tax area, the taxable amount and the GST) and leaves a provincial tax inside the expense line; JD Edwards makes
+    the GST line and the payable line itself. AP Coder took code V to recover every tax charged: a Quebec invoice
+    coded with the QST added to the expense line was held back as unbalanced (B-2086), so no setting could say what
+    the department does. It also types its vouchers, so it needs a sheet to read, not the Z-files.
+  - **What, the tax:** the invoice's stored G/L distribution already says which taxes are recovered (a recoverable
+    tax line of their own) and which are in the expense. Under code V a tax charged that the distribution does not
+    recover is left off the pay item (`jde._tax_amounts`, `_Voucher.expensed`): the taxable amount and the tax
+    amount are the recovered taxes' alone, the other tax stays in the G/L lines, and the voucher balances as before
+    (gross = distribution + the tax JD Edwards posts). In the batch files it is in the non-taxable amount (VLATXN =
+    gross - taxable - tax: the three amounts must add up to the gross, which is not sent). With the gross amount
+    only, JD Edwards would work the GST out of an amount that holds the QST: held back, with that reason
+    (JDE_GROSS_TAX).
+  - **No switch:** every voucher this changes was held back before, so nothing an install sends today moves: where
+    the Tax setup recovers each tax the code posts, the amounts are the same to the cent. Codes C and B are
+    untouched: there the provincial tax is the tax area's sales tax and stays in the tax amount, and a Quebec company
+    that prefers code C with an area holding the QST as a sales tax keeps that. What is lost is one catch: a tax set
+    to "not recoverable" by mistake under code V used to be held as unbalanced, and now goes out with the tax left
+    off the pay item, on a tax area that may hold it (JD Edwards' own tax tolerance is then the check). The other
+    way round is still held: a tax the Tax setup recovers under a code that expenses it.
+  - **Open, for the JDE team:** on a voucher with a provincial tax left in the expense, is that tax entered as the pay
+    item's non-taxable amount (what the batch files send), or is the taxable amount left at the base with nothing
+    else typed? The keying sheet shows gross, taxable and tax, which is the same either way.
+  - **What, the keying sheet** (`erp/jde_keying.py`; the Exports page's format "JD Edwards keying sheet"): for a
+    batch's invoices, a block for each voucher in the screen's order (the header and pay item fields, then its G/L
+    lines with the account string as typed, the account's description, the amount and the remark, then a check line:
+    lines + recovered tax = gross, then in words what a person would otherwise work out), made of the same voucher
+    as the batch files (`jde._prepare`), so the two cannot disagree. Codes are text cells, amounts numbers, dates
+    dates; it prints upright with the column names on each page, a voucher that fits a page never cut.
+  - **Changed after its review (B-2147 to B-2152):** a keying batch first took every ticked invoice and listed those
+    not ready on its second sheet; it now holds only invoices that pass the JD Edwards checks, as a JD Edwards batch
+    does (the others stay in Ready to export, listed with why before the batch is made), keeps its vouchers once
+    they are back in the ERP register, and its invoices read "On keying sheet 12", not "Exported". The sheet "Not
+    ready" remains for a batch made in another format and for vouchers JD Edwards has through the API. The CSV twin
+    is gone: a spreadsheet reads its codes as numbers and no house convention keeps them text. A GST/HST left in
+    the expense under code V is warned of (JDE_TAX_NOT_RECOVERED), and a voucher with no tax left on its pay item
+    goes with the exempt code. Two federal rates on one invoice (lines supplied in two provinces) are two pay
+    items: the voucher is held (JDE_TAX_AREA) with both spelled out, until AP Coder makes two pay items itself.
+  - **Its settings in one step:** `jde.prototype_settings()` is the department's way (tax amounts on the pay item,
+    code V and a placeholder tax rate/area for each province, the remarks as typed, the default account rule) and
+    `jde.use_prototype(store)` saves it, shows JD Edwards (`jde.show`) and sets the QST to "add to the expense
+    line". `JdeSettings()` keeps its defaults (the tax coded to G/L lines, JD Edwards hidden on a laptop): existing
+    installs do not move. The review screen reads what is keyed from `jde.voucher_view` (`keyed`, `not_ready`).
+  - **Remarks:** `jde.line_remark` and `jde.voucher_remark` alone say a G/L line's remark (today its description cut
+    at 30 characters) and the pay item's (the first line's): the keying sheet always shows them, and one setting
+    (Remarks) chooses what the batch files carry: AP Coder's invoice number in VLRMK and the invoice number in VNEXR
+    (the default: what was sent before), or the pay item's remark in VLRMK and each line's in VNEXR, as typed by hand.
+  - **Not chosen:** a setting "the pay item's tax is only the taxes you recover" (the Tax setup already says it, and
+    two places to say it can disagree); the same rule under codes C and B (it would take the PST out of the tax
+    amount of every code C voucher sent today); a keying sheet built from the Excel export's rows (it knows no tax
+    area, explanation code or account string).
+  - **Left:** the worksheet for the JDE team has no question yet for the open one above, nor for the remarks. (The
+    Sales tax page now counts a keying-sheet batch typed with code B as one whose PST JD Edwards accrues: B-2153.)
+  - (`ap_coder/erp/jde.py`, `ap_coder/erp/jde_keying.py`, `ap_coder/erp/exports.py`,
+    `ap_coder/web/pages/exports.py`, `ap_coder/web/pages/settings_jde.py`, `docs/JDE_E1.md`;
+    `tests/erp/test_jde.py`, `tests/erp/test_jde_keying.py`, `tests/web/test_web_settings.py`)
+- **D-211** · **A data folder that serves a team with sign-in is never started in laptop mode by accident: the
+  launcher and `serve` refuse it, the server running or stopped, and laptop mode again on the same data is a named
+  option, `serve --without-sign-in`** (one laptop that first runs AP Coder for one person, then serves a few AP
+  processors from the same data folder; 10 Nov 2026).
+  - **Why:** The launcher asked "is AP Coder already running here?" over plain HTTP only (`scripts/running.py`), so
+    beside a server on HTTPS a double-click on `APProcessor.bat`, or on the desktop shortcut left from the laptop's
+    first weeks, saw nothing, took the next free port and started a second AP Coder in laptop mode: no sign-in, on
+    the team's database. `python -m ap_coder serve` by hand did the same. Asking over HTTPS too would not be enough:
+    a server stopped for the night answers on no port, and the same double-click would then open the team's data to
+    whoever sits at the laptop. The guide only said "don't double-click".
+  - **What tells a team's data folder** (`ops/safety.py:team_server`), any one of four:
+    1. a server-mode AP Coder answers for it now: the port its server file (`.ap_coder_server.json`) names, else
+       server.json's, asked on this computer over HTTPS (the certificate not checked: it is self-signed or names the
+       server, not 127.0.0.1) and over HTTP (a first test with `--insecure-http`); its `/healthz` now says
+       `server_mode`. This holds before the first account and without server.json (a server started by hand);
+    2. its database holds sign-in accounts, one row in `users` or more, turned off or not
+       (`core/store/users.py:sign_in_accounts`: read without a Store, which would migrate it, and leaving no `-wal`
+       file beside a database closed cleanly);
+    3. the sign-in codes' key, `authenticator.key`, is in the folder: someone set up their authenticator app. It is
+       what the launcher's first phase in a new AP Coder folder has, where it runs on the standard library alone
+       and can't load the store yet (its second phase, the packages installed, and `serve` read the accounts);
+    4. its `server.json` is there (what `service install` writes, and the doctor already reads as "this is the
+       server": `service.is_server_here`): the server set up and not yet given its first account.
+    The last three do not depend on anything answering: that is the point.
+  - **What a laptop-mode start does** (the launcher before it sets anything up or stops anything, `serve` before it
+    opens the database; a start in server mode is the server's own and is not asked, except that the launcher never
+    starts a second one beside a running server in either mode):
+    - *the server runs*: "AP Coder is serving your team from this computer (sign in at https://…): it was not started
+      a second time", and the browser opens at that address (the first name of server.json's `allowed_hosts`, else
+      this computer's own name, which the certificate should carry); exit code 0 from the launcher, 2 from `serve`;
+    - *the server is stopped*: "AP Coder on this computer is set up to serve your team, with sign-in (N sign-in
+      accounts in its database …), and its server is stopped now: it was not started without sign-in", with how to
+      start it and the option below; nothing is opened in the browser (nothing answers there); exit code 1 / 2;
+    - *a laptop's own data folder* (no account, no server.json, no server answering): as before, nothing more said.
+  - **The way back, on purpose:** `python -m ap_coder serve --without-sign-in` (`APProcessor.bat --without-sign-in`:
+    the launcher passes it on) opens the same data in laptop mode again, with a warning each time; its help says
+    what it does. The accounts stay in the database, unused, and the next `serve --server` uses them again: a
+    database still moves from laptop mode to server mode and back, as before. It is needed at every such start, not
+    once: nothing is written that a later double-click could inherit. While the server runs the option changes
+    nothing (two AP Coders never use one database).
+  - **Not chosen:** only asking the running server over HTTPS (a stopped server leaves the way in open); the accounts
+    alone (a server set up and waiting for its first Admin would still start in laptop mode; a database that can't
+    be read would say nothing) or server.json alone (a server started by hand has none); a note in the data folder
+    that remembers "laptop mode again" (one deliberate step would then open every later double-click); refusing in
+    `server.serve` itself (the tests and the bench call it with their own stores; the command is the one way a
+    person starts it); making the launcher's own running check speak HTTPS (it also stops older versions and opens
+    `http://127.0.0.1`: a laptop-mode AP Coder given a certificate is still not found by it, as before).
+  - **Left:** on a laptop whose data folder has a server.json from a trial of `service install` (`service remove`
+    keeps the file), the start is refused until the file is deleted or the option used: the message names the file.
+    `--without-sign-in` leaves no line in the Activity log (a new action needs its name in the controls report).
+    Not run on Windows 11 itself: the tests run the launcher's and `serve`'s own code against a real server on HTTPS
+    with a self-signed certificate on Linux, and CI on Windows Server.
+  - (`ap_coder/ops/safety.py`, `ap_coder/core/store/users.py`, `ap_coder/ops/cli.py`, `ap_coder/ops/service.py`,
+    `ap_coder/web/app.py`, `ap_coder/web/server.py`, `scripts/launch.py`, `scripts/running.py`, `docs/SERVER.md`;
+    `tests/ops/test_safety.py`, `tests/launcher/test_launch.py`, `tests/web/test_server_https.py`)
+- **D-212** · **A line's account is suggested from how the supplier was coded last year, as whole account strings
+  that may be posted to; a line is coded with no one picking only on strong evidence, and keeps the accounts offered
+  and what decided it** (a head-office overhead department's prototype; 10 Nov 2026).
+  - **Why:** All AP Coder knew of a supplier was the lines approved in AP Coder. A department starts with a year of
+    coding in JD Edwards' Transaction Journal, in its own 30-character remarks ("courier charges 4410 Alder"), where
+    an invoice prints the supplier's words ("Ground shipment waybill 77812"). Taught as past coding, with the remark
+    as the description, the journal gave: lines coded with no one picking that were wrong four times in five (the
+    object.subsidiary without a business unit, or the last line of a split), nothing for a supplier with 346 lines on
+    one account under one remark, and the first suggestion right for 6% of lines (the table below). The chat model
+    was shown 1.5% of a chart of 13,000 accounts and allowed all of them. Nothing on a line said what had decided it.
+  - **What, the supplier prior** (`ai/supplier_prior.py`): `prior_for(store, vendor)` counts, for each account string,
+    the supplier's lines, vouchers, share, latest G/L date and commonest remark shapes (months, quarters, years and
+    numbers of five digits or more taken out), the share of its vouchers with one coding line and the business units
+    each object.subsidiary was used on. The supplier is found by its JD Edwards number when the vendor list gives one
+    (a number the journal does not have is a new supplier, never looked up by name); else by the name the journal
+    prints, cut at 26 characters: a shorter journal name is whole and must read as the vendor's (legal forms aside), a
+    26-character one may start the vendor's name, and two numbers that fit a cut name are not told apart (neither is
+    taken, and the line says so). Two numbers under one whole name are one vendor in the vendor list, which merges
+    them: counted together. A journal line counts 1, a line approved in AP Coder as proposed 3, a line a person coded
+    or changed 5: one correction outweighs four lines of history. `rank(prior, line, reference)` orders the accounts
+    by the log of the share plus 3 x the likeness to the remarks AP wrote for the account, 4 x the likeness to the
+    lines AP approved to it here, 2 x the likeness to the account's name, each `Candidate` with its reason in plain
+    words and counts ("9 of this supplier's 15 lines last year; 4 of its 4 “custom” lines").
+  - **What, one list** (`ai/suggest.py` `candidates`): every source in one ordered list of account strings: this
+    vendor's approved lines like it, the supplier's coding, other vendors' lines, the vendor master's default, the
+    words of the accounts' names. Each pair is completed (`complete_pair`: the past line's business unit, the only
+    one of the supplier's that has the account, the only one of the chart that has it, then a guess: the supplier's
+    most used, else the home business unit) and must be offered by `AccountPairs`: never a reserved subsidiary, a
+    closed or DO NOT USE business unit, a title account. A past line on a business unit since closed gives its
+    account on another, saying why, or nothing. `suggest_gl` returns the first of these when a chart is imported or a
+    journal loaded. For a line left for a person, the supplier's accounts on a business unit the line names come
+    first, saying so (`supplier_prior.units_named`, B-2253: the line has every word of the unit's name that at most
+    3 units' names have, "Smartphone device balance - IT - Data Centre"); this orders the list and codes nothing.
+    On the made-up company's fifteen-line invoice the account AP keys is first on 15 lines of 15 (it was on 1, and
+    among the first three on 4).
+  - **What, deciding alone** (`ai/offline_coder.py`): a line is coded with no one picking by this vendor's own
+    approved lines as before, or when one account has 90% of the supplier's lines (by weight) of 3 lines or more and
+    the last line a person approved here did not go elsewhere (`SURE_SHARE`, `SURE_LINES`). For both, a line a
+    person approved here to another account counts only for a new line alike to it (`Prior.sure(line)`, B-2252): a
+    lunch coded by hand on a courier's invoice is evidence about the next lunch, not about the waybills, which are
+    coded alone as before; it still ranks the accounts offered. Never on a guessed
+    business unit, never from another vendor's line, and not when the same words went to several business units
+    (who ordered decides: `UNIT_SURE_LINES` approvals on one unit settle it) or to several accounts of one voucher of
+    the past coding. Nor does the supplier's one account code a line that plainly says another kind of thing
+    (B-2228, `suggest._unless_another_kind`): one that reads as a meal while nothing of the account does, that is
+    `ANOTHER_ALIKE` (0.5) to the name of another account offered, or that says the name of another account of the
+    chart, offered or not (B-2251, `supplier_prior.reads_like`: every word of one of the things the name lists,
+    "laptop" for "Laptops & Desktops", or nothing but words of the name, "Consulting services" for "Management
+    Consulting", one of them a word at most 3 names have), and in each case is not alike to AP's remarks
+    for the account, the lines approved to it here or its name. It is left with "This supplier's lines usually go to
+    X, but this line reads like Y: check it" and both offered; a supplier's own words that name no account ("waybill
+    77812", and "Fuel surcharge" beside "Fleet Fuel": one word of two is not the name) are still coded, and so is a
+    line no account is named for ("Ergonomic office chair", "Late payment interest" where the chart has neither):
+    words cannot tell those. The journal bench's one-account lines: 77% coded alone, 88 of 88 right before B-2251;
+    76%, 87 of 87 after ("Paper cups" from a coffee supplier reads like "Printer Toner & Paper"); all lines 14%, 117
+    of 117 and 116 of 116.
+    A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
+    "A new supplier: not in last year's journal", "The supplier's usual account … is no longer in the chart (business
+    unit … is no longer active)") and keeps up to 5 `candidates`. Every line with an account keeps `decided_by`
+    (`core/schema.decided`): `source` rule, vendor, supplier, others, words, model or person, with the rule's id, the
+    counts, what it replaced. A fixed rule records itself also when it only agrees; the review screen records a
+    person's pick and which candidate it was (`coding/review.decided_on_screen`). Both keys are left out of the
+    stored coding when empty, so invoices stored before read and are stored unchanged.
+  - **What, the chat model** (`ai/inference.py`): for the lines left it chooses among the accounts offered for each
+    line: the supplier's first 8 and the first 8 others, each with its string, name, business unit's name and "used N
+    times for this supplier, e.g. …", or "none of these". The schema lists those strings (under 2,000 characters
+    where the whole chart was 320,000). An answer that is not offered for the line, or an offered code on another
+    business unit, leaves the line for a person and the line says so, as it says when the model gave no answer. Its
+    pick is a guess (`decided_by.source` model). With no chart and no journal the model is asked as before.
+  - **Measured** (`python -m ap_coder.bench coding --journal`: the made-up year, 14,000 chart rows, 5,500 vouchers,
+    seed 1; ten months loaded, the last two held out as invoices in the suppliers' wording; 809 lines of 266 trade
+    suppliers; no AI model; right = object.subsidiary and business unit both). Before = the journal's lines taught
+    as past coding, the supplier named by its number:
+
+    | lines | before: coded alone / right | first / in 3 | after: coded alone / right | first / in 3 |
+    |---|---:|---:|---:|---:|
+    | one account (114) | 68% / 21% | 15% / 15% | 77% / 100% | 100% / 100% |
+    | several, by what was bought (237) | 13% / 68% | 9% / 9% | 0% / - | 44% / 78% |
+    | several, by who ordered (434) | 32% / 9% | 3% / 3% | 5% / 100% | 42% / 72% |
+    | never seen (24) | 0% / - | 0% / 0% | 0% / - | 12% / 12% |
+    | all (809) | 30% / 20% | 6% / 6% | 13% / 100% | 50% / 76% |
+
+    First candidate's object.subsidiary right 37% → 67%, business unit right 8% → 62%. With AP approving each
+    held-out invoice as it comes (`--approve`): 24% coded alone, 94% of those right (186 of 198; 10 of the 12 wrong
+    are a billback or another department's line worded as an earlier one), first 52%, in the first three 78%.
+    The bars: at 90% of 3 lines, 109 coded and 0 wrong; at 80%, 117 and 3; at 2 lines, 160 and 19; at 5 lines, 98
+    and 0: 90% and 3 kept. The ranking's weights are the audit's; the wording was written to share few words with
+    the remarks, so on the several-account suppliers the words add about a dozen points to the share alone.
+    Speed: 1.5 ms a line on a supplier's first invoice, 0.9 ms after (the slowest 34 ms); a prior is 4.6 KB at the
+    median, kept in 6 MB (`core/caches.py`; the 950 suppliers of the year are 5 MB).
+  - **Not chosen:** The journal pressed into the approval memory (one remark on the accounts of a split read as a
+    change of mind; identical remarks counted once); the whole chart in the model's schema; a third field for the
+    account string (D-209: the two codes stay); the vendor's "usual account" rule on journal lines (it counts
+    different descriptions, and gives no business unit).
+  - **Left:** With no chart and no journal nothing is suggested or decided differently (the coding bench's lines are
+    the same, one by one); there the fixes of the usual account's missing cost center, of a line coded from one
+    other vendor's, and of a split in past coding do not apply. The reasoning model's own choice among the accounts
+    offered is not measured: no model runs in CI (the true account is among the first three for 76% of lines, which
+    bounds what it can add from that list). Two suppliers whose names read alike share one vendor, so their coding is
+    pooled (the made-up company has many: 113 of 607). A vendor past the 50,000-lesson cap has its units by line
+    read from each line's latest decision only. The rules' history, and `decided_by` copied to the lessons, are for
+    the stage that searches by them.
+  - (`ap_coder/ai/supplier_prior.py`, `ap_coder/ai/suggest.py`, `ap_coder/ai/offline_coder.py`,
+    `ap_coder/ai/inference.py`, `ap_coder/ai/pipeline.py`, `ap_coder/coding/rules.py`, `ap_coder/coding/review.py`,
+    `ap_coder/core/schema.py`, `ap_coder/core/store/prior.py`, `ap_coder/web/invoice_view.py`,
+    `ap_coder/bench/coding_journal.py`, `ap_coder/bench/jde_names.py`; `tests/ai/test_supplier_prior.py`,
+    `tests/ai/test_candidates.py`, `tests/ai/test_closed_list.py`, `tests/bench/test_coding_journal.py`)
+- **D-213** · **Each G/L line has the remark AP keys with it in JD Edwards: suggested from the supplier's usual
+  one, edited by a person, learned on approval, and sent on the keying sheet and in the batch files** (the same
+  department's prototype; 10 Nov 2026).
+  - **Why:** AP types a remark of 30 characters at most with every G/L line, in its own short words ("KT
+    May.cellphone", "coffee supplies 3-1-204"). AP Coder stored none: the sheet and the batch carried the invoice
+    line's description cut at 30, mid-word.
+  - **What:** `LineItem.remark` and `remark_from` ("supplier", "invoice", "account", "person"), left out of the
+    stored coding when empty and never asked of the model. `coding/remark.py` `suggest_remark(line, invoice, prior,
+    account, reference)` gives the text and why: (a) the supplier's commonest remark shape for that account
+    (`supplier_prior`), in its latest wording, with the month, quarter, year and "INV" number of this invoice put
+    back and the office it ends with kept as written; (b) with no remark for the account, the supplier's one shape
+    when it is on more than half of its lines (three at least); (c) else the invoice line's own words shortened at
+    a word end, else the account's name. `fit` never returns more than 30 characters and says when it shortened.
+  - **Filled** in `finalise_coding` (`fill_remarks`), so on every read and every check of the review screen: a
+    line's suggestion follows its account; a remark a person typed (`remark_from` "person") is never replaced. The
+    form's field is `line_remark`, one a line (`invoice_view.LINE_REMARK`): posted, it is a person's once it is not
+    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again.
+  - **Only where remarks are used:** a chart of accounts is imported, or JD Edwards is in use with its remarks as
+    typed. Any other install stores its invoices as before (`same_behaviour.py`: the same).
+  - **Too long:** a typed remark is kept whole; over 30 characters is the check `REMARK_LONG`, which says what would
+    be keyed: an error where the remarks go to JD Edwards as typed, a warning elsewhere. The exports always fit it.
+  - **Learned:** `feedback.final_remark` and `feedback.remark_from` (added to an older database at its next start).
+    The supplier prior counts them with the journal's: a remark a person typed 5, one a person approved as
+    suggested 3, one nobody looked at 1. The accounts are ranked by the journal's remarks only, as before.
+  - **Measured** (`bench coding --journal --quick`, 198 held-out lines, each on its true account): the suggestion
+    has the department's shape for 11% and is its very remark for 6%. The made-up department picks its wording
+    among several and its office at random for every voucher, so this is a floor; nothing was tuned to it.
+  - **Left:** the review screen's box and its counter (another build). The period is the month a line names, else
+    the invoice date's: the schema has no service period of the header. An unlabelled long number in a remark is
+    taken out (it was that voucher's); "INV 123" with fewer than five digits is left as written.
+  - (`ap_coder/coding/remark.py`, `ap_coder/core/schema.py`, `ap_coder/ai/supplier_prior.py`,
+    `ap_coder/ai/pipeline.py`, `ap_coder/coding/review.py`, `ap_coder/coding/validation.py`,
+    `ap_coder/web/invoice_view.py`, `ap_coder/erp/jde.py`, `ap_coder/core/store/`, `ap_coder/ops/help.py`,
+    `ap_coder/bench/coding_journal.py`; `tests/coding/test_remark.py`, `tests/web/test_web_remark.py`)
+- **D-214** · **The review screen's first version for an install with a chart of accounts: one row a line (the
+  whole account string in one box, amount, remark, tax with its amount), the reason under it, in a frame that fits
+  the window it is given** (the same department's prototype; stage 1 of the screens plan; 10 Nov 2026).
+  - **Why:** With a chart loaded a line was two pickers (GL account, cost center) three rows tall under the whole
+    invoice header, the first line some 1,700 px down; nothing said which tax a line carried or how much, why a line
+    was coded so, or what was offered for a line left for a person. The department keys a JD Edwards account string
+    (`business unit.object.subsidiary`) and a remark for each line and wants to confirm each line's tax.
+  - **What:** Only where a chart is imported (`account_lines.in_use`); an install without one keeps its screen,
+    row and tests. A line's Account box is a text box (the picker's free kind) holding the whole string: the server
+    splits what is posted (`account_lines.posted`) and the chart's four checks say what is wrong on the line; a
+    string the chart does not have stays in the box and keeps Approve closed, never replaced by the account before.
+    Under the boxes: the account's name, its business unit and why (`decided_by` in plain words), or "To fix" with
+    the line's reason and its `candidates` as buttons. Each line's taxes come from `taxmath.invoice_taxes`, once a
+    draw: each tax its own amount, "read" when printed on the line, a mark when it is not the invoice's usual tax,
+    the amount keyed under Amount when a tax stays in the line, one sentence a tax under the lines. The Remark box
+    (D-213) shows the suggestion with a dashed edge until visited and posts it blank, so it follows the account;
+    its count is under it and past 30 nothing is cut. The account list is fetched once
+    (`GET /review/accounts.json`, kept by the browser as the vendor list is) and searched in the page
+    (`account_search.js`): by any part of the number with or without dots, words, a business unit's name; 50 rows
+    drawn. The frame: two panes from 1200 px (400 and 690 px at the least), stacked under it, the menu behind a
+    button below 1820 px, a compact header with the rest under More details, "Keyed on the pay item" in one line
+    from `jde.voucher_view`. Keys: Ctrl+Enter approves (twice when something is to check), F8 the next thing to fix.
+  - **Measured:** the sweep (`tests/web/test_screens_fluid.py`: 12 widths from 1000 to 2560 px x 3 heights, a 17 px
+    scrollbar, three invoices) finds no sideways scroll and nothing outside its card; the four-line invoice's first
+    line is at 433 px in a 1280 x 700 window (about 1,690 before). Page weight with the made-up chart (146 accounts
+    offered, a 10 KB list): one line 97 → 85 KB, four lines 117 → 108 KB, fifteen lines 182 → 182 KB (its rows now
+    carry each line's candidates and remark); the page no longer grows with the chart.
+  - **Not chosen:** rows as `<div>` blocks, container queries, a drag handle between the panes (the plan's second
+    version: the table row is already a grid, and media queries pass the sweep); a hidden select behind the Account
+    box (it puts the earlier choice back when what is typed names nothing).
+  - **Left (stage 2):** the no-chart row in the new columns; compact rows and a filter for long invoices (a long
+    invoice shows the accounts offered for the line in hand only); one pane at a time under 1200 px; the supplier
+    change; pay items as groups for two tax areas (held with its sentence today); editing what is keyed on the pay
+    item; Ctrl+D copying the remark; the first press on the Approve button (not Ctrl+Enter) approves at once;
+    "Supplier" for "Vendor" everywhere; the findings strip rebuilt (it is the checks card, compacted).
+  - (`ap_coder/web/account_lines.py`, `ap_coder/web/invoice_view.py`, `ap_coder/web/pages/invoice.py`,
+    `ap_coder/web/roles.py`, `ap_coder/web/templates/invoice.html`, `_invoice_lines.html`, `_invoice_live.html`,
+    `ap_coder/web/static/invoice.css`, `picker.css`, `js/invoice.js`, `js/picker.js`, `js/account_search.js`;
+    `tests/web/test_account_lines.py`, `tests/web/test_account_picker.py`, `tests/web/test_screens_fluid.py`,
+    `tests/review_page.py`)
+- **D-215** · **A line's amount is read from one column of the line table, and lines that do not add up are left
+  for a person, never balanced.** After B-2106 a row's own arithmetic could pick any figure of the row as its
+  amount, and a line "Charges not in the line table" of whatever was missing hid a wrong reading (B-2197 to B-2203).
+  - **Decision:** The amount's column is chosen once for the table: by its heading (`_amount_heading`: after a
+    discount column only the headings right of it; never one that says the tax is in it; one that says before tax
+    over a plain one only beside a tax column or a total with tax, else the plain one; of equals the first), then by
+    where the numbers are printed (`_columns_under`: a heading has the column of numbers printed under it, else
+    headings and columns are paired in the order they come across the page, never a heading with the numbers
+    printed wholly to its left; a heading over words, a tax code's, has none). The numbers may change the COLUMN, not
+    a row's figure: a column of money that makes the amount read with the tax on every row that prints one is the
+    amount before tax; another column headed as an amount that adds up to the invoice's subtotal is the amount.
+    A charge outside the table is a line only when it is read from the page (the freight beside the subtotal, an
+    amount under its own label). Lines left not adding up stay as read: SUBTOTAL_MISMATCH closes Approve, and
+    LINE_AMOUNTS_TO_CHECK says whether the amounts include the tax or which column to check. A tax cell not found
+    is "not read"; a column says only about the tax it names; the tax amounts read are kept on the line
+    (`taxes_read`), a "Tax" column on an invoice that charges two taxes excepted (it names neither).
+    A row's discount that explains its amount makes the line's unit price the price after it, so quantity × unit
+    price is the amount (B-2269). A row of the supplier's account ("Previous balance", "Payment received", "Balance
+    forward" above the first line) is no line: every reading leaves it out and ACCOUNT_ROWS_LEFT_OUT names it
+    (B-2270).
+  - **Not chosen:** Working out the amount before tax as total less tax on a "Tax | Total" table (nothing on the
+    page proves it line by line: a person enters it); pairing a heading with the nearest numbers (the column before
+    ends nearer a left-aligned heading than its own); a partial tax code for a line when only one of two taxes has
+    a column (`line_tax.prefill` takes whole codes: the amounts decide, as before the tax columns were read).
+  - **Where:** `ap_coder/capture/reader/line_items.py` (`_amount_heading`, `_Columns`, `_columns_under`),
+    `ap_coder/capture/bridge.py` (`printed_taxes`), `ap_coder/ai/offline_coder.py` (`_charges_outside`,
+    `_lines_to_check`), `ap_coder/ops/help.py`; `tests/capture/test_line_table_columns.py`.

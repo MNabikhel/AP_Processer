@@ -166,6 +166,9 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store.reports:_KEPT": Kept(32 * MB, "Bounded; KEPT_HERE answers"),
     "ap_coder.erp.jde_sync:_CACHE": Kept(32 * MB, "Bounded (CACHE_MOST); CACHE_SECONDS old at most (B-2025)"),
     "ap_coder.core.store._base:_VENDOR_LESSONS": Kept(8 * MB, "Bounded; VENDOR_LESSONS_KEPT vendors"),
+    "ap_coder.ai.supplier_prior:_KEPT": Kept(6 * MB, "Bounded; the supplier priors (D-212: 4.6 KB a supplier, the "
+                                                     "950 of a year's journal 5 MB), the journal's names and each "
+                                                     "chart's account names (0.3 MB)"),
     "ap_coder.coding.po:_KEPT": Kept(24 * MB, "Bounded (PO_KEPT_MOST); POs of PO_KEPT_FROM invoices or more (the "
                                               "300,000 seed's one, 3,382 invoices of 8 lines: 22.5 MB)"),
     "ap_coder.coding.po:_MATCHED": Kept(6 * MB, "Bounded (MATCHED_MOST); the matches of the POs read at each ask"),
@@ -188,9 +191,12 @@ CACHES: dict[str, Kept] = {
     "ap_coder.erp.accruals:_PARTS": Kept(16 * MB, "PARTS_KEPT period ends of the purchase orders' accruals"),
     "ap_coder.core.store._base:_NOT_FOUND": Kept(24 * MB, "LOOKED_KEPT invoices (B-2026)"),
     "ap_coder.core.store._base:_FOUND": Kept(12 * MB, "LOOKED_KEPT files"),
-    "ap_coder.core.store.accounts:_REFERENCE": Kept(8 * MB, "8 databases' reference data (a chart of 1,500 "
-                                                            "accounts: 0.7 MB)"),
-    "ap_coder.ai.suggest:_ACCOUNT_STEMS": Kept(8 * MB, "4 charts of accounts"),
+    "ap_coder.core.store.accounts:_REFERENCE": Kept(8 * MB, "REFERENCE_KEPT databases' reference data (a chart of "
+                                                            "1,500 accounts: 0.7 MB), WITH_PAIRS_KEPT while one "
+                                                            "holds the pairs of a JD Edwards chart (14,700 "
+                                                            "accounts, D-209: 3 MB more)"),
+    "ap_coder.ai.suggest:_ACCOUNT_STEMS": Kept(2 * MB, "2 charts of accounts (1,500 accounts: 0.8 MB; the 184 GL "
+                                                       "codes of a JD Edwards chart of 14,000 rows: 0.1 MB)"),
     "ap_coder.web.pages.process:_LISTED": Kept(8 * MB, "8 folders' new files, LISTED_SECONDS (a laptop's: the "
                                                        "company server's are kept for every process)", web=False),
     "ap_coder.core.store.review_queue:_KEPT": Kept(16 * MB, "KEPT_MOST: the queue's lists and facts of 2 "

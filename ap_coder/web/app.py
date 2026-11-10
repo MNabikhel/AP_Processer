@@ -3,9 +3,9 @@
 Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES`` (or ``pages.MORE_MODULES``). Besides the
 pages:
 
-* ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port"} for the launcher (no secrets); to this
-  computer, also "user" (the account running it); to another computer, or past the server's own console, only
-  {"ok", "app"}.
+* ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port", "server_mode"} for the launcher (no
+  secrets); to this computer, also "user" (the account running it); to another computer, or past the server's own
+  console, only {"ok", "app"}.
 * ``GET /readyz``: for IT's monitor (D-187, ``ops/health.py``): 200 when ready, 503 when not, with what was checked;
   on the server only to its console and the monitors server.json names.
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
@@ -497,6 +497,7 @@ def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
             "folder": str(CODE_FOLDER),
             "pid": os.getpid(),
             "port": request.app.state.port or server[1],
+            "server_mode": console_only,  # the team's, with sign-in: never joined by a laptop-mode start (D-211)
         }
         if is_this_computer(request.client.host if request.client else ""):  # (never said to the network)
             found["user"] = os_user()  # another account's double-click must not open this one (B-168)

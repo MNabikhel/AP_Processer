@@ -8,7 +8,9 @@ packages for) and runs this file with it. It then:
 2. reuses ``.venv`` (it creates it only the first time, and again only when it is broken, or made with a Python
    the offline bundle has no packages for while one it has is installed);
 3. looks for an AP Coder already running: the same folder and version is only opened in the browser; an older
-   version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database;
+   version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database. Before
+   anything else, a data folder that serves a team with sign-in (server mode) is never started here in laptop mode:
+   its address is opened instead, or, its server stopped, the start says so (``team_server_instead``, D-211);
 4. says "Updated AP Coder from X to Y" when this folder's version changed, and removes the files an older
    version unzipped here left behind (the bundle's manifest lists its own);
 5. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
@@ -1864,6 +1866,32 @@ def open_running(port: int) -> int:
     return 0
 
 
+def team_server_instead(rest: list[str]) -> int | None:
+    """The data folder is one a server-mode AP Coder serves with sign-in, or was set up to serve
+    (``ap_coder/ops/safety.py:team_server``: it answers now, over HTTPS or HTTP; or, stopped, its database has sign-in
+    accounts or its server.json is there): this start never opens it in laptop mode, with no sign-in (D-211). Running:
+    the team's address is opened in the browser, whatever this start's own mode. Stopped: said, with how to start it,
+    unless the start asks for laptop mode again by name (``--without-sign-in``, which ``serve`` is given and warns
+    of). Returns the exit code, or None when this start goes on (a laptop's own data; the server's own start)."""
+    from ap_coder.ops.safety import WITHOUT_SIGN_IN, team_server
+
+    team = team_server(paths.private_dir(), paths.default_db_path())
+    if team is None or (server_mode() and not team.running):
+        return None
+    why, to_do = team.refusal(WITHOUT_SIGN_IN in rest)
+    if not why:
+        return None
+    if not team.running:
+        again = "APProcessor.bat" if WINDOWS else "./APProcessor.command"
+        return failed(SetupError(why, f"{to_do} (or {again} {WITHOUT_SIGN_IN})."))
+    say(why)
+    if WITHOUT_SIGN_IN in rest:
+        say(f"{to_do}.")
+    say(f"Opening {team.address} in your browser. Nothing was started; this window can be closed.")
+    open_browser(team.address)
+    return 0
+
+
 # --- One start at a time ----------------------------------------------------------------------------------------
 
 _held: list[Any] = []  # the open lock file: the lock lasts as long as this process
@@ -2011,6 +2039,9 @@ def start_dashboard(rest: list[str], state: dict) -> int:
     """Start the server on the port asked for, else the first free one from 8501 (recorded, so the next
     double-click finds this one running); its output is shown as it comes, and the browser opens once it is up
     (its "AP Coder is running at" line, or an answer on /healthz). Returns when it stops."""
+    refused = team_server_instead(rest)  # (also asked first of all by a double-click: here for the installer's start)
+    if refused is not None:
+        return refused
     port = requested_port(rest) or free_port()
     if port != DEFAULT_PORT and not requested_port(rest):
         say(f"Port {DEFAULT_PORT} is in use by another program: AP Coder uses port {port} ({dashboard_url(port)}).")
@@ -2340,6 +2371,12 @@ def _main(argv: list[str] | None = None) -> int:
                                  f"({ROOT}) that it deletes later.", "Close this window, right-click the ZIP, choose "
                                  "Extract All (e.g. to C:\\APCoder), then double-click APProcessor.bat in the "
                                  "extracted folder."))  # fmt: skip
+    if not args.no_start and not args.installer:  # (the installer: asked as it starts one)
+        # Before anything is set up, or stopped to make way (D-211). In both phases: the first, in a new folder,
+        # has no packages yet to read the accounts with.
+        code = team_server_instead(rest)
+        if code is not None:
+            return code
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
             if args.installer:

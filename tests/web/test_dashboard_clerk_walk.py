@@ -133,8 +133,8 @@ def test_the_reading_tab_does_not_say_ovisocr2_is_missing_while_lm_studio_is_dow
 
 
 def test_the_vendor_master_duplicates_warning_is_about_the_last_import(client):
-    """The "appear more than once in the file" warning stayed after the corrected file was imported, naming vendors
-    the new file no longer has twice."""
+    """The warning about names the file has twice stayed after the corrected file was imported, naming vendors the
+    new file no longer has twice."""
 
     def import_file(name, text):
         response = post(client, "/vendors/master/upload", files={"file": (name, text.encode(), "text/csv")})
@@ -145,10 +145,11 @@ def test_the_vendor_master_duplicates_warning_is_about_the_last_import(client):
 
     head = "vendor_id,vendor_name,payment_terms\n"
     twice = head + "V1,Northwind IT Solutions Inc.,Net 30\nV2,Northwind IT Solutions Inc,Net 30\nV3,Chinook,Net 15\n"
-    assert "1 vendor appears more than once" in import_file("vendors.csv", twice)
+    # (two numbers under one name are two suppliers since B-2157: said so, each kept under its number)
+    assert "1 name is shared by more than one supplier number" in import_file("vendors.csv", twice)
     once = head + "V1,Northwind IT Solutions Inc.,Net 30\nV3,Chinook,Net 15\n"
     page = import_file("vendors_fixed.csv", once)
-    assert "Vendor master:" in page and "more than once" not in page
+    assert "Vendor master:" in page and "more than once" not in page and "more than one supplier number" not in page
 
 
 class _Tables(HTMLParser):

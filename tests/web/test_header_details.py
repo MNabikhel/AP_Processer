@@ -183,37 +183,36 @@ def _pick_vendor(page, typed: str, name: str) -> None:
 def test_in_a_browser_picking_a_vendor_fills_its_numbers_and_follows_it(browser, store):  # noqa: F811
     _red_river(store, printed=False)  # no GST/HST number read: the vendor list fills it (B-688)
     page, errors = _open_review(browser, store, "Red River", viewport=LAPTOP)
-    if True:
-        gst, qst = page.locator(f"[name={GST}]"), page.locator(f"[name={QST}]")
-        gst.fill("")
-        qst.fill("1111111111 TQ0001")  # typed by the clerk: never overwritten
-        page.wait_for_timeout(600)
-        vendor = page.locator("#vendor-name")
-        _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
-        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
-        note = page.locator(f'[data-field="{GST}"] [data-from-vendor-note]')
-        assert note.is_visible() and "not printed on the invoice" in note.inner_text()
-        assert qst.input_value() == "1111111111 TQ0001"
-        assert page.locator("#toasts", has_text="filled from the vendor list").count()
-        # another vendor: the filled number follows it
-        _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
-        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
-        assert qst.input_value() == "1111111111 TQ0001"
-        # Ctrl+Z puts back the vendor with its numbers (B-682)
-        page.keyboard.press("Control+z")
-        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
-        assert "Pacific" in vendor.input_value()
-        page.wait_for_timeout(900)  # checked again: the server does not fill it again
-        assert gst.input_value() == "555666775 RT0001"
-        _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
-        page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
-        # a printed number that differs from the vendor list: amber, with the list's number under it
-        gst.fill("123456782 RT0001")
-        page.wait_for_selector(f'[data-field="{GST}"].is-flagged')
-        flag = page.locator(f'[data-field="{GST}"] [data-flag]')
-        assert flag.is_visible() and "Vendor list: 609274188 RT0001" in flag.inner_text()
-        assert not page.locator(f'[data-field="{GST}"] [data-from-vendor-note]').is_visible()
-        assert errors == []
+    gst, qst = page.locator(f"[name={GST}]"), page.locator(f"[name={QST}]")
+    gst.fill("")
+    qst.fill("1111111111 TQ0001")  # typed by the clerk: never overwritten
+    page.wait_for_timeout(600)
+    vendor = page.locator("#vendor-name")
+    _pick_vendor(page, "Pacific Office", "Pacific Office Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    note = page.locator(f'[data-field="{GST}"] [data-from-vendor-note]')
+    assert note.is_visible() and "not printed on the invoice" in note.inner_text()
+    assert qst.input_value() == "1111111111 TQ0001"
+    assert page.locator("#toasts", has_text="filled from the vendor list").count()
+    # another vendor: the filled number follows it
+    _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
+    assert qst.input_value() == "1111111111 TQ0001"
+    # Ctrl+Z puts back the vendor with its numbers (B-682)
+    page.keyboard.press("Control+z")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '555666775 RT0001'")
+    assert "Pacific" in vendor.input_value()
+    page.wait_for_timeout(900)  # checked again: the server does not fill it again
+    assert gst.input_value() == "555666775 RT0001"
+    _pick_vendor(page, "Prairie Network", "Prairie Network Supply")
+    page.wait_for_function(f"document.querySelector('[name={GST}]').value === '609274188 RT0001'")
+    # a printed number that differs from the vendor list: amber, with the list's number under it
+    gst.fill("123456782 RT0001")
+    page.wait_for_selector(f'[data-field="{GST}"].is-flagged')
+    flag = page.locator(f'[data-field="{GST}"] [data-flag]')
+    assert flag.is_visible() and "Vendor list: 609274188 RT0001" in flag.inner_text()
+    assert not page.locator(f'[data-field="{GST}"] [data-from-vendor-note]').is_visible()
+    assert errors == []
 
 
 # --- Pay from: our bank account (D-66) -------------------------------------------------------------------------------

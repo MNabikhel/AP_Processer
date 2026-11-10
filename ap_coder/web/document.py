@@ -33,7 +33,7 @@ from ap_coder.capture.types import MISSING, STATUSES, Box, FieldResult, LineRead
 PDF = ".pdf"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp", ".heic", ".heif"}
 VIEWABLE = {PDF, *IMAGE_SUFFIXES}
-MAX_PAGES = 20  # pages shown; a longer file still shows its first pages
+MAX_PAGES = 60  # pages shown (as many as are read: ``layout.READ_PAGES``); a longer file still shows its first pages
 DPI = 120  # sharp on a laptop screen at "Fit", still small
 MAX_SIDE = 2400  # pixels: a page is never drawn bigger than this at scale 1, whatever the dpi
 SCALES = (1, 2, 3)  # the picture at 1x, 2x or 3x the dpi: the viewer asks for a sharper one when zoomed in

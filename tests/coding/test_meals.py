@@ -97,6 +97,22 @@ def test_a_tip_line_carries_no_tax_to_halve():
     assert expense == [(MEALS, 6.50, 106.50), ("6900", 0.0, 15.0)] and tax == [("2310", 6.50)]
 
 
+@pytest.mark.parametrize("marked", [[], ["GST", "PST"]])
+def test_a_tip_line_takes_none_of_the_pst_kept_in_the_expense(marked):
+    """B-2169: a Saskatchewan dinner and its tip, PST 6.00 kept in the expense: all of it is on the dinner, as the
+    GST is (one rule for a line's share of a tax, ``tax_shares``), none on the tip coded elsewhere; whether no line is
+    marked with the tax or every line is."""
+    doc = _on([(100.0, "6000", "Dinner for 4"), (15.0, "6900", "Tip")], 0.0)
+    for line in doc["line_items"]:
+        line.update(taxes_applied=marked, tax_exempt=[], tax_status="")
+    doc.update(supplier_province="SK", ship_to_province="SK", tax_total=11.0, grand_total=126.0, tax_lines=[
+        {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 100.0, "tax_amount": 5.0},
+        {"tax_type": "PST", "province": "SK", "rate": 0.06, "taxable_amount": 100.0, "tax_amount": 6.0},
+    ])  # fmt: skip
+    expense, tax = _split(_dist(doc, _setup(meals=())))
+    assert expense == [("6000", 6.0, 106.0), ("6900", 0.0, 15.0)] and tax == [("2310", 5.0)]
+
+
 def test_gst_and_qst_on_a_quebec_client_cocktail():
     """The Montreal invoice's client cocktail (2,550.00, GST 5% and QST 9.975%): half of each is expensed with it,
     63.75 GST and 127.18 QST; the other lines keep their full credits and refunds."""

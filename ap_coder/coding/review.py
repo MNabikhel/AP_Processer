@@ -8,13 +8,18 @@ Entry points: ``coding_from_inputs``, ``codes_to_pick`` (what approval still nee
 from __future__ import annotations
 
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from ..core.memory import pair_lines
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import InvoiceCoding
+from ..core.schema import InvoiceCoding, decided
 from .money import half_up, times
+from .remark import one_line
+from .remark import typed as typed_remark
+from .rules import Rule, decided_by_rule, rule_for
 
 if TYPE_CHECKING:  # imported where a grid is split: the queue's summary reads ``codes_to_pick`` without pandas
     import pandas as pd
@@ -30,20 +35,67 @@ def to_number(value: Any, default: float = 0.0) -> float:
     return float(str(value).replace(",", "").replace("$", "").strip())
 
 
+def _blank(code: Any) -> str:
+    return "" if code in (None, "", UNASSIGNED) else str(code)
+
+
+PICKED = "Picked by a person."  # a line's reason once a person picked its account (``account_lines.why_words``)
+_LEFT = re.compile(r"^.*?: pick the account\.", re.S)  # why a line was left for a person (``ai.suggest.why_left``)
+
+
+def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str, Any]], vendor: str = "",
+                      rules: list[Rule] | None = None) -> None:  # fmt: skip
+    """What decided each line's account once a person had the invoice on the review screen (``decided_by``, D-212):
+    the one place a person's pick is recorded. A line still coded as proposed keeps what the proposal said; one
+    with another account or cost center was coded by a person (``source`` "person": with ``was``, the source of
+    what was proposed, and ``candidate``, the place from 1 of the pick among the accounts offered, when it was one of
+    them), or by a fixed coding rule a person applied (the rule that codes it so). The accounts offered stay with
+    the line: what the person chose among. A line without an account has no decision. A line left for a person
+    ("…: pick the account.") whose account a person picked says that instead (``PICKED``); what its reason says
+    after (its tax code) is kept."""
+    for before, li in pair_lines(proposed, line_items):
+        before = before or {}
+        li["candidates"] = list(before.get("candidates") or [])
+        gl, cc = _blank(li.get("predicted_gl_code")), _blank(li.get("predicted_cost_center"))
+        if not gl:
+            li["decided_by"] = {}
+        elif gl == _blank(before.get("predicted_gl_code")) and cc == _blank(before.get("predicted_cost_center")):
+            li["decided_by"] = dict(before.get("decided_by") or {})
+        else:
+            rule = rule_for(rules, vendor, str(li.get("description") or "")) if rules else None
+            if rule is not None and rule.gl_code.strip() == gl and rule.cost_center.strip() in ("", cc):
+                li["decided_by"] = decided_by_rule(rule, before.get("decided_by"))
+                continue
+            picked = [n for n, c in enumerate(li["candidates"], 1)
+                      if c.get("code") == gl and _blank(c.get("business_unit")) in ("", cc)]  # fmt: skip
+            li["decided_by"] = decided("person", was=(before.get("decided_by") or {}).get("source"),
+                                       candidate=picked[0] if picked else None)  # fmt: skip
+            if _LEFT.match(str(li.get("reasoning_justification") or "")):
+                li["reasoning_justification"] = _LEFT.sub(PICKED, li["reasoning_justification"], count=1)
+
+
 def coding_from_inputs(
     header: dict[str, Any],
     lines: pd.DataFrame,
     taxes: pd.DataFrame,
     ai: dict[str, Any],
     default_cost_center: str = "",
+    rules: list[Rule] | None = None,
 ) -> tuple[InvoiceCoding | None, list[str]]:
     """Rebuild the coding from the dashboard's form and grids.
 
     Blank GL cells become ``UNASSIGNED``; blank cost centers become ``default_cost_center``
-    (``UNASSIGNED`` when cost centers are configured, so the check says what is missing).
+    (``UNASSIGNED`` when cost centers are configured, so the check says what is missing). ``ai``: the coding
+    proposed, which says what decided each line still coded as proposed (``decided_on_screen``); ``rules``: the
+    fixed coding rules, for the lines a person had a rule code.
+
+    A line's remark (D-213) is the grid's ``remark`` column: with a ``remark_from`` column beside it, as that says
+    (the review screen's draft: ``remark.typed`` read the posted cell); without one, a remark that is not the one
+    proposed is a person's. A grid with no ``remark`` column keeps the remark each line was proposed with.
     """
     problems: list[str] = []
     line_items = []
+    remarks: list[tuple[str, str | None] | None] = []  # each line's (remark, where from) as the grid has it
     used = {int(n) for n in lines.get("line_number", []) if not is_blank(n)}
     next_no = max(used, default=0) + 1
     for row in lines.to_dict("records"):
@@ -58,6 +110,8 @@ def coding_from_inputs(
         def text(field: str, default: str = "", row: dict[str, Any] = row) -> str:
             return default if is_blank(row.get(field)) else str(row[field])
 
+        remarks.append((text("remark"), text("remark_from") if "remark_from" in row else None)
+                       if "remark" in row else None)  # fmt: skip
         line_items.append(
             {
                 "line_number": int(number),
@@ -90,6 +144,13 @@ def coding_from_inputs(
                 "tax_amount": to_number(row.get("tax_amount")),
             }
         )
+    decided_on_screen(line_items, ai.get("line_items") or [], str(header.get("vendor_name") or ""), rules)
+    for cell, (before, li) in zip(remarks, pair_lines(ai.get("line_items") or [], line_items), strict=True):
+        if cell is None:
+            cell = (str((before or {}).get("remark") or ""), str((before or {}).get("remark_from") or ""))
+        li["remark"], li["remark_from"] = (
+            (one_line(cell[0]), cell[1]) if cell[1] is not None else typed_remark(cell[0], before)
+        )
     data = {**header, "tax_lines": tax_lines, "line_items": line_items,
             "confidence_score": ai.get("confidence_score", 0.0)}  # fmt: skip
     try:
@@ -108,12 +169,13 @@ def uses_cost_centers(reference: ReferenceData) -> bool:
 MANY_LINES = 4  # this many lines or more to pick for: counted, and Apply to all lines… pointed to (B-667)
 
 
-def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
+def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True, once: bool = False) -> str:
     """What approval still needs on the lines (dicts or line items): "Pick a GL account for line 2 and a cost center
     for lines 1, 2 to approve", or "" when every line has a GL account and, where cost centers are used, a cost
     center. The review screen's Approve bar and the queue's Ready ask this one question, so they always agree.
     ``MANY_LINES`` or more are counted ("for 15 lines"), with ``hint`` (the review screen, where it is) "(or use
-    Apply to all lines…)"."""
+    Apply to all lines…)". ``once``: a line without a GL account is not named again for its cost center (a screen
+    with one Account box a line, ``account_lines.bar_words``)."""
 
     def code(li: Any, key: str) -> str:
         value = li.get(key) if isinstance(li, dict) else getattr(li, key, "")
@@ -131,6 +193,8 @@ def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
         if cost_centers
         else []
     )
+    if once:
+        no_cc = [number for number in no_cc if number not in uncoded]
     parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
         [f"a cost center for {which(no_cc)}"] if no_cc else []
     )

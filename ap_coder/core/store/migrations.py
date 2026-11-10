@@ -247,6 +247,8 @@ def _vendor_numbers(store: Any, conn: sqlite3.Connection) -> None:
     for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):
         if columns and column not in columns:
             dialect.add_column(conn, "vendors", column, "TEXT NOT NULL DEFAULT ''")
+    if columns:  # JD Edwards' "N" is no hold: a sync before B-2081 kept it as one (B-2158)
+        conn.execute("UPDATE vendors SET erp_hold = '' WHERE erp_hold IN ('N', 'n')")
 
 
 def _cost_center_managers(store: Any, conn: sqlite3.Connection) -> None:
@@ -397,6 +399,15 @@ def _feedback_tax_codes(store: Any, conn: sqlite3.Connection) -> None:
         store._fill_tax_codes(conn)
 
 
+def _feedback_remarks(store: Any, conn: sqlite3.Connection) -> None:
+    """Each approved line remembers the remark it was approved with and where it came from (D-213): blank for the
+    lines approved before, which had none. No version of their own: an older AP Coder leaves the columns be."""
+    columns = dialect.columns(conn, "feedback")
+    for column in ("final_remark", "remark_from"):
+        if column not in columns:
+            dialect.add_column(conn, "feedback", column, "TEXT NOT NULL DEFAULT ''")
+
+
 def _reading_as_d89(store: Any, conn: sqlite3.Connection) -> None:
     """The invoices read before D-89 scored again (``old_readings``), once per database."""
     reading_as_d89(conn)
@@ -441,6 +452,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _feedback_cleanup),
     (EVERY_TIME, _gl_meals),
     (EVERY_TIME, _feedback_tax_codes),
+    (EVERY_TIME, _feedback_remarks),
     (EVERY_TIME, _reading_as_d89),
     (EVERY_TIME, _seen_files),
     (EVERY_TIME, _billing_by_vendor),

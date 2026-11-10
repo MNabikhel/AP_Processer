@@ -11,6 +11,25 @@ def _codes(report):
     return {i.code for i in report.issues}
 
 
+def test_an_invoice_whose_every_account_is_a_guess_is_not_approved_in_one_click(reference, ground_truth):
+    """B-2218: the chat model's pick, an account's name or other vendors' lines decided every account."""
+    gt = copy.deepcopy(ground_truth)
+    for n, li in enumerate(gt["line_items"]):
+        li["decided_by"] = {"source": ("model", "words", "others")[n % 3]}
+    count = len(gt["line_items"])
+    assert count > 1
+    found = [i for i in validate_coding(InvoiceCoding.model_validate(gt), reference).issues
+             if i.code == "ACCOUNTS_ALL_GUESSED"]  # fmt: skip
+    assert [(i.severity, i.message) for i in found] == [("error", (
+        f"{count} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+        "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them"))]  # fmt: skip
+    # One a person, a rule, the vendor's approvals or last year's journal decided: no longer every account.
+    for source in ("person", "rule", "vendor", "supplier"):
+        gt["line_items"][0]["decided_by"] = {"source": source}
+        assert "ACCOUNTS_ALL_GUESSED" not in _codes(validate_coding(InvoiceCoding.model_validate(gt), reference))
+    assert "ACCOUNTS_ALL_GUESSED" not in _codes(validate_coding(InvoiceCoding.model_validate(ground_truth), reference))
+
+
 def test_clean_invoice_passes(reference, ground_truth):
     report = validate_coding(InvoiceCoding.model_validate(ground_truth), reference)
     assert report.issues == []
@@ -123,3 +142,53 @@ def test_a_finding_about_the_coding_keeps_the_invoice_for_a_person(reference, gr
     assert _codes(report) == {"HISTORY_CONFLICT"}
     assert report.reading_confidence == 0.94 and report.coding_confidence == 0.9  # counted once, in the Coding
     assert report.requires_review is True
+
+
+def test_a_line_with_no_account_yet_is_not_held_against_what_reviewers_coded(reference, ground_truth):
+    """B-2261: "reviewers coded similar lines from this vendor to GL …" was raised on a line left for a person, which
+    has no account to compare; it is said of a line that has one."""
+    gt = dict(ground_truth)
+    gt["line_items"] = [dict(li) for li in gt["line_items"]]
+    gt["line_items"][0]["predicted_gl_code"] = "UNASSIGNED"
+    first, second = (li["line_number"] for li in gt["line_items"][:2])
+    history = [{"line_number": n, "status": "conflict", "history_gl": "6999", "decisions": 3} for n in (first, second)]
+    report = validate_coding(InvoiceCoding.model_validate(gt), reference, history=history)
+    assert [i.line_number for i in report.issues if i.code == "HISTORY_CONFLICT"] == [second]
+    assert report.checks["history"] == history  # what reviewers used is still known for the line
+
+
+def test_a_duplicate_says_which_came_first_and_where_the_other_stands():
+    """Both invoices of a duplicate pair said the same, "reject this one" (B-2101): the message names which was
+    received first and the other's state, and tells the one that came first to reject the other, unless the other
+    is approved already. With the others' numbers alone it says what it said."""
+    from ap_coder.coding.validation import duplicate_message
+
+    year = __import__("datetime").date.today().year
+    assert duplicate_message([20]) == "same vendor and invoice number as invoice #20: possible duplicate payment"
+    waiting = {"id": 20, "first": True, "status": "review", "approved": ""}
+    assert duplicate_message([waiting]) == (
+        "same vendor and invoice number as invoice #20 (received first, waiting for review): possible duplicate "
+        "payment. If it is the same bill, reject this one"
+    )
+    later = {"id": 21, "first": False, "status": "parked", "approved": ""}
+    assert duplicate_message([later]) == (
+        "same vendor and invoice number as invoice #21 (received after this one, set aside): possible duplicate "
+        "payment. This one came first: if it is the same bill, reject the other"
+    )
+    approved = {"id": 20, "first": True, "status": "approved", "approved": f"{year}-11-10T09:30:00"}
+    assert duplicate_message([approved]) == (
+        "same vendor and invoice number as invoice #20 (received first, approved on Nov 10): possible duplicate "
+        "payment. If it is the same bill, reject this one"
+    )
+    second = {"id": 20, "first": True, "status": "pending_approval", "approved": ""}
+    assert "invoice #20 (received first, waiting for a second approval): possible" in duplicate_message([second])
+    after = {"id": 21, "first": False, "status": "approved", "approved": "2024-03-05T09:30:00", "exported": True}
+    assert duplicate_message([after]) == (
+        "same vendor and invoice number as invoice #21 (received after this one, approved on Mar 5, 2024 and "
+        "exported): possible duplicate payment. It is approved already: if it is the same bill, reject this one"
+    )
+    assert duplicate_message([later, {**later, "id": 22, "status": "review"}]) == (
+        "same vendor and invoice number as invoice #21 (received after this one, set aside), #22 (received after "
+        "this one, waiting for review): possible duplicate payment. This one came first: if it is the same bill, "
+        "reject the others"
+    )

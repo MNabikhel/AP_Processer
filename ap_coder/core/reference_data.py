@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .chart import AccountPairs
 from .csvio import read_csv_rows
 from .tax_setup import TaxRateTable, TaxSetup, TaxTreatment, load_tax_mapping
 
@@ -69,6 +70,24 @@ def marks_meals(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() not in _NOT_MEALS
+
+
+# The words in an account's name that read like a meals and entertainment account ("Meals - Travel", "Working
+# Lunches", "Client Hospitality", "Catering - Meetings", "M&E"): such an account is offered for the meals tick, never
+# ticked by itself (B-2277). Not "food" or "beverages": a kitchen's purchases are no meals account.
+_MEALS_NAME = re.compile(
+    r"(?i)\b(?:meals?|lunch(?:es|eons?)?|dinners?|breakfasts?|brunch|catering|caterers?|hospitality|entertainment"
+    r"|restaurants?|banquets?|repas|traiteurs?|divertissements?)\b|\bm\s*&\s*e\b"
+)
+# ... unless it says the meals are charged on ("Recovery-Meals & Hospi", "Meals billed to clients"): the tax on those
+# is claimed in full, so such an account is left for a person to tick.
+_CHARGED_ON = re.compile(r"(?i)\b(?:recover(?:y|ies|ed|able)|re-?bill(?:ed|able)?|billed|billable|recharged?)\b")
+
+
+def reads_like_meals(name: object) -> bool:
+    """Whether an account's name reads like a meals and entertainment account (50% tax credit, D-90)."""
+    text = str(name or "")
+    return bool(_MEALS_NAME.search(text)) and not _CHARGED_ON.search(text)
 
 
 def meals_column(headers: list[str]) -> str:
@@ -143,17 +162,48 @@ class ReferenceData:
     cost_centers: ReferenceTable | None = None
     tax: TaxSetup = field(default_factory=TaxSetup.default)
     notes: list[str] = field(default_factory=list)
+    # Which GL code exists on which cost center (a JD Edwards business unit) and may be posted to, when a chart of
+    # accounts was imported (D-209); None: every GL code goes with every cost center, as before.
+    pairs: AccountPairs | None = None
+    # What the store built it from, as it compares it (``Store.reference_stamp``); "" when read from files. Checks
+    # made with it say so (``ValidationReport.reference_stamp``), so an invoice checked against lists that changed
+    # before it was saved is checked again (B-2094).
+    stamp: str = ""
+
+    def line_accounts(self) -> list[str]:
+        """The GL codes a line may be offered, in the list's order: every account but those mapped to a tax type and,
+        with a chart imported, those offered on no business unit (never-offered accounts, ``chart.ChartSettings``).
+        The one place that says so. Asked by the coding's schema (``schema.line_gl_codes``), the review screen's
+        picker (``invoice_view.gl_options``), the doctor and ``to_prompt_context``; the suggestions
+        (``ai/suggest.suggest_gl``) and the model's account pass (``ai/inference._account_schema``) still work their
+        own list out, tax accounts aside only, until they are rebuilt on this and the pairs (B-2093)."""
+        tax_gls = self.tax.tax_gl_codes()
+        offered = None if self.pairs is None else self.pairs.offered_codes()
+        return [c for c in self.chart_of_accounts.codes if c not in tax_gls and (offered is None or c in offered)]
+
+    def line_cost_centers(self) -> list[str] | None:
+        """The cost centers a line may be offered, in the list's order (None: the organisation has none): all of
+        them, or with a chart imported those with an account the pairs offer, so not a business unit named DO NOT USE
+        or one all of whose accounts are never offered (B-2093). Such a one stays a cost center: a line coded to it by
+        hand is checked. Asked by the coding's schema, the review screen's picker (``invoice_view.cc_options``, which
+        keeps a line's own), ``to_prompt_context`` and the chat model's list (``ai/inference._account_schema``)."""
+        if self.cost_centers is None:
+            return None
+        offered = None if self.pairs is None else frozenset(self.pairs.business_units())
+        return [c for c in self.cost_centers.codes if offered is None or c in offered]
 
     def to_prompt_context(self) -> str:
-        tax_gls = self.tax.tax_gl_codes()
+        offered = frozenset(self.line_accounts())
         expense_accounts = ReferenceTable(
             self.chart_of_accounts.kind,
             self.chart_of_accounts.key_column,
-            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] not in tax_gls],
+            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] in offered],
         )
         sections = ["### GL Accounts (use for line items)\n" + expense_accounts.to_markdown()]
         if self.cost_centers is not None:
-            sections.append("### Cost Centers\n" + self.cost_centers.to_markdown())
+            centers, key = frozenset(self.line_cost_centers() or ()), self.cost_centers.key_column
+            rows = [r for r in self.cost_centers.rows if r[key] in centers]
+            sections.append("### Cost Centers\n" + ReferenceTable(self.cost_centers.kind, key, rows).to_markdown())
         sections.append("### Canadian Sales Tax Rates in force today\n" + self.tax.rates.to_markdown())
         if self.notes:
             sections.append("### Coding Policy Notes\n" + "\n".join(f"- {n}" for n in self.notes))

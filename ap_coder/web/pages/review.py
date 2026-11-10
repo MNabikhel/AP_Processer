@@ -154,13 +154,16 @@ def _to_fix(facts: dict[str, Any], cost_centers: bool) -> tuple[str, int, int]:
 
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
               threshold: float | None = None, checks: dict[int, dict[str, Any]] | None = None,
-              recheck: bool | None = None) -> dict[int, str]:  # fmt: skip
+              recheck: bool | None = None, parts: dict[int, tuple[str, str, int, int, bool]] | None = None
+              ) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands, and nothing in its checks keeps bulk approval from taking it (B-1027).
     The lines' codes are asked as the review screen asks (``codes_to_pick``), then the checks' flag (an error, or
     confidence under ``threshold``; None: the flag alone, without its words).
     The checks are today's (``bulk.queue_checks``, or ``checks`` when the caller has it; ``recheck`` as there): an
-    invoice whose stored checks were made against other settings is checked again (B-815)."""
+    invoice whose stored checks were made against other settings is checked again (B-815). ``parts``: filled with
+    what each one's reason was made from (what its lines need, its Pay from account's trouble, its errors, its other
+    findings for a person, confidence under the threshold): what ``first_to_fix`` says in words."""
     from ap_coder.coding import banks
 
     if checks is None:
@@ -193,10 +196,57 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
         why = [w for w in why if w]
+        if parts is not None and why:
+            parts[inv["id"]] = (to_pick, bank, errors, warned, bool(why[-1].startswith("confidence under")))
         if why or inv.get("requires_review"):
             # flagged when its review screen last checked it, nothing standing today: opening it checks it again
             out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else FLAGGED_BEFORE
     return out
+
+
+# Said before anything else there is to fix: nothing else matters for a document that is not an invoice.
+SAID_FIRST = frozenset({"NOT_AN_INVOICE"})
+
+
+def _said(issue: dict[str, Any]) -> str:
+    """A finding's own sentence, as the queue says it: "Line 4: no GL account yet: pick one"."""
+    words = str(issue.get("message") or "").strip().rstrip(".")
+    line = issue.get("line_number")
+    return f"Line {line}: {words}" if line else words[:1].upper() + words[1:]
+
+
+def first_to_fix(parts: tuple[str, str, int, int, bool], issues: list[dict[str, Any]], output: dict[str, Any],
+                 counted: str) -> str:  # fmt: skip
+    """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). That
+    it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else why the first line without
+    an account was left for a person ("Line 4: this supplier's 9 lines last year went to 3 accounts ..."); else its
+    Pay from account's trouble; else the first finding a person looks at; else ``counted`` (``attention``'s own
+    words: confidence under the threshold). What else there is to fix is counted after it: "(and 2 more)"."""
+    to_pick, bank, errors, warned, _ = parts
+    first = next((_said(i) for i in issues if i.get("code") in SAID_FIRST), "")
+    if first:
+        pass
+    elif errors:
+        first = next((_said(i) for i in issues if i.get("severity") == "error"), "")
+    elif to_pick:
+        from ap_coder.core.reference_data import UNASSIGNED
+
+        left = next((li for li in output.get("line_items") or []
+                     if str(li.get("predicted_gl_code") or UNASSIGNED) == UNASSIGNED), None)  # fmt: skip
+        why = str((left or {}).get("reasoning_justification") or "").strip().rstrip(".")
+        if why:
+            first = f"Line {left.get('line_number')}: {why[:1].lower() + why[1:] if why[1:2].islower() else why}"
+        else:
+            first = to_pick
+    elif bank:
+        first = bank
+    elif warned:
+        first = next((_said(i) for i in issues if i.get("severity") != "error" and i.get("code") not in TO_PICK_CODES
+                      and needs_a_person(i.get("severity"), i.get("code"))), "")  # fmt: skip
+    if not first:
+        return counted
+    more = errors + warned + bool(to_pick) + bool(bank) - 1
+    return f"{first} (and {more} more)" if more > 0 else first
 
 
 def _pay(facts: dict[str, Any], inv: dict[str, Any]) -> tuple[str, bool, str, str]:
@@ -254,17 +304,24 @@ NO_VENDOR = "No vendor name"
 
 
 def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reasons: dict[int, str] | None = None,
-               others: dict[int, list[str]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+               others: dict[int, list[str]] | None = None,
+               parts: dict[int, tuple[str, str, int, int, bool]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``.
-    ``others``: the names of those who have an invoice open (``invoice.open_elsewhere``, D-184)."""
+    ``others``: the names of those who have an invoice open (``invoice.open_elsewhere``, D-184). ``parts``: what
+    ``attention`` made the reasons of: each of these says the first thing to fix in words (``first_to_fix``), the
+    others ``reasons``' own (a draft's, one flagged before)."""
     from ap_coder.web.pages.invoice import names_text
 
-    reasons, others = reasons or {}, others or {}
+    reasons, others, parts = reasons or {}, others or {}, parts or {}
     ids = [i["id"] for i in shown]
-    outputs = {  # a sent-back invoice shows the first approver's corrections, as its review screen does
-        r["id"]: r["final_output"] or r["ai_output"] or {}
-        for r in store.invoice_columns(("id", "ai_output", "final_output"), ids=ids)
-    }
+    read = store.invoice_columns(("id", "ai_output", "final_output", "validation"), ids=ids)
+    # a sent-back invoice shows the first approver's corrections, as its review screen does
+    outputs = {r["id"]: r["final_output"] or r["ai_output"] or {} for r in read}
+    said = [i for i in ids if i in parts]
+    today = bulk.issues_today(store, said) if said else {}  # (checked again already by the queue: read, not redone)
+    stored = {r["id"]: (r["validation"] or {}).get("issues") or [] for r in read if r["id"] in parts}
+    reasons = {**reasons, **{i: first_to_fix(parts[i], today.get(i, stored.get(i, [])), outputs.get(i, {}),
+                                             reasons.get(i, "")) for i in said}}  # fmt: skip
     sources = store.layout_sources(ids)
     vendor_checks = store.vendor_name_checks(ids)
     default_days = store.default_terms_days()
@@ -408,8 +465,11 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     # too, never only "flagged" (B-1522). On the company server, the ones still checked again after a change of
     # settings show their earlier checks meanwhile, and the page says so (its background process does it, D-155).
     checks, updating = queue_checks(store, [i["id"] for i in pending], settings, recheck=not server_mode(request))
-    reasons = attention(store, reference, pending, threshold, checks)  # Ready means its Approve is open
-    reasons.update(draft_reasons(request, pending))  # an invoice with edits kept: what its screen says (B-996)
+    parts: dict[int, tuple[str, str, int, int, bool]] = {}
+    reasons = attention(store, reference, pending, threshold, checks, parts=parts)  # Ready: its Approve is open
+    drafts = draft_reasons(request, pending)  # an invoice with edits kept: what its screen says (B-996)
+    reasons.update(drafts)
+    parts = {i: p for i, p in parts.items() if i not in drafts}
     flagged = [i for i in pending if i["id"] in reasons]
     approved = counts.get(APPROVED, 0)
     awaiting = [i for i in invoices if i["status"] == PENDING]
@@ -448,7 +508,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             pending=pending,
             updating=updating,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
-            rows=queue_rows(store, shown[:limit], threshold, reasons, open_elsewhere(request, store)),
+            rows=queue_rows(store, shown[:limit], threshold, reasons, open_elsewhere(request, store), parts),
             # the view, as this address has it, carried by each row's link: the invoice's count, Previous / Next and
             # Queue button follow it (B-1592), its rows too (Show more: the queue opens once coming back, B-1621)
             row_query="?" + view if (view := urlencode({
@@ -532,6 +592,10 @@ def exported_reason(store: Store, inv: dict[str, Any] | None) -> str:
     batch = inv["export_batch"]
     if any(p["invoice_id"] == inv["id"] for p in jde_post.postings(store, batch, (jde_post.POSTED,))):
         return f"it was posted to JD Edwards (batch {batch}): it stays approved in AP Coder"
+    from ap_coder.erp import jde_keying
+
+    if batch in jde_keying.keying_batches(store):  # to type by hand: not in JD Edwards until someone has
+        return f"it is on keying sheet {batch}: undo the batch on the Exports page first"
     return f"it was exported in batch {batch}: undo the batch on the Exports page first"
 
 

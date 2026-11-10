@@ -97,7 +97,6 @@ Store.add_rules_applied
 Store.add_vendor_here
 Store.all_vendor_terms
 Store.approval_limit
-Store.approvals_stamp
 Store.approve_invoice
 Store.approved_since
 Store.auto_backup

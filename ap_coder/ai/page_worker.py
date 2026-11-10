@@ -32,6 +32,7 @@ from typing import Any
 
 from ..core.config import Settings
 from ..core.paths import pid_alive as _pid_alive  # (its name here: web/server.py and the tests use it)
+from ..ops.awake import stay_awake
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -512,7 +513,8 @@ def _read_one(settings: Settings, store: Any, cache_dir: Path | None, invoice_id
         return None
     iid = int(row["invoice_id"])
     try:
-        with renewed(lambda: store.renew_page_read(iid, mark)) as lost:  # its heartbeat while it is read (D-171)
+        # Its heartbeat while it is read (D-171), a laptop on Windows not put to sleep meanwhile (ops/awake.py).
+        with stay_awake(), renewed(lambda: store.renew_page_read(iid, mark)) as lost:
             # Taken by another meanwhile (this reader paused past the stale time): it stops (B-1770).
             stop = lost.is_set if should_stop is None else (lambda: lost.is_set() or should_stop())
             return _read_taken(settings, store, row, model, cache_dir, stop, finish_page)
@@ -1239,7 +1241,8 @@ def _test(settings: Settings, store: Any, model: str, started: str,
 
     try:
         try:
-            result = page_reader.test_reader(settings, model=model, on_page=progress)
+            with stay_awake():  # (10 to 20 minutes on a laptop: Windows would put it to sleep meanwhile)
+                result = page_reader.test_reader(settings, model=model, on_page=progress)
             record = _test_record(result, model)
         except Exception as exc:  # noqa: BLE001 - a bug must not lose the test silently
             log.exception("page reader test failed")

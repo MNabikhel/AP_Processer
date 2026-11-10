@@ -134,7 +134,7 @@ Then it checks itself and prints a short summary before the browser opens:
 ```
 AP Coder readiness:
   [OK] Python 3.12.4
-  [OK] Packages: all 16 in place
+  [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
@@ -163,7 +163,7 @@ server; then press Check again in AP Coder's Settings → Reading (no need to re
    OvisOCR2 reads a scan of a sample invoice whose answers are known, field by field. This takes 10 to 20
    minutes on a laptop the first time (once per model). *Settings → Reading* shows its progress and, after,
    what it read on the test invoice. Until it has passed, invoices are read by OCR and wait for a person; a
-   banner on the Process and Review pages says so.
+   banner on the Import invoices and Review pages says so.
 
 There is nothing to choose and nothing to link: every invoice is read the same way. A failed self-test is
 tried again a day later, or at once with *Run the self-test again* in *Settings → Reading*.
@@ -249,6 +249,69 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    ([JDE_E1.md](JDE_E1.md)). With it on, each vendor needs its address number (AN8) before its invoices can be
    approved (Settings → JD Edwards E1 → *Supplier address numbers*, or the vendor master's ERP ID; *Add new
    vendor…* takes it too), and the export needs a *Default BU* or every account mapped, tax accounts included.
+
+## How well would it have coded last year?
+
+Two commands answer it before anyone relies on AP Coder. Both run on this laptop only, change nothing in AP Coder
+(not its learning, not the journal loaded) and write their report into `pilot_score` in the data folder. Run them
+in the black window's folder, with AP Coder's Python (as `python -m ap_coder doctor`).
+
+**1. From last year's journal alone (no invoices needed, a few seconds):**
+
+```
+python -m ap_coder pilot-score --journal R09321.csv --hold-out 2
+```
+
+`R09321.csv` is JD Edwards' Transaction Journal saved as CSV; leave the file name out to use the journal already
+loaded here. AP Coder forgets the journal's last 2 months, learns the months before in a temporary copy, then codes
+each line of the last 2 months from its supplier and its remark, and compares with the account that was keyed. It
+says, and writes at the top of `journal_score.md`, one paragraph such as: "Of 1,149 lines keyed in November and
+December 2024 (785 vouchers), AP Coder would have coded 227 by itself, all of them the way they were keyed; for
+another 734 the keyed account was among its first three suggestions; 188 it would have left to a person without the
+keyed account among them."
+
+- *Coded with no one picking*: AP Coder was sure enough to put the account in itself. *Of those right*: how many are
+  the account keyed, business unit and object.subsidiary both. This is the number to trust it by: it should be close
+  to all of them.
+- *First suggestion right* and *right answer in the first three*: for the lines it leaves to a person, how often the
+  keyed account is the first, or one of the first three, it offers.
+- *Object.subsidiary right* and *business unit right*: the two halves of the account, each on its own.
+- The same figures follow for suppliers seen before and new ones, one-line vouchers and longer ones, each business
+  unit, and the 20 suppliers with the most misses. `journal_score_misses.csv` has a row for every miss: the supplier,
+  the remark, the account keyed, the account suggested and why.
+- *What the sure rule would do at other bars*: how many lines would be coded alone, and how many wrongly, if AP Coder
+  asked for 80, 90, 95 or 100% of a supplier's lines on one account, of 3 or 5 lines at least.
+- It is an **upper bound**: there is no invoice, so each line is described by the remark typed in JD Edwards, in the
+  department's own words. Vouchers of affiliates and vouchers that do not balance are left out, and counted.
+
+**2. From real past invoices (as long as reading them takes, then a few seconds):**
+
+Drop about 50 past invoices (PDFs) in the invoices folder and let AP Coder read them; nobody needs to approve them.
+Export the voucher list of the same period from JD Edwards (Supplier Ledger Inquiry, to Excel), then:
+
+```
+python -m ap_coder pilot-score --proposed --vouchers HEADERS.xlsx --journal R09321.csv
+```
+
+Each invoice is found in the voucher list by its supplier number and invoice number (else by supplier and gross
+amount), and that voucher in the journal by its supplier number, G/L date and gross (leave `--journal` out to use
+the journal loaded here). What AP Coder proposed, before anyone changed anything, is compared with what was keyed
+account by account: its amounts added up per account against the journal's. `proposed_score.md` gives each voucher
+one of:
+
+- *every account and amount right*;
+- *accounts right, amounts differ* (for example a line AP split over two business units);
+- *a line left to a person, no account wrong* (AP Coder was not sure, and said so);
+- *object and subsidiary right, a business unit wrong*;
+- *an account wrong*.
+
+It also compares the invoice number, dates, gross amount and currency with the voucher list, and the GST it would
+recover with the journal's tax line. `proposed_score_misses.csv` shows both sides of every voucher not wholly right;
+an invoice with no voucher, or with two that fit, is listed and not scored.
+
+For a fair test, use invoices keyed **after** the last voucher of the journal AP Coder has loaded (for example this
+January's, with last year's journal loaded): otherwise it has already seen how they were keyed, and the report says
+so.
 
 ## Touchless processing: off for the pilot (D-144)
 

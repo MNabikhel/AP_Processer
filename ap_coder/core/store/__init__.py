@@ -17,7 +17,8 @@ helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, t
 approving, the second approval), ``register`` (the ERP's invoice register, JD Edwards' vouchers in it, D-181),
 ``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
-D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the
+D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors`` (the vendor list) and ``vendor_master`` (the
+ERP's vendor master: its import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the
 invoice files and others a backup holds, D-143; the copies server-update makes of a database file without opening a
 Store on it, D-189), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages and uploads kept for a short
 while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97), ``hub`` (what the finance
@@ -29,8 +30,12 @@ lists and facts, kept in each process and followed by the summary's log of the q
 pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
 (the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every process
 of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as
-jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189). A test that patches a
-module-level name (``_now``, ``json``...) patches it in the part that uses it.
+jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189), ``chart`` (the chart of
+accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out from
+them, D-209), ``journal`` (last year's coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
+apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
+a vendor's approved lines, counted, D-212). A test that patches a module-level name (``_now``, ``json``...) patches
+it in the part that uses it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
 tools excepted), so moving to another database changes this folder only.
@@ -115,16 +120,19 @@ from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: fo
 from .backups import BackupsMixin
 from .bulk_jobs import BulkJobsMixin
 from .capture import CaptureMixin
+from .chart import ChartMixin
 from .ephemeral import EphemeralMixin
 from .folder import FolderMixin
 from .hub import HubMixin
 from .imports import ImportsMixin
 from .invoices import InvoicesMixin
+from .journal import JournalMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
 from .managers import ManagersMixin
 from .page_queue import PageQueueMixin
 from .postings import PostingsMixin
+from .prior import PriorMixin
 from .purchasing import PurchasingMixin
 from .register import RegisterMixin
 from .reports import ReportsMixin
@@ -133,6 +141,7 @@ from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
 from .transaction import TransactionMixin
 from .users import UsersMixin
+from .vendor_master import VendorMasterMixin
 from .vendors import VendorsMixin
 
 
@@ -149,6 +158,7 @@ class Store(
     SuppliersMixin,
     LessonsMixin,
     VendorsMixin,
+    VendorMasterMixin,
     BackupsMixin,
     LearningMixin,
     EphemeralMixin,
@@ -161,6 +171,9 @@ class Store(
     BulkJobsMixin,
     PostingsMixin,
     TransactionMixin,
+    ChartMixin,
+    JournalMixin,
+    PriorMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

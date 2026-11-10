@@ -222,6 +222,20 @@ def test_a_header_amount_that_is_not_a_finite_number_is_refused(client, store, t
     assert store.get_invoice(inv_id)["status"] == REVIEW
 
 
+@pytest.mark.parametrize("typed", ["9" * 27, "-" + "9" * 40, "1e30", "10000000000000"])
+@pytest.mark.parametrize("field", ["grand_total", "subtotal", "tax_total"])
+def test_a_header_amount_too_long_to_be_one_is_refused_like_a_word(client, store, field, typed):
+    """27 digits typed in Total answered "Something went wrong" (500, decimal.InvalidOperation in the rounding,
+    B-2096): it is not an amount, said under the field as for "abc"."""
+    inv_id = clean_invoice(client, store)
+    data = form_of(store, inv_id, **{field: typed})
+    answer = check(client, inv_id, data)
+    assert not answer["valid"] and not answer["allow"]
+    assert f"“{typed}” is not an amount" in answer["sections"]["checks"]
+    assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).status_code == 400
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+
+
 def test_errors_need_approve_anyway_with_a_reason_but_not_what_makes_the_voucher_invalid(client, store):
     """D-75: a total that doesn't add up can never be approved anyway; another error (a vendor not in the vendor list)
     can, ticked with a reason, which is kept with the approval."""
@@ -1445,16 +1459,17 @@ def _queue_reason(client: TestClient, invoice_id: int) -> str:
 def test_the_queue_names_what_the_review_screen_flagged(client, store):
     """B-1522: once the review screen's check flagged an invoice (JD Edwards switched on, not set up), the queue said
     only "Flagged by the checks": a flagged invoice's reasons were its checks as first stored, which said nothing of
-    JD Edwards. Its reasons are today's checks now; and a flag whose cause is gone says to open it again."""
+    JD Edwards. Its reasons are today's checks now; and a flag whose cause is gone says to open it again. The first
+    of them is said in its own words, the others counted (B-2219)."""
     invoice_id = clean_invoice(client, store)
     store.set_setting("show_jde_settings", "1")
     assert not check(client, invoice_id)["allow"]
     assert store.get_invoice(invoice_id)["requires_review"]
     reason = _queue_reason(client, invoice_id)
-    assert "to fix" in reason and "Flagged by the checks" not in reason, reason
+    assert "JD Edwards: GL 2310" in reason and "Flagged by the checks" not in reason, reason
     store.set_setting("show_jde_settings", "0")
     reason = _queue_reason(client, invoice_id)  # today's checks: the JD Edwards errors are gone
-    assert "to fix" not in reason and "Flagged by the checks" not in reason, reason
+    assert "JD Edwards" not in reason and "Flagged by the checks" not in reason, reason
 
 
 def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(browser, store):
@@ -1548,3 +1563,27 @@ def test_an_address_or_form_with_a_value_ap_coder_cant_read_gets_plain_words(cli
     assert page.status_code == 422 and "<html" in page.text.lower() and "int_parsing" not in page.text
     answer = client.post("/purchase-orders/status", data={}, headers=PAGE)
     assert answer.status_code == 422 and answer.json()["ok"] is False and "detail" not in answer.json()
+
+
+def test_a_duplicate_pair_says_which_to_reject_and_follows_the_other(client, store, tmp_path):
+    """B-2101: the first-received invoice and its second notice each said "reject this one", and after one of them
+    was approved the other did not say so. Each says where the other stands as the screen is drawn."""
+    first = clean_invoice(client, store)
+    inv = store.get_invoice(first)
+    copy = store.add_invoice(tmp_path / "second notice.pdf", inv["ai_output"], inv["validation"])
+
+    def said(invoice_id: int) -> str:
+        text = re.sub(r"<[^>]+>", " ", check(client, invoice_id)["sections"]["checks"])
+        return " ".join(text.split())
+
+    assert f"invoice #{first} (received first, waiting for review): possible duplicate payment. If it is the same " \
+           "bill, reject this one" in said(copy)  # fmt: skip
+    assert f"invoice #{copy} (received after this one, waiting for review): possible duplicate payment. This one " \
+           "came first: if it is the same bill, reject the other" in said(first)  # fmt: skip
+    assert check(client, first)["sections"]["checks"].count(f'href="/review/{copy}"') == 1
+    store.approve_invoice(first, inv["ai_output"], "Sam Reviewer")
+    today = dt.date.today()
+    assert f"invoice #{first} (received first, approved on {today:%b} {today.day}): possible duplicate payment. " \
+           "If it is the same bill, reject this one" in said(copy)  # fmt: skip
+    store.reject_invoice(copy, "Sam Reviewer", "sent twice")
+    assert "possible duplicate payment" not in client.get(f"/review/{first}").text

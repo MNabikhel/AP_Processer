@@ -58,6 +58,81 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
    number, so the Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
    with the current JD Edwards settings.
 
+## Keying vouchers by hand from the keying sheet
+
+Where vouchers are typed into JD Edwards by hand (Standard Voucher Entry) and not loaded as a batch, choose the ERP
+format **JD Edwards keying sheet** on the Exports page (`ap_coder/erp/jde_keying.py`, D-210).
+
+1. **Ready to export** lists, as for the Z-files, the invoices that cannot go to JD Edwards yet, each with why and
+   its invoice to open (the same checks as the batch files, below): they are not ticked and stay there. Only the
+   ready ones go on the batch; a batch of none is refused.
+2. The batch's download is an Excel workbook to read, or print, while typing: one block per voucher on the sheet
+   *Keying sheet*. Its invoices then read **On keying sheet 12** where an exported one reads "Exported in batch 12":
+   they are in JD Edwards once someone has typed them.
+3. To change an invoice on a sheet, **Undo this batch** (Past batches): its invoices go back to Ready to export.
+4. Downloaded again, the sheet holds the same vouchers, also once they are back in the ERP's invoice register (the
+   voucher list imported): a batch's own vouchers are not "already in the ERP". The sheet *Not ready* stays empty
+   for such a batch unless the settings changed since; it lists, with why, the invoices of a batch made in **another**
+   format whose keying sheet is asked for (Past batches → format), and the vouchers JD Edwards already has through
+   the API, never to be typed too.
+
+There is no CSV of the sheet: a spreadsheet opening one reads `0312005561.0042` as a number and `00052316` as
+52316, and the house way for a CSV (text as it is, for a loader; an apostrophe only against formulas) cannot keep
+a code text. The workbook does.
+
+**The settings for it in one step.** `jde.use_prototype(store)` (`ap_coder/erp/jde.py`, for a first-run step and
+tests) sets a data folder up as a department that types its vouchers and recovers the GST/HST only: Amounts = tax
+amounts, code V and a tax rate/area for each province (placeholders an Admin replaces in *Province → tax area*:
+`CDNGST`, a GST-only area, for AB, BC, MB, SK, QC and the territories; `ONHST`, `NBHST`, `NLHST`, `NSHST`, `PEHST`
+for the HST provinces), the remarks as typed, the default account rule (no mapping rows), *Show JD Edwards
+settings* on, and the QST set to *not recoverable: add to the expense line*. A new data folder's own defaults are
+the tax coded to G/L lines and JD Edwards hidden.
+
+The sheet says what the JD Edwards settings say, like the batch files: with *Amounts* = **Taxable / non-taxable / tax
+amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the tax and taxable
+amounts) and the G/L lines are net of it; with **Tax coded to G/L accounts** each recoverable tax is a G/L line of
+its own and the pay item has no tax. It is always one pay item per voucher, whatever *Line numbering* says.
+
+A block follows the screen's order: the header, the pay item, the G/L distribution.
+
+| On the sheet | What it is | Where it is typed |
+| --- | --- | --- |
+| Supplier number, Supplier name | the vendor's address number (AN8) and its name, to check | *Supplier Number* |
+| Company | Settings → JD Edwards E1 | *Company* |
+| Invoice number | as printed | *Invoice Number* |
+| Invoice date, G/L date | real dates; the G/L date as Settings → JD Edwards E1 sets it | *Invoice Date*, *G/L Date* |
+| Currency | the invoice's; a note under a foreign voucher says to type its amounts in that currency, and the rate | the currency, before the amounts |
+| Gross amount | the invoice total, in the invoice's currency | the pay item's *Gross Amount* |
+| Payment terms | the JD Edwards terms code when the terms table has one, else the terms as printed | *Pymt Terms* |
+| Remark | the first line's remark | the pay item's *Remark* |
+| Due date | printed or worked out from the printed terms; blank: JD Edwards works it out | *Due Date* |
+| PO number | as text, with its leading zeros; a note says when it is longer than the field's 8 characters | the purchase order, on the G/L distribution |
+| Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
+| Tax amount, Taxable amount | the tax on the pay item: what JD Edwards posts or is told (the notes say what it holds) | *Tax Amount*, *Taxable Amount* |
+| Account number | `BU.Object.Subsidiary`, typed as it is, without padding | G/L Distribution: *Account Number* |
+| Account description | the GL account's name in AP Coder, to compare with what JD Edwards shows | not typed |
+| Amount | the line's amount net of the tax JD Edwards posts; a tax left in the expense is inside it | *Amount* |
+| Explanation -Remark- | the line's remark: its description, cut at 30 characters | *Explanation -Remark-* |
+| Check | G/L lines + recovered tax = gross, and the lines' total | not typed: JD Edwards' amount to distribute |
+| Warning | a GST or HST that GL accounts & tax does not recover (also a finding on the review screen) | not typed: check it first |
+| Note | what would otherwise be worked out: a provincial tax not recovered and where it is; under code C, how much of the tax amount JD Edwards recovers and how much is the sales tax inside the lines; the half of the tax on meals that is not claimed and the line it is in; a foreign voucher's currency and rate; a PO number too long | not typed |
+
+Every code is a text cell (a business unit `0312005561`, an object `0042`, a PO `00052316` keep their zeros), amounts
+are numbers with two decimals and dates are dates. Printed, the sheet is upright, the column names on each page. A
+voucher that fits a page is never cut by one; a voucher longer than a page is cut between G/L lines only, each
+further page under its title ("Voucher 7 of 31, continued") and fields again.
+
+**A tax that is not recovered** (the QST of a company that claims the GST only): set it to *Not recoverable: add to
+the expense line* in GL accounts & tax, and give the province a GST-only tax area with code V. The pay item then
+carries the GST alone (taxable amount = the base, tax amount = the GST) and the G/L line holds the expense with its
+QST: gross = G/L lines + GST. **To confirm with the JDE team:** whether the tax left in the expense is entered as the
+pay item's non-taxable amount (what the batch files send in VLATXN: gross - taxable - tax), or the taxable amount is
+simply left at the base and JD Edwards works the rest out. When **no** tax is left on the pay item (the GST set to
+not recoverable too) the voucher goes with the exempt code, as one that charges no tax, and is warned of. Under
+**code C** the tax amount is the GST and the provincial tax together: right for a tax area that holds the
+provincial tax as a sales tax (BC, SK, MB); a Quebec area on code C must hold the QST so, or use code V with a
+GST-only area as above.
+
 ## How the mapping works
 
 ### Formats
@@ -98,7 +173,8 @@ setting *Amounts* chooses one of three ways (D-93):
   (JDE_GROSS_TAX, B-921): a line exempt or zero-rated, or tax charged at another rate than the area's on the gross.
 * **Taxable / non-taxable / tax**: VLATXA (taxable), VLATXN (non-taxable = gross - taxable - tax) and
   VLSTAM (all Canadian tax charged); VLAG is blank (VLCTXA / VLCTXN / VLCTAM in a foreign currency).
-  E1 keeps the tax printed on the invoice.
+  E1 keeps the tax printed on the invoice. Under code V a tax the Tax setup leaves in the expense (the QST not
+  recovered) is not in VLATXA / VLSTAM: it is in the G/L lines and so in VLATXN (D-210).
 
 ### Tax areas and explanation codes
 
@@ -110,6 +186,7 @@ F4008 tax areas:
 | --- | --- | --- | --- |
 | ON, NB, NL, NS, PE (HST) | `ON-HST`, `NS-HST`, … | V | gross - HST |
 | QC (GST + QST) | `QC-GSTQST` | V | gross - GST - QST |
+| QC, the QST not recovered (Tax setup: added to the expense line) | your GST-only area | V | gross - GST (the QST stays in the expense lines, D-210) |
 | BC, SK, MB (GST + seller-charged PST) | `BC-GSTPST`, … | C | gross - GST (the PST stays in the expense lines) |
 | AB, NT, NU, YT (GST) | `AB-GST`, … | V | gross - GST |
 | BC, SK, MB with no PST charged, every line owing it | same area | B (self-assessed PST) | gross - GST; E1 accrues the PST |
@@ -151,6 +228,16 @@ province uses code C): E1 would post the PST twice or not at all, so the invoice
 recovers, rather than against the gross itself, because under V / C / B E1 adds the recoverable tax line
 itself; balancing to the gross would post that tax twice.
 
+**Code V and a tax left in the expense (D-210).** Code V has E1 post every tax on the pay item as recoverable. A
+tax the Tax setup does not recover (*add to the expense line*, or its own expense account: the QST of a company
+that claims the GST only) is therefore left off the pay item: VLATXA and VLSTAM hold the recovered taxes alone, the
+other tax stays in the G/L lines and in VLATXN, and the check is still gross = distribution + the tax E1 posts. The
+province's tax area must then be one with the recovered taxes only (a GST-only area for Quebec). With the gross
+amount only E1 would work the GST out of an amount that holds the QST, so such an invoice is held back
+(JDE_GROSS_TAX): send tax amounts, or code the tax to G/L accounts. Codes C and B are as before: the provincial tax
+is the area's sales tax, in VLSTAM. The other way round is still held as *unbalanced*: a tax the Tax setup recovers
+under a code that leaves it in the expense.
+
 ### Accounts: GL code → BU.Object.Subsidiary
 
 Each distribution line's GL code (and cost center) is looked up in the mapping table:
@@ -158,7 +245,9 @@ Each distribution line's GL code (and cost center) is looked up in the mapping t
 1. a row with the same GL code **and** cost center;
 2. else a row with the GL code and a blank cost center;
 3. else the **default rule** (if on): BU = the line's cost center (or the *Default BU* when the line has none,
-   or always when "BU = the line's cost center" is off), Object = the GL code, Subsidiary blank.
+   or always when "BU = the line's cost center" is off), Object = the GL code, Subsidiary blank. **A GL code
+   with a dot is split** (D-209): `6420.2210` is object `6420`, subsidiary `2210`, so a chart whose accounts are
+   `object.subsidiary` needs no mapping row for each.
 
 A row with a blank BU or object is completed by the default rule, so a mapping can change just the object.
 A line that finds no account is *unmapped*: the invoice is left out. With *Account* = one field, AP Coder
@@ -221,6 +310,10 @@ Blocking problems, per invoice:
 * a distribution line whose GL code (+ cost center) has no JDE account, or an account too long (BU 12,
   object 6, subsidiary 8);
 * the GL distribution does not add up to the invoice total, or is *unbalanced* for the tax code (above);
+* the GST/HST charged at two rates (lines supplied in two provinces: GST on some, HST on others, or the HST at 13% and 15%):
+  a pay item has one tax area, so it is two pay items; held (JDE_TAX_AREA), the reason spelling out each pay item to
+  key by hand (tax area, taxable and tax amounts, its lines). Two provinces of one federal rate (Alberta and British
+  Columbia) cannot be told from the lines and are not held (B-2152);
 * currency not set up; province unknown while Canadian tax was charged; a tax code AP Coder cannot balance;
 * **duplicates**: the same supplier (address number, or vendor name) and invoice number (compared the way
   people mean them: `INV-00123` = `#123`) twice in the batch, already in a live export batch, or in the
@@ -269,7 +362,7 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
 | VLPDCT | PO document type (default `OP`) | with VLPO |
 | VLPKCO | PO company (default: the company) | with VLPO |
-| VLRMK | `AP Coder #<id>`, plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
+| VLRMK | `AP Coder #<id>`, or with *Remarks* = as typed by hand the first line's remark (D-210); plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
 | VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
 
@@ -319,7 +412,7 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 | VNCRCD | Currency code | |
 | VNACR | Foreign amount | foreign currency |
 | VNEXA | Line description (≤30) | |
-| VNEXR | Invoice number (≤30) | remark |
+| VNEXR | Invoice number (≤30), or with *Remarks* = as typed by hand the line's remark (≤30, D-210) | remark: *Explanation -Remark-* on E1's G/L distribution |
 | VNTXA1, VNEXR1 | Tax area and code | optional (setting) |
 
 ## F0411Z1T: PO match lines (unconfirmed)
@@ -439,6 +532,97 @@ settings* on in Settings → About); a test checks that each one stays covered.
 * The PO path: matched in E1 by hand, by a custom program reading the match file, or through an orchestration;
   the automation columns of the pay item.
 * Exchange rates: E1's table (VLCRR blank) or AP Coder's.
+
+## Last year's coding: the Transaction Journal (R09321)
+
+How AP coded each supplier before is in JD Edwards already. AP Coder reads it from report **R09321, "Transaction
+Journal"**, and keeps it apart from what it learns from approved invoices (`ap_coder/erp/journal.py` reads the file,
+`ap_coder/core/store/journal.py` keeps it).
+
+**Pull it.** Run R09321 for document type **PV** (vouchers), the **company**, and **12 months** of G/L dates, and
+save the report **as CSV**. Leave the file as it comes: the title rows, the page headers and the total rows are
+expected, and the `Grand Total` row at the end is what the load is checked against.
+
+**Load it.** Either way shows a summary first and writes nothing until asked:
+
+* **Learning & accuracy → Coding accuracy → Teach from past coding**: choose the file and *Read the file*. A
+  journal is recognised by itself; check the summary and the three boxes of object accounts, then **Load this
+  journal**. Each journal loaded is listed there (file, G/L dates, vouchers, who, when) with **Forget**. On the
+  company server this is an Admin's.
+* The console: `python -m ap_coder journal import FILE` (`--dry-run`: the summary only), `journal list`,
+  `journal forget ID` or `journal forget all`.
+
+**What is left out, and why.** A voucher in the journal has the lines AP typed and the lines JD Edwards added.
+Only AP's are coding:
+
+* The **payable lines** (trade payable, intercompany payable) and the **tax line** (GST clearing) are JD Edwards'
+  own. They are told by their **object account**, which is a company's own number, so AP Coder works the objects
+  out from the file and says why (the object that alone closes most vouchers is the trade payable one, and so on).
+  Correct them in the boxes, or with `--trade`, `--intercompany` and `--tax`; they are saved for the next journal.
+* A voucher with an **intercompany payable line** (an affiliate's) and a voucher whose **debits and credits
+  differ** are kept and marked, and not learned from.
+* A file whose lines **do not add up to its Grand Total** has rows missing: it is not loaded unless asked
+  (`--anyway`, or the tick on the page).
+
+The summary also names the suppliers that are not in the vendor master (matched by supplier number, the vendor
+master's ERP ID: import the supplier master first) and, with a chart of accounts imported, the account strings that
+are not in it or may not be posted to. The same file loaded twice adds nothing. Two files that cover some of the
+same months count each voucher once, and forgetting one of them takes nothing from the other.
+
+## Loading the chart of accounts and the business units
+
+A company that types one account string for each line, `business unit.object.subsidiary`, loads its chart from JD
+Edwards' own exports (D-209). AP Coder then knows which account exists on which business unit and which may be posted
+to, and checks each line's pair: *Account not on this business unit*, *Account does not take postings*, *Business unit
+not active*, *Account not offered for invoices* (Help lists them). Without a chart nothing changes.
+
+**Pull the two exports** in JD Edwards, each from its grid with *Export to Excel*, every column, and use the file as it
+comes (do not open and save it in between: a code like `0042` would become the number 42, and such a file is refused):
+
+- the **account master** for the company, all business units (about 110 columns: `Business Unit`, `Object Account`,
+  `Subsidiary`, `Account Description`, `L D`, `P E`...);
+- the **business unit master** (about 67 columns: `Job Number`, `Job Name`, `Co`, `BU Ty`, `Job Sts`...).
+
+**Import them** from `scripts\terminal.bat` (the business units alone, the chart alone, or both):
+
+```
+python -m ap_coder chart import --chart "Account master.xlsx" --business-units "Business units.xlsx"
+```
+
+A chart of 15,000 rows takes 10 to 20 seconds. **The summary says** how many business units and accounts were read and
+how many may be posted to (posting edit code blank; the others are counted by their code), the rows left out and why,
+how many GL accounts and cost centers there are now, what left the two lists, and how many accounts a line may be
+coded to. The GL accounts and cost centers are worked out from the chart: an account is listed when it may be posted
+to on an active business unit, with the title account above it as its category. Importing again replaces the chart;
+the same file again changes nothing (and puts right a list changed by hand). JD Edwards exports only the columns
+the grid shows: a chart without its posting edit column ("P E") or its Subsidiary column is not imported, and the
+message names the column to add to the grid; `--anyway` imports it as it is (without "P E" every account is offered),
+and the summary says so each time until a whole export is imported.
+
+- A GL account's meals tick, a category typed for it and a cost center's manager stay. When an import no longer has
+  the account or the business unit, they are **set aside**, said in the summary, and put back when a later import has
+  it again.
+- *To set right* in the summary: a tax type or a bank account still pointing at a GL account that is gone (choose its
+  account on GL accounts & tax).
+- With a chart imported, the API sync (below) leaves the GL accounts and business units alone: the chart says which
+  exist.
+
+**The chart's settings** (shown by `python -m ap_coder chart settings`, each changed by naming it; `""` clears one):
+
+```
+python -m ap_coder chart settings --never-offered "*.7701, 4110" --home-business-unit 0880133142
+```
+
+- `--never-offered`: accounts that exist and may be posted to but are never suggested or listed, with commas between:
+  `*.7701` (that subsidiary of any object), `4110` (that object, whatever its subsidiary), `0880133142.*.*` (a whole
+  business unit). A line coded to one by hand is flagged for a person to confirm.
+- `--postable`: posting edit codes AP may post to besides blank (ask the JD Edwards team before adding one).
+- `--skip-words`: a business unit whose name carries one (DO NOT USE, DNU) is never offered; the same words mark a
+  retired supplier (the Vendors page).
+- `--home-business-unit`: where a line is suggested to go when nothing says otherwise.
+
+`python -m ap_coder chart show` says what is imported, the settings, and what is held back and why; `chart rebuild`
+works the GL accounts and cost centers out again from the chart as it is.
 
 ## Through the API (AIS Server, D-104)
 

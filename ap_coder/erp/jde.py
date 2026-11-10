@@ -17,7 +17,8 @@ In E1 the tax explanation code decides which part of the tax the system posts by
 tax AAIs, e.g. PT / GT) and which part must already be in the G/L distribution:
 
 * ``V`` (VAT: GST, HST, QST): all the tax is recoverable and posted by E1, so the distribution is the
-  gross amount minus the tax.
+  gross amount minus the tax. A tax the Tax setup keeps in the expense (the QST of a company that claims the GST
+  only) is left off the pay item: it is in the distribution, and E1 posts the recovered tax alone (D-210).
 * ``C`` (GST + seller-charged PST): the GST/HST part is posted by E1, the PST is an expense: the
   distribution is the gross minus the GST/HST, with the PST inside the expense lines.
 * ``B`` (GST + self-assessed PST): the supplier charged GST only; E1 accrues the PST. The distribution
@@ -69,15 +70,21 @@ from typing import Any
 
 from ..coding import money
 from ..coding.line_tax import exempt_of, legacy_basis
+from ..coding.remark import fit
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.terms import terms_key
 from ..coding.vendors import norm_invoice_number
+from ..core.chart import code_of, join_account, split_code
 from ..core.headers import match_columns
 from ..core.memory import refresh_vendor_key, vendor_key
 from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
+EXPORT_FORMAT = "export_format"  # the setting: the format the Exports page opens on (the last batch's)
+# The formats of a batch whose vouchers go into JD Edwards: loaded as Z-files, or typed from the keying sheet
+# (``jde_keying.FORMAT``, D-210). What JD Edwards does with a voucher (the PST it accrues itself) holds for both.
+FORMATS = (FORMAT, "jde_keying")
 # The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
 # Edwards E1 → Supplier address numbers (``an8_problem``).
 NO_AN8 = "no JDE supplier number (AN8)"
@@ -111,6 +118,12 @@ GL_DATES = {GL_DATE_INVOICE: "The invoice date", GL_DATE_EXPORT: "The day the ba
 CLOSED_MOVE, CLOSED_HOLD = "move", "hold"
 CLOSED_PERIODS = {CLOSED_MOVE: "Move its G/L date to the first day of the open period",
                   CLOSED_HOLD: "Hold the invoice back"}  # fmt: skip
+# What the two remarks of a voucher carry (D-210): AP Coder's references (as before), or the remarks a person types.
+REMARKS_REFERENCE, REMARKS_TYPED = "reference", "typed"
+REMARKS = {
+    REMARKS_REFERENCE: "The pay item: AP Coder's invoice number (AP Coder #12); each G/L line: the invoice number",
+    REMARKS_TYPED: "The pay item: the first line's remark; each G/L line: its own remark, as typed by hand",
+}
 # Seconds more than a voucher's wait before a lost answer's "not there" is believed (``JdeSettings.resend_seconds``).
 RESEND_MARGIN = 60.0
 
@@ -123,6 +136,9 @@ RECOVERABLE_BY_CODE: dict[str, frozenset[str]] = {
     "": frozenset(),
 }
 PST_PROVINCES = ("BC", "SK", "MB")
+HST_PROVINCES = ("ON", "NB", "NL", "NS", "PE")
+# The GST-only tax area of the made-up company (``bench.jde_company.TAX_AREA``): a placeholder, as every area name.
+PROTOTYPE_GST_AREA = "CDNGST"
 NO_DECIMAL_CURRENCIES = dict.fromkeys(sorted(ZERO_DECIMAL_CURRENCIES), 0)
 
 HEADER_COLUMNS = [
@@ -172,7 +188,7 @@ def default_tax_map() -> dict[str, TaxArea]:
     customer names its tax areas (F4008) its own way."""
     out: dict[str, TaxArea] = {}
     for p in PROVINCES:
-        if p in ("ON", "NB", "NL", "NS", "PE"):
+        if p in HST_PROVINCES:
             out[p] = TaxArea(f"{p}-HST", "V")
         elif p == "QC":
             out[p] = TaxArea("QC-GSTQST", "V")
@@ -198,7 +214,8 @@ PTC_WIDTH = 3  # VLPTC
 @dataclass
 class GlMap:
     """AP Coder GL code (+ cost center, blank = any) → E1 business unit / object / subsidiary. A blank
-    BU or object is filled by the default rule (BU = cost center or default BU, object = GL code)."""
+    BU or object is filled by the default rule (BU = cost center or default BU, object = GL code, or the object
+    and the subsidiary of a GL code "object.subsidiary", D-209)."""
 
     gl_code: str
     cost_center: str = ""
@@ -233,6 +250,7 @@ class JdeSettings:
     # The meaning of the printed terms (``terms.terms_key``: "Net 30", "2/10 Net 30"...) → the company's code (D-91).
     terms_codes: dict[str, str] = field(default_factory=dict)
     send_due_date: bool = True
+    remarks: str = REMARKS_REFERENCE  # VLRMK and VNEXR
     gl_date: str = GL_DATE_INVOICE
     # JD Edwards' open period (D-182, R5): G/L dates from ``open_from`` to ``open_to`` (blank: no end) take postings;
     # one before it is in a closed period (``closed_period``: moved or held), one after it is held. Blank: not checked.
@@ -311,6 +329,8 @@ class JdeSettings:
             out.line_numbering = SEQUENTIAL
         if out.gl_date not in GL_DATES:
             out.gl_date = GL_DATE_INVOICE
+        if out.remarks not in REMARKS:
+            out.remarks = REMARKS_REFERENCE
         out.open_from, out.open_to = (str(_date(d) or "") for d in (out.open_from, out.open_to))
         if out.closed_period not in CLOSED_PERIODS:
             out.closed_period = CLOSED_MOVE
@@ -358,6 +378,55 @@ def save(store: Any, settings: JdeSettings, actor: str | None = None) -> bool:
     store.set_setting(SETTING_KEY, text, actor=actor)
     store.log_event("settings_changed", actor=actor, detail={"keys": [SETTING_KEY]})
     return True
+
+
+def prototype_settings(base: JdeSettings | None = None) -> JdeSettings:
+    """JD Edwards set up as a department that types its own vouchers and recovers the GST/HST only works (D-210): what
+    a first-run step saves and test fixtures use. ``JdeSettings()`` keeps its own defaults (existing installs).
+
+    * The tax is on the pay item: Amounts = tax amounts, tax explanation code V for every province.
+    * A tax rate/area a province, placeholder names an Admin replaces with the company's own (Settings → JD Edwards
+      E1 → Province → tax area): ``CDNGST`` (a GST-only area) for the provinces whose federal tax is the GST (AB,
+      BC, MB, SK, QC, NT, NU, YT: their PST or QST stays in the expense), ``<province>HST`` for the HST provinces
+      (ONHST, NBHST, NLHST, NSHST, PEHST: their rates differ). Outside Canada: none.
+    * The remarks are the ones typed by hand (``REMARKS_TYPED``).
+    * The account is the line's own string: the business unit is its cost center, the object and subsidiary its GL
+      code's (the default rule, B-2085); no mapping row is needed.
+
+    ``base``: settings already saved, whose other values are kept (the company, the supplier numbers, the terms).
+    Not settings of JD Edwards, and needed too: JD Edwards shown (``show``) and the QST not recovered (GL accounts &
+    tax): ``use_prototype`` does all three. Left as it was: the code for a PST not charged (B, the self-assessed
+    code), which on a GST-only area accrues nothing: to settle with the JDE team for a company that buys in BC, SK
+    or MB."""
+    settings = JdeSettings.from_json(base.to_json()) if base is not None else JdeSettings()
+    settings.amount_mode, settings.remarks = AMOUNT_TAX, REMARKS_TYPED
+    settings.use_default_rule = settings.bu_from_cost_center = True
+    for province in PROVINCES:
+        area = f"{province}HST" if province in HST_PROVINCES else PROTOTYPE_GST_AREA
+        settings.tax_map[province] = TaxArea(area, "V")
+    return settings
+
+
+def show(store: Any, shown: bool = True, actor: str | None = None) -> None:
+    """Turn "Show JD Edwards settings" (Settings → About) on or off without the page: on, JD Edwards E1 is a tab of
+    Settings and its formats are on the Exports page, and its checks run on the review screen (``in_use``)."""
+    store.set_setting(SHOW_SETTING, "1" if shown else "0", actor=actor)
+
+
+def use_prototype(store: Any, actor: str | None = None) -> JdeSettings:
+    """Set a data folder up the department's way in one step (``prototype_settings``, over what is saved): its JD
+    Edwards settings saved, JD Edwards shown, and the QST set to "not recoverable: add to the expense line" in GL
+    accounts & tax (the department claims the GST/HST only). The page that hands vouchers over opens on the keying
+    sheet, unless a format was chosen there before (B-2279). Returns the settings saved."""
+    from ..core.tax_setup import EXPENSE_TO_LINE
+
+    settings = prototype_settings(load(store))
+    save(store, settings, actor)
+    show(store, True, actor)
+    store.set_tax_treatment("QST", EXPENSE_TO_LINE, "", actor=actor)
+    if not store.get_setting(EXPORT_FORMAT):
+        store.set_setting(EXPORT_FORMAT, FORMATS[1])  # the keying sheet (``jde_keying.FORMAT``)
+    return settings
 
 
 def settings_problems(settings: JdeSettings) -> list[str]:
@@ -515,10 +584,13 @@ def account_for(gl_code: str, cost_center: str, settings: JdeSettings) -> GlMap 
         return None
     row = row or GlMap(gl_code)
     bu = row.bu.strip() or ((cc if settings.bu_from_cost_center and cc else "") or settings.default_bu.strip())
-    obj = row.obj.strip() or gl
+    obj, sub = row.obj.strip(), row.sub.strip()
+    if not obj:  # the default rule: the GL code is the object, or "object.subsidiary" (D-209, B-2085)
+        obj, own = split_code(gl)
+        sub = sub or own
     if not bu or not obj:
         return None
-    return GlMap(gl_code, cost_center, bu, obj, row.sub.strip(), row.sbl.strip(), row.sblt.strip())
+    return GlMap(gl_code, cost_center, bu, obj, sub, row.sbl.strip(), row.sblt.strip())
 
 
 def accounts_without_bu(settings: JdeSettings, gl_codes: Iterable[str], tax_codes: Iterable[str],
@@ -534,8 +606,8 @@ def accounts_without_bu(settings: JdeSettings, gl_codes: Iterable[str], tax_code
 
 
 def ani(account: GlMap) -> str:
-    """VNANI in format 2: BU.Object.Subsidiary ("CC400.6010", "CC400.6010.01")."""
-    return f"{account.bu}.{account.obj}" + (f".{account.sub}" if account.sub else "")
+    """VNANI in format 2: BU.Object.Subsidiary ("CC400.6010", "CC400.6010.01"), the string a person types (D-209)."""
+    return join_account(account.bu, code_of(account.obj, account.sub))
 
 
 # --- One voucher ----------------------------------------------------------------------------------------------
@@ -559,6 +631,8 @@ class _Voucher:
     recoverable: int = 0
     charged: list[dict[str, Any]] = field(default_factory=list)  # Canadian tax lines with an amount
     recoverable_types: frozenset[str] = frozenset()
+    # The taxes the code would have E1 post that the Tax setup keeps in the expense (D-210): not on the pay item.
+    expensed: frozenset[str] = frozenset()
     entries: list[dict[str, Any]] = field(default_factory=list)  # distribution lines (cents in "cents")
     po_matched: bool = False
     # The GST/HST/QST on meals not claimable (D-90): in the expense lines, so E1 must not post it as recoverable.
@@ -598,6 +672,18 @@ def _entry_tax(e: dict[str, Any]) -> str:
     """The tax of a tax distribution line ("HST"), from its description ("HST ON 13% (recoverable)")."""
     words = str(e.get("description") or "").split()
     return words[0].upper() if words else ""
+
+
+def _recovered_types(dist: list[dict[str, Any]], final: dict[str, Any]) -> set[str]:
+    """The taxes the G/L distribution recovers, as the Tax setup said when the invoice was coded: each has its own
+    recoverable tax line, or, all of it on a meal with nothing left to claim (a cent), is kept on the meals lines."""
+    found = {_entry_tax(e) for e in dist if _is_recoverable_entry(e)}
+    tax_lines = final.get("tax_lines") or []
+    for e in dist:
+        for position in e.get("meals_tax_lines") or {}:
+            if str(position).isdigit() and int(position) < len(tax_lines):
+                found.add(str(tax_lines[int(position)].get("tax_type") or ""))
+    return found
 
 
 def sent_due(final: dict[str, Any], invoice: dict[str, Any] | None = None) -> dt.date | None:
@@ -702,6 +788,28 @@ PO_WIDTH = 8  # VLPO
 REMARK_WIDTH = 30  # VLRMK
 
 
+def line_remark(line: Mapping[str, Any]) -> str:
+    """The remark of a G/L line as JD Edwards holds it (30 characters): the line's own remark (suggested or typed,
+    D-213; ``remark.fit``: the whole words that fit), else the line's description cut at 30. The batch files and
+    the keying sheet (``jde_keying``) both ask here."""
+    return fit(line.get("remark"))[0] or _text(line.get("description"), REMARK_WIDTH)
+
+
+def voucher_remark(invoice: Mapping[str, Any]) -> str:
+    """The remark of a voucher's pay item: its first line's remark (the first line that has one)."""
+    lines = (invoice.get("final_output") or {}).get("line_items") or []
+    return next((remark for remark in map(line_remark, lines) if remark), "")
+
+
+def _pay_item_remark(v: _Voucher, settings: JdeSettings) -> str:
+    """VLRMK: AP Coder's invoice number, or the voucher's remark (Settings' Remarks, D-210); a PO number too long for
+    VLPO is added when it fits in the remark's 30 characters (D-87)."""
+    typed = settings.remarks == REMARKS_TYPED
+    remark = voucher_remark({"final_output": v.final}) if typed else f"AP Coder #{v.inv_id}"
+    with_po = f"{remark} PO {str(v.final.get('po_number') or '').strip()}".strip()
+    return (with_po if po_not_sent(v.final, settings) and len(with_po) <= REMARK_WIDTH else remark)[:REMARK_WIDTH]
+
+
 def po_not_sent(final: dict[str, Any], settings: JdeSettings) -> bool:
     """Whether the PO number is left out of the voucher's PO reference because VLPO can't hold it (D-87): longer than
     8 characters, sent as a reference only (not a PO-matched voucher, where it holds the voucher back)."""
@@ -769,6 +877,14 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
     types = _area_types(v.province, v.tax_code, on)
     if not types:
         return []
+    if v.expensed:  # E1 would work the recovered tax out of an amount that holds the other (D-210)
+        left = sorted(v.expensed)
+        return [
+            f"the {' and '.join(left)} {'is' if len(left) == 1 else 'are'} left in the expense (GL accounts & tax): "
+            "with the gross amount only JD Edwards works the tax out of the whole amount, that tax included. Code "
+            "the tax to G/L accounts or send tax amounts (Amounts): set it in Settings → JD Edwards E1, or ask "
+            "whoever sets up AP Coder"
+        ]
     items = final.get("line_items") or []
     basis = legacy_basis(items, final.get("tax_lines") or [])
     kinds = sorted({t["tax_type"] for t in v.charged})
@@ -797,6 +913,62 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
     ]
 
 
+def _two_tax_areas(v: _Voucher, final: dict[str, Any], settings: JdeSettings) -> str:
+    """Why a voucher whose recovered GST/HST is charged at more than one rate is held back ("" otherwise): its lines
+    were supplied in two provinces (the GST on some and the HST on others, or the HST at 13% and at 15%), a pay item
+    has one tax area, and AP Coder makes one pay item. The reason spells out the pay items to key by hand, each with
+    its tax area, taxable and tax amounts, and its lines where the lines' tax codes or amounts tell (B-2152): the
+    figures are ``taxmath.invoice_taxes``'s ``areas``, as the review screen's Tax check has them (B-2227).
+
+    Told from the tax lines' types and rates alone. Not seen: two provinces of one federal rate (Alberta and British
+    Columbia or Quebec: the same GST, the provincial tax on some lines only, as on an invoice with exempt lines)."""
+
+    def rate_of(t: dict[str, Any]) -> float:
+        return round(float(t.get("rate") or 0), 5)
+
+    federal = [t for t in v.charged if t["tax_type"] in ("GST", "HST") and t["tax_type"] in v.recoverable_types]
+    rated = sorted({rate_of(t) for t in federal if t["tax_type"] == "HST"} - {0}) or [0.0]
+    kinds = [("GST", 0.05)] if any(t["tax_type"] == "GST" for t in federal) else []
+    kinds += [("HST", rate) for rate in rated if any(t["tax_type"] == "HST" for t in federal)]
+    if len(kinds) < 2:
+        return ""
+    on = _date(final.get("invoice_date"))
+    areas = _federal_taxes(final)
+    labels, items = [], []
+    for n, (kind, rate) in enumerate(kinds, 1):
+        # (an HST line whose rate was not read goes with the first rate; the GST has one)
+        mine = [t for t in federal if t["tax_type"] == kind and (kind == "GST" or (rate_of(t) or rated[0]) == rate)]
+        province = next((p for p in (_norm(t.get("province")) for t in mine) if p in PROVINCES), "")
+        if not province and kind in _area_types(v.province, "V", on):
+            province = v.province
+        row = settings.tax_map.get(province) or TaxArea("", "")
+        label = f"{kind} {rate * 100:.6g}%" if rate else kind
+        theirs = [a for a in areas if a.tax_type == kind and (kind == "GST" or (round(a.rate, 5) or rated[0]) == rate)]
+        numbers = sorted({x for a in theirs for x in a.line_numbers})
+        taxable, tax = (sum(_units(getattr(a, key), v.decimals) for a in theirs) for key in ("taxable", "tax"))
+        labels.append(label)
+        items.append(
+            f"Pay item {n:03d}: tax area {row.tax_area.strip() or 'the one of the province it was supplied in'}, "
+            f"code {row.code.strip().upper() or 'V'}, taxable amount {taxable / 100:,.2f}, tax amount "
+            f"{tax / 100:,.2f} ({label}{': ' + _lines_said([x for x in numbers if x]) if any(numbers) else ''})"
+        )
+    count = {2: "two", 3: "three"}.get(len(kinds), str(len(kinds)))
+    return (f"{' and '.join(labels)} are {'both' if len(kinds) == 2 else 'all'} charged (lines supplied in {count} "
+            f"provinces): a pay item has one tax area, so this voucher is {count} pay items, to key by hand with the "
+            f"G/L lines as coded. {'. '.join(items)}")  # fmt: skip
+
+
+def _federal_taxes(final: dict[str, Any]) -> tuple[Any, ...]:
+    """The GST and each province's HST the invoice charges, with the lines that carry each
+    (``taxmath.invoice_taxes``'s ``areas``)."""
+    from ..coding.tax import TaxSetup
+    from ..coding.taxmath import invoice_taxes
+    from ..core.schema import InvoiceCoding
+
+    coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
+    return invoice_taxes(coding, TaxSetup(_rates(), {})).areas
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
@@ -804,10 +976,12 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     po = _check_header(v, final, settings, an8)
     charged = _check_tax_area(v, final, settings)
     on_gl = settings.tax_on_gl
-    recoverable = _tax_amounts(v, final, inv, settings, charged)
+    dist = _distribution(final)
+    recoverable = _tax_amounts(v, final, inv, settings, charged, dist)
+    if two := _two_tax_areas(v, final, settings):  # a pay item has one tax area: held, the two spelled out
+        add(two, "JDE_TAX_AREA")
 
     # Meals (D-90): half the tax on a meals line is not claimable, and is in its expense line, not E1's to post.
-    dist = _distribution(final)
     meals = sum(_units(e.get("meals_tax"), v.decimals) for e in dist if e.get("kind") == "expense")
     if v.recoverable_types and meals:
         v.meals = meals
@@ -900,7 +1074,7 @@ def _check_tax_area(v: _Voucher, final: dict[str, Any], settings: JdeSettings) -
 
 
 def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settings: JdeSettings,
-                 charged: list[dict[str, Any]]) -> list[dict[str, Any]]:  # fmt: skip
+                 charged: list[dict[str, Any]], dist: list[dict[str, Any]]) -> list[dict[str, Any]]:  # fmt: skip
     """The gross, the due date, the tax and its taxable amount, and the recoverable tax (``v``'s); the
     recoverable tax lines."""
     add = v.add
@@ -911,15 +1085,23 @@ def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settin
     if settings.send_due_date and v.gross >= 0 and due is not None and due.year not in E1_YEARS:
         # (a credit's is not sent)
         add(f"due date {due} is outside what JD Edwards dates hold (1900 to 2899)", "JDE_DATE_RANGE")
-    v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in charged)
+    recovers = frozenset() if on_gl else RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
+    # Code V has E1 post every tax on the pay item as recoverable: one the Tax setup keeps in the expense (the QST
+    # not recovered, the GST still claimed) is not the pay item's. It stays in the G/L lines, in the non-taxable
+    # amount (D-210, B-2086). Codes C and B keep the provincial tax in the tax amount: the area's sales tax.
+    if v.tax_code == "V" and dist:
+        v.expensed = frozenset(t["tax_type"] for t in charged) & (recovers - _recovered_types(dist, final))
+    on_item = [t for t in charged if t["tax_type"] not in v.expensed]
+    if v.expensed and not on_item:  # no tax left on the pay item: the exempt code, as when none is charged (B-2150)
+        v.tax_code, recovers = settings.exempt_code.strip().upper(), frozenset()
+    v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in on_item)
     # The taxable amount of each tax, a tax printed twice (goods, freight) added up (B-923); GST and QST on the same
     # lines have the same one: the widest.
     bases: dict[str, int] = {}
-    for t in charged:
+    for t in on_item:
         bases[t["tax_type"]] = bases.get(t["tax_type"], 0) + _units(t.get("taxable_amount"), v.decimals)
     v.atxa = max(bases.values(), key=abs, default=0)
-    recovers = frozenset() if on_gl else RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
-    v.charged, v.recoverable_types = charged, recovers
+    v.charged, v.recoverable_types = charged, recovers - v.expensed
     recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
     v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
     return recoverable
@@ -939,6 +1121,11 @@ def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSetting
             "POSTING_UNBALANCED",
         )
     _distribution_entries(v, settings, dist)
+    from .exports import entry_lines
+
+    for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []), strict=True):
+        if li is not None and li.get("remark"):  # the invoice line's own remark (``line_remark``, D-213)
+            e["remark"] = li["remark"]
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
     kept_cents = sum(_units(e.get("amount")) for e in v.entries)
@@ -1109,9 +1296,7 @@ def voucher_rows(
     po = str(final.get("po_number") or "").strip()
     # VLPO, VLPDCT and VLPKCO go together (B-457); a PO longer than VLPO is not sent, only kept in the remark (D-87).
     send_po = bool(po) and (v.po_matched or (settings.send_po_reference and len(po) <= PO_WIDTH))
-    remark = f"AP Coder #{v.inv_id}"
-    if po_not_sent(final, settings) and len(f"{remark} PO {po}") <= REMARK_WIDTH:
-        remark = f"{remark} PO {po}"
+    typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
@@ -1127,7 +1312,7 @@ def voucher_rows(
         "VLPDCT": settings.po_document_type.strip() if send_po else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
                    else settings.po_company.strip() or settings.company_code) if send_po else "",
-        "VLRMK": remark[:REMARK_WIDTH],
+        "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
         common["VLGLBA"] = glba(final, settings)
@@ -1179,8 +1364,8 @@ def voucher_rows(
             **_keys("VN", settings, batch, invoice, v.inv_id, site), "VNEDLN": n, "VNCO": settings.company_code,
             "VNDGJ": julian(gl_date), "VNDCT": doc_type, "VNLT": "AA",
             "VNAA": "" if v.foreign else amount, "VNCRCD": v.currency, "VNACR": amount if v.foreign else "",
-            "VNEXA": _text(e.get("description"), 30),
-            "VNEXR": str(final.get("invoice_number") or "").strip()[:30],
+            "VNEXA": line_remark(e),
+            "VNEXR": line_remark(e) if typed else str(final.get("invoice_number") or "").strip()[:30],
             "VNSBL": acct.sbl, "VNSBLT": acct.sblt,
             "VNTXA1": v.tax_area if settings.dist_tax_columns else "",
             "VNEXR1": line_codes[n - 1] if settings.dist_tax_columns else "",
@@ -1199,7 +1384,8 @@ def voucher_rows(
     if settings.line_numbering == MATCH_HEADER and len(v.entries) > 1:
         # One pay item per distribution line: each gets its share of each recoverable tax and of the taxable amount,
         # split over the lines that carry that tax (an exempt line gets none). Its tax is that share plus the
-        # non-recoverable tax already in its line (e.g. PST charged on some lines only).
+        # non-recoverable tax already in its line (e.g. PST charged on some lines only); a tax the Tax setup keeps
+        # in the expense under code V is not the pay item's (D-210): its tax is that share alone.
         unit = 10 ** (2 - v.decimals)
         taxes = _entry_taxes(v.entries, final.get("line_items") or [])
         net = [_units(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
@@ -1214,7 +1400,8 @@ def voucher_rows(
             if t["tax_type"] in v.recoverable_types:
                 part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
                 shares = [a + b for a, b in zip(shares, part, strict=True)]
-        widest = max(v.charged, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
+        on_item = [t for t in v.charged if t["tax_type"] not in v.expensed]
+        widest = max(on_item, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
         base = carrying(widest["tax_type"]) if widest else weights  # the tax whose taxable amount is VLATXA
         atxas = _split(v.atxa, base, unit)
         # Half the tax on a meals line is in its expense amount (D-90): not E1's to post, so neither in its share
@@ -1224,7 +1411,7 @@ def voucher_rows(
         own = _claimed_shares(v) if v.meals else None
         if own is not None:  # the distribution's own shares, not split again with other cents (B-867)
             shares = own
-        stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) - m
+        stams = [s if v.expensed else s + _units(e.get("non_recoverable_tax"), v.decimals) - m
                  for e, s, m in zip(v.entries, shares, meals, strict=True)]  # fmt: skip
         stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
@@ -1494,6 +1681,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, code, f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if said := not_recovered(v):  # a GST/HST the Tax setup keeps in the expense: meant, or a slip (B-2150)
+        out.append((WARNING, "JDE_TAX_NOT_RECOVERED", f"JD Edwards: {said}", None))
     if v.gl_moved and v.gl_day:  # posted in the open period: the person sees it before approving (D-182)
         out.append((WARNING, "JDE_GL_DATE_MOVED", f"JD Edwards: {moved_note(v.gl_day, v.gl_moved)}", None))
     no_code = terms_unmapped(output, settings)
@@ -1519,6 +1708,38 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     return [(severity, code, setup_contact(text), line) for severity, code, text, line in out]
 
 
+def not_recovered(v: _Voucher) -> str:
+    """What to say of a voucher whose GST or HST the Tax setup keeps in the expense under code V ("" otherwise): no
+    input tax credit is claimed for it. Nearly every company recovers them, so it is asked, on the review screen and
+    on the keying sheet; a provincial tax left in the expense is the company's choice (D-210) and is not."""
+    left = [t for t in v.charged if t["tax_type"] in v.expensed and t["tax_type"] in ("GST", "HST")]
+    if not left:
+        return ""
+    names = " and ".join(dict.fromkeys(t["tax_type"] for t in left))
+    amount = sum(_units(t.get("tax_amount"), v.decimals) for t in left) / 100
+    return (f"the {names} ({amount:,.2f}) is not recovered: GL accounts & tax keeps it in the expense, so the "
+            "voucher claims no input tax credit for it. If that is not meant, set it to recoverable in GL accounts "
+            "& tax (or ask the pilot tester), then save the invoice again")  # fmt: skip
+
+
+def pay_item_tax(v: _Voucher, settings: JdeSettings) -> tuple[int | None, int | None]:
+    """(the tax amount, the taxable amount) on the voucher's pay item, in cents, as ``voucher_rows`` sends them;
+    (None, None) when it carries no tax: the tax coded to G/L lines, the exempt code or none, or no tax charged."""
+    if settings.tax_on_gl or v.tax_code in ("", "E", settings.exempt_code.strip().upper()) or not v.stam:
+        return None, None
+    return v.stam, v.atxa
+
+
+def taxes_e1_posts(final: dict[str, Any], settings: JdeSettings) -> frozenset[str]:
+    """The taxes of this invoice JD Edwards posts itself from the pay item's tax area (the recovered tax under codes
+    V, C and B), so no sales-tax GL account of AP Coder's is posted to for them (``_distribution_entries``); none with
+    the tax coded to G/L lines, or under a code that recovers nothing."""
+    v = _Voucher(0, final, [])
+    charged = _check_tax_area(v, final, settings)
+    _tax_amounts(v, final, {}, settings, charged, _distribution(final))
+    return v.recoverable_types
+
+
 def account_text(gl_code: str, cost_center: str, settings: JdeSettings) -> str:
     """The E1 account a GL line posts to, BU.Object.Subsidiary ("CC400.6010.01"), or "" when none is mapped."""
     account = account_for(gl_code, cost_center, settings)
@@ -1529,7 +1750,11 @@ def voucher_view(
     output: dict[str, Any], settings: JdeSettings, an8: str, *, on: dt.date | None = None
 ) -> dict[str, Any]:
     """The voucher header as JD Edwards gets it, in its order, for the review screen: each value, where it comes from
-    (the invoice, or the settings: read-only there) and the Z-file column."""
+    (the invoice, or the settings: read-only there) and the Z-file column (``rows``). Beside them, what is keyed on
+    the pay item: ``gl_date`` (ISO, ``gl_date_of``: moved into the open period when it must be), ``tax_code``,
+    ``tax_area``, ``taxable`` and ``tax`` (None when the pay item carries no tax), ``not_ready`` (why the voucher is
+    held back, each reason; empty when it can go) and ``keyed``, the one line that says it all ("Keyed on the pay
+    item: …", or "Not ready to key: <the first reason>")."""
     final = output
     v = _prepare({"id": 0, "final_output": final}, settings, str(an8 or "").strip())
     today = on or dt.date.today()
@@ -1584,9 +1809,22 @@ def voucher_view(
          else f"{v.tax_area or '—'} / {v.tax_code or 'blank'}", "settings"),
         ("Pay status", "VLPST", settings.pay_status.strip() or "—", "settings"),
     ]  # fmt: skip
+    tax, taxable = pay_item_tax(v, settings)
+    day = gl_date_of(final, settings, on)[0].isoformat()
+    not_ready = _accounts_once(v) if v.problems else []
+    if not_ready:
+        keyed = f"Not ready to key: {not_ready[0]}"
+    elif tax is None:
+        keyed = (f"Keyed on the pay item: G/L date {day} · Tax Ex {v.tax_code or 'blank'} · no tax"
+                 + (" (it is on its own G/L lines)" if settings.tax_on_gl else ""))  # fmt: skip
+    else:
+        keyed = (f"Keyed on the pay item: G/L date {day} · Tax Ex {v.tax_code} · Tax Rate/Area "
+                 f"{v.tax_area or 'blank'} · taxable amount {money(taxable)} · tax amount {money(tax)}")  # fmt: skip
     return {"rows": [{"label": a, "column": b, "value": c, "source": d} for a, b, c, d in rows],
             "settings_url": SETTINGS_URL, "terms_sent": bool(code), "terms_code": code,
-            "terms_note": terms_note}  # fmt: skip
+            "terms_note": terms_note, "gl_date": day, "tax_code": v.tax_code, "tax_area": v.tax_area,
+            "taxable": None if taxable is None else taxable / 100, "tax": None if tax is None else tax / 100,
+            "not_ready": not_ready, "keyed": keyed}  # fmt: skip
 
 
 # --- Files -------------------------------------------------------------------------------------------------------

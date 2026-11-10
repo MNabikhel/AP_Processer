@@ -49,7 +49,7 @@ def test_a_first_sync_fills_every_table_through_the_imports(store, ais):
     assert acme["erp_id"] == "4001" and acme["expected_gst"] == "123456789RT0001" and acme["terms"] == "Net 30"
     assert acme["status"] == "active" and acme["province"] == "ON" and acme["erp_bank"] == "00012-003 …4567"
     courier = store.get_vendor("northern courier")
-    assert courier["erp_hold"] == "H" and courier["qst_number"] == "1234567890TQ0001"  # the hold code: on hold in JDE
+    assert courier["erp_hold"] == "Y" and courier["qst_number"] == "1234567890TQ0001"  # the hold code: on hold in JDE
     codes = {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}
     assert codes == {"6100": "Office supplies", "6200": "Courier and freight", "6200.01": "Courier - same day",
                      "1310": "GST/HST receivable"}  # the inactive 6999 left out  # fmt: skip
@@ -66,6 +66,21 @@ def test_a_first_sync_fills_every_table_through_the_imports(store, ais):
     lines = jde_sync.report_lines(report)
     assert lines[0].startswith("Suppliers: 2 added, 0 changed") and any("1 not postable" in x for x in lines)
     assert store.events(actions=["jde_synced"])[0]["actor"] == "jane"
+
+
+def test_a_supplier_with_jd_edwards_usual_hold_code_n_is_not_on_hold(store, ais):
+    """B-2081: JD Edwards' hold payment code is ``N`` for a supplier that is not held. The sync kept the code and any
+    code that was not blank read as a hold: every supplier was on hold, every invoice an error."""
+    ais.data["suppliers"][0]["hold_code"] = "N"
+    connect(store, ais)
+    assert jde_sync.sync(store)["ok"]
+    assert [v["display_name"] for v in store.held_vendors()] == ["Northern Courier Inc."]
+    assert store.get_vendor("acme office supplies")["erp_hold"] == ""
+    found = {code for _, code, _ in vendor_findings(_coding(invoice_number="A-1"), store)}
+    assert "VENDOR_ON_HOLD" not in found
+    held = _coding(vendor_name="Northern Courier Inc.", invoice_number="A-2")
+    said = [text for _, code, text in vendor_findings(held, store) if code == "VENDOR_ON_HOLD"]
+    assert said and "hold payment code Y" in said[0]
 
 
 def test_a_second_sync_reports_what_changed_and_closes_pos_no_longer_open(store, ais):
@@ -283,3 +298,31 @@ def test_the_sync_report_says_how_many_gl_descriptions_were_taken_from_jd_edward
     assert {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}["6100"] == "Office supplies"
     line = next(x for x in jde_sync.report_lines(report) if x.startswith("GL accounts"))
     assert "2 descriptions taken from JD Edwards" in line, line
+
+
+def test_with_a_chart_imported_the_sync_leaves_the_accounts_and_business_units_alone(store, ais):
+    """B-2092: the GL accounts and cost centers are then what the chart gives (D-209). The sync wrote them itself: a
+    code the chart lacks listed, a closed business unit a cost center again, until the next chart import took them
+    out, and so on, the whole queue checked again at each turn."""
+    from ap_coder.core import chart
+    from tests import chart_files as cf
+
+    def rows(read, headers, cells):
+        return read(dict(zip(headers, row, strict=True)) for row in cells).rows
+
+    store.import_business_units(rows(chart.bu_rows, cf.BU_HEADERS, cf.bu_cells()))
+    store.import_chart(rows(chart.chart_rows, cf.CHART_HEADERS, cf.chart_cells()))
+    lists = (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers"))
+    stamp, mapped = store.checks_stamp(), jde.load(store).gl_map
+    connect(store, ais)
+    report = jde_sync.sync(store, actor="jane")
+    assert report["ok"], report["errors"]
+    assert (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers")) == lists
+    assert {r["code"] for r in lists[0]} == set(cf.GL_ACCOUNTS) and jde.load(store).gl_map == mapped
+    assert store.get_vendor("acme office supplies") and store.purchase_order("4512")  # the other parts as before
+    said = jde_sync.report_lines(report)
+    why = "not synced: the chart of accounts is imported from JD Edwards' export, which says which accounts exist"
+    assert f"GL accounts: {why}" in said[1] and f"Business units: {why}" in said[2] and "chart import" in said[1]
+    assert report["parts"]["gl_accounts"] == report["parts"]["business_units"] == {"chart": True}
+    assert jde_sync.sync(store, parts=("gl_accounts", "business_units"))["ok"]
+    assert store.account_pairs().status(cf.HOME, "5410") == chart.OK and stamp  # the pairs as they were

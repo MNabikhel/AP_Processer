@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import io
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -84,6 +85,48 @@ def test_a_picture_named_as_a_pdf_is_made_into_a_pdf_and_kept(pipeline):
     assert store.find_by_hash(folder / "originals" / "invoice 77.png")["id"] == result.invoice_id
 
 
+def _picture_file(kind: str, pages: int = 1) -> bytes:
+    frames = [Image.open(io.BytesIO(_png_bytes((600 + 10 * n, 800)))).convert("RGB") for n in range(pages)]
+    buf = io.BytesIO()
+    frames[0].save(buf, kind, save_all=pages > 1, append_images=frames[1:]) if pages > 1 else frames[0].save(buf, kind)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("name, kind, pages", [("scan photo.jpg", "JPEG", 1), ("fax.tiff", "TIFF", 1),
+                                               ("scanner.tif", "TIFF", 3), ("phone.heic", "HEIF", 1),
+                                               ("named wrong.pdf", "PNG", 1)])  # fmt: skip
+def test_the_pdf_made_from_a_picture_in_the_invoices_folder_is_not_listed_as_a_new_file(pipeline, name, kind, pages):
+    """A picture dropped in the invoices folder is made a PDF there as it is read. The Import page then listed that
+    PDF, AP Coder's own, under "Process 1 file" (B-2098): the pick-up had only ever read the picture. The same for a
+    multi-page TIFF (one PDF), a HEIC photo and a picture named as a PDF."""
+    from ap_coder.intake import imports
+
+    if kind == "HEIF" and not layout.register_heif():
+        pytest.skip("pillow-heif is not installed")
+    store, pipe, folder = pipeline
+    picture = folder / name
+    picture.write_bytes(_picture_file(kind, pages))
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == [name]
+    result = pipe.process(picture)
+    assert result.ok and result.source.suffix == ".pdf" and result.source.parent == folder, result.error
+    with pymupdf.open(result.source) as doc:
+        assert doc.page_count == pages
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == []
+    result.source.write_bytes(SAMPLE.read_bytes())  # another invoice saved over it is a new file all the same
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == [result.source.name]
+
+
+def test_a_file_renamed_to_what_it_is_is_not_listed_as_a_new_file(pipeline):
+    """A PDF saved as ".jpg" is renamed ".pdf" as it is read: under its new name the pick-up had never read it."""
+    from ap_coder.intake import imports
+
+    store, pipe, folder = pipeline
+    (folder / "scan from vendor.jpg").write_bytes(SAMPLE.read_bytes())
+    result = pipe.process(folder / "scan from vendor.jpg")
+    assert result.ok and result.source.name == "scan from vendor.pdf"
+    assert imports.list_folder(store, folder).new == []
+
+
 def test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words(pipeline):
     store, pipe, folder = pipeline
     page = folder / "invoice.pdf"
@@ -152,6 +195,62 @@ def test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is
                             "without one.")  # fmt: skip
     opened = pipe.process(folder / "print only.pdf")  # an empty user password: opened without asking
     assert opened.ok and opened.output["grand_total"] == 18017.85
+
+
+def test_an_empty_damaged_or_locked_pdf_is_one_warning_line_not_a_traceback(pipeline, caplog, monkeypatch):
+    """Each printed about twenty lines of Python traceback in AP Coder's window (B-2097): a file AP can do something
+    about is one line saying what is wrong and what to do, as on the page; the traceback stays for the unexpected."""
+    import logging
+
+    store, pipe, folder = pipeline
+    (folder / "empty.pdf").write_bytes(b"")
+    (folder / "broken.pdf").write_bytes(b"%PDF-1.7\nthis is not a pdf at all\n")
+    with pymupdf.open(SAMPLE) as doc:
+        doc.save(folder / "locked.pdf", encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="secret", owner_pw="owner")
+    said = {"empty.pdf": "empty.pdf can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a "
+                         "new copy.",
+            "broken.pdf": "broken.pdf can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor "
+                          "for a new copy.",
+            "locked.pdf": "locked.pdf is protected by a password, so it can't be read. Ask the vendor for a copy "
+                          "without one."}  # fmt: skip
+    for name, text in said.items():
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="ap_coder.ai.pipeline"):
+            result = pipe.process(folder / name)
+        assert result.error == text
+        shown = [r for r in caplog.records if r.name == "ap_coder.ai.pipeline" and r.levelno >= logging.WARNING]
+        assert [(r.levelname, r.getMessage(), r.exc_info) for r in shown] == [("WARNING", text, None)], name
+
+    def unexpected(*args, **kwargs):
+        raise RuntimeError("the disk went away")
+
+    monkeypatch.setattr(pipe, "_read_and_code", unexpected)
+    caplog.clear()
+    result = pipe.process(SAMPLE)
+    assert result.error == "RuntimeError: the disk went away"
+    failed = [r for r in caplog.records if r.getMessage().startswith("Failed to process")]
+    assert len(failed) == 1 and failed[0].levelname == "ERROR" and failed[0].exc_info
+
+
+def test_a_bug_while_a_picture_is_made_a_pdf_keeps_its_traceback_in_the_log(pipeline, caplog, monkeypatch):
+    """Any TypeError, SyntaxError or OSError raised while the file was still a picture was "damaged: ask the vendor
+    for a new copy", in one line, its traceback at DEBUG, which no log keeps (B-2204): only what Pillow itself raises
+    on a picture it cannot decode is the file's fault. A bug of AP Coder's own stays an error with its traceback."""
+    from PIL import Image
+
+    from ap_coder.intake import pictures
+
+    store, pipe, folder = pipeline
+    Image.new("RGB", (60, 40), "white").save(folder / "photo.jpg")
+
+    def bug(path):
+        return None + 1.0  # (a TypeError of AP Coder's own making)
+
+    monkeypatch.setattr(pictures, "to_pdf", bug)
+    result = pipe.process(folder / "photo.jpg")
+    assert result.error.startswith("TypeError: unsupported operand") and "damaged" not in result.error
+    failed = [r for r in caplog.records if r.getMessage().startswith("Failed to process")]
+    assert len(failed) == 1 and failed[0].levelname == "ERROR" and failed[0].exc_info
 
 
 # --- B-263: a text file saved as "Unicode" by Notepad, or one that is not text at all --------------------------------
@@ -297,8 +396,9 @@ def test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were
     assert result.ok, result.error
     issue = next(i for i in result.report.issues if i.code == "PAGES_NOT_READ")
     assert issue.severity == "warning"
-    assert issue.message == ("only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR "
-                             "can't read is left out): check the other pages yourself before approving")  # fmt: skip
+    assert issue.message == ("pages 56 to 295 of its 300 pages were not read (of a file longer than 60 pages the "
+                             "first 55 and the last 5 are read): nothing on them is in the lines or totals shown; "
+                             "check them yourself before approving")  # fmt: skip
     assert not any(i.code == "PAGES_NOT_READ" for i in pipe.process(SAMPLE).report.issues)
 
 

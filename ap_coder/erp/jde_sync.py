@@ -80,6 +80,14 @@ WRITE_ROWS = 500  # POs closed in one transaction
 VOUCHERS_A_WRITE = 250
 MASS_CLOSE_SHARE = 0.5  # an answer that would close more than this share of the open synced POs, or all, is refused
 SUPPLIER_COLUMNS = {k: k for k in ("vendor_name", "erp_id", "gst", "qst", "pst", "terms", "province")}
+# With a chart of accounts imported from JD Edwards' export (D-209), the GL accounts and cost centers are worked out
+# from it (``Store.import_chart``): these two parts are not read, and the report says why (their report: {"chart":
+# True}). Written here they came and went with each chart import, the whole queue checked again each time (B-2092).
+CHART_PARTS = ("gl_accounts", "business_units")
+FROM_CHART = (
+    "not synced: the chart of accounts is imported from JD Edwards' export, which says which accounts exist on which "
+    "business unit. Import the export again to change them (python -m ap_coder chart import)."
+)
 # Each part's report, besides what all have ("read", "mode", "added", "changed").
 REPORTED = {"suppliers": {"duplicates": []}, "gl_accounts": {"not_postable": 0, "mapped": []},
             "business_units": {"not_postable": 0}, "purchase_orders": {"closed": [], "skipped": 0, "refused_close": ""},
@@ -167,7 +175,8 @@ def _suppliers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[st
     records = []
     banks: dict[str, str] = {}
     # JDE's hold is kept apart (``vendors.erp_hold``): a hold AP put on a vendor here is never lifted by the sync; the
-    # vendor is on hold if either is (D-105).
+    # vendor is on hold if either is (D-105). The store says which hold payment codes hold: "N", JDE's usual value,
+    # never does (``Store.set_erp_bank_and_hold``, B-2081).
     holds: dict[str, str] = {}
     for r in found:
         name, an8 = _text(r.get("name")), _text(r.get("an8"))
@@ -617,8 +626,12 @@ def sync(store: Any, *, parts: tuple[str, ...] = PARTS, client: jde_ais.AisClien
         report["ok"] = False
         return report
     lost = False
+    from_chart = store.has_chart()
     try:
         for part in parts:
+            if from_chart and part in CHART_PARTS:  # the two lists are the chart's: never written here (B-2092)
+                report["parts"][part] = {"chart": True}
+                continue
             try:
                 report["parts"][part] = _sync_part(store, client, part, actor, full=full,
                                                    allow_mass_close=allow_mass_close, lease=lease)  # fmt: skip
@@ -652,6 +665,9 @@ def report_lines(report: dict[str, Any], shown: int = 10) -> list[str]:
     """The sync's report as plain lines (the settings page's message, ``jde sync``)."""
     lines = []
     for part, r in (report.get("parts") or {}).items():
+        if r.get("chart"):
+            lines.append(f"{LABELS[part]}: {FROM_CHART}")
+            continue
         if part == "vouchers":
             bits = [f"{r.get('read', 0)} read"]
             if r.get("new"):

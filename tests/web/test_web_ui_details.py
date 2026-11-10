@@ -175,9 +175,10 @@ def _queue_row(client, invoice_id: int) -> str:
 
 
 def test_the_queue_row_says_the_drafts_own_blocker(client, store):
-    """B-996: the queue still said "Pick a GL account for line 4" after line 4 was coded in a saved draft."""
+    """B-996: the queue still said what line 4 needed ("Line 4: … not sure", B-2219's sentence; then "Pick a GL
+    account for line 4") after line 4 was coded in a saved draft."""
     invoice_id = _id(store, "Harbourview")
-    assert "Pick a GL account for line 4" in _queue_row(client, invoice_id)
+    assert "Line 4: " in _queue_row(client, invoice_id)
 
     def code(rows):
         rows[3]["predicted_gl_code"] = "6800"
@@ -186,7 +187,7 @@ def test_the_queue_row_says_the_drafts_own_blocker(client, store):
     answer = check(client, invoice_id, form_of(store, invoice_id, lines=code))
     assert answer["draft"]
     row = _queue_row(client, invoice_id)
-    assert "Pick a GL account for line 4" not in row
+    assert "Line 4: " not in row and "Pick a GL account for line 4" not in row
     assert "Edits not approved yet" in row, row
     from ap_coder.web.pages.review import draft_reasons
 

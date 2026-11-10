@@ -324,6 +324,108 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
     assert opened == ["http://127.0.0.1:8501"]
 
 
+# --- The team's server: never a second AP Coder, without sign-in, on its data (D-211) ---------------------------------
+
+
+@pytest.fixture
+def double_click(launch, tmp_path, monkeypatch):
+    """A double-click on a laptop whose data folder is ``tmp_path/data``: what it opened in the browser, and whether
+    it went on to set up and start AP Coder (``went_on``: the arguments it would have started with)."""
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setenv("AP_SERVER_MODE", "0")
+    monkeypatch.delenv(launch.LOCK_HELD_ENV, raising=False)
+    monkeypatch.setattr(launch, "LOCK", tmp_path / ".ap_coder_launch.lock")
+    monkeypatch.setattr(launch, "_held", [])
+    monkeypatch.setattr(launch, "in_venv", lambda: True)
+    monkeypatch.setattr(launch.upgrade, "newer_install", lambda root: None)
+    opened: list[str] = []
+    went_on: list[list[str]] = []
+    monkeypatch.setattr(launch, "open_browser", opened.append)
+    monkeypatch.setattr(launch, "run", lambda args, rest: went_on.append(rest) or 0)
+    yield SimpleNamespace(launch=launch, data=data, db=data / "ap_coder.db", opened=opened, went_on=went_on)
+    launch.release_lock()
+
+
+def test_a_plain_laptop_data_folder_starts_as_before(double_click):
+    from ap_coder.core.store import Store
+
+    d = double_click
+    assert d.launch.main([]) == 0 and d.went_on == [[]]  # the first start: no database yet
+    Store(d.db)
+    assert d.launch.main(["--port", "8502"]) == 0 and d.went_on == [[], ["--port", "8502"]]
+    assert d.opened == []
+
+
+@pytest.mark.parametrize("https", [True, False])
+def test_a_double_click_beside_the_teams_server_opens_it_and_starts_nothing(double_click, capsys, https):
+    """B-2119: the launcher asked for a running AP Coder over HTTP only, so beside the team's server (HTTPS, here with
+    a self-signed certificate) the old shortcut started a second AP Coder in laptop mode, with no sign-in, on the same
+    database. It opens the team's address instead; the option for laptop mode again changes nothing while it runs."""
+    from ap_coder.ops import safety
+    from tests.ops.test_safety import team_server_stand_in
+
+    d = double_click
+    httpd, port = team_server_stand_in(d.data, https=https)
+    try:
+        address = safety.team_server(d.data, d.db).address
+        assert address.startswith("https://" if https else "http://") and address.endswith(f":{port}")
+        assert d.launch.main([]) == 0
+        assert d.launch.main(["--without-sign-in"]) == 0
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    out = capsys.readouterr().out
+    assert d.went_on == [] and d.opened == [address, address]
+    assert out.count(f"AP Coder is serving your team from this computer (sign in at {address})") == 2
+    assert "it was not started a second time" in out and not d.launch._held  # (no set-up lock taken either)
+
+
+def test_a_double_click_never_opens_a_stopped_team_servers_data_without_sign_in(double_click, capsys):
+    """B-2119: with the server stopped for the night nothing answers, and the double-click must still not open the
+    team's data with no sign-in: told by the sign-in accounts in its database (or its server.json), not by the port."""
+    from ap_coder.core.store import Store
+    from ap_coder.ops import service
+
+    d = double_click
+    Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
+    assert d.launch.main([]) == 1 and d.went_on == [] and d.opened == []
+    out = capsys.readouterr().out
+    assert "set up to serve your team" in out and "it was not started without sign-in" in out
+    assert "1 sign-in account" in out and "--without-sign-in" in out
+    assert sorted(p.name for p in d.data.glob("ap_coder.db*")) == ["ap_coder.db"]  # (only read; nothing left beside it)
+    d.db.unlink()
+    service.write_config(d.data, port=8501, certfile="tls/apcoder.pem", keyfile="tls/apcoder.key.pem")
+    assert d.launch.main([]) == 1 and d.went_on == [] and d.opened == []  # before its first account: server.json
+    assert "server.json" in capsys.readouterr().out
+
+
+def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_click, monkeypatch, capsys):
+    from ap_coder.core.store import Store
+
+    d = double_click
+    Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
+    assert d.launch.main(["--without-sign-in"]) == 0 and d.went_on == [["--without-sign-in"]]
+    assert "--without-sign-in" in d.launch.server_command(8501, ["--without-sign-in"])  # (serve is told, and warns)
+    # A set-up that starts nothing (the server's own, and server-update's) is never refused.
+    assert d.launch.main(["--no-start", "--yes"]) == 0 and len(d.went_on) == 2
+    # The last guard, for a start that comes another way (the installer's "Start AP Coder now?").
+    monkeypatch.setattr(d.launch.subprocess, "Popen", lambda *a, **k: pytest.fail("a dashboard started"))
+    assert d.launch.start_dashboard([], {}) == 1
+    assert "it was not started without sign-in" in capsys.readouterr().out
+
+
+def test_the_servers_own_launcher_is_not_refused_on_its_stopped_data(double_click, monkeypatch):
+    """In server mode (``AP_SERVER_MODE=1`` for the machine) a start is the server's own: with sign-in."""
+    from ap_coder.ops import service
+
+    d = double_click
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    service.write_config(d.data, port=8501, insecure_http=True)
+    assert d.launch.main([]) == 0 and d.went_on == [[]]
+
+
 @pytest.fixture
 def lock(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "LOCK", tmp_path / ".ap_coder_launch.lock")

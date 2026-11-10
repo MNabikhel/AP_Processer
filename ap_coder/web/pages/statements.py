@@ -9,6 +9,7 @@ for what is missing (``&lang=``) and ``GET /statements/reconciliation.csv`` (sam
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 from urllib.parse import urlencode
 
@@ -17,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ap_coder.coding import vendor_mail
 from ap_coder.core.store import Store
+from ap_coder.erp import jde_keying
 from ap_coder.erp import statements as stm
 from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, page_router, refuse, render, reviewer
@@ -53,10 +55,14 @@ FIELD_LABELS = {
 }
 
 
-def ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]]) -> str:
+def ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]], keying: Collection[int] = ()) -> str:
+    """Where AP has a statement line's invoice; ``keying``: the batches that are keying sheets
+    (``jde_keying.keying_batches``), typed into JD Edwards by hand."""
     if not line.invoice_id:
         return ""
     inv = invoices.get(line.invoice_id) or {}
+    if inv.get("export_batch") in keying:
+        return f"On keying sheet {inv['export_batch']}"
     if inv.get("export_batch"):
         return f"Exported (batch {inv['export_batch']})"
     return {"approved": "Approved", "review": "In review", "pending_approval": "Second approval"}.get(
@@ -99,6 +105,7 @@ def statements_page(
             else:
                 rec = reconciliation(store, vendor, df.to_dict("records"), chosen)
                 by_id = {i["id"]: i for i in store.vendor_invoices(vendor)}
+                keying = jde_keying.keying_batches(store)
                 lang = lang if lang in vendor_mail.LANGUAGES else vendor_mail.ENGLISH
                 mail = vendor_mail.statement_request(rec.lines, lang, reviewer())
                 params = [(k, v) for k, v in request.query_params.multi_items() if k != "lang"]
@@ -119,7 +126,7 @@ def statements_page(
                             "line": li,
                             "tone": TONES[li.status],
                             "label": stm.LABELS[li.status],
-                            "where": ap_status(li, by_id) or li.note,
+                            "where": ap_status(li, by_id, keying) or li.note,
                         }
                         for li in rec.lines
                     ],

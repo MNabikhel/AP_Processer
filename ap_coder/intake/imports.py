@@ -30,6 +30,7 @@ from typing import Any
 
 from ..core.store.folder import read_file
 from ..core.store.imports import GONE, IMPORT_CLAIM, IMPORT_DONE, IMPORT_FAILED, IMPORT_LEASE_SECONDS, IMPORT_SKIPPED
+from ..ops.awake import stay_awake
 from .files import folder_names
 
 log = logging.getLogger(__name__)
@@ -38,6 +39,21 @@ NO_ROOM = ("The disk of the data folder is nearly full: AP Coder reads no more i
            "files wait in line in the invoices folder.")  # fmt: skip
 RESTORING = "A backup is being restored: the invoices in line are read once it is done."
 Read = tuple[str, int | None, int | None, str]  # (place, size, time in nanoseconds, SHA-256), as ``read_file``
+
+
+def result_line(name: str, output: dict[str, Any], flagged: bool) -> dict[str, str]:
+    """The line an import's card says of a file read: its vendor and invoice number ("Acme Supply Ltd, invoice
+    A-1001: ready"), so three invoices of one vendor are three different lines (B-2100); the file's name where no
+    number, or no vendor, was read."""
+    vendor, number = str(output.get("vendor_name") or "").strip(), str(output.get("invoice_number") or "").strip()
+    try:
+        credit = float(output.get("grand_total") or 0) < 0
+    except (TypeError, ValueError):
+        credit = False
+    numbered = f"{vendor or name}, {'credit note' if credit else 'invoice'} {number}"
+    what = numbered if number else f"{vendor} ({name})" if vendor else name
+    return {"text": f"{what}: {'needs attention' if flagged else 'ready'}", "tone": "warn" if flagged else "ok",
+            "icon": "flag" if flagged else "check_circle"}  # fmt: skip
 
 
 def owner_id(kind: str) -> str:
@@ -287,7 +303,8 @@ class Reader:
             context.run(EVENT_ACTOR.set, row["account"] or None)
             context.run(EVENT_ORIGIN.set, row["origin"] or None)
             context.run(IMPORT_CLAIM.set, (row["id"], self.owner))  # stored only while it is still this reader's
-            result = context.run(pipeline.process, path, sha256=row["sha256"] if same else None)
+            with stay_awake():  # (a laptop on Windows is not put to sleep in the middle of a file)
+                result = context.run(pipeline.process, path, sha256=row["sha256"] if same else None)
         except Exception as exc:  # noqa: BLE001 - the pipeline says what failed itself; never left in line to fail again
             log.exception("Could not read %s from the import queue", path)
             self.store.finish_import(row["id"], self.owner, IMPORT_FAILED, error=f"{type(exc).__name__}: {exc}",
@@ -298,9 +315,7 @@ class Reader:
                 flagged = self.attention(self.store, getattr(pipeline, "reference", None), result)
             except Exception:  # noqa: BLE001 - only what the line says
                 flagged = bool(result.report and result.report.requires_review)
-            vendor = (result.output or {}).get("vendor_name") or name
-            line = {"text": f"{vendor}: {'needs attention' if flagged else 'ready'}", "tone": "warn" if flagged
-                    else "ok", "icon": "flag" if flagged else "check_circle"}  # fmt: skip
+            line = result_line(name, result.output or {}, flagged)
         else:
             line = {"text": f"{name}: {result.error}", "tone": "err", "icon": "error"}
         self.store.finish_import(row["id"], self.owner, IMPORT_DONE if result.ok else IMPORT_FAILED,

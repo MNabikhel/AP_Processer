@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from typing import Any
 
-from ..keys import register_keys
+from ..keys import master_vendor_id, register_keys
 from ..memory import vendor_key
 from ._base import _in_list, _norm_number, _now
-from .dialect import ROWID, begin_write, table_names
+from .dialect import ROWID, add_column, begin_write, table_names
+from .dialect import columns as table_columns
 from .learning import one_snapshot
 from .summary import fetch_rows, fts_available
 
@@ -29,10 +31,15 @@ from .summary import fetch_rows, fts_available
 # and the column be: no version of their own).
 JDE_REGISTER = (
     "CREATE TABLE IF NOT EXISTS erp_vouchers (erp_key TEXT PRIMARY KEY, vendor_key TEXT NOT NULL, number_key TEXT "
-    "NOT NULL, total REAL NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', seen INTEGER NOT NULL)",
+    "NOT NULL, total REAL NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', seen INTEGER NOT NULL, document TEXT "
+    "NOT NULL DEFAULT '', batch TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT '', gl_date TEXT NOT NULL "
+    "DEFAULT '')",
     "CREATE INDEX IF NOT EXISTS erp_vouchers_bill ON erp_vouchers (vendor_key, number_key, total)",
     "CREATE INDEX IF NOT EXISTS erp_vouchers_date ON erp_vouchers (invoice_date, seen)",
 )
+# What a voucher of JD Edwards' voucher list keeps besides (B-2084): its document number and batch, read back onto the
+# reviewed invoice (``erp_vouchers_of``), and the currency of its gross. Added to a table made before them.
+VOUCHER_COLUMNS = ("document", "batch", "currency", "gl_date")  # (the G/L date: the period a list covers, B-2164)
 WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never long enough to hold up an approval
 # When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
 # gone, so its next read of the vouchers is whole.
@@ -104,6 +111,16 @@ def build_register_search(conn: sqlite3.Connection) -> None:
         _search_kept(conn, 0, cleared=True)
 
 
+def _vouchers_by_key(rows: list[dict[str, Any]]) -> dict[str, tuple[str, str, float, dict[str, Any]]]:
+    """{a voucher's key: (the vendor key, the invoice number's key, the gross, its row)}: the rows that name a bill."""
+    vouchers: dict[str, tuple[str, str, float, dict[str, Any]]] = {}
+    for r in rows:
+        key, name, number = str(r.get("key") or ""), vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"])
+        if key and name and number and r.get("total") is not None:
+            vouchers[key] = (name, number, round(float(r["total"]), 2), r)
+    return vouchers
+
+
 def add_jde_register(conn: sqlite3.Connection, columns: Any) -> None:
     """The register's supplier numbers and JD Edwards' vouchers (D-181), whatever the version (``columns``: the
     register's)."""
@@ -111,6 +128,10 @@ def add_jde_register(conn: sqlite3.Connection, columns: Any) -> None:
         conn.execute("ALTER TABLE erp_invoices ADD COLUMN an8 TEXT NOT NULL DEFAULT ''")
     for sql in JDE_REGISTER:
         conn.execute(sql)
+    kept = table_columns(conn, "erp_vouchers")
+    for column in VOUCHER_COLUMNS:
+        if column not in kept:
+            add_column(conn, "erp_vouchers", column, "TEXT NOT NULL DEFAULT ''")
 
 
 class RegisterMixin:
@@ -210,7 +231,7 @@ class RegisterMixin:
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
-        an8 = str(self.vendor_ids().get(key, "") if an8 is None else an8).strip()
+        an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
         with self._conn() as conn:
             rows = [
                 dict(r)
@@ -232,44 +253,115 @@ class RegisterMixin:
         bill, with the newest read that listed it; one that moved (its supplier renamed in JDE, its gross corrected)
         leaves its old bill, which goes with its last voucher. One transaction (the caller's: a page of the read). How
         many bills are new."""
-        vouchers: dict[str, tuple[str, str, float, dict[str, Any]]] = {}
-        for r in rows:
-            key, name, number = str(r.get("key") or ""), vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"])
-            if key and name and number and r.get("total") is not None:
-                vouchers[key] = (name, number, round(float(r["total"]), 2), r)
+        vouchers = _vouchers_by_key(rows)
         if not vouchers:
             return 0
-        bills = {v[:3]: v[3] for v in vouchers.values()}  # (named by its last voucher)
         with self._conn() as conn:
             begin_write(conn)
             top = _search_top(conn) if search_in_step(conn) else None  # (the search's index kept with it, D-194)
-            before = {r[0]: tuple(r[1:]) for r in conn.execute(
-                f"SELECT erp_key, vendor_key, number_key, total FROM erp_vouchers WHERE {_in_list('erp_key')}",
-                (json.dumps(sorted(vouchers)),))}  # fmt: skip
-            known = {tuple(r) for r in conn.execute(
-                f"SELECT vendor_key, number_key, total FROM erp_invoices WHERE {_in_list('number_key')}",
-                (json.dumps(sorted({bill[1] for bill in bills})),))}  # fmt: skip
-            conn.executemany(
-                "INSERT INTO erp_vouchers (erp_key, vendor_key, number_key, total, invoice_date, seen) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET vendor_key = excluded.vendor_key, "
-                "number_key = excluded.number_key, total = excluded.total, invoice_date = excluded.invoice_date, "
-                "seen = MAX(erp_vouchers.seen, excluded.seen)",  # (an older read writing after a newer one)
-                [(key, *v[:3], v[3].get("invoice_date") or "", seen) for key, v in vouchers.items()],
-            )
-            conn.executemany(
-                """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
-                   imported_at, copies, plain_name, raw_number, an8) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                   ON CONFLICT(vendor_key, number_key, total) DO UPDATE SET invoice_date = excluded.invoice_date,
-                   imported_at = excluded.imported_at,
-                   an8 = CASE WHEN excluded.an8 != '' THEN excluded.an8 ELSE erp_invoices.an8 END""",
-                [(*bill, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", _now(),
-                  *register_keys(r["vendor_name"], r["invoice_number"]), str(r.get("an8") or ""))
-                 for bill, r in bills.items()],
-            )  # fmt: skip
-            moved = {bill for key, bill in before.items() if bill != vouchers[key][:3]}
-            self._recount(conn, set(bills) | moved, top is not None)
+            new = self._write_vouchers(conn, vouchers, seen, top is not None)
             _search_kept(conn, top)
+        return new
+
+    def _write_vouchers(self, conn: sqlite3.Connection, vouchers: dict[str, tuple[str, str, float, dict[str, Any]]],
+                        seen: int, indexed: bool) -> int:  # fmt: skip
+        """``vouchers`` (``_vouchers_by_key``) written under their bills in the caller's transaction, each with its
+        document number, batch and currency when it gives them; the bills counted again. How many bills are new."""
+        bills = {v[:3]: v[3] for v in vouchers.values()}  # (named by its last voucher)
+        before = {r[0]: tuple(r[1:]) for r in conn.execute(
+            f"SELECT erp_key, vendor_key, number_key, total FROM erp_vouchers WHERE {_in_list('erp_key')}",
+            (json.dumps(sorted(vouchers)),))}  # fmt: skip
+        known = {tuple(r) for r in conn.execute(
+            f"SELECT vendor_key, number_key, total FROM erp_invoices WHERE {_in_list('number_key')}",
+            (json.dumps(sorted({bill[1] for bill in bills})),))}  # fmt: skip
+        conn.executemany(
+            "INSERT INTO erp_vouchers (erp_key, vendor_key, number_key, total, invoice_date, seen, document, batch, "
+            "currency, gl_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET "
+            "vendor_key = excluded.vendor_key, number_key = excluded.number_key, total = excluded.total, "
+            "invoice_date = excluded.invoice_date, "
+            "seen = MAX(erp_vouchers.seen, excluded.seen), "  # (an older read writing after a newer one)
+            + ", ".join(f"{c} = CASE WHEN excluded.{c} != '' THEN excluded.{c} ELSE erp_vouchers.{c} END"
+                        for c in VOUCHER_COLUMNS),
+            [(key, *v[:3], v[3].get("invoice_date") or "", seen, *(str(v[3].get(c) or "") for c in VOUCHER_COLUMNS))
+             for key, v in vouchers.items()],
+        )  # fmt: skip
+        conn.executemany(
+            """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
+               imported_at, copies, plain_name, raw_number, an8) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+               ON CONFLICT(vendor_key, number_key, total) DO UPDATE SET invoice_date = excluded.invoice_date,
+               imported_at = excluded.imported_at,
+               an8 = CASE WHEN excluded.an8 != '' THEN excluded.an8 ELSE erp_invoices.an8 END""",
+            [(*bill, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", _now(),
+              *register_keys(r["vendor_name"], r["invoice_number"]), str(r.get("an8") or ""))
+             for bill, r in bills.items()],
+        )  # fmt: skip
+        moved = {bill for key, bill in before.items() if bill != vouchers[key][:3]}
+        self._recount(conn, set(bills) | moved, indexed)
         return len(set(bills) - known)
+
+    def import_erp_vouchers(self, rows: list[dict[str, Any]], replace_all: bool = False,
+                            actor: str | None = None) -> int:  # fmt: skip
+        """JD Edwards' voucher list imported from a file (``registers.vouchers_from_pay_items``: a voucher's key,
+        its supplier's name and number, the invoice number, date and gross, its document number, batch and currency)
+        into the register, as the sync's vouchers are kept: each by its key under its bill, so the same list imported
+        again adds nothing and a bill entered twice in JD Edwards (two documents) counts two copies. ``replace_all``:
+        the register is these vouchers and nothing else. Returns how many bills the register holds (B-2084)."""
+        vouchers = _vouchers_by_key(rows)
+        seen = time.time_ns() // 1_000_000  # as a read of the sync stamps what it lists
+        with self._conn() as conn:
+            begin_write(conn)
+            top = _search_top(conn) if search_in_step(conn) else None  # (the search's index kept with it, D-194)
+            if replace_all:
+                conn.execute("DELETE FROM erp_invoices")
+                conn.execute("DELETE FROM erp_vouchers")
+                _cleared(conn)
+            self._write_vouchers(conn, vouchers, seen, top is not None and not replace_all)
+            _search_kept(conn, None if top is None else 0 if replace_all else top, cleared=replace_all)
+            count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+            self._log(conn, "erp_register_imported", actor=actor,
+                      detail={"rows": len(rows), "total": count, "vouchers": len(vouchers)})  # fmt: skip
+        return count
+
+    def erp_vouchers_left(self, voided: list[str], covers: dict[str, Any], listed: list[str]) -> int:
+        """The vouchers an earlier voucher list gave that a later one says are gone, taken off the register, a bill
+        with its last voucher, so it is no duplicate any more (B-2164). ``voided``: the keys the later list shows
+        adding up to 0.00. ``covers``: {"<company>-<document type>-": (the first G/L date of the list's rows, the
+        last)} (``registers.vouchers_from_pay_items``), given only for a whole list the person says was not
+        filtered: the vouchers of that period not among ``listed`` (its vouchers' keys) leave too. Only a voucher
+        kept with its G/L date, which a voucher list gives, can leave by its absence: one the JD Edwards sync
+        brought is its own to remove. How many left."""
+        kept = set(listed)
+        with self._conn() as conn:
+            gone = [r[0] for r in conn.execute(f"SELECT erp_key FROM erp_vouchers WHERE {_in_list('erp_key')}",
+                                               (json.dumps(sorted(set(voided))),))]  # fmt: skip
+            for prefix, (first, last) in covers.items():
+                found = conn.execute("SELECT erp_key FROM erp_vouchers WHERE erp_key >= ? AND erp_key < ? AND "
+                                     "gl_date != '' AND gl_date >= ? AND gl_date <= ?",
+                                     (prefix, prefix[:-1] + ".", first, last))  # fmt: skip
+                gone += [r[0] for r in found if r[0] not in kept and r[0] not in gone]
+        if gone:
+            self.remove_jde_vouchers(gone, _LAST_ROWID)
+        return len(gone)
+
+    def erp_vouchers_of(self, vendor_name: str, invoice_number: str, total: float | None,
+                        an8: str | None = None) -> list[dict[str, Any]]:  # fmt: skip
+        """JD Edwards' vouchers of a bill in the register, each with its key, document number, batch, currency, date
+        and gross: what a reviewed invoice's sign-off says of where it is in JD Edwards. The bill is found as
+        ``in_erp`` finds it (the vendor's name, or its supplier number: ``an8``; None: the vendor list's ERP ID of the
+        vendor) with this invoice number and gross. [] when the register has no voucher for it."""
+        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        if not number or total is None:
+            return []
+        an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
+        with self._conn() as conn:
+            return fetch_rows(
+                conn,
+                "SELECT v.erp_key, v.document, v.batch, v.currency, v.invoice_date, v.total FROM erp_vouchers v "
+                "JOIN erp_invoices b ON b.vendor_key = v.vendor_key AND b.number_key = v.number_key AND "
+                "b.total = v.total WHERE v.number_key = ? AND v.total = ? AND (v.vendor_key = ? OR (? != '' AND "
+                "b.an8 = ?)) ORDER BY v.erp_key",
+                (number, round(float(total), 2), key, an8, an8),
+            )
 
     def jde_vouchers_unseen(self, since: str, seen: int, undated: bool = False) -> tuple[list[str], int]:
         """(the JD Edwards vouchers dated after ``since`` that the sync's read ``seen`` did not list, how many are dated

@@ -27,15 +27,21 @@
         </a>
       {% endmacro %}
       {# The everyday pages, then the rest folded under More (open on one of its pages; otherwise as this browser left
-         it), then Settings and Help, pinned above the footer so they are always on screen (D-52). #}
+         it), then Settings and Help, pinned above the footer so they are always on screen (D-52). In Simple screens
+         (Settings → About): the five everyday pages, then the pages under "Setup", with no More, and Help. #}
       <nav class="nav" aria-label="Pages">
         {% for item in rail.main %}{{ nav_link(item) }}{% endfor %}
+        {% if simple_screens %}
+        <div class="nav-group" id="nav-setup">Setup</div>
+        {% for item in rail.setup %}{{ nav_link(item) }}{% endfor %}
+        {% else %}
         {% set in_more = rail.more | selectattr("page.key", "equalto", page) | list %}
         <details class="nav-more" id="nav-more"{% if in_more %} open data-here{% endif %}>
           <summary class="nav-link"><span class="ms" aria-hidden="true">more_horiz</span><span class="label">More</span><span class="ms chev" aria-hidden="true">expand_more</span></summary>
           {% for item in rail.more %}{{ nav_link(item) }}{% endfor %}
         </details>
         <script src="{{ static_url('/static/js/nav_more.js') }}"></script>{# not inline: the server's Content-Security-Policy runs AP Coder's own files only #}
+        {% endif %}
       </nav>
       <nav class="nav nav-pinned" aria-label="Settings and help">
         {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
@@ -49,9 +55,11 @@
         {% endif %}
         {% if account %}
         {# Server mode (D-97): the person logged in, their role, their password, the users (Admin) and Log out. #}
-        <div class="apc-me" title="{{ account.username }} · {{ account.role_label }} · {{ approved_today | num }} approved today">
+        {# (a Manager approves no invoice: only the role) #}
+        {% set mine = account.role_label ~ ("" if account.role == "manager" else " · " ~ (approved_today | num) ~ " approved today") %}
+        <div class="apc-me" title="{{ account.username }} · {{ mine }}">
           {{ ui.avatar(account.name, "sm") }}
-          <div><div class="name">{{ account.name }}</div><div class="role">{{ account.role_label }} · {{ approved_today | num }} approved today</div></div>
+          <div><div class="name">{{ account.name }}</div><div class="role">{{ mine }}</div></div>
         </div>
         <div class="apc-me-links">
           <a href="/account/password">Your password</a>
@@ -85,6 +93,13 @@
         <span class="ms" aria-hidden="true">{{ 'hourglass_top' if banner_tone == 'info' else 'visibility_off' }}</span>
         <span>{{ banner }}</span>
         {% if can("/settings/reading", "GET") %}<a href="/settings/reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+      </div>
+      {% endif %}
+      {% if hidden_in_simple %}
+      <div class="banner info" role="status" id="hidden-in-simple">
+        <span class="ms" aria-hidden="true">visibility_off</span>
+        <span>Hidden in Simple screens: Settings → About shows everything</span>
+        {% if can("/settings/about", "GET") %}<a href="/settings/about#show">Open Settings → About <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
       </div>
       {% endif %}
       {% if admin_notice %}

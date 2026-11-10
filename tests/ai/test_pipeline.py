@@ -26,8 +26,10 @@ def test_end_to_end_from_markdown(tmp_path, settings, reference, ground_truth, s
 
     out = json.loads((tmp_path / f"{SAMPLE_STEM}.json").read_text())
     distribution = out.pop("gl_distribution")
-    # Target schema fields exactly as coded, each line's account marked the chat model's (B-894).
+    # Target schema fields exactly as coded, each line's account marked the chat model's (B-894), on the line's
+    # record of what decided it too (D-212).
     assert all(li.pop("reasoning_justification").startswith("Suggested by the chat model") for li in out["line_items"])
+    assert all(li.pop("decided_by") == {"source": "model"} for li in out["line_items"])
     assert out == {**ground_truth, "line_items": [{k: v for k, v in li.items() if k != "reasoning_justification"}
                                                   for li in ground_truth["line_items"]]}  # fmt: skip
     assert round(sum(e["amount"] for e in distribution), 2) == ground_truth["grand_total"]
@@ -94,7 +96,7 @@ def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
     coded = [li.predicted_gl_code for li in coding.line_items]
     asked = {}
 
-    def suggest(coder, vendor, lines, history="", kept=None, within=None):
+    def suggest(coder, vendor, lines, history="", kept=None, within=None, **more):
         asked["lines"] = lines
         return {n: ("6999", "", "a guess") for n, _, _ in lines}
 

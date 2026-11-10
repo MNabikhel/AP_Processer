@@ -45,7 +45,7 @@ def test_a_hold_in_jde_holds_the_vendor_and_its_release_frees_only_that(store, a
     connect(store, ais)
     jde_sync.sync(store, parts=("suppliers",))
     courier = store.get_vendor("northern courier")
-    assert courier["erp_hold"] == "H" and courier["status"] == "active"  # JDE's hold, kept apart
+    assert courier["erp_hold"] == "Y" and courier["status"] == "active"  # JDE's hold, kept apart
     found = [
         m
         for _, c, m in vendor_findings(_coding(vendor_name="Northern Courier Inc.", invoice_number="Q-1"), store)

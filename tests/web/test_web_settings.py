@@ -344,6 +344,18 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
+def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
+    """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
+    assert jde.load(store).remarks == jde.REMARKS_REFERENCE
+    assert f'<option value="{jde.REMARKS_REFERENCE}" selected>' in client.get("/settings/jde").text
+    follow(client, post(client, "/settings/jde", general_form(remarks=jde.REMARKS_TYPED)))
+    assert jde.load(store).remarks == jde.REMARKS_TYPED
+    assert f'<option value="{jde.REMARKS_TYPED}" selected>' in client.get("/settings/jde").text
+    assert post(client, "/settings/jde", general_form(remarks="both")).status_code == 400
+    follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the field: kept
+    assert jde.load(store).remarks == jde.REMARKS_TYPED
+
+
 def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store):
     """D-182: JD Edwards' open period (a G/L date before it moved or held) and the API's waits (a voucher's request,
     a posting run, a lost answer sent again) are set on the page; a form without them keeps them."""
@@ -499,7 +511,7 @@ def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, sto
     store.set_setting("backup_copy_dir", str(share))
     backup = store.backup_now()
     text = client.get("/settings/data").text
-    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    row = text.split(f'<td class="w">{backup.name}', 1)[1].split("</tr>", 1)[0]
     assert "1 invoice" in row and "1 file" in row and "Copied" in row and "Complete" in row
     assert f'href="/settings/data?restore={backup.name}#restore"' in row and "Restore this state" in row
     assert "every invoice file" in text  # the page says what a backup holds and what restoring does
@@ -519,7 +531,7 @@ def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, sto
     (store.backup_dir() / "files" / sha[:2] / sha).unlink()
     store.set_setting("backup_status", "failed 2026-11-03 09:00: No space left on device")
     text = client.get("/settings/data").text
-    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    row = text.split(f'<td class="w">{backup.name}', 1)[1].split("</tr>", 1)[0]
     assert "1 file missing" in row
     assert "The last backup failed 2026-11-03 09:00: No space left on device" in text
 
@@ -651,6 +663,26 @@ def test_second_backup_folder(client, store, tmp_path):
     text = follow(client, post(client, "/settings/data/backup-copy", {"folder": f'"{other}"'}))
     assert store.get_setting("backup_copy_dir") == str(other) and "copied there too" in text
     assert list(other.glob("ap_coder-*.db"))  # a first copy straight away
+
+
+def test_the_restore_panel_says_before_the_confirmation_that_the_second_backup_folder_is_cleared(client, store,
+                                                                                                 tmp_path):  # fmt: skip
+    """B-2108: a restore clears the second backup folder, and only the console's restore said so: on the page the
+    person confirmed without knowing, and (on the server, logged out by the restore) found the box empty, or did
+    not look, the backups from then on kept on the same disk only."""
+
+    def panel() -> str:
+        return client.get("/settings/data").text.split('id="restore"', 1)[1].split("</details>", 1)[0]
+
+    store.backup_now()
+    assert "second backup folder" not in panel()  # none set: nothing to say
+    share = tmp_path / "share"
+    share.mkdir()
+    store.set_setting("backup_copy_dir", str(share))
+    text = panel()
+    assert "A restore clears the second backup folder" in text and html.escape(str(share)) in text
+    assert "Also copy each backup to" in text  # where to set it again
+    assert text.index("A restore clears the second backup folder") < text.index("to confirm")
 
 
 # --- About --------------------------------------------------------------------------------------------------------

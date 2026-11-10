@@ -32,6 +32,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
+from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
 from ..coding.terms import payment_findings
@@ -39,14 +40,14 @@ from ..coding.validation import WARNING, Issue, ValidationReport, validate_codin
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
-from ..core.reference_data import ReferenceData
-from ..core.schema import InvoiceCoding
+from ..core.reference_data import ReferenceData, short_name
+from ..core.schema import InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
 from . import azure_check, verifier
 from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
-from .imaging import render_page_images
+from .imaging import render_first_and_last, render_page_images
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ log = logging.getLogger(__name__)
 # an answer in time asks again from the next one on). A hung or slow model never holds up the imports. With a backup
 # server (D-180) the chat model's breaker (``local_llm.Failover``) moves the calls there first, and this one counts
 # afresh for the server in use: arrivals stop asking only when neither answers in time.
+HEADER_PAGES = 2  # pages the chat model reads the header from: the first, and the last (the totals)
 ARRIVAL_ENV = "AP_LLM_ARRIVAL_SECONDS"
 ARRIVAL_SECONDS = 20.0
 BREAKER_FAILURES = 2
@@ -196,6 +198,22 @@ def discover_inputs(paths: list[str | Path]) -> list[Path]:
     return found
 
 
+def duplicates_known(store: Store, others: list[int], invoice_id: int | None) -> list[dict[str, Any]]:
+    """What DUPLICATE_INVOICE says of each other invoice with this vendor and invoice number
+    (``validation.duplicate_message``): whether it was received before this one (``invoice_id``; None: this one is
+    coming in now), where it stands, and when it was approved. Read as the checks run, so each of a pair says the
+    other's state as its screen is drawn (B-2101)."""
+    from ..core.store import APPROVED
+
+    known = []
+    for inv in store.get_invoices(others):
+        approved = inv["status"] == APPROVED
+        known.append({"id": inv["id"], "first": invoice_id is None or inv["id"] < invoice_id, "status": inv["status"],
+                      "approved": (inv.get("reviewed_at") or "") if approved else "",
+                      "exported": approved and inv.get("export_batch") is not None})  # fmt: skip
+    return known
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -219,12 +237,16 @@ def finalise_coding(
     else:
         history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
-        store.find_duplicates(
-            coding.vendor_name,
-            coding.invoice_number,
-            exclude_id=exclude_invoice_id,
-            grand_total=coding.grand_total,
-            key=key,
+        duplicates_known(
+            store,
+            store.find_duplicates(
+                coding.vendor_name,
+                coding.invoice_number,
+                exclude_id=exclude_invoice_id,
+                grand_total=coding.grand_total,
+                key=key,
+            ),
+            exclude_invoice_id,
         )
         if store is not None
         else None
@@ -241,6 +263,15 @@ def finalise_coding(
                 store.last_pay_from(key or vendor_key(coding.vendor_name)),  # B-1515
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
+    # JD Edwards in use: its settings. Each line's remark for it (D-213), where remarks are used: a chart of accounts
+    # is imported, or the remarks go to JD Edwards as typed; any other install stores its invoices as before.
+    js = None
+    if store is not None:
+        from ..erp import jde
+
+        js = jde.load(store) if jde.in_use(store) else None
+    remarks_typed = js is not None and js.remarks == jde.REMARKS_TYPED
+    fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     output = coding.to_output()
     if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
         place, source = supply_source(coding, reference.tax)
@@ -251,12 +282,8 @@ def finalise_coding(
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
-    if store is not None:
-        from ..erp import jde
-
-        if jde.in_use(store):
-            js = jde.load(store)
-            erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
+    if js is not None:
+        erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
     report = validate_coding(
         coding,
         reference,
@@ -274,8 +301,19 @@ def finalise_coding(
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
         erp_findings=erp_findings,
+        remarks_typed=remarks_typed,
+        erp_posts_tax=jde.taxes_e1_posts(output, js) if js is not None else frozenset(),
     )
     return output, report
+
+
+def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:
+    """Why the chat model gave a line no account, added to what the line says of itself (``said``: for all of
+    ``lines``, or by line number): asked and silent, not asked, or an answer that was not an account offered."""
+    for n, li in lines.items():
+        note = said if isinstance(said, str) else said.get(n, "")
+        if note:
+            li.reasoning_justification = f"{str(li.reasoning_justification or '').strip()} {note.rstrip('.')}.".strip()
 
 
 def _mark_chat_accounts(coding: InvoiceCoding) -> None:
@@ -290,6 +328,7 @@ def _mark_chat_accounts(coding: InvoiceCoding) -> None:
             continue
         reason = str(li.reasoning_justification or "").strip()
         li.reasoning_justification = f"{CHAT_SUGGESTED}: {reason}" if reason else CHAT_SUGGESTED
+        li.decided_by = decided("model")
 
 
 def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
@@ -327,8 +366,24 @@ def _picture(path: Path) -> bool:
 
 
 def plain_error(exc: Exception, path: Path) -> str:
-    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
-    technical detail is in the log), anything else as the error it is."""
+    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do
+    (``file_error``), anything else as the error it is."""
+    return file_error(exc, path) or f"{type(exc).__name__}: {exc}"
+
+
+def _raised_by_pillow(exc: Exception) -> bool:
+    """The error was raised inside Pillow (or its HEIC add-on): the last frame of its traceback is their code."""
+    tb = exc.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    module = str(tb.tb_frame.f_globals.get("__name__") or "") if tb is not None else ""
+    return module.split(".")[0] in ("PIL", "pillow_heif")
+
+
+def file_error(exc: Exception, path: Path) -> str | None:
+    """What is wrong with the file and what to do, when the error is the file's (too large or damaged a picture, an
+    empty or damaged PDF, a PDF with a password): AP Coder's window says that one line, not a traceback (B-2097).
+    None for an error nobody expected."""
     name = type(exc).__name__
     kind = path.suffix.lstrip(".").upper() or "picture"
     if name == "DecompressionBombError":  # Pillow's guard: over ~179 million pixels (a phone's 200 MP mode)
@@ -338,8 +393,10 @@ def plain_error(exc: Exception, path: Path) -> str:
         return (f"{path.name} is too large a picture{size} to be opened safely. Take the photo at the phone's normal "
                 "resolution (12 megapixels is plenty), or scan the page.")  # fmt: skip
     # Pillow's own errors on a picture it can't decode (an OSError without a system error number, a TypeError such as
-    # "Missing dimensions", a SyntaxError): the file, not the computer (B-1528).
-    pillow = name in ("OSError", "TypeError", "SyntaxError") and getattr(exc, "errno", None) is None
+    # "Missing dimensions", a SyntaxError): the file, not the computer (B-1528). Only when Pillow raised it: the
+    # same kind of error from AP Coder's own code is a bug, and keeps its traceback (B-2204).
+    pillow = (name in ("OSError", "TypeError", "SyntaxError") and getattr(exc, "errno", None) is None
+              and _raised_by_pillow(exc))  # fmt: skip
     if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)) or (pillow and _picture(path)):
         return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
                 "vendor for a new copy, or scan it again.")  # fmt: skip
@@ -348,7 +405,7 @@ def plain_error(exc: Exception, path: Path) -> str:
                 "copy.")  # fmt: skip
     if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
         return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
-    return f"{name}: {exc}"
+    return None
 
 
 NO_PAGES = "{name} has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy."
@@ -413,6 +470,11 @@ class InvoicePipeline:
         self.store = store
         self.arrival_seconds = arrival_seconds()
 
+    def _account_names(self) -> dict[str, str]:
+        """{GL code: its name}: what the chat model's examples name each account by."""
+        table = self.reference.chart_of_accounts
+        return {row[table.key_column]: short_name(str(row.get("description") or "")) for row in table.rows}
+
     def _local_accounts(self, result: CodingResult, history: str, arriving: bool = False) -> bool:
         """The local model's account for each line the approval memory has not taught. Never fatal: a model
         that is slow or wrong leaves the line as it was for AP to code. ``arriving``: a new invoice, which waits at
@@ -440,6 +502,7 @@ class InvoicePipeline:
         if within is not None and not ARRIVAL_BREAKER.asks(server):
             log.info("the chat model gave no answer in time to the last arriving invoices: not asked now (D-168); the "
                      "page reader's pass asks again")  # fmt: skip
+            _say_on(todo, "The chat model was not asked yet: it gave no answer in time to the last invoices")
             return True
         from .lessons import prompt_lines
 
@@ -453,28 +516,36 @@ class InvoicePipeline:
             from ..core.paths import private_dir
 
             kept = private_dir() / ".cache" / "model_accounts"
+        # With whole account strings the model chooses among the accounts offered for each line, never the whole
+        # chart (D-212); what it says of a line it gives no account is kept on the line.
+        offered = getattr(result, "offered", None) or None
+        notes: dict[int, str] = {}
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
-                kept=kept, within=within,
+                kept=kept, within=within, offered=offered, notes=notes,
             )  # fmt: skip
         except ChatTimeout as exc:  # slow or hung: on arrival, the page reader's pass asks again
             log.info("local model could not suggest accounts in time (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer in time ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(False, server)
             return within is not None
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         if within is not None:
             ARRIVAL_BREAKER.answered(True, server)
+        model = getattr(self.coder, "_local_model", "") or "local model"
         for n, (gl, cc, reason) in picks.items():
             li = todo.get(n)
             if li is None:
@@ -489,7 +560,8 @@ class InvoicePipeline:
             elif hint:
                 why += f" (the account's name pointed to {hint} instead)"
             li.reasoning_justification = why
-        model = getattr(self.coder, "_local_model", "") or "local model"
+            li.decided_by = decided("model", model=model)  # a guess: a person checks it
+        _say_on({n: li for n, li in todo.items() if n not in picks}, notes)
         result.model = f"local reader + {model}"
         return False
 
@@ -523,7 +595,8 @@ class InvoicePipeline:
         except (OSError, ValueError):
             pass
         try:
-            values = read_header(self.coder, render_page_images(path, 2))  # the header, and the totals on page 2
+            # The header on the first page, and the totals on the LAST one (B-2216).
+            values = read_header(self.coder, render_first_and_last(path, HEADER_PAGES))
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: the chat model could not read the header (%s)", path.name, exc)
             return None
@@ -606,12 +679,28 @@ class InvoicePipeline:
             log.warning("%s: %s", result.source.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
-            log.exception("Failed to process %s", result.source)
-            result.error = plain_error(exc, result.source)
+            result.error = file_error(exc, result.source)
+            if result.error:  # the file's own fault: one line in the window, as on the page
+                log.warning("%s", result.error)
+                log.debug("%s: the error as it was raised", result.source.name, exc_info=True)
+            else:
+                log.exception("Failed to process %s", result.source)
+                result.error = plain_error(exc, result.source)
         azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
                                                          pages_read, text_file)  # fmt: skip
         self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
+        if save and result.invoice_id and (result.original or result.source != Path(path)):
+            self._note_own_file(result.source)
         return result
+
+    def _note_own_file(self, path: Path) -> None:
+        """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
+        renamed to the kind it is, pages turned upright): kept as read by the pick-up, which read the file as it
+        came, so the import page does not list AP Coder's own file as a new one (B-2098)."""
+        from ..core.store.folder import read_file
+
+        with contextlib.suppress(OSError):  # gone meanwhile: nothing to list
+            self.store.note_files([read_file(path)])
 
     def _read_and_code(self, result: PipelineResult, page_text: list[str] | None, invoice_id: int | None,
                        text_file: bool, captured: dict[str, tuple[Any, str, Any]]) -> None:  # fmt: skip
@@ -642,7 +731,7 @@ class InvoicePipeline:
         feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
         examples = select_examples(feedback, result.extraction.content, vendor_hint)
         result.history_examples = len(examples)
-        history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+        history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
 
         # Read again (the page reader): as of the day it came in, which settles a 03/04/2026 the page leaves open.
         received = None
@@ -709,7 +798,7 @@ class InvoicePipeline:
                 feedback = self.store.learning_rows(str(vendor.value))
             examples = select_examples(feedback, result.extraction.content, str(vendor.value))
             result.history_examples = len(examples)
-            history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+            history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
         # A weak match (an account's name) is never put in the line: it is left blank, suggested on the review
         # screen, and the chat model is asked about it when it answers (B-463).
         result.coding = code_from_capture(

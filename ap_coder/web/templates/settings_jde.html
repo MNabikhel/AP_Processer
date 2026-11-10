@@ -145,7 +145,7 @@
 
     {{ ui.subhead("Default account rule", "when the GL code is not in the mapping below") }}
     <div class="st-grid three st-end">
-      <label class="check" title="Object = the GL code, Subsidiary blank."><input type="checkbox" name="use_default_rule" value="1"{% if js.use_default_rule %} checked{% endif %}> Use the default rule</label>
+      <label class="check" title="Object = the GL code, Subsidiary blank; a GL code with a dot is object.subsidiary."><input type="checkbox" name="use_default_rule" value="1"{% if js.use_default_rule %} checked{% endif %}> Use the default rule</label>
       <label class="check"><input type="checkbox" name="bu_from_cost_center" value="1"{% if js.bu_from_cost_center %} checked{% endif %}> BU = the line's cost center</label>
       {{ text_field("default_bu", "Default BU", 12, "When a line has no cost center.") }}
     </div>
@@ -165,6 +165,9 @@
         <label class="field">A G/L date in a closed period
           <select name="closed_period">{% for key, text in closed_periods.items() %}<option value="{{ key }}"{% if js.closed_period == key %} selected{% endif %}>{{ text }}</option>{% endfor %}</select>
           <small class="muted">Moved: said on the invoice and in the dry run, confirmed by the go-ahead.</small></label>
+        <label class="field">Remarks (VLRMK, VNEXR)
+          <select name="remarks">{% for key, text in remarks.items() %}<option value="{{ key }}"{% if js.remarks == key %} selected{% endif %}>{{ text }}</option>{% endfor %}</select>
+          <small class="muted">The invoice number is in VLVINV either way. The keying sheet always shows the remarks to type.</small></label>
         <label class="field">API: a voucher's wait (seconds)
           <input type="number" name="voucher_timeout" value="{{ '%g' % js.voucher_timeout }}" min="1" max="900" step="any">
           <small class="muted">R04110ZA runs in each voucher's request.</small></label>

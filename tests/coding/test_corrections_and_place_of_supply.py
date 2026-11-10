@@ -415,6 +415,40 @@ def test_the_daily_backup_also_runs_while_the_dashboard_keeps_running(tmp_path, 
     assert len(store.list_backups()) == 1
 
 
+def test_lines_a_person_made_add_up_drop_the_lines_to_check_warning(tmp_path, monkeypatch):
+    """B-2210: the reading's "the lines add up to 40.00, the invoice says 45.00" is about the lines as read. Once a
+    person has changed them and they add up to the subtotal, it is no longer said; as read, or changed and still
+    not adding up, it stands."""
+    from types import SimpleNamespace
+
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web import invoice_view
+    from ap_coder.web.invoice_view import Draft, analyse
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    read = _blank_invoice()
+    read["line_items"][0].update(unit_price=40.0, amount=40.0, predicted_gl_code="6000")
+    read.update(subtotal=45.0, tax_total=0.0, grand_total=45.0)
+    iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
+    check = {"code": "LINE_AMOUNTS", "ok": False, "detail": "the lines add up to 40.00, the invoice says 45.00"}
+    capture = SimpleNamespace(fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="")
+    monkeypatch.setattr(invoice_view, "capture_of", lambda *a: capture)
+
+    def codes(draft):
+        result = analyse(store, Settings(), store.reference_data(), store.get_invoice(iid), draft)
+        return {i.code for i in result.errors + result.warnings}
+
+    assert "LINE_AMOUNTS_TO_CHECK" in codes(Draft.stored(read))
+    short = Draft.stored(read)
+    short.lines[0].update(amount=42.0, unit_price=42.0)
+    assert "LINE_AMOUNTS_TO_CHECK" in codes(short)
+    fixed = Draft.stored(read)
+    fixed.lines[0].update(amount=45.0, unit_price=45.0)
+    assert "LINE_AMOUNTS_TO_CHECK" not in codes(fixed)
+
+
 # --- B-662: a stale "as printed" warning, and a quantity-1 line whose amount the clerk fixed --------------------------
 
 
@@ -433,7 +467,7 @@ def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp
     read.update(subtotal=40.0, tax_total=0.0, grand_total=45.0)
     iid = store.add_invoice(tmp_path / "x.pdf", read, {"requires_review": True})
     check = {"code": "TOTALS_ADD_UP", "ok": False, "detail": "subtotal 40.00 + tax 0.00 ≠ total 45.00"}
-    capture = SimpleNamespace(fields={}, checks=[check], pages_left_out=0, page_count=1)
+    capture = SimpleNamespace(fields={}, checks=[check], pages_left_out=0, page_count=1, not_invoice="")
     monkeypatch.setattr(invoice_view, "capture_of", lambda *a: capture)
 
     def codes(draft):

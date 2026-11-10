@@ -106,6 +106,17 @@ PAGES: list[Page] = [
         more=True,
     ),
     Page(
+        "jde_files",
+        "JD Edwards files",
+        "/jde-files",
+        "drive_folder_upload",
+        M,
+        "Load JD Edwards' own exports: the chart of accounts, the business units, the suppliers, last year's coding "
+        "and the vouchers already entered.",
+        module="jde_files",
+        more=True,
+    ),
+    Page(
         "vendors",
         "Vendors",
         "/vendors",
@@ -193,4 +204,12 @@ MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users", "downloa
 
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
+
+# Simple screens (Settings → About → "What is shown", ``core.simple_screens``): the menu of one person coding invoices
+# to JD Edwards account strings. Its everyday pages in the menu's order, each with its name there, then the pages
+# under "Setup", then Help. Every other page is left out of the menu, not removed: its address still opens.
+SIMPLE_MAIN: dict[str, str] = {"review": "To review", "process": "Add invoices", "exports": "To key into JDE",
+                               "search": "Find an invoice", "learning": "What was learned"}  # fmt: skip
+SIMPLE_SETUP: tuple[str, ...] = ("accounts", "jde_files", "vendors", "activity", "settings")
+SIMPLE_KEYS = {*SIMPLE_MAIN, *SIMPLE_SETUP, "help"}
 BANNER_PAGES = {"process", "review"}  # where OvisOCR2's one-line warning shows under the page header

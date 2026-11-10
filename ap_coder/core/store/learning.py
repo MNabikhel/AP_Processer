@@ -466,9 +466,10 @@ class LearningMixin:
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
         Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
-        added = skipped = unknown = 0
+        added = skipped = unknown = unknown_cc = 0
         with self._conn() as conn:
             known_gls = {r[0] for r in conn.execute("SELECT code FROM gl_accounts")}
+            known_ccs = {r[0] for r in conn.execute("SELECT code FROM cost_centers")}
             seen = {
                 (r[0], r[1], r[2], r[3] or "", r[4], r[5])
                 for r in conn.execute(
@@ -484,14 +485,17 @@ class LearningMixin:
                 if known_gls and gl not in known_gls:  # a retired or mistyped account would only mislead
                     unknown += 1
                     continue
+                cc = row.get("cost_center") or ""
+                if cc and known_ccs and cc not in known_ccs:  # a cost center since closed: the account is still
+                    cc, unknown_cc = "", unknown_cc + 1  # learned, the cost center is not proposed again (B-2146)
                 when = row.get("date") or ""  # undated rows: the same key every day, so no re-import doubles
-                ident = (key, row["description"], gl, row.get("cost_center") or "", row.get("amount"), when)
+                ident = (key, row["description"], gl, cc, row.get("amount"), when)
                 if not key or ident in seen:
                     skipped += 1
                     continue
                 seen.add(ident)
-                batch.append((key, row["vendor_name"], row["description"], row.get("amount"), gl,
-                              row.get("cost_center") or "", HISTORY, "ERP history", when))  # fmt: skip
+                batch.append((key, row["vendor_name"], row["description"], row.get("amount"), gl, cc, HISTORY,
+                              "ERP history", when))  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
@@ -500,9 +504,12 @@ class LearningMixin:
             )
             added = len(batch)
             self._log(conn, "history_imported", actor=actor, detail={
-                "added": added, "skipped": skipped, "unknown_gl": unknown,
+                "added": added, "skipped": skipped, "unknown_gl": unknown, **({"unknown_cc": unknown_cc}
+                                                                              if unknown_cc else {}),
             })  # fmt: skip
-        return {"added": added, "skipped": skipped, "unknown_gl": unknown}
+        # ("unknown_cc": the lines kept without their cost center, which is not in the list; only when there are)
+        return {"added": added, "skipped": skipped, "unknown_gl": unknown,
+                **({"unknown_cc": unknown_cc} if unknown_cc else {})}  # fmt: skip
 
     def history_count(self) -> int:
         with self._conn() as conn:

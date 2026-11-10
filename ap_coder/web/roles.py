@@ -78,6 +78,7 @@ RULES: dict[tuple[str, str], str] = {
         "GET /review/{invoice_id:int}/words", "GET /review/{invoice_id:int}/reader",
         "GET /review/{invoice_id:int}/approved.pdf",
         "GET /review/vendors.json",  # the vendor list the screen picks from (no bank details in it, D-160)
+        "GET /review/accounts.json",  # the chart's accounts the Account boxes pick from (D-214)
         "GET /search", "GET /search/export.csv", "GET /search/export.xlsx", "GET /search/{invoice_id:int}/approved.pdf",
         # The exports list, the reports and their downloads.
         "GET /exports", "GET /exports/duplicates.csv",
@@ -134,6 +135,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /statements/upload", "POST /statements/emailed/{entry_id}/{n}",
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
+        "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
     ),
@@ -160,6 +162,14 @@ RULES: dict[tuple[str, str], str] = {
         "POST /learning/lessons/retire", "POST /learning/suppliers/hold", "POST /learning/suppliers/allow",
         "POST /learning/suppliers/reset-layout", "POST /learning/memory/forget", "POST /learning/history/upload",
         "POST /learning/history/teach", "POST /learning/history/forget", "GET /learning/training.zip",
+        # JD Edwards' journal: as the past coding
+        "POST /learning/journal/load", "POST /learning/journal/forget", "POST /learning/journal/as-table",
+        # JD Edwards files: the chart, the business units, the suppliers, the journal and the voucher list loaded
+        "POST /jde-files/chart", "POST /jde-files/units", "POST /jde-files/chart/settings",
+        "POST /jde-files/suppliers/upload", "POST /jde-files/suppliers/load",
+        "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
+        "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
+        "POST /jde-files/meals", "POST /jde-files/company",
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",

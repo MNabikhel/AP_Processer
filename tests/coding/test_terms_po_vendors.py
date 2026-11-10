@@ -288,12 +288,20 @@ def test_duplicate_vendor_records_are_reported_and_keep_the_hold(tmp_path):
     rows = [
         {"vendor_name": "Acme Supplies Inc.", "erp_id": "V1", "gst": "111111111RT0001", "terms": "", "default_gl": "",
          "status": "on_hold", "status_given": True},
-        {"vendor_name": "ACME Supplies Incorporated", "erp_id": "V2", "gst": "", "terms": "", "default_gl": "",
+        {"vendor_name": "ACME Supplies Incorporated", "erp_id": "", "gst": "", "terms": "", "default_gl": "",
          "status": "active", "status_given": True},
     ]  # fmt: skip
     result = store.import_vendor_master(rows)
     assert result["duplicates"] == [["Acme Supplies Inc.", "ACME Supplies Incorporated"]]
     assert store.get_vendor("acme supplies")["status"] == "on_hold"
+    # each with a supplier number of its own: two vendors, the one on hold not holding the other (B-2161)
+    numbered = Store(tmp_path / "b.db")
+    result = numbered.import_vendor_master([rows[0], {**rows[1], "erp_id": "V2"}])
+    assert result["duplicates"] == [] and result["shared"] == [
+        ["V1 Acme Supplies Inc.", "V2 ACME Supplies Incorporated"]
+    ]
+    assert numbered.get_vendor("acme supplies")["status"] == "on_hold"
+    assert numbered.get_vendor("acme supplies #V2")["status"] == "active"
 
 
 def test_reviewer_lessons_come_before_history(tmp_path):

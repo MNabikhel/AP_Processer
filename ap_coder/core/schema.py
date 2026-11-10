@@ -18,9 +18,9 @@ from __future__ import annotations
 import datetime as dt
 import re
 import unicodedata
-from typing import Any
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
 from .tax_setup import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
@@ -77,9 +77,9 @@ def plan_code_enums(gl_codes: list[str], cc_codes: list[str] | None) -> tuple[li
 
 
 def line_gl_codes(reference: ReferenceData) -> list[str]:
-    """GL codes an expense line may use: everything except accounts mapped to a tax type."""
-    tax_gls = reference.tax.tax_gl_codes()
-    return [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    """GL codes an expense line may use: everything except accounts mapped to a tax type (and, with a chart of
+    accounts imported, those never offered): ``ReferenceData.line_accounts``."""
+    return reference.line_accounts()
 
 
 def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes: bool = True) -> dict[str, Any]:
@@ -94,7 +94,7 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
     cc_description = f"Cost center code from the Cost Center list, or {UNASSIGNED} if none fits."
     if reference is not None:
         if constrain_codes:
-            cost_centers = reference.cost_centers.codes if reference.cost_centers is not None else None
+            cost_centers = reference.line_cost_centers()
             gl_codes, cc_codes = plan_code_enums(line_gl_codes(reference), cost_centers)
         if reference.cost_centers is None:
             cc_codes, cc_description = [""], "Cost centers are not configured: always an empty string."
@@ -351,6 +351,26 @@ class TaxLine(BaseModel):
         return province_code(value)
 
 
+# What may decide a line's account (``LineItem.decided_by``'s "source", D-212): a fixed coding rule; this vendor's own
+# approved lines; the supplier's coding (last year's journal and its approvals); other vendors' lines like it; the
+# words of an account's name; the chat model (a guess); a person on the review screen.
+DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
+CANDIDATES_KEPT = 5  # accounts kept with a line left for a person
+# Where a line's remark came from (``LineItem.remark_from``, D-213): the supplier's usual remark, the invoice's own
+# line, the account's name, or a person who typed it.
+REMARK_SOURCES = ("supplier", "invoice", "account", "person")
+
+
+def decided(source: str, **evidence: Any) -> dict[str, Any]:
+    """What decided a line's account, as the line keeps it (``LineItem.decided_by``): the one place that makes it.
+    ``source``: one of ``DECIDED_SOURCES``; ``evidence``: what it went by, as plain values (a rule's ``rule_id``,
+    the counts ``lines``, ``of`` and ``share``, the source it replaced as ``was``...); one that is None or blank is
+    left out."""
+    if source not in DECIDED_SOURCES:
+        raise ValueError(f"a line's account is decided by one of {DECIDED_SOURCES}, not {source!r}")
+    return {"source": source, **{k: v for k, v in evidence.items() if v is not None and v != ""}}
+
+
 class LineItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -366,7 +386,68 @@ class LineItem(BaseModel):
     # vendor meant it (InvoiceCoding fills it: line_tax.legacy_exempt).
     tax_exempt: list[str] | None = None
     tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
+    # The tax amounts printed on this line, tax by tax ({"GST": 12.50}); None: the invoice prints no tax for a line
+    # (most print one total). The model is never asked for it (``build_json_schema`` leaves it out), and None is
+    # left out of what is stored, so an invoice without it is stored as it always was. ``taxmath.line_taxes`` reads it.
+    taxes_read: dict[str, float] | None = None
     reasoning_justification: str = ""
+    # The accounts offered for a line left for a person, the likeliest first, ``CANDIDATES_KEPT`` at most (D-212):
+    # each {"account": the whole string, "business_unit", "code", "name", "reason": why, in plain words, "source":
+    # where it came from; with the supplier's counts also "lines", "of" and "share"; "guess": True when nothing said
+    # which business unit}. Left out of the stored coding when there are none.
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    # What decided the line's account (``decided``, D-212): {"source": one of ``DECIDED_SOURCES``, and what it went
+    # by: "rule_id" and "rule", "lines" / "of" / "share", "similarity", "was"...}. Left out of the stored coding when
+    # nothing is recorded (a line with no account, an invoice stored before).
+    decided_by: dict[str, Any] = Field(default_factory=dict)
+    # The remark AP keys with the line in JD Edwards, in its own short words ("May janitorial 410 Elm"; D-213), and
+    # where it came from (``REMARK_SOURCES``; "person": typed on the review screen, never replaced by a suggestion).
+    # JD Edwards keeps 30 characters (``coding/remark.py`` fits it). The model is never asked for either, and both
+    # are left out of the stored coding when empty.
+    remark: str = ""
+    remark_from: str = ""
+    # The fields left out of the stored coding while they say nothing (``_without_empty``).
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by", "remark", "remark_from")
+
+    @field_validator("candidates")
+    @classmethod
+    def _few_candidates(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return value[:CANDIDATES_KEPT]
+
+    @field_validator("decided_by")
+    @classmethod
+    def _decided_source(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if value and value.get("source") not in DECIDED_SOURCES:
+            raise ValueError(f"decided_by's source must be one of {DECIDED_SOURCES}, got {value.get('source')!r}")
+        return value
+
+    @field_validator("remark_from")
+    @classmethod
+    def _remark_source(cls, value: str) -> str:
+        if value and value not in REMARK_SOURCES:
+            raise ValueError(f"remark_from must be one of {REMARK_SOURCES}, got {value!r}")
+        return value
+
+    @field_validator("taxes_read", mode="before")
+    @classmethod
+    def _taxes_read(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out = {str(k).strip().upper(): v for k, v in value.items()}
+        if unknown := [k for k in out if k not in TAX_TYPES]:
+            raise ValueError(f"taxes_read entries must be one of {TAX_TYPES}, got {unknown[0]!r}")
+        return {t: out[t] for t in TAX_TYPES if t in out}
+
+    @model_serializer(mode="wrap")
+    def _without_empty(self, handler: Any) -> dict[str, Any]:
+        # A line stored before these fields existed, or one they say nothing about, is stored as it always was: each
+        # of these keys is there only when it says something. ONE serializer for the class: a second one would
+        # replace the first, not join it (``OPTIONAL``: add a later field there).
+        data = handler(self)
+        for name in self.OPTIONAL:
+            if data.get(name) is None or (name != "taxes_read" and not data[name]):
+                data.pop(name, None)
+        return data
 
     @field_validator("taxes_applied")
     @classmethod

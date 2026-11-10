@@ -38,6 +38,9 @@ TO_DO = {
 CLOUD_CHECKS = frozenset(
     {"DI_INVOICE_ID_DIFFERS", "DI_DATE_DIFFERS", "DI_AMOUNT_DIFFERS", "AZURE_DI_DISAGREES", "AZURE_DI_NOT_COMPARED"}
 )
+# How the four checks of an account on its business unit begin (D-209): they are only made with a chart loaded.
+CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
+CHART_IMPORT = "Setup → JD Edwards files"
 
 CHECKS: dict[str, CheckHelp] = {
     # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
@@ -110,10 +113,21 @@ CHECKS: dict[str, CheckHelp] = {
     "JDE_GROSS_TAX": CheckHelp(
         ERP, "JD Edwards would work out a different tax",
         "With the gross amount only, JD Edwards works the tax out itself from the tax area's rate on the whole gross. "
-        "This invoice has a line with no tax on it (exempt or zero-rated), or charges another tax than the area's "
-        "rate, so JD Edwards would post a tax the vendor did not charge.",
+        "This invoice has a line with no tax on it (exempt or zero-rated), charges another tax than the area's "
+        "rate, or carries a tax that GL accounts & tax leaves in the expense (a QST that is not recovered), so JD "
+        "Edwards would post a tax the vendor did not charge, or work the tax out of an amount that holds another.",
         "Check the tax lines and each line's tax code. If they are right, ask the pilot tester to code the tax to G/L "
         "accounts, or to send tax amounts (Settings → JD Edwards E1, Amounts).",
+    ),
+    "JDE_TAX_NOT_RECOVERED": CheckHelp(
+        ERP, "GST/HST not recovered on the JD Edwards voucher",
+        "GL accounts & tax keeps this invoice's GST or HST in the expense (not recoverable), so its JD Edwards "
+        "voucher claims no input tax credit: the tax is inside the G/L lines and off the pay item. Most companies "
+        "recover the GST/HST, so this is asked before it goes out. A provincial tax left in the expense (a QST that is "
+        "not recovered) is not asked.",
+        "If the company does not recover it, approve as usual. If it should be recovered, set the tax to recoverable "
+        "with its account in GL accounts & tax (the pilot tester does), then save the invoice again so its posting "
+        "is worked out anew.",
     ),
     "JDE_MEALS_PO": CheckHelp(
         ERP, "Meals on a PO-matched JD Edwards voucher",
@@ -149,11 +163,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the currency on the page; if it is right, ask the pilot tester to add it in Settings → JD Edwards E1.",
     ),
     "JDE_TAX_AREA": CheckHelp(
-        ERP, "No JD Edwards tax area",
+        ERP, "No JD Edwards tax area, or two on one invoice",
         "JD Edwards needs a tax area and explanation code for the province of supply, and there is none for this "
-        "invoice.",
+        "invoice. Or the invoice charges the GST/HST at two rates (lines supplied in two provinces: GST on some, HST "
+        "on others): a voucher's pay item has one tax area, so it is two pay items, which AP Coder does not make "
+        "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
-        "Edwards E1.",
+        "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
+        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",
@@ -199,7 +216,8 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Possible duplicate",
         "Another invoice from the same vendor has the same invoice number (ignoring dashes, leading zeros and "
         "prefixes such as INV).",
-        "Open the other invoice. If it is the same bill, reject this one so it is not paid twice.",
+        "Open the other invoice and compare the two. If it is the same bill, reject the one the message names, so it "
+        "is not paid twice: the one received later, or this one when the other is approved already.",
     ),
     "DUPLICATE_IN_ERP": CheckHelp(
         FRAUD, "Already in the ERP",
@@ -233,11 +251,21 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_ON_HOLD": CheckHelp(
         FRAUD, "Vendor on hold",
         "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
-        "marks it as blocked or inactive.",
+        "does: it marks the vendor as blocked or inactive, its name carries a word for a retired supplier (DO NOT "
+        "USE, DNU: the note says which), or JD Edwards' hold payment code is one that stops vouchers (Y or 1; the "
+        "codes that hold are listed on the vendor master's import).",
         "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (on the company server "
         "an Approver or an Admin does that, not a Clerk; a hold set in JD Edwards is lifted in JD Edwards, then the "
-        "vendor list imported or synced again), or reject the invoice. Coding it to another vendor instead needs an "
-        "Approver too (Moved off a vendor on hold).",
+        "vendor list imported or synced again), or reject the invoice. A vendor held for a word in its name is held "
+        "again at each import: rename it in JD Edwards, or take the word off the import's list. Coding it to "
+        "another vendor instead needs an Approver too (Moved off a vendor on hold).",
+    ),
+    "VENDOR_PAYMENTS_HELD": CheckHelp(
+        FRAUD, "Payments held in JD Edwards",
+        "JD Edwards' hold payment code for this supplier is 2: its payments are held, its vouchers are still "
+        "entered.",
+        "Code and approve the invoice as usual: the voucher can be keyed. It is paid once the hold is lifted in "
+        "JD Edwards. If the invoice should not go in at all, put the vendor on hold on the Vendors page.",
     ),
     "VENDOR_CHANGED_FROM_HELD": CheckHelp(
         FRAUD, "Moved off a vendor on hold",
@@ -349,9 +377,13 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_NOT_IN_MASTER": CheckHelp(
         FRAUD, "Not in the vendor master",
         "A vendor master was imported from the ERP and this vendor is in it neither by name nor by GST/HST "
-        "number. Invoices from vendors nobody set up are a classic fraud route.",
-        "Pick the vendor from the list on the review screen (it may be there under another name). A vendor that is "
-        "really new: add it with \u201cAdd new vendor\u201d, and have it set up (and verified) in JD Edwards.",
+        "number. Invoices from vendors nobody set up are a classic fraud route. Or the name is in it more than once: "
+        "several suppliers go by it, each with its own supplier number, and the name alone does not say which (the "
+        "check lists them, with how many vouchers each had in last year's journal when it is loaded).",
+        "Pick the vendor from the list on the review screen (it may be there under another name). Of several "
+        "suppliers under one name, each is offered with its number (\u201cLAKESIDE CATERING LTD #2004\u201d): pick "
+        "the one the invoice is from, by its address or by which one you usually pay. A vendor that is really new: add "
+        "it with \u201cAdd new vendor\u201d, and have it set up (and verified) in JD Edwards.",
     ),
     "VENDOR_MATCHED_BY_TAX_NUMBER": CheckHelp(
         FRAUD, "Known vendor under another name",
@@ -505,6 +537,21 @@ CHECKS: dict[str, CheckHelp] = {
         "The AI could not decide on a GL account for this line.",
         "Pick the GL account in the line table; approving teaches the AI for next time.",
     ),
+    "ACCOUNTS_ALL_GUESSED": CheckHelp(
+        CODING, "Every account is a guess",
+        "Every line's GL account on this invoice was chosen by the chat model, from the words of an account's name "
+        "or from other vendors' lines: not one comes from what AP approved for this vendor, from last year's journal "
+        "or from a coding rule. One click would approve them all and teach them as this vendor's coding.",
+        "Look at each line's account. Change the wrong ones (a line you change is yours, and the finding goes once "
+        "one is); to keep them all as they are, tick Approve anyway and say why.",
+    ),
+    "REMARK_LONG": CheckHelp(
+        CODING, "Remark too long for JD Edwards",
+        "The remark typed for this line is longer than the 30 characters JD Edwards keeps. Nothing is cut without "
+        "saying: the check shows what would be keyed (the whole words that fit). A warning, unless the remarks go to "
+        "JD Edwards as typed (Settings → JD Edwards E1 → Remarks): then it holds the invoice back.",
+        "Shorten the remark to 30 characters in your own words, or clear it to get the suggested one back.",
+    ),
     "GL_UNKNOWN": CheckHelp(
         CODING, "GL account not in your list",
         "The GL account is not in your GL accounts (it may have been removed or mistyped).",
@@ -522,6 +569,36 @@ CHECKS: dict[str, CheckHelp] = {
     "CC_UNKNOWN": CheckHelp(
         CODING, "Cost center not in your list", "The cost center is not in your cost centers.",
         "Pick a cost center from the list, or add it on the GL accounts & tax page.",
+    ),
+    # With the chart of accounts imported from JD Edwards (D-209): the account and its business unit together. Each
+    # says it applies once a chart is loaded (``CHART_LOADED``): the Help page lists them for every install.
+    "ACCOUNT_NOT_IN_CHART": CheckHelp(
+        CODING, "Account not on this business unit",
+        f"{CHART_LOADED}: the line's business unit and account do not go together. The chart has no such account on "
+        "that business unit, so JD Edwards would refuse the line. The finding names the business units that do have "
+        "the account. Words or part of a number left in a line's Account box are not an account either.",
+        "Pick an account that business unit has, or the business unit the account is on. If the account was added in "
+        f"JD Edwards since, import the chart of accounts again ({CHART_IMPORT}).",
+    ),
+    "ACCOUNT_NOT_POSTABLE": CheckHelp(
+        CODING, "Account does not take postings",
+        f"{CHART_LOADED}: the chart marks this account as one that cannot be posted to (its posting edit code): a "
+        "title over other accounts, an inactive account, or one kept for budgets or for entries JD Edwards makes "
+        "itself.",
+        "Pick the account under it that takes postings. If it should take postings, ask the JD Edwards team.",
+    ),
+    "BU_INACTIVE": CheckHelp(
+        CODING, "Business unit not active",
+        f"{CHART_LOADED}: the business unit master imported with it says this business unit is not active, so "
+        "nothing can be posted to it.",
+        "Pick the business unit that replaced it. If it was opened again in JD Edwards, import the business units "
+        f"again ({CHART_IMPORT}).",
+    ),
+    "ACCOUNT_RESERVED": CheckHelp(
+        CODING, "Account not offered for invoices",
+        f"{CHART_LOADED}: the account exists and takes postings, but it is one of those AP Coder never suggests: an "
+        "account on the never-offered list, or a business unit whose name says DO NOT USE.",
+        "Check the account is the one meant, then approve; else pick the usual account for this expense.",
     ),
     "HISTORY_CONFLICT": CheckHelp(
         CODING, "Coded differently before",
@@ -552,6 +629,13 @@ CHECKS: dict[str, CheckHelp] = {
         TAX, "Tax of another province",
         "A provincial tax belongs to a province other than the place of supply.",
         "Check the ship-to address. The tax should follow where the goods or services are delivered.",
+    ),
+    "TAX_TWO_PROVINCES": CheckHelp(
+        TAX, "Lines for two provinces",
+        "The invoice charges GST on some lines and HST on others (or the HST of two provinces), each at its "
+        "official rate on lines of its own: the lines were supplied in two provinces.",
+        "Check that each line's tax code is the tax of the province it was supplied in; if every line was supplied "
+        "in one province, ask the vendor for a corrected invoice.",
     ),
     "TAX_PROVINCE_UNKNOWN": CheckHelp(
         TAX, "Tax province unknown", "The province of a tax line is not known, so its rate cannot be checked.",
@@ -732,9 +816,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PAGES_NOT_READ": CheckHelp(
         READING, "Pages not read",
-        "The file has more pages than were read on this computer: its first 20 pages are read (a statement, a "
-        "catalogue or several invoices scanned as one file can be longer), and a scanned page OCR couldn't read is "
-        "left out. Nothing on those pages is in the fields, lines or totals shown.",
+        "Some of the file's pages were not read on this computer; the finding names them. Up to 60 pages of a file "
+        "are read; of a longer one (a statement, a catalogue or several invoices scanned as one file) the first 55 "
+        "and the last 5, where the totals are. A scanned page OCR couldn't read is left out too. Nothing on those "
+        "pages is in the fields, lines or totals shown.",
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),
@@ -752,6 +837,24 @@ CHECKS: dict[str, CheckHelp] = {
         "hidden text of a PDF is a known way to slip a different amount past a system that reads the text alone.",
         "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
         "on a number you already have before paying.",
+    ),
+    "ACCOUNT_ROWS_LEFT_OUT": CheckHelp(
+        READING, "Rows of the supplier's account left out of the lines",
+        "The invoice's table also prints the supplier's account, as a statement does: what was owed before this "
+        "invoice (\"Previous balance\", \"Balance forward\") or what was paid since (\"Payment received - thank "
+        "you\"). These rows are no lines of this invoice, so they were not read as lines and are not coded; the "
+        "finding names them.",
+        "Nothing to do when the invoice's own total is right. An earlier balance still owing is that earlier "
+        "invoice's to pay, not this one's: check that the total here is this invoice's alone.",
+    ),
+    "LINE_AMOUNTS_TO_CHECK": CheckHelp(
+        READING, "Line amounts to check against the page",
+        "The lines were left as they were read from the invoice's table and they do not add up to the invoice: the "
+        "column read as each line's amount holds its total with the tax in it, or another column of the table is "
+        "the amount (before a discount, after it), or a line is missing. AP Coder adds no line of its own to make "
+        "them add up.",
+        "Compare each line's amount with the page and enter the amount before tax. A charge printed outside the "
+        "table (freight, a fee) is a line of its own.",
     ),
     "LINE_ITEMS_AGREE": CheckHelp(
         READING, "Line items read differently",
@@ -789,6 +892,15 @@ CHECKS: dict[str, CheckHelp] = {
         "prebuilt-invoice (prebuilt-layout and prebuilt-read find no invoice fields), or Azure found no invoice.",
         "Check the invoice against the page yourself, then approve. It isn't approved without a person. Set the "
         "Azure model back to prebuilt-invoice if it was changed.",
+    ),
+    "NOT_AN_INVOICE": CheckHelp(
+        READING, "May not be an invoice",
+        "The document looks like something else that arrives with invoices: its title says so (a statement of "
+        "account, a remittance advice, a quote, a packing slip, an order confirmation, a notice), or it lists "
+        "several invoices with their balances or payments, or no invoice number and no amounts were found on it. "
+        "The finding says which. AP Coder never rejects a document on its own.",
+        "Look at the page. If it is not an invoice, click Reject and give the reason (nothing is posted or "
+        "learned from it); if it is one, check and approve it as any other.",
     ),
     "INVOICE_DATE_NOT_FOUND": CheckHelp(
         READING, "Invoice date not found",

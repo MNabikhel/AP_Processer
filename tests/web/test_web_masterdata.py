@@ -314,6 +314,8 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
         ["Acme <script>x</script>", "V1", "", "Net 30", "Active"],
         ["Beta Supply", "V2", "", "Net 45", "Hold"],
         ["BETA SUPPLY.", "V3", "", "", ""],
+        ["Gamma Signs", "", "", "", ""],
+        ["GAMMA SIGNS INC", "", "", "", ""],
     ]
     bad = client.post(
         "/vendors/master/upload", files={"file": ("v.xlsx", b"not a workbook", "application/zip")}, headers=PAGE
@@ -339,8 +341,131 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
             headers=PAGE,
         ),
     )
-    assert "Vendor master: 2 added" in page.text and "more than once" in page.text and "BETA SUPPLY." in page.text
-    assert any(v["erp_id"] == "V1" for v in busy.master_vendors())
+    # two supplier numbers under one name are two vendors, named with their numbers (B-2161); two rows of one name
+    # with no number to tell them apart are one, as before
+    assert "Vendor master: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
+    assert "V2 Beta Supply / V3 BETA SUPPLY." in page.text
+    assert "more than once" in page.text and "Gamma Signs / GAMMA SIGNS INC" in page.text
+    assert {v["erp_id"] for v in busy.master_vendors()} >= {"V1", "V2", "V3"}
+    assert busy.get_vendor("beta supply")["status"] == ON_HOLD  # (V2, as its Status column says)
+    assert busy.get_vendor("beta supply #V3")["status"] == "active"
+
+
+def guessed(html: str) -> dict[str, str]:
+    """{field: the column the page offers already chosen} of an import's column choices ("" for none)."""
+    chosen = {}
+    for field, options in re.findall(r'<select name="col_(\w+)">(.*?)</select>', html, re.S):
+        picked = re.search(r'<option value="([^"]*)" selected>', options)
+        chosen[field] = picked.group(1) if picked else ""
+    return chosen
+
+
+def test_jd_edwards_supplier_master_is_imported_as_the_page_offers_it(client, store):
+    """B-2082: the supplier master's export uploaded and imported with the columns the page guesses, none picked: the
+    hold is ``Hold Payment Code`` (Y, 1 and 2 hold; N, JD Edwards' usual value, does not), the free-text tax ID is not
+    the GST/HST number, and a code the JDE team confirms later (0) is one setting away, on the same form."""
+    from tests.jde_exports import supplier, supplier_master
+
+    listed = [supplier(410001, "MAPLE LEAF COFFEE SERVICES INC."), supplier(410002, "QUICKSHIP COURIER CANADA LTD"),
+              supplier(410005, "HARBOUR TELECOM", "2", tax="123456789RT0001"),
+              supplier(410006, "PRAIRIE OFFICE FURNITURE", "0", tax="VERIFIED BY PHONE 2019"),
+              supplier(410010, "CEDAR RIDGE TOWING", "Y"), supplier(410011, "SUMMIT PEST CONTROL", "1")]  # fmt: skip
+
+    page_after: list[str] = []  # the page the last import led to, with what it said
+
+    def imported(**typed):
+        page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed))
+        offered = guessed(page.text)
+        data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}, **typed}
+        page_after[:] = [follow(client, client.post("/vendors/master/import", data=data, headers=PAGE)).text]
+        return page, offered
+
+    page, offered = imported()
+    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "terms": "",
+                       "status": "Status", "hold": "Hold Payment Code", "default_gl": ""}  # fmt: skip
+    assert 'name="hold_codes" value="Y, 1, 2"' in page.text
+    vendors = {v["erp_id"]: v for v in store.master_vendors()}
+    assert {i: v["erp_hold"] for i, v in vendors.items()} == {"410001": "", "410002": "", "410005": "2", "410006": "",
+                                                              "410010": "Y", "410011": "1"}  # fmt: skip
+    assert {(v["status"], v["expected_gst"]) for v in vendors.values()} == {("active", "")}
+    # 2 holds the payments only: no hold on the invoices (B-2157)
+    assert sorted(v["display_name"] for v in store.held_vendors()) == ["CEDAR RIDGE TOWING", "SUMMIT PEST CONTROL"]
+    # a code the list does not name is said, not dropped in silence (B-2159); and what a change reaches is on the form
+    said = page_after[0]
+    assert "1 supplier with hold payment code 0: not treated as a hold." in said
+    assert (
+        "Hold payment codes that put a supplier on hold" in said
+        and "reaches the suppliers of this file now" in page.text
+    )
+    page, _ = imported(hold_codes="y,1 , 2, 0")
+    assert "not treated as a hold" not in page_after[0]
+    assert store.get_vendor("prairie office furniture")["erp_hold"] == "0"
+    assert store.hold_codes() == ["Y", "1", "2", "0"]
+    assert (
+        'name="hold_codes" value="Y, 1, 2, 0"'
+        in upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed)).text
+    )
+
+
+def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are_on_the_form(client, store):
+    """B-2083: imported through the page, a supplier the master marks as retired is found by its real name and on
+    hold; the words that mark one are the import form's, kept as a setting."""
+    from tests.jde_exports import supplier, supplier_master
+
+    listed = [supplier(410003, "NORTHERN PAPER CO  DO NOT USE"), supplier(410012, "CEDAR RIDGE TOWING - CLOSED"),
+              supplier(410001, "MAPLE LEAF COFFEE SERVICES INC.")]  # fmt: skip
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed))
+    assert 'name="skip_words" value="DO NOT USE, DNU, *"' in page.text
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/vendors/master/import", data={**data, "skip_words": "DO NOT USE, DNU, closed"},
+                               headers=PAGE))  # fmt: skip
+    assert store.skip_words() == ["DO NOT USE", "DNU", "closed"]
+    held = {v["display_name"]: v["notes"] for v in store.held_vendors()}
+    assert held == {"NORTHERN PAPER CO  DO NOT USE": "marked DO NOT USE in the supplier master",
+                    "CEDAR RIDGE TOWING - CLOSED": "marked CLOSED in the supplier master"}  # fmt: skip
+    assert store.find_vendor("Northern Paper Co")["erp_id"] == "410003"
+    assert store.find_vendor("Cedar Ridge Towing")["erp_id"] == "410012"
+    # the star is a word of the list: taken off it, a star marks nothing (B-2160)
+    starred = [supplier(410020, "*** MISC ONE-TIME VENDOR ***")]
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+    assert store.find_vendor("Misc One-Time Vendor")["status"] == "active"
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
+    follow(client, client.post("/vendors/master/import", data={**data, "file": page.url.params["file"],
+                                                              "skip_words": "DNU, *"}, headers=PAGE))  # fmt: skip
+    assert store.skip_words() == ["DNU", "*"]
+    assert store.find_vendor("Misc One-Time Vendor")["notes"] == "marked * in the supplier master"
+    assert store.chart_settings().skip_words == ("DNU", "*")  # one setting: the chart finds no word in the star
+    # left blank: no word at all, for the chart of accounts too, which reads the same setting
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
+    follow(client, client.post("/vendors/master/import", data={**data, "file": page.url.params["file"],
+                                                              "skip_words": " "}, headers=PAGE))  # fmt: skip
+    assert store.skip_words() == [] and store.find_vendor("Misc One-Time Vendor")["status"] == "active"
+    assert store.chart_settings().skip_words == ()
+
+
+def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
+    """The repo's ``data/vendor_master.csv`` through the Vendors page, with the columns it offers: the same vendors,
+    field for field, as ``load_sample_vendor_master`` makes, none on hold in JD Edwards."""
+    from ap_coder.core.store import load_sample_vendor_master
+    from ap_coder.core.store.samples import SAMPLE_DATA_DIR
+
+    page = upload(client, "/vendors/master/upload", "vendor_master.csv",
+                  (SAMPLE_DATA_DIR / "vendor_master.csv").read_bytes())  # fmt: skip
+    offered = guessed(page.text)
+    assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number", "hold": "",
+                       "terms": "payment_terms", "status": "status", "default_gl": "default_gl"}  # fmt: skip
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
+    follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+    loaded = Store(tmp_path / "loaded.db")
+    load_sample_vendor_master(loaded)
+
+    def rows(of):
+        return sorted(tuple((k, v) for k, v in r.items() if k != "updated_at") for r in of.master_vendors())
+
+    assert rows(store) == rows(loaded) and len(rows(store)) == 8
+    assert {v["erp_hold"] for v in store.master_vendors()} == {""}
 
 
 # --- Long lists, a part at a time (D-162) -------------------------------------------------------------------------

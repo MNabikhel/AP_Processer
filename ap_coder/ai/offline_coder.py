@@ -15,11 +15,13 @@ import datetime as dt
 import functools
 import logging
 import re
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..capture import analyze, build_layout
-from ..capture.bridge import vendor_record
+from ..capture.bridge import TAX_FIELD, printed_taxes, said_pages, vendor_record
 from ..capture.confidence import apply_supplier_record, reading_confidence
 from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout, Line
@@ -35,15 +37,17 @@ from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
+from ..core.schema import CANDIDATES_KEPT, PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
-from .suggest import suggest_gl
+from .suggest import by_pairs, candidates, why_left
+from .supplier_prior import Candidate, Prior, account_name, prior_for
 
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
+OFFERED = 20  # accounts worked out for a line (``suggest.candidates``): the chat model chooses among them
 # A line an older version coded from a weak match (an account's name, the vendor's default): never approved without a
 # person. This version leaves such a line blank (B-463); invoices already in the queue may still carry it.
 WEAK_MATCH = "A weak match, for a person to confirm"
@@ -307,7 +311,12 @@ def default_currency(supplier_province: str) -> str:
     return "USD" if supplier_province == OUTSIDE_CANADA else "CAD"
 
 
-def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None) -> list[TaxLine]:
+def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None,
+               amounts: Sequence[float] = ()) -> list[TaxLine]:  # fmt: skip
+    """The tax lines of a reading: each tax's amount, on the subtotal until the lines' tax codes say which lines
+    carry it (``line_tax.settled_tax_lines``). ``amounts``: the lines' amounts."""
+    from ..coding.line_tax import can_explain
+
     out = []
     table = _rate_table()
     for field, tax_type in _TAXES:
@@ -316,6 +325,14 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
             continue
         official = table.rate_for(tax_type, province, on) if table and province in PROVINCE_VALUES else None
         charged = abs(amount / subtotal) if subtotal else 0.0
+        where = province
+        if tax_type == "HST" and official is None and all(abs(charged - r) > 0.002 for r in _OFFICIAL["HST"]):
+            # HST where the place of supply levies none, and not on the whole subtotal: some lines were supplied in
+            # another province. Its rate is the one HST rate that some of the lines make it at, in the province
+            # that rate names (B-2226).
+            fits = [r for r in _OFFICIAL["HST"] if can_explain(amounts, amount, r)]
+            if len(fits) == 1:
+                official, where = fits[0], _RATE_PROVINCE.get(("HST", fits[0]), "")
         # Less tax than the province's rate on the whole subtotal: charged on part of it (delivery exempt from
         # Manitoba RST), the province's rate on its base. More than that (14% Nova Scotia HST with the province
         # read as Ontario) is no partial base: the rate the amounts show is kept, with the province it names,
@@ -324,7 +341,7 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
         if official and tax_type != "GST" and abs(charged - official) > 0.002 and partial:
             base = round(amount / official, 2)
             out.append(
-                TaxLine(tax_type=tax_type, province=province, rate=official, taxable_amount=base, tax_amount=amount)
+                TaxLine(tax_type=tax_type, province=where, rate=official, taxable_amount=base, tax_amount=amount)
             )
             continue
         rate = abs(amount / subtotal) if subtotal else 0.0
@@ -377,27 +394,85 @@ def bank_details(text: str) -> str:
     return "; ".join(found)[:200]
 
 
-def _unlisted_charge(text: str, amount: float) -> str:
-    """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
+READ_CHARGE = "Charges not in the line table"  # the freight read beside the subtotal, when its label is not found
+
+LINES_CHECK = "LINE_AMOUNTS"  # the capture check that fails when the lines read are left not adding up
+
+_TAKEN_OFF = re.compile(r"(?i)\b(?:discount|escompte|rabais|remise|rebate|coupon|credit|cr[ée]dit|less|moins)\b")
+
+
+def _charge_label(text: str, amount: float) -> str:
+    """The label printed beside an amount outside the line table ("Delivery & handling: $95.00"); "" when the
+    amount is printed nowhere under a label of its own (a total's, a tax's and a table row's are not: the cells
+    before the figure are no label). An amount taken off is printed so: with its sign, or under a label that says
+    it ("Discount 50.00")."""
     figure = re.compile(rf"(?<![\d,.]){re.escape(f'{abs(amount):,.2f}')}(?!\d)")  # whole: not "50.00" in "1,250.00"
     lines = text.splitlines()
     for i, line in enumerate(lines):
         m = figure.search(line)
         if m:
-            label = line[: m.start()].strip(" :$-–\t")
+            label = line[: m.start()].strip(" :$-–\t(")
+            signed = bool(
+                re.search(r"[-–(]\s*\$?\s*$", line[: m.start()]) or re.match(r"\s*(?:-|\)|CR\b)", line[m.end() :])
+            )
             if not label and i:  # the figure alone on its line (a PDF's text, a cell a line): its label just above
                 label = lines[i - 1].strip(" :$-–\t")
-            if (2 < len(label) < 60 and re.search(r"[^\W\d_]", label)
-                    and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label)):  # fmt: skip
+            if (2 < len(label) < 60 and re.search(r"[^\W\d_]", label) and not re.search(r"\d[.,]\d{2}(?!\d)", label)
+                    and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label)
+                    and (amount > 0 or signed or _TAKEN_OFF.search(label))):  # fmt: skip
                 return label
-    return "Charges not in the line table"
+    return ""
+
+
+def _charges_outside(text: str, short: float, freight: float) -> list[tuple[str, float]]:
+    """The charges printed outside the line table, of what the lines fall ``short`` of the subtotal and the freight
+    read beside it: each one READ from the page, never worked out as what is missing. The freight (``freight``: the
+    reader's own field) is one; what is short beside it is one only when that amount is printed under a label of its
+    own (``_charge_label``). Anything else is left short: the lines stay as read, the totals check fails and
+    ``_lines_to_check`` says why, where a line "Charges not in the line table" of whatever was missing made a wrong
+    reading add up unseen (the tax taken back off lines read with their tax in them, B-2107; the discount of a line
+    read before it, B-2199)."""
+    out = []
+    if abs(freight) >= 0.01:
+        out.append((_charge_label(text, freight) or READ_CHARGE, freight))
+        short = round(short - freight, 2)
+    label = _charge_label(text, short) if abs(short) >= 0.01 else ""
+    return [*out, (label, short)] if label else out
+
+
+def _lines_to_check(readings: list[Any], lines: float, expected: float, tax_charged: float, total: float,
+                    pages_not_read: list[int] | tuple[int, ...] = ()) -> str:  # fmt: skip
+    """What a person is told when the lines read are left not adding up to the invoice (``lines``: their sum with the
+    charges read; ``expected``: the subtotal and the freight); "" when they add up. The lines' amounts include their
+    tax when taking off the invoice's tax, or the tax printed on the rows, makes them add up; and when they add up
+    only because no subtotal and no tax was read under a table that prints a tax on its rows. Lines that fall short
+    on an invoice with ``pages_not_read`` are missing those pages' lines: said so, with the pages."""
+    printed = round(sum(v for li in readings for v in (li.taxes_read or {}).values() if v), 2)
+    if abs(lines - expected) < 0.01:
+        if abs(printed) >= 0.01 and abs(tax_charged) < 0.01 and abs(lines - total) < 0.01:
+            return (f"the line table's amounts include the tax: its rows print {printed:,.2f} of tax, they add up to "
+                    f"the total ({total:,.2f}) and no tax was read under them. Enter each line's amount before tax, "
+                    "and the invoice's tax")  # fmt: skip
+        return ""
+    if any(abs(t) >= 0.01 and abs(lines - t - expected) < 0.01 for t in (tax_charged, printed)):
+        return (f"the line table's amounts include the tax: the lines add up to {lines:,.2f} with it, the invoice "
+                f"says {expected:,.2f} before tax. Enter each line's amount before tax")  # fmt: skip
+    if pages_not_read and 0 < abs(lines) < abs(expected) and lines * expected > 0:
+        one = len(pages_not_read) == 1
+        return (f"the lines add up to {lines:,.2f}, the invoice says {expected:,.2f}: {said_pages(pages_not_read)} "
+                f"{'was' if one else 'were'} not read, so what {'it bills' if one else 'they bill'} "
+                f"({expected - lines:,.2f}) is not among the lines. Add {'its' if one else 'their'} lines from "
+                f"{'that page' if one else 'those pages'}")  # fmt: skip
+    return (f"the lines add up to {lines:,.2f}, the invoice says {expected:,.2f}: check which column of the line "
+            "table is each line's amount, and that no line is missing")  # fmt: skip
 
 
 def not_sure(top: Any) -> str:
     """Why a line with a suggestion was left without an account."""
     if getattr(top, "check", ""):
         return f"{top.check}."
-    return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
+    code = getattr(top, "gl_code", None) or top.code  # (a ``Suggestion``, or a ``Candidate``)
+    return f"Not sure enough to code it (maybe {code}: {'; '.join(top.reasons[:2])}): pick the account."
 
 
 # The invoice a credit note credits, as printed: "Original Invoice: NW-2026-0912", "Credit for invoice #INV-4471",
@@ -419,6 +494,130 @@ def credited_invoice(text: str) -> str:
         if any(c.isdigit() for c in number):
             return number
     return ""
+
+
+@dataclass(frozen=True)
+class _Evidence:
+    """What an invoice's lines are coded from: the vendor, AP's approvals and the accounts; with a journal loaded
+    the supplier's coding (``prior``); with a chart of accounts the cost centers the vendor's approved lines used
+    (``units``)."""
+
+    vendor: str
+    feedback: list[dict[str, Any]]
+    reference: ReferenceData
+    default_gl: str
+    key: str
+    prior: Prior | None = None
+    units: tuple[str, ...] = ()
+
+
+def supplier_evidence(store: Any, vendor: Any, key: str,
+                      reference: ReferenceData) -> tuple[Prior | None, tuple[str, ...]]:  # fmt: skip
+    """(the supplier's prior, the cost centers the vendor's approved lines used) for an invoice's vendor: the vendor
+    list's row, or the name printed. (None, ()) without a store that keeps them; no cost centers when lines are
+    suggested GL codes as before (``suggest.by_pairs``)."""
+    if store is None or not vendor or not hasattr(store, "prior_stamp"):
+        return None, ()
+    prior = prior_for(store, vendor, always=reference.pairs is not None)
+    if not by_pairs(reference, prior):
+        return prior, ()
+    name = vendor if isinstance(vendor, str) else str(vendor.get("display_name") or "")
+    return prior, tuple(sorted(store.vendor_lessons(name, key).cost_centers))
+
+
+def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evidence, printed: str,
+                hints: dict[int, str], offered: dict[int, list[Candidate]]) -> LineItem:  # fmt: skip
+    """One line of the invoice: coded when the evidence is strong enough (``Candidate.auto``), else left for a
+    person with why, and the accounts offered kept with it (D-212). ``printed``: the text printed, when the line is
+    described as AP approved it before. The weak match of a line left goes in ``hints``; with whole account strings
+    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among."""
+    description, quantity, unit_price, amount = reading
+    reference = ev.reference
+    found = candidates(description, ev.vendor, ev.feedback, reference, OFFERED, ev.default_gl, ev.key, ev.prior,
+                       ev.units)  # fmt: skip
+    top = found[0] if found else None
+    # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
+    best = top if top is not None and top.auto else None
+    if top is not None and best is None:
+        hints[number] = top.code
+    if best is not None:
+        why = "; ".join(best.reasons)
+    elif by_pairs(reference, ev.prior):
+        why = why_left(ev.prior, found, reference, description)
+        offered[number] = found
+    else:
+        why = not_sure(top) if top is not None else NO_HISTORY
+    if printed:
+        why = f"{why}; {RENAMED} (read “{printed}”)"
+    kept = [] if best is not None else [
+        {**c.kept(), "name": c.name or account_name(reference, c.business_unit, c.code)}
+        for c in found[:CANDIDATES_KEPT]
+    ]  # fmt: skip
+    return LineItem(
+        line_number=number,
+        description=description.strip() or f"Line {number}",
+        quantity=quantity,
+        unit_price=round(unit_price, 4),
+        amount=round(amount, 2),
+        predicted_gl_code=best.code if best else UNASSIGNED,
+        predicted_cost_center=(best.business_unit if best else "")
+        or (UNASSIGNED if reference.cost_centers is not None else ""),
+        reasoning_justification=why,
+        candidates=kept,
+        decided_by=best.decided() if best else {},
+    )
+
+
+def _with_charges(capture: CaptureResult, readings: list[Any], rows: list[tuple[str, float, float, float]], text: str,
+                  expected: float, freight: float, tax_charged: float, total: float,
+                  ) -> list[tuple[str, float, float, float]]:  # fmt: skip
+    """``rows`` (each line read: description, quantity, unit price, amount) with the charges printed outside the
+    line table that they fall short of ``expected`` by (the subtotal and the freight; ``_charges_outside``). Lines
+    left not adding up are said on the capture (the check ``LINES_CHECK``, ``bridge.review_issues``'
+    LINE_AMOUNTS_TO_CHECK), in ``_lines_to_check``'s words."""
+    short = round(expected - sum(r[3] for r in rows), 2)
+    if (readings or freight) and abs(short) >= 0.01:
+        rows = [*rows, *((label, 1.0, amount, amount) for label, amount in _charges_outside(text, short, freight))]
+    capture.checks = [c for c in capture.checks if c.get("code") != LINES_CHECK]
+    doubt = (
+        _lines_to_check(
+            readings, round(sum(r[3] for r in rows), 2), expected, tax_charged, total, capture.pages_not_read
+        )
+        if readings
+        else ""  # fmt: skip
+    )
+    if doubt:
+        capture.checks.append({"code": LINES_CHECK, "ok": False, "fields": [], "severity": "warning", "detail": doubt})
+    return rows
+
+
+def _printed(readings: list[Any], tax_lines: list[TaxLine]) -> tuple[list[str], list[dict[str, float] | None]]:
+    """(each line's tax code as printed, the tax amounts printed on each line): the tax-code cell of its row ("G R",
+    "E"), read with the invoice's legend (D-64); else what the tax amounts printed on its row say, with the taxes
+    the invoice charges (``bridge.printed_taxes``). One "" for an invoice with no line read."""
+    said = printed_taxes(readings, _charged(tax_lines))
+    flags = [li.tax_flags or code for li, (code, _) in zip(readings, said, strict=True)]
+    return flags or [""], [read for _, read in said]
+
+
+def _taxes_kept(lines: list[LineItem], readings: list[Any], printed: list[dict[str, float] | None]) -> list[LineItem]:
+    """``lines`` with the tax amounts printed on each one's row (``LineItem.taxes_read``, B-2203), signed as the
+    line is: a credit note's lines printed without their sign are credits, and so are their taxes."""
+    out = list(lines)
+    for k, (reading, taxes) in enumerate(zip(readings, printed, strict=True)):
+        if taxes:
+            sign = -1 if (reading.amount or 0.0) * lines[k].amount < 0 else 1
+            out[k] = lines[k].model_copy(update={"taxes_read": {tax: sign * v or 0.0 for tax, v in taxes.items()}})
+    return out
+
+
+def _charged(tax_lines: list[TaxLine]) -> dict[str, float]:
+    """{tax: its amount on the invoice} of the tax lines."""
+    out: dict[str, float] = {}
+    for t in tax_lines:
+        if t.tax_type in TAX_FIELD:  # (not a tax total the invoice does not break down)
+            out[t.tax_type] = round(out.get(t.tax_type, 0.0) + t.tax_amount, 2)
+    return out
 
 
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
@@ -446,9 +645,9 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     ours = getattr(getattr(reference, "tax", None), "our_province", "") or ""
     tax_lines = _tax_lines(
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
-        dt.date.fromisoformat(invoice_on) if invoice_on else None,
+        dt.date.fromisoformat(invoice_on) if invoice_on else None, [float(li.amount) for li in readings],
     )  # fmt: skip
-    default_gl, key = "", vendor_key(vendor)
+    default_gl, key, found = "", vendor_key(vendor), None
     if store is not None and vendor:
         try:  # the vendor of two whose names read alike by its GST/HST number (B-1021)
             found = store.find_vendor(vendor, values.get("gst_hst_registration_number"))
@@ -466,8 +665,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
-    # The tax-code cell printed on each line ("G R", "E"), read with the invoice's legend below (D-64).
-    flags = [li.tax_flags for li in readings] if readings else [""]
+    flags, taxes_printed = _printed(readings, tax_lines)  # each line's tax code and tax amounts, as printed
     # A line read as AP named it on an earlier invoice of the supplier: the text printed, said in its reasoning (D-120).
     printed_as = [li.read_as for li in readings]
     # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
@@ -476,54 +674,31 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     listed = round(sum(r[3] for r in readings_data), 2)
     if readings and subtotal < 0 < listed and abs(listed + subtotal) < 0.01:
         readings_data = [(d, q, -u, -a) for d, q, u, a in readings_data]
-    # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
-    short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
-    if (readings or freight) and abs(short) >= 0.01:
-        readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
+    tax_charged = _amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2)
+    readings_data = _with_charges(capture, readings, readings_data, text, round(subtotal + freight, 2), freight,
+                                  tax_charged, _amount(values, "grand_total"))  # fmt: skip
     # A tip printed between the tax and the total (a restaurant's "Gratuity 120.00"): a line with no tax, in the
     # subtotal, so the invoice adds up (B-931).
-    tax_charged = _amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2)
     tip = _tip_after_tax(text, round(_amount(values, "grand_total") - subtotal - freight - tax_charged, 2))
     if tip:
         readings_data.append((tip[0], 1.0, tip[1], tip[1]))
         flags.append("")
         subtotal = round(subtotal + tip[1], 2)
-    lines = []
+    prior, units = supplier_evidence(store, found or vendor, key, reference)
+    evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units)
     hints: dict[int, str] = {}
-    for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        ranked = suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl, key=key)
-        top = next(iter(ranked), None)
-        # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
-        best = top if top is not None and top.auto else None
-        if top is not None and best is None:
-            hints[number] = top.gl_code
-        why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
-        if number <= len(printed_as) and printed_as[number - 1]:
-            why = f"{why}; {RENAMED} (read “{printed_as[number - 1]}”)"
-        lines.append(
-            LineItem(
-                line_number=number,
-                description=description.strip() or f"Line {number}",
-                quantity=quantity,
-                unit_price=round(unit_price, 4),
-                amount=round(amount, 2),
-                predicted_gl_code=best.gl_code if best else UNASSIGNED,
-                predicted_cost_center=(best.cost_center if best else "")
-                or (UNASSIGNED if reference.cost_centers is not None else ""),
-                reasoning_justification=why,
-            )
-        )
+    offered: dict[int, list[Candidate]] = {}
+    lines = [_coded_line(number, reading, evidence, printed_as[number - 1] if number <= len(printed_as) else "",
+                         hints, offered)
+             for number, reading in enumerate(readings_data, 1)]  # fmt: skip
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
-    lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
-                      supplier_province=supplier_province,
-                      pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
-                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
-                      vendor_key=key)  # fmt: skip
-    if tip:  # a voluntary tip is no taxable supply
-        from ..coding.line_tax import OUT_OF_SCOPE
-
-        lines[-1] = lines[-1].model_copy(update={"taxes_applied": [], "tax_exempt": [], "tax_status": OUT_OF_SCOPE})
+    lines, tax_lines = _taxed(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province,
+                              invoice_on, tip, supplier_province=supplier_province,
+                              pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
+                              vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
+                              vendor_key=key)  # fmt: skip
+    lines = _taxes_kept(lines, readings, taxes_printed)
 
     # The coding's confidence_score is the Reading (D-89): how sure the header is. How sure the lines' accounts and
     # tax codes are is the Coding, worked out from the lines by the checks (``validation.coding_confidence``).
@@ -558,7 +733,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         confidence_score=confidence,
         line_items=lines,
     )
-    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints)
+    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints,
+                        offered=offered)  # fmt: skip
 
 
 _TIP_LABEL = re.compile(
@@ -602,17 +778,21 @@ def _money_of(text: str) -> float:
         return 0.0
 
 
-def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
-              invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
-              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
-              vendor: str = "", qst_number: str | None = None,
-              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
-    """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
-    the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
-    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
-    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
-    from ..coding.line_tax import learned_codes, parse_legend, prefill
+def _taxed(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
+           invoice_on: str, tip: bool, **vendor: Any) -> tuple[list[LineItem], list[TaxLine]]:  # fmt: skip
+    """The lines with their tax codes (``tax_codes``; a voluntary tip is no taxable supply), then the tax lines with
+    what each tax was charged on, now that the codes say which lines carry it (``line_tax.settled_tax_lines``)."""
+    from ..coding.line_tax import OUT_OF_SCOPE, settled_tax_lines
 
+    lines = tax_codes(lines, tax_lines, flags, text, province, invoice_on, **vendor)
+    if tip:
+        lines[-1] = lines[-1].model_copy(update={"taxes_applied": [], "tax_exempt": [], "tax_status": OUT_OF_SCOPE})
+    return lines, settled_tax_lines(lines, tax_lines, _rates_in_force(province, invoice_on))
+
+
+def _rates_in_force(province: str, invoice_on: str = "") -> Callable[[str, str], float | None]:
+    """``rate_for(tax_type, province)``: a tax's official rate on the invoice's date, in the province its tax line
+    names, else where the invoice is supplied (``province``). None without a rate table, or where it is not levied."""
     table = _rate_table()
     try:
         on = dt.date.fromisoformat(invoice_on) if invoice_on else None
@@ -625,6 +805,21 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
+    return rate_for
+
+
+def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
+              invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
+              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
+              vendor: str = "", qst_number: str | None = None,
+              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
+    """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
+    the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
+    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
+    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
+    from ..coding.line_tax import learned_codes, parse_legend, prefill
+
+    rate_for = _rates_in_force(province, invoice_on)
     # A vendor out of the province of supply, or without a PST (QST) number that charges none (B-715, B-719): the
     # provincial tax it does not charge on a line is due (self-assess). The codes learned are only those approved
     # where the vendor collected the provincial taxes as it does now (B-760).

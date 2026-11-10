@@ -1,7 +1,8 @@
-"""The vendor list: the vendor master imported from the ERP (``import_vendor_master``), the vendors added on the review
-screen, how an invoice's vendor is found among those whose names read alike (``find_vendor``, ``vendor_key_for``),
-each vendor's invoices and terms, the Vendors page's summaries, and where we are (``our_province``,
-``site_provinces``)."""
+"""The vendor list: the vendors added on the review screen, how an invoice's vendor is found among those whose names
+read alike (``find_vendor``, ``vendor_key_for``), each vendor's invoices and terms, the Vendors page's summaries, and
+where we are (``our_province``, ``site_provinces``). The vendor master imported from the ERP
+(``import_vendor_master``) and what its rows say (hold codes, retired names, people) are ``vendor_master``'s; its
+names are importable from here as before."""
 
 from __future__ import annotations
 
@@ -14,13 +15,15 @@ from types import MappingProxyType
 from typing import Any
 
 from ..caches import MB, Bounded, size_of
-from ..keys import ADDED_HERE, BUSINESS_NUMBER, norm_tax_number, same_tax_number
+from ..chart import SKIP_WORDS_SAVED as SKIP_WORDS  # noqa: F401  (the default as the setting holds it)
+from ..chart import SKIP_WORDS_SETTING  # noqa: F401  (imported from here by the Vendors page)
+from ..chart import markers as _markers  # noqa: F401  (how a word is found in a name: one way for both)
+from ..keys import ADDED_HERE, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
     _ACTIVE_IN,
     ACTIVE_STATUSES,
     FAILED,
-    _clean_code,
     _in_list,
     _now,
 )
@@ -28,6 +31,23 @@ from .capture import capture_lookup
 from .learning import one_snapshot
 from .reports import OWN_WORK
 from .summary import fetch_rows
+from .vendor_master import (  # noqa: F401  (the names this module had before the vendor master was its own part)
+    HOLD_CODES,
+    HOLD_CODES_SETTING,
+    MARKED,
+    MARKED_LIKE,
+    NEVER_HOLD,
+    PAYMENTS_ONLY,
+    STAR,
+    Person,
+    hold_code,
+    listed,
+    name_marker,
+    person_name,
+    same_person,
+    sharing,
+    with_number,
+)
 
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
 # output is parsed for a few fields.
@@ -47,6 +67,13 @@ _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
 VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a change by ten times their work (B-2044)
 TOTALS_FORMAT = "vendor-totals-1"  # their format as kept for every process (``shared_answer``, D-198)
+
+
+# The words an ERP's names carry for "retired: do not use": the default, the setting's name and how a word is found
+# in a name are ``core/chart.py``'s, the one definition for a supplier and a business unit of the chart of accounts
+# alike (D-209): commas between the words, and saved blank they are none. A supplier is also marked by a star before
+# or after its name (``STAR``): while the setting is as it comes, and once it is saved only if the list has the star,
+# a word of it like the others (``Store.supplier_markers``, B-2160; the chart finds no word in a star).
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -100,16 +127,6 @@ def _read_only(rows: list[dict[str, Any]]) -> list[Any]:
 def _newest_first(row: Any) -> int:
     """A vendor's invoice's place in ``vendor_invoices``' order (the newest first)."""
     return -row["id"]
-
-
-def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
-    """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
-    GST/HST number (B-930). Without both numbers it reads as the same supplier set up twice: merged, as before."""
-    a, b = str(first.get("erp_id") or "").strip(), str(row.get("erp_id") or "").strip()
-    if not a or not b or a == b:
-        return False
-    gst_a, gst_b = str(first.get("gst") or ""), str(row.get("gst") or "")
-    return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
 
 
 def alike_names(printed: str, name: str) -> bool:
@@ -217,7 +234,9 @@ class VendorsMixin:
 
     def _held_vendors(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
-            return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR COALESCE(erp_hold, '') != ''")
+            # (a hold payment code that holds the payments only stops no invoice: ``stops_vouchers``, B-2157)
+            return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR (COALESCE(erp_hold, '') != '' "
+                              f"AND NOT {_in_list('erp_hold')})", (json.dumps(list(PAYMENTS_ONLY)),))  # fmt: skip
 
     def find_vendor(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> dict[str, Any] | None:
         """The vendor list's row for an invoice's vendor: among the vendors whose names read as this one (the vendor
@@ -238,6 +257,8 @@ class VendorsMixin:
                 (key, f"{key} #", f"{key} $"),
             )]  # fmt: skip
         own = next((r for r in rows if r["vendor_key"] == key), None)
+        if not rows:  # no vendor under the name as written: its supplier without a marker, or the person it names
+            return self._vendor_named_otherwise(name or "")
         if len(rows) < 2:
             return own
         number = norm_tax_number(gst_number)
@@ -250,7 +271,21 @@ class VendorsMixin:
             found = [r for r in rows if str(r.get("erp_id") or "").strip() == ident]
             if found:
                 return own if own in found else found[0]
-        return own
+        # several supplier numbers in use go by the name, and nothing on the invoice says which: none of them, never
+        # the first in silence (the review screen asks; a name picked there carries its number, B-2161)
+        return None if sharing(rows) else own
+
+    def skip_words(self) -> list[str]:
+        """The words that mark a retired supplier in the ERP's names (SKIP_WORDS unless the setting lists others;
+        saved blank they are none, as the chart reads the same setting)."""
+        return listed(self.get_setting(SKIP_WORDS_SETTING, SKIP_WORDS))
+
+    def supplier_markers(self) -> list[str]:
+        """What marks a retired supplier in its name (``name_marker``): the skip words, and STAR for a star before or
+        after the name. The star marks while the setting is as it comes; once the list is saved (the vendor master's
+        import form), only if it has the star: taken off the list, a star marks nothing (B-2160)."""
+        saved = self.get_setting(SKIP_WORDS_SETTING, "\0")  # (a default no saved list can be)
+        return [*listed(SKIP_WORDS), STAR] if saved == "\0" else listed(saved)
 
     def vendor_key_for(self, name: str | None, gst_number: Any = None) -> str:
         """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of
@@ -298,121 +333,6 @@ class VendorsMixin:
                 self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed},
                           checked=not before or set(changed) != {"notes"} or bool(said))  # fmt: skip
 
-    def import_vendor_master(
-        self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False, by_erp_id: bool = False,
-        log: bool = True,
-    ) -> dict[str, Any]:  # fmt: skip
-        """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
-        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there; what
-        it has no column for is kept.
-        Rows whose names normalise to the same vendor are merged (on hold if any of them is) and reported
-        in ``duplicates``: often the same supplier set up twice in the ERP. With ``only_new``, vendors
-        already in the list are left alone (``inserted`` lists the new ones). ``by_erp_id`` (the JD Edwards sync,
-        which brings the list a page or a night's changes at a time, D-181): the vendors already there count as rows
-        before these, so a row goes to the vendor of its name holding its ERP ID ("Acme", or "Acme #4002" the second
-        of two, B-930) and another ERP ID's row of that name is merged into that vendor or is the second vendor, as
-        in one file. ``log``: the import's event (the sync logs one for all its pages)."""
-        added = updated = 0
-        now = _now()
-        merged: dict[str, dict[str, Any]] = {}
-        names: dict[str, list[str]] = {}
-        known = self._master_rows_named(rows) if by_erp_id else {}
-        for row in rows:
-            key = vendor_key(row["vendor_name"])
-            if not key:
-                continue
-            if known and key not in merged:
-                key = self._earlier_row(key, row, known, merged, names)
-            first = merged.get(key)
-            if first is not None and _distinct(first, row):
-                # Two suppliers whose names read the same, each with its own ERP ID (and GST/HST number): two vendors,
-                # the second kept under its ERP ID, not merged into the first (B-930).
-                key = f"{key} #{row['erp_id'].strip()}"
-                if key not in merged:
-                    merged[key] = dict(row)
-                    continue
-            names.setdefault(key, []).append(row["vendor_name"])
-            if key in merged:
-                first = merged[key]
-                if row.get("status") == "on_hold":
-                    first["status"], first["status_given"] = "on_hold", True
-                for field in ("erp_id", "gst", "terms", "default_gl", "qst", "pst", "province"):
-                    first[field] = first.get(field) or row.get(field) or first.get(field)
-            else:
-                merged[key] = dict(row)
-        duplicates = [n for n in names.values() if len(n) > 1]
-        inserted: list[str] = []
-        with self._conn() as conn:
-            existing = {r["vendor_key"] for r in conn.execute("SELECT vendor_key FROM vendors")}
-            for key, row in merged.items():
-                if only_new and key in existing:
-                    continue
-                conn.execute(
-                    """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
-                       terms, default_gl, in_master, qst_number, pst_number, province)
-                       VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?)
-                       ON CONFLICT(vendor_key) DO UPDATE SET
-                       qst_number = CASE WHEN excluded.qst_number != '' THEN excluded.qst_number
-                                    ELSE vendors.qst_number END,
-                       pst_number = CASE WHEN excluded.pst_number != '' THEN excluded.pst_number
-                                    ELSE vendors.pst_number END,
-                       province = CASE WHEN excluded.province != '' THEN excluded.province ELSE vendors.province END,
-                       erp_id = CASE WHEN ? THEN excluded.erp_id ELSE vendors.erp_id END,
-                       terms = CASE WHEN ? THEN excluded.terms ELSE vendors.terms END,
-                       default_gl = CASE WHEN ? THEN excluded.default_gl ELSE vendors.default_gl END,
-                       in_master = 1, updated_at = excluded.updated_at,
-                       expected_gst = CASE WHEN excluded.expected_gst != '' THEN excluded.expected_gst
-                                      ELSE vendors.expected_gst END,
-                       status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
-                    (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
-                     row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
-                     row.get("qst") or "", row.get("pst") or "", row.get("province") or "",
-                     *(row.get(f) is not None for f in ("erp_id", "terms", "default_gl")),
-                     bool(row.get("status_given"))),
-                )  # fmt: skip
-                if key in existing:
-                    updated += 1
-                else:
-                    added += 1
-                    inserted.append(key)
-                    existing.add(key)
-            if log:
-                self._log(conn, "vendors_imported", actor=actor, detail={
-                    "added": added, "updated": updated, "duplicates": len(duplicates),
-                })  # fmt: skip
-        return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
-
-    def _master_rows_named(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """The vendors already there under these rows' names, or a second one's ("<name> #<ERP ID>"), as rows of the
-        import (``master_rows``' fields), by key."""
-        keys = set()
-        for row in rows:
-            if key := vendor_key(row["vendor_name"]):
-                keys |= {key, f"{key} #{str(row.get('erp_id') or '').strip()}"}
-        with self._conn() as conn:
-            found = fetch_rows(conn, "SELECT vendor_key, display_name, erp_id, expected_gst, terms, default_gl, "
-                               "qst_number, pst_number, province FROM vendors WHERE " + _in_list("vendor_key"),
-                               (json.dumps(sorted(keys)),))  # fmt: skip
-        return {r["vendor_key"]: {"vendor_name": r["display_name"], "erp_id": r["erp_id"], "gst": r["expected_gst"],
-                                  "terms": r["terms"], "default_gl": r["default_gl"], "qst": r["qst_number"],
-                                  "pst": r["pst_number"], "province": r["province"]} for r in found}  # fmt: skip
-
-    @staticmethod
-    def _earlier_row(key: str, row: dict[str, Any], known: dict[str, dict[str, Any]],
-                     merged: dict[str, dict[str, Any]], names: dict[str, list[str]]) -> str:  # fmt: skip
-        """``by_erp_id``: the key of the vendor already there that ``row`` is (its name's, holding its ERP ID, or the
-        second one's of its name), else ``key``; a vendor there of that name with another ERP ID is put in ``merged``
-        as an earlier row (its own values kept when the row is merged into it)."""
-        erp_id = str(row.get("erp_id") or "").strip()
-        for own in (key, f"{key} #{erp_id}"):
-            if erp_id and str((known.get(own) or {}).get("erp_id") or "").strip() == erp_id:
-                return own
-        there = known.get(key)
-        if there and str(there.get("erp_id") or "").strip() and erp_id:
-            merged[key] = dict(there)
-            names[key] = [there["vendor_name"]]
-        return key
-
     def our_province(self) -> str:
         """Where invoices are delivered to us when they print no ship-to (Settings → Review), "" if not set."""
         return self.get_setting("our_province").strip().upper()
@@ -428,7 +348,8 @@ class VendorsMixin:
 
     def vendor_choices(self) -> list[dict[str, Any]]:
         """The vendors a reviewer picks from on the review screen: the vendor master's and the ones added there; with
-        no vendor master, every vendor with an approved invoice too. Sorted by name."""
+        no vendor master, every vendor with an approved invoice too. Sorted by name. One of several suppliers in use
+        under one name is named with its number ("LAKESIDE CATERING LTD #2004"): the pick an invoice keeps."""
         with self._conn() as conn:
             rows = fetch_rows(conn, "SELECT * FROM vendors WHERE in_master IN (1, 2)")
             if not any(r["in_master"] == 1 for r in rows):
@@ -441,6 +362,12 @@ class VendorsMixin:
                                    for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
                         rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
                                      **numbers})  # fmt: skip
+        named: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            named.setdefault(str(r["vendor_key"]).partition(" #")[0], []).append(r)
+        for group in named.values():  # the suppliers of one name are offered each with its number (B-2161)
+            for r in sharing(group) if len(group) > 1 else ():
+                r["display_name"] = with_number(r)
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
 
     def _approved_vendors(self) -> list[dict[str, Any]]:
@@ -493,94 +420,6 @@ class VendorsMixin:
             if count:
                 self._log(conn, "vendors_deleted", actor=actor, detail={"vendors": names})
             return count
-
-    def has_vendor_master(self) -> bool:
-        with self._conn() as conn:
-            return conn.execute("SELECT 1 FROM vendors WHERE in_master = 1 LIMIT 1").fetchone() is not None
-
-    def master_vendors(self) -> list[dict[str, Any]]:
-        with self._conn() as conn:
-            return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
-
-    def master_vendor_ids(self) -> list[tuple[str, str]]:
-        """(vendor key, ERP ID) of each vendor of the vendor master: what Import invoices' setup step counts, at every
-        view (``master_vendors``' every column of 20,000 vendors took 0.23 s, D-166)."""
-        with self._conn() as conn:
-            return [tuple(r) for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE in_master = 1")]
-
-    def master_vendors_of(self, keys: set[str], ids: set[str]) -> dict[str, dict[str, Any]]:
-        """The vendor master's vendors of these keys or ERP IDs, by key: what the JD Edwards sync reports changed."""
-        sql = (
-            "SELECT vendor_key, display_name, erp_id, expected_gst, terms, status, qst_number, pst_number, province, "
-            "erp_bank, erp_hold FROM vendors WHERE in_master = 1 AND {} IN (SELECT value FROM json_each(?))"
-        )
-        found: dict[str, dict[str, Any]] = {}
-        with self._conn() as conn:
-            for column, values in (("vendor_key", keys), ("erp_id", ids)):
-                for r in conn.execute(sql.format(column), (json.dumps(sorted(values)),)):
-                    found[r["vendor_key"]] = dict(r)
-        return found
-
-    def set_erp_bank_and_hold(self, values: dict[str, tuple[str, str]]) -> None:
-        """{ERP ID: (the bank account JDE pays on, JDE's hold code)} on the vendor master's vendors of those IDs (kept
-        apart from AP's own hold, D-105): only where either changed."""
-        with self._conn() as conn:
-            conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
-                             "(erp_bank != ?1 OR erp_hold != ?2)",
-                             [(bank, hold, erp_id) for erp_id, (bank, hold) in values.items()])  # fmt: skip
-
-    def vendor_ids(self) -> dict[str, str]:
-        """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
-        invoice whose vendor name differs but whose GST/HST number matches still gets its ID. Kept in each process
-        until the vendor list changes (``changes/vendors``, D-159): each check asks it twice. Shared: read it, don't
-        change it."""
-        return self.summary_memo("vendor_ids", self._vendor_ids, topic="", changes="vendors")
-
-    def _vendor_ids(self) -> dict[str, str]:
-        with self._conn() as conn:
-            rows = conn.execute("SELECT vendor_key, erp_id, expected_gst FROM vendors WHERE erp_id != ''").fetchall()
-        ids = {r[0]: r[1] for r in rows}
-        for r in rows:
-            number = norm_tax_number(r[2])
-            if sum(c.isdigit() for c in number) >= 9:
-                ids.setdefault(f"gst:{number}", r[1])
-                if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
-                    ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
-        return ids
-
-    def master_by_tax_number(self, number: Any) -> list[dict[str, Any]]:
-        """The vendor master's vendors whose GST/HST number is the registration ``number`` is (``same_tax_number``),
-        in the list's order: for an invoice not found by name. Only those vendors are read, found by the master's
-        numbers kept in each process until the vendor list changes (``changes/vendors``, D-159)."""
-        text = norm_tax_number(number)
-        if not text:
-            return []
-        exact, business = self.summary_memo("master_numbers", self._master_numbers, topic="", changes="vendors")
-        found = {*exact.get(text, ()), *(business.get(text[:9], ()) if BUSINESS_NUMBER.fullmatch(text) else ())}
-        if not found:
-            return []
-        with self._conn() as conn:
-            rows = [dict(r) for r in conn.execute(
-                "SELECT * FROM vendors WHERE rowid IN (SELECT value FROM json_each(?)) AND in_master = 1 "
-                "ORDER BY rowid", (json.dumps(sorted(found)),),
-            )]  # fmt: skip
-        return [r for r in rows if same_tax_number(r["expected_gst"], number)]
-
-    def _master_numbers(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
-        """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:
-        the rowids of those whose number is it, with or without its RT suffix}): every vendor ``same_tax_number``
-        could match is in one of them."""
-        with self._conn() as conn:
-            rows = conn.execute("SELECT rowid, expected_gst FROM vendors WHERE in_master = 1 AND expected_gst != ''")
-            exact: dict[str, list[int]] = {}
-            business: dict[str, list[int]] = {}
-            for rowid, gst in rows:
-                text = norm_tax_number(gst)
-                if text:
-                    exact.setdefault(text, []).append(rowid)
-                    if BUSINESS_NUMBER.fullmatch(text):
-                        business.setdefault(text[:9], []).append(rowid)
-        return exact, business
 
     def all_vendor_terms(self) -> dict[str, str]:
         """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""

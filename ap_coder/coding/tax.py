@@ -193,17 +193,21 @@ class _TaxCheck:
     findings: list[TaxFinding] = field(default_factory=list)
     foreign: float = 0.0  # non-Canadian tax charged (OTHER): US sales tax, said once
     not_charged: set[str] = field(default_factory=set)  # taxes lines are marked with that the invoice does not charge
+    two_provinces: bool = False  # GST lines and HST lines, each tax on lines of its own: said once
 
     def add(self, severity: str, code: str, message: str, line: int | None = None) -> None:
         self.findings.append(TaxFinding(severity, code, message, line))
 
 
-def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None) -> list[TaxFinding]:
+def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None,
+                erp_posts: frozenset[str] = frozenset()) -> list[TaxFinding]:  # fmt: skip
     """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
     each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
-    non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to."""
+    non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to.
+    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde.taxes_e1_posts``)."""
     check = _start_tax_check(coding, setup)
     _tax_lines_add_up(check)
+    _lines_for_two_provinces(check)
     _each_tax_line(check)
     _lines_carry_each_tax(check)
     _lines_marked_with_a_tax_not_charged(check)
@@ -212,7 +216,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     _foreign_tax(check)
     _exemptions_to_confirm(check)
     _registration_numbers(check)
-    _tax_accounts(check, known_gl_codes)
+    _tax_accounts(check, known_gl_codes, erp_posts)
     return check.findings
 
 
@@ -248,6 +252,41 @@ def _tax_lines_add_up(check: _TaxCheck) -> None:
         )
 
 
+def _lines_for_two_provinces(check: _TaxCheck) -> None:
+    """GST on some lines and HST on others (or the HST of two provinces), each at a rate in force and on lines of
+    its own (``taxmath.invoice_taxes``'s ``areas``): the invoice has lines for two provinces. Said once, in place of
+    what each of its tax lines would say held against the one place of supply: HST not levied there, the tax of
+    another province, an input tax credit at risk (B-2226)."""
+    federal = {(t.tax_type, t.province if t.tax_type == "HST" else "", round(t.rate, 6))
+               for t in check.tax_lines if t.tax_type in ("GST", "HST") and not nil(t.tax_amount)}  # fmt: skip
+    items = check.coding.line_items
+    if len(federal) < 2 or any({"GST", "HST"} <= set(li.taxes_applied) for li in items):
+        return
+    from .taxmath import invoice_taxes
+
+    areas = invoice_taxes(check.coding, check.setup).areas
+    marked = {li.line_number: li for li in items}
+
+    def plain(area: Any) -> bool:
+        where = [area.province] if area.province or area.tax_type == "GST" else list(PROVINCE_NAMES)
+        in_force = any(abs((check.setup.rates.rate_for(area.tax_type, p, check.on) or 0.0) - area.rate) <= 1e-6
+                       for p in where)  # fmt: skip
+        its = [marked[n] for n in area.line_numbers if area.tax_type in marked[n].taxes_applied]
+        on_its_lines = within(add_up(li.amount for li in its), area.taxable, check.tol)
+        return bool(its) and len(its) == len(area.line_numbers) and in_force and on_its_lines
+
+    if len(areas) < 2 or not all(plain(a) for a in areas):
+        return
+    check.two_provinces = True
+    said = [f"{PROVINCE_NAMES.get(a.province, '')} {a.tax_type} {pct(a.rate)}".strip()
+            + f" on {'line' if len(a.line_numbers) == 1 else 'lines'} {', '.join(map(str, a.line_numbers))} "
+            f"({a.taxable:,.2f})" for a in areas]  # fmt: skip
+    count = {2: "two", 3: "three"}.get(len(areas), str(len(areas)))
+    check.add(WARNING, "TAX_TWO_PROVINCES",
+              f"this invoice has lines for {count} provinces: {' and '.join(said)}. Check that each line's tax code "
+              "is the tax of where it was supplied")  # fmt: skip
+
+
 def _each_tax_line(check: _TaxCheck) -> None:
     """Each tax line: its amount at its rate, the rate in force where it is charged, the province it names."""
     places = currency_places(getattr(check.coding, "currency", ""))
@@ -258,6 +297,8 @@ def _each_tax_line(check: _TaxCheck) -> None:
             continue
         if nil(tl.tax_amount):
             continue  # "GST 0.00" / "exempt" printed: nothing charged, nothing to allocate or verify
+        if check.two_provinces and tl.tax_type in ("GST", "HST"):
+            continue  # each at a rate in force where its own lines were supplied (TAX_TWO_PROVINCES)
         _tax_line_rate(check, tl)
 
 
@@ -455,6 +496,8 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
                   + ("every line is marked exempt, zero-rated or out of scope: confirm it" if all_stated
                      else _nothing_charged(prov, expected_types)))  # fmt: skip
     for extra in sorted(charged - expected_types):
+        if check.two_provinces and extra in ("GST", "HST"):
+            continue
         check.add(
             WARNING,
             "TAX_REGIME_MISMATCH",
@@ -462,7 +505,8 @@ def _regime_of_the_place_of_supply(check: _TaxCheck) -> None:
         )
     if charged:
         _provincial_tax_due(check, expected_types, name, all_stated)
-        _hst_where_it_applies(check, expected_types, name)
+        if not check.two_provinces:
+            _hst_where_it_applies(check, expected_types, name)
 
 
 def _nothing_charged(prov: str, expected_types: set[str]) -> str:
@@ -578,14 +622,17 @@ def _registration_numbers(check: _TaxCheck) -> None:
             check.add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
 
-def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None) -> None:
+def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None, erp_posts: frozenset[str]) -> None:
     """Every tax charged must have a GL treatment the user has set up. Non-Canadian tax (OTHER) too: set up to post
     to its own account, it would otherwise post to a blank GL. Meals (D-90): half the tax on a meals line is
-    expensed, so which lines carry the tax decides how much (B-868)."""
+    expensed, so which lines carry the tax decides how much (B-868). A recovered tax JD Edwards posts itself from
+    the pay item (``erp_posts``) posts to no account of ours: a missing one is not asked for (B-2259)."""
     setup = check.setup
     for tax_type in sorted(check.posted):
         t = setup.treatment(tax_type)
         if t.needs_gl and not t.gl_code:
+            if tax_type in erp_posts:
+                continue
             check.add(ERROR, "TAX_GL_UNMAPPED", f"no GL account is set for {tax_type}: set it in GL accounts & tax")
         elif t.needs_gl and known_gl_codes is not None and t.gl_code not in known_gl_codes:
             check.add(
@@ -731,16 +778,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
-            items = list(enumerate(coding.line_items))
-            # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of
-            # scope (never spread onto a line that says it carries no tax), else every line.
-            targets = (
-                [(i, li) for i, li in items if tl.tax_type in li.taxes_applied]
-                or [(i, li) for i, li in items if tax_state(li, tl.tax_type) != NOT_DUE]
-                or items
-            )
-            shares = split(tl.tax_amount, [li.amount for _, li in targets], places)
-            for (idx, _li), share in zip(targets, shares, strict=True):
+            for idx, share in tax_shares(coding.line_items, tl, places):  # a tip takes none of it (B-2169)
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
                 e["amount"] = half_up(e["amount"] + share)
@@ -809,11 +847,14 @@ def half_down(amount: float, places: int = 2) -> float:
 
 
 def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
-    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it (as PST is spread,
-    ``build_gl_distribution``), tip lines left out (a voluntary tip is not taxed), in cents. The JD Edwards pay items
-    take the same shares (B-867; a pay item per line, by the same rule, B-1889)."""
+    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, tip lines left out (a
+    voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
+    (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
+    the same rule, B-1889)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
+    # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope
+    # (never spread onto a line that says it carries no tax), else every line.
     targets = (
         [(i, li) for i, li in items if tax_type in li.taxes_applied]
         or [(i, li) for i, li in items if tax_state(li, tax_type) != NOT_DUE]

@@ -131,6 +131,74 @@ def test_in_a_browser_the_first_sign_in_sets_a_password_then_the_authenticator_a
     assert errors == []
 
 
+LOOK = """e => { const s = getComputedStyle(e); return {
+    height: s.height, width: s.width, radius: s.borderTopLeftRadius, border: s.borderTopWidth + ' ' + s.borderTopColor,
+    padding: s.paddingLeft, font: s.fontSize + ' ' + s.fontFamily, back: s.backgroundColor}; }"""
+# Whether the page's first table fits: no sideways scroll of the page or of the table's box, and every link and button
+# of its last column inside that box.
+FITS = """() => { const wrap = document.querySelector('.table-wrap'), box = wrap.getBoundingClientRect();
+    const last = [...wrap.querySelectorAll('tbody tr td:last-child :is(a, button)')];
+    const inside = b => { const r = b.getBoundingClientRect();
+                          return r.width > 0 && r.left >= box.left - 1 && r.right <= box.right + 1; };
+    return {page: document.documentElement.scrollWidth <= window.innerWidth,
+            table: wrap.scrollWidth <= wrap.clientWidth, buttons: last.length, reachable: last.every(inside)}; }"""
+
+
+def _look(page, selector: str) -> dict:
+    """How a box of a form looks, nothing in the page focused: what the stylesheet gives every text box. The blur and
+    the look are one step in the page: a box with ``autofocus`` can take the focus at any moment while the page is
+    still loading, and a look taken a moment after the blur then read the focused box's border (seen in CI)."""
+    page.wait_for_load_state("load")
+    return page.eval_on_selector(
+        selector, f"e => {{ document.activeElement && document.activeElement.blur(); return ({LOOK})(e); }}"
+    )
+
+
+def test_in_a_browser_every_password_box_looks_like_the_other_boxes(browser, store):
+    """B-2109: the stylesheet every page loads styled text, email, search, number and date boxes, not password ones:
+    on the login page, the first password, *Your password* (and the keys of Settings' forms outside its own
+    stylesheet) they were the browser's own thin boxes under a rounded, taller username box."""
+    chromium, base = browser
+    store.add_user("newbie", "abcd-efgh-jkmn-pqrs", role="clerk", display_name="New Bie")
+    page = chromium.new_page(viewport=LAPTOP)
+    page.goto(base + "/login")
+    usual = _look(page, "input[name=username]")
+    assert usual["height"] == "34px" and usual["radius"] != "0px"
+    assert _look(page, "input[name=password]") == usual
+    page.fill("input[name=username]", "newbie")
+    page.fill("input[name=password]", "abcd-efgh-jkmn-pqrs")
+    page.click("button:has-text('Log in')")
+    page.wait_for_url("**/login/new-password*")  # the first password
+    assert [_look(page, f"input[name={name}]") for name in ("current", "new", "again")] == [usual] * 3
+    page, errors = _log_in(browser, store, "boss", path="/account/password")  # Your password
+    boxes = [_look(page, f"input[name={name}]") for name in ("current", "new", "again")]
+    assert all({**box, "width": ""} == {**usual, "width": ""} for box in boxes) and errors == []
+
+
+@pytest.mark.parametrize("width", [1366, 1280])
+def test_in_a_browser_the_users_and_backups_tables_fit_a_laptop_screen(browser, store, tmp_path, width):
+    """B-2110: at 1280 to 1366 pixels wide the People table of *Users* and the Backups table were wider than their
+    card: *Reset password*, *Reset authenticator* and *Turn off*, and a backup's *Restore this state* and
+    *Download*, were cut off until the table was scrolled sideways, which hid its first column. Each fits its card:
+    nothing to scroll, the page neither, and every button of the last column is on the screen's width."""
+    chromium, base = browser
+    uid = store.add_user("mona.manager", GOOD, role="manager", display_name="Mona Manager-Longname")
+    enrol(store, uid)  # (the widest row: a Manager's cost centers, and all three buttons)
+    second = tmp_path / "second"
+    second.mkdir()
+    store.set_setting("backup_copy_dir", str(second))
+    store.backup_now()
+    store.backup_now(label="before-restore")
+    page, errors = _log_in(browser, store, "boss", path="/admin/users")
+    page.set_viewport_size({"width": width, "height": 768})
+    assert page.evaluate(FITS) == {"page": True, "table": True, "buttons": 3 * 4 + 1, "reachable": True}
+    page.goto(base + "/settings/data")
+    page.wait_for_selector(".table-wrap")
+    links = 2 * len(store.list_backups())  # Restore this state, Download
+    assert page.evaluate(FITS) == {"page": True, "table": True, "buttons": links, "reachable": True}
+    assert errors == []
+
+
 def test_in_a_browser_read_only_opens_an_invoice_without_a_refusal(browser, store):
     """B-1100: opening an invoice posted its check, which Read-only is refused (a 403 toast); B-1101: its fields
     could be typed in. Read-only sees the stored checks, posts nothing and changes nothing."""

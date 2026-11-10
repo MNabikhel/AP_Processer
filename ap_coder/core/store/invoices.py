@@ -27,7 +27,6 @@ from ._base import (
     _LOOK_AGAIN_SECONDS,
     _NOT_FOUND,
     APPROVED,
-    CHECKS_STAMP_KEY,
     FAILED,
     PARKED,
     PENDING,
@@ -80,7 +79,7 @@ class InvoicesMixin:
         sha = sha256 or (hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None)
         out = output or {}
         if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
-            validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}
+            validation = self.checked_stamp(validation)
         val = validation or {}
         key = self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number"))  # B-1021
         with self._conn() as conn:
@@ -674,8 +673,8 @@ class InvoicesMixin:
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at, final_tax_code,
-                   tax_source, tax_province, tax_uncollected)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   tax_source, tax_province, tax_uncollected, final_remark, remark_from)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 feedback_rows,
             )
         return counts
@@ -778,6 +777,8 @@ class InvoicesMixin:
                     ),
                     province,
                     missing,
+                    " ".join(str(li.get("remark") or "").split()),  # the remark it is keyed with (D-213)
+                    str(li.get("remark_from") or ""),
                 )  # fmt: skip
             )
         return out

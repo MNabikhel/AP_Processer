@@ -65,7 +65,7 @@
   <div class="table-wrap">
     <table class="apc-table">
       <thead><tr><th>#</th><th>Vendor</th><th>Invoice #</th><th>Why not</th></tr></thead>
-      <tbody>{% for p in problems %}<tr><td><b>{{ p.id }}</b></td><td>{{ p.vendor }}</td><td>{{ p.number }}</td>
+      <tbody>{% for p in problems %}<tr><td><a href="/review/{{ p.id }}" title="Open the invoice"><b>{{ p.id }}</b></a></td><td>{{ p.vendor }}</td><td>{{ p.number }}</td>
         <td class="w">{% for reason in p.reasons %}<div>{{ reason }}</div>{% endfor %}
           {% if p.an8 and jde_settings %}<a class="small" href="/settings/jde#an8">Supplier address numbers</a>{% endif %}</td></tr>{% endfor %}</tbody>
     </table>
@@ -81,6 +81,9 @@
   {% if just.format == jde_format %}
   <p class="muted">Load F0411Z1.csv and F0911Z1.csv into the Z-tables, then run R04110ZA in proof mode first, then final
     (see README.txt in the ZIP). If the load fails, {{ undo_text }} and export again.</p>
+  {% elif just.format == keying_format %}
+  <p class="muted">Read it, or print it, while typing each voucher into JD Edwards (Standard Voucher Entry). Its
+    invoices are on keying sheet {{ just.id }} from now on, no longer in Ready to export: to change one, {{ undo_text }}.</p>
   {% else %}
   <p class="muted">Import this file into your ERP. If the import fails, {{ undo_text }} and export again.</p>
   {% endif %}
@@ -140,12 +143,18 @@
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">receipt_long</span>Invoices already in the ERP{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
   <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
-    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.</p>
+    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.
+    JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
   {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
   {% if reg %}
   {{ preview(reg, "/exports", {"register": reg.token}) }}
   <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long>
-    {{ columns(reg) }}
+    {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
+    <input type="hidden" name="file" value="{{ reg.token }}">
+    <input type="hidden" name="sheet" value="{{ reg.sheet }}">
+    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
+    <label class="check"><input type="checkbox" name="whole" value="1"> This list is every voucher of the period it covers (the grid was not filtered by supplier, batch or pay status): also take off the list the vouchers of that period it no longer shows</label>
+    {% else %}{{ columns(reg) }}{% endif %}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>
@@ -177,7 +186,7 @@
           <td><b>{{ b.id }}</b></td><td>{{ b.when }}</td><td>{{ b.actor or "" }}</td><td class="r">{{ b.invoices }}</td>
           <td class="r">{% for cur, t in b.amounts %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</td>
           <td>{{ b.format_label }}</td>
-          <td>{{ ui.pill("Undone", "gray", "undo") if b.undone_at else ui.pill("Exported", "ok", "check") }}</td>
+          <td>{{ ui.pill("Undone", "gray", "undo") if b.undone_at else (ui.pill("On keying sheet", "ok", "keyboard") if b.keying else ui.pill("Exported", "ok", "check")) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -199,8 +208,9 @@
   {% if left_out[0] %}
   <div class="flash warn"><span class="ms" aria-hidden="true">rule</span><div>
     {{ left_out[0] }} of {{ left_out[1] | plural("invoice") }} in batch {{ chosen.id }} cannot go to JD Edwards and
-    {{ "are" if left_out[0] > 1 else "is" }} left out of this file{% if left_out[0] == left_out[1] %}, so it holds no invoice{% endif %}
-    (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in the ZIP.</div></div>
+    {% if again_fmt == jde_format %}{{ "are" if left_out[0] > 1 else "is" }} left out of this file{% if left_out[0] == left_out[1] %}, so it holds no invoice{% endif %}
+    (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in the ZIP.{% else %}{{ "are" if left_out[0] > 1 else "is" }} not to type{% if left_out[0] == left_out[1] %}, so the sheet holds no voucher{% endif %}:
+    the workbook's sheet "Not ready" lists {{ "them" if left_out[0] > 1 else "it" }} with why.{% endif %}</div></div>
   {% endif %}
   {% if again_fmt == jde_format and (jde_api.posted or jde_api.maybe) %}{# posted through the API: never loaded again (D-134) #}
   <div class="flash warn"><span class="ms" aria-hidden="true">cloud_done</span><div>

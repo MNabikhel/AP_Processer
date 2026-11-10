@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -94,5 +96,68 @@ def test_invalid_tax_values_rejected(ground_truth, path, value):
 
 def test_extra_fields_rejected(ground_truth):
     ground_truth["notes"] = "x"
+    with pytest.raises(ValidationError):
+        InvoiceCoding.model_validate(ground_truth)
+
+
+def test_a_tax_amount_read_on_a_line_is_kept_and_an_invoice_without_one_is_stored_as_before(ground_truth):
+    """``LineItem.taxes_read``: the tax printed on a line, tax by tax. None (most invoices print one total) is left
+    out of what is stored and exported, byte for byte, and the model is never asked for it."""
+    assert "taxes_read" not in build_json_schema()["properties"]["line_items"]["items"]["properties"]
+    coding = InvoiceCoding.model_validate(ground_truth)
+    assert coding.line_items[0].taxes_read is None
+    stored = json.dumps(coding.to_output())
+    assert all(list(line) == TARGET_LINE for line in json.loads(stored)["line_items"])
+    assert json.dumps(InvoiceCoding.model_validate(json.loads(stored)).to_output()) == stored
+    assert json.loads(coding.model_dump_json()) == {**json.loads(stored), "pay_from_account": ""}
+    assert "taxes_read" not in coding.line_items[0].model_dump()
+    assert "taxes_read" not in coding.model_dump_json()
+
+    ground_truth["line_items"][0]["taxes_read"] = {" hst ": 26, "GST": 0.0}
+    out = InvoiceCoding.model_validate(ground_truth).to_output()
+    assert out["line_items"][0]["taxes_read"] == {"GST": 0.0, "HST": 26.0}
+    assert list(out["line_items"][0]) == [*TARGET_LINE[:-1], "taxes_read", TARGET_LINE[-1]]
+    assert InvoiceCoding.model_validate(out).to_output() == out
+    assert all("taxes_read" not in line for line in out["line_items"][1:])
+
+
+def test_a_line_stores_each_of_its_optional_keys_only_when_it_says_something(ground_truth):
+    """``taxes_read``, ``candidates`` and ``decided_by`` are each left out of a stored line that has none, by one
+    serializer: a model keeps only the last one defined, and with two (one for the tax read, one for the other two)
+    every line stored was given ``"candidates": []`` and ``"decided_by": {}`` (B-2183)."""
+    line = InvoiceCoding.model_validate(ground_truth).line_items[0]
+    assert list(line.model_dump()) == TARGET_LINE
+    assert list(InvoiceCoding.model_validate(ground_truth).model_dump()["line_items"][0]) == TARGET_LINE
+    for name, value in (("taxes_read", {"GST": 1.0}), ("candidates", [{"account": "100.7340.3307"}]),
+                        ("decided_by", {"source": "person"})):  # fmt: skip
+        kept = line.model_copy(update={name: value}).model_dump()
+        assert set(kept) - set(TARGET_LINE) == {name} and kept[name] == value, name
+
+
+@pytest.mark.parametrize("bad", [{"VAT": 1.0}, {"GST": "a lot"}, ["GST"]])
+def test_a_tax_amount_read_that_is_no_tax_or_no_amount_is_rejected(ground_truth, bad):
+    ground_truth["line_items"][0]["taxes_read"] = bad
+    with pytest.raises(ValidationError):
+        InvoiceCoding.model_validate(ground_truth)
+
+
+def test_a_line_keeps_its_remark_and_one_without_is_stored_byte_for_byte_as_before(ground_truth):
+    """``LineItem.remark`` and ``remark_from`` (D-213): the model is never asked for them, and a line with no remark
+    is stored as it always was. So is one with no candidates and no decision (B-2187: the line had two serializers,
+    of which pydantic keeps the last, so every line was stored with ``"candidates": [], "decided_by": {}``)."""
+    asked = build_json_schema()["properties"]["line_items"]["items"]["properties"]
+    assert not {"remark", "remark_from", "candidates", "decided_by"} & set(asked)
+    old = json.dumps(InvoiceCoding.model_validate(ground_truth).to_output())  # an invoice stored before
+    assert all(list(line) == TARGET_LINE for line in json.loads(old)["line_items"])
+    assert json.dumps(InvoiceCoding.model_validate(json.loads(old)).to_output()) == old
+
+    ground_truth["line_items"][0].update(remark="May janitorial 410 Elm", remark_from="supplier")
+    out = InvoiceCoding.model_validate(ground_truth).to_output()
+    first = out["line_items"][0]
+    assert list(first) == [*TARGET_LINE, "remark", "remark_from"]
+    assert (first["remark"], first["remark_from"]) == ("May janitorial 410 Elm", "supplier")
+    assert all(list(line) == TARGET_LINE for line in out["line_items"][1:])
+    assert InvoiceCoding.model_validate(out).to_output() == out
+    ground_truth["line_items"][0]["remark_from"] = "somebody"
     with pytest.raises(ValidationError):
         InvoiceCoding.model_validate(ground_truth)

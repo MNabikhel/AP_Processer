@@ -29,10 +29,12 @@ import hashlib
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..capture.bridge import said_numbers
 from ..coding.line_tax import tax_code_of
 
 log = logging.getLogger(__name__)
@@ -40,7 +42,9 @@ log = logging.getLogger(__name__)
 SETTING = "verifier"  # Settings → Reading, as JSON: {"on", "rounds", "minutes"}
 DEFAULT_ROUNDS, MAX_ROUNDS = 3, 6
 DEFAULT_MINUTES, MAX_MINUTES = 5.0, 30.0
-MAX_PAGES = 3  # page images sent: the header, the lines, the totals
+# Page images sent: the first page (the header), the last (the totals) and the page with the most line items
+# (``imaging.pages_to_show``). Of a longer invoice it is told which pages it has (``PAGES_GIVEN``).
+MAX_PAGES = 3
 MAX_TRIES = 3  # reviews the model server cut off before any answer, before an invoice leaves the line as failed
 MAX_LINES = 60  # an invoice with more lines than this is not reviewed (it would not fit the model): a person checks it
 DESCRIPTION_CHARS = 160  # of each line's description, as it is shown
@@ -95,15 +99,29 @@ def vendor_record(store: Any, output: dict[str, Any]) -> dict[str, Any] | None:
     return store.get_vendor(key)
 
 
-def schema(fields: list[str]) -> dict[str, Any]:
+# Said with an invoice it is not shown every page of (B-2216): what it cannot see is "not shown", never "wrong".
+PAGES_GIVEN = (
+    "You are given {given} of this invoice's {count} pages, not the others. An item entered with a value that you "
+    "cannot find on the pages you have may be on a page you were not given: it is not shown, not wrong. For such an "
+    "item set not_shown true (its agree is then ignored) and say so in the reason; it does not count against "
+    "confident. Set agree false only when the pages you have show something else than was entered."
+)
+
+
+def schema(fields: list[str], not_shown: bool = False) -> dict[str, Any]:
     """The answer's JSON schema: an entry per field asked about (``fields``) and per line, then confident and a
-    summary."""
+    summary. ``not_shown``: for an invoice it is not shown every page of, each entry also says whether the item is on
+    a page it was not given."""
     field = {"type": "object", "additionalProperties": False, "required": ["field", "agree", "on_page", "reason"],
              "properties": {"field": {"type": "string", "enum": fields or list(FIELDS)}, "agree": {"type": "boolean"},
                             "on_page": {"type": ["string", "null"]}, "reason": {"type": "string"}}}  # fmt: skip
     line = {"type": "object", "additionalProperties": False, "required": ["line_number", "agree", "reason"],
             "properties": {"line_number": {"type": "integer"}, "agree": {"type": "boolean"},
                            "reason": {"type": "string"}}}  # fmt: skip
+    if not_shown:
+        for item in (field, line):
+            item["required"] = [*item["required"], "not_shown"]
+            item["properties"]["not_shown"] = {"type": "boolean"}
     return {"type": "object", "additionalProperties": False, "required": ["fields", "lines", "confident", "summary"],
             "properties": {"fields": {"type": "array", "items": field}, "lines": {"type": "array", "items": line},
                            "confident": {"type": "boolean"}, "summary": {"type": "string"}}}  # fmt: skip
@@ -208,8 +226,10 @@ def question(shown: dict[str, Any], fields: list[str], lines: list[int], earlier
     """The user message's text: what to check (all of it, or what it disputed), and its own earlier answers."""
     ask = {"fields": {f: shown["fields"].get(f, "") for f in fields},
            "lines": [li for li in shown["lines"] if li.get("line_number") in lines]}  # fmt: skip
-    context = {k: v for k, v in shown.items() if k not in ("fields", "lines")}
+    context = {k: v for k, v in shown.items() if k not in ("fields", "lines", "pages")}
+    given = shown.get("pages")  # {"given": [1, 4, 9], "count": 9} when it is not shown every page
     text = ["Check this invoice against its pages (the images below).",
+            *([PAGES_GIVEN.format(given=said_numbers(given["given"]), count=given["count"])] if given else []),
             "What was entered, to check:", json.dumps(ask, ensure_ascii=False, indent=1),
             "For reference (the taxes, the vendor list's record of the vendor, the math worked out again, and AP's "
             "lessons for this vendor):",
@@ -255,6 +275,28 @@ def _agreed(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[
     return got_f, got_l
 
 
+def _not_shown(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[set[str], set[int]]:
+    """The fields and lines asked about that one answer says are on a page it was not given (not_shown true)."""
+    hidden_f = {str(i["field"]) for i in data.get("fields") or []
+                if isinstance(i, dict) and i.get("field") in fields and i.get("not_shown") is True}  # fmt: skip
+    hidden_l: set[int] = set()
+    for item in data.get("lines") or []:
+        try:
+            if item.get("not_shown") is True and int(item.get("line_number")) in lines:
+                hidden_l.add(int(item.get("line_number")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return hidden_f, hidden_l
+
+
+def _why_not_shown(given: dict[str, Any], fields: set[str], lines: set[int]) -> str:
+    """Why it is not sure of an invoice it was shown some pages of: which, and what was not on them."""
+    missing = [FIELDS[f] for f in FIELDS if f in fields] + ([said_numbers(sorted(lines), "line", "lines")] if lines
+                                                             else [])  # fmt: skip
+    return (f"it was shown {said_numbers(given['given'])} of the {given['count']}; not on them, so not checked: "
+            f"{', '.join(missing)}")  # fmt: skip
+
+
 def _parse(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[dict[str, dict], dict[int, str], bool,
                                                                                   str]:  # fmt: skip
     """(disputed fields, disputed lines, confident, summary) from one answer. An item asked about but not answered is
@@ -287,7 +329,9 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
     ``seconds`` in all. Round 1 is everything; after a confident round the next is what it disputed, with its
     earlier answers; after a round it was not confident of, everything again (what it was unsure of, or never
     answered, is not dropped). A dispute it keeps on a second look while confident is a disagreement; one it drops is
-    resolved. Agreed means every field and every line was answered "agree" in a round it was confident of. The model
+    resolved. Agreed means every field and every line was answered "agree" in a round it was confident of. Of an
+    invoice it is shown some pages of (``shown["pages"]``), an item it says is not shown is neither agreed nor
+    disputed: once the rest is agreed it is not sure, saying which pages it had and what was not on them. The model
     server failing on the first question (``temporary``: stopped, no answer in time) is raised: that is no review."""
     start = clock()
     all_fields = list(FIELDS)
@@ -299,6 +343,9 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
     summary, why, done = "", "", 0
     disputed: dict[str, dict] = {}
     disputed_lines: dict[int, str] = {}
+    given = shown.get("pages")
+    hidden_f: set[str] = set()  # said to be on a page it was not given, the last time it was asked
+    hidden_l: set[int] = set()
     if len(all_lines) > MAX_LINES:  # too long to be asked about in one go: never agreed, so not asked
         return Review(UNSURE, {}, {}, 0, 0.0, "", f"{len(all_lines)} lines: more than the {MAX_LINES} it checks")
     while done < rounds:
@@ -315,6 +362,10 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
             break
         done += 1
         got_f, got_l, confident, summary = _parse(data, fields, lines)
+        now_f, now_l = _not_shown(data, fields, lines) if given else (set(), set())
+        hidden_f, hidden_l = (hidden_f - set(fields)) | now_f, (hidden_l - set(lines)) | now_l
+        got_f = {f: v for f, v in got_f.items() if f not in now_f}  # not shown is not a dispute
+        got_l = {n: r for n, r in got_l.items() if n not in now_l}
         # What it now says about the items asked; items not asked this round keep their earlier answer (none: they
         # were agreed).
         disputed = {f: v for f, v in {**disputed, **got_f}.items() if f in got_f or f not in fields}
@@ -324,11 +375,16 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
             agreed_f, agreed_l = _agreed(data, fields, lines)
             confirmed_f |= agreed_f
             confirmed_l |= agreed_l
-        confirmed_f -= set(got_f)
-        confirmed_l -= set(got_l)
+        confirmed_f -= set(got_f) | hidden_f
+        confirmed_l -= set(got_l) | hidden_l
         everything = confirmed_f >= set(all_fields) and confirmed_l >= set(all_lines)
         if confident and not disputed and not disputed_lines and everything:
             return Review(AGREED, {}, {}, done, round(clock() - start, 1), summary)
+        seen = confirmed_f | hidden_f >= set(all_fields) and confirmed_l | hidden_l >= set(all_lines)
+        if confident and not disputed and not disputed_lines and (hidden_f or hidden_l) and seen:
+            # All it could see is right; another look at the same pages would show it no more.
+            return Review(UNSURE, {}, {}, done, round(clock() - start, 1), summary,
+                          _why_not_shown(given, hidden_f, hidden_l))  # fmt: skip
         if (confident and previous is not None and (now[0] or now[1]) and now[0] <= previous[0]
                 and now[1] <= previous[1]):  # fmt: skip
             # It stands by what it disputed, on a second look: a disagreement, for a person to settle.
@@ -349,10 +405,11 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
 MIN_CALL_SECONDS = 10.0  # a call is never given less, however little of the budget is left
 
 
-def ask_model(coder: Any, images: list[Any], *, seconds_left: Callable[[], float] | None = None
-              ) -> Callable[[str, list[str], list[int]], dict[str, Any]]:  # fmt: skip
+def ask_model(coder: Any, images: list[Any], *, seconds_left: Callable[[], float] | None = None,
+              not_shown: bool = False) -> Callable[[str, list[str], list[int]], dict[str, Any]]:  # fmt: skip
     """``ask`` for ``review``: one call to the local chat model with the page images, thinking on. ``seconds_left``:
-    what is left of the reviewer's time for the invoice, the most each call may take (not AP_LLM_TIMEOUT_SECONDS)."""
+    what is left of the reviewer's time for the invoice, the most each call may take (not AP_LLM_TIMEOUT_SECONDS).
+    ``not_shown``: the images are not every page of the invoice (``schema``)."""
     from . import local_llm
     from .inference import CodingError
 
@@ -363,7 +420,7 @@ def ask_model(coder: Any, images: list[Any], *, seconds_left: Callable[[], float
         content += [{"type": "image_url", "image_url": {"url": img.to_data_url(), "detail": "high"}} for img in images]
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
         timeout = max(MIN_CALL_SECONDS, float(seconds_left())) if seconds_left is not None else None
-        response = coder._local_create(model, messages, schema(fields), thinking=True, timeout=timeout)
+        response = coder._local_create(model, messages, schema(fields, not_shown), thinking=True, timeout=timeout)
         # Strict: a draft in its thinking is not its answer (an answer that can approve an invoice).
         reply = local_llm.read_reply(response.choices[0], response_limit(coder), strict=True)
         if reply.data is None:
@@ -565,6 +622,21 @@ def _taken_over(iid: int) -> Outcome:
     return Outcome(iid, "skipped", message)
 
 
+def busiest_page(capture: Any) -> int | None:
+    """The page with the most line items in an invoice's reading (the first of them when several have as many);
+    None when no line was read on a page."""
+    from ..capture.types import CaptureResult
+
+    if not capture:
+        return None
+    try:
+        read = capture if isinstance(capture, CaptureResult) else CaptureResult.from_dict(capture)
+    except Exception:  # noqa: BLE001 - an older capture: the first and last pages are enough
+        return None
+    pages = Counter(item.boxes[0].page for item in read.line_items if item.boxes)
+    return min(pages, key=lambda page: (-pages[page], page)) if pages else None
+
+
 def _coder(settings: Any, store: Any) -> Any:
     from .inference import InvoiceCoder
     from .page_worker import reference_data
@@ -575,7 +647,7 @@ def _coder(settings: Any, store: Any) -> Any:
 def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSettings, coder: Any,
             clock: Callable[[], float]) -> Outcome:  # fmt: skip
     from ..core.store import PARKED, REVIEW
-    from .imaging import render_page_images
+    from .imaging import page_count, pages_to_show, render_page_images
     from .inference import CodingError
 
     iid = int(row["invoice_id"])
@@ -597,7 +669,8 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         model = coder._prepare_local()
         if not coder.profile.supports_vision:
             raise CodingError(f"{model} can't see pages: load a model that can (Gemma 4 12B)")
-        images = render_page_images(path, MAX_PAGES)
+        count = page_count(path)
+        images = render_page_images(path, pages=pages_to_show(count, MAX_PAGES, busiest_page(store.get_capture(iid))))
     except CodingError as exc:  # not loaded, can't see: it waits in line
         _end(store, row, "waiting", error=str(exc)[:300])
         return Outcome(iid, "postponed", str(exc)[:300])
@@ -630,8 +703,10 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     )
     if learned:
         shown["lessons"] = learned
+    if count > len(images):  # a long invoice: it is told which pages it has
+        shown["pages"] = {"given": [image.page_number for image in images], "count": count}
     budget, started = cfg.minutes * 60, clock()
-    ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started))
+    ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started), not_shown="pages" in shown)
     from . import local_llm
 
     breaker, began = local_llm.chat_failover(settings.llm), time.time()

@@ -45,7 +45,10 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185), and
 # billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
 # purchasing.py, D-194), and answer_wants (by _SCHEMA, no version of its own either: the settled answers the server's
-# background process works out again, reports.py, D-198)
+# background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
+# of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209), and
+# journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
+# JD Edwards' Transaction Journal has it, journal.py)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -57,6 +60,9 @@ _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
 # The key of a stored validation that holds the stamp of what it was checked against (``Store.checks_stamp``, B-815).
 CHECKS_STAMP_KEY = "checks_stamp"
+# The key of a report's dict that says which reference data its checks were made with (``ReferenceData.stamp``): read
+# when the validation is stored, never stored itself (``Store.checked_stamp``, B-2094).
+REFERENCE_STAMP_KEY = "reference_stamp"
 
 
 def _in_list(column: str) -> str:
@@ -144,6 +150,16 @@ QUEUE_CHANGES = "CREATE TABLE IF NOT EXISTS queue_changes (seq INTEGER PRIMARY K
 ANSWER_WANTS = ("CREATE TABLE IF NOT EXISTS answer_wants (name TEXT NOT NULL, asked TEXT NOT NULL, args TEXT NOT NULL, "
                 "db TEXT NOT NULL, asked_at REAL NOT NULL, wanted_at REAL, tries INTEGER NOT NULL DEFAULT 0, "
                 "PRIMARY KEY (name, asked))")  # fmt: skip
+# The chart of accounts and the business units as JD Edwards exports them (chart.py, D-209): every row of the account
+# master (a business unit's own header row has no object) and of the business unit master. Made by ``_SCHEMA`` and in
+# a restore's copy of an older backup (``_own_triggers``): the reference data asks them of whatever database is there.
+CHART_TABLES = (
+    "CREATE TABLE IF NOT EXISTS chart_accounts (bu TEXT NOT NULL, object TEXT NOT NULL DEFAULT '', subsidiary TEXT NOT "
+    "NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', lod INTEGER NOT NULL DEFAULT 0, posting_edit TEXT NOT NULL "
+    "DEFAULT '', category TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, subsidiary))",
+    "CREATE TABLE IF NOT EXISTS business_units (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', company TEXT NOT "
+    "NULL DEFAULT '', type TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '')",
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -170,7 +186,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     suggested_gl TEXT, final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT,
     outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '',
     tax_source TEXT NOT NULL DEFAULT '', tax_province TEXT NOT NULL DEFAULT '',
-    tax_uncollected TEXT NOT NULL DEFAULT '');
+    tax_uncollected TEXT NOT NULL DEFAULT '', final_remark TEXT NOT NULL DEFAULT '',
+    remark_from TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
 CREATE TABLE IF NOT EXISTS events (
@@ -333,8 +350,27 @@ CREATE TABLE IF NOT EXISTS bulk_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owne
 CREATE UNIQUE INDEX IF NOT EXISTS bulk_jobs_one ON bulk_jobs (owner, db) WHERE state IN ('waiting', 'running');
 CREATE INDEX IF NOT EXISTS bulk_jobs_state ON bulk_jobs (state, id);
 CREATE INDEX IF NOT EXISTS bulk_jobs_owner ON bulk_jobs (owner, id);
+CREATE TABLE IF NOT EXISTS journal_files (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, hash TEXT NOT NULL,
+    loaded_at TEXT NOT NULL, loaded_by TEXT NOT NULL DEFAULT '', first_date TEXT NOT NULL DEFAULT '', last_date TEXT
+    NOT NULL DEFAULT '', vouchers INTEGER NOT NULL DEFAULT 0, lines INTEGER NOT NULL DEFAULT 0, coding_lines INTEGER
+    NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '{}', done INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS journal_files_hash ON journal_files (hash);
+CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL, row INTEGER NOT NULL,
+    doc_type TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', gl_date TEXT NOT NULL DEFAULT '',
+    supplier_number TEXT NOT NULL DEFAULT '', supplier_key TEXT NOT NULL DEFAULT '', supplier_name TEXT NOT NULL
+    DEFAULT '', gross REAL NOT NULL DEFAULT 0, tax REAL NOT NULL DEFAULT 0, affiliate INTEGER NOT NULL DEFAULT 0,
+    credit INTEGER NOT NULL DEFAULT 0, balanced INTEGER NOT NULL DEFAULT 1, both_columns INTEGER NOT NULL DEFAULT 0,
+    coding_lines INTEGER NOT NULL DEFAULT 0, identity TEXT NOT NULL, counted INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS journal_vouchers_supplier ON journal_vouchers (supplier_key, gl_date);
+CREATE INDEX IF NOT EXISTS journal_vouchers_identity ON journal_vouchers (identity);
+CREATE INDEX IF NOT EXISTS journal_vouchers_file ON journal_vouchers (file_id);
+CREATE INDEX IF NOT EXISTS journal_vouchers_date ON journal_vouchers (gl_date);
+CREATE TABLE IF NOT EXISTS journal_lines (voucher_id INTEGER NOT NULL, n INTEGER NOT NULL, row INTEGER NOT NULL
+    DEFAULT 0, account TEXT NOT NULL, business_unit TEXT NOT NULL DEFAULT '', object TEXT NOT NULL DEFAULT '',
+    subsidiary TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', amount REAL NOT NULL DEFAULT 0,
+    remark TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, PRIMARY KEY (voucher_id, n));
 """
-_SCHEMA += ANSWER_WANTS + ";\n"  # (made in a restore's copy of an older backup too)
+_SCHEMA += ";\n".join((ANSWER_WANTS, *CHART_TABLES)) + ";\n"  # (made in a restore's copy of an older backup too)
 
 # The page reader's queue (``page_reads.status``, ``page_queue``). A read not renewed for READING_STALE_SECONDS was
 # interrupted (the computer slept, its process paused): it waits in line again. ``reader`` names the process reading

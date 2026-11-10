@@ -20,11 +20,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from ap_coder.bench import content as C
-from ap_coder.bench.wording import label, phrase, title, with_sep
+from ap_coder.bench.wording import TABLE_HEADS, label, phrase, title, with_sep
 from ap_coder.capture.types import Box
 
 GENERATOR_VERSION = 1
@@ -664,6 +665,13 @@ def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
 # --- rendering --------------------------------------------------------------------------------
 
 
+EXTRA_COLUMNS = 0.2  # the share of invoices whose line table prints more than the usual columns (B-2206)
+
+# A tax's own column heading in a line table that prints each line's tax: (English, French).
+TAX_COLUMN_HEADS = {"GST": ("GST", "TPS"), "HST": ("HST", "TVH"), "PST": ("PST", "TVP"), "QST": ("QST", "TVQ"),
+                    "RST": ("RST", "TVP")}  # fmt: skip
+
+
 class Renderer:
     def __init__(self, inv: Inv, rng: random.Random):
         self.inv, self.rng, self.k = inv, rng, inv.k
@@ -682,6 +690,9 @@ class Renderer:
         self.show_qst = bool(inv.vendor.qst) and S("show_qst").random() < 0.92
         self.page_bottom = self.H - self.m - 14  # leave room for the page number line
         self.vname = inv.extras.get("printed_name") or inv.vendor.name  # the vendor's name as printed
+        self.head_align = ""  # where the numeric columns' headings are printed, when not over the numbers' right edge
+        self.line_taxes: list[list[C.Tax]] = []  # the taxes each tax column of the line table prints, line by line
+        self.extra: list[str] = []  # what the line table prints beside the usual columns (the truth's "table_columns")
 
     # small helpers
     def lab(self, key: str) -> str:
@@ -990,6 +1001,63 @@ class Renderer:
         return a
 
     # --- table ---
+    def table_choice(self, name: str) -> random.Random:
+        """Where a choice of the line table's extra columns (``EXTRA_COLUMNS``) draws from: the supplier's own stream
+        when the style is pinned (as every style choice), else one seeded by the invoice. Never the invoice's own
+        stream: every invoice that draws none of them is rendered as it was before these tables were added."""
+        if self.S.pinned:
+            return self.S(f"table:{name}")
+        return random.Random(f"ap-bench-table:{self.inv.vendor.name}:{self.inv.number}:{name}")
+
+    def extra_columns(self, cols: list[tuple[str, str, float, str]]) -> list[tuple[str, str, float, str]]:
+        """``cols`` with the columns a share of invoices (``EXTRA_COLUMNS``) print beside the usual ones: the rows'
+        numbers ("#"), the amount before a discount and the discount, each line's tax as an amount (one column a
+        tax, or one for all) with or without the line's total with tax, or a tax code; and where the numeric
+        columns' headings are printed (``self.head_align``: over the numbers' right edge as before, from the
+        column's left edge as a spreadsheet does, or centred). The reader must still take the amount before tax
+        and after the discount, under its own heading."""
+        inv, T = self.inv, self.table_choice
+        self.head_align, self.line_taxes = "", []
+        if inv.kind != "invoice" or T("extra").random() >= EXTRA_COLUMNS:
+            return cols
+        lang = "fr" if inv.lang == "fr" else "en"  # (a bilingual invoice prints these few headings in English)
+
+        def head(key: str) -> str:
+            return T(f"head:{key}").choice(TABLE_HEADS[key][lang])
+
+        keys = [c[0] for c in cols]
+        amount_head = cols[keys.index("amount")][1]
+        self.head_align = T("head_align").choice(["", "", "left", "center"])
+        if T("number").random() < 0.5:
+            cols.insert(0, ("number", head("number"), 0.05, "left"))
+        if "unit_price" in keys and T("discount").random() < 0.35:
+            at = [c[0] for c in cols].index("amount")
+            cols[at:at] = [("before", head("before"), 0.12, "right"), ("discount", head("discount"), 0.09, "right")]
+        taxes = [t for t in inv.taxes if t.code in TAX_COLUMN_HEADS]
+        how = T("tax").random()
+        if taxes and how < 0.4 and self.k["totals"] != "footer":  # (a footer's totals sit under the last two columns)
+            if len(taxes) <= 2 and T("tax_split").random() < 0.6:
+                self.line_taxes = [[t] for t in taxes]
+                cols += [(f"tax{k}", TAX_COLUMN_HEADS[t.code][lang == "fr"], 0.08, "right")
+                         for k, t in enumerate(taxes)]  # fmt: skip
+            else:
+                self.line_taxes = [taxes]
+                cols.append(("tax0", head("tax"), 0.08, "right"))
+            if T("line_total").random() < 0.6:
+                with_tax = head("line_total")  # (never the amount's own heading again)
+                cols.append(("line_total", TABLE_HEADS["line_total"][lang][-1] if with_tax == amount_head else with_tax,
+                             0.13, "right"))  # fmt: skip
+        elif taxes and how < 0.65:
+            cols.append(("tax_code", head("tax_code"), 0.07, "left"))
+        if self.head_align:  # (room for a heading to stand apart from the next one: two that touch read as one)
+            cols = [(key, head, rel + 0.025 if al == "right" else rel, al) for key, head, rel, al in cols]
+        for key in ("unit", "sku", "before", "line_total"):  # the description keeps room for its words
+            if sum(c[2] for c in cols) > 0.72:
+                cols = [c for c in cols if c[0] != key and (key != "before" or c[0] != "discount")]
+        usual = ("sku", "description", "qty", "unit", "unit_price", "amount")
+        self.extra = [c[0] for c in cols if c[0] not in usual] + [f"headings {self.head_align}"] * bool(self.head_align)
+        return cols
+
     def columns(self, x0: float, x1: float) -> list[tuple[str, str, float, str]]:
         inv, S = self.inv, self.S
         has_qty = any(li.quantity is not None for li in inv.lines)
@@ -1003,6 +1071,7 @@ class Renderer:
                 cols.append(("unit", self.lab("unit"), 0.07, "left"))
             cols.append(("unit_price", self.lab("unit_price"), 0.14, "right"))
         cols.append(("amount", self.lab("amount"), 0.15, "right"))
+        cols = self.extra_columns(cols)
         fixed = sum(c[2] for c in cols)
         width = x1 - x0
         out = []
@@ -1012,6 +1081,20 @@ class Renderer:
             out.append((key, head, x, x + w, al))
             x += w
         return out
+
+    def line_discount(self, li: Any, cols: list) -> tuple[Decimal, Decimal]:
+        """(what is taken off each unit, what is taken off the line) where the table prints a discount column: on
+        about half the lines priced to the cent by a whole quantity, 5 or 10% of the unit price. The line's amount
+        stays the amount after it; its unit price is printed before it."""
+        none = Decimal("0.00")
+        if not any(c[0] == "discount" for c in cols) or li.kind != "item" or li.quantity is None or not li.unit_price:
+            return none, none
+        whole = li.quantity == li.quantity.to_integral_value() and li.unit_price == li.unit_price.quantize(none)
+        r = self.table_choice(f"discount:{li.description}:{li.amount}")
+        if not whole or li.quantity * li.unit_price != li.amount or li.amount <= 0 or r.random() < 0.5:
+            return none, none
+        each = C.money(li.unit_price * r.choice([Decimal("0.05"), Decimal("0.10")]))
+        return each, C.money(each * li.quantity)
 
     def table_header(self, cols, y: float) -> float:
         cv, s, style = self.cv, self.s, self.k["table"]
@@ -1028,11 +1111,28 @@ class Renderer:
             cv.hline(x0, x1, y + h, INK, 0.8)
         else:
             cv.hline(x0, x1, y + h, GREY, 0.5)
-        for _key, head, cx0, cx1, al in cols:
-            hs = cv.fit(head, s, cx1 - cx0 - 6, bold=True)
-            tx = cx0 + 3 if al == "left" else cx1 - 3
+        if self.head_align and any(
+            b[0] - a[1] < 2.2 * s for a, b in pairwise(self.heading_spans(cols, self.head_align))
+        ):
+            # Two headings would touch and read as one: over the numbers' right edge, as on every other table.
+            self.head_align, self.extra = "", [e for e in self.extra if not e.startswith("headings")]
+        for (_key, head, cx0, cx1, _al), (_h0, _h1, hs, al) in zip(cols, self.heading_spans(cols, self.head_align),
+                                                                  strict=True):  # fmt: skip
+            tx = cx0 + 3 if al == "left" else cx1 - 3 if al == "right" else (cx0 + cx1) / 2
             cv.text(tx, y + h * 0.66, head, hs, bold=True, color=color, align=al)
         return y + h
+
+    def heading_spans(self, cols, numeric: str) -> list[tuple[float, float, float, str]]:
+        """(from, to, font size, alignment) of each column's heading across the page, the numeric columns' headings
+        printed ``numeric`` ("left", "center"; "": over the numbers' right edge). The numbers stay right-aligned."""
+        out = []
+        for _key, head, cx0, cx1, al in cols:
+            hs = self.cv.fit(head, self.s, cx1 - cx0 - 6, bold=True)
+            al = numeric if al == "right" and numeric else al
+            width = self.cv.tw(head, hs, True)
+            start = cx0 + 3 if al == "left" else cx1 - 3 - width if al == "right" else (cx0 + cx1 - width) / 2
+            out.append((start, start + width, hs, al))
+        return out
 
     def cont_header(self) -> float:
         """Top of a continuation page: vendor name, the invoice number again, the table header."""
@@ -1076,10 +1176,24 @@ class Renderer:
             base = y + rowh * 0.66
             boxes = []
             desc = li.description
+            each_off, off = self.line_discount(li, cols)
+            taxed = [sum((C.money(li.amount * t.rate) for t in group), Decimal("0")) for group in self.line_taxes]
             for key, _head, cx0, cx1, al in cols:
                 tx = cx0 + 3 if al == "left" else cx1 - 3
                 if key == "sku":
                     val = li.sku
+                elif key == "number":
+                    val = str(i + 1)
+                elif key == "before":
+                    val = inv.amt(li.amount + off, symbol=False)
+                elif key == "discount":
+                    val = inv.amt(off, symbol=False)
+                elif key.startswith("tax") and key != "tax_code":
+                    val = inv.amt(taxed[int(key[3:])], symbol=False)
+                elif key == "line_total":
+                    val = inv.amt(li.amount + sum(taxed, Decimal("0")), symbol=False)
+                elif key == "tax_code":
+                    val = "".join(t.code[0] for t in inv.taxes if t.code in TAX_COLUMN_HEADS)  # "G", "GP", "H"
                 elif key == "description":
                     desc = cv.clip(li.description, s, cx1 - cx0 - 6)
                     val = desc
@@ -1092,7 +1206,7 @@ class Renderer:
                         val = ""
                     else:
                         places = 4 if li.unit_price != li.unit_price.quantize(Decimal("0.01")) else 2
-                        val = C.number_text(li.unit_price, dec, places)
+                        val = C.number_text(li.unit_price + each_off, dec, places)
                 else:
                     val = inv.amt(li.amount, symbol=bool(sym_lines))
                 if val:
@@ -1105,7 +1219,7 @@ class Renderer:
                 {
                     "description": desc,
                     "quantity": float(li.quantity) if li.quantity is not None and qty_col else None,
-                    "unit_price": float(li.unit_price) if li.unit_price is not None and qty_col else None,
+                    "unit_price": float(li.unit_price + each_off) if li.unit_price is not None and qty_col else None,
                     "amount": float(li.amount),
                     "kind": li.kind,
                     "box": _union(boxes),
@@ -1453,6 +1567,7 @@ class Renderer:
                 **({"freight": float(inv.freight)} if inv.freight is not None else {}),
                 "font": self.k["family"],
                 "date_style": inv.date_style,
+                **({"table_columns": self.extra} if self.extra else {}),
             },
         }
 
