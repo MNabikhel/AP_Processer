@@ -108,3 +108,81 @@ def test_a_claims_findings_say_whose_the_supplier_is_and_name_the_receipt_left_o
         plain = report()
         claim_findings(plain, other)
         assert [i.message for i in plain.issues] == [i.message for i in report().issues]
+
+
+def test_as_many_receipts_in_each_of_two_currencies_is_never_the_first_files_currency(reference):
+    """B-2285: a USD receipt first and a CAD one second made a USD claim, the other order a CAD one."""
+    usd = _receipt("Desert Diner", "2026-05-03", [_line(1, "Dinner", 40.0, ())], ("GST", "", 0.05, 0.0), 40.0, "USD")
+    said = ("it is in USD (40.00) and fuel.jpg in CAD, as many receipts in each: the claim was put in CAD, and its "
+            "currency is yours to set")  # fmt: skip
+    for receipts in ([Receipt("us.jpg", usd), Receipt("fuel.jpg", FUEL)],
+                     [Receipt("fuel.jpg", FUEL), Receipt("us.jpg", usd)]):  # fmt: skip
+        claim, notes = claim_coding(receipts, reference.tax)
+        assert (claim.currency, claim.subtotal, claim.grand_total) == ("CAD", 60.0, 63.0)
+        assert sorted(notes) == ["", said]
+        assert [li.amount for li in claim.line_items if li.description.startswith("us.jpg:")] == [0.0]
+
+
+def test_a_receipt_left_out_is_no_longer_named_once_its_amount_is_typed_and_the_totals_follow(reference):
+    """B-2286: the finding was read back from the reading on every check, whatever the line held by then. B-2287:
+    its line had the cost center "" where the company uses cost centers (an unknown one, not "none yet")."""
+    from ap_coder.coding.claim import totals_follow
+    from ap_coder.core.reference_data import UNASSIGNED
+
+    receipts = [Receipt("parking.pdf", None, "its total could not be read"), Receipt("fuel.pdf", FUEL)]
+    claim, notes = claim_coding(receipts, reference.tax, cost_centers=True)
+    assert claim.line_items[0].predicted_cost_center == UNASSIGNED
+    assert claim_coding(receipts, reference.tax)[0].line_items[0].predicted_cost_center == ""  # none are used
+    files = [{"kind": "claim", "name": r.name, "first_page": n, "pages": 1, "note": note}
+             for n, (r, note) in enumerate(zip(receipts, notes, strict=True), start=1)]  # fmt: skip
+    found = SimpleNamespace(issues=[])
+    claim_findings(found, files, claim)
+    assert [i.code for i in found.issues] == [NOT_ADDED]
+    # On the screen: its amount typed on its line, the totals still the ones without it.
+    header = {"subtotal": "60.00", "tax_total": "3.00", "grand_total": "63.00"}
+    lines = [{"description": li.description, "amount": f"{li.amount:.2f}"} for li in claim.line_items]
+    assert totals_follow(header, lines, files, float) == {}  # nothing typed yet
+    lines[0]["amount"] = "12.00"
+    assert totals_follow(header, lines, files, float) == {"subtotal": "72.00", "grand_total": "75.00"}
+    assert header == {"subtotal": "72.00", "tax_total": "3.00", "grand_total": "75.00"}
+    assert totals_follow(header, lines, files, float) == {}  # once: they are right now
+    mine = {"subtotal": "70.00", "tax_total": "3.00", "grand_total": "73.00"}  # totals a person typed are theirs
+    assert totals_follow(mine, lines, files, float) == {} and mine["subtotal"] == "70.00"
+    assert totals_follow(dict(header, subtotal="60.00"), lines, [{**f, "kind": "pages"} for f in files], float) == {}
+    typed = claim.model_copy(update={"line_items": [
+        claim.line_items[0].model_copy(update={"amount": 12.0, "unit_price": 12.0}), claim.line_items[1]]})  # fmt: skip
+    found = SimpleNamespace(issues=[])
+    claim_findings(found, files, typed)
+    assert found.issues == []
+
+
+def test_receipts_of_two_tax_areas_are_told_to_be_one_voucher_a_tax_area_with_which_files_are_of_which(reference):
+    """B-2288: JD Edwards' finding spelled out two pay items to key by hand, and nothing said what to do with a
+    claim."""
+    from ap_coder.coding.claim import SEPARATE_THEN_JOIN, tax_area, two_areas
+
+    receipts = [Receipt("a.jpg", FUEL), Receipt("b.jpg", LUNCH), Receipt("c.jpg", ROOM)]
+    assert [tax_area(r.coding.tax_lines) for r in receipts] == ["GST", "GST", "Ontario HST"]
+    assert tax_area([{"tax_type": "HST", "province": "", "rate": 0.15, "tax_amount": 1.5}]) == "HST 15%"
+    assert tax_area([{"tax_type": "PST", "province": "BC", "rate": 0.07, "tax_amount": 1.0}]) == ""
+    files = [{"kind": "claim", "name": r.name, "first_page": n, "pages": 1, "note": "",
+              "tax": tax_area(r.coding.tax_lines)} for n, r in enumerate(receipts, start=1)]  # fmt: skip
+
+    def held():
+        return SimpleNamespace(issues=[Issue(ERROR, "JDE_TAX_AREA", "JD Edwards: province of supply unknown: no JDE "
+                                             "tax area for the Canadian tax charged")])  # fmt: skip
+
+    found = held()
+    claim_findings(found, files, claim_coding(receipts, reference.tax)[0])
+    assert found.issues[0].message == (
+        "These receipts are of two tax areas (GST; Ontario HST), and JD Edwards takes one tax area a voucher: "
+        "separate them and join each tax area's receipts as its own voucher. GST: a.jpg, b.jpg. Ontario HST: c.jpg. "
+        + SEPARATE_THEN_JOIN)  # fmt: skip
+    assert "Make these separate invoices again" in SEPARATE_THEN_JOIN and "Add invoices" in SEPARATE_THEN_JOIN
+    # Receipts of one tax area: JD Edwards' own finding, as for any invoice.
+    found = held()
+    claim_findings(found, files[:2], claim_coding(receipts[:2], reference.tax)[0])
+    assert found.issues[0].message.startswith("JD Edwards: province of supply unknown")
+    assert two_areas(files[:2]) == "" and two_areas(files).startswith("These receipts are of two tax areas (GST; "
+                                                                      "Ontario HST), and JD Edwards takes one tax "
+                                                                      "area a voucher: join each")  # fmt: skip

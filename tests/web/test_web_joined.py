@@ -147,6 +147,159 @@ def test_files_ticked_in_the_folder_are_one_claim_then_separate_invoices_again(a
     assert client.post(f"/review/{invoices['IMG_0412.pdf']['id']}/separate", headers=PAGE).status_code == 409
 
 
+def test_a_second_join_of_a_file_is_refused_before_the_first_is_read_and_a_deleted_claim_takes_its_files(
+        app, client, store, tmp_path):  # fmt: skip
+    """B-2283, B-2284, B-2289 on the pages: two joins of overlapping files one after the other, nothing read in
+    between; the join in the claim's history; a deleted claim leaves nothing in ``originals/``."""
+    from ap_coder.web.pages.process import start_reading
+
+    saved = _receipts_in_folder(store)
+    folder = invoice_dir(store)
+    app.state.import_stop.set()  # nothing is read for now: the first voucher waits in line
+    first = client.post("/process/voucher", data={"names": ["IMG_0411.pdf", "IMG_0412.pdf"], "kind": "claim"},
+                        headers=PAGE)  # fmt: skip
+    assert first.json()["ok"] is True and store.list_invoices() == []
+    again = folder / "lunch (from a colleague).pdf"
+    again.write_bytes((folder / "originals" / "IMG_0412.pdf").read_bytes())
+    second = client.post("/process/voucher", data={"names": [again.name, "IMG_0413.pdf"], "kind": "claim"},
+                         headers=PAGE)  # fmt: skip
+    assert second.status_code == 400 and second.json()["error"].startswith(
+        "lunch (from a colleague).pdf is already in AP Coder: it is page 2 of IMG_0411 and 1 more.pdf, a voucher "
+        "waiting to be read.")  # fmt: skip
+    assert saved[2].is_file() and again.is_file()
+    app.state.import_stop.clear()
+    start_reading(app)
+    finished(app, client)
+    (invoice,) = stored(store)
+    assert invoice["ai_output"]["grand_total"] == 97.4
+    # Who joined which files, as what, is in the claim's own history and on Activity.
+    joined = [e for e in store.events(invoice["id"]) if e["action"] == "joined"]
+    assert [(e["detail"]["files"], e["detail"]["kind"]) for e in joined] == [
+        (["IMG_0411.pdf", "IMG_0412.pdf"], "claim")]  # fmt: skip
+    assert joined[0]["actor"]  # the person at this computer
+    assert "IMG_0411.pdf, IMG_0412.pdf joined as the receipts of one claim" in client.get("/activity").text
+
+    # Deleted: the document and its files are in invoices/deleted, none is a voucher's file any more.
+    assert client.post(f"/review/{invoice['id']}/delete", data={}, headers=PAGE).json()["ok"] is True
+    assert list((folder / "originals").iterdir()) == [] and store.joined_files(invoice["file_sha256"]) == []
+    assert sorted(p.name for p in (folder / "deleted").iterdir()) == [
+        "IMG_0411 and 1 more.pdf", "IMG_0411.pdf", "IMG_0412.pdf"]  # fmt: skip
+
+
+def test_a_receipts_amount_typed_on_its_line_ends_its_finding_and_the_claims_totals_follow(app, client, store,
+                                                                                         tmp_path):  # fmt: skip
+    """B-2286 and B-2287 on the review screen: the receipt whose total could not be read, its amount typed."""
+    from tests.review_page import ReviewPage
+
+    parking = ["Corner Parking", "Edmonton, AB", "", "Thank you for parking with us", "Stall 14", "Paid by card"]
+    files = [receipt(tmp_path, "parking.pdf", parking), receipt(tmp_path, "fuel.pdf", RECEIPTS["IMG_0411"])]
+    assert upload(client, files, voucher="claim").json()["ok"] is True
+    finished(app, client)
+    (invoice,) = stored(store)
+    codes = [i["code"] for i in invoice["validation"]["issues"]]
+    assert "CLAIM_RECEIPT_NOT_ADDED" in codes and "CC_UNKNOWN" not in codes  # its line: "no cost center yet"
+    page = ReviewPage(client, invoice["id"])
+    assert page.findings["CLAIM_RECEIPT_NOT_ADDED"].lower().startswith("parking.pdf (page 1) is not in the claim's")
+    totals = {name: page._cells(name)[0] for name in ("subtotal", "grand_total")}
+    assert (totals["subtotal"][1], totals["grand_total"][1]) == ("60.00", "63.00")
+    for name in ("line_amount", "line_unit_price"):
+        page._cells(name)[0][1:] = ["12.00", "12.00"]
+    page.check()
+    assert "CLAIM_RECEIPT_NOT_ADDED" not in page.findings
+    assert (page._cells("subtotal")[0][1], page._cells("grand_total")[0][1]) == ("72.00", "75.00")
+
+
+DINNER = ["Harbour Grill", "55 Queens Quay, Toronto, ON M5J 1A7", "HST No. 222333444 RT0001", "",
+          "Receipt No: 6120", "Date: 2026-05-06", "", "Dinner|50.00", "", "Subtotal|50.00", "HST 13%|6.50",
+          "Total|56.50"]  # fmt: skip
+
+
+def test_a_claim_of_two_tax_areas_is_separated_and_joined_again_as_one_voucher_a_tax_area(chart_company, tmp_path):
+    """B-2288: a trip across two provinces (fuel and lunch with the GST, a room and a dinner with Ontario's HST) on a
+    company that keys JD Edwards vouchers was held with no way forward. The finding says what to do; "Make these
+    separate invoices again", then each tax area's receipts chosen again as a claim, gives two vouchers on the keying
+    sheet."""
+    import io
+
+    import openpyxl
+
+    from ap_coder.erp import jde_keying
+    from tests.review_page import ReviewPage
+    from tests.webclient import post, web_settings
+
+    store = chart_company.store
+    app = create_app(web_settings(), store, start_reader=False)
+    client = TestClient(app, base_url="http://localhost")
+    before = {i["id"] for i in store.list_invoices()}
+    rows = {"fuel": RECEIPTS["IMG_0411"], "lunch": RECEIPTS["IMG_0412"], "room": RECEIPTS["IMG_0413"],
+            "dinner": DINNER}  # fmt: skip
+    files = {name: receipt(tmp_path, f"{name}.pdf", text) for name, text in rows.items()}
+
+    def new() -> list[dict]:
+        return [invoice for invoice in stored(store) if invoice["id"] not in before]
+
+    assert upload(client, list(files.values()), voucher="claim").json()["ok"] is True
+    finished(app, client)
+    (claim,) = new()
+    (held,) = [i["message"] for i in claim["validation"]["issues"] if i["code"] == "JDE_TAX_AREA"]
+    assert held.startswith(
+        "These receipts are of two tax areas (GST; Ontario HST), and JD Edwards takes one tax area a voucher: "
+        "separate them and join each tax area's receipts as its own voucher. GST: fuel.pdf, lunch.pdf. Ontario HST: "
+        "room.pdf, dinner.pdf. Use “Make these separate invoices again”")  # fmt: skip
+    assert ReviewPage(client, claim["id"]).findings["JDE_TAX_AREA"].startswith("These receipts are of two tax areas")
+
+    assert client.post(f"/review/{claim['id']}/separate", headers=PAGE).json()["ok"] is True
+    finished(app, client)
+    alone = new()
+    assert [i["vendor_name"] for i in alone] == ["Prairie Fuel Stop", "Riverbend Diner", "Lakeshore Inn",
+                                                 "Harbour Grill"]  # fmt: skip
+    # Read by now, receipts of two tax areas chosen as one claim again are refused at once: nothing to wait for.
+    mixed = upload(client, [files["fuel"], files["lunch"], files["room"]], voucher="claim")
+    assert mixed.status_code == 400 and mixed.json()["error"] == (
+        "These receipts are of two tax areas (GST; Ontario HST), and JD Edwards takes one tax area a voucher: join "
+        "each tax area's receipts as its own voucher. GST: fuel.pdf, lunch.pdf. Ontario HST: room.pdf. Nothing was "
+        "joined.")  # fmt: skip
+    assert [i["id"] for i in new()] == [i["id"] for i in alone]
+    # Each tax area's receipts as a claim of their own: the invoices read from them one by one are part of it.
+    for group in (["fuel", "lunch"], ["room", "dinner"]):
+        assert upload(client, [files[name] for name in group], voucher="claim").json()["ok"] is True
+        assert finished(app, client)["result"]["ok"] == 1
+    vouchers = new()
+    assert [(v["file_name"], v["grand_total"]) for v in vouchers] == [
+        ("fuel and 1 more.pdf", 97.4), ("room and 1 more.pdf", 259.9)]  # fmt: skip
+    took = [e["detail"]["took"] for e in reversed(store.events(actions=["joined"])) if e["detail"]["took"]]
+    assert took == [[alone[0]["id"], alone[1]["id"]], [alone[2]["id"], alone[3]["id"]]]
+    # Each is of one tax area: what JD Edwards still asks of it is what it asks of any invoice (its place of supply).
+    assert {i["message"] for v in vouchers for i in v["validation"]["issues"] if i["code"] == "JDE_TAX_AREA"} == {
+        "JD Edwards: province of supply unknown: no JDE tax area for the Canadian tax charged"}  # fmt: skip
+
+    invoice, _ = next(iter(chart_company.invoices.values()))  # an employee stands in: a supplier JD Edwards knows
+    for voucher, province in zip(vouchers, ("AB", "ON"), strict=True):
+        page = ReviewPage(client, voucher["id"])
+        for n in range(1, len(page.lines) + 1):
+            page.set_account(n, invoice.parts[0].account)
+        typed = {"vendor_name": invoice.supplier_name, "invoice_number": f"CLAIM-MAY-{province}",
+                 "ship_to_province": province}  # fmt: skip
+        for control in page._controls:
+            control[1] = typed.get(control[0], control[1])
+        assert page.check()["allow"] is True, page.findings
+        assert page.approve().get("redirect")
+    made = post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [v["id"] for v in vouchers]})
+    assert made.status_code == 200 and made.json()["ok"] is True
+    answer = client.get(f"/exports/batches/{store.export_batches()[0]['id']}/download?fmt={jde_keying.FORMAT}")
+    sheet = openpyxl.load_workbook(io.BytesIO(answer.content))["Keying sheet"]
+    keyed = [row for row in sheet.iter_rows(values_only=True)
+             if row[0] in ("Currency", "Tax explanation code", "Tax amount", "Check")]  # fmt: skip
+    assert keyed == [
+        ("Currency", "CAD", "Gross amount", 97.4), ("Tax explanation code", "V", "Tax rate/area", "CDNGST"),
+        ("Tax amount", 4.4, "Taxable amount", 88),
+        ("Check", "G/L lines + recovered tax = gross", 93, "93.00 + 4.40 = 97.40: balanced"),
+        ("Currency", "CAD", "Gross amount", 259.9), ("Tax explanation code", "V", "Tax rate/area", "ONHST"),
+        ("Tax amount", 29.9, "Taxable amount", 230),
+        ("Check", "G/L lines + recovered tax = gross", 230, "230.00 + 29.90 = 259.90: balanced"),
+    ]  # fmt: skip
+
+
 def test_one_file_alone_is_read_as_it_always_was(app, client, store, tmp_path):
     alone = receipt(tmp_path, "IMG_0411.pdf", RECEIPTS["IMG_0411"])
     assert upload(client, [alone]).json() == {"ok": True, "job": "process", "status": "/process/status"}

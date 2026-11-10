@@ -5089,14 +5089,34 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     line (merchant and date, its amount before tax); each line carries the tax its own receipt charged
     (`LineItem.taxes_read`, from that receipt's own `invoice_taxes`, so a tip takes none); the totals and the tax
     lines are the receipts' added up. A receipt in another currency than most, or whose total could not be read,
-    adds nothing: a 0.00 line and the finding CLAIM_RECEIPT_NOT_ADDED naming the file and its page. The supplier
+    adds nothing: a 0.00 line and the finding CLAIM_RECEIPT_NOT_ADDED naming the file and its page. With as many
+    receipts in each of two currencies the claim is put in CAD (else the first by its letters), never the first
+    file's, the finding names the receipts of both, and the currency is the person's to set (B-2285). Once the
+    person types the receipt's amount on its line the finding goes and the claim's subtotal and total take it,
+    while they are still the ones without it (`claim.totals_follow`, B-2286). The supplier
     and the invoice number are left empty, and MISSING_VENDOR and MISSING_INVOICE_NUMBER say why in a claim's words
     (the employee being repaid; a reference of your own), on the first reading and on every check after it
     (`finalise_coding`). The review screen lists the files ("page 3 is from IMG_0412.jpg") over the one document,
     and "Make these separate invoices again" (`POST /review/{id}/separate`, a Clerk's) removes the voucher, puts
     the files back in the invoices folder and reads each on its own. A file that is one of a voucher's files counts
     as in AP Coder wherever a file's content is asked (the upload's and the folder's skip, the folder's list), and
-    joining it into another voucher is refused with where it is ("page 2 of invoice #14").
+    joining it into another voucher is refused with where it is ("page 2 of invoice #14"): from the moment it is
+    joined, its voucher read or still in line ("page 2 of IMG_0411 and 1 more.pdf, a voucher waiting to be read"),
+    the join and the queueing being one step under the pick-up's lock (B-2283). A file read as an invoice of its
+    own and still in review is taken into the voucher instead (that invoice is removed; one approved or rejected
+    is refused as before): what a separation did is undone the same way.
+    **Two tax areas (B-2288):** JD Edwards takes one tax area a pay item and AP Coder makes one pay item (D-210),
+    so a claim with the GST on some receipts and Ontario's HST on another is held by JDE_TAX_AREA. Each receipt's
+    tax area is kept as read (`joined_files.tax`), and the finding says what to do in a claim's words, naming the
+    files of each: make them separate invoices again, then choose each tax area's receipts again on Add invoices
+    as a claim of their own. Receipts already read on their own that show two tax areas are refused at the join,
+    with the same words. Two pay items on one voucher are not made (left).
+    **The audit trail (B-2284):** the events `joined` (who, which files, as what, the invoices taken in; the
+    voucher's own once it is read: `Store.joined_read`) and `separated` (who, which files), on Activity and in
+    the invoice's history. **Nothing left in `originals/` (B-2289):** a separation also removes the copy kept of
+    the document as joined (pages set upright since); a deleted voucher's files go to `invoices/deleted` with its
+    document, as a deleted invoice's file does, and are no voucher's files any more. A rejected voucher keeps
+    them (it can be reopened and separated). A backup holds the whole invoices folder, `originals/` included.
   - **Measured:** three made-up phone pictures (fuel with GST, a lunch with GST and a tip, a room with HST) as one
     claim: 5 lines, 273.00 + 27.80 = 300.80, GST 3.00 / 1.20 / 0.20 / none on the tip, HST 23.40 on the room, no
     tax or total finding, read in 7 to 10 s (4 cores, OCR on the processor). Two scanned pages joined give the same
@@ -5106,7 +5126,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     document's SHA-256, so a failed read, a retry or pages set upright need nothing more); a supplier guessed from
     the first merchant; a capture of the whole claim (each receipt has its own: a claim is never approved without
     a person, and its fields are not boxed on the page).
-  - **Left:** a claim cover sheet; per-employee settings; adding a file to a voucher already read; a claim's
+  - **Left:** two pay items on one voucher (a claim of two tax areas is two vouchers); a claim of one receipt (a
+    receipt alone in its tax area stays an invoice of its own, the employee chosen as its supplier by hand); a
+    claim cover sheet; per-employee settings; adding a file to a voucher already read; a claim's
     receipt photographed sideways is read but shown as it was taken; a tip whose amount OCR reads before its
     label is not split out (the receipt is then one line for its amount before tax).
   - (`ap_coder/intake/joined.py`, `ap_coder/coding/claim.py`, `ap_coder/core/store/joined.py`,

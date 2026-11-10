@@ -43,6 +43,7 @@ from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date, p
 from ap_coder.capture.types import DATE_FIELDS, MISSING, Box, CaptureResult
 from ap_coder.capture.workflow import AP_LESSON
 from ap_coder.coding import banks, rules, vendor_mail
+from ap_coder.coding.claim import totals_follow
 from ap_coder.coding.line_tax import (
     all_labels,
     charged_types,
@@ -1849,6 +1850,15 @@ def _rebuilt(header: dict[str, Any], problems: list[str], draft: Draft, ai: dict
     return coding, [plain_problem(p) for p in problems]
 
 
+def _settled(store: Store, inv: dict[str, Any], draft: Draft, ai: dict[str, Any]) -> dict[str, str]:
+    """What the server fills in the screen's details before they are checked ({field: value}, for the screen to
+    show): ``settle_header``'s, and a claim's totals once the amount of a receipt that was not in them is typed on
+    its line (``claim.totals_follow``, B-2286)."""
+    filled = settle_header(store, draft, ai)
+    filled.update(totals_follow(draft.header, draft.lines, store.joined_files(invoice_id=inv["id"]), to_number))
+    return filled
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "", capture: CaptureResult | None = _UNREAD) -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1856,7 +1866,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     ai = inv["ai_output"] or {}
     start = inv.get("final_output") or ai
     has_cc = reference.cost_centers is not None
-    filled = settle_header(store, draft, ai)  # the vendor list's tax numbers, the default Pay from account
+    filled = _settled(store, inv, draft, ai)  # the vendor list's tax numbers, the default Pay from account
     header, problems = header_values(draft.header)
     # A date typed another way, unclear or not a date: said at its field, the checks meanwhile on the date as read.
     dates = settle_dates(header, {**ai, **{k: v for k, v in start.items() if k in DATE_FIELDS}})

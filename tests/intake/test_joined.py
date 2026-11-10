@@ -10,9 +10,11 @@ import pymupdf
 import pytest
 
 from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.intake.joined import CLAIM, PAGES, CannotJoin, join, pages_of, separate
+from ap_coder.core.store.folder import read_file
+from ap_coder.intake.joined import CLAIM, PAGES, CannotJoin, join, pages_of, removed, separate
 from tests.pdfs import RECEIPTS, long_invoice, receipt
 
 
@@ -94,8 +96,9 @@ def test_a_file_already_part_of_an_invoice_is_said_where_it_is_and_counts_as_in_
         join(store, folder, [other, again], PAGES)
     assert str(refused.value).startswith(f"b.pdf is already in AP Coder: it is page 2 of invoice #{invoice_id} "
                                          "(a and 1 more.pdf).")  # fmt: skip
-    # An invoice made of one file is said the same way.
+    # An invoice made of one file and no longer in review is said the same way.
     alone = store.add_invoice(other, {"vendor_name": "Lakeshore Inn", "grand_total": 203.4}, None)
+    store.reject_invoice(alone, "Dana", "not ours")
     spare = receipt(folder, "d.pdf", RECEIPTS["IMG_0411"][:-1] + ["Total|63.01"])
     with pytest.raises(CannotJoin, match=f"c.pdf is already in AP Coder: it is invoice #{alone}."):
         join(store, folder, [spare, other], PAGES)
@@ -115,6 +118,100 @@ def test_separating_a_voucher_puts_its_files_back_and_removes_it(store, folder):
     with pytest.raises(CannotJoin, match="not made of several files"):
         separate(store, {"id": store.add_invoice(first, {"vendor_name": "Prairie Fuel Stop"}, None),
                          "source_path": str(first)})  # fmt: skip
+
+
+def test_a_file_is_part_of_its_voucher_from_the_moment_it_is_joined(store, folder):
+    """B-2283: the voucher still waits to be read, and the same receipt comes again: it is not joined into a second
+    voucher (two people with the same receipts), nor read as an invoice of its own."""
+    first = receipt(folder, "a.pdf", RECEIPTS["IMG_0411"])
+    second = receipt(folder, "b.pdf", RECEIPTS["IMG_0412"])
+    lunch = second.read_bytes()
+    made = join(store, folder, [first, second], CLAIM)
+    assert store.queue_imports([read_file(made)], source="upload")["queued"] == 1  # in line: no invoice yet
+    again = folder / "b (colleague).pdf"
+    again.write_bytes(lunch)
+    other = receipt(folder, "c.pdf", RECEIPTS["IMG_0413"])
+    with pytest.raises(CannotJoin) as refused:
+        join(store, folder, [again, other], CLAIM)
+    assert str(refused.value) == (
+        "b (colleague).pdf is already in AP Coder: it is page 2 of a and 1 more.pdf, a "
+        "voucher waiting to be read. Nothing was joined: leave it out and join the others."
+    )
+    assert again.is_file() and other.is_file() and len(store.joined_files(_sha(made))) == 2
+    alone = read_file(again)
+    assert store.queue_imports([alone], source="upload")["skipped"] == ["b (colleague).pdf"]
+    assert store.unseen_files([alone[:3]]) == set()  # nor listed as a new file of the folder
+
+
+def test_who_joined_and_who_separated_which_files_is_in_the_audit_trail(store, folder):
+    """B-2284: the join named no file and no person, and a separation was a plain "deleted"."""
+    from ap_coder.web.pages.activity import GROUPS
+
+    first = receipt(folder, "a.pdf", RECEIPTS["IMG_0411"])
+    second = receipt(folder, "b.jpg", RECEIPTS["IMG_0412"])
+    made = join(store, folder, [first, second], CLAIM, "Ann Lee")
+    (event,) = store.events(actions=["joined"])
+    assert (event["actor"], event["invoice_id"]) == ("Ann Lee", None)  # no invoice yet: on Activity all the same
+    assert describe(event) == "a and 1 more.pdf: a.pdf, b.jpg joined as the receipts of one claim"
+    invoice_id = store.add_invoice(made, {"vendor_name": "", "grand_total": 97.4}, None)
+    store.joined_read(invoice_id)  # as the reading does: the event is in the invoice's history
+    assert [(e["action"], e["actor"]) for e in store.events(invoice_id)] == [("processed", None), ("joined", "Ann Lee")]
+    separate(store, store.get_invoice(invoice_id), "Dana")
+    (event,) = store.events(actions=["separated"])
+    assert (event["actor"], event["invoice_id"]) == ("Dana", invoice_id)
+    assert describe(event) == ("a and 1 more.pdf (the receipts of one claim): a.pdf, b.jpg back in line, each read "
+                               "as an invoice of its own")  # fmt: skip
+    assert {"joined", "separated"} <= set(ACTIONS) and {"joined", "separated"} <= set(GROUPS["Invoices"])
+
+
+def test_nothing_of_a_voucher_is_left_in_originals_once_it_is_separated_or_deleted(store, folder):
+    """B-2289: the copy of the document as joined stayed after a separation (its pages had been set upright), and a
+    deleted voucher left its files there, still a voucher's files."""
+    first = receipt(folder, "scan_1.pdf", RECEIPTS["IMG_0411"])
+    second = receipt(folder, "scan_2.jpg", RECEIPTS["IMG_0412"])
+    made = join(store, folder, [first, second], PAGES)
+    as_joined, copy = _sha(made), folder / "originals" / made.name
+    copy.write_bytes(made.read_bytes())  # what setting its pages upright keeps (``pictures.turn_upright``)
+    made.write_bytes(b"%PDF-1.4 its pages set upright")
+    invoice_id = store.add_invoice(
+        made,
+        {"vendor_name": "Prairie Fuel Stop"},
+        None,
+        original_sha256=as_joined,
+        meta={"original": {"file": made.name, "kept": str(copy), "sha256": as_joined}},
+    )
+    back = separate(store, store.get_invoice(invoice_id), "Dana")
+    assert sorted(p.name for p in folder.iterdir()) == ["originals", "scan_1.pdf", "scan_2.jpg"]
+    assert list((folder / "originals").iterdir()) == []
+    # Deleted: its files go where a deleted invoice's file goes, and can come in again.
+    made = join(store, folder, back, CLAIM)
+    shas = [f["sha256"] for f in store.joined_files(_sha(made))]
+    invoice_id = store.add_invoice(made, {"vendor_name": ""}, None)
+    invoice, parts = store.get_invoice(invoice_id), store.joined_files(invoice_id=invoice_id)
+    store.delete_invoice(invoice_id)
+    removed(store, invoice, parts)
+    assert list((folder / "originals").iterdir()) == [] and store.joined_files(_sha(made)) == []
+    assert sorted(p.name for p in (folder / "deleted").iterdir()) == ["scan_1.pdf", "scan_2.jpg"]
+    assert store.known_files(shas) == set() and all(store.joined_where(sha) is None for sha in shas)
+
+
+def test_a_restore_brings_a_vouchers_files_back_with_it(store, folder):
+    """A backup made while a voucher was joined holds its files in ``originals/``: restored after the voucher was
+    separated, it is the voucher again, its files where they were kept, and it can be separated again."""
+    first = receipt(folder, "a.pdf", RECEIPTS["IMG_0411"])
+    second = receipt(folder, "b.jpg", RECEIPTS["IMG_0412"])
+    shas = [_sha(first), _sha(second)]
+    made = join(store, folder, [first, second], CLAIM)
+    invoice_id = store.add_invoice(made, {"vendor_name": "", "grand_total": 97.4}, None)
+    backup = store.backup_now("manual")
+    separate(store, store.get_invoice(invoice_id), "Dana")
+    assert not made.exists() and list((folder / "originals").iterdir()) == []
+    store.restore_state(backup)
+    files = store.joined_files(invoice_id=invoice_id)
+    assert [f["name"] for f in files] == ["a.pdf", "b.jpg"] and made.is_file()
+    assert [_sha(folder / f["kept"]) for f in files] == shas
+    assert not first.exists() and not second.exists()  # as they were then: kept, not in the folder
+    assert [_sha(p) for p in separate(store, store.get_invoice(invoice_id), "Dana")] == shas
 
 
 def test_a_claim_is_still_a_claim_when_it_is_read_again_and_names_the_receipt_it_could_not_add(store, folder):

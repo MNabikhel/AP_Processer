@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NU
 CREATE TABLE IF NOT EXISTS past_lines (vendor_key TEXT PRIMARY KEY, stamp TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS joined_files (joined TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT
     NOT NULL, sha256 TEXT NOT NULL, kept TEXT NOT NULL DEFAULT '', first_page INTEGER NOT NULL, pages INTEGER NOT NULL,
-    note TEXT NOT NULL DEFAULT '', PRIMARY KEY (joined, position));
+    note TEXT NOT NULL DEFAULT '', tax TEXT NOT NULL DEFAULT '', PRIMARY KEY (joined, position));
 CREATE INDEX IF NOT EXISTS joined_files_sha ON joined_files (sha256);
 CREATE TABLE IF NOT EXISTS billing_facts (vendor_key TEXT NOT NULL, id INTEGER NOT NULL, facts TEXT NOT NULL,
     PRIMARY KEY (vendor_key, id));

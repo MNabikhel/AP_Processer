@@ -266,6 +266,13 @@ def _account_columns(store: Any, conn: sqlite3.Connection) -> None:
     add_columns(conn)
 
 
+def _joined_tax(store: Any, conn: sqlite3.Connection) -> None:
+    """The tax area of each receipt joined into a claim (``joined_files.tax``, B-2288): a table made before it."""
+    columns = dialect.columns(conn, "joined_files")
+    if columns and "tax" not in columns:
+        dialect.add_column(conn, "joined_files", "tax", "TEXT NOT NULL DEFAULT ''")
+
+
 def _picture_sha(store: Any, conn: sqlite3.Connection) -> None:
     """An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
     again is found."""
@@ -450,6 +457,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _cost_center_managers),
     (EVERY_TIME, _account_columns),
     (EVERY_TIME, _picture_sha),
+    (EVERY_TIME, _joined_tax),
     (EVERY_TIME, _lookup_indexes),
     (EVERY_TIME, _register_columns),
     (EVERY_TIME, _register_by_number),
