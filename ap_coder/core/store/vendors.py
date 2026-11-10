@@ -44,6 +44,8 @@ from .vendor_master import (  # noqa: F401  (the names this module had before th
     name_marker,
     person_name,
     same_person,
+    sharing,
+    with_number,
 )
 
 # An invoice's coding as approved, else as read (a blank one counts as none), for json_extract: no invoice's whole AI
@@ -269,7 +271,9 @@ class VendorsMixin:
             found = [r for r in rows if str(r.get("erp_id") or "").strip() == ident]
             if found:
                 return own if own in found else found[0]
-        return own
+        # several supplier numbers in use go by the name, and nothing on the invoice says which: none of them, never
+        # the first in silence (the review screen asks; a name picked there carries its number, B-2161)
+        return None if sharing(rows) else own
 
     def skip_words(self) -> list[str]:
         """The words that mark a retired supplier in the ERP's names (SKIP_WORDS unless the setting lists others;
@@ -337,7 +341,8 @@ class VendorsMixin:
 
     def vendor_choices(self) -> list[dict[str, Any]]:
         """The vendors a reviewer picks from on the review screen: the vendor master's and the ones added there; with
-        no vendor master, every vendor with an approved invoice too. Sorted by name."""
+        no vendor master, every vendor with an approved invoice too. Sorted by name. One of several suppliers in use
+        under one name is named with its number ("LAKESIDE CATERING LTD #2004"): the pick an invoice keeps."""
         with self._conn() as conn:
             rows = fetch_rows(conn, "SELECT * FROM vendors WHERE in_master IN (1, 2)")
             if not any(r["in_master"] == 1 for r in rows):
@@ -350,6 +355,12 @@ class VendorsMixin:
                                    for c in ("expected_gst", "qst_number", "pst_number")}  # fmt: skip
                         rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0,
                                      **numbers})  # fmt: skip
+        named: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            named.setdefault(str(r["vendor_key"]).partition(" #")[0], []).append(r)
+        for group in named.values():  # the suppliers of one name are offered each with its number (B-2161)
+            for r in sharing(group) if len(group) > 1 else ():
+                r["display_name"] = with_number(r)
         return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
 
     def _approved_vendors(self) -> list[dict[str, Any]]:

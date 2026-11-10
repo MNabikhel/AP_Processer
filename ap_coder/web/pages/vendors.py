@@ -379,6 +379,7 @@ async def master_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
 
 
+SHARED_NAMED = 200  # the names several supplier numbers share that an import's note lists
 HOLD_CODES_LABEL = "Hold payment codes that put a supplier on hold"  # the import form's field, as its notes name it
 
 
@@ -426,12 +427,19 @@ def import_notes(result: dict[str, Any]) -> list[Any]:
         notes.append(
             flash_message(
                 f"{ui.plural(len(dupes), 'vendor')} {'appears' if len(dupes) == 1 else 'appear'} more than once in the "
-                "file under similar names (merged here; one on hold keeps the vendor on hold). Often the same supplier "
-                "set up twice in the ERP:",
+                "file under similar names, with no supplier number to tell them apart (merged here; one on hold keeps "
+                "the vendor on hold). Often the same supplier set up twice in the ERP:",
                 "warn",
                 [" / ".join(n) for n in dupes[:8]],
             )
         )
+    shared = result.get("shared") or []
+    if shared:
+        notes.append(flash_message(
+            f"{ui.plural(len(shared), 'name')} {'is' if len(shared) == 1 else 'are each'} shared by more than one "
+            "supplier number. Each number is kept as a vendor of its own; an invoice that prints such a name is asked "
+            "which one on the review screen, where each is offered with its number:",
+            "warn", [" / ".join(group) for group in shared[:SHARED_NAMED]]))  # fmt: skip
     for code, count in sorted(result.get("other_holds", {}).items()):
         notes.append(flash_message(
             f"{ui.plural(count, 'supplier')} with hold payment code {code}: not treated as a hold. Add it under "

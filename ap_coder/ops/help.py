@@ -360,9 +360,13 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_NOT_IN_MASTER": CheckHelp(
         FRAUD, "Not in the vendor master",
         "A vendor master was imported from the ERP and this vendor is in it neither by name nor by GST/HST "
-        "number. Invoices from vendors nobody set up are a classic fraud route.",
-        "Pick the vendor from the list on the review screen (it may be there under another name). A vendor that is "
-        "really new: add it with \u201cAdd new vendor\u201d, and have it set up (and verified) in JD Edwards.",
+        "number. Invoices from vendors nobody set up are a classic fraud route. Or the name is in it more than once: "
+        "several suppliers go by it, each with its own supplier number, and the name alone does not say which (the "
+        "check lists them, with how many vouchers each had in last year's journal when it is loaded).",
+        "Pick the vendor from the list on the review screen (it may be there under another name). Of several "
+        "suppliers under one name, each is offered with its number (\u201cLAKESIDE CATERING LTD #2004\u201d): pick "
+        "the one the invoice is from, by its address or by which one you usually pay. A vendor that is really new: add "
+        "it with \u201cAdd new vendor\u201d, and have it set up (and verified) in JD Edwards.",
     ),
     "VENDOR_MATCHED_BY_TAX_NUMBER": CheckHelp(
         FRAUD, "Known vendor under another name",

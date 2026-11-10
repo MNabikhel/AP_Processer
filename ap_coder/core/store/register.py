@@ -19,7 +19,7 @@ import sqlite3
 import time
 from typing import Any
 
-from ..keys import register_keys
+from ..keys import master_vendor_id, register_keys
 from ..memory import vendor_key
 from ._base import _in_list, _norm_number, _now
 from .dialect import ROWID, add_column, begin_write, table_names
@@ -230,7 +230,7 @@ class RegisterMixin:
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
-        an8 = str(self.vendor_ids().get(key, "") if an8 is None else an8).strip()
+        an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
         with self._conn() as conn:
             rows = [
                 dict(r)
@@ -330,7 +330,7 @@ class RegisterMixin:
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not number or total is None:
             return []
-        an8 = str(self.vendor_ids().get(key, "") if an8 is None else an8).strip()
+        an8 = str(master_vendor_id(self.vendor_ids(), vendor_name) if an8 is None else an8).strip()
         with self._conn() as conn:
             return fetch_rows(
                 conn,

@@ -7,6 +7,7 @@ invoices, the Vendors page) is ``vendors``, which keeps every name of this part 
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 from typing import Any
@@ -157,29 +158,110 @@ def same_person(person: Person, other: Any, exactly: bool = False) -> bool:
 
 
 def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
-    """Whether two vendor master rows whose names read the same are two suppliers: each has its own ERP ID and its own
-    GST/HST number (B-930). Without both numbers it reads as the same supplier set up twice: merged, as before."""
+    """Whether two vendor master rows whose names read the same are two suppliers: each has an ERP ID of its own. The
+    supplier's number is the identity whenever the list gives numbers (B-2161: before, each also needed its own
+    GST/HST number, B-930, which JD Edwards' list does not give). A list with no numbers cannot tell them apart: the
+    same supplier set up twice, merged, as before."""
     a, b = str(first.get("erp_id") or "").strip(), str(row.get("erp_id") or "").strip()
-    if not a or not b or a == b:
-        return False
-    gst_a, gst_b = str(first.get("gst") or ""), str(row.get("gst") or "")
-    return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
+    return bool(a and b) and a != b
 
 
-def _people_keys(rows: list[tuple[str, str]], words: list[str]) -> dict[str, str]:
-    """{a person's name in the usual order, as a vendor key: the ERP ID} for the vendors (name, ERP ID) listed "LAST,
-    FIRST M.": "jane q doe", and "jane doe" too when only one vendor can be meant, as ``find_vendor`` matches a
-    person. So an invoice printed "Jane Q. Doe" gets the supplier number of "DOE, JANE Q."."""
-    full: dict[str, set[str]] = {}
-    short: dict[str, set[str]] = {}
-    for name, ident in rows:
-        person = person_name(name_marker(name, words)[0])
-        if person:
-            last, first, middles = person
-            full.setdefault(" ".join((first, *middles, *last)), set()).add(ident)
-            short.setdefault(" ".join((first, *last)), set()).add(ident)
-    keys = {key: next(iter(found)) for key, found in short.items() if len(found) == 1 and key not in full}
-    return keys | {key: next(iter(found)) for key, found in full.items() if len(found) == 1}
+def same_number(a: Any, b: Any) -> bool:
+    """Whether two supplier numbers are the same, leading zeros and spaces aside ("0410002" and 410002)."""
+    a, b = str(a or "").strip().lstrip("0"), str(b or "").strip().lstrip("0")
+    return bool(a) and a == b
+
+
+def erp_stopped(vendor: dict[str, Any]) -> bool:
+    """Whether the ERP itself stops a vendor of the list: its name was marked as retired (its note is the marker's),
+    or its hold payment code stops vouchers. AP's own hold is not the ERP's: such a vendor is still one in use."""
+    return bool(re.fullmatch(MARKED.format(".+"), vendor.get("notes") or "")) or stops_vouchers(vendor.get("erp_hold"))
+
+
+def sharing(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The vendors in use that share one name, each under a supplier number of its own, among the vendors of that
+    name (the one under the name's key and its "#<ERP ID>" ones), by number; [] when the name is one supplier's. The
+    number is the identity: the name alone does not say which of them an invoice is from (B-2161)."""
+    live = {str(r["erp_id"]).strip(): r for r in rows if str(r.get("erp_id") or "").strip() and not erp_stopped(r)}
+    return [live[number] for number in sorted(live)] if len(live) > 1 else []
+
+
+def with_number(vendor: dict[str, Any]) -> str:
+    """A vendor's name with its supplier number, as the review screen offers one of several by a name and as an
+    invoice keeps the pick: "LAKESIDE CATERING LTD #2004"."""
+    return f"{vendor['display_name']} #{str(vendor['erp_id']).strip()}"
+
+
+_NUMBERED = re.compile(r"\s*(.*?\S)\s*#\s*(\d{1,12})\s*")
+
+
+def named_otherwise(name: str, words: list[str], like: Any) -> dict[str, Any] | None:
+    """The vendor of a name no vendor is kept under as it is written: the ONE rule the checks (``find_vendor``) and
+    the exports' supplier number (``VendorIds.number_of``) both follow (B-2162). ``like(key, more)``: the vendors
+    under a key and its "#<ERP ID>" ones (``more``: every key starting with it as a word), each with its
+    ``vendor_key``, ``display_name`` and ``erp_id``.
+
+    * A name with a supplier number ("LAKESIDE CATERING LTD #2004", a pick among the suppliers of one name) is the
+      vendor of that name holding that number (B-2161).
+    * A name with a retired supplier's marker (picked as the master shows it: "NORTHERN PAPER CO  DO NOT USE") is the
+      supplier kept under the name without it, the one shown under that very name first (B-2083).
+    * A person's name is the one vendor that person is, written the other way round or without a middle initial:
+      "Jane Q. Doe" and "Jane Doe" for "DOE, JANE Q.", "Doe, Jane Q." for "Jane Q. Doe" (``same_person``); none when
+      two vendors could be, and never a company's name for a person's or the reverse."""
+    numbered = _NUMBERED.fullmatch(name)
+    if numbered and (key := vendor_key(name_marker(numbered.group(1), words)[0])):
+        return next((r for r in like(key, False) if same_number(r["erp_id"], numbered.group(2))), None)
+    plain, marker = name_marker(name, words)
+    if marker and (key := vendor_key(plain)):
+        rows = like(key, False)
+        shown = [r for r in rows if vendor_key(r["display_name"]) == vendor_key(name)]
+        if found := (shown or [r for r in rows if r["vendor_key"] == key]):
+            return found[0]
+    asked = person_name(plain)
+    if asked:  # "DOE, JANE Q.": the vendors "LAST, FIRST …" and the ones starting with the first name
+        starts = [" ".join((*asked[0], asked[1])), asked[1]]
+    else:  # "Jane Q. Doe": the vendors "LAST, FIRST …", for each way its last words can be the surname
+        given = _plain_words(plain)
+        starts = [" ".join((*given[cut:], given[0])) for cut in range(max(1, len(given) - 3), len(given))]
+
+    def fits(row: dict[str, Any], exactly: bool = False) -> bool:
+        theirs = name_marker(row["display_name"], words)[0]
+        if asked:
+            return same_person(asked, theirs, exactly)
+        person = person_name(theirs)
+        return person is not None and same_person(person, plain, exactly)
+
+    rows = [row for start in starts for row in like(start, True) if fits(row)]
+    found = list({row["vendor_key"]: row for row in rows}.values())
+    if len(found) > 1:  # "DOE, JANE" and "DOE, JANE Q." for "Jane Doe": the one written with as much
+        found = [row for row in found if fits(row, exactly=True)]
+    return found[0] if len(found) == 1 else None
+
+
+class VendorIds(dict):  # type: ignore[type-arg]
+    """``Store.vendor_ids()``: {vendor key: ERP ID}, and the "gst:" keys, as a plain dict gave them; and the supplier
+    number of a name with no key of its own (``number_of``), by the rule the checks find its vendor by
+    (``named_otherwise``), from every vendor of the list as it was read."""
+
+    def __init__(self, ids: dict[str, str], vendors: list[dict[str, Any]], words: list[str]) -> None:
+        super().__init__(ids)
+        self._vendors = {v["vendor_key"]: v for v in vendors}
+        self._keys = sorted(self._vendors)
+        self._words = words
+
+    def _like(self, key: str, more: bool) -> list[dict[str, Any]]:
+        first, last = (f"{key} ", f"{key}!") if more else (f"{key} #", f"{key} $")
+        found = [self._vendors[key]] if key in self._vendors else []
+        at = bisect.bisect_left(self._keys, first)
+        while at < len(self._keys) and self._keys[at] < last:
+            found.append(self._vendors[self._keys[at]])
+            at += 1
+        return found
+
+    def number_of(self, name: Any) -> str:
+        """The supplier number of the vendor a name is by ``named_otherwise``; "" when it is no vendor's."""
+        found = named_otherwise(str(name or ""), self._words, self._like)
+        return str((found or {}).get("erp_id") or "").strip()
 
 
 def _master_rows_as_kept(rows: list[dict[str, Any]], holding: list[str], words: list[str]) -> list[dict[str, Any]]:
@@ -197,6 +279,17 @@ def _master_rows_as_kept(rows: list[dict[str, Any]], holding: list[str], words: 
             row["hold"] = hold_code(row["hold"], holding)
         kept.append(row)
     return kept
+
+
+def _as_written(key: str, row: dict[str, Any], existing: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    """(the note, the status) a vendor of an import is written with: its marker's note and its own status; and for
+    a number split off a vendor AP has on hold (a new "<key> #<ERP ID>" whose name's vendor is held, by AP's own
+    hold: not the ERP's), that vendor's note and hold, which AP put on the name (B-2161)."""
+    marked, status = row.get("marked") or "", row.get("status") or "active"
+    first = existing.get(key.partition(" #")[0]) if " #" in key and key not in existing else None
+    if first and first["status"] == "on_hold" and not marked and not erp_stopped(first):
+        return first["notes"] or "", "on_hold"
+    return marked, status
 
 
 def _stopped(row: dict[str, Any]) -> bool:
@@ -231,7 +324,11 @@ class VendorMasterMixin:
         in one file. ``log``: the import's event (the sync logs one for all its pages).
         A supplier whose name the ERP marks as retired ("… DO NOT USE", ``name_marker``) is kept under its name
         without the marker, on hold, with a note that says so; when the list has a supplier of that name in use too,
-        that one is the vendor of the name and the retired one is kept under its ERP ID (B-2083)."""
+        that one is the vendor of the name and the retired one is kept under its ERP ID (B-2083).
+        The supplier's number is the identity when the list gives numbers (B-2161): two rows of one name with two
+        ERP IDs are two vendors, the first under the name's key, the others under "<key> #<ERP ID>"; ``shared``
+        lists the names several numbers in use go by, each "<ERP ID> <name>". A vendor already there under the
+        name keeps its key and everything AP set on it; a number split off a vendor AP holds is held with it."""
         added = updated = 0
         now = _now()
         holding = self.hold_codes()
@@ -239,11 +336,13 @@ class VendorMasterMixin:
         duplicates = [n for n in names.values() if len(n) > 1]
         inserted: list[str] = []
         with self._conn() as conn:
-            existing = {r["vendor_key"] for r in conn.execute("SELECT vendor_key FROM vendors")}
+            existing = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT vendor_key, status, notes, erp_id "
+                                                                      "FROM vendors")}  # fmt: skip
+            before = dict(existing)  # the vendors there before this import
             for key, row in merged.items():
                 if only_new and key in existing:
                     continue
-                marked = row.get("marked") or ""
+                marked, status = _as_written(key, row, before)
                 # A marked supplier shows the master's name, on hold with its note (AP's own note is kept); one no
                 # longer marked there (its note is still the marker's) is active again under the master's name.
                 conn.execute(
@@ -269,7 +368,7 @@ class VendorMasterMixin:
                                       ELSE vendors.expected_gst END,
                        status = CASE WHEN ? THEN excluded.status WHEN {_WAS_MARKED} THEN 'active'
                                 ELSE vendors.status END""",
-                    (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", marked, now,
+                    (key, row["vendor_name"], status, row.get("gst") or "", marked, now,
                      row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
                      row.get("qst") or "", row.get("pst") or "", row.get("province") or "", row.get("hold") or "",
                      MARKED_LIKE, MARKED_LIKE,
@@ -281,14 +380,22 @@ class VendorMasterMixin:
                 else:
                     added += 1
                     inserted.append(key)
-                    existing.add(key)
+                    existing[key] = {"vendor_key": key, "status": status, "notes": marked, "erp_id": row.get("erp_id")}
+                # the same supplier as an earlier version kept it, active, under a key with the marker in it: folded
+                # into this one, its note kept, so the name as the master shows it is stopped too (B-2163)
+                old = existing.get(vendor_key(row["vendor_name"])) if row.get("marked") else None
+                if old and old["vendor_key"] != key and str(old["erp_id"] or "") in ("", str(row.get("erp_id") or "")):
+                    self._merge_vendor_rows(conn, existing.pop(old["vendor_key"])["vendor_key"], key)
             holds_as_listed(conn, holding)
             if log:
                 self._log(conn, "vendors_imported", actor=actor, detail={
                     "added": added, "updated": updated, "duplicates": len(duplicates),
                 })  # fmt: skip
+        bases = sorted({key.partition(" #")[0] for key in merged if " #" in key})
+        shared = [[f"{v['erp_id']} {v['display_name']}" for v in found] for base in bases
+                  if (found := sharing(self._vendors_like(base)))]  # fmt: skip
         return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted,
-                "other_holds": other_holds(rows, holding)}  # fmt: skip
+                "other_holds": other_holds(rows, holding), "shared": shared}  # fmt: skip
 
     def _master_rows_merged(
         self, rows: list[dict[str, Any]], by_erp_id: bool
@@ -310,9 +417,9 @@ class VendorMasterMixin:
                 key = self._earlier_row(key, row, known, merged, names)
             first = merged.get(key)
             if first is not None and (_distinct(first, row) or _retired_twin(first, row)):
-                # Two suppliers whose names read the same, each with its own ERP ID (and GST/HST number): two vendors,
-                # the second kept under its ERP ID, not merged into the first (B-930). So is a retired supplier by
-                # the name of one in use (B-2083).
+                # Two suppliers whose names read the same, each with its own ERP ID: two vendors, the second kept
+                # under its ERP ID, not merged into the first (B-930, B-2161). So is a retired supplier by the name
+                # of one in use (B-2083).
                 key = f"{key} #{row['erp_id'].strip()}"
                 if key not in merged:
                     merged[key] = dict(row)
@@ -417,7 +524,9 @@ class VendorMasterMixin:
 
     def _vendor_ids(self) -> dict[str, str]:
         with self._conn() as conn:
-            rows = conn.execute("SELECT vendor_key, erp_id, expected_gst FROM vendors WHERE erp_id != ''").fetchall()
+            vendors = fetch_rows(conn, "SELECT vendor_key, display_name, erp_id, expected_gst, notes, erp_hold "
+                                       "FROM vendors")  # fmt: skip
+        rows = [(v["vendor_key"], v["erp_id"], v["expected_gst"]) for v in vendors if v["erp_id"]]
         ids = {r[0]: r[1] for r in rows}
         for r in rows:
             number = norm_tax_number(r[2])
@@ -425,12 +534,21 @@ class VendorMasterMixin:
                 ids.setdefault(f"gst:{number}", r[1])
                 if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
                     ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
-        with self._conn() as conn:  # the people ("LAST, FIRST M."), by their names as a claim prints them
-            people = conn.execute("SELECT display_name, erp_id FROM vendors WHERE erp_id != '' AND "
-                                  f"{like('display_name')}", ("%,%",)).fetchall()  # fmt: skip
-        for key, ident in _people_keys([tuple(r) for r in people], self.skip_words()).items():
-            ids.setdefault(key, ident)
-        return ids
+        # A name several supplier numbers in use go by gives none of them: only the name with its number does
+        # (``VendorIds.number_of``, B-2161).
+        named: dict[str, list[dict[str, Any]]] = {}
+        for v in vendors:
+            named.setdefault(v["vendor_key"].partition(" #")[0], []).append(v)
+        for key, group in named.items():
+            if len(group) > 1 and sharing(group):
+                ids.pop(key, None)
+        return VendorIds(ids, vendors, self.skip_words())
+
+    def vendors_sharing(self, name: str | None) -> list[dict[str, Any]]:
+        """The vendors in use that share the name an invoice prints, each under a supplier number of its own, by
+        number; [] when the name is one vendor's or none's (``sharing``, B-2161)."""
+        key = vendor_key(name or "")
+        return sharing(self._vendors_like(key)) if key else []
 
     def master_by_tax_number(self, number: Any) -> list[dict[str, Any]]:
         """The vendor master's vendors whose GST/HST number is the registration ``number`` is (``same_tax_number``),
@@ -477,34 +595,6 @@ class VendorMasterMixin:
                                                          f"{key}!" if more else f"{key} $"))  # fmt: skip
 
     def _vendor_named_otherwise(self, name: str) -> dict[str, Any] | None:
-        """The vendor of a name no vendor is kept under as it is written. A name with a retired supplier's marker
-        (picked from the list as the master shows it: "NORTHERN PAPER CO  DO NOT USE") is the supplier kept under
-        the name without it, the one shown under that very name first (B-2083). A person's name is the one vendor
-        that person is, written the other way round or without a middle initial: "Jane Q. Doe" and "Jane Doe" for
-        "DOE, JANE Q.", "Doe, Jane Q." for "Jane Q. Doe" (``same_person``); none when two vendors could be."""
-        words = self.skip_words()
-        plain, marker = name_marker(name, words)
-        if marker and (key := vendor_key(plain)):
-            rows = self._vendors_like(key)
-            shown = [r for r in rows if vendor_key(r["display_name"]) == vendor_key(name)]
-            if found := (shown or [r for r in rows if r["vendor_key"] == key]):
-                return found[0]
-        asked = person_name(plain)
-        if asked:  # "DOE, JANE Q.": the vendors "LAST, FIRST …" and the ones starting with the first name
-            starts = [" ".join((*asked[0], asked[1])), asked[1]]
-        else:  # "Jane Q. Doe": the vendors "LAST, FIRST …", for each way its last words can be the surname
-            given = _plain_words(plain)
-            starts = [" ".join((*given[cut:], given[0])) for cut in range(max(1, len(given) - 3), len(given))]
-
-        def fits(row: dict[str, Any], exactly: bool = False) -> bool:
-            theirs = name_marker(row["display_name"], words)[0]
-            if asked:
-                return same_person(asked, theirs, exactly)
-            person = person_name(theirs)
-            return person is not None and same_person(person, plain, exactly)
-
-        rows = [row for start in starts for row in self._vendors_like(start, more=True) if fits(row)]
-        found = list({row["vendor_key"]: row for row in rows}.values())
-        if len(found) > 1:  # "DOE, JANE" and "DOE, JANE Q." for "Jane Doe": the one written with as much
-            found = [row for row in found if fits(row, exactly=True)]
-        return found[0] if len(found) == 1 else None
+        """The vendor of a name no vendor is kept under as it is written (``named_otherwise``: a name with its
+        supplier number, a retired supplier's marker, a person written the other way round), read from the list."""
+        return named_otherwise(name, self.skip_words(), self._vendors_like)

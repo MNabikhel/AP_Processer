@@ -497,17 +497,18 @@ def test_a_person_in_the_master_is_found_by_the_name_as_a_claim_prints_it(tmp_pa
     assert _number(store, "Sam Roe") == "520004" and _said(store, "VENDOR_ON_HOLD", vendor_name="Sam Roe")
     # the supplier number goes with the name as printed (the exports and the JD Edwards voucher look it up so)
     ids = store.vendor_ids()
-    assert (ids["jane q doe"], ids["jane doe"], ids["pieter van der berg"]) == ("520001", "520001", "520003")
+    printed = ("Jane Q. Doe", "Jane Doe", "Pieter van der Berg")
+    assert [master_vendor_id(ids, name) for name in printed] == ["520001", "520001", "520003"]
     assert master_vendor_id(ids, "Jane Q. Doe") == "520001" and master_vendor_id(ids, "Janet Doe") == ""
 
 
 def test_two_people_one_name_could_be_are_never_guessed_between(tmp_path):
     store = _people(tmp_path, "DOE, JANE Q.", "DOE, JANE R.")
-    assert _number(store, "Jane Doe") is None and "jane doe" not in store.vendor_ids()
+    assert _number(store, "Jane Doe") is None and master_vendor_id(store.vendor_ids(), "Jane Doe") == ""
     assert (_number(store, "Jane Q. Doe"), _number(store, "Jane R Doe")) == ("520001", "520002")
     # one listed without a middle initial is the one a name printed without it means
     store = _people(tmp_path, "DOE, JANE Q.", "DOE, JANE R.", "DOE, JANE")
-    assert _number(store, "Jane Doe") == "520003" and store.vendor_ids()["jane doe"] == "520003"
+    assert _number(store, "Jane Doe") == "520003" and master_vendor_id(store.vendor_ids(), "Jane Doe") == "520003"
     assert _number(store, "Jane Q. Doe") == "520001"
 
 
@@ -586,3 +587,143 @@ def test_the_import_counts_the_hold_codes_it_did_not_treat_as_a_hold(tmp_path):
     store.set_setting(HOLD_CODES_SETTING, "Y, 1, 2, 0")
     assert store.import_vendor_master(rows)["other_holds"] == {"3": 1}
     assert store.import_vendor_master([{"vendor_name": "No Column Co", "erp_id": "1"}])["other_holds"] == {}
+
+
+# --- The supplier's number is the identity (B-2161 to B-2163) -------------------------------------------------------
+
+TWINS = [{"vendor_name": "LAKESIDE CATERING INC", "erp_id": "2003"},
+         {"vendor_name": "LAKESIDE CATERING LTD", "erp_id": "2004"},
+         {"vendor_name": "Summit Electric (Calgary)", "erp_id": "2010"},
+         {"vendor_name": "SUMMIT ELECTRIC - CALGARY", "erp_id": "2011"},
+         {"vendor_name": "Maple Leaf Coffee", "erp_id": "2020"}]  # fmt: skip
+
+
+def _twins(tmp_path, name="twins.db"):
+    store = Store(tmp_path / name)
+    return store, store.import_vendor_master([dict(r) for r in TWINS])
+
+
+def test_two_suppliers_of_one_name_with_no_tax_number_keep_both_address_numbers(tmp_path):
+    """B-2161: two suppliers whose names read the same (Inc / Ltd, punctuation) were one vendor under the first
+    number unless each had its own GST/HST number, which JD Edwards' master does not give: the second number was kept
+    nowhere and every invoice of either got the first. With supplier numbers in the list, each number is a vendor."""
+    store, result = _twins(tmp_path)
+    assert result["added"] == 5 and result["duplicates"] == []
+    assert result["shared"] == [["2003 LAKESIDE CATERING INC", "2004 LAKESIDE CATERING LTD"],
+                                ["2010 Summit Electric (Calgary)", "2011 SUMMIT ELECTRIC - CALGARY"]]  # fmt: skip
+    assert sorted(v["erp_id"] for v in store.master_vendors()) == ["2003", "2004", "2010", "2011", "2020"]
+    assert store.import_vendor_master([dict(r) for r in TWINS])["added"] == 0  # the same list again: nothing moves
+    assert len(store.master_vendors()) == 5
+    # a supplier alone under its name is found as before
+    assert store.find_vendor("Maple Leaf Coffee")["erp_id"] == "2020"
+    assert master_vendor_id(store.vendor_ids(), "Maple Leaf Coffee Inc.") == "2020"
+
+
+def test_a_name_several_supplier_numbers_share_is_never_given_the_first(tmp_path, monkeypatch):
+    """B-2161: an invoice that prints a name two supplier numbers go by gets neither in silence: no vendor, no
+    supplier number for the export, and a finding that lists them (and which last year's journal used most). Picked
+    on the review screen, the name carries the number, and everything follows it."""
+    store, _ = _twins(tmp_path)
+    ids = store.vendor_ids()
+    for printed in ("Lakeside Catering", "Lakeside Catering Ltd.", "LAKESIDE CATERING INC", "Summit Electric Calgary"):
+        assert store.find_vendor(printed) is None, printed
+        assert master_vendor_id(ids, printed) == "", printed
+    assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name="Lakeside Catering Ltd.") == [
+        "2 suppliers in the vendor list read “Lakeside Catering Ltd.”: pick one from the list, each has its own "
+        "supplier number: 2003 LAKESIDE CATERING INC; 2004 LAKESIDE CATERING LTD"
+    ]
+    used = [{"supplier_number": "2004", "vouchers": 14}, {"supplier_number": " 02003", "vouchers": 3},
+            {"supplier_number": "2020", "vouchers": 40}]  # fmt: skip
+    monkeypatch.setattr(type(store), "journal_suppliers", lambda self: used)
+    assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name="Lakeside Catering")[0].endswith(
+        ": 2003 LAKESIDE CATERING INC (3 vouchers in last year's journal); 2004 LAKESIDE CATERING LTD (14 vouchers in "
+        "last year's journal, the most)"
+    )
+    # the review screen's list offers each with its number, and the pick is found by it however the rest is typed
+    assert [v["display_name"] for v in store.vendor_choices()] == [
+        "LAKESIDE CATERING INC #2003", "LAKESIDE CATERING LTD #2004", "Maple Leaf Coffee",
+        "Summit Electric (Calgary) #2010", "SUMMIT ELECTRIC - CALGARY #2011",
+    ]  # fmt: skip
+    for picked, number in (("LAKESIDE CATERING LTD #2004", "2004"), ("Lakeside Catering #2003", "2003"),
+                           ("lakeside catering inc # 02004", "2004")):  # fmt: skip
+        assert store.find_vendor(picked)["erp_id"] == number, picked
+        assert master_vendor_id(ids, picked) == number, picked
+        assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name=picked) == []
+    assert store.vendor_key_for("LAKESIDE CATERING INC #2003") == "lakeside catering"
+    assert store.vendor_key_for("LAKESIDE CATERING LTD #2004") == "lakeside catering #2004"
+    # a number no supplier of that name has is no pick
+    assert store.find_vendor("Lakeside Catering #2020") is None
+    assert master_vendor_id(ids, "Lakeside Catering #2020") == ""
+    assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name="Lakeside Catering #2020")
+
+
+def test_suppliers_merged_under_one_name_before_are_split_at_the_next_import_and_keep_aps_work(tmp_path):
+    """B-2161, a database that imported its list before: the vendor AP worked on keeps its key, its number, its
+    note, its hold and its controls; the number merged into it comes back as a vendor of its own, on hold too when
+    AP's hold was on the name. A list with no supplier numbers merges names that read the same, as before (B-930)."""
+    store = Store(tmp_path / "before.db")
+    store.import_vendor_master([dict(TWINS[0])])  # as the import before left the two: one vendor, the first number
+    store.save_vendor("lakeside catering", "LAKESIDE CATERING INC", "on_hold", "123456789RT0001", "call before paying")
+    result = store.import_vendor_master([dict(r) for r in TWINS])
+    assert (result["added"], result["updated"]) == (4, 1)
+    first, second = store.get_vendor("lakeside catering"), store.get_vendor("lakeside catering #2004")
+    assert (first["erp_id"], first["status"], first["notes"]) == ("2003", ON_HOLD, "call before paying")
+    assert first["expected_gst"] == "123456789RT0001"
+    assert (second["erp_id"], second["status"], second["notes"]) == ("2004", ON_HOLD, "call before paying")
+    assert store.get_vendor("summit electric calgary #2011")["status"] == "active"
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="LAKESIDE CATERING LTD #2004")
+    plain = Store(tmp_path / "plain.db")
+    result = plain.import_vendor_master([{"vendor_name": "Acme Inc"}, {"vendor_name": "ACME LTD", "status": "on_hold",
+                                                                      "status_given": True}])  # fmt: skip
+    assert result["duplicates"] == [["Acme Inc", "ACME LTD"]] and result["shared"] == []
+    assert [(v["vendor_key"], v["status"]) for v in plain.master_vendors()] == [("acme", ON_HOLD)]
+    assert plain.find_vendor("Acme Limited")["status"] == ON_HOLD
+
+
+def test_one_rule_says_which_vendor_a_name_is_for_the_checks_and_for_the_supplier_number(tmp_path):
+    """B-2162: the review screen (``find_vendor``) and the exports' supplier number (``vendor_ids``) followed two
+    rules. "John Smith Inc." got the number of the person "SMITH, JOHN" while the check said not in the master; "Paul
+    S. Martin" was found by the check and had no number on the keying sheet. One function decides both, and a company
+    is never a person."""
+    store = _people(tmp_path, "SMITH, JOHN", "MARTIN, PAUL", "MARTIN, PAUL R.", "DOE, JANE Q.", "SINGH, HARPREET K.",
+                    "ROY, LUC  DO NOT USE", "Old Mill Supply DNU")  # fmt: skip
+    ids = store.vendor_ids()
+    for company in ("John Smith Inc.", "John Smith Ltd", "John Smith & Sons", "Smith John Holdings"):
+        assert store.find_vendor(company) is None, company
+        assert master_vendor_id(ids, company) == "", company
+        assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name=company), company
+    expected = {"John Smith": "520001", "Smith, John": "520001", "Paul Martin": "520002", "Paul S. Martin": "520002",
+                "Paul R. Martin": "520003", "Jane Quinn Doe": "520004", "Jane Doe": "520004", "Jane R. Doe": "",
+                "Harpreet Kaur Singh": "520005", "Harpreet Singh": "520005", "Luc Roy": "520006",
+                "ROY, LUC  DO NOT USE": "520006", "Old Mill Supply": "520007", "Old Mill Supply DNU": "520007",
+                "Janet Doe": "", "Singh Harpreet": ""}  # fmt: skip
+    for printed, number in expected.items():
+        assert (store.find_vendor(printed) or {}).get("erp_id", "") == number, printed
+        assert master_vendor_id(ids, printed) == number, printed
+    assert store.in_erp("Jane Quinn Doe", "X-1", 5.0) == []  # (asked by the same rule: no error for a person's name)
+
+
+def test_two_people_a_name_fits_as_well_are_never_guessed_between(tmp_path):
+    """A printed "Jane Q. Doe" with "DOE, JANE Q." and "DOE, JANE QUINN" both in the list: neither is taken."""
+    store = _people(tmp_path, "DOE, JANE Q.", "DOE, JANE QUINN")
+    assert store.find_vendor("Jane Q. Doe") is None and master_vendor_id(store.vendor_ids(), "Jane Q. Doe") == ""
+    assert store.find_vendor("Jane Quinn Doe") is None
+
+
+def test_a_marked_supplier_imported_before_the_marker_was_read_is_stopped_at_the_next_import(tmp_path):
+    """B-2163: a database that imported "Old Mill DNU" before B-2083 kept it, active, under a key with the marker in
+    it: the next import made a held vendor beside it, and an invoice read as "Old Mill DNU" still found the old
+    active one. The old row is folded into the new one (its note kept), so the supplier is stopped."""
+    path = tmp_path / "a.db"
+    store = Store(path)
+    store.import_vendor_master([{"vendor_name": "Old Mill Supply", "erp_id": "7"}])
+    with sqlite3.connect(path) as conn:  # as the version before kept the marked name
+        conn.execute("UPDATE vendors SET vendor_key = 'old mill dnu', display_name = 'Old Mill DNU'")
+    store = Store(path)
+    store.save_vendor("old mill dnu", "Old Mill DNU", "active", "", "pays by cheque")
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="Old Mill DNU") == []
+    store.import_vendor_master([{"vendor_name": "Old Mill DNU", "erp_id": "7"}])
+    assert [(v["vendor_key"], v["status"], v["erp_id"]) for v in store.master_vendors()] == [("old mill", ON_HOLD, "7")]
+    assert "pays by cheque" in store.get_vendor("old mill")["notes"]
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="Old Mill DNU") and _said(store, "VENDOR_ON_HOLD",
+                                                                              vendor_name="Old Mill")  # fmt: skip

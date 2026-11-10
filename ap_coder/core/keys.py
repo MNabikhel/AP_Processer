@@ -74,7 +74,12 @@ def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: A
         )
         if found:
             return found
-    return ids.get(vendor_key(vendor_name or "")) or ""
+    found = ids.get(vendor_key(vendor_name or ""))
+    if not found and (number_of := getattr(ids, "number_of", None)) is not None:
+        # a name no vendor is kept under as written: by the rule the checks find its vendor by (a name with its
+        # supplier number, a retired supplier's marker, a person written the other way round: B-2162)
+        found = number_of(vendor_name)
+    return found or ""
 
 
 ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")

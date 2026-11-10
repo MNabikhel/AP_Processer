@@ -314,6 +314,8 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
         ["Acme <script>x</script>", "V1", "", "Net 30", "Active"],
         ["Beta Supply", "V2", "", "Net 45", "Hold"],
         ["BETA SUPPLY.", "V3", "", "", ""],
+        ["Gamma Signs", "", "", "", ""],
+        ["GAMMA SIGNS INC", "", "", "", ""],
     ]
     bad = client.post(
         "/vendors/master/upload", files={"file": ("v.xlsx", b"not a workbook", "application/zip")}, headers=PAGE
@@ -339,8 +341,14 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
             headers=PAGE,
         ),
     )
-    assert "Vendor master: 2 added" in page.text and "more than once" in page.text and "BETA SUPPLY." in page.text
-    assert any(v["erp_id"] == "V1" for v in busy.master_vendors())
+    # two supplier numbers under one name are two vendors, named with their numbers (B-2161); two rows of one name
+    # with no number to tell them apart are one, as before
+    assert "Vendor master: 4 added" in page.text and "1 name is shared by more than one supplier number" in page.text
+    assert "V2 Beta Supply / V3 BETA SUPPLY." in page.text
+    assert "more than once" in page.text and "Gamma Signs / GAMMA SIGNS INC" in page.text
+    assert {v["erp_id"] for v in busy.master_vendors()} >= {"V1", "V2", "V3"}
+    assert busy.get_vendor("beta supply")["status"] == ON_HOLD  # (V2, as its Status column says)
+    assert busy.get_vendor("beta supply #V3")["status"] == "active"
 
 
 def guessed(html: str) -> dict[str, str]:

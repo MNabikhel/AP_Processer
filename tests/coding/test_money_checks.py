@@ -69,13 +69,15 @@ def test_two_suppliers_with_different_address_numbers_stay_two_vendors(tmp_path)
     result = store.import_vendor_master(master_rows(records, master_columns(list(records[0]))))
     assert result["duplicates"] == [["Northwind IT Solutions", "Northwind IT Solutions Inc."]]
     ids = store.vendor_ids()
-    assert sorted(v for k, v in ids.items() if not k.startswith(("gst:", "bn:", "bnx:"))) == ["40001", "40212", "40219"]
+    # (the name the two Great Lakes share gives neither number by itself: B-2161)
+    assert sorted(v for k, v in ids.items() if not k.startswith(("gst:", "bn:", "bnx:"))) == ["40001", "40219"]
     names = {v["display_name"] for v in store.master_vendors()}
     assert {"Great Lakes Mechanical Inc.", "Great Lakes Mechanical Limited"} <= names
     # An invoice is matched by its GST/HST number first: the Limited's invoices go to the Limited's AN8
     assert master_vendor_id(ids, "Great Lakes Mechanical Limited", "897654321RT0001") == "40219"
     assert master_vendor_id(ids, "Great Lakes Mechanical Inc.", "123456782 RT0001") == "40212"
-    assert master_vendor_id(ids, "Great Lakes Mechanical Inc.", "") == "40212"  # by name
+    assert master_vendor_id(ids, "Great Lakes Mechanical Inc.", "") == ""  # the name alone: which of the two?
+    assert master_vendor_id(ids, "Great Lakes Mechanical Inc. #40212", "") == "40212"  # picked, with its number
     inv = coded(
         doc(
             [line(1, 100.0, taxes=["HST"])],
