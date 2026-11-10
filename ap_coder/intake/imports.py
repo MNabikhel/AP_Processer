@@ -30,6 +30,7 @@ from typing import Any
 
 from ..core.store.folder import read_file
 from ..core.store.imports import GONE, IMPORT_CLAIM, IMPORT_DONE, IMPORT_FAILED, IMPORT_LEASE_SECONDS, IMPORT_SKIPPED
+from ..ops.awake import stay_awake
 from .files import folder_names
 
 log = logging.getLogger(__name__)
@@ -302,7 +303,8 @@ class Reader:
             context.run(EVENT_ACTOR.set, row["account"] or None)
             context.run(EVENT_ORIGIN.set, row["origin"] or None)
             context.run(IMPORT_CLAIM.set, (row["id"], self.owner))  # stored only while it is still this reader's
-            result = context.run(pipeline.process, path, sha256=row["sha256"] if same else None)
+            with stay_awake():  # (a laptop on Windows is not put to sleep in the middle of a file)
+                result = context.run(pipeline.process, path, sha256=row["sha256"] if same else None)
         except Exception as exc:  # noqa: BLE001 - the pipeline says what failed itself; never left in line to fail again
             log.exception("Could not read %s from the import queue", path)
             self.store.finish_import(row["id"], self.owner, IMPORT_FAILED, error=f"{type(exc).__name__}: {exc}",
