@@ -610,13 +610,23 @@ def jde_vouchers(store: Store, df: Any) -> tuple[list[dict[str, Any]], dict[str,
 
 def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[str, Any]],
                      read: dict[str, Any]) -> JSONResponse:  # fmt: skip
-    """JD Edwards' voucher list into the register, saying what was read."""
+    """JD Edwards' voucher list into the register, saying what was read; and out of it the vouchers the list shows
+    at 0.00 (voided in JD Edwards since an earlier list gave them) and, when the list is whole and the person says
+    the grid was not filtered (``whole``), the vouchers of the period it covers that it no longer shows (B-2164)."""
     store, said = get_store(request), registers.vouchers_said(read)
-    if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
+    covers = read["covers"] if form.get("whole") and read["complete"] else {}
+    if rows:
+        store.import_erp_vouchers(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
+    left = store.erp_vouchers_left(read["voided"], covers, [row["key"] for row in rows])
+    if not rows and not left:  # "Replace" would empty the list the duplicate checks look in (B-1405)
         return refuse(f"No voucher of this list can be kept: nothing was imported, the list is as it was. {said}")
-    total = store.import_erp_vouchers(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
-    text = f"{total:,} ERP invoices known. {said}"
+    text = f"{ui.plural(store.erp_register_count(), 'ERP invoice')} known. {said}"
+    if left:
+        text += (f" {ui.plural(left, 'voucher')} an earlier list gave {'is' if left == 1 else 'are'} voided or no "
+                 "longer in JD Edwards by this one: taken off the list.")  # fmt: skip
+    elif form.get("whole") and not read["complete"]:
+        text += " Nothing was taken off the list for the vouchers this file does not show: it may be cut short."
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
@@ -645,7 +655,7 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
                       "again.")  # fmt: skip
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
-    text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
+    text = f"{ui.plural(total, 'ERP invoice')} known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
     if repeats := store.erp_register_repeats():
         text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))

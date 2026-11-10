@@ -1,5 +1,7 @@
 """Duplicates against the ERP's invoice register."""
 
+import datetime as dt
+
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
@@ -76,7 +78,8 @@ def test_jd_edwards_voucher_list_is_read_as_it_comes():
     assert chosen == {"document": "Document Number", "doc_type": "Doc Type", "company": "Doc Co",
                       "pay_item": "Pay Item", "an8": "Supplier Number", "supplier_name": "Supplier Number Desc",
                       "invoice_number": "Invoice Number", "invoice_date": "Invoice Date", "gross": "Gross Amount",
-                      "foreign": "Foreign Amount", "currency": "Curr Code", "batch": "Batch Number"}  # fmt: skip
+                      "foreign": "Foreign Amount", "currency": "Curr Code", "batch": "Batch Number",
+                      "gl_date": "G/L Date"}  # fmt: skip
     rows, read = registers.vouchers_from_pay_items(listed, chosen, NAMES)
     kept = ("key", "vendor_name", "an8", "invoice_number", "invoice_date", "total")
     assert [tuple(r[field] for field in kept) for r in rows] == [
@@ -90,13 +93,18 @@ def test_jd_edwards_voucher_list_is_read_as_it_comes():
         ("700101", "5550001", "CAD"), ("700102", "5550002", "CAD"), ("700103", "5550001", "CAD"),
         ("700104", "5550001", "USD"), ("700101", "5550001", "CAD"),
     ]  # fmt: skip
+    day = ["2026-03-04", "2026-03-04"]
     assert read == {"pay_items": 11, "vouchers": 5, "added_up": 2, "totals_rows": 1, "named": 4, "foreign": {"USD": 1},
-                    "skipped": {"with no invoice number": [1, 1], "adding up to 0.00": [1, 2]}}  # fmt: skip
+                    "skipped": {"with no invoice number": [1, 1], "adding up to 0.00": [1, 2]}, "by_supplier": False,
+                    "domestic": {}, "complete": True, "covers": {"08801-PV-": day, "08802-PV-": day},
+                    "voided": ["08801-PV-700106"]}  # fmt: skip
     assert registers.vouchers_said(read) == (
         "JD Edwards' voucher list: 5 vouchers read from 11 pay items (2 vouchers added up from more than one pay "
         "item). 4 named from the vendor master by their supplier number, 1 by the name on the list (cut at 30 "
         "characters). 1 voucher in USD, by its foreign amount. Left out: the totals row; 1 voucher with no invoice "
-        "number (1 pay item); 1 voucher adding up to 0.00 (2 pay items)."
+        "number (1 pay item); 1 voucher adding up to 0.00 (2 pay items). It covers company 08801 PV, G/L dates "
+        "2026-03-04 to 2026-03-04; company 08802 PV, G/L dates 2026-03-04 to 2026-03-04 (its own rows' dates; its "
+        "totals row adds up)."
     )
     # the grid's other caption for the pay item; a file without the foreign amount and the currency
     short = [h if h != "Pay Item" else "Pay Itm" for h in VOUCHER_HEAD if h not in ("Foreign Amount", "Curr Code")]
@@ -161,3 +169,78 @@ def test_a_supplier_number_written_with_leading_zeros_is_named_from_the_master()
     rows, read = registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns),
                                                    {"00410002": "Quickship Courier"})  # fmt: skip
     assert (rows[0]["vendor_name"], read["named"]) == ("Quickship Courier", 1)
+
+
+# --- What the voucher list cannot tell, and the vouchers voided since (B-2164, B-2165) -----------------------------
+
+
+def _read(items, head=None, names=None):
+    columns, listed = records("vouchers.xlsx", voucher_headers(items, head))
+    return registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns), names or {})
+
+
+def test_a_voucher_list_without_its_company_or_foreign_amount_says_what_was_assumed():
+    """B-2165: with no "Doc Co" / "Doc Type" column, the pay items of two suppliers under one document number were
+    added up as one voucher; a USD voucher with no foreign amount column was kept at its Canadian gross, labelled USD,
+    without a word; and a USD pay item whose foreign amount was blank fell out of its voucher's sum."""
+    courier, coffee = (410002, "QUICKSHIP COURIER CANADA LTD"), (410001, "MAPLE LEAF COFFEE SERVICES INC.")
+    items = [pay_item(800401, "001", 10.00, *courier, "A-1"), pay_item(800401, "002", 20.00, *courier, "A-1"),
+             pay_item(800401, "001", 5.00, *coffee, "C-9")]  # fmt: skip
+    bare = [h for h in VOUCHER_HEAD if h not in ("Doc Co", "Doc Type")]
+    rows, read = _read(items, bare)
+    assert sorted((r["key"], r["an8"], r["invoice_number"], r["total"]) for r in rows) == [
+        ("--800401-410001", "410001", "C-9", 5.00), ("--800401-410002", "410002", "A-1", 30.00)
+    ]  # fmt: skip
+    assert read["by_supplier"] and read["covers"] == {}  # (no company: no period it can be said to cover)
+    assert ("The list has no document company or document type column: a voucher is told by its document number and "
+            "its supplier.") in registers.vouchers_said(read)  # fmt: skip
+    usd = [pay_item(800500, "001", 1370.00, *courier, "US-1", currency="USD"),
+           pay_item(800501, "001", 1370.00, *courier, "US-2", foreign=1000.00, currency="USD"),
+           pay_item(800501, "002", 137.00, *courier, "US-2", currency="USD")]  # fmt: skip
+    rows, read = _read(usd)
+    assert [(r["key"], r["total"], r["currency"]) for r in rows] == [("08801-PV-800500", 1370.00, "USD")]
+    assert read["domestic"] == {"USD": 1} and read["skipped"] == {"with a pay item that has no foreign amount": [1, 2]}
+    said = registers.vouchers_said(read)
+    assert ("1 voucher in USD kept at its gross amount in Canadian dollars (the list gives no foreign amount): it will "
+            "not match an invoice's USD total.") in said  # fmt: skip
+    assert "1 voucher with a pay item that has no foreign amount (2 pay items)" in said
+
+
+def test_a_voucher_voided_since_it_was_imported_leaves_the_register(tmp_path):
+    """B-2164: a voucher voided in JD Edwards after its list was imported stayed in the register: re-keyed, the bill
+    counted two copies, and an invoice whose only voucher was voided stayed DUPLICATE_IN_ERP. A later list that shows
+    it at 0.00 takes it off; one that no longer shows it takes it off only when it is whole and said not filtered."""
+    store = Store(tmp_path / "a.db")
+    coffee = (410001, "MAPLE LEAF COFFEE SERVICES INC.")
+    march = [pay_item(810001, "001", 214.20, *coffee, "INV-0042"), pay_item(810002, "001", 99.00, *coffee, "INV-0043"),
+             pay_item(810003, "001", 12.00, *coffee, "INV-0044", date=dt.datetime(2026, 3, 20))]  # fmt: skip
+    rows, read = _read(march)
+    assert store.import_erp_vouchers(rows) == 3 and read["voided"] == [] and read["complete"]
+    assert read["covers"] == {"08801-PV-": ["2026-03-04", "2026-03-20"]}
+    # the next list: 810001 voided and keyed again as 810050; 810002 no longer shown (deleted); 810003 as it was
+    april = [pay_item(810001, "001", 0.00, *coffee, "INV-0042"), pay_item(810050, "001", 214.20, *coffee, "INV-0042"),
+             march[2]]  # fmt: skip
+    rows, read = _read(april)
+    assert read["voided"] == ["08801-PV-810001"] and store.import_erp_vouchers(rows) == 3
+    assert store.erp_vouchers_left(read["voided"], {}, [r["key"] for r in rows]) == 1
+    assert [v["document"] for v in store.erp_vouchers_of(coffee[1], "INV-0042", 214.20)] == ["810050"]
+    assert store.erp_register_repeats() == 0 and store.in_erp(coffee[1], "INV-0043", 99.00)  # not shown: still there
+    # said whole and not filtered: what it no longer shows for its period goes too; a second time nothing more does
+    assert store.erp_vouchers_left(read["voided"], read["covers"], [r["key"] for r in rows]) == 1
+    assert store.in_erp(coffee[1], "INV-0043", 99.00) == [] and store.erp_register_count() == 2
+    assert store.erp_vouchers_left(read["voided"], read["covers"], [r["key"] for r in rows]) == 0
+    # a voucher dated outside the list's own dates, or another company's, is not the list's to take off
+    store.import_erp_vouchers(_read([pay_item(810099, "001", 7.00, *coffee, "LATE", date=dt.datetime(2026, 4, 2)),
+                                     pay_item(810001, "001", 8.00, *coffee, "OTHER", company="08802")])[0])  # fmt: skip
+    assert store.erp_vouchers_left([], read["covers"], [r["key"] for r in rows]) == 0
+    # a file cut short (no totals row, or one that is not the sum of its rows) is not whole
+    columns, listed = records("vouchers.xlsx", voucher_headers(april))
+    cut = registers.vouchers_from_pay_items(listed[:-1], registers.voucher_columns(columns), {})[1]
+    short = registers.vouchers_from_pay_items(listed[:1] + listed[2:], registers.voucher_columns(columns), {})[1]
+    assert not cut["complete"] and not short["complete"]
+    assert "may be cut short: a voucher it does not show is never taken off the list" in registers.vouchers_said(cut)
+    # only the void in the list: the invoice is no duplicate any more
+    store.import_erp_vouchers(_read([pay_item(810200, "001", 55.00, *coffee, "INV-0050")])[0])
+    rows, read = _read([pay_item(810200, "001", 0.00, *coffee, "INV-0050")])
+    assert rows == [] and store.erp_vouchers_left(read["voided"], {}, []) == 1
+    assert store.in_erp(coffee[1], "INV-0050", 55.00) == []

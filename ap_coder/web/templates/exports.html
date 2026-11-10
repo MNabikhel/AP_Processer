@@ -149,7 +149,8 @@
     {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
     <input type="hidden" name="file" value="{{ reg.token }}">
     <input type="hidden" name="sheet" value="{{ reg.sheet }}">
-    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers.</div></div>
+    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers, and takes off the list any voucher it shows at 0.00 (voided in JD Edwards).</div></div>
+    <label class="check"><input type="checkbox" name="whole" value="1"> This list is every voucher of the period it covers (the grid was not filtered by supplier, batch or pay status): also take off the list the vouchers of that period it no longer shows</label>
     {% else %}{{ columns(reg) }}{% endif %}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
     <div class="row">

@@ -32,13 +32,14 @@ from .summary import fetch_rows, fts_available
 JDE_REGISTER = (
     "CREATE TABLE IF NOT EXISTS erp_vouchers (erp_key TEXT PRIMARY KEY, vendor_key TEXT NOT NULL, number_key TEXT "
     "NOT NULL, total REAL NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', seen INTEGER NOT NULL, document TEXT "
-    "NOT NULL DEFAULT '', batch TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT '')",
+    "NOT NULL DEFAULT '', batch TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT '', gl_date TEXT NOT NULL "
+    "DEFAULT '')",
     "CREATE INDEX IF NOT EXISTS erp_vouchers_bill ON erp_vouchers (vendor_key, number_key, total)",
     "CREATE INDEX IF NOT EXISTS erp_vouchers_date ON erp_vouchers (invoice_date, seen)",
 )
 # What a voucher of JD Edwards' voucher list keeps besides (B-2084): its document number and batch, read back onto the
 # reviewed invoice (``erp_vouchers_of``), and the currency of its gross. Added to a table made before them.
-VOUCHER_COLUMNS = ("document", "batch", "currency")
+VOUCHER_COLUMNS = ("document", "batch", "currency", "gl_date")  # (the G/L date: the period a list covers, B-2164)
 WRITE_ROWS = 500  # vouchers removed in one transaction: each a moment, never long enough to hold up an approval
 # When the register was last cleared or replaced (a setting): what the JD Edwards sync's reads before then wrote is
 # gone, so its next read of the vouchers is whole.
@@ -275,7 +276,7 @@ class RegisterMixin:
             (json.dumps(sorted({bill[1] for bill in bills})),))}  # fmt: skip
         conn.executemany(
             "INSERT INTO erp_vouchers (erp_key, vendor_key, number_key, total, invoice_date, seen, document, batch, "
-            "currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET "
+            "currency, gl_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(erp_key) DO UPDATE SET "
             "vendor_key = excluded.vendor_key, number_key = excluded.number_key, total = excluded.total, "
             "invoice_date = excluded.invoice_date, "
             "seen = MAX(erp_vouchers.seen, excluded.seen), "  # (an older read writing after a newer one)
@@ -320,6 +321,27 @@ class RegisterMixin:
             self._log(conn, "erp_register_imported", actor=actor,
                       detail={"rows": len(rows), "total": count, "vouchers": len(vouchers)})  # fmt: skip
         return count
+
+    def erp_vouchers_left(self, voided: list[str], covers: dict[str, Any], listed: list[str]) -> int:
+        """The vouchers an earlier voucher list gave that a later one says are gone, taken off the register, a bill
+        with its last voucher, so it is no duplicate any more (B-2164). ``voided``: the keys the later list shows
+        adding up to 0.00. ``covers``: {"<company>-<document type>-": (the first G/L date of the list's rows, the
+        last)} (``registers.vouchers_from_pay_items``), given only for a whole list the person says was not
+        filtered: the vouchers of that period not among ``listed`` (its vouchers' keys) leave too. Only a voucher
+        kept with its G/L date, which a voucher list gives, can leave by its absence: one the JD Edwards sync
+        brought is its own to remove. How many left."""
+        kept = set(listed)
+        with self._conn() as conn:
+            gone = [r[0] for r in conn.execute(f"SELECT erp_key FROM erp_vouchers WHERE {_in_list('erp_key')}",
+                                               (json.dumps(sorted(set(voided))),))]  # fmt: skip
+            for prefix, (first, last) in covers.items():
+                found = conn.execute("SELECT erp_key FROM erp_vouchers WHERE erp_key >= ? AND erp_key < ? AND "
+                                     "gl_date != '' AND gl_date >= ? AND gl_date <= ?",
+                                     (prefix, prefix[:-1] + ".", first, last))  # fmt: skip
+                gone += [r[0] for r in found if r[0] not in kept and r[0] not in gone]
+        if gone:
+            self.remove_jde_vouchers(gone, _LAST_ROWID)
+        return len(gone)
 
     def erp_vouchers_of(self, vendor_name: str, invoice_number: str, total: float | None,
                         an8: str | None = None) -> list[dict[str, Any]]:  # fmt: skip
