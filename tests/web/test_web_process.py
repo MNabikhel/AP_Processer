@@ -458,7 +458,8 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
     assert reasons  # lines to code: the queue flags them
     lines = [line["text"] for line in snap["lines"]]
     for inv in pending:
-        said = [t for t in lines if t.startswith(f"{inv['vendor_name']}, invoice {inv['invoice_number']}:")]
+        said = [t for t in lines if t.startswith(f"{inv['vendor_name']}, ")  # ("invoice …", "credit note …": B-2100)
+                and t.split(":")[0].endswith(f" {inv['invoice_number']}")]  # fmt: skip
         assert said and all(t.endswith("needs attention" if inv["id"] in reasons else "ready") for t in said), (
             said,
             reasons.get(inv["id"]),
