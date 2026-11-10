@@ -268,6 +268,8 @@ def test_server_settings_alone_mark_a_team_servers_data_folder(laptop, started, 
     team = safety.team_server(data, db)
     assert team is not None and not team.running and team.accounts == 0
     assert team.address == "https://apcoder.example:8443"
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4242, "port": 8502}))  # left by a start that
+    assert safety.team_server(data, db).address == "https://apcoder.example:8443"  # was killed: not the team's port
     assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
     said = capsys.readouterr().err
     assert "server.json" in said and "https://apcoder.example:8443" in said

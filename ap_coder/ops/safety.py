@@ -350,8 +350,8 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
     if not (scheme or accounts or key or marker.is_file()):
         return None
     running = bool(scheme)
-    if settings and not running:  # (stopped: the server runs only over HTTPS, but for a first test)
-        scheme = "http" if settings.insecure_http else "https"
+    if settings and not running:  # (stopped: its own port, over HTTPS, as the server runs but for a first test)
+        scheme, port = "http" if settings.insecure_http else "https", settings.port
     name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
     address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
     return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key)
