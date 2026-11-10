@@ -169,6 +169,18 @@ def test_a_printed_number_that_differs_from_the_vendor_list_is_highlighted(clien
     assert "is-flagged" in field
 
 
+def test_another_gst_account_of_the_same_business_is_said_under_the_number_in_amber(client, store):
+    """VENDOR_TAX_ACCOUNT_DIFFERS (D-219 amended) is a warning: its hint is under the GST/HST box, which is not among
+    the details in red."""
+    invoice_id = _red_river(store)
+    answer = check(client, invoice_id, form_of(store, invoice_id, **{GST: "741852966 RT0002"}))
+    assert answer["header"]["flags"][GST] == (
+        "Vendor list: 741852966 RT0001, another GST/HST account of the same business"
+    )
+    assert GST not in answer["header"]["flag_errors"]
+    assert "another of its GST/HST accounts" in html.unescape(answer["sections"]["checks"])  # the checks list it too
+
+
 # --- In a browser ---------------------------------------------------------------------------------------------------
 
 

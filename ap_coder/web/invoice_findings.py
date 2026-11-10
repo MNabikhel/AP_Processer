@@ -107,6 +107,7 @@ def low_confidence(report: Any) -> list[str]:
 # checks panel lists them too). {check: (field, note)}; a note of None is worked out (``field_flags``).
 FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
     "VENDOR_TAX_NUMBER_CHANGED": ("gst_hst_registration_number", None),
+    "VENDOR_TAX_ACCOUNT_DIFFERS": ("gst_hst_registration_number", None),
     "GST_NUMBER_CHECK_DIGIT": ("gst_hst_registration_number", "Fails the CRA check digit"),
     "GST_HST_NUMBER_FORMAT": ("gst_hst_registration_number", "Not in the format 123456789 RT0001"),
     "VENDOR_QST_CHANGED": ("qst_registration_number", None),
