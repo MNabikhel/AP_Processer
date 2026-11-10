@@ -376,6 +376,7 @@ class Ours:
     tax_area: str = ""
     tax_code: str = ""
     touchless: bool = False
+    status: str = ""
     lines: list[dict[str, Any]] = field(default_factory=list)
     tax_on_gl: bool = False  # the tax coded to G/L accounts (D-93): the voucher's F0411 carries none
 
@@ -401,18 +402,22 @@ def _would_be_touchless(inv: dict[str, Any]) -> bool:
         READY, AUTONOMOUS)  # fmt: skip
 
 
-def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ours]:
+def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: bool = False) -> list[Ours]:
     """Every invoice fully approved in AP Coder, oldest first, as JD Edwards would get it: one still waiting for its
-    second approval is not exported yet (B-1012)."""
-    from ..core.store import APPROVED
+    second approval is not exported yet (B-1012). ``proposed``: every invoice in review, parked, waiting for its
+    second approval or approved, each as AP Coder proposed it before a person changed anything (``ai_output``)."""
+    from ..core.store import ACTIVE_STATUSES, APPROVED
     from ..erp.exports import distribution
 
     settings = settings or jde.load(store)
     ids = store.vendor_ids()
-    rows = sorted(store.list_invoices(APPROVED), key=lambda r: r["id"])
+    treatments = store.tax_treatments() if proposed else None
+    rows = sorted(store.list_invoices(statuses=ACTIVE_STATUSES if proposed else (APPROVED,)), key=lambda r: r["id"])
     out = []
     for row in rows:
         inv = store.get_invoice(row["id"])
+        if proposed:
+            inv = {**inv, "final_output": inv.get("ai_output") or {}}
         final = inv.get("final_output") or {}
         if not final:
             continue
@@ -436,7 +441,7 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ou
             tax_total=given if given is not None else parse_amount(tax_total),
             currency=str(final.get("currency") or settings.domestic_currency).upper(),
             due_date=due.isoformat() if due else "", touchless=_would_be_touchless(inv),
-            tax_on_gl=settings.tax_on_gl,
+            tax_on_gl=settings.tax_on_gl, status=str(inv.get("status") or ""),
         )  # fmt: skip
         try:  # the tax area and explanation code the voucher would carry
             header = jde.voucher_rows(inv, an8 or "0", settings)[0]
@@ -444,7 +449,7 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None) -> list[Ou
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: its tax treatment is not compared
             pass
         proposed = {li.get("line_number"): li for li in (inv.get("ai_output") or {}).get("line_items") or []}
-        for e in distribution(final):
+        for e in distribution(final, treatments):
             recoverable = e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < CENT
             gl, cc = str(e.get("gl_code") or ""), str(e.get("cost_center") or "")
             cc = "" if cc.upper() == UNASSIGNED else cc

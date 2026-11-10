@@ -1084,13 +1084,21 @@ def cmd_export_training(args: argparse.Namespace) -> int:
 def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
     """``pilot-score --journal`` (last year's journal, its last months held out) and ``pilot-score --proposed`` (what
     AP Coder proposed for real invoices against the vouchers keyed for them): the report's first paragraph, said."""
-    from . import journal_score
+    from . import journal_score, proposed_score
     from .pilot_score import ExportError
 
     store = Store(args.db)
+    if args.proposed and not args.vouchers:
+        print("pilot-score --proposed needs the voucher list: --vouchers HEADERS.xlsx", file=sys.stderr)
+        return 2
     try:
-        report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
-        said, module = [journal_score.paragraph(report), journal_score.UPPER_BOUND], journal_score
+        if args.proposed:
+            report, folder = proposed_score.run(store, args.vouchers, args.journal or None, args.out,
+                                                implied_decimals=args.implied_decimals)  # fmt: skip
+            said, module = [proposed_score.paragraph(report)], proposed_score
+        else:
+            report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
+            said, module = [journal_score.paragraph(report), journal_score.UPPER_BOUND], journal_score
     except ExportError as exc:
         print(str(exc), file=sys.stderr)
         return 1
