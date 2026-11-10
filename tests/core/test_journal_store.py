@@ -298,11 +298,61 @@ def test_a_load_that_stopped_half_way_is_never_read_and_the_file_loads_again(sto
         _load(store, truth)
     # The first 50 vouchers were written, in a transaction of their own: none is counted, listed or read.
     assert calls == [50, 50] and store.journal_files() == [] and store.journal_vouchers() == []
-    assert store.journal_suppliers() == [] and store.journal_stamp() == 0
+    assert store.journal_suppliers() == [] and store.journal_stamp() == 0 and _rows(store) == (1, 50)
     monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(wrote))
+    # Another file loaded soon after leaves it be (it may still be under way); the file itself replaces it.
+    other = _load(store, replace(truth, vouchers=truth.vouchers[:10]), "other.csv")
+    assert other["added"] == 10 and _rows(store) == (2, 60)
     result = _load(store, truth)
-    assert (result["loaded"], result["added"], result["already"]) == (True, 120, 0)
-    assert len(store.journal_vouchers()) == 120 and len(store.journal_files()) == 1
+    assert (result["loaded"], result["added"], result["already"]) == (True, 110, 10)
+    assert len(store.journal_vouchers()) == 120 and len(store.journal_files()) == 2 and _rows(store) == (2, 130)
+
+
+def _rows(store):
+    """(the files' rows, the vouchers' rows) in the tables, counted or not."""
+    with store._conn() as conn:
+        return tuple(conn.execute(f"SELECT COUNT(*) FROM journal_{table}").fetchone()[0]
+                     for table in ("files", "vouchers"))  # fmt: skip
+
+
+def test_what_an_old_stopped_load_left_is_removed_at_the_next_load(store, truth, monkeypatch):
+    wrote = part.JournalMixin._write_vouchers
+
+    def stops(conn, file_id, vouchers):
+        wrote(conn, file_id, vouchers[:5])
+        conn.commit()
+        raise OSError("the computer stopped")
+
+    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(stops))
+    with pytest.raises(OSError):
+        _load(store, replace(truth, vouchers=truth.vouchers[:20]), "stopped.csv")
+    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(wrote))
+    assert _rows(store) == (1, 5) and store.journal_vouchers() == []
+    monkeypatch.setattr(part, "STOPPED_AFTER", -part.STOPPED_AFTER)  # (as if it had begun over an hour ago)
+    assert _load(store, truth)["added"] == 120
+    assert _rows(store) == (1, 120) and len(store.journal_lines_for(str(truth.vouchers[0].supplier))) > 0
+    with store._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM journal_lines WHERE voucher_id NOT IN (SELECT id FROM "
+                            "journal_vouchers)").fetchone()[0] == 0  # fmt: skip
+
+
+def test_the_same_file_loaded_twice_at_the_same_moment_is_kept_once(store, truth, monkeypatch):
+    monkeypatch.setattr(part, "VOUCHERS_A_WRITE", 50)
+    wrote = part.JournalMixin._write_vouchers
+    calls = []
+
+    def meanwhile(conn, file_id, vouchers):
+        calls.append(file_id)
+        if len(calls) == 2:  # between two of the first load's writes, the same file is loaded whole
+            assert _load(store, truth, actor="sam")["added"] == 120
+        wrote(conn, file_id, vouchers)
+
+    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(meanwhile))
+    with pytest.raises(ValueError, match="loaded a second time at the same moment"):
+        _load(store, truth, actor="pat")
+    (kept,) = store.journal_files()
+    assert (kept["loaded_by"], kept["vouchers"], kept["counted"]) == ("sam", 120, 120) and _rows(store) == (1, 120)
+    assert len(store.journal_vouchers()) == 120 and len(store.events(actions=["journal_imported"])) == 1
 
 
 def test_a_caller_may_keep_the_whole_load_in_one_transaction(store, truth):

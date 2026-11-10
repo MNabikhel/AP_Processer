@@ -26,6 +26,7 @@ this is used.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import sqlite3
@@ -43,6 +44,9 @@ SETTING_KEYS = {"trade": "journal_payable_trade", "intercompany": "journal_payab
                 "tax": "journal_tax_objects"}  # fmt: skip
 VERSION_KEY = "journal_version"
 VOUCHERS_A_WRITE = 250  # vouchers written in one transaction, with their lines
+STOPPED_AFTER = dt.timedelta(
+    hours=1
+)  # a load not finished this long after it began stopped half way (it takes seconds)
 SAME_FILE = "this file is loaded already"
 IN_ANOTHER_FILE = "the same voucher is in a file loaded before"
 NO_VOUCHER = "This file has no voucher that could be read: nothing was loaded."
@@ -199,8 +203,11 @@ class JournalMixin:
                     return {**result, "file_id": loaded["id"], "skipped": {SAME_FILE: len(vouchers)}}
                 if not vouchers:
                     raise ValueError(NO_VOUCHER)
-                stopped = conn.execute("SELECT id FROM journal_files WHERE hash = ? AND done = 0", (source_hash,))
-                self._forget_files(conn, [r["id"] for r in stopped])  # a load of this file that stopped half way
+                # What a load that stopped half way left: this file's, and any that began long ago.
+                long_ago = (dt.datetime.now() - STOPPED_AFTER).isoformat(timespec="seconds")
+                stopped = conn.execute("SELECT id FROM journal_files WHERE done = 0 AND (hash = ? OR loaded_at < ?)",
+                                       (source_hash, long_ago))  # fmt: skip
+                self._forget_files(conn, [r["id"] for r in stopped])
                 detail = {key: result[key] for key in ("payable_lines", "tax_lines", "affiliates", "unbalanced",
                                                        "credits", "learned_vouchers", "learned_lines")}  # fmt: skip
                 detail["objects"] = {name: list((objects or {}).get(name, ())) for name in SETTING_KEYS}
@@ -344,12 +351,13 @@ class JournalMixin:
         "description" (the account's name as printed, 24 characters at most), "amount" (debit - credit, so a credit
         is negative), "remark" (AP's words, 30 characters at most, may be ""), "kind", "voucher_coding_lines" (1: the
         whole voucher went to this account), "affiliate", "credit", "balanced" (True or False)}."""
+        kinds = [kinds] if isinstance(kinds, str) else list(kinds)
         sql = _LINES_FOR + _in_list("l.kind")
         sql += "" if include_affiliates else " AND v.affiliate = 0"
         sql += "" if include_unbalanced else " AND v.balanced = 1"
         with self._conn() as conn:
             rows = conn.execute(sql + " ORDER BY v.gl_date, v.id, l.n",
-                                (supplier_key(supplier_number), json.dumps(list(kinds)))).fetchall()  # fmt: skip
+                                (supplier_key(supplier_number), json.dumps(kinds))).fetchall()  # fmt: skip
         return [_flags(row) for row in rows]
 
     def journal_suppliers(self) -> list[dict[str, Any]]:
