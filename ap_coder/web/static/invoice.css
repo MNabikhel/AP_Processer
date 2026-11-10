@@ -725,7 +725,7 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .c-cap .acct-unit::before, .c-cap .acct-why::before {content: " · ";}
 .c-cap .acct-why .ms {font-size: 13px; vertical-align: -2px; margin-right: 2px;}
 .acct-note {margin: 2px 0 3px; padding: 5px 8px; border-radius: 6px; font-size: 12px; line-height: 17px;
-  color: var(--lg-text); overflow-wrap: anywhere;}
+  color: var(--lg-text); white-space: normal; overflow-wrap: anywhere;}
 .acct-note p {margin: 0;}
 .acct-note .ms {font-size: 15px; vertical-align: -3px; margin-right: 4px;}
 .acct-note.fix {background: var(--lg-danger-weak);} .acct-note.fix b, .acct-note.fix .ms {color: var(--lg-danger);}

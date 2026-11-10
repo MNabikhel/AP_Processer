@@ -86,14 +86,17 @@ def chromium():
             browser.close()
 
 
-def _sweep(chromium, store, invoice_id: int) -> list[dict]:
-    """The invoice's review screen measured at every window, each with ``window`` (width, height)."""
+def _sweep(chromium, store, invoice_id: int, first: str = "") -> list[dict]:
+    """The invoice's review screen measured at every window, each with ``window`` (width, height); ``first``: a
+    script run on the page before it is measured."""
     out = []
     with browser_on(chromium, create_app(web_settings(), store, start_reader=False)) as (browser, base):
         page = browser.new_page(viewport={"width": 1366, "height": 768})
         page.goto(f"{base}/review/{invoice_id}")
         page.wait_for_load_state("networkidle")
         page.add_style_tag(content=BAR)
+        if first:
+            page.evaluate(first)
         for width in WIDTHS:
             for height in HEIGHTS:
                 page.set_viewport_size({"width": width, "height": height})
@@ -111,6 +114,22 @@ def _faults(measures: list[dict]) -> list[str]:
             faults.append(f"{m['window']}: the page scrolls sideways ({m['scroll']} of {m['client']} px)")
         faults += [f"{m['window']}: outside its card: {what}" for what in m["outside"]]
     return faults
+
+
+LONG_NOTE = """() => {
+  const slot = document.querySelector('[data-grid="lines"] [data-row] td.c-slot');
+  slot.innerHTML = '<div class="acct-note fix"><p><b>To fix:</b> <span data-acct-why>' +
+    "This supplier's 3 lines last year went to 3 accounts: 33% / 33% / 33%: pick the account. The chat model was " +
+    "asked and gave no answer, so nothing here is its pick; the three accounts are offered below." +
+    '</span></p></div>';
+}"""
+
+
+def test_a_long_sentence_under_a_line_wraps_in_every_window(chromium, chart_company):
+    """B-2209: a line left to a person says why in a sentence as long as it needs: it wraps inside the line (the
+    template's own markup, with a long sentence), and the page never scrolls sideways."""
+    faults = _faults(_sweep(chromium, chart_company.store, chart_company.invoices["four_lines"][1], LONG_NOTE))
+    assert not faults, "\n".join(faults[:25])
 
 
 @pytest.mark.parametrize("name", ["four_lines", "fifteen_lines"])
