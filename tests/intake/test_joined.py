@@ -10,12 +10,16 @@ import pymupdf
 import pytest
 
 from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.capture import layout
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.core.store.folder import read_file
 from ap_coder.intake.joined import CLAIM, PAGES, CannotJoin, join, pages_of, removed, separate
 from tests.pdfs import RECEIPTS, long_invoice, receipt
+
+# (a picture is read by the local OCR: where it is not installed, as in the CI jobs without it, these are skipped)
+ocr = pytest.mark.skipif(not layout.ocr_available(), reason="local OCR not installed (pip install -e .[ocr])")
 
 
 @pytest.fixture
@@ -250,6 +254,7 @@ def test_a_claim_is_still_a_claim_when_it_is_read_again_and_names_the_receipt_it
     assert said["CLAIM_RECEIPT_NOT_ADDED"].startswith(left_out) and "employee being repaid" in said["MISSING_VENDOR"]
 
 
+@ocr
 def test_two_scanned_pages_joined_are_read_as_the_same_invoice_scanned_as_one_file(tmp_path, folder):
     """The pages of one invoice scanned one by one (a picture each) and joined, against the same two pictures a
     scanner saved as one PDF: the same header, lines and totals."""

@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.capture import layout
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW
 from ap_coder.web.app import create_app
@@ -16,6 +17,9 @@ from ap_coder.web.core import invoice_dir
 from tests.pdfs import RECEIPTS, receipt
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.webclient import PAGE
+
+# (a picture is read by the local OCR: where it is not installed, as in the CI jobs without it, these are skipped)
+ocr = pytest.mark.skipif(not layout.ocr_available(), reason="local OCR not installed (pip install -e .[ocr])")
 
 CLAIM_LINES = [
     ("Prairie Fuel Stop: Regular fuel", 60.0, ["GST"], {"GST": 3.0}),
@@ -64,6 +68,7 @@ def as_read(lines: list[tuple]) -> list[tuple]:
     return [(text.replace(" ", "").lower(), *rest) for text, *rest in lines]
 
 
+@ocr
 def test_three_phone_pictures_of_receipts_are_read_as_one_claim(app, client, store, tmp_path):
     """Fuel with GST, a lunch with GST and a tip, a room with HST, photographed one by one and dropped together as
     the receipts of one claim: one invoice of their lines in order, each line with its own receipt's tax."""
