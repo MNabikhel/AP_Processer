@@ -10,8 +10,7 @@ import re
 
 import pytest
 
-from ap_coder.core.store import APPROVED, PENDING
-from ap_coder.core.store.invoices import TAX_ID_DIFFERS, TAX_ID_NOTE
+from ap_coder.core.store import APPROVED, PENDING, TAX_ID_DIFFERS, TAX_ID_NOTE
 from ap_coder.web.pages import exports
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
 from tests.web.test_server_web import account, log_in, server_client

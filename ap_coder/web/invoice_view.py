@@ -473,6 +473,14 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
     return changed
 
 
+def tax_id_second(store: Store, output: dict[str, Any]) -> str:
+    """Why approving this coding needs a second approver for its tax ID ("" when it does not): it differs from the
+    supplier list's and people sign in, so approved anyway, someone else confirms it (``Store.approve_invoice``,
+    D-219). Said on the approve bar before approving, as a currency changed is."""
+    person = identity.person()
+    return TAX_ID_DIFFERS if person is not None and person.user_id and store.tax_id_differs(output) else ""
+
+
 def supplier_by_number(store: Store, draft: Draft) -> str:
     """The name, as the vendor field takes it, of the ONE supplier in use whose GST/HST number is the one in the
     invoice's box (``Store.supplier_of_tax_number``); "" when the box is empty, holds a number filled from the
@@ -1946,10 +1954,6 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     # A currency changed from the one read: when the limit in that one is why a second approver is needed, the bar
     # says so before approving (D-132).
     second = store.approval_reason(inv, output)[0] if coding.currency != (ai.get("currency") or "CAD") else ""
-    # A tax ID that differs from the supplier list's, where people sign in: approved anyway, someone else confirms it
-    # (``Store.approve_invoice``, D-219); said before approving, as a currency changed is.
-    person = identity.person()
-    tax_second = TAX_ID_DIFFERS if person is not None and person.user_id and store.tax_id_differs(output) else ""
     changed = ai_changes(coding, ai, cc)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, coding_rules)
@@ -2000,7 +2004,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
             "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
             "first": blockers[0] if blockers else None, "blockers": blockers,
-            "second": second if second.startswith(CURRENCY_CHANGED) else tax_second,
+            "second": second if second.startswith(CURRENCY_CHANGED) else tax_id_second(store, output),
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,

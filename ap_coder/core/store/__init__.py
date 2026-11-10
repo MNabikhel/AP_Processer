@@ -129,7 +129,7 @@ from .ephemeral import EphemeralMixin
 from .folder import FolderMixin
 from .hub import HubMixin
 from .imports import ImportsMixin
-from .invoices import InvoicesMixin
+from .invoices import TAX_ID_DIFFERS, TAX_ID_NOTE, InvoicesMixin  # noqa: F401  (the two: what other modules import)
 from .joined import JoinedMixin
 from .journal import JournalMixin
 from .learning import LearningMixin
