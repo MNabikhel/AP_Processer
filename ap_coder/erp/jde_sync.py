@@ -51,8 +51,8 @@ from ..core.caches import MB, Bounded
 from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store.register import CLEARED_KEY
-from . import jde, jde_ais
-from .jde import ERROR, INFO
+from . import jde_accounts, jde_ais, jde_formats, jde_settings
+from .jde_review import ERROR, INFO
 from .registers import iso_date
 
 log = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ VENDOR_FIELDS = {"erp_id": "number", "expected_gst": "GST/HST number", "terms": 
 
 def _suppliers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[str, Any]) -> None:
     if "terms" not in run.cache:
-        run.cache["terms"] = {code: text for text, code in jde.load(store).terms_codes.items()}
+        run.cache["terms"] = {code: text for text, code in jde_settings.load(store).terms_codes.items()}
     by_code = run.cache["terms"]
     records = []
     banks: dict[str, str] = {}
@@ -254,13 +254,13 @@ def _gl_accounts(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[
     # An account with a subsidiary is AP Coder's GL code "object.subsidiary": the JD Edwards mapping sends it as that
     # object and subsidiary (the default rule would send "6200.01" as the object). Saved with the page's accounts (the
     # change logged once for the part).
-    settings = jde.load(store)
-    mapped = {jde._norm(m.gl_code) for m in settings.gl_map}
-    new_maps = [jde.GlMap(code, obj=obj, sub=sub) for code, (obj, sub) in sorted(subs.items())
-                if jde._norm(code) not in mapped]  # fmt: skip
+    settings = jde_settings.load(store)
+    mapped = {jde_formats._norm(m.gl_code) for m in settings.gl_map}
+    new_maps = [jde_settings.GlMap(code, obj=obj, sub=sub) for code, (obj, sub) in sorted(subs.items())
+                if jde_formats._norm(code) not in mapped]  # fmt: skip
     if new_maps:
         settings.gl_map += new_maps
-        store.set_setting(jde.SETTING_KEY, settings.to_json(), actor=run.actor)
+        store.set_setting(jde_settings.SETTING_KEY, settings.to_json(), actor=run.actor)
         _note(run.report, "mapped", [m.gl_code for m in new_maps])
 
 
@@ -497,7 +497,7 @@ def _log_part(store: Any, run: _Run) -> None:
             "table": table, "added": _count(r, "added"), "updated": r.get("updated", 0),
             "skipped": r.get("not_postable", 0), "replace_all": False})  # fmt: skip
         if _count(r, "mapped"):
-            store.log_event("settings_changed", actor=run.actor, detail={"keys": [jde.SETTING_KEY]})
+            store.log_event("settings_changed", actor=run.actor, detail={"keys": [jde_settings.SETTING_KEY]})
     elif run.part == "purchase_orders":
         store.log_event("pos_imported", actor=run.actor, detail={
             "orders": r.get("orders", 0), "added": _count(r, "added"), "updated": r.get("updated", 0),
@@ -799,7 +799,7 @@ def live_findings(store: Any, coding: Any, exclude_invoice_id: int | None = None
         return []
     final = {"vendor_name": coding.vendor_name, "gst_hst_registration_number": coding.gst_hst_registration_number}
     ids = store.vendor_ids()
-    an8 = jde.resolve_an8(final, ids, jde.load(store))
+    an8 = jde_accounts.resolve_an8(final, ids, jde_settings.load(store))
     where = str(store.path)
     now = time.monotonic()
     with _LOCK:

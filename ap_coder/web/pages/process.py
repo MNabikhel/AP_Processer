@@ -309,12 +309,12 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
     order the pilot needs them after the GL accounts (D-92): each supplier's address number (AN8) comes from
     the vendor master, the settings map the accounts, and the past coding warm-starts the coding of the first
     invoices."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_accounts, jde_settings
     from ap_coder.web.core import jde_shown
 
     shown = jde_shown(store)
     # its ERP ID, else the number set in Settings → JD Edwards → Supplier address numbers (B-1002)
-    overrides = dict(jde.load(store).an8_overrides) if shown else {}
+    overrides = dict(jde_settings.load(store).an8_overrides) if shown else {}
 
     def counted() -> tuple[int, int]:  # (the vendor master's vendors, those with an address number)
         vendors = store.master_vendor_ids()
@@ -339,10 +339,10 @@ def pilot_steps(store: Store) -> list[tuple[str, str, str]]:
         vendor = ("ok", VENDOR_STEP, ui.plural(vendors, "vendor"))
     steps = [vendor]
     if shown:
-        saved = bool(store.get_setting(jde.SETTING_KEY))
-        problems = jde.settings_problems(jde.load(store)) if saved else []
-        settings = jde.load(store)
-        missing = jde.accounts_without_bu(
+        saved = bool(store.get_setting(jde_settings.SETTING_KEY))
+        problems = jde_settings.settings_problems(jde_settings.load(store)) if saved else []
+        settings = jde_settings.load(store)
+        missing = jde_accounts.accounts_without_bu(
             settings, [a["code"] for a in store.list_accounts("gl_accounts")],
             [t.gl_code for t in store.tax_treatments().values() if t.needs_gl and t.gl_code],
             bool(store.list_accounts("cost_centers")),

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from ap_coder.coding import banks
 from ap_coder.core.store import APPROVED, REJECTED, REVIEW
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.web import invoice_view
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, form_of
@@ -24,7 +24,7 @@ def _id(store, vendor: str, status: str = REVIEW) -> int:
 
 
 def _jde_on(store) -> None:
-    store.set_setting(jde.SHOW_SETTING, "1")
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
 
 
 def _open(browser, path: str, width=1366, height=768, wait_viewer=True):

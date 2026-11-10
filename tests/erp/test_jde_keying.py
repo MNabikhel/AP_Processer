@@ -10,7 +10,7 @@ import openpyxl
 
 from ap_coder.coding.tax import TaxTreatment
 from ap_coder.core.memory import vendor_key
-from ap_coder.erp import exports, jde, jde_keying
+from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import _setup
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
@@ -28,8 +28,8 @@ def lookup(final):
 
 def settings(**kw):
     """Tax amounts on the pay item, Quebec on a GST-only tax area: the QST is not recovered."""
-    js = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, terms_codes={"Net 30": "N30"}, **kw)
-    js.tax_map["QC"] = jde.TaxArea("GSTONLY", "V")
+    js = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, terms_codes={"Net 30": "N30"}, **kw)
+    js.tax_map["QC"] = jde_settings.TaxArea("GSTONLY", "V")
     return js
 
 
@@ -206,8 +206,8 @@ def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
     assert [row[3] for row in lines_and_check(block)[:3]] == [
         "KT Oct.parcels 3-1-204", "Toner", "same-day courier for the north"]  # fmt: skip
     assert field(block, "Remark").value == "KT Oct.parcels 3-1-204"  # the first line's
-    files = jde.export_batch([invoice], settings(remarks=jde.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
-    dist = list(csv.DictReader(io.StringIO(files[jde.DIST_FILE].decode())))
+    files = jde_zfiles.export_batch([invoice], settings(remarks=jde_settings.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
+    dist = list(csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode())))
     assert [r["VNEXR"] for r in dist] == [row[3] for row in lines_and_check(block)[:3]]
 
 
@@ -309,7 +309,7 @@ def test_a_gst_the_tax_setup_does_not_recover_is_warned_of_on_the_voucher():
 
 def test_the_tax_coded_to_gl_accounts_is_a_line_of_its_own_and_no_tax_on_the_pay_item():
     """With JD Edwards' Amounts set to the tax on G/L lines (D-93), the sheet says the same as the batch files."""
-    js = jde.JdeSettings(default_bu="0000900")  # the tax account's business unit
+    js = jde_settings.JdeSettings(default_bu="0000900")  # the tax account's business unit
     (block,) = blocks(workbook([one_line()], js)[jde_keying.SHEET])
     assert field(block, "Tax explanation code").value == "E" and field(block, "Tax rate/area").value is None
     assert field(block, "Taxable amount").value is None
@@ -407,7 +407,7 @@ def test_the_same_invoices_give_the_same_sheet_every_time():
 
     assert cells(workbook(everything())) == cells(workbook(everything()))
     # The G/L date of the export day is the batch's day, not the day the sheet is downloaded again.
-    (block,) = blocks(workbook([one_line()], settings(gl_date=jde.GL_DATE_EXPORT))[jde_keying.SHEET])
+    (block,) = blocks(workbook([one_line()], settings(gl_date=jde_settings.GL_DATE_EXPORT))[jde_keying.SHEET])
     assert field(block, "G/L date").value == dt.datetime(2026, 10, 9)
 
 
@@ -415,9 +415,9 @@ def test_the_sheet_and_the_batch_files_say_the_same():
     """The sheet's figures are the voucher's own: what the Z-files of the same invoices hold."""
     js = settings()
     invoices = [one_line(), split(), quebec(), usd(), credit()]
-    files = jde.export_batch(invoices, js, lookup, batch=7, on=ON_DAY)
-    heads = list(csv.DictReader(io.StringIO(files[jde.HEADER_FILE].decode())))
-    dist = list(csv.DictReader(io.StringIO(files[jde.DIST_FILE].decode())))
+    files = jde_zfiles.export_batch(invoices, js, lookup, batch=7, on=ON_DAY)
+    heads = list(csv.DictReader(io.StringIO(files[jde_zfiles.HEADER_FILE].decode())))
+    dist = list(csv.DictReader(io.StringIO(files[jde_zfiles.DIST_FILE].decode())))
     ready, held = jde_keying.vouchers(invoices, js, lookup, gl_names=NAMES, on=ON_DAY)
     assert not held
     for v, head in zip(ready, heads, strict=True):
@@ -427,7 +427,7 @@ def test_the_sheet_and_the_batch_files_say_the_same():
         assert tax == (cents(v.taxable), cents(v.tax))
         assert (head["VLAN8"], head["VLVINV"], head["VLEXR1"], head["VLTXA1"]) == (
             v.supplier_number, v.invoice_number, v.tax_code, v.tax_area)  # fmt: skip
-        assert head["VLDGJ"] == str(jde.julian(v.gl_date)) and head["VLPO"] == v.po_number
+        assert head["VLDGJ"] == str(jde_formats.julian(v.gl_date)) and head["VLPO"] == v.po_number
     typed = [(li.account, cents(li.amount), li.remark) for v in ready for li in v.lines]
     assert typed == [(r["VNANI"], r["VNAA"] or r["VNACR"], r["VNEXA"]) for r in dist]
 
@@ -441,10 +441,10 @@ def demo(tmp_path, template):
     ready = store.unexported_approved()
     northwind, chinook = (next(i for i in ready if i["vendor_name"].startswith(name)) for name in ("North", "Chinook"))
     assert len(ready) == 2
-    js = jde.load(store)
+    js = jde_settings.load(store)
     js.default_bu = "HQ"  # the tax account's business unit (the tax coded to G/L accounts: D-93)
     js.an8_overrides = {vendor_key(chinook["vendor_name"]): "C-41"}
-    jde.save(store, js)
+    jde_settings.save(store, js)
     return store, client_for(store), northwind, chinook
 
 
@@ -571,10 +571,10 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
 def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
     from ap_coder.web.pages import exports as exports_page
 
-    store.set_setting(jde.SHOW_SETTING, "0")
-    assert not {jde.FORMAT, jde_keying.FORMAT} & set(exports_page.shown_formats(store))
-    store.set_setting(jde.SHOW_SETTING, "1")
-    assert {jde.FORMAT, jde_keying.FORMAT} <= set(exports_page.shown_formats(store))
+    store.set_setting(jde_settings.SHOW_SETTING, "0")
+    assert not {jde_settings.FORMAT, jde_keying.FORMAT} & set(exports_page.shown_formats(store))
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    assert {jde_settings.FORMAT, jde_keying.FORMAT} <= set(exports_page.shown_formats(store))
 
 
 def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_typed_too(tmp_path, monkeypatch):
@@ -627,7 +627,7 @@ def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_th
     for _ in range(2):
         ids.append(store.add_invoice(SAMPLES / f"{SK}.pdf", final, {"requires_review": True}))
         store.approve_invoice(ids[-1], final, "Pat Tester")
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))
     day = dt.date.fromisoformat(final["invoice_date"])
     before = taxreturn.setup_key(store)
     store.create_export_batch([ids[0]], jde_keying.FORMAT, actor="Pat Tester")
@@ -639,9 +639,9 @@ def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_th
 
 
 def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_is_on_the_keying_sheet(tmp_path):
-    """The department's way in one step (`jde.use_prototype`): JD Edwards shown, the tax on the pay item with code V
-    and a tax rate/area, the QST not recovered, the account the line's own string. With a new data folder's defaults
-    (tax coded to G/L lines, JD Edwards hidden) the same invoice was held back from the sheet."""
+    """The department's way in one step (`jde_prototype.use_prototype`): JD Edwards shown, the tax on the pay item with
+    code V and a tax rate/area, the QST not recovered, the account the line's own string. With a new data folder's
+    defaults (tax coded to G/L lines, JD Edwards hidden) the same invoice was held back from the sheet."""
     from ap_coder.bench import jde_company, jde_exports
     from ap_coder.core.store import Store
     from ap_coder.ops import chart_cmd
@@ -667,17 +667,17 @@ def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_
         store.undo_export_batch(batch)
         return blocks(wb[jde_keying.SHEET]), list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True))
 
-    assert not jde.in_use(store) and not exports_page.shown_formats(store).count(jde_keying.FORMAT)
+    assert not jde_settings.in_use(store) and not exports_page.shown_formats(store).count(jde_keying.FORMAT)
     ready, held = sheet()  # a new data folder: the tax on G/L lines, whose tax account has no business unit
     assert len(held) == 1 and "has no JDE account" in held[0][7]
 
-    js = jde.use_prototype(store, actor="Setup")
+    js = jde_prototype.use_prototype(store, actor="Setup")
     # the page that hands vouchers over opens on the keying sheet (B-2279), unless a format was chosen before
     assert store.get_setting("export_format") == jde_keying.FORMAT
     store.set_setting("export_format", "csv")
-    jde.use_prototype(store, actor="Setup")
+    jde_prototype.use_prototype(store, actor="Setup")
     assert store.get_setting("export_format") == "csv"
-    assert jde.load(store) == js == jde.prototype_settings() and jde.in_use(store)
+    assert jde_settings.load(store) == js == jde_prototype.prototype_settings() and jde_settings.in_use(store)
     assert jde_keying.FORMAT in exports_page.shown_formats(store)
     assert store.tax_treatments()["QST"].treatment == "expense_to_line"
     (block,), held = sheet()
@@ -689,8 +689,8 @@ def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_
         [f"{unit}.{code}", pairs.description(unit, code) or None, 240, "Fibre line October"],
         ["Check", "G/L lines + recovered tax = gross", 240, "240.00 + 12.00 = 252.00: balanced"],
     ]
-    jde.show(store, False)
-    assert not jde.in_use(store)
+    jde_settings.show(store, False)
+    assert not jde_settings.in_use(store)
 
 
 def test_a_warning_given_for_a_voucher_is_said_first_under_it_and_under_no_other():

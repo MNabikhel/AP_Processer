@@ -634,7 +634,7 @@ def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoe
     """D-166: the setup step's count of the vendor master, and of its vendors with an address number (AN8), is kept in
     each process until the vendor list changes (``changes/vendors``: another Store, plain SQL) or the numbers set in
     Settings → JD Edwards do (what it is asked): 20,000 vendors read at every view of Import invoices took 0.23 s."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE
     from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
     from tests.core.test_kept_answers import _plain
@@ -652,9 +652,9 @@ def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoe
     assert step() == "1 vendor, 1 with an address number (AN8)"
     _plain(store, "UPDATE vendors SET erp_id = '' WHERE in_master = 1")
     assert step().startswith("1 vendor, but no address number")
-    settings = jde.load(other)
+    settings = jde_settings.load(other)
     settings.an8_overrides = {store.master_vendor_ids()[0][0]: "2002"}
-    jde.save(other, settings)
+    jde_settings.save(other, settings)
     assert step() == "1 vendor, 1 with an address number (AN8)"
     other.import_vendor_master([{"vendor_name": "Harbourview Paper", "status": "active"}])
     assert step() == "2 vendors, 1 with an address number (AN8)"

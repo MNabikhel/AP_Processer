@@ -3,8 +3,8 @@ off the line or worked out, recovered on the pay item or kept in the line's expe
 Edwards for it. Every invoice here is made up.
 
 One rounding rule with the rest of the code: every case is held (``_taxes``) to the posting's line amounts
-(``tax.build_gl_distribution``), to the tax the JD Edwards pay item takes (``jde._prepare``) and to the Tax check's
-rows (``math_check``)."""
+(``tax.build_gl_distribution``), to the tax the JD Edwards pay item takes (``jde_voucher._prepare``) and to the Tax
+check's rows (``math_check``)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from ap_coder.coding.taxmath import (
 )
 from ap_coder.coding.taxmath import money as shown
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings, jde_voucher
 from tests.conftest import DATA
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
 
@@ -59,9 +59,9 @@ def _setup(meals=(), **treatments):
 
 def _keyed_by_hand():
     """JD Edwards as the department keys it: the tax on the pay item under code V, one tax area."""
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, default_bu="0021061010")
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX, default_bu="0021061010")
     for province in settings.tax_map:
-        settings.tax_map[province] = jde.TaxArea("CDNGST", "V")
+        settings.tax_map[province] = jde_settings.TaxArea("CDNGST", "V")
     return settings
 
 
@@ -79,7 +79,7 @@ def _taxes(d, setup=None):
     assert [ln.printed for ln in found.lines] == [e["net_amount"] for e in expense]
     claimed = [e["amount"] for e in posting if e["kind"] == "tax" and not e["non_recoverable_tax"]]
     assert money.add_up(claimed) == found.recovered
-    voucher = jde._prepare(coded(d, setup), _keyed_by_hand(), "10023")
+    voucher = jde_voucher._prepare(coded(d, setup), _keyed_by_hand(), "10023")
     if voucher.recoverable_types:
         assert voucher.stam == voucher.recoverable == money.in_cents(found.recovered)
     else:  # JD Edwards works out no tax on this voucher (code E): the tax recovered is one of its G/L lines
@@ -381,13 +381,13 @@ def test_an_invoice_with_no_tax_at_all():
 
 def test_recovered_is_the_tax_setups_word_where_jd_edwards_works_out_no_tax_it_is_a_gl_line_not_the_pay_item():
     """British Columbia, GST only, every line exempt from the PST: JD Edwards takes the voucher with code E and the
-    GST as a G/L line of its own (``jde._tax_area_code``). The line still says the GST is recovered: which box it is
-    keyed in is the voucher's to say (``jde.voucher_view``), not worked out here."""
+    GST as a G/L line of its own (``jde_voucher._tax_area_code``). The line still says the GST is recovered: which box
+    it is keyed in is the voucher's to say (``jde_review.voucher_view``), not worked out here."""
     d = doc([line(1, 609.2, "7410", ["GST"], exempt=["PST"], desc="Legal fees")], [tl("GST", "", 0.05, 609.2, 30.46)],
             prov="BC")  # fmt: skip
     found = _taxes(d)
     assert _lines(found) == [(1, "GST only · PST exempt", [("GST", 30.46, SHARE, RECOVERED)], 609.2)]
-    voucher = jde._prepare(coded(d, _setup()), _keyed_by_hand(), "10023")
+    voucher = jde_voucher._prepare(coded(d, _setup()), _keyed_by_hand(), "10023")
     assert voucher.tax_code == "E" and voucher.recoverable == 0 and found.recovered == 30.46
 
 

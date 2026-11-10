@@ -25,7 +25,7 @@ from ..coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
 from ..core.memory import vendor_key
 from ..core.safe import neutralise_sheet
 from ..intake import triage
-from . import jde
+from . import jde_accounts, jde_settings, jde_voucher
 
 TEXT, BOOL, CHOICE, LIST, EXTRAS, INFO = "text", "bool", "choice", "list", "extras", "info"
 
@@ -120,7 +120,7 @@ QUESTIONS = [
         "(E1 calculates the tax), or the taxable / tax amounts printed on the invoice?",
         "VLAG or VLATXA / VLSTAM",
         CHOICE,
-        jde.AMOUNT_MODES,
+        jde_settings.AMOUNT_MODES,
     ),
     Question(
         "info:gl_code_e",
@@ -136,7 +136,7 @@ QUESTIONS = [
         "Are amounts loaded with implied decimals (5.50 as 550) or a decimal point?",
         "all amounts",
         CHOICE,
-        jde.DECIMAL_MODES,
+        jde_settings.DECIMAL_MODES,
     ),
     Question(
         "line_numbering",
@@ -144,7 +144,7 @@ QUESTIONS = [
         "How are G/L lines numbered under the pay item?",
         "VNEDLN",
         CHOICE,
-        jde.LINE_NUMBERING,
+        jde_settings.LINE_NUMBERING,
     ),
     Question(
         "info:edln_decimals",
@@ -167,7 +167,7 @@ QUESTIONS = [
         "Is the account sent as one field (BU.Object.Subsidiary) or as separate columns?",
         "VNANI or VNMCU / VNOBJ / VNSUB",
         CHOICE,
-        jde.ACCOUNT_MODES,
+        jde_settings.ACCOUNT_MODES,
     ),
     Question(
         "use_default_rule",
@@ -198,7 +198,7 @@ QUESTIONS = [
         width=2,
     ),
     Question("exempt_code", "Tax", "Explanation code when no tax is charged?", "VLEXR1", width=2),
-    Question("gl_date", "Dates", "Which date is the G/L date?", "VLDGJ", CHOICE, jde.GL_DATES),
+    Question("gl_date", "Dates", "Which date is the G/L date?", "VLDGJ", CHOICE, jde_settings.GL_DATES),
     Question(
         "send_due_date",
         "Dates",
@@ -260,7 +260,7 @@ UPPER = {"document_type", "credit_document_type", "po_document_type", "domestic_
 YES, NO = {"yes", "y", "true", "1", "oui", "o", "x"}, {"no", "n", "false", "0", "non"}
 
 
-def _current(q: Question, settings: jde.JdeSettings) -> str:
+def _current(q: Question, settings: jde_settings.JdeSettings) -> str:
     if q.kind == INFO:
         return settings.answers.get(q.id, "")
     value = getattr(settings, q.id)
@@ -275,7 +275,7 @@ def _current(q: Question, settings: jde.JdeSettings) -> str:
     return str(value)
 
 
-def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors: list[dict[str, Any]],
+def build(settings: jde_settings.JdeSettings, gl_accounts: list[dict[str, Any]], vendors: list[dict[str, Any]],
           an8_of: Any = None) -> bytes:  # fmt: skip
     """The worksheet as .xlsx bytes. ``gl_accounts``: [{"code", "description"}]; ``vendors``: [{"vendor_name"}];
     ``an8_of(name)``: the address number AP Coder would send for a vendor now ("" if none)."""
@@ -350,7 +350,7 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
     tax = wb.create_sheet("Tax areas")
     tax.append(["Province", "Name", "Tax area now", "Code now", "Your tax area (VLTXA1)", "Your code (VLEXR1)"])
     for p in [*PROVINCES, OUTSIDE_CANADA]:
-        area = settings.tax_map.get(p) or jde.TaxArea("", "")
+        area = settings.tax_map.get(p) or jde_settings.TaxArea("", "")
         tax.append([p, province_label(p), area.tax_area, area.code, "", ""])
     table(tax, [10, 26, 16, 10, 24, 18], (5, 6), (3, 4))
 
@@ -360,7 +360,7 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
     rows = {(m.gl_code, m.cost_center): "" for m in settings.gl_map}
     rows.update({(str(a.get("code") or ""), ""): str(a.get("description") or "") for a in gl_accounts if a.get("code")})
     for (gl, cc), desc in sorted(rows.items()):
-        m = mapped.get((gl, cc)) or jde.GlMap(gl, cc)
+        m = mapped.get((gl, cc)) or jde_settings.GlMap(gl, cc)
         acc.append([gl, cc, desc, m.bu, m.obj, m.sub, m.sbl, m.sblt])
     table(acc, [12, 12, 40, 12, 10, 12, 12, 14], (4, 5, 6, 7, 8), (1, 2))
 
@@ -380,7 +380,7 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
 
 @dataclass
 class Result:
-    settings: jde.JdeSettings
+    settings: jde_settings.JdeSettings
     changes: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
@@ -406,11 +406,11 @@ def _choice(q: Question, answer: str) -> str | None:
     return None
 
 
-def read(content: bytes, settings: jde.JdeSettings) -> Result:
+def read(content: bytes, settings: jde_settings.JdeSettings) -> Result:
     """The settings with the worksheet's answers applied (a copy), what changed and what could not be used."""
     import openpyxl
 
-    out = Result(jde.JdeSettings.from_json(settings.to_json()))
+    out = Result(jde_settings.JdeSettings.from_json(settings.to_json()))
     s = out.settings
     if triage.sheet_unzips_too_big(content):  # an uploaded workbook: its unzipped sizes are checked first (W2-01)
         out.problems.append(
@@ -467,10 +467,10 @@ def read(content: bytes, settings: jde.JdeSettings) -> Result:
         area, code = row.get("Your tax area (VLTXA1)", ""), row.get("Your code (VLEXR1)", "").upper()
         if prov not in s.tax_map or not (area or code):
             continue
-        if code and code not in jde.RECOVERABLE_BY_CODE:
+        if code and code not in jde_voucher.RECOVERABLE_BY_CODE:
             out.problems.append(f"Tax areas, {prov}: code “{code}” is not one AP Coder knows (V, C, B or E).")
             continue
-        new = jde.TaxArea(area or s.tax_map[prov].tax_area, code or s.tax_map[prov].code)
+        new = jde_settings.TaxArea(area or s.tax_map[prov].tax_area, code or s.tax_map[prov].code)
         if new != s.tax_map[prov]:
             s.tax_map[prov] = new
             out.changes.append(f"Tax area for {prov}: {new.tax_area}, code {new.code}")
@@ -478,13 +478,13 @@ def read(content: bytes, settings: jde.JdeSettings) -> Result:
         r for r in _rows(wb, "Account mapping") if any(r.get(k) for k in ("BU", "Object", "Subsidiary", "Subledger"))
     ]
     if filled:
-        new_map = jde.gl_map_from_records(filled)
+        new_map = jde_accounts.gl_map_from_records(filled)
         by_key = {(m.gl_code, m.cost_center): m for m in s.gl_map}
         for m in new_map:
             if by_key.get((m.gl_code, m.cost_center)) != m:
                 by_key[(m.gl_code, m.cost_center)] = m
                 out.changes.append(
-                    f"Account {m.gl_code}{' / ' + m.cost_center if m.cost_center else ''} → {jde.ani(m)}"
+                    f"Account {m.gl_code}{' / ' + m.cost_center if m.cost_center else ''} → {jde_accounts.ani(m)}"
                 )
         s.gl_map = list(by_key.values())
     for row in _rows(wb, "Suppliers"):
@@ -498,5 +498,5 @@ def read(content: bytes, settings: jde.JdeSettings) -> Result:
         if s.an8_overrides.get(key) != an8:
             s.an8_overrides[key] = an8
             out.changes.append(f"Supplier {name} → AN8 {an8}")
-    out.problems += [f"After the answers: {p}" for p in jde.settings_problems(s)]
+    out.problems += [f"After the answers: {p}" for p in jde_settings.settings_problems(s)]
     return out

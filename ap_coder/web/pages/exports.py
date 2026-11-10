@@ -27,7 +27,20 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.core.store.invoices import TAX_ID_NOTE
-from ap_coder.erp import dupaudit, export_layout, exports, jde, jde_ais, jde_keying, jde_post, registers, stamp
+from ap_coder.erp import (
+    dupaudit,
+    export_layout,
+    exports,
+    jde,
+    jde_ais,
+    jde_keying,
+    jde_post,
+    jde_settings,
+    jde_voucher,
+    jde_zfiles,
+    registers,
+    stamp,
+)
 from ap_coder.web.core import (
     by_currency,
     done,
@@ -64,15 +77,15 @@ SHORT_FORMATS = {
     "xlsx": "Excel workbook",
     "csv": "CSV, one row per GL line",
     "custom": "Custom CSV layout",
-    jde.FORMAT: "JD Edwards E1 (Z-tables)",
+    jde_settings.FORMAT: "JD Edwards E1 (Z-tables)",
     jde_keying.FORMAT: "JD Edwards keying sheet",
 }
-AGAIN_FORMATS = {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)",
+AGAIN_FORMATS = {"custom": "Custom CSV", jde_settings.FORMAT: "JD Edwards E1 (ZIP)",
                  jde_keying.FORMAT: "JD Edwards keying sheet"}  # the others read as XLSX, CSV  # fmt: skip
 # JD Edwards' formats: the Z-files to load and the sheet to type from. A batch made in one holds only invoices that
 # passed the JD Edwards checks (the others stay in Ready to export, listed with why: B-2148).
-JDE_FORMATS = (jde.FORMAT, jde_keying.FORMAT)
-FORMAT_SETTING = jde.EXPORT_FORMAT  # the format of the last batch made: the page opens on it (Excel at first)
+JDE_FORMATS = (jde_settings.FORMAT, jde_keying.FORMAT)
+FORMAT_SETTING = jde_settings.EXPORT_FORMAT  # the format of the last batch made: the page opens on it (Excel at first)
 
 
 def shown_formats(store: Store, *keep: str) -> list[str]:
@@ -126,7 +139,7 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     if known and known["format"] in JDE_FORMATS:
         return invoices, {}
     prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
-    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), prior)
+    left_out = jde.validate(invoices, jde_settings.load(store), store.vendor_ids(), prior)
     return invoices, left_out
 
 
@@ -138,7 +151,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     # Vouchers JD Edwards has, or may have, through the API (D-104, D-105) are left out of the files: loaded again,
     # they would be twice. The README lists them (the unknown ones: check in JD Edwards before loading).
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
-    settings, lookup = jde.load(store), store.vendor_ids()
+    settings, lookup = jde_settings.load(store), store.vendor_ids()
     known = store.export_batch(batch) or {}
     created = known.get("created_at") or ""
     kept = [i for i in invoices if i["id"] not in left_out]
@@ -153,7 +166,7 @@ def jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
         check_now=True,  # to_check: what the current settings would now refuse (B-21)
         left_invoices=[i for i in invoices if i["id"] in left_out],
         no_undo=jde_post.undo_problem(store, batch),
-        site=jde.batch_site(known, invoices),  # the keys the API sends too (D-182)
+        site=jde_zfiles.batch_site(known, invoices),  # the keys the API sends too (D-182)
     )
 
 
@@ -162,8 +175,8 @@ def jde_check(store: Store, invoice_ids: list[int],
     """(invoices that can go out, {invoice: why not}, settings problems that stop everything). ``files``: for the
     Z-files; not so for the keying sheet, which a setting only the files need (the user ID, the batch prefix) does
     not stop."""
-    settings = jde.load(store)
-    blocking = jde.settings_problems(settings) if files else []
+    settings = jde_settings.load(store)
+    blocking = jde_settings.settings_problems(settings) if files else []
     invoices = store.get_invoices(invoice_ids)
     problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store, invoices=invoices))
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
@@ -177,7 +190,8 @@ def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     invoices, left_out = jde_left_out(store, batch)
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     created = (store.export_batch(batch) or {}).get("created_at") or ""
-    return jde_keying.build(invoices, jde.load(store), store.vendor_ids(), batch=batch, gl_names=gl_names(store),
+    return jde_keying.build(invoices, jde_settings.load(store), store.vendor_ids(), batch=batch,
+                            gl_names=gl_names(store),
                             on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
                             fx_rates=store.fx_rates(), warned=tax_id_warnings(store, invoices),
                             bank_accounts={a["code"]: a for a in store.bank_accounts(active_only=True)})  # fmt: skip
@@ -193,7 +207,7 @@ def tax_id_warnings(store: Store, invoices: list[dict[str, Any]]) -> dict[int, l
 
 def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     """(bytes, file name, content type) of export batch ``batch`` in format ``fmt``."""
-    if fmt == jde.FORMAT:
+    if fmt == jde_settings.FORMAT:
         return jde_file(store, batch)
     if fmt == jde_keying.FORMAT:
         return keying_file(store, batch)
@@ -216,11 +230,12 @@ def ready_problems(store: Store, invoice_ids: list[int]) -> list[dict[str, Any]]
     vendor master, the ERP register, JD Edwards' settings, the tax-rate file (the amount sent gross reads it, B-2074)
     or the day change (0.6 s at 300,000 invoices with 1,100 ready, at every visit before: D-206). Making a batch
     checks its invoices again (``_create_batch``). Shared: read it, don't change it."""
-    text = store.get_setting(jde.SETTING_KEY)  # (checked by the very settings it is kept for, not read again: B-2075)
+    # (checked by the very settings it is kept for, not read again: B-2075)
+    text = store.get_setting(jde_settings.SETTING_KEY)
 
     def work() -> list[dict[str, Any]]:
         invoices = store.get_invoices(invoice_ids)
-        problems = jde.validate(invoices, jde.JdeSettings.from_json(text), store.vendor_ids(),
+        problems = jde.validate(invoices, jde_settings.JdeSettings.from_json(text), store.vendor_ids(),
                                 jde.prior_records(store, invoices=invoices))  # fmt: skip
         return problem_rows(store, problems, invoices)
 
@@ -242,7 +257,7 @@ def problem_rows(store: Store, problems: dict[int, list[str]],
                 "vendor": inv.get("vendor_name") or "",
                 "number": inv.get("invoice_number") or "",
                 "reasons": list(reasons),
-                "an8": any(jde.an8_problem(r) for r in reasons),  # linked to Settings → JD Edwards E1
+                "an8": any(jde_voucher.an8_problem(r) for r in reasons),  # linked to Settings → JD Edwards E1
             }
         )
     return rows
@@ -323,7 +338,7 @@ def exports_page(
     blocking: list[str] = []
     if fmt in JDE_FORMATS and ready:
         problems = ready_problems(store, [r["id"] for r in ready])
-        blocking = jde.settings_problems(jde.load(store)) if fmt == jde.FORMAT else []
+        blocking = jde_settings.settings_problems(jde_settings.load(store)) if fmt == jde_settings.FORMAT else []
     held = {p["id"] for p in problems}
     rows = [{**r, "blocked": r["id"] in held or bool(blocking)} for r in ready]
 
@@ -387,7 +402,7 @@ def exports_page(
         fmt=fmt,
         formats={f: SHORT_FORMATS[f] for f in shown_formats(store, fmt) if f in SHORT_FORMATS},
         format_help=exports.FORMATS,
-        jde_format=jde.FORMAT,
+        jde_format=jde_settings.FORMAT,
         keying_format=jde_keying.FORMAT,
         problems=problems,
         blocking=blocking,
@@ -420,8 +435,8 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
     """The batch panel's "JD Edwards API" part: shown for a JD Edwards batch while step 2 is on, or once any of its
     vouchers went that way."""
     cfg = jde_ais.load(store)
-    rows = jde_post.status_rows(store, chosen["id"]) if chosen and chosen["format"] == jde.FORMAT else []
-    shown = bool(chosen and chosen["format"] == jde.FORMAT and (cfg.step2 or rows))
+    rows = jde_post.status_rows(store, chosen["id"]) if chosen and chosen["format"] == jde_settings.FORMAT else []
+    shown = bool(chosen and chosen["format"] == jde_settings.FORMAT and (cfg.step2 or rows))
     posted = sum(r["status"] == jde_post.POSTED for r in rows)
     # Its ZIP downloaded (D-134): posting it too asks for a person's word that the file was not loaded.
     downloads = [{**d, "at": d["at"].replace("T", " ")[:16]} for d in jde_post.downloads(store, chosen["id"])] if (
@@ -429,7 +444,7 @@ def api_context(store: Store, chosen: dict[str, Any] | None) -> dict[str, Any]:
     return {"shown": shown, "on": cfg.step2, "rows": rows,
             "checked": sum(r["status"] == jde_post.CHECKED for r in rows),
             # their G/L date moved into the open period by the dry run: the go-ahead confirms it (D-182)
-            "moved": sum(r["status"] == jde_post.CHECKED and r["error"].startswith(jde.MOVED) for r in rows),
+            "moved": sum(r["status"] == jde_post.CHECKED and r["error"].startswith(jde_settings.MOVED) for r in rows),
             "waiting": len(jde_post.waiting(store)), "done": all(r["status"] == jde_post.POSTED for r in rows) and
             bool(rows), "downloads": downloads, "posted": posted,
             "maybe": sum(r["locked"] for r in rows) - posted}  # fmt: skip
@@ -459,7 +474,7 @@ def _create_batch(request: Request, form: Any) -> JSONResponse:
         return refuse("Tick the invoices to export.")
     ticked = len(chosen)
     if fmt in JDE_FORMATS:
-        chosen, _problems, blocking = jde_check(store, chosen, files=fmt == jde.FORMAT)
+        chosen, _problems, blocking = jde_check(store, chosen, files=fmt == jde_settings.FORMAT)
         if blocking:
             return refuse(" ".join(f"{p} Set it in Settings → JD Edwards E1." for p in blocking))
         if not chosen:
@@ -492,7 +507,7 @@ def jde_dry_run(request: Request) -> Response:
     store = get_store(request)
     invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
     prior = jde.prior_records(store, invoices=invoices)  # only what has their numbers (D-156)
-    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=prior,
+    report = jde.dry_run(invoices, jde_settings.load(store), store.vendor_ids(), prior=prior,
                          batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
 
@@ -520,13 +535,14 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     fmt = fmt or known["format"]
     if fmt not in exports.FORMATS:
         raise HTTPException(status_code=400, detail="Unknown export format.")
-    if fmt == jde.FORMAT and request.method != "POST":
+    if fmt == jde_settings.FORMAT and request.method != "POST":
         raise HTTPException(status_code=405, detail="Download the JD Edwards file with its button on the Exports page.")
-    if fmt == jde.FORMAT and (blocking := jde.settings_problems(jde.load(store))):
+    if fmt == jde_settings.FORMAT and (blocking := jde_settings.settings_problems(jde_settings.load(store))):
         # Z-files made with these settings cannot load (their own dry run says "NOTHING CAN LOAD"): say what to fix.
         detail = " ".join(f"{p} Set it in Settings → JD Edwards E1, then download the batch again." for p in blocking)
         raise HTTPException(status_code=409, detail=detail)
-    if fmt == jde.FORMAT:  # who and when; posting the batch through the API too then asks if it was loaded (D-134)
+    # who and when; posting the batch through the API too then asks if it was loaded (D-134)
+    if fmt == jde_settings.FORMAT:
         jde_post.file_downloaded(store, batch, current_reviewer())
     return download(*batch_file(store, batch, fmt))
 

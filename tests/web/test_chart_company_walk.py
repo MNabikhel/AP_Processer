@@ -18,8 +18,9 @@ import openpyxl
 import pytest
 
 from ap_coder.bench import jde_invoices
+from ap_coder.coding.tax import OUTSIDE_CANADA
 from ap_coder.core.store import APPROVED, REVIEW
-from ap_coder.erp import jde, jde_keying
+from ap_coder.erp import jde_formats, jde_keying, jde_settings, jde_voucher, jde_zfiles
 from tests.erp.test_jde_keying import LINES, blocks, field, said
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE, follow, post
@@ -383,11 +384,11 @@ def test_the_line_split_across_two_business_units_is_two_lines_of_the_voucher(ch
 def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company, chart_company_client):
     store = chart_company.store
     batch, workbook = _sheet(chart_company_client, store, _approve_the_ready_ones(chart_company_client, chart_company))
-    answer = chart_company_client.post(f"/exports/batches/{batch}/download?fmt={jde.FORMAT}", headers=PAGE)
+    answer = chart_company_client.post(f"/exports/batches/{batch}/download?fmt={jde_settings.FORMAT}", headers=PAGE)
     assert answer.status_code == 200
     with zipfile.ZipFile(io.BytesIO(answer.content)) as files:
-        heads = list(csv.DictReader(io.StringIO(files.read(jde.HEADER_FILE).decode())))
-        lines = list(csv.DictReader(io.StringIO(files.read(jde.DIST_FILE).decode())))
+        heads = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.HEADER_FILE).decode())))
+        lines = list(csv.DictReader(io.StringIO(files.read(jde_zfiles.DIST_FILE).decode())))
     sheet = blocks(workbook[jde_keying.SHEET])
     assert len(heads) == len(sheet) == 6
 
@@ -403,7 +404,7 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
             cents(field(block, "Taxable amount").value), cents(field(block, "Tax amount").value))  # fmt: skip
         gross = field(block, "Gross amount").value  # not sent: taxable + not taxable + tax add up to it
         assert int(head["VLATXA"]) + int(head["VLATXN"]) + int(head["VLSTAM"]) == round(gross * 100)
-        assert head["VLDGJ"] == str(jde.julian(field(block, "G/L date").value))
+        assert head["VLDGJ"] == str(jde_formats.julian(field(block, "G/L date").value))
         assert head["VLRMK"] == field(block, "Remark").value  # the remarks as typed (the settings' choice)
     typed = [(row[0].value, cents(row[2].value), row[3].value) for block in sheet for row in _rows(block)]
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
@@ -440,7 +441,7 @@ def test_once_the_new_supplier_has_its_number_its_usd_voucher_is_right_on_the_sh
     client, store = chart_company_client, chart_company.store
     invoice, invoice_id = chart_company.invoices["usd_new_supplier"]
     added = post(client, f"/review/{invoice_id}/vendor", {"name": invoice.supplier_name, "an8": NEW_NUMBER,
-                                                          "province": jde.OUTSIDE_CANADA})  # fmt: skip
+                                                          "province": OUTSIDE_CANADA})  # fmt: skip
     assert added.json()["ok"]
     page = _coded(client, chart_company, "usd_new_supplier")
     assert not page.check()["allow"] and "VENDOR_ADDED_HERE" in page.findings and not page.not_ready
@@ -456,25 +457,25 @@ def test_once_the_new_supplier_has_its_number_its_usd_voucher_is_right_on_the_sh
     assert (said(block, "Warning"), said(block, "Note")) == ([], [
         "USD voucher: type the amounts as shown, in USD (foreign entry), not in CAD. JD Edwards takes the exchange "
         "rate from its own table."])  # fmt: skip
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     settings.an8_overrides = {}
-    jde.save(store, settings)
+    jde_settings.save(store, settings)
     batch = store.export_batches()[0]["id"]
     again = client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
     held = openpyxl.load_workbook(io.BytesIO(again.content))
     ((row,),) = blocks(held[jde_keying.SHEET])  # no voucher: one row that says where it went
     assert [cell.value for cell in row] == ["No voucher to type: see the sheet “Not ready”.", None, None, None]
     ((number, _, name, *_, why),) = held[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)
-    assert (number, name) == (invoice_id, invoice.supplier_name) and jde.NO_AN8 in why
+    assert (number, name) == (invoice_id, invoice.supplier_name) and jde_voucher.NO_AN8 in why
 
 
 def test_a_voucher_with_no_tax_goes_with_the_exempt_code_on_the_tax_area_of_where_it_was_supplied(
     chart_company, chart_company_client
 ):
     """A voucher with no tax on its pay item goes with the exempt code (D-210), E, and keeps the tax rate/area of the
-    province it was supplied to (``jde._tax_area_code``): the US supplier's invoice billed to head office shows E and
-    the company's GST area, with no taxable and no tax amount. Still to ask the JDE team: the made-up company's own
-    books key neither a code nor an area on a voucher without tax (``jde_company.PayItem``, ``Invoice.coding``), and
+    province it was supplied to (``jde_voucher._tax_area_code``): the US supplier's invoice billed to head office shows
+    E and the company's GST area, with no taxable and no tax amount. Still to ask the JDE team: the made-up company's
+    own books key neither a code nor an area on a voucher without tax (``jde_company.PayItem``, ``Invoice.coding``), and
     no setting leaves both blank."""
     client, company = chart_company_client, chart_company.truth.company
     invoice, invoice_id = chart_company.invoices["usd_new_supplier"]
@@ -486,5 +487,5 @@ def test_a_voucher_with_no_tax_goes_with_the_exempt_code_on_the_tax_area_of_wher
     (block,) = blocks(workbook[jde_keying.SHEET])
     assert not invoice.taxes and invoice.coding()["tax_code"] == invoice.coding()["tax_area"] == ""  # the books' way
     assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == (
-        jde.JdeSettings().exempt_code, company.tax_area) == ("E", "CDNGST")  # fmt: skip
+        jde_settings.JdeSettings().exempt_code, company.tax_area) == ("E", "CDNGST")  # fmt: skip
     assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (None, None)

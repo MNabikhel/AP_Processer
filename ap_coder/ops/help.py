@@ -43,7 +43,7 @@ CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
 CHART_IMPORT = "Setup → JD Edwards files"
 
 CHECKS: dict[str, CheckHelp] = {
-    # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
+    # --- JD Edwards voucher (erp/jde_review.py voucher_findings, D-75): what its batch would hold back -------------
     "JDE_SETTINGS": CheckHelp(
         ERP, "JD Edwards settings incomplete",
         "A setting every JD Edwards voucher needs (company, user ID, batch prefix, document type or currency) is not "

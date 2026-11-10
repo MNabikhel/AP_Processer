@@ -18,7 +18,7 @@ from ap_coder.ai.reading import ReaderLine, ReadingStatus
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.envfile import read_env
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import settings as settings_page
 from tests.stores import sample_setup_store  # noqa: F401  (the tests' store)
@@ -310,7 +310,7 @@ def test_approval_settings_are_saved(client, store):
 
 
 def general_form(**changes) -> dict[str, str]:
-    js = jde.JdeSettings()
+    js = jde_settings.JdeSettings()
     form = {
         "company": js.company, "user": js.user, "batch_prefix": js.batch_prefix, "document_type": js.document_type,
         "domestic_currency": js.domestic_currency, "currencies": "CAD, USD", "amount_mode": js.amount_mode,
@@ -335,35 +335,35 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     form = general_form(company="42", po_matched="1", currencies="cad;eur")
     text = follow(client, post(client, "/settings/jde", form))
     assert "JD Edwards settings saved." in text
-    js = jde.load(store)
+    js = jde_settings.load(store)
     assert js.company == "42" and js.po_matched and js.currencies == ["CAD", "EUR"]
     assert not js.dist_tax_columns  # unticked
     response = post(client, "/settings/jde", general_form(company="ABC"))
     assert response.status_code == 400 and "Company (VLCO)" in response.json()["error"]
-    assert jde.load(store).company == "42"
+    assert jde_settings.load(store).company == "42"
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
 def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
     """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
-    assert jde.load(store).remarks == jde.REMARKS_REFERENCE
-    assert f'<option value="{jde.REMARKS_REFERENCE}" selected>' in client.get("/settings/jde").text
-    follow(client, post(client, "/settings/jde", general_form(remarks=jde.REMARKS_TYPED)))
-    assert jde.load(store).remarks == jde.REMARKS_TYPED
-    assert f'<option value="{jde.REMARKS_TYPED}" selected>' in client.get("/settings/jde").text
+    assert jde_settings.load(store).remarks == jde_settings.REMARKS_REFERENCE
+    assert f'<option value="{jde_settings.REMARKS_REFERENCE}" selected>' in client.get("/settings/jde").text
+    follow(client, post(client, "/settings/jde", general_form(remarks=jde_settings.REMARKS_TYPED)))
+    assert jde_settings.load(store).remarks == jde_settings.REMARKS_TYPED
+    assert f'<option value="{jde_settings.REMARKS_TYPED}" selected>' in client.get("/settings/jde").text
     assert post(client, "/settings/jde", general_form(remarks="both")).status_code == 400
     follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the field: kept
-    assert jde.load(store).remarks == jde.REMARKS_TYPED
+    assert jde_settings.load(store).remarks == jde_settings.REMARKS_TYPED
 
 
 def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store):
     """D-182: JD Edwards' open period (a G/L date before it moved or held) and the API's waits (a voucher's request,
     a posting run, a lost answer sent again) are set on the page; a form without them keeps them."""
-    form = general_form(open_from="2026-11-01", open_to="", closed_period=jde.CLOSED_HOLD, voucher_timeout="180",
-                        post_minutes="90", resend_minutes="15")  # fmt: skip
+    form = general_form(open_from="2026-11-01", open_to="", closed_period=jde_settings.CLOSED_HOLD,
+                        voucher_timeout="180", post_minutes="90", resend_minutes="15")  # fmt: skip
     assert "JD Edwards settings saved." in follow(client, post(client, "/settings/jde", form))
-    js = jde.load(store)
-    assert (js.open_from, js.open_to, js.closed_period) == ("2026-11-01", "", jde.CLOSED_HOLD)
+    js = jde_settings.load(store)
+    assert (js.open_from, js.open_to, js.closed_period) == ("2026-11-01", "", jde_settings.CLOSED_HOLD)
     assert (js.voucher_timeout, js.post_minutes, js.resend_minutes) == (180, 90, 15)
     page = client.get("/settings/jde").text
     assert 'name="open_from" value="2026-11-01"' in page and 'name="voucher_timeout" value="180"' in page
@@ -371,11 +371,11 @@ def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store)
                 {"open_from": "2026-11-01", "open_to": "2026-10-31"}):  # fmt: skip
         assert post(client, "/settings/jde", general_form(**bad)).status_code == 400, bad
     follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the new fields: kept
-    assert jde.load(store).open_from == "2026-11-01" and jde.load(store).voucher_timeout == 180
+    assert jde_settings.load(store).open_from == "2026-11-01" and jde_settings.load(store).voucher_timeout == 180
     # B-1880: a lost voucher is never sent again sooner than its own wait and a minute (JDE may still be making it)
     short = post(client, "/settings/jde", general_form(voucher_timeout="900", resend_minutes="10"))
     assert short.status_code == 400 and "at least 16 minutes" in short.text
-    assert jde.load(store).resend_minutes == 15
+    assert jde_settings.load(store).resend_minutes == 15
 
 
 def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):
@@ -390,9 +390,9 @@ def test_jde_lists_every_bank_account_with_its_g_l_bank_account(client, store):
     assert 'name="bank_code" value="CAD-OP"' in text and 'name="bank_code" value="USD-OP"' in text
     form = general_form(bank_code=["CAD-OP", "USD-OP"], bank_glba=["00012345", ""])
     follow(client, post(client, "/settings/jde", form))
-    assert jde.load(store).bank_glba == {"CAD-OP": "00012345"}
+    assert jde_settings.load(store).bank_glba == {"CAD-OP": "00012345"}
     follow(client, post(client, "/settings/jde", general_form(company="7")))  # a form without the boxes keeps them
-    assert jde.load(store).bank_glba == {"CAD-OP": "00012345"}
+    assert jde_settings.load(store).bank_glba == {"CAD-OP": "00012345"}
 
 
 def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
@@ -400,7 +400,7 @@ def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
             "obj": ["6100", "", ""], "sub": ["", "", ""], "sbl": ["", "", ""], "sblt": ["", "", ""]}  # fmt: skip
     text = follow(client, post(client, "/settings/jde/gl-map", rows))
     assert "2 mapping rows saved." in text  # the row without a GL code is dropped
-    assert [(m.gl_code, m.cost_center, m.bu) for m in jde.load(store).gl_map] == [
+    assert [(m.gl_code, m.cost_center, m.bu) for m in jde_settings.load(store).gl_map] == [
         ("6100", "", "100"),
         ("6200", "OPS", "200"),
     ]
@@ -408,24 +408,24 @@ def test_jde_gl_mapping_tax_areas_and_address_numbers(client, store):
     response = client.post("/settings/jde/gl-map/import", files={"file": ("map.csv", io.BytesIO(csv), "text/csv")},
                            headers=PAGE)  # fmt: skip
     assert "2 mapping rows imported." in follow(client, response)
-    assert {m.gl_code: m.bu for m in jde.load(store).gl_map} == {"6100": "999", "6200": "200", "7000": "300"}
+    assert {m.gl_code: m.bu for m in jde_settings.load(store).gl_map} == {"6100": "999", "6200": "200", "7000": "300"}
     bad = client.post("/settings/jde/gl-map/import", files={"file": ("map.txt", io.BytesIO(b"x"), "text/plain")},
                       headers=PAGE)  # fmt: skip
     assert bad.status_code == 400
 
-    tax_map = jde.load(store).tax_map
+    tax_map = jde_settings.load(store).tax_map
     provinces = list(tax_map)
     areas = ["on-hst-x" if p == "ON" else tax_map[p].tax_area for p in provinces]
     codes = [tax_map[p].code for p in provinces]
     table = {"province": provinces, "tax_area": areas, "code": codes}
     text = follow(client, post(client, "/settings/jde/tax-map", table))
-    assert "Tax areas saved." in text and jde.load(store).tax_map["ON"].tax_area == "ON-HST-X"
+    assert "Tax areas saved." in text and jde_settings.load(store).tax_map["ON"].tax_area == "ON-HST-X"
     codes[0] = "Z"
     assert post(client, "/settings/jde/tax-map", table).status_code == 400
 
     text = follow(client, post(client, "/settings/jde/an8", {"vendor": ["Northwind Supply", ""], "an8": ["4100", "9"]}))
     assert "Address numbers saved." in text
-    assert list(jde.load(store).an8_overrides.values()) == ["4100"]
+    assert list(jde_settings.load(store).an8_overrides.values()) == ["4100"]
     assert 'value="4100"' in client.get("/settings/jde").text
 
 

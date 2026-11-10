@@ -35,7 +35,7 @@ from ..core import chart
 from ..core.safe import csv_row
 from ..core.store.journal import supplier_key
 from ..core.ui import plural
-from ..erp import jde
+from ..erp import jde_settings
 from ..erp import journal as jr
 from .pilot_score import FOLDER, ExportError
 
@@ -136,7 +136,7 @@ def books_copy(live: Any, path: Path) -> Any:
     ], by_erp_id=True, log=False)  # fmt: skip
     for tax_type, treatment in live.tax_treatments().items():
         store.set_tax_treatment(tax_type, treatment.treatment, treatment.gl_code)
-    jde.save(store, jde.load(live))
+    jde_settings.save(store, jde_settings.load(live))
     store.save_journal_objects(**live.journal_objects())
     return store
 

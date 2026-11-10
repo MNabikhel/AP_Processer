@@ -448,7 +448,7 @@ def test_the_audit_trail_records_the_confirmed_exemption_b715():
 
 
 def test_the_dry_run_warns_that_a_use_tax_code_and_the_self_assessment_could_accrue_twice_b716():
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde, jde_settings
     from tests.erp.test_jde import AN8, SK
     from tests.erp.test_jde import _invoice as jde_invoice
 
@@ -467,7 +467,7 @@ def test_the_dry_run_warns_that_a_use_tax_code_and_the_self_assessment_could_acc
     final["gl_distribution"] = build_gl_distribution(
         IC.model_validate({k: v for k, v in final.items() if k != "gl_distribution"}), setup
     )
-    report = jde.dry_run([doc_inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8)
+    report = jde.dry_run([doc_inv], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS), AN8)
     voucher = report["vouchers"][0]
     assert voucher["tax_code"] == "B"
     assert any("accrued twice" in w for w in voucher["warnings"])
@@ -571,9 +571,10 @@ def test_the_self_assessment_report_marks_invoices_jd_edwards_accrues_with_code_
         store.approve_invoice(iid, final, "Pat Tester")
         ids.append(iid)
     store.create_export_batch([ids[0]], "jde", actor="Pat Tester")
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
 
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))  # code B: not with the tax coded to G/L (D-93)
+    # code B: not with the tax coded to G/L (D-93)
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))
     day = dt.date.fromisoformat(final["invoice_date"])
     items = {s.invoice_id: s for s in taxreturn.self_assessment(store, day, day)}
     assert "JD Edwards accrues this one (code B): don't book it again from this report" == items[ids[0]].note

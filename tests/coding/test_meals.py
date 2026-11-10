@@ -16,7 +16,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import load_reference_data
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import exports, jde
+from ap_coder.erp import exports, jde, jde_review, jde_settings, jde_zfiles
 from tests.conftest import DATA
 from tests.webclient import gt as _gt
 
@@ -209,12 +209,14 @@ def _jde_invoice(stem=QC, **changes):
     return {"id": 1, "final_output": doc}
 
 
-@pytest.mark.parametrize("numbering", [jde.SEQUENTIAL, jde.MATCH_HEADER])
+@pytest.mark.parametrize("numbering", [jde_settings.SEQUENTIAL, jde_settings.MATCH_HEADER])
 def test_the_jde_voucher_balances_with_the_meals_half_in_the_expense_line(numbering):
     inv = _jde_invoice()
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, decimals=jde.POINT, line_numbering=numbering)
+    settings = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_TAX, decimals=jde_settings.POINT, line_numbering=numbering
+    )
     assert jde.validate([inv], settings, lambda f: "10023") == {}
-    headers, dists, _ = jde.voucher_rows(inv, "10023", settings)
+    headers, dists, _ = jde_zfiles.voucher_rows(inv, "10023", settings)
     gross = sum(float(h["VLATXA"]) + float(h["VLATXN"]) + float(h["VLSTAM"]) for h in headers)
     tax = sum(float(h["VLSTAM"]) for h in headers)
     assert round(gross, 2) == 21578.51
@@ -228,14 +230,16 @@ def test_in_gross_mode_a_meals_voucher_is_held_back():
     """B-866: with gross amounts only, E1 works out the tax itself and claims the full ITC while AP Coder expenses half
     of it: the GL and the ITC report disagree. It was a warning; it is now a blocker, before approval and at export."""
     inv = _jde_invoice()
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, an8_overrides={})
-    findings = jde.voucher_findings(inv["final_output"], settings, "10023")
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, an8_overrides={})
+    findings = jde_review.voucher_findings(inv["final_output"], settings, "10023")
     meals = [f for f in findings if f[1] == "JDE_MEALS_GROSS"]
     assert meals and meals[0][0] == "error" and "Settings → JD Edwards E1" in meals[0][2]
     assert "tax amounts" in meals[0][2]
     assert 1 in jde.validate([inv], settings, lambda f: "10023")  # held back from the batch
-    tax_mode = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
-    assert not [f for f in jde.voucher_findings(inv["final_output"], tax_mode, "10023") if f[1] == "JDE_MEALS_GROSS"]
+    tax_mode = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX)
+    assert not [
+        f for f in jde_review.voucher_findings(inv["final_output"], tax_mode, "10023") if f[1] == "JDE_MEALS_GROSS"
+    ]
     from ap_coder.ops.help import help_for
 
     assert "would not balance" not in help_for("JDE_MEALS_GROSS").meaning
@@ -250,27 +254,33 @@ def _dinner_and_paper(**changes):
     return {"id": 1, "final_output": doc}
 
 
-@pytest.mark.parametrize("mode", [jde.AMOUNT_TAX, jde.AMOUNT_GROSS])
+@pytest.mark.parametrize("mode", [jde_settings.AMOUNT_TAX, jde_settings.AMOUNT_GROSS])
 def test_a_po_matched_meals_voucher_is_held_back(mode):
     """B-865: a PO-matched voucher has no G/L lines of ours (E1 distributes from the receipts), so the half of the HST
     on the dinner that is not claimable could not be expensed: VLSTAM went out at the full 24.37, with no finding."""
     inv = _dinner_and_paper(po_number="4500012")
-    settings = jde.JdeSettings(an8_overrides={}, po_matched=True, amount_mode=mode)
-    findings = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"]
+    settings = jde_settings.JdeSettings(an8_overrides={}, po_matched=True, amount_mode=mode)
+    findings = [
+        f for f in jde_review.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"
+    ]
     assert findings and findings[0][0] == "error" and "PO" in findings[0][2]
     assert 1 in jde.validate([inv], settings, lambda f: "10023")
     plain = _dinner_and_paper(po_number="4500012")
     doc = {k: v for k, v in plain["final_output"].items() if k != "gl_distribution"}
     plain["final_output"]["gl_distribution"] = _dist(doc, _setup(meals=()))
-    assert not [f for f in jde.voucher_findings(plain["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"]
+    assert not [
+        f for f in jde_review.voucher_findings(plain["final_output"], settings, "10023") if f[1] == "JDE_MEALS_PO"
+    ]
 
 
 def test_one_pay_item_per_line_takes_the_tax_of_the_distribution():
     """B-867: with one pay item per line, the tax was split again by JD Edwards' own rounding: the dinner got 5.67 and
     the paper 13.01, while the GL distribution has 5.68 claimable on the dinner and 13.00 on the paper."""
     inv = _dinner_and_paper()
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, decimals=jde.POINT, line_numbering=jde.MATCH_HEADER)
-    headers, dists, _ = jde.voucher_rows(inv, "10023", settings)
+    settings = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_TAX, decimals=jde_settings.POINT, line_numbering=jde_settings.MATCH_HEADER
+    )
+    headers, dists, _ = jde_zfiles.voucher_rows(inv, "10023", settings)
     assert [h["VLSTAM"] for h in headers] == ["5.68", "13.00"]
     assert [d["VNAA"] for d in dists] == ["93.12", "100.00"]
     gross = [round(float(h["VLATXA"]) + float(h["VLATXN"]) + float(h["VLSTAM"]), 2) for h in headers]

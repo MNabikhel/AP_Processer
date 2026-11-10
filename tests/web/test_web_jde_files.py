@@ -13,7 +13,7 @@ from markupsafe import escape
 
 from ap_coder.bench import jde_exports as made
 from ap_coder.core.reference_data import reads_like_meals
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.ops import journal_cmd
 from ap_coder.web import files, roles
 from ap_coder.web.app import create_app
@@ -143,21 +143,21 @@ def test_the_meals_accounts_are_named_and_ticked_with_one_click_and_a_newer_char
 def test_the_one_company_of_the_business_units_is_offered_as_jd_edwards_company(client, store, exports, tmp_path):
     """JD Edwards' company number stayed 00001 until set by hand in Settings, and the keying sheet printed it
     (B-2278): offered with one click when every business unit loaded belongs to one company, never to several."""
-    assert jde.load(store).company == "00001" and "/jde-files/company" not in client.get("/jde-files").text
+    assert jde_settings.load(store).company == "00001" and "/jde-files/company" not in client.get("/jde-files").text
     several = [(code, name, "00002" if n else company, kind, status)
                for n, (code, name, company, kind, status) in enumerate(cf.UNITS)]  # fmt: skip
     units = cf.write_business_units(tmp_path / "bu.xlsx", several).read_bytes()
     page = follow(client, client.post("/jde-files/units", files={"file": ("bu.xlsx", units)}, headers=PAGE))
     assert "/jde-files/company" not in page
     refused = client.post("/jde-files/company", headers=PAGE)
-    assert refused.status_code == 400 and jde.load(store).company == "00001"
+    assert refused.status_code == 400 and jde_settings.load(store).company == "00001"
     _load_chart(client, exports)
     (company,) = {unit.company for unit in store.business_units()}
     page = client.get("/jde-files").text
     assert company != "00001" and f"Use company {company} (the one your business units belong to)" in page
-    assert jde.load(store).company == "00001"  # not without the click
+    assert jde_settings.load(store).company == "00001"  # not without the click
     page = follow(client, client.post("/jde-files/company", headers=PAGE))
-    assert jde.load(store).company == company and "/jde-files/company" not in page
+    assert jde_settings.load(store).company == company and "/jde-files/company" not in page
     assert f"company number is now {company}" in page.split('id="units-said"', 1)[1].split("</div></div>", 1)[0]
 
 

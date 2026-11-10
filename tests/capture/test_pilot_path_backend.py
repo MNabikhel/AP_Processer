@@ -264,12 +264,12 @@ def test_long_lists_are_saved_on_every_page_that_posts_them(tmp_path):
 def test_the_po_company_goes_out_only_with_the_po_number():
     """With "Send the PO number" off, the pay item had no PO number (VLPO) nor PO type (VLPDCT) but still the PO
     company (VLPKCO), where docs/JDE_E1.md says all three go out together when there is a PO to send."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings, jde_zfiles
     from tests.erp.test_jde import ON, _files, _invoice
 
-    off = _files([_invoice(ON)], jde.JdeSettings(send_po_reference=False))[jde.HEADER_FILE][0]
+    off = _files([_invoice(ON)], jde_settings.JdeSettings(send_po_reference=False))[jde_zfiles.HEADER_FILE][0]
     assert (off["VLPO"], off["VLPDCT"], off["VLPKCO"]) == ("", "", "")
-    on = _files([_invoice(ON)], jde.JdeSettings())[jde.HEADER_FILE][0]
+    on = _files([_invoice(ON)], jde_settings.JdeSettings())[jde_zfiles.HEADER_FILE][0]
     assert (on["VLPO"], on["VLPDCT"], on["VLPKCO"]) == ("PO-88213", "OP", "00001")
 
 

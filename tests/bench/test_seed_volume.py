@@ -120,7 +120,7 @@ def test_the_big_reports_give_what_they_gave_on_the_seed(seeded, tmp_path, monke
     and the JD Edwards duplicate checks of the ready invoices (with copies of exported bills and of the register's)."""
     import re
 
-    from ap_coder.erp import accruals, controls, jde, spend
+    from ap_coder.erp import accruals, controls, jde, jde_settings, spend
     from ap_coder.web.pages import exports as exports_page
     from tests import reports_reference as old
     from tests.conftest import copy_database
@@ -136,7 +136,7 @@ def test_the_big_reports_give_what_they_gave_on_the_seed(seeded, tmp_path, monke
             copy = {**doc, "vendor_name": source["vendor_name"], "invoice_number": source["invoice_number"]}
             store.approve_invoice(store.add_invoice(tmp_path / f"copy-{n}.pdf", copy, {}), copy, "Jordan Lee")
         invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
-        settings, lookup = jde.load(store), store.vendor_ids()
+        settings, lookup = jde_settings.load(store), store.vendor_ids()
         found = jde.validate(invoices, settings, lookup, jde.prior_records(store, invoices=invoices))
         assert found == jde.validate(invoices, settings, lookup, jde.prior_records(store))
         assert sum("already exported" in m or "already in the ERP" in m for ms in found.values() for m in ms) >= 6
@@ -180,7 +180,7 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
 
     from ap_coder.core.memory import vendor_key
     from ap_coder.core.store import summary
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.app import create_app
     from ap_coder.web.pages import exports as exports_page
     from tests import reports_reference as old
@@ -269,14 +269,14 @@ def test_exports_activity_and_automation_show_on_the_seed_what_they_showed_befor
                          (first["invoice_number"], first["vendor_name"], ready[1]["id"]))  # fmt: skip
         same("a ready invoice the same bill as another, in plain SQL")
         assert "already in the ERP" in last[-1]["clerk /exports?fmt=jde"]
-        settings = jde.load(other)
-        jde.save(other, dataclasses.replace(settings, company="ABC"), actor="Jordan Lee")
+        settings = jde_settings.load(other)
+        jde_settings.save(other, dataclasses.replace(settings, company="ABC"), actor="Jordan Lee")
         same("JD Edwards' settings: a company that stops every invoice")
         overrides = {**settings.an8_overrides, vendor_key(ready[6]["vendor_name"]): "ABC"}
-        jde.save(other, dataclasses.replace(settings, an8_overrides=overrides), actor="Jordan Lee")
+        jde_settings.save(other, dataclasses.replace(settings, an8_overrides=overrides), actor="Jordan Lee")
         same("JD Edwards' settings: a vendor's supplier number")
         assert "supplier number &#39;ABC&#39;" in last[-1]["admin /exports?fmt=jde"]
-        jde.save(other, settings, actor="Jordan Lee")
+        jde_settings.save(other, settings, actor="Jordan Lee")
         same("and back")
         with sqlite3.connect(store.path) as conn:
             conn.execute("UPDATE invoices SET status = 'pending_approval' WHERE id = ?", (waiting,))

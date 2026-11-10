@@ -271,10 +271,10 @@ def finalise_coding(
     # is imported, or the remarks go to JD Edwards as typed; any other install stores its invoices as before.
     js = None
     if store is not None:
-        from ..erp import jde
+        from ..erp import jde_accounts, jde_review, jde_settings
 
-        js = jde.load(store) if jde.in_use(store) else None
-    remarks_typed = js is not None and js.remarks == jde.REMARKS_TYPED
+        js = jde_settings.load(store) if jde_settings.in_use(store) else None
+    remarks_typed = js is not None and js.remarks == jde_settings.REMARKS_TYPED
     fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     output = coding.to_output()
     if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
@@ -287,7 +287,7 @@ def finalise_coding(
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
     if js is not None:
-        erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
+        erp_findings = jde_review.voucher_findings(output, js, jde_accounts.resolve_an8(output, store.vendor_ids(), js))
     report = validate_coding(
         coding,
         reference,
@@ -306,7 +306,7 @@ def finalise_coding(
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
         erp_findings=erp_findings,
         remarks_typed=remarks_typed,
-        erp_posts_tax=jde.taxes_e1_posts(output, js) if js is not None else frozenset(),
+        erp_posts_tax=jde_review.taxes_e1_posts(output, js) if js is not None else frozenset(),
     )
     if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
         claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)

@@ -161,7 +161,7 @@ def validate_coding(
         add(severity, code, message)
     for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
         add(severity, code, message, line)
-    for severity, code, message, line in erp_findings or []:  # what the ERP's batch would refuse (erp/jde.py)
+    for severity, code, message, line in erp_findings or []:  # what the ERP's batch would refuse (erp/jde_review.py)
         add(severity, code, message, line)
 
     # --- Header -----------------------------------------------------------

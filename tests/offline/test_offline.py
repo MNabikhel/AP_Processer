@@ -125,7 +125,7 @@ def demo_db(tmp_path):
 
 def test_demo_review_and_jde_export_offline(no_network, demo_db):
     """The demo invoices through validation, tax checks, capture and a JD Edwards batch, offline."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde, jde_settings
     from ap_coder.ops.demo import load_demo
 
     store = Store(demo_db)
@@ -133,7 +133,7 @@ def test_demo_review_and_jde_export_offline(no_network, demo_db):
     assert counts["added"] >= 5
     approved = [store.get_invoice(i["id"]) for i in store.list_invoices(APPROVED)]
     assert approved
-    data, name, _ = jde.build_zip(approved, jde.JdeSettings(), lambda final: "10023", batch=1)
+    data, name, _ = jde.build_zip(approved, jde_settings.JdeSettings(), lambda final: "10023", batch=1)
     assert name.endswith(".zip") and zipfile.ZipFile(__import__("io").BytesIO(data)).namelist()
     assert no_network == []
 

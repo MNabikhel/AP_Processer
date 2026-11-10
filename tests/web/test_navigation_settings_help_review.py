@@ -23,12 +23,12 @@ from tests.web.test_navigation_settings_help import PAGE, _demo_client, client, 
 
 
 def test_a_jd_edwards_user_keeps_the_tab_and_the_format_after_the_update(store):
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
 
-    store.set_setting(jde.SETTING_KEY, json.dumps({"company": "00001"}))
-    store.set_setting(exports_page.FORMAT_SETTING, jde.FORMAT)
+    store.set_setting(jde_settings.SETTING_KEY, json.dumps({"company": "00001"}))
+    store.set_setting(exports_page.FORMAT_SETTING, jde_settings.FORMAT)
     assert core.jde_shown(store) and store.get_setting(core.SHOW_JDE) == "1"  # turned on, once, and stored
-    assert exports_page.last_format(store) == jde.FORMAT
+    assert exports_page.last_format(store) == jde_settings.FORMAT
     store.set_setting(core.SHOW_JDE, "0")  # switched off by hand: stays off
     assert not core.jde_shown(store)
 

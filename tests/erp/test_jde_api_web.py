@@ -122,12 +122,12 @@ def test_the_posting_job_shows_each_vouchers_outcome_as_it_goes(tmp_path, ais, m
 
 def test_a_g_l_date_moved_into_the_open_period_is_shown_and_the_go_ahead_confirms_it(tmp_path, ais, monkeypatch):
     """D-182 (B-1861): the dry run's row says the G/L date was moved, and the go-ahead's question names it."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
 
     store, batch = batch_of(tmp_path, ais)  # dated 14 September
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     settings.open_from = "2026-10-01"
-    jde.save(store, settings)
+    jde_settings.save(store, settings)
     monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
     client = client_for(store)
     post(client, f"/exports/batches/{batch}/jde-api/dry-run")
