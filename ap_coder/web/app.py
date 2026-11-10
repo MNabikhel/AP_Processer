@@ -18,6 +18,7 @@ pages:
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import email.utils
 import getpass
 import hmac
@@ -124,26 +125,71 @@ class DailyBackup:
     in the lifespan); after that, a request at least ``every`` seconds after the last check checks again. Each runs on
     a thread of its own, so neither the start nor a page waits for it: the first one after an update copies every
     invoice file, minutes to a slow network share (B-1553). ``auto_backup`` keeps its rules: once a day, the newest
-    14 kept. ``now``: one asked for on Settings, on the same thread (never two at once)."""
+    14 kept. ``now``: one asked for on Settings, on the same thread (never two at once). With a time of day set
+    (Settings → Data & backups, ``Store.backup_at``, D-218) a check as the clock passes it makes the day's backup
+    then; ``watch`` checks every half minute with no page asked for. ``clock``, ``monotonic``: the time, for a test
+    to set."""
 
-    def __init__(self, store: Store, every: float = 3600) -> None:
-        self.store, self.every = store, every
-        self.last = time.monotonic()  # the start's own backup is ``start``'s
+    def __init__(self, store: Store, every: float = 3600, clock: Callable[[], dt.datetime] = dt.datetime.now,
+                 monotonic: Callable[[], float] = time.monotonic) -> None:  # fmt: skip
+        self.store, self.every, self.clock, self.monotonic = store, every, clock, monotonic
+        self.last = monotonic()  # the start's own backup is ``start``'s
         self.thread: threading.Thread | None = None
         self.outcome: Path | Exception | None = None  # what the last one asked for (``now``) gave
+        self.at: tuple[int, int] | None = None  # the set time as last read, and when it comes next
+        self.next_at: dt.datetime | None = None
+        self._read: float | None = None  # when the set time was last read (``monotonic``)
+        self._halt = threading.Event()
         self._lock = threading.Lock()
 
     def start(self) -> None:
         with self._lock:
-            self._spawn(self._run)
+            self._spawn(lambda: self._run(started=True))
 
     def check(self) -> None:
-        now = time.monotonic()
+        now = self.monotonic()
         with self._lock:
-            if now - self.last < self.every or (self.thread is not None and self.thread.is_alive()):
+            if self.thread is not None and self.thread.is_alive():
+                return
+            if now - self.last < self.every and not self._time_came(now):
                 return
             self.last = now
             self._spawn(self._run)
+
+    def _time_came(self, now: float) -> bool:
+        """Whether the clock passed the backup's set time since the last check. The time is read again once a
+        minute: one saved on Settings, in this process or another, is followed without a restart."""
+        wall = self.clock()
+        if self._read is None or now - self._read >= 60:
+            self._read = now
+            try:
+                at = self.store.backup_at()
+            except Exception:  # noqa: BLE001 - a busy database: the time as last read
+                at = self.at
+            if at != self.at:
+                from ap_coder.core.store.backups import next_backup_due
+
+                self.at, self.next_at = at, (next_backup_due(wall, at) if at else None)
+        if self.at is None or self.next_at is None or wall < self.next_at:
+            return False
+        from ap_coder.core.store.backups import next_backup_due
+
+        self.next_at = next_backup_due(wall, self.at)
+        return True
+
+    def watch(self, every: float = 30.0) -> None:
+        """``check`` every ``every`` seconds on a thread of its own, until ``stop``: on a laptop left open the set
+        time comes with no page asked for (the server's background process checks in its own loop)."""
+        self._halt.clear()
+
+        def look() -> None:
+            while not self._halt.wait(every):
+                self.check()
+
+        threading.Thread(target=look, name="ap-coder-backup-clock", daemon=True).start()
+
+    def stop(self) -> None:
+        self._halt.set()
 
     def now(self, label: str = "manual", actor: str | None = None) -> threading.Thread | None:
         """``Store.backup_now(label)`` on the backups' thread (its result in ``outcome``); None while one runs."""
@@ -165,11 +211,12 @@ class DailyBackup:
         self.thread.start()
         return self.thread
 
-    def _run(self) -> None:
+    def _run(self, started: bool = False) -> None:
         from ap_coder.core.store.backups import BACKUP_HOURS_ENV, backup_window
 
         try:
-            self.store.auto_backup(window=backup_window(os.environ.get(BACKUP_HOURS_ENV)))
+            self.store.auto_backup(window=backup_window(os.environ.get(BACKUP_HOURS_ENV)), now=self.clock(),
+                                   at=self.store.backup_at(), started=started)  # fmt: skip
         except Exception:  # noqa: BLE001 - a backup problem must never reach a page
             logging.getLogger(__name__).warning("the daily backup was not made", exc_info=True)
 
@@ -347,6 +394,7 @@ def _lifespan(store: Store, settings_factory: Callable[[], Settings], *, server:
             anyio.to_thread.current_default_thread_limiter().total_tokens = worker_threads()
         if background:  # once a day, when the dashboard starts, on its own thread: it never holds up the start
             app.state.daily_backup.start()
+            app.state.daily_backup.watch()  # and at its set time, a page asked for or not (D-218)
         if start_reader and background:
             (app.state.reader, app.state.azure_checker, app.state.jde_worker, app.state.queue_recheck,
              *made) = start_background_work(settings_factory, store)  # fmt: skip
@@ -360,6 +408,7 @@ def _lifespan(store: Store, settings_factory: Callable[[], Settings], *, server:
 
                 resume_bulk(store, settings_factory)
         yield
+        app.state.daily_backup.stop()
         if app.state.processes == 1:  # the dashboard's own import: the file under way back in line (B-1766)
             from ap_coder.web.pages import process
 

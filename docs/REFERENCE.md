@@ -318,6 +318,7 @@ This is a memory of your team's decisions. No model is retrained.
 |---|---|
 | `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. Server mode: `--server`, with `--certfile` and `--keyfile` (HTTPS), `--proxy` (a reverse proxy's address) or `--insecure-http` (a first test only); see [docs/SERVER.md](SERVER.md). |
 | `service install\|remove\|start\|stop\|status` | The company server: run AP Coder as a scheduled task on Windows (not a Windows service), a LaunchDaemon on a Mac, a systemd unit on Linux. |
+| `share [--stop] [--allow-folder FOLDER]` | One laptop serving a few colleagues, with sign-in: checks what is missing (the certificate, the first Admin, the firewall rule) and says the next step, makes what needs no administrator rights, then serves until its window is closed or `share --stop`. `--allow-folder`: a folder Admins may choose for the backups' second copy. See [docs/SERVER.md](SERVER.md), section 16. |
 | `server-update [bundle] [--back]` | The company server: install a new offline bundle, or go back to the previous version. |
 | `users add\|list\|reset\|reset-2fa\|deactivate\|activate\|role` | Server mode: the people who log in, and their roles (`reset-2fa`: forget a person's authenticator app, a phone lost or replaced). |
 | `backup now\|list\|check\|restore [name] [--from FOLDER] [--yes]` | Backups of the database and the invoice files: make one now, list them, check that every file of one (or of each) is there and undamaged, restore one. `--from`: the backups in another folder (the second backup folder on a network share). See [docs/SERVER.md](SERVER.md). |
@@ -488,7 +489,8 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
   ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py · pilot_score.py ·
                      service.py (server mode's service: its host, status) · service_windows.py (the
                      scheduled task) · service_macos.py (the LaunchDaemon) · service_linux.py (the systemd
-                     unit) · server_update.py · jde_cmd.py
+                     unit) · server_update.py · share.py (a laptop shared with sign-in) ·
+                     jde_cmd.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)

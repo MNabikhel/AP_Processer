@@ -56,6 +56,11 @@ class Restored:
 BACKUP_HOURS_ENV = "AP_BACKUP_HOURS"  # when the daily backup may start ("1-5"); unset: any time (``backup_window``)
 MISSED_WINDOW_HOURS = 30  # a daily backup this old is made at once, whatever the hours: a day is never skipped
 RESTORE_HOURS = 2  # a restore marker older than this is not believed (a restore takes minutes, not hours)
+# The time of day the daily backup is made, "HH:MM" (Settings → Data & backups, D-218): never saved, BACKUP_AT_DEFAULT;
+# BACKUP_AT_OFF, no set time: once a day when AP Coder starts, as before.
+BACKUP_AT, BACKUP_AT_DEFAULT, BACKUP_AT_OFF = "backup_at", "17:30", "off"
+BACKUP_LAST = "backup_last"  # the last backup made at its set time, as JSON: {"at", "file", "why"}
+ON_TIME = dt.timedelta(minutes=10)  # a backup started this long after its time was made at its time
 
 
 def restore_marker(db: Path) -> Path:
@@ -125,6 +130,45 @@ def backup_window(text: str | None) -> tuple[int, int] | None:
 def _in_window(hour: int, window: tuple[int, int]) -> bool:
     start, end = window
     return start <= hour < end if start < end else hour >= start or hour < end
+
+
+def backup_time(text: str | None) -> tuple[int, int] | None:
+    """A time of day as written ("17:30", "7:05") as (hour, minute); None when it is not one."""
+    found = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", text or "")
+    if not found or int(found.group(1)) > 23 or int(found.group(2)) > 59:
+        return None
+    return int(found.group(1)), int(found.group(2))
+
+
+def backup_due(now: dt.datetime, at: tuple[int, int]) -> dt.datetime:
+    """The last moment the clock showed ``at`` (hour, minute), at ``now`` or before, on this computer's clock as
+    ``now`` is: the time is the business time zone's (server.json's ``time_zone``, D-187) where there is one, so a
+    server left on UTC backs up at the end of the business's day. The next one is a day after it."""
+    from ...ops.health import business_zone
+
+    zone = business_zone()
+    there = now.astimezone(zone) if zone is not None else now
+    due = there.replace(hour=at[0], minute=at[1], second=0, microsecond=0)
+    if due > there:
+        due -= dt.timedelta(days=1)
+    return due.astimezone().replace(tzinfo=None) if zone is not None else due
+
+
+def next_backup_due(now: dt.datetime, at: tuple[int, int]) -> dt.datetime:
+    """The next moment the clock shows ``at``, after ``now`` (``backup_due``'s clock and time zone)."""
+    return backup_due(now + dt.timedelta(days=1), at)
+
+
+def _why_then(now: dt.datetime, due: dt.datetime, at: tuple[int, int], started: bool, first: bool) -> str:
+    """Why a backup with a set time was made when it was, for Settings → Data & backups."""
+    said = f"{at[0]:02d}:{at[1]:02d}"
+    if now - due <= ON_TIME:
+        return f"made at its time, {said}"
+    if first:
+        return "made at start: there was no backup yet" if started else "the first backup"
+    if started:
+        return f"made at start: AP Coder was not running at {said}"
+    return f"made late: this computer was asleep or busy at {said}"
 
 
 def _business_hour(now: dt.datetime) -> int:
@@ -542,24 +586,68 @@ class BackupsMixin:
         backup_files.record_copy(made, True, _now()[:16], str(target))
         return copied
 
+    def backup_at(self) -> tuple[int, int] | None:
+        """The time of day the daily backup is made (Settings → Data & backups; BACKUP_AT_DEFAULT until one is
+        saved); None with no set time: once a day when AP Coder starts."""
+        return backup_time(self.get_setting(BACKUP_AT) or BACKUP_AT_DEFAULT)
+
+    def last_timed_backup(self) -> dict[str, str]:
+        """The last backup made at its set time: {"at": when, "file": its name, "why": why then}; {} when none
+        was."""
+        found = self.get_json(BACKUP_LAST, {})
+        return {k: str(v) for k, v in found.items()} if found.get("at") else {}
+
     def auto_backup(self, keep: Retention | None = None, min_hours: float = 20, window: tuple[int, int] | None = None,
-                    now: dt.datetime | None = None) -> Path | None:  # fmt: skip
+                    now: dt.datetime | None = None, at: tuple[int, int] | None = None,
+                    started: bool = False) -> Path | None:  # fmt: skip
         """Back up at most once a day (call it at start-up) and keep the daily copies ``keep`` says
         (``backup_files.drop_old``; by default the newest 14, and on the company server also one a week for 8 weeks
         and one a month for a year, D-187). Only a
         complete backup (with its list of files) is the day's: one cut short is made again at the next check (B-1557).
         None while another backup or a restore runs (B-1559). ``window`` (``backup_window``): it starts only in those
         hours of the business time zone (server.json's ``time_zone``, else the server's clock), unless the last daily
-        backup is ``MISSED_WINDOW_HOURS`` old or there is none (B-1671)."""
+        backup is ``MISSED_WINDOW_HOURS`` old or there is none (B-1671). ``at`` (``backup_at``; without ``window``,
+        whose hours IT chose): the day's backup is the one made since the clock last showed that time
+        (``backup_due``), so one is made when the time comes, and at the next check when AP Coder was not running
+        then (``started``: this is the check at start); why it was made then is kept (``last_timed_backup``,
+        D-218)."""
         try:
             with backup_files.exclusive(self.path.parent):
-                return self._auto_backup(keep, min_hours, window, now or dt.datetime.now())
+                return self._auto_backup(keep, min_hours, window, now or dt.datetime.now(), at, started)
         except backup_files.Busy:
             return None
 
+    def _timed_backup(self, keep: Retention | None, daily: list[Path], now: dt.datetime, at: tuple[int, int],
+                      started: bool) -> Path | None:  # fmt: skip
+        """The day's backup with a set time (``auto_backup``'s ``at``): none while one was made since that time."""
+        due, first = backup_due(now, at), True
+        for backup in daily:
+            try:
+                made = dt.datetime.fromtimestamp(backup.stat().st_mtime)
+            except OSError:
+                continue
+            if due <= made <= now:
+                return None
+            first = first and made > now  # (one made in the future, the clock was ahead, is no backup yet)
+        if not self.path.exists():
+            return None
+        made_now = self._daily_backup(keep)
+        with contextlib.suppress(OSError, sqlite3.Error):  # (a busy database: the backup is made all the same)
+            self.set_setting(BACKUP_LAST, json.dumps({"at": now.strftime("%Y-%m-%d %H:%M"), "file": made_now.name,
+                                                      "why": _why_then(now, due, at, started, first)}))  # fmt: skip
+        return made_now
+
+    def _daily_backup(self, keep: Retention | None) -> Path:
+        made = self.backup_now(keep=keep)
+        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep, self.path.parent)
+        backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
+        return made
+
     def _auto_backup(self, keep: Retention | None, min_hours: float, window: tuple[int, int] | None,
-                     now: dt.datetime) -> Path | None:  # fmt: skip
+                     now: dt.datetime, at: tuple[int, int] | None, started: bool) -> Path | None:  # fmt: skip
         daily = [p for p in self.list_backups() if _daily(p) and backup_files.list_path(p).is_file()]
+        if at is not None and not window:
+            return self._timed_backup(keep, daily, now, at, started)
         newest: dt.timedelta | None = None
         for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
             try:
@@ -575,10 +663,7 @@ class BackupsMixin:
                 return None  # its hours come before a day is missed
         if not self.path.exists():
             return None
-        made = self.backup_now(keep=keep)
-        backup_files.drop_old([p for p in self.list_backups() if _daily(p)], keep, self.path.parent)
-        backup_files.prune(self.backup_dir())  # the files only the backups dropped needed
-        return made
+        return self._daily_backup(keep)
 
     @staticmethod
     @contextmanager

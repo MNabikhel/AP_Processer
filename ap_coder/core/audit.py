@@ -241,6 +241,7 @@ SETTING_LABELS = {
     "default_terms_days": "Days to pay when no terms are printed", "why_after": "When to ask why",
     "touchless_limit": "Touchless limit", "touchless_processing": "Touchless processing",
     "export_layout": "Export layout", "verifier": "AI reviewer", "backup_copy_dir": "Backup copy folder",
+    "backup_at": "When the daily backup is made",
     "policy_notes": "Policy notes", "reviewer": "Your name", "azure_check": "Azure check",
     "AP_REVIEWER": "Your name", "AP_REVIEW_THRESHOLD": "Review threshold",
     "AP_CONSTRAIN_CODES": "Only accounts from the list",
