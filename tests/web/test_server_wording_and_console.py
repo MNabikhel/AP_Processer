@@ -342,6 +342,20 @@ def test_users_activate_turns_an_account_on_again(tmp_path, capsys):
     assert cli.main(["--db", db, "users", "activate", "nobody"]) == 1
 
 
+def test_the_first_admins_command_is_written_one_way(tmp_path, capsys):
+    """B-2116: the login page of a server with no account and ``users list`` said ``users add <username> --role
+    admin``, the guide, the doctor and ``service install`` ``users add --admin <username>``: one way everywhere."""
+    db = tmp_path / "ap_coder.db"
+    client = TestClient(create_app(web_settings(), Store(db), start_reader=False, server=True),
+                        base_url="https://localhost")  # fmt: skip
+    command = "python -m ap_coder users add --admin &lt;username&gt;"
+    page = client.get("/login").text
+    assert "No one has an account yet" in page and command in page and "--role admin" not in page
+    assert cli.main(["--db", str(db), "users", "list"]) == 0
+    said = capsys.readouterr().out
+    assert "python -m ap_coder users add --admin <username>" in said and "--role admin" not in said
+
+
 # --- The doctor on the server (B-1107) --------------------------------------------------------------------------------
 
 

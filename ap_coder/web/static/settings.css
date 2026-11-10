@@ -16,8 +16,6 @@
 .stack > .field, .stack > .st-grid, .stack > .table-wrap, .stack > details {align-self: stretch;}
 .st-2 .stack > .field, .st-grid .field {max-width: none;}
 .field small {font-weight: 400; font-size: 12px;}
-input[type="password"] {height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
-  color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}
 input[type="file"] {font: 13px Inter, system-ui, sans-serif; color: var(--lg-muted); padding: 6px 0;}
 .st-range {display: flex; align-items: center; gap: 12px;}
 .st-range input[type="range"] {flex: 1; accent-color: var(--lg-accent);}

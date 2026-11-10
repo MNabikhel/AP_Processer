@@ -47,6 +47,7 @@ import secrets
 import sqlite3
 import time
 import unicodedata
+from pathlib import Path
 from typing import Any
 
 from .. import authenticator
@@ -96,7 +97,8 @@ LOCKED = (
     "again, or ask an Admin to reset your password."
 )
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
-WRONG_CODE = "That code doesn't match. Type the 6 digits your authenticator app shows now."
+WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
+              "(a new code every 30 seconds).")  # fmt: skip
 CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
 KEY_WHY = "authenticator key missing"
 KEY_MISSING = (
@@ -271,6 +273,22 @@ def same_approver(first_name: str | None, first_login: str | None, name: str | N
 # last step a code of it was used at.
 ADDED_COLUMNS = (("cost_centers", "TEXT NOT NULL DEFAULT ''"), ("totp_secret", "TEXT NOT NULL DEFAULT ''"),
                  ("totp_on", "INTEGER NOT NULL DEFAULT 0"), ("totp_step", "INTEGER NOT NULL DEFAULT 0"))  # fmt: skip
+
+
+def sign_in_accounts(db: Path) -> int:
+    """How many accounts the database file ``db`` holds, turned off or not: 0 when it has none, is not there, or can't
+    be read. Asked before a laptop-mode start opens it (D-211): no Store is opened on it (that would migrate it), and
+    one closed cleanly (no write-ahead log) is read as a file that does not change, so that no ``-wal`` file is left
+    beside it (the update reads that file's time as the database's last use: ``scripts/upgrade.py``)."""
+    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "immutable=1"
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return 0
 
 
 def add_columns(conn: Any) -> None:

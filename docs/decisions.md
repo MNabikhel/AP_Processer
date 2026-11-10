@@ -4808,3 +4808,58 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/erp/jde.py`, `ap_coder/erp/jde_keying.py`, `ap_coder/erp/exports.py`,
     `ap_coder/web/pages/exports.py`, `ap_coder/web/pages/settings_jde.py`, `docs/JDE_E1.md`;
     `tests/erp/test_jde.py`, `tests/erp/test_jde_keying.py`, `tests/web/test_web_settings.py`)
+- **D-211** · **A data folder that serves a team with sign-in is never started in laptop mode by accident: the
+  launcher and `serve` refuse it, the server running or stopped, and laptop mode again on the same data is a named
+  option, `serve --without-sign-in`** (one laptop that first runs AP Coder for one person, then serves a few AP
+  processors from the same data folder; 10 Nov 2026).
+  - **Why:** The launcher asked "is AP Coder already running here?" over plain HTTP only (`scripts/running.py`), so
+    beside a server on HTTPS a double-click on `APProcessor.bat`, or on the desktop shortcut left from the laptop's
+    first weeks, saw nothing, took the next free port and started a second AP Coder in laptop mode: no sign-in, on
+    the team's database. `python -m ap_coder serve` by hand did the same. Asking over HTTPS too would not be enough:
+    a server stopped for the night answers on no port, and the same double-click would then open the team's data to
+    whoever sits at the laptop. The guide only said "don't double-click".
+  - **What tells a team's data folder** (`ops/safety.py:team_server`), any one of four:
+    1. a server-mode AP Coder answers for it now: the port its server file (`.ap_coder_server.json`) names, else
+       server.json's, asked on this computer over HTTPS (the certificate not checked: it is self-signed or names the
+       server, not 127.0.0.1) and over HTTP (a first test with `--insecure-http`); its `/healthz` now says
+       `server_mode`. This holds before the first account and without server.json (a server started by hand);
+    2. its database holds sign-in accounts, one row in `users` or more, turned off or not
+       (`core/store/users.py:sign_in_accounts`: read without a Store, which would migrate it, and leaving no `-wal`
+       file beside a database closed cleanly);
+    3. the sign-in codes' key, `authenticator.key`, is in the folder: someone set up their authenticator app. It is
+       what the launcher's first phase in a new AP Coder folder has, where it runs on the standard library alone
+       and can't load the store yet (its second phase, the packages installed, and `serve` read the accounts);
+    4. its `server.json` is there (what `service install` writes, and the doctor already reads as "this is the
+       server": `service.is_server_here`): the server set up and not yet given its first account.
+    The last three do not depend on anything answering: that is the point.
+  - **What a laptop-mode start does** (the launcher before it sets anything up or stops anything, `serve` before it
+    opens the database; a start in server mode is the server's own and is not asked, except that the launcher never
+    starts a second one beside a running server in either mode):
+    - *the server runs*: "AP Coder is serving your team from this computer (sign in at https://…): it was not started
+      a second time", and the browser opens at that address (the first name of server.json's `allowed_hosts`, else
+      this computer's own name, which the certificate should carry); exit code 0 from the launcher, 2 from `serve`;
+    - *the server is stopped*: "AP Coder on this computer is set up to serve your team, with sign-in (N sign-in
+      accounts in its database …), and its server is stopped now: it was not started without sign-in", with how to
+      start it and the option below; nothing is opened in the browser (nothing answers there); exit code 1 / 2;
+    - *a laptop's own data folder* (no account, no server.json, no server answering): as before, nothing more said.
+  - **The way back, on purpose:** `python -m ap_coder serve --without-sign-in` (`APProcessor.bat --without-sign-in`:
+    the launcher passes it on) opens the same data in laptop mode again, with a warning each time; its help says
+    what it does. The accounts stay in the database, unused, and the next `serve --server` uses them again: a
+    database still moves from laptop mode to server mode and back, as before. It is needed at every such start, not
+    once: nothing is written that a later double-click could inherit. While the server runs the option changes
+    nothing (two AP Coders never use one database).
+  - **Not chosen:** only asking the running server over HTTPS (a stopped server leaves the way in open); the accounts
+    alone (a server set up and waiting for its first Admin would still start in laptop mode; a database that can't
+    be read would say nothing) or server.json alone (a server started by hand has none); a note in the data folder
+    that remembers "laptop mode again" (one deliberate step would then open every later double-click); refusing in
+    `server.serve` itself (the tests and the bench call it with their own stores; the command is the one way a
+    person starts it); making the launcher's own running check speak HTTPS (it also stops older versions and opens
+    `http://127.0.0.1`: a laptop-mode AP Coder given a certificate is still not found by it, as before).
+  - **Left:** on a laptop whose data folder has a server.json from a trial of `service install` (`service remove`
+    keeps the file), the start is refused until the file is deleted or the option used: the message names the file.
+    `--without-sign-in` leaves no line in the Activity log (a new action needs its name in the controls report).
+    Not run on Windows 11 itself: the tests run the launcher's and `serve`'s own code against a real server on HTTPS
+    with a self-signed certificate on Linux, and CI on Windows Server.
+  - (`ap_coder/ops/safety.py`, `ap_coder/core/store/users.py`, `ap_coder/ops/cli.py`, `ap_coder/ops/service.py`,
+    `ap_coder/web/app.py`, `ap_coder/web/server.py`, `scripts/launch.py`, `scripts/running.py`, `docs/SERVER.md`;
+    `tests/ops/test_safety.py`, `tests/launcher/test_launch.py`, `tests/web/test_server_https.py`)

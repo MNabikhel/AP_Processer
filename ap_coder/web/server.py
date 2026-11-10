@@ -195,10 +195,16 @@ def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> No
     else:
         return
     print(f"AP Coder is running at {url}", flush=True)
-    if open_browser and browser_wanted():  # (not BROWSER=none, nor a Linux computer with no desktop)
+    if open_browser:
+        open_in_browser(url)
+
+
+def open_in_browser(url: str) -> None:
+    """``url`` in the browser, unless BROWSER=none or this is a Linux computer with no desktop."""
+    if browser_wanted():
         try:
             webbrowser.open(url)
-        except Exception:  # noqa: BLE001 - no browser: the address is printed above
+        except Exception:  # noqa: BLE001 - no browser: the address was said
             pass
 
 
