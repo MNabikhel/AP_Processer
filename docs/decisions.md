@@ -4852,3 +4852,90 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/safety.py`, `ap_coder/core/store/users.py`, `ap_coder/ops/cli.py`, `ap_coder/ops/service.py`,
     `ap_coder/web/app.py`, `ap_coder/web/server.py`, `scripts/launch.py`, `scripts/running.py`, `docs/SERVER.md`;
     `tests/ops/test_safety.py`, `tests/launcher/test_launch.py`, `tests/web/test_server_https.py`)
+- **D-212** · **A line's account is suggested from how the supplier was coded last year, as whole account strings
+  that may be posted to; a line is coded with no one picking only on strong evidence, and keeps the accounts offered
+  and what decided it** (a head-office overhead department's prototype; 10 Nov 2026).
+  - **Why:** All AP Coder knew of a supplier was the lines approved in AP Coder. A department starts with a year of
+    coding in JD Edwards' Transaction Journal, in its own 30-character remarks ("courier charges 4410 Alder"), where
+    an invoice prints the supplier's words ("Ground shipment waybill 77812"). Taught as past coding, with the remark
+    as the description, the journal gave: lines coded with no one picking that were wrong four times in five (the
+    object.subsidiary without a business unit, or the last line of a split), nothing for a supplier with 346 lines on
+    one account under one remark, and the first suggestion right for 6% of lines (the table below). The chat model
+    was shown 1.5% of a chart of 13,000 accounts and allowed all of them. Nothing on a line said what had decided it.
+  - **What, the supplier prior** (`ai/supplier_prior.py`): `prior_for(store, vendor)` counts, for each account string,
+    the supplier's lines, vouchers, share, latest G/L date and commonest remark shapes (months, quarters, years and
+    numbers of five digits or more taken out), the share of its vouchers with one coding line and the business units
+    each object.subsidiary was used on. The supplier is found by its JD Edwards number when the vendor list gives one
+    (a number the journal does not have is a new supplier, never looked up by name); else by the name the journal
+    prints, cut at 26 characters: a shorter journal name is whole and must read as the vendor's (legal forms aside), a
+    26-character one may start the vendor's name, and two numbers that fit a cut name are not told apart (neither is
+    taken, and the line says so). Two numbers under one whole name are one vendor in the vendor list, which merges
+    them: counted together. A journal line counts 1, a line approved in AP Coder as proposed 3, a line a person coded
+    or changed 5: one correction outweighs four lines of history. `rank(prior, line, reference)` orders the accounts
+    by the log of the share plus 3 x the likeness to the remarks AP wrote for the account, 4 x the likeness to the
+    lines AP approved to it here, 2 x the likeness to the account's name, each `Candidate` with its reason in plain
+    words and counts ("9 of this supplier's 15 lines last year; 4 of its 4 “custom” lines").
+  - **What, one list** (`ai/suggest.py` `candidates`): every source in one ordered list of account strings: this
+    vendor's approved lines like it, the supplier's coding, other vendors' lines, the vendor master's default, the
+    words of the accounts' names. Each pair is completed (`complete_pair`: the past line's business unit, the only
+    one of the supplier's that has the account, the only one of the chart that has it, then a guess: the supplier's
+    most used, else the home business unit) and must be offered by `AccountPairs`: never a reserved subsidiary, a
+    closed or DO NOT USE business unit, a title account. A past line on a business unit since closed gives its
+    account on another, saying why, or nothing. `suggest_gl` returns the first of these when a chart is imported or a
+    journal loaded.
+  - **What, deciding alone** (`ai/offline_coder.py`): a line is coded with no one picking by this vendor's own
+    approved lines as before, or when one account has 90% of the supplier's lines (by weight) of 3 lines or more and
+    the last line a person approved here did not go elsewhere (`SURE_SHARE`, `SURE_LINES`). Never on a guessed
+    business unit, never from another vendor's line, and not when the same words went to several business units
+    (who ordered decides: `UNIT_SURE_LINES` approvals on one unit settle it) or to several accounts of one voucher of
+    the past coding. A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
+    "A new supplier: not in last year's journal", "The supplier's usual account … is no longer in the chart (business
+    unit … is no longer active)") and keeps up to 5 `candidates`. Every line with an account keeps `decided_by`
+    (`core/schema.decided`): `source` rule, vendor, supplier, others, words, model or person, with the rule's id, the
+    counts, what it replaced. A fixed rule records itself also when it only agrees; the review screen records a
+    person's pick and which candidate it was (`coding/review.decided_on_screen`). Both keys are left out of the
+    stored coding when empty, so invoices stored before read and are stored unchanged.
+  - **What, the chat model** (`ai/inference.py`): for the lines left it chooses among the accounts offered for each
+    line: the supplier's first 8 and the first 8 others, each with its string, name, business unit's name and "used N
+    times for this supplier, e.g. …", or "none of these". The schema lists those strings (under 2,000 characters
+    where the whole chart was 320,000). An answer that is not offered for the line, or an offered code on another
+    business unit, leaves the line for a person and the line says so, as it says when the model gave no answer. Its
+    pick is a guess (`decided_by.source` model). With no chart and no journal the model is asked as before.
+  - **Measured** (`python -m ap_coder.bench coding --journal`: the made-up year, 14,000 chart rows, 5,500 vouchers,
+    seed 1; ten months loaded, the last two held out as invoices in the suppliers' wording; 809 lines of 266 trade
+    suppliers; no AI model; right = object.subsidiary and business unit both). Before = the journal's lines taught
+    as past coding, the supplier named by its number:
+
+    | lines | before: coded alone / right | first / in 3 | after: coded alone / right | first / in 3 |
+    |---|---:|---:|---:|---:|
+    | one account (114) | 68% / 21% | 15% / 15% | 77% / 100% | 100% / 100% |
+    | several, by what was bought (237) | 13% / 68% | 9% / 9% | 0% / - | 44% / 78% |
+    | several, by who ordered (434) | 32% / 9% | 3% / 3% | 5% / 100% | 42% / 72% |
+    | never seen (24) | 0% / - | 0% / 0% | 0% / - | 12% / 12% |
+    | all (809) | 30% / 20% | 6% / 6% | 13% / 100% | 50% / 76% |
+
+    First candidate's object.subsidiary right 37% → 67%, business unit right 8% → 62%. With AP approving each
+    held-out invoice as it comes (`--approve`): 24% coded alone, 94% of those right (186 of 198; 10 of the 12 wrong
+    are a billback or another department's line worded as an earlier one), first 52%, in the first three 78%.
+    The bars: at 90% of 3 lines, 109 coded and 0 wrong; at 80%, 117 and 3; at 2 lines, 160 and 19; at 5 lines, 98
+    and 0: 90% and 3 kept. The ranking's weights are the audit's; the wording was written to share few words with
+    the remarks, so on the several-account suppliers the words add about a dozen points to the share alone.
+    Speed: 1.5 ms a line on a supplier's first invoice, 0.9 ms after (the slowest 34 ms); a prior is 4.6 KB at the
+    median, kept in 6 MB (`core/caches.py`; the 950 suppliers of the year are 5 MB).
+  - **Not chosen:** The journal pressed into the approval memory (one remark on the accounts of a split read as a
+    change of mind; identical remarks counted once); the whole chart in the model's schema; a third field for the
+    account string (D-209: the two codes stay); the vendor's "usual account" rule on journal lines (it counts
+    different descriptions, and gives no business unit).
+  - **Left:** With no chart and no journal nothing is suggested or decided differently (the coding bench's lines are
+    the same, one by one); there the fixes of the usual account's missing cost center, of a line coded from one
+    other vendor's, and of a split in past coding do not apply. The reasoning model's own choice among the accounts
+    offered is not measured: no model runs in CI (the true account is among the first three for 76% of lines, which
+    bounds what it can add from that list). Two suppliers whose names read alike share one vendor, so their coding is
+    pooled (the made-up company has many: 113 of 607). A vendor past the 50,000-lesson cap has its units by line
+    read from each line's latest decision only. The rules' history, and `decided_by` copied to the lessons, are for
+    the stage that searches by them.
+  - (`ap_coder/ai/supplier_prior.py`, `ap_coder/ai/suggest.py`, `ap_coder/ai/offline_coder.py`,
+    `ap_coder/ai/inference.py`, `ap_coder/ai/pipeline.py`, `ap_coder/coding/rules.py`, `ap_coder/coding/review.py`,
+    `ap_coder/core/schema.py`, `ap_coder/core/store/prior.py`, `ap_coder/web/invoice_view.py`,
+    `ap_coder/bench/coding_journal.py`, `ap_coder/bench/jde_names.py`; `tests/ai/test_supplier_prior.py`,
+    `tests/ai/test_candidates.py`, `tests/ai/test_closed_list.py`, `tests/bench/test_coding_journal.py`)

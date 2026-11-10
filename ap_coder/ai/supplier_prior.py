@@ -66,7 +66,7 @@ W_LINE = 4.0  # to the invoice lines AP approved to the account here (the suppli
 NAME_CUT = 26  # characters of a supplier's name the journal prints
 REMARKS_KEPT = 3  # shapes of remark kept for an account, the commonest
 TEXTS_KEPT = 24  # different remarks (and approved lines) of an account a new line is compared with
-SAID_ALIKE = 0.3  # a likeness from which the words are named in the reason
+SAID_ALIKE = 0.2  # a likeness from which the words are named in the reason
 
 _MONTHS = (
     "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|"
@@ -215,7 +215,7 @@ class Candidate:
 
 # What each process keeps (D-195): a supplier's prior by vendor, the journal's names by database, and the words of
 # each chart's account names; each while its stamp holds, the ones used longest ago let go first.
-_KEPT = Bounded("supplier priors", 4 * MB)
+_KEPT = Bounded("supplier priors", 6 * MB)
 _LOCK = threading.Lock()
 
 
@@ -426,7 +426,7 @@ def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[st
         journal=True, supplier_number=number, supplier_name=name, found_by=found_by, note=note,
         accounts=tuple(accounts), lines=sum(a.lines for a in accounts),
         journal_lines=sum(a.journal_lines for a in accounts), approved=sum(a.approved for a in accounts),
-        vouchers=sum(a.vouchers for a in accounts), weight=weight,
+        vouchers=len(vouchers) + sum(u.invoices for u in counted.uses.values()), weight=weight,
         one_line_share=sum(1 for n in vouchers.values() if n == 1) / len(vouchers) if vouchers else 0.0,
         units_of={code: tuple(u for u, _ in c.most_common()) for code, c in units.items()},
         latest_approved=counted.latest[1], latest_approved_on=counted.latest[2],
@@ -507,7 +507,7 @@ def _why(prior: Prior, use: AccountUse, line: frozenset[str], remark: float, own
     words of the line that go with it."""
     said = [f"{use.lines} of this supplier's {prior.total_said()}"]
     best: tuple[float, int, int, str] | None = None
-    for word in line:
+    for word in sorted(line):  # (of two words that say as much, the first in the alphabet: the same every time)
         counts = prior.word_lines.get(word)
         if counts and counts.get(use.account):
             n, of = counts[use.account], sum(counts.values())

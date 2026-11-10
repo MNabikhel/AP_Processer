@@ -39,7 +39,7 @@ from ..coding.validation import WARNING, Issue, ValidationReport, validate_codin
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
-from ..core.reference_data import ReferenceData
+from ..core.reference_data import ReferenceData, short_name
 from ..core.schema import InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.reports import anywhere_in
@@ -450,6 +450,11 @@ class InvoicePipeline:
         self.store = store
         self.arrival_seconds = arrival_seconds()
 
+    def _account_names(self) -> dict[str, str]:
+        """{GL code: its name}: what the chat model's examples name each account by."""
+        table = self.reference.chart_of_accounts
+        return {row[table.key_column]: short_name(str(row.get("description") or "")) for row in table.rows}
+
     def _local_accounts(self, result: CodingResult, history: str, arriving: bool = False) -> bool:
         """The local model's account for each line the approval memory has not taught. Never fatal: a model
         that is slow or wrong leaves the line as it was for AP to code. ``arriving``: a new invoice, which waits at
@@ -705,7 +710,7 @@ class InvoicePipeline:
         feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
         examples = select_examples(feedback, result.extraction.content, vendor_hint)
         result.history_examples = len(examples)
-        history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+        history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
 
         # Read again (the page reader): as of the day it came in, which settles a 03/04/2026 the page leaves open.
         received = None
@@ -772,7 +777,7 @@ class InvoicePipeline:
                 feedback = self.store.learning_rows(str(vendor.value))
             examples = select_examples(feedback, result.extraction.content, str(vendor.value))
             result.history_examples = len(examples)
-            history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+            history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
         # A weak match (an account's name) is never put in the line: it is left blank, suggested on the review
         # screen, and the chat model is asked about it when it answers (B-463).
         result.coding = code_from_capture(

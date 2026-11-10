@@ -23,7 +23,6 @@ LONG_FUNCTIONS = {
     "ap_coder/bench/learning.py::render_markdown": 146,
     "ap_coder/ops/pilot_score.py::score": 145,
     "ap_coder/core/schema.py::build_json_schema": 140,
-    "ap_coder/ai/offline_coder.py::code_from_capture": 138,
     "ap_coder/bench/harness.py::render_markdown": 138,
     "ap_coder/bench/generator.py::make_invoice": 136,
     "ap_coder/bench/day.py::Run.report": 133,

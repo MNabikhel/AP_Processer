@@ -43,6 +43,7 @@ from typing import Any
 from ..core import chart
 from ..core.caches import MB
 from ..core.memory import (
+    HISTORY,
     PAST_BYTES_KEPT,
     PAST_KEPT,
     PAST_ROWS_KEPT,
@@ -99,6 +100,9 @@ class Suggestion:
     # decisions ("" for none), the most used first: more than one, and the words of the line do not say which
     # (``candidates``).
     units: tuple[tuple[str, int], ...] = field(default=(), compare=False)
+    # The past coding has this vendor's lines like this one on several accounts on one day: one voucher split, not
+    # a change of mind (``candidates`` leaves such a line for a person).
+    split: bool = field(default=False, compare=False)
 
 
 @dataclass
@@ -441,7 +445,7 @@ def _stems(words: set[str]) -> dict[str, str]:
 
 
 # Each chart of accounts' accounts and the stems of the words of their other columns (``_account_stems``), the latest
-# few charts: every line suggested reads them all (1,500 accounts, each line of each check of an invoice).
+# two charts: every line suggested reads them all (1,500 accounts, each line of each check of an invoice).
 _ACCOUNT_STEMS: dict[int, tuple[Any, list[tuple[str, frozenset[str]]]]] = {}
 
 
@@ -458,24 +462,33 @@ def _account_stems(chart: Any) -> list[tuple[str, frozenset[str]]]:
     with _SAID_LOCK:
         _ACCOUNT_STEMS.pop(id(chart), None)
         _ACCOUNT_STEMS[id(chart)] = (chart, found)
-        while len(_ACCOUNT_STEMS) > 4:
+        while len(_ACCOUNT_STEMS) > 2:  # (the chart in use and the one before a change: room for D-212's priors)
             del _ACCOUNT_STEMS[next(iter(_ACCOUNT_STEMS))]
     return found
 
 
-def _units_of(memory: _Memory, gl: str, hits: list[tuple[float, _Pattern]]) -> tuple[tuple[str, int], ...]:
-    """The cost centers AP approved a vendor's lines like one with, for the account ``gl``, each with its decisions,
-    the most used first: every decision of the lines found (``hits``) that went to it, not only each line's
-    latest."""
+def _units_of(memory: _Memory, gl: str,
+              hits: list[tuple[float, _Pattern]]) -> tuple[tuple[tuple[str, int], ...], bool]:  # fmt: skip
+    """(the cost centers AP approved a vendor's lines like one with, for the account ``gl``, each with its
+    decisions, the most used first: every decision of the lines found (``hits``) that went to it, not only each
+    line's latest; whether the imported past coding has one of those lines on several accounts or cost centers on
+    one day: a voucher split across them, which the latest-decision rule would take for a change of mind)."""
     units: Counter[str] = Counter()
+    split = False
     for _, p in hits:
-        decided = [row for _, row in memory.lines.get((p.vendor_key, _normalise(p.description)), ())
-                   if row.get("final_gl") == gl]  # fmt: skip
+        rows = [row for _, row in memory.lines.get((p.vendor_key, _normalise(p.description)), ())]
+        decided = [row for row in rows if row.get("final_gl") == gl]
         for row in decided:
             units[row.get("final_cc") or ""] += 1
         if not decided:  # (a memory extended for one vendor keeps no decisions: the line's latest)
             units[p.cost_center] += p.decisions
-    return tuple(units.most_common())
+        days: dict[str, set[tuple[str, str]]] = {}
+        for row in rows:
+            if row.get("outcome") == HISTORY:
+                days.setdefault(str(row.get("created_at") or ""), set()).add(
+                    (row.get("final_gl") or "", row.get("final_cc") or ""))  # fmt: skip
+        split = split or any(len(coded) > 1 for coded in days.values())
+    return tuple(units.most_common()), split
 
 
 def _plural(n: int, word: str) -> str:
@@ -606,7 +619,7 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
         add(gl, 0.6 + 0.3 * best_sim + 0.02 * min(decisions, 5),
             f"coded this way {_plural(decisions, 'time')} for similar lines from this vendor", "vendor", auto,
             best.cost_center)  # fmt: skip
-        found[gl].units = _units_of(memory, gl, hits) if gl in found else ()
+        found[gl].units, found[gl].split = _units_of(memory, gl, hits)
 
     # The line AP changed: this one, or a similar line of this vendor (then named, B-607).
     held_line = "this line" if held is None or _normalise(held.description) == _normalise(description) else (
@@ -816,20 +829,26 @@ def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list
     if top.guess or any(s.check for s in found):
         return False
     first = found[0] if found else None
-    if first is not None and first.auto and first.strong >= PRIORITY["vendor"]:
+    if first is not None and first.source == "vendor" and top.code == first.gl_code:
+        # One description on several accounts of one voucher of the past coding is a split, not a change of mind.
         # The same words on several business units: who ordered decides, not the words. So does a supplier whose
         # lines to this account went to several, until lines like this one were approved here on one of them
         # ``UNIT_SURE_LINES`` times.
         units = [(u, n) for u, n in first.units if _unit(u)]
         used = prior.units_of.get(first.gl_code, ()) if prior else ()
-        if len(units) > 1 or (len(used) > 1 and (not units or units[0][1] < UNIT_SURE_LINES)):
-            several = units if len(units) > 1 else used
-            top.reasons.append(
-                f"{'lines like this one' if len(units) > 1 else 'this supplier’s lines to ' + first.gl_code} "
-                f"went to {len(several)} business units: the words do not say which"
-            )
+        unsettled = ""
+        if first.split:
+            unsettled = "the past coding has lines like this one on several accounts on one day: a split"
+        elif len(units) > 1:
+            unsettled = f"lines like this one went to {len(units)} business units: the words do not say which"
+        elif len(used) > 1 and (not units or units[0][1] < UNIT_SURE_LINES):
+            unsettled = (f"this supplier's lines to {first.gl_code} went to {len(used)} business units: the words "
+                         "do not say which")  # fmt: skip
+        if unsettled:
+            top.reasons.insert(0, unsettled)
             top.reason = "; ".join(top.reasons)
             return False
+    if first is not None and first.auto and first.strong >= PRIORITY["vendor"]:
         return offered[top.account][0] == TIER["vendor"] and top.code == first.gl_code
     sure = prior.sure() if prior else None
     if sure is None or top.account != sure.account:

@@ -330,7 +330,10 @@ def test_learning_applies_to_the_next_invoice(tmp_path, settings, reference, gro
     second = pipe.process(sample_markdown_path)
     user_message = client.calls[1]["messages"][1]["content"]
     assert "Approved coding history from your AP team" in user_message
-    assert "| Microsoft 365 E3 licences - monthly | 6030 | CC400 | 0 | 1 |" in user_message
+    # (each account named beside its code: B-2143)
+    assert (
+        "| Microsoft 365 E3 licences - monthly | 6030 Cloud Hosting & Infrastructure | CC400 | 0 | 1 |" in user_message
+    )
     codes = {i.code for i in second.report.issues}
     assert "HISTORY_CONFLICT" in codes  # the AI repeated 6020 despite the correction
     assert "DUPLICATE_INVOICE" in codes  # same vendor + invoice number as the first one
@@ -1149,3 +1152,13 @@ def test_a_vendors_older_lines_kept_for_every_process_go_with_the_lessons_an_inv
     store.delete_invoice(8, forget_lessons=True)
     with sqlite3.connect(store.path) as conn:
         assert conn.execute("SELECT vendor_key FROM past_lines").fetchall() == []
+
+
+def test_the_examples_name_each_account_for_the_chat_model():
+    """B-2143: the examples gave the model account codes alone ("6010"), which say nothing to a model that was not
+    shown that account."""
+    rows = [_row("Northwind IT Solutions Inc.", "Dell Latitude laptop", "6010")]
+    examples = select_examples(rows, "Northwind IT Solutions Inc. invoice")
+    named = format_examples(examples, names={"6010": "Computer Equipment | under $5,000"})
+    assert "| Northwind IT Solutions Inc. | Dell Latitude laptop | 6010 Computer Equipment / under $5,000 |" in named
+    assert "| Dell Latitude laptop | 6010 |" in format_examples(examples)  # without names: as before

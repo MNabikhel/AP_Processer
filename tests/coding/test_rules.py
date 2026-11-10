@@ -152,3 +152,22 @@ def test_a_later_rule_still_measures_the_ais_first_answer(tmp_path, ground_truth
     store.approve_invoice(invoice_id, final, "Jane")
     line5 = next(r for r in store.feedback_rows() if r["line_number"] == 5)
     assert (line5["suggested_gl"], line5["outcome"]) == ("6800", "accepted")
+
+
+def test_a_rule_that_agrees_with_the_proposal_is_recorded_on_the_line_too(ground_truth):
+    """B-2140: a rule that changed a line said so; one that agreed with what was proposed left no trace, so the
+    lines a rule stands behind could not be found. Every line a rule matches keeps the rule's id (D-212)."""
+    coding = InvoiceCoding.model_validate(ground_truth)
+    first, second = coding.line_items[0], coding.line_items[1]
+    first.decided_by = {"source": "vendor"}
+    agrees = Rule("", "latitude", first.predicted_gl_code, first.predicted_cost_center, id=7)
+    changes = Rule("", "poweredge", "6999", "", id=9)
+    coded, changed = rules.apply(coding, [agrees, changes])
+    assert [c["line_number"] for c in changed] == [second.line_number]  # only a change is a change
+    kept, moved = coded.line_items[0], coded.line_items[1]
+    assert kept.decided_by == {"source": "rule", "rule_id": 7, "rule": agrees.label, "was": "vendor", "agreed": True}
+    assert kept.reasoning_justification == first.reasoning_justification  # its own words stay
+    assert moved.predicted_gl_code == "6999"
+    assert moved.decided_by == {"source": "rule", "rule_id": 9, "rule": changes.label}
+    assert all(li.decided_by == {} for li in coded.line_items[2:])
+    assert rules.apply(coded, [agrees, changes])[0].line_items[0].decided_by == kept.decided_by  # said once
