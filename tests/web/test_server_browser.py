@@ -145,9 +145,13 @@ FITS = """() => { const wrap = document.querySelector('.table-wrap'), box = wrap
 
 
 def _look(page, selector: str) -> dict:
-    """How a box of a form looks, nothing in the page focused: what the stylesheet gives every text box."""
-    page.evaluate("document.activeElement && document.activeElement.blur()")
-    return page.eval_on_selector(selector, LOOK)
+    """How a box of a form looks, nothing in the page focused: what the stylesheet gives every text box. The blur and
+    the look are one step in the page: a box with ``autofocus`` can take the focus at any moment while the page is
+    still loading, and a look taken a moment after the blur then read the focused box's border (seen in CI)."""
+    page.wait_for_load_state("load")
+    return page.eval_on_selector(
+        selector, f"e => {{ document.activeElement && document.activeElement.blur(); return ({LOOK})(e); }}"
+    )
 
 
 def test_in_a_browser_every_password_box_looks_like_the_other_boxes(browser, store):

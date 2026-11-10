@@ -672,6 +672,11 @@ def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_
     assert len(held) == 1 and "has no JDE account" in held[0][7]
 
     js = jde.use_prototype(store, actor="Setup")
+    # the page that hands vouchers over opens on the keying sheet (B-2279), unless a format was chosen before
+    assert store.get_setting("export_format") == jde_keying.FORMAT
+    store.set_setting("export_format", "csv")
+    jde.use_prototype(store, actor="Setup")
+    assert store.get_setting("export_format") == "csv"
     assert jde.load(store) == js == jde.prototype_settings() and jde.in_use(store)
     assert jde_keying.FORMAT in exports_page.shown_formats(store)
     assert store.tax_treatments()["QST"].treatment == "expense_to_line"

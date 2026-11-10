@@ -1,10 +1,15 @@
 {% extends "base.html" %}
 {# JD Edwards files (pages/jde_files.py): JD Edwards' own exports, a card each in the order they are loaded. #}
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
-{% macro file_form(action, label, accept, busy) %}
+{# anyway: the tick that loads a chart exported without its posting edit or subsidiary column. #}
+{% macro file_form(action, label, accept, busy, anyway=false) %}
 <form method="post" action="{{ action }}" enctype="multipart/form-data" class="row upload-row" data-busy="{{ busy }}" data-long>
   <input type="file" name="file" accept="{{ accept }}" required aria-label="{{ label }}">
   <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload_file</span>{{ caller() }}</button>
+  {% if anyway %}
+  <label class="check"><input type="checkbox" name="anyway" value="1"> Load it anyway: every account will be offered
+    <span class="muted">(only for an export without its posting edit or Subsidiary column, which is not loaded otherwise)</span></label>
+  {% endif %}
 </form>
 {% endmacro %}
 {# What the load just made said, a line each. #}
@@ -29,6 +34,29 @@
     <dt>{{ loop.index }}. <a href="#{{ item.card }}">{{ item.name }}</a></dt>
     <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
     {% endfor %}
+    {# The chart does not say which accounts are meals accounts: ticked here with one click, or one by one. #}
+    {% if meals %}
+    <dt>Meals accounts</dt>
+    <dd id="meals-accounts">
+      {% if meals.ticked %}
+      {{ ui.pill("Set", "ok", "check") }} {{ meals.ticked | plural("account") }} ticked: half the GST/HST of a line
+      coded to one is claimable. Tick or untick each on <a href="/accounts?tab=gl">GL accounts &amp; tax</a>.
+      {% elif meals.like %}
+      {{ ui.pill("To check", "warn") }} None is ticked, so the GST/HST of a meal is claimed in full. These accounts
+      read like meals: {% for row in meals.like[:20] %}{{ row.code }} {{ row.description }}{% if not loop.last %}; {% endif %}{% endfor %}{% if meals.like | length > 20 %} and {{ meals.like | length - 20 }} more{% endif %}.
+      {% if can("/jde-files/meals") %}
+      <form method="post" action="/jde-files/meals" data-busy="Saving…">
+        {% for row in meals.like %}<input type="hidden" name="code" value="{{ row.code }}">{% endfor %}
+        <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">restaurant</span>Mark these {{ meals.like | length }} as meals accounts (half their GST/HST is claimable)</button>
+      </form>
+      {% endif %}
+      Each can be unticked, and others ticked, on <a href="/accounts?tab=gl">GL accounts &amp; tax</a>.
+      {% else %}
+      {{ ui.pill("To check", "warn") }} None is ticked, and no account's name reads like meals: tick yours on
+      <a href="/accounts?tab=gl">GL accounts &amp; tax</a>, so half the GST/HST of a meal is claimed, not all of it.
+      {% endif %}
+    </dd>
+    {% endif %}
   </dl>
   <p class="muted">{{ order }}</p>
   {% if not can("/jde-files/chart") %}<p class="muted">An Admin loads these files.</p>{% endif %}
@@ -45,7 +73,7 @@
   <ul id="chart-tally">{% for line in tally %}<li>{{ line }}</li>{% endfor %}</ul>
   {% endif %}
   {% if can("/jde-files/chart") %}
-  {% call file_form("/jde-files/chart", "Chart of accounts (.xlsx)", ".xlsx", "Reading the chart (10 to 20 seconds)…") %}Load the chart{% endcall %}
+  {% call file_form("/jde-files/chart", "Chart of accounts (.xlsx)", ".xlsx", "Reading the chart (10 to 20 seconds)…", anyway=true) %}Load the chart{% endcall %}
   {% endif %}
   {% if can("/jde-files/chart/settings") %}
   <form method="post" action="/jde-files/chart/settings" class="stack" id="chart-settings" data-busy="Saving…">
@@ -69,6 +97,12 @@
   {{ loaded_now("units", loaded.units, "business unit", last.units) }}
   {{ what_was_said("units") }}
   {% if loaded.units %}<p class="muted">A newer export replaces the business units whole.</p>{% endif %}
+  {% if company and can("/jde-files/company") %}
+  <form method="post" action="/jde-files/company" class="row" id="company-offer" data-busy="Saving…">
+    <span>JD Edwards' company number is still the one a new installation starts with, and the keying sheet prints it.</span>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">apartment</span>Use company {{ company }} (the one your business units belong to)</button>
+  </form>
+  {% endif %}
   {% if can("/jde-files/units") %}
   {% call file_form("/jde-files/units", "Business units (.xlsx)", ".xlsx", "Reading…") %}Load the business units{% endcall %}
   {% endif %}
@@ -146,7 +180,7 @@
     {% endif %}
   </div>
   {% elif can("/jde-files/journal/upload") %}
-  {% call file_form("/jde-files/journal/upload", "Transaction Journal (.csv)", ".csv", "Reading…") %}Read the journal{% endcall %}
+  {% call file_form("/jde-files/journal/upload", "Transaction Journal (.csv)", ".csv,.txt", "Reading…") %}Read the journal{% endcall %}
   {% endif %}
   {% if journals %}
   <div class="table-wrap"><table class="apc-table" aria-label="JD Edwards journals loaded">

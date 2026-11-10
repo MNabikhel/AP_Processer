@@ -845,6 +845,15 @@ CHECKS: dict[str, CheckHelp] = {
         "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
         "on a number you already have before paying.",
     ),
+    "ACCOUNT_ROWS_LEFT_OUT": CheckHelp(
+        READING, "Rows of the supplier's account left out of the lines",
+        "The invoice's table also prints the supplier's account, as a statement does: what was owed before this "
+        "invoice (\"Previous balance\", \"Balance forward\") or what was paid since (\"Payment received - thank "
+        "you\"). These rows are no lines of this invoice, so they were not read as lines and are not coded; the "
+        "finding names them.",
+        "Nothing to do when the invoice's own total is right. An earlier balance still owing is that earlier "
+        "invoice's to pay, not this one's: check that the total here is this invoice's alone.",
+    ),
     "LINE_AMOUNTS_TO_CHECK": CheckHelp(
         READING, "Line amounts to check against the page",
         "The lines were left as they were read from the invoice's table and they do not add up to the invoice: the "

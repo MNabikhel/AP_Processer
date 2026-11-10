@@ -144,3 +144,23 @@ def test_a_wrong_file_changes_nothing_of_either(tmp_path, capsys):
     store = Store(tmp_path / "ap_coder.db")
     assert store.business_units() == [] and store.chart_accounts() == [] and store.chart_version() == 0
     assert store.events(actions=["accounts_imported"]) == []
+
+
+def test_a_chart_without_its_posting_edit_column_is_imported_only_when_asked_and_says_so_each_time(tmp_path, capsys):
+    """JD Edwards exports the grid's visible columns only: without "P E" every account was postable, with no word
+    (B-2271)."""
+    grid = cf.write_chart(tmp_path / "grid.xlsx", without=("P E",))
+    code, _, err = _run(tmp_path, capsys, "--chart", str(grid))
+    assert code == 1 and "Not imported: grid.xlsx has no posting edit column (“P E”): without it AP Coder" in err
+    assert "To import it anyway, add --anyway: every account will be offered." in err
+    store = Store(tmp_path / "ap_coder.db")
+    assert store.chart_accounts() == [] and store.chart_without() == ()
+    code, out, _ = _run(tmp_path, capsys, "--chart", str(grid), "--anyway")
+    said = "Loaded without the posting edit column (“P E”): every account is offered, titles and accounts closed"
+    assert code == 0 and said in out and "32 accounts on 9 business units; 32 may be posted to." in out
+    assert store.chart_without() == ("posting_edit",)
+    assert store.events(actions=["accounts_imported"])[0]["detail"]["without"] == ["posting_edit"]
+    assert said in _run(tmp_path, capsys, action="show")[1]  # every time the chart is shown
+    code, out, _ = _run(tmp_path, capsys, "--chart", str(cf.write_chart(tmp_path / "chart.xlsx")), "--anyway")
+    assert code == 0 and said not in out and store.chart_without() == ()
+    assert said not in _run(tmp_path, capsys, action="show")[1]

@@ -21,6 +21,7 @@ Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal``, ``coding
 
 from __future__ import annotations
 
+import codecs
 import csv
 import io
 from collections import Counter
@@ -165,12 +166,16 @@ class _Seen:
 
 
 def _rows(data: bytes) -> list[list[str]]:
-    """The file's rows as they are, each with its own number of cells: UTF-8 (with or without a mark) or Windows'
-    cp1252, comma or semicolon, Excel's quoting (a name with a comma is in quotes)."""
-    try:
-        text = data.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = data.decode("cp1252", errors="replace")
+    """The file's rows as they are, each with its own number of cells: UTF-8 (with or without a mark), Windows'
+    cp1252, or UTF-16 with its mark (Excel's "Unicode Text", tabs between the cells: B-2276); comma, semicolon or
+    tab, Excel's quoting (a name with a comma is in quotes)."""
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        text = data.decode("utf-16", errors="replace")
+    else:
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = data.decode("cp1252", errors="replace")
     try:
         return list(csv.reader(io.StringIO(text, newline=""), delimiter=sniff_delimiter(text)))
     except csv.Error as exc:

@@ -27,6 +27,7 @@ from .reader import (
     listed_items,
     read_fields,
     read_line_items,
+    without_account_rows,
 )
 from .types import (
     AMOUNT_FIELDS,
@@ -169,8 +170,9 @@ def _ai_readings(layout: DocLayout, ai_values: dict[str, Any]) -> dict[str, list
     return out
 
 
-def _page_reader(layout: DocLayout, page_text: list[str],
-                 today: dt.date | None) -> tuple[dict[str, list[Reading]], list[LineReading]]:  # fmt: skip
+def _page_reader(layout: DocLayout, page_text: list[str], today: dt.date | None,
+                 left_out: list[LineReading] | None = None,
+                 ) -> tuple[dict[str, list[Reading]], list[LineReading]]:  # fmt: skip
     """The page reader's transcription read by the rule reader: its readings, each with the boxes where its
     value is printed on the page (none when the page's text does not show it: it cannot be verified alone),
     and its line items. Its first choice only, but for amounts (the runners-up there let the totals that add
@@ -184,7 +186,7 @@ def _page_reader(layout: DocLayout, page_text: list[str],
         for r in readings[: 3 if field in AMOUNT_FIELDS else 1]:  # at most what fusion weighs
             found = locate(layout, field, r.value)
             out[field].append(Reading(field, r.value, r.raw, list(found[0].boxes) if found else [], r.score, r.method))
-    return out, read_line_items(vlm)
+    return out, read_line_items(vlm, left_out=left_out)
 
 
 def _line_targets(fields: dict[str, FieldResult]) -> list[float]:
@@ -263,6 +265,21 @@ def _discounts_taken_off(items: list[LineReading], targets: list[float]) -> list
     return off if off != items and _adds_up(off, targets) else items
 
 
+ACCOUNT_ROWS_CHECK = "ACCOUNT_ROWS"
+
+
+def account_rows_check(left_out: list[LineReading]) -> dict[str, Any]:
+    """The check that names the rows of the line table left out as the supplier's account, not lines of the invoice
+    (``reader.without_account_rows``): passed, said as an info finding (``bridge.review_issues``)."""
+    named = ", ".join(f"“{li.description[:60]}” {li.amount:,.2f}" for li in left_out[:6] if li.amount is not None)
+    more = f" and {len(left_out) - 6} more" if len(left_out) > 6 else ""
+    one = len(left_out) == 1
+    return {"code": ACCOUNT_ROWS_CHECK, "ok": True, "fields": [], "severity": "info",
+            "detail": f"{'a row' if one else 'rows'} of the line table left out: {named}{more}. "
+                      f"{'It is' if one else 'They are'} the supplier's account (an earlier balance, a payment), as "
+                      "on a statement: no line of this invoice, so not coded"}  # fmt: skip
+
+
 def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
     for li in items:
         li.source = li.source or source
@@ -270,7 +287,8 @@ def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
 
 
 def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], words: list[LineReading],
-                tables: Any) -> tuple[list[LineReading], list[list[LineReading]]]:  # fmt: skip
+                tables: Any, left_out: list[LineReading] | None = None,
+                ) -> tuple[list[LineReading], list[list[LineReading]]]:  # fmt: skip
     """The line items read from the page itself, and every reading of them, best first: the words inside the tables
     the table finder found (``tables``: True finds them now, a {page: boxes} dict found before, None/False: not
     looked for), the words under the column headings across the page (``words``, the reading as before) and the
@@ -278,7 +296,8 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     listed above the subtotal when they add up to it (a receipt, ``reader.listed_items``), else the first one
     found inside a table, else the words across the page. The PDF's table is last: it is a second reading of the
     same text, there to be compared with OvisOCR2's when the others read the lines differently from it. A reading
-    that ran on into the totals under the table is cut at its subtotal row first (``_to_subtotal``)."""
+    that ran on into the totals under the table is cut at its subtotal row first (``_to_subtotal``). No reading
+    keeps a row of the supplier's account (``left_out`` gathers them)."""
     from .tables import text_table_items
 
     if tables is True:
@@ -287,17 +306,18 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
         tables = find_tables(path, max_pages=min(len(layout.pages), read_pages()) or 1)
     found = tables if isinstance(tables, dict) else None
     targets = _line_targets(fields)
-    in_tables = _labelled(read_line_items(layout, found, targets), "table") if found else []
+    in_tables = _labelled(read_line_items(layout, found, targets, left_out), "table") if found else []
     text_table: list[LineReading] = []
     if layout.source == "text":
-        text_table = _labelled(text_table_items(path, layout, found), "text table")
+        text_table = _labelled(without_account_rows(text_table_items(path, layout, found), left_out), "text table")
     in_tables, words, text_table = (_discounts_taken_off(_to_subtotal(r, targets), targets)
                                     for r in (in_tables, words, text_table))  # fmt: skip
     readings = [r for r in (in_tables, words, text_table) if r]
     adds = [r for r in readings if targets and _adds_up(r, targets)]
     if adds:
         return adds[0], [adds[0], *[r for r in readings if r is not adds[0]]]
-    listed = _labelled(listed_items(layout, targets), "listed")  # no reading adds up: a receipt's list of amounts
+    # No reading adds up: a receipt's list of amounts.
+    listed = _labelled(without_account_rows(listed_items(layout, targets), left_out), "listed")
     if listed:
         return listed, [listed, *readings]
     return (in_tables or words), readings
@@ -510,12 +530,13 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         if second:
             sources["ocr"] = second
     vlm_items: list[LineReading] = []
+    account: list[LineReading] = []  # the rows of the supplier's account no reading keeps as lines
     if page_text and any((page or "").strip() for page in page_text):
         try:
-            sources["vlm"], vlm_items = _page_reader(layout, page_text, today)
+            sources["vlm"], vlm_items = _page_reader(layout, page_text, today, account)
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: page reader's transcription not read (%s)", path.name, exc)
-    words = _labelled(read_line_items(layout), "words")
+    words = _labelled(read_line_items(layout, left_out=account), "words")
 
     page_words = layout.text()  # a tip printed after the tax (B-1026)
 
@@ -529,7 +550,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
     pictured = path.suffix.lower() == ".pdf" or path.suffix.lower() in IMAGE_EXTENSIONS
     if tables is not False and pictured and not any(page.turn for page in layout.pages):
         try:  # a page to look at (a text file has none)
-            items, readings = _page_lines(path, layout, fields, words, tables)
+            items, readings = _page_lines(path, layout, fields, words, tables, account)
         except Exception as exc:  # the table readers are extras: the words under the headings stay
             log.warning("%s: tables not read (%s)", path.name, exc)
     agreement = None
@@ -547,6 +568,8 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         fields, checks = fused(items)  # the lines-add-up check on the lines kept
     if agreement is not None:
         checks.append(agreement)
+    if account:
+        checks.append(account_rows_check(account))
     if "vlm" in sources and layout.source == "text":
         checks.append(text_layer_check(layout, page_text or [], fields, sources["rules"]))
     _mark_doubtful_vendor(layout, fields, checks, template)

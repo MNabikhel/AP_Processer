@@ -46,6 +46,7 @@ from .line_items import (  # noqa: F401
     straightened,
     tax_code_column,
     tax_flag_cell,
+    without_account_rows,
 )
 from .patterns import (  # noqa: F401
     _CONTACT,

@@ -510,3 +510,55 @@ def test_what_a_rows_tax_cells_say_tax_by_tax(tmp_path):
     plain = _rows_read(tmp_path, [*heads[:2], ("Tax", 440, "r")], [row[:3] for row in rows])
     assert printed_taxes(plain, {"GST": 15.5})[0] == ("GST", {"GST": 10.0})
     assert printed_taxes(plain, charged)[0] == ("", None)
+
+
+# --- A row's discount explains its amount; the supplier's account is no line (B-2269, B-2270) ------------------------
+
+PRICED = [("Description", 50), ("Qty", 300, "r"), ("Unit Price", 380, "r"), ("Discount", 460, "r"),
+          ("Amount", 550, "r")]  # fmt: skip
+
+
+@pytest.mark.parametrize("discount", ["10.00", "10%"])
+def test_a_rows_discount_explains_its_amount_and_no_line_math_is_raised(discount, pipe, tmp_path):
+    """ "Qty 2 | Unit Price 50.00 | Discount 10.00 | Amount 90.00" read the amount right and raised "quantity × unit
+    price = 100.00 but the amount is 90.00": the unit price is now the price after the row's discount."""
+    rows = [["Courier service downtown", "2", "50.00", discount, "90.00"],
+            ["Courier service airport", "1", "200.00", "0.00", "200.00"]]  # fmt: skip
+    read = _rows_read(tmp_path, PRICED, rows)
+    assert [(li.quantity, li.unit_price, li.amount) for li in read] == [(2.0, 45.0, 90.0), (1.0, 200.0, 200.0)]
+    result = pipe.process(_invoice(tmp_path, "L-1", AB, PRICED, rows, _gst(290.0)), save=False)
+    assert _amounts(result) == [90.0, 200.0] and "LINE_MATH" not in _codes(result)
+
+
+def test_a_discount_that_does_not_explain_the_amount_still_raises_line_math(pipe, tmp_path):
+    rows = [["Courier service downtown", "2", "50.00", "10.00", "80.00"],
+            ["Courier service airport", "1", "200.00", "0.00", "200.00"]]  # fmt: skip
+    assert [li.unit_price for li in _rows_read(tmp_path, PRICED, rows)] == [50.0, 200.0]
+    result = pipe.process(_invoice(tmp_path, "L-2", AB, PRICED, rows, _gst(280.0)), save=False)
+    assert "LINE_MATH" in _codes(result)
+
+
+ACCOUNT = [["Previous balance", "500.00"], ["Payment received - thank you", "-500.00"]]
+FORWARD = [["Balance forward", "500.00"], ["Payment - thank you", "-500.00"]]
+
+
+@pytest.mark.parametrize("rows", [ACCOUNT, ACCOUNT[:1], FORWARD])
+def test_the_suppliers_account_in_the_table_is_no_line_and_one_finding_names_its_rows(rows, pipe, tmp_path):
+    """ "Previous balance 500.00" and "Payment received -500.00" were read as lines and coded: they are the
+    supplier's account, as on a statement. They are left out and one info finding names them; a charge for paying
+    late is a line."""
+    from ap_coder.ops.help import CHECKS
+
+    heads = [("Description", 50), ("Amount", 550, "r")]
+    table = [*rows, ["Courier service downtown", "300.00"], ["Late payment charge", "20.00"]]
+    left: list = []
+    pdf = _invoice(tmp_path, "M-7", AB, heads, table, _gst(320.0))
+    read = read_line_items(layout.build_layout(pdf), left_out=left)
+    assert [(li.description, li.amount) for li in read] == [("Courier service downtown", 300.0),
+                                                            ("Late payment charge", 20.0)]  # fmt: skip
+    assert [(li.description, li.amount) for li in left] == [(words, float(amount)) for words, amount in rows]
+    result = pipe.process(pdf, save=False)
+    assert _amounts(result) == [300.0, 20.0] and not _codes(result) & {"SUBTOTAL_MISMATCH", FOUND}
+    (said,) = [i for i in result.report.issues if i.code == "ACCOUNT_ROWS_LEFT_OUT"]
+    assert said.severity == "info" and all(words in said.message and amount in said.message for words, amount in rows)
+    assert "ACCOUNT_ROWS_LEFT_OUT" in CHECKS

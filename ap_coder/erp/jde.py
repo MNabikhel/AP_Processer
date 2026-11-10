@@ -81,6 +81,7 @@ from ..core.reference_data import UNASSIGNED
 
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
+EXPORT_FORMAT = "export_format"  # the setting: the format the Exports page opens on (the last batch's)
 # The formats of a batch whose vouchers go into JD Edwards: loaded as Z-files, or typed from the keying sheet
 # (``jde_keying.FORMAT``, D-210). What JD Edwards does with a voucher (the PST it accrues itself) holds for both.
 FORMATS = (FORMAT, "jde_keying")
@@ -415,13 +416,16 @@ def show(store: Any, shown: bool = True, actor: str | None = None) -> None:
 def use_prototype(store: Any, actor: str | None = None) -> JdeSettings:
     """Set a data folder up the department's way in one step (``prototype_settings``, over what is saved): its JD
     Edwards settings saved, JD Edwards shown, and the QST set to "not recoverable: add to the expense line" in GL
-    accounts & tax (the department claims the GST/HST only). Returns the settings saved."""
+    accounts & tax (the department claims the GST/HST only). The page that hands vouchers over opens on the keying
+    sheet, unless a format was chosen there before (B-2279). Returns the settings saved."""
     from ..core.tax_setup import EXPENSE_TO_LINE
 
     settings = prototype_settings(load(store))
     save(store, settings, actor)
     show(store, True, actor)
     store.set_tax_treatment("QST", EXPENSE_TO_LINE, "", actor=actor)
+    if not store.get_setting(EXPORT_FORMAT):
+        store.set_setting(EXPORT_FORMAT, FORMATS[1])  # the keying sheet (``jde_keying.FORMAT``)
     return settings
 
 
