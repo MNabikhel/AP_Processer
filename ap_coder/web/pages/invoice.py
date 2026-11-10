@@ -55,7 +55,7 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
 from ap_coder.erp.jde_keying import keying_batches
-from ap_coder.web import document, identity
+from ap_coder.web import account_lines, document, identity
 from ap_coder.web import invoice_view as view
 from ap_coder.web.access import is_admin, key_of, may_lift_hold, person_key
 from ap_coder.web.core import (
@@ -694,6 +694,16 @@ def _render_lines(reference: ReferenceData, draft: view.Draft, ai: dict[str, Any
     return str(mod.line_rows(view.grid(reference, draft, ai)))
 
 
+def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
+    """With a chart of accounts (D-214): each row's live cells as a check answers them, in row order (its state,
+    and the cells marked ``data-live-line`` drawn again); None for the rows of an install without one."""
+    if not grid.get("account"):
+        return None
+    mod = templates.env.get_template("_invoice_lines.html").module
+    return [{"state": row["acct"]["state"], "text": row["acct"]["text"], "cap": str(mod.acct_cap(row["acct"])),
+             "slot": str(mod.acct_slot(row["acct"]))} for row in grid["lines"]]  # fmt: skip
+
+
 def _reference(store: Store) -> ReferenceData:
     reference = reference_or_none(store)
     if reference is None:
@@ -781,7 +791,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         rev=store.coding_revision(invoice_id), screen=screen, watch_seconds=WATCH_SECONDS,
         others=working_here(open_elsewhere(request, store, invoice_id).get(invoice_id, [])),
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
-                          view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+                          view.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
               "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
@@ -1107,7 +1117,8 @@ def approved_pdf_download(store: Store, inv: dict[str, Any]) -> Response:
 
 def _from_form(request: Request, inv: dict[str, Any], form: Any) -> view.Draft:
     base, _ = current_draft(request, inv)
-    return view.Draft.from_form(form, base)
+    reference = reference_or_none(get_store(request))
+    return view.Draft.from_form(form, base, reference.pairs if reference is not None else None)
 
 
 @router.post("/review/{invoice_id:int}/check")
@@ -1146,7 +1157,11 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         header["flag_errors"] = analysis.live.get("flag_errors") or []  # red, as an error (B-796)
         header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
         header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
+    # With a chart of accounts: what each line's row says under its boxes, for the account now in it (D-214)
+    rows = (_line_views(view.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
+            if account_lines.in_use(reference) else None)  # fmt: skip
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
+                         **({"lines": rows} if rows is not None else {}),
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
@@ -1546,7 +1561,11 @@ def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         return refuse("Pick the line to split.")
     by = "amount" if str(form.get("split_by") or "") == "amount" else "percent"
     parts = []
-    for gl, cc, share in zip(form.getlist("part_gl"), form.getlist("part_cc") or [""] * len(form.getlist("part_gl")),
+    gls, ccs = form.getlist("part_gl"), form.getlist("part_cc")
+    if whole := form.getlist("part_account"):  # with a chart of accounts: one Account box a part (D-214)
+        gls, ccs = (list(codes) for codes in zip(*(account_lines.posted(a, reference.pairs) for a in whole),
+                                                 strict=True))  # fmt: skip
+    for gl, cc, share in zip(gls, ccs or [""] * len(gls),
                              form.getlist("part_amount" if by == "amount" else "part_pct"), strict=False):  # fmt: skip
         try:
             value = float(str(share).strip() or "nan")
@@ -1624,6 +1643,14 @@ async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _fill_lines(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     _, _, reference, draft = _posted_in_review(request, invoice_id, form)
+    if account := " ".join(str(form.get("fill_account") or "").split()):  # one Account box a line (D-214)
+        gl, cc = account_lines.posted(account, reference.pairs)
+        if reference.pairs is None or not reference.pairs.offered(cc, gl):
+            return refuse(f"{account} is not an account of the chart that invoices are coded to: pick one from the "
+                          "list.")  # fmt: skip
+        lines, n = account_lines.fill(draft.lines, gl, cc)
+        text = f"Account {account} set on {ui.plural(n, 'line')}. Lines that had an account kept theirs."
+        return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check", form)
     gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
     if not gl and not cc:
         return refuse("Pick a GL account or a cost center to apply to the lines without one.")

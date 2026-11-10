@@ -85,7 +85,7 @@ from ap_coder.coding.tax import (
     supply_source,
     tax_line_ways,
 )
-from ap_coder.coding.taxmath import math_check
+from ap_coder.coding.taxmath import invoice_taxes, math_check
 from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
@@ -100,7 +100,7 @@ from ap_coder.core.store.accounts import CURRENCY_CHANGED
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
-from ap_coder.web import identity
+from ap_coder.web import account_lines, identity
 from ap_coder.web.access import may_lift_hold
 from ap_coder.web.document import clean_boxes
 
@@ -308,9 +308,11 @@ class Draft:
                    pay_from_for=pay_from_for)  # fmt: skip
 
     @classmethod
-    def from_form(cls, form: Any, base: Draft) -> Draft:
+    def from_form(cls, form: Any, base: Draft, pairs: Any = None) -> Draft:
         """The screen as posted. A header field missing from the form keeps ``base``'s value; the grids are taken
-        from the form when it says it has them (``grids``), so deleting the last row is an edit too."""
+        from the form when it says it has them (``grids``), so deleting the last row is an edit too. A row's Account
+        box (``account_lines.LINE_ACCOUNT``, with a chart of accounts: ``pairs``) is the line's two codes, whatever
+        the row's hidden cells say: what was typed is kept and checked, never the account the line had."""
         header = {name: str(form.get(name)) if form.get(name) is not None and name not in READ_ONLY
                   else base.header.get(name, "") for name in FORM_FIELDS}  # fmt: skip
         lines, taxes = base.lines, base.taxes
@@ -318,9 +320,12 @@ class Draft:
             keys = form.getlist("line_key")
             cols = {c: form.getlist(name) for c, name in LINE_INPUTS.items()}
             codes = form.getlist(LINE_TAX_CODE)
+            accounts = form.getlist(account_lines.LINE_ACCOUNT)
             lines = []
             for i, key in enumerate(keys):
                 row: dict[str, Any] = {c: (cols[c][i] if i < len(cols[c]) else "") for c in LINE_INPUTS}
+                if i < len(accounts):
+                    row["predicted_gl_code"], row["predicted_cost_center"] = account_lines.posted(accounts[i], pairs)
                 row["line_number"] = _line_number(row["line_number"])
                 row.update({c: _number_cell(row[c]) for c in NUMBER_CELLS if c in row})
                 # The line's tax code (one dropdown a row, posted in order: "GST+PST", "EXEMPT", D-64); a form of
@@ -723,11 +728,13 @@ def vendor_accounts(store: Store, vendor_name: str, limit: int = 6) -> list[str]
 
 
 def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = None,
-         vendor_gls: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+         vendor_gls: list[str] | None = None, checked: Analysis | None = None) -> dict[str, Any]:  # fmt: skip
     """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell. ``ai``: the
     invoice as read: a row whose account is still the one the AI only guessed for its line is marked (B-463), not one
     whose account the reviewer, a coding rule or the PO coding put there (B-475). ``vendor_gls``: the accounts the
-    vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list."""
+    vendor's lines went to (``vendor_accounts``), offered first by the account picker; those still in the list.
+    With a chart of accounts imported (``account``) each row is one Account box: what it shows is its ``acct``
+    (``account_lines.row_views``), with the findings and the taxes of ``checked``, the draft's analysis."""
     paired = list(pair_lines((ai or {}).get("line_items") or [], draft.lines))
     guesses = {
         id(row)
@@ -747,7 +754,17 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
     printed = {id(row): renamed_from(before.get("reasoning_justification")) for before, row in paired
                if before and row and before.get("description") == row.get("description")}  # fmt: skip
     codes = tax_choices(draft, reference.tax)
+    account = account_lines.in_use(reference)
+    views = account_lines.row_views(
+        reference, draft.lines, (ai or {}).get("line_items") or [],
+        checked.report.issues if checked is not None and checked.report is not None else (),
+        checked.taxes if checked is not None else None) if account else []  # fmt: skip
+    for shown, row in zip(views, draft.lines, strict=False):  # still the model's own guess: to check (B-463)
+        if id(row) in guesses and not shown["state"] and shown["name"]:
+            shown.update(state=account_lines.CHECK, note=account_lines.GUESS)
     return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
+        "account": account,
+        "acct_empty": account_lines.EMPTY,
         "lines": [
             {
                 **row,
@@ -758,6 +775,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
                 "tax_learned": tax_learned(row),  # taken from what AP approved on the vendor's similar lines (D-70)
                 "tax_inferred": inferred.get(id(row), ""),
                 "read_as": printed.get(id(row), ""),
+                **({"acct": views[i]} if account else {}),
             }
             for i, row in enumerate(draft.lines)
         ],
@@ -1688,6 +1706,7 @@ class Analysis:
     changed: bool = False  # differs from the stored coding (an edit not approved yet)
     live: dict[str, Any] = field(default_factory=dict)
     filled: dict[str, str] = field(default_factory=dict)  # details the server filled in (``settle_header``)
+    taxes: Any = None  # each line's taxes (``taxmath.invoice_taxes``), worked out once, with a chart of accounts
 
 
 def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
@@ -1847,6 +1866,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     from ap_coder.erp import jde
 
     js = jde.load(store) if jde.in_use(store) else None  # JD Edwards is the export in use (D-75)
+    # Each line's taxes, for the rows of an install with a chart of accounts: worked out once a draw (D-214)
+    taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None
     an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,
@@ -1888,7 +1909,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
                     allow=allow, changed=differs_from_stored(coding, start, cost_centers=has_cc, filled=auto),
-                    live=live, filled=filled)  # fmt: skip
+                    live=live, filled=filled, taxes=taxes)  # fmt: skip
 
 
 def pay_from_choices(store: Store, header: dict[str, str]) -> dict[str, Any]:

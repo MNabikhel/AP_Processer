@@ -94,8 +94,83 @@ function applySections(answer, posted = null) {
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
+  if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
   showMailLanguage();
 }
+
+/* ---------- With a chart of accounts: a line is one Account box (D-214) ---------- */
+
+/** The row a box, a button or a cell is in (a line or a tax line). */
+const rowOf = (el) => el?.closest?.("[data-row]") || null;
+
+/** A line's Account box (the whole account string), or null on a screen with GL account and cost center lists. */
+const accountBox = (row) => row?.querySelector?.("input[data-account]") || null;
+
+/** The row's two hidden cells follow its Account box (the text up to the first dot is the business unit), for
+    what reads a line's GL account by name; the server reads the box itself. */
+function syncAccount(row) {
+  const text = (accountBox(row)?.value || "").trim();
+  const dot = text.indexOf(".");
+  const gl = row.querySelector('[name="line_gl"]');
+  const cc = row.querySelector('[name="line_cc"]');
+  if (gl) gl.value = (dot > 0 && text.slice(dot + 1)) || "UNASSIGNED";
+  if (cc) cc.value = (dot > 0 ? text.slice(0, dot) : "") || "UNASSIGNED";
+}
+
+/** Put ``text`` (a whole account string, or "" to clear it) in a line's Account box, as typing it would. */
+function setAccount(row, text) {
+  const box = accountBox(row);
+  if (!box) return false;
+  box.value = text || "";
+  syncAccount(row);
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+/** A line's account as one string, from its two codes ("" when it has none). */
+function accountText(gl, cc) {
+  const code = gl && gl !== "UNASSIGNED" ? gl : "";
+  const unit = cc && cc !== "UNASSIGNED" ? cc : "";
+  return code && unit ? `${unit}.${code}` : code || unit;
+}
+
+/** What each line's row says under its boxes, as the check answered it (in row order): the cells marked
+    data-live-line are drawn again, never a box, so the focus stays where it is. A row whose Account box changed
+    since the check was sent keeps what it shows until the next one. */
+function applyLineViews(views, posted) {
+  const rows = gridRows();
+  const sent = posted ? posted.getAll("line_account") : null;
+  if (rows.length !== views.length || (sent && sent.length !== rows.length)) return;
+  rows.forEach((row, i) => {
+    const box = accountBox(row);
+    if (!box || (sent && box.value !== sent[i])) return;
+    const view = views[i];
+    row.classList.toggle("is-fix", view.state === "fix");
+    row.classList.toggle("is-check", view.state === "check");
+    row.querySelectorAll("[data-live-line]").forEach((cell) => {
+      const html = view[cell.dataset.liveLine];
+      if (typeof html === "string" && cell.innerHTML !== html) cell.innerHTML = html; // the server's, escaped
+    });
+  });
+}
+
+document.addEventListener("input", (e) => {
+  if (e.isTrusted && e.target.matches?.('[data-grid="lines"] input[data-account]')) syncAccount(rowOf(e.target));
+});
+document.addEventListener("click", (e) => {
+  const use = e.target.closest?.("[data-use-account]"); // an account offered under a line: it fills the box
+  if (use) {
+    const row = rowOf(use);
+    undoable(`${lineName(row)}: account ${use.dataset.useAccount} put in its box.`, () => {
+      setAccount(row, use.dataset.useAccount);
+      accountBox(row)?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const more = e.target.closest?.("[data-row-menu]"); // the row's own menu button: as a right-click on the line
+  if (more) openFor(rowOf(more), more);
+});
 
 /** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
     (B-935, B-1020). Only a box that still holds what was sent is changed, and only when the rows are those sent. */
@@ -213,7 +288,7 @@ if (form) {
     if (e.target.name !== "mail_lang") dropUndo();
     headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
-    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(e.target.closest("tr")); // theirs now (B-713)
+    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(rowOf(e.target)); // theirs now (B-713)
     if (e.target === vendorInput) vendorChanged(); // the vendor list's tax numbers, with Undo (D-65)
     if (e.target.name === "pay_from_account" && payFromFor) {  // picked: kept while the currency stays (D-66)
       payFromFor.value = (input("currency")?.value || "CAD").trim().toUpperCase() || "CAD";
@@ -283,20 +358,20 @@ document.addEventListener("click", (e) => {
     enhance(body.lastElementChild);
     // a new line: its description, where it starts (B-742); a tax line: its tax
     const fresh = body.lastElementChild;
-    (fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
+    (accountBox(fresh) || fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
     return;
   }
   const del = e.target.closest("[data-del-row]");
   if (del) {
-    const tr = del.closest("tr");
+    const tr = rowOf(del);
     if (tr) deleteRow(tr);
     return;
   }
   const splitRow = e.target.closest("[data-split-row]");
   if (splitRow) {
-    const tr = splitRow.closest("tr");
+    const tr = rowOf(splitRow);
     if (tr && lineNo(tr)) openSplit(tr);
     else toast({ text: "Give the line a number first: then it can be split.", tone: "info" }, 3000);
     return;
@@ -378,7 +453,7 @@ try {
 registerGroups("gl", (select) => {
   const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
   // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
-  const number = select.closest("tr")?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
+  const number = rowOf(select)?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
   if (number) {
     const card = document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(number)}"]`);
     groups.push({ label: "Suggested", values: [...(card?.querySelectorAll("[data-gl]") || [])].map((b) => b.dataset.gl) });
@@ -393,7 +468,7 @@ document.addEventListener("click", (e) => {
   if (!go) return;
   const pop = go.closest("[data-fill]");
   const value = (name) => pop?.querySelector(`[data-fill-${name}]`)?.value || "";
-  gridAction(`${base}/fill-lines`, { fill_gl: value("gl"), fill_cc: value("cc") }, go).then(() =>
+  gridAction(`${base}/fill-lines`, { fill_gl: value("gl"), fill_cc: value("cc"), fill_account: pop?.querySelector("[data-fill-account]")?.value }, go).then(() =>
     pop?.removeAttribute("open"),
   );
 });
@@ -446,7 +521,9 @@ function addPart(gl, cc, pct) {
   const glSelect = tr.querySelector('[name="part_gl"]');
   const ccSelect = tr.querySelector('[name="part_cc"]');
   enhance(tr); // the account pickers (their choices: the page's #gl-options and #cc-options)
-  if (gl) setValue(glSelect, gl); // the line's accounts
+  const whole = tr.querySelector('[name="part_account"]'); // with a chart of accounts: one Account box a part
+  if (whole) whole.value = accountText(gl, cc);
+  if (gl && glSelect) setValue(glSelect, gl); // the line's accounts
   if (ccSelect && cc) setValue(ccSelect, cc);
   tr.querySelector('[name="part_pct"]').value = pct;
   tr.querySelector('[name="part_amount"]').value = cents((splitAmount() * pct) / 100).toFixed(2);
@@ -544,7 +621,8 @@ if (split) {
         {
           split_line: splitLine.value,
           split_by: splitBy(),
-          part_gl: rows.map((r) => r.querySelector('[name="part_gl"]').value),
+          part_account: rows.map((r) => r.querySelector('[name="part_account"]')?.value).filter((v) => v !== undefined),
+          part_gl: rows.map((r) => r.querySelector('[name="part_gl"]')?.value || ""),
           part_cc: rows.map((r) => r.querySelector('[name="part_cc"]')?.value || ""),
           part_pct: rows.map((r) => r.querySelector('[name="part_pct"]').value),
           part_amount: rows.map((r) => r.querySelector('[name="part_amount"]').value),
@@ -1119,13 +1197,13 @@ function markRow(index, on) {
 
 const linesGrid = document.querySelector('[data-grid="lines"]');
 linesGrid?.addEventListener("mouseover", (e) => {
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   if (!tr || !viewer) return;
   viewer.markLine(rowToLine()[gridRows().indexOf(tr)], true);
 });
 linesGrid?.addEventListener("mouseleave", () => viewer?.markLine(-1, false));
 linesGrid?.addEventListener("focusin", (e) => {
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   const i = tr ? rowToLine()[gridRows().indexOf(tr)] : -1;
   if (viewer && i >= 0) viewer.revealLine(i);
 });
@@ -1137,7 +1215,7 @@ linesGrid?.addEventListener("focusin", (e) => {
 });
 linesGrid?.addEventListener("change", (e) => {
   if (e.target.name !== "line_amount") return;
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   const qty = tr?.querySelector("[name=line_quantity]");
   const price = tr?.querySelector("[name=line_unit_price]");
   const before = e.target.dataset.before ?? "";
@@ -1490,7 +1568,9 @@ function typing(target) {
     where it was a label and the line far down the page (B-434). */
 function goToPick() {
   const boxes = [...document.querySelectorAll('select[form="inv"][name="line_gl"], select[form="inv"][name="line_cc"]')];
-  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED");
+  const whole = [...document.querySelectorAll('[data-grid="lines"] input[data-account]')]; // one Account box a line
+  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED") ||
+    whole.find((b) => !b.value.trim() || rowOf(b).classList.contains("is-fix"));
   if (!box) return false;
   box.scrollIntoView({ block: "center", behavior: "smooth" });
   box.focus({ preventScroll: true });
@@ -1500,8 +1580,8 @@ function goToPick() {
 /** The box of one line (a finding in the checks: "Line 2: no GL account yet"), by its line number (B-443). */
 function goToLine(name, number) {
   const rows = [...document.querySelectorAll('input[form="inv"][name="line_number"]')];
-  const row = rows.find((r) => r.value === number)?.closest("tr");
-  const box = row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
+  const row = rowOf(rows.find((r) => r.value === number));
+  const box = accountBox(row) || row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
   if (!box) return goToPick();
   box.scrollIntoView({ block: "center", behavior: "smooth" });
   box.focus({ preventScroll: true });
@@ -1925,6 +2005,10 @@ function numberNew(tr) {
   const inOrder = numbers.every((n, i) => n === i + 1);
   if (inOrder) rows.forEach((r, i) => (r.querySelector('[name="line_number"]').value = String(i + 1)));
   else tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
+  rows.forEach((r) => {  // a row that shows its number as text (one Account box a line)
+    const shown = r.querySelector("[data-line-no]");
+    if (shown) shown.textContent = lineNo(r);
+  });
 }
 
 function deleteRow(tr) {
@@ -1944,6 +2028,7 @@ function deleteRow(tr) {
 }
 
 function setGl(tr, gl, cc) {
+  if (accountBox(tr)) return setAccount(tr, accountText(gl, cc)); // one Account box: the whole string
   const g = tr.querySelector('[name="line_gl"]');
   if (g && gl !== undefined) {
     setValue(g, gl);
@@ -1971,10 +2056,10 @@ function copyAbove(tr) {
   const rows = gridRows();
   const above = rows[rows.indexOf(tr) - 1];
   if (!above || blank(above.querySelector('[name="line_gl"]'))) {
-    toast({ text: above ? "The line above has no GL account yet." : "It is the first line: there is none above.", tone: "info" }, 3000);
+    toast({ text: above ? `The line above has no ${accountBox(tr) ? "account" : "GL account"} yet.` : "It is the first line: there is none above.", tone: "info" }, 3000);
     return;
   }
-  const what = tr.querySelector('[name="line_cc"]') ? "GL account and cost center" : "GL account";
+  const what = accountBox(tr) ? "account" : tr.querySelector('[name="line_cc"]') ? "GL account and cost center" : "GL account";
   undoable(`${lineName(tr)}: ${what} copied from the line above.`, () => {
     setGl(tr, above.querySelector('[name="line_gl"]').value, above.querySelector('[name="line_cc"]')?.value);
     soon(0);
@@ -2003,20 +2088,23 @@ function lineMenu(tr) {
   const without = others.filter((r) => blank(r.querySelector('[name="line_gl"]')));
   const n = lineNo(tr);
   const suggested = n ? document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(n)}"] [data-gl]`) : null;
-  const what = cc ? "coding" : "GL account";
+  const whole = accountBox(tr); // one Account box a line (a chart of accounts): its whole string
+  const what = whole ? "account" : cc ? "coding" : "GL account";
+  const named = whole ? whole.value.trim() : `GL ${gl?.value}`;
+  const more = tr.querySelector("[data-row-more]");
   const taxItems = taxCodeItems(tr, above, others).filter((it) => it && !it.disabled);
   const confirm = taxItems.find((it) => it.id === "tax-confirm");
   const moreTax = taxItems.filter((it) => it !== confirm);
   return [
     suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
     above && !blank(above.querySelector('[name="line_gl"]')) ? { icon: "vertical_align_top", label: `Copy the ${what} from above`, hint: "Ctrl+D", id: "above", run: () => copyAbove(tr) } : null,
-    !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use GL ${gl.value} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
-      run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
-        without.forEach((r) => setGl(r, gl.value));
+    !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use ${named} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
+      run: () => undoable(`${named} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
+        without.forEach((r) => setGl(r, gl.value, accountBox(r) ? cc?.value : undefined));
         soon(0);
       }) } : null,
-    !blank(gl) ? { icon: "backspace", label: "Clear GL account", id: "clear-gl",
-      run: () => undoable(`${lineName(tr)}: GL account cleared.`, () => {
+    !blank(gl) ? { icon: "backspace", label: whole ? "Clear the account" : "Clear GL account", id: "clear-gl",
+      run: () => undoable(`${lineName(tr)}: ${whole ? "account" : "GL account"} cleared.`, () => {
         setGl(tr, "UNASSIGNED");
         soon(0);
       }) } : null,
@@ -2033,6 +2121,11 @@ function lineMenu(tr) {
       soon(0);
     }) },
     n ? { icon: "call_split", label: "Split this line…", id: "split", run: () => openSplit(tr) } : null,
+    more ? { icon: "tune", label: more.hidden ? "Show its details (quantity, unit price)" : "Hide its details", id: "details",
+      run: () => {
+        more.hidden = !more.hidden;
+        if (!more.hidden) more.querySelector("input, textarea")?.focus();
+      } } : null,
     "-",
     { icon: "delete", label: "Delete line", hint: "Alt+Del", id: "delete", danger: true, run: () => deleteRow(tr) },
   ];

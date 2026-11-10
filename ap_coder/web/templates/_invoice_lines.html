@@ -55,12 +55,59 @@
 </tr>
 {%- endmacro %}
 
+{# ---- With a chart of accounts (D-214): one row a line, # · Account · Amount · Description · Tax, and under the
+   boxes what the line says about itself. ``row.acct``: account_lines.row_views. The cells marked data-live-line are
+   drawn again by each check (pages/invoice.py ``_line_views``); they hold no box, so the focus is never lost. #}
+
+{# Under the Account box: the account's name · its business unit · why the line was coded so. #}
+{% macro acct_cap(a) -%}
+{%- if a.name %}<b class="acct-name">{{ a.name }}</b>{% endif %}
+{%- if a.unit %}<span class="acct-unit">{{ a.unit }}</span>{% endif %}
+{%- if a.why and a.state != "fix" %}<span class="acct-why"><span class="ms" aria-hidden="true">{{ 'person' if a.why.startswith('picked') else 'history' }}</span>{{ a.why }}</span>{% endif %}
+{%- endmacro %}
+
+{# A line left for a person: why, and the accounts offered, each a button that fills the box. #}
+{% macro acct_slot(a) -%}
+{%- if a.state == "fix" %}<div class="acct-note fix"><p><span class="ms" aria-hidden="true">error</span><b>To fix:</b> <span data-acct-why>{{ a.note }}</span></p>
+  {%- if a.candidates %}<ol class="acct-cands" aria-label="Accounts offered for this line">{% for c in a.candidates %}
+    <li><button type="button" data-use-account="{{ c.account }}" title="Put {{ c.account }} in the Account box"><span class="s">{{ c.account }}</span><span class="d">{{ c.name }}{% if c.unit %} · {{ c.unit }}{% endif %}</span><span class="e">{{ c.reason }}</span></button></li>{% endfor %}</ol>{% endif %}</div>
+{%- elif a.state == "check" %}<div class="acct-note check"><p><span class="ms" aria-hidden="true">visibility</span><b>To check:</b> <span data-acct-why>{{ a.note }}</span></p></div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro account_row(row, g, key) -%}
+{%- set a = row.acct or g.acct_empty %}
+<tr data-row="{{ key }}" class="acct-row{% if a.state %} is-{{ a.state }}{% endif %}"{% if row.tax_inferred %} data-tax-inferred="{{ row.tax_inferred }}"{% endif %}>
+  <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
+    <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
+    <input type="hidden" name="line_number" value="{{ num(row.line_number) }}" form="inv"><span class="acct-no" data-line-no>{{ num(row.line_number) }}</span></td>
+  {# The whole account string in one box (the picker's free kind): what is in it is what is posted, split and
+     checked against the chart on the server. The two hidden cells follow it (invoice.js setAccount). #}
+  <td class="c-acct"><input type="text" name="line_account" value="{{ a.text }}" form="inv" data-account data-picker="free" data-picker-noun="account" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="{{ line_label(row, 'Account') }}" aria-describedby="cap-{{ key }}">
+    <input type="hidden" name="line_gl" value="{{ row.predicted_gl_code or 'UNASSIGNED' }}" form="inv"><input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or 'UNASSIGNED' }}" form="inv"></td>
+  <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="{{ line_label(row, 'Amount') }}"></td>
+  <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="{{ line_label(row, 'Description') }}" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>
+    {%- if row.read_as %}<span class="inv-readas" data-read-as title="This supplier's line is printed “{{ row.read_as }}”: AP approved it as described here on an earlier invoice, so it is named so again"><span class="ms" aria-hidden="true">school</span>Named as approved before · printed “{{ row.read_as }}”</span>{% endif %}</td>
+  {% set guess = "Worked out from the tax charged: several sets of lines add up, check it" if row.tax_guess else "" %}
+  {% set mark = (g.tax_marks or {}).get(row.line_number) or guess %}
+  {% set code = row.tax_code if row.tax_code is defined else g.tax_default %}
+  <td class="c-tax{% if mark %} is-taxcheck{% endif %}"{% if mark %} title="{{ mark }}"{% endif %}{% if guess %} data-tax-guess="{{ guess }}"{% endif %}><select name="line_tax_code" form="inv" aria-label="{{ line_label(row, 'Tax code') }}" data-tax-code>{{ opts(g.tax_codes, code) }}</select>
+    <span class="inv-taxnote" data-tax-note{% if not mark %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-tax-note-text>{{ mark }}</span></span></td>
+  <td class="c-del"><button type="button" class="icon-btn acct-menu" data-row-menu tabindex="-1" title="More for this line: split, copy the account above, insert, delete (or right-click, or Shift+F10)" aria-label="More for this line" aria-haspopup="menu"><span class="ms" aria-hidden="true">more_vert</span></button></td>
+  <td class="c-cap" id="cap-{{ key }}" data-live-line="cap">{{ acct_cap(a) }}</td>
+  <td class="c-slot" data-live-line="slot">{{ acct_slot(a) }}</td>
+  <td class="c-more" data-row-more hidden>
+    <label class="field">Quantity<input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv"></label>
+    <label class="field">Unit price<input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv"></label></td>
+</tr>
+{%- endmacro %}
+
 {% macro line_rows(g) -%}
-{% for row in g.lines %}{{ line_row(row, g, row.key) }}{% endfor %}
+{% for row in g.lines %}{{ account_row(row, g, row.key) if g.account else line_row(row, g, row.key) }}{% endfor %}
 {%- endmacro %}
 
 {% macro line_template(g) -%}
-<template id="line-template">{{ line_row({"taxes_applied": []}, g, "__KEY__") }}</template>
+<template id="line-template">{{ account_row({"taxes_applied": []}, g, "__KEY__") if g.account else line_row({"taxes_applied": []}, g, "__KEY__") }}</template>
 {%- endmacro %}
 
 {% macro tax_row(t, g) -%}

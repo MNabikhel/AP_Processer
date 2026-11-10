@@ -691,3 +691,69 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .apc-table.po-match td.w {min-width: 0;}
 .apc-table.po-match th {white-space: normal;}
 .apc-table.po-match .po-pills {margin-top: 4px;}
+
+/* ==== With a chart of accounts (D-214): the review screen codes a line to ONE account string =====================
+   Every rule from here on is under .acct (the lines grid) or .inv-acct (the page): the grid and the page of an
+   install without a chart are the rules above, untouched. */
+/* ---- The row: # · Account · Amount · Description · Tax · its menu; under the boxes the caption (the account's name,
+   its business unit, why) and, for a line left for a person, why and the accounts offered. Narrow card: two rows of
+   boxes a line. */
+.inv-lines-grid.acct {--cols: 24px minmax(0, 1fr) 96px 28px;
+  --areas: "no acct amt del" ". desc tax tax" ". cap cap cap" ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct tr[data-row] {grid-template-columns: var(--cols); grid-template-areas: var(--areas);
+  gap: 2px 4px; padding: 5px 0; align-items: start;}
+.inv-lines-grid.acct .c-acct {grid-area: acct;} .inv-lines-grid.acct .c-cap {grid-area: cap;}
+.inv-lines-grid.acct .c-slot {grid-area: slot;} .inv-lines-grid.acct .c-more {grid-area: more;}
+.inv-lines-grid.acct td[hidden], .inv-lines-grid.acct .c-slot:empty, .inv-lines-grid.acct .c-cap:empty {display: none;}
+.inv-lines-grid.acct input, .inv-lines-grid.acct select {height: 28px; padding: 0 6px;}
+.inv-lines-grid.acct textarea {min-height: 28px; padding: 4px 6px;}
+.inv-lines-grid.acct input[data-account], .inv-parts input[data-account], input[data-fill-account] {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums;}
+.inv-parts input[data-account], input[data-fill-account] {width: 100%; min-width: 250px;}
+.acct-no {display: block; line-height: 28px; text-align: center; font-size: 12.5px; color: var(--lg-muted);
+  font-variant-numeric: tabular-nums;}
+/* The Account box's states, each with a mark that is not colour alone: to fix (a thick red edge, and the words
+   under the line), to check (amber, and the words under the line). */
+.acct-row.is-fix input[data-account] {border: 2px solid var(--lg-danger); padding: 0 5px;}
+.acct-row.is-check input[data-account] {border-color: var(--lg-warning); background-color: var(--lg-warning-weak);}
+.inv-lines-grid.acct td.c-del {justify-content: center;}
+.icon-btn.acct-menu:hover {background: var(--lg-nav-hover); color: var(--lg-text);}
+.inv-lines-grid.acct .c-cap {display: flex; gap: 0 6px; min-width: 0; padding: 0 2px 1px; font-size: 11.5px;
+  line-height: 15px; color: var(--lg-muted); white-space: nowrap; overflow: hidden;}
+.c-cap .acct-name {flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
+  color: var(--lg-text);}
+.c-cap .acct-unit {flex: 0 2 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;}
+.c-cap .acct-unit::before, .c-cap .acct-why::before {content: "· ";}
+.c-cap .acct-why {flex: 0 0 auto; max-width: 72%; overflow: hidden; text-overflow: ellipsis;}
+.c-cap .acct-why .ms {font-size: 13px; vertical-align: -2px; margin-right: 2px;}
+/* the line in hand shows its caption whole */
+.inv-lines-grid.acct tr[data-row]:focus-within .c-cap {white-space: normal; flex-wrap: wrap;}
+.inv-lines-grid.acct tr[data-row]:focus-within .c-cap .acct-why {max-width: 100%;}
+.acct-note {margin: 2px 0 3px; padding: 5px 8px; border-radius: 6px; font-size: 12px; line-height: 17px;
+  color: var(--lg-text); overflow-wrap: anywhere;}
+.acct-note p {margin: 0;}
+.acct-note .ms {font-size: 15px; vertical-align: -3px; margin-right: 4px;}
+.acct-note.fix {background: var(--lg-danger-weak);} .acct-note.fix b, .acct-note.fix .ms {color: var(--lg-danger);}
+.acct-note.check {background: var(--lg-warning-weak);}
+.acct-note.check b, .acct-note.check .ms {color: var(--lg-warning);}
+.acct-cands {list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px;}
+.acct-cands li {margin: 0; min-width: 0;}
+.acct-cands button {display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0; min-height: 24px;
+  padding: 2px 8px; border: 1px solid var(--lg-border); border-radius: 6px; background: var(--lg-surface);
+  color: var(--lg-text); font: inherit; font-size: 12px; line-height: 18px; text-align: left; cursor: pointer;}
+.acct-cands button:hover, .acct-cands button:focus-visible {border-color: var(--lg-accent);
+  background: var(--lg-accent-weak); outline: none;}
+.acct-cands .s {flex: none; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 600;
+  font-variant-numeric: tabular-nums;}
+.acct-cands .d {flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.acct-cands .e {flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; color: var(--lg-muted);}
+.inv-lines-grid.acct td.c-more {display: flex; gap: 8px; padding: 2px 0 4px;}
+.inv-lines-grid.acct td.c-more[hidden] {display: none;}
+.inv-lines-grid.acct td.c-more .field {flex: 0 1 140px; font-size: 11.5px; color: var(--lg-muted);}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--cols: 28px minmax(200px, 1fr) 96px minmax(170px, 1.1fr) minmax(96px, 124px) 28px;
+    --areas: "no acct amt desc tax del" ". cap cap cap cap ." ". slot slot slot slot slot" ". more more more more more";}
+  .inv-lines-grid.acct thead th.c-acct {grid-area: acct;}
+  .inv-lines-grid.acct thead .c-del {visibility: hidden;}
+}
