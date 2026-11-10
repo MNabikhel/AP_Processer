@@ -49,7 +49,7 @@
 
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)
-      <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
+      <input type="text" name="folder" value="{{ copy_dir }}" placeholder="{{ 'a folder IT allowed, e.g. \\\\fileserver\\Backups\\APCoder' if server_mode else 'e.g. C:\\Users\\you\\OneDrive - Company\\AP Coder backups' }}"
              title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer loses nothing. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
