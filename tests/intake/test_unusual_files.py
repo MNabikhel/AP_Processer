@@ -197,7 +197,7 @@ def test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is
     assert opened.ok and opened.output["grand_total"] == 18017.85
 
 
-def test_an_empty_damaged_or_locked_pdf_is_one_warning_line_in_the_window_not_a_traceback(pipeline, caplog, monkeypatch):
+def test_an_empty_damaged_or_locked_pdf_is_one_warning_line_not_a_traceback(pipeline, caplog, monkeypatch):
     """Each printed about twenty lines of Python traceback in AP Coder's window (B-2097): a file AP can do something
     about is one line saying what is wrong and what to do, as on the page; the traceback stays for the unexpected."""
     import logging

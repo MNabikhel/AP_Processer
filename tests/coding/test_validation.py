@@ -136,20 +136,27 @@ def test_a_duplicate_says_which_came_first_and_where_the_other_stands():
     waiting = {"id": 20, "first": True, "status": "review", "approved": ""}
     assert duplicate_message([waiting]) == (
         "same vendor and invoice number as invoice #20 (received first, waiting for review): possible duplicate "
-        "payment. If it is the same bill, reject this one")
+        "payment. If it is the same bill, reject this one"
+    )
     later = {"id": 21, "first": False, "status": "parked", "approved": ""}
     assert duplicate_message([later]) == (
         "same vendor and invoice number as invoice #21 (received after this one, set aside): possible duplicate "
-        "payment. This one came first: if it is the same bill, reject the other")
+        "payment. This one came first: if it is the same bill, reject the other"
+    )
     approved = {"id": 20, "first": True, "status": "approved", "approved": f"{year}-11-10T09:30:00"}
     assert duplicate_message([approved]) == (
         "same vendor and invoice number as invoice #20 (received first, approved on Nov 10): possible duplicate "
-        "payment. If it is the same bill, reject this one")
+        "payment. If it is the same bill, reject this one"
+    )
+    second = {"id": 20, "first": True, "status": "pending_approval", "approved": ""}
+    assert "invoice #20 (received first, waiting for a second approval): possible" in duplicate_message([second])
     after = {"id": 21, "first": False, "status": "approved", "approved": "2024-03-05T09:30:00", "exported": True}
     assert duplicate_message([after]) == (
         "same vendor and invoice number as invoice #21 (received after this one, approved on Mar 5, 2024 and "
-        "exported): possible duplicate payment. It is approved already: if it is the same bill, reject this one")
+        "exported): possible duplicate payment. It is approved already: if it is the same bill, reject this one"
+    )
     assert duplicate_message([later, {**later, "id": 22, "status": "review"}]) == (
         "same vendor and invoice number as invoice #21 (received after this one, set aside), #22 (received after "
         "this one, waiting for review): possible duplicate payment. This one came first: if it is the same bill, "
-        "reject the others")
+        "reject the others"
+    )

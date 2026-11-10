@@ -83,7 +83,8 @@ class ValidationReport:
         return asdict(self)
 
 
-_DUPLICATE_STANDS = {"review": "waiting for review", "parked": "set aside", "approved": "approved"}
+_DUPLICATE_STANDS = {"review": "waiting for review", "parked": "set aside", "approved": "approved",
+                     "pending_approval": "waiting for a second approval"}  # fmt: skip
 
 
 def duplicate_message(duplicate_of: list[Any]) -> str:

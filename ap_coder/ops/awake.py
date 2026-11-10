@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from .offline import server_mode
 
 ES_CONTINUOUS = 0x80000000  # the state asked stays until this thread asks otherwise (or ends)
-ES_SYSTEM_REQUIRED = 0x00000001  # the system stays in the working state (never ES_DISPLAY_REQUIRED: the screen may go off)
+ES_SYSTEM_REQUIRED = 0x00000001  # the system stays working (never ES_DISPLAY_REQUIRED: the screen may go off)
 
 
 @contextlib.contextmanager
