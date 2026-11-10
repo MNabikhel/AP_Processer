@@ -17,7 +17,8 @@ In E1 the tax explanation code decides which part of the tax the system posts by
 tax AAIs, e.g. PT / GT) and which part must already be in the G/L distribution:
 
 * ``V`` (VAT: GST, HST, QST): all the tax is recoverable and posted by E1, so the distribution is the
-  gross amount minus the tax.
+  gross amount minus the tax. A tax the Tax setup keeps in the expense (the QST of a company that claims the GST
+  only) is left off the pay item: it is in the distribution, and E1 posts the recovered tax alone (D-210).
 * ``C`` (GST + seller-charged PST): the GST/HST part is posted by E1, the PST is an expense: the
   distribution is the gross minus the GST/HST, with the PST inside the expense lines.
 * ``B`` (GST + self-assessed PST): the supplier charged GST only; E1 accrues the PST. The distribution
@@ -742,6 +743,15 @@ def voucher_remark(invoice: Mapping[str, Any]) -> str:
     return next((remark for remark in map(line_remark, lines) if remark), "")
 
 
+def _pay_item_remark(v: _Voucher, settings: JdeSettings) -> str:
+    """VLRMK: AP Coder's invoice number, or the voucher's remark (Settings' Remarks, D-210); a PO number too long for
+    VLPO is added when it fits in the remark's 30 characters (D-87)."""
+    typed = settings.remarks == REMARKS_TYPED
+    remark = voucher_remark({"final_output": v.final}) if typed else f"AP Coder #{v.inv_id}"
+    with_po = f"{remark} PO {str(v.final.get('po_number') or '').strip()}".strip()
+    return (with_po if po_not_sent(v.final, settings) and len(with_po) <= REMARK_WIDTH else remark)[:REMARK_WIDTH]
+
+
 def po_not_sent(final: dict[str, Any], settings: JdeSettings) -> bool:
     """Whether the PO number is left out of the voucher's PO reference because VLPO can't hold it (D-87): longer than
     8 characters, sent as a reference only (not a PO-matched voucher, where it holds the voucher back)."""
@@ -963,7 +973,7 @@ def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settin
     # not recovered, the GST still claimed) is not the pay item's. It stays in the G/L lines, in the non-taxable
     # amount (D-210, B-2086). Codes C and B keep the provincial tax in the tax amount: the area's sales tax.
     if v.tax_code == "V" and dist:
-        v.expensed = frozenset(t["tax_type"] for t in charged) & recovers - _recovered_types(dist, final)
+        v.expensed = frozenset(t["tax_type"] for t in charged) & (recovers - _recovered_types(dist, final))
     on_item = [t for t in charged if t["tax_type"] not in v.expensed]
     v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in on_item)
     # The taxable amount of each tax, a tax printed twice (goods, freight) added up (B-923); GST and QST on the same
@@ -1162,10 +1172,7 @@ def voucher_rows(
     po = str(final.get("po_number") or "").strip()
     # VLPO, VLPDCT and VLPKCO go together (B-457); a PO longer than VLPO is not sent, only kept in the remark (D-87).
     send_po = bool(po) and (v.po_matched or (settings.send_po_reference and len(po) <= PO_WIDTH))
-    typed = settings.remarks == REMARKS_TYPED
-    remark = voucher_remark({"final_output": final}) if typed else f"AP Coder #{v.inv_id}"
-    if po_not_sent(final, settings) and len(f"{remark} PO {po}".strip()) <= REMARK_WIDTH:
-        remark = f"{remark} PO {po}".strip()
+    typed = settings.remarks == REMARKS_TYPED  # VNEXR: the line's remark, not the invoice number (D-210)
     rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
@@ -1181,7 +1188,7 @@ def voucher_rows(
         "VLPDCT": settings.po_document_type.strip() if send_po else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
                    else settings.po_company.strip() or settings.company_code) if send_po else "",
-        "VLRMK": remark[:REMARK_WIDTH],
+        "VLRMK": _pay_item_remark(v, settings),
     }  # fmt: skip
     if settings.bank_glba:  # the G/L bank account of the Pay from account (D-66); blank: E1's AAI PB
         common["VLGLBA"] = glba(final, settings)
