@@ -4720,3 +4720,32 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`ap_coder/ops/service_linux.py`, `ap_coder/ops/service.py`, `scripts/ci/linux_service.py`,
     `.github/workflows/ci.yml`, `docs/SERVER.md`; `tests/ops/test_service_linux.py`, `tests/ops/test_service.py`,
     `tests/ops/test_server_update.py`)
+- **D-209** · **A line is coded to one JD Edwards account string, `business unit.object.subsidiary`, kept as its two
+  codes: the cost center is the business unit and the GL code is `object.subsidiary`; which pairs exist and may be
+  posted to comes from the chart of accounts as JD Edwards exports it** (a head-office overhead department's prototype;
+  10 Nov 2026).
+  - **Why:** The department types one string into JD Edwards for each line ("0880133142.6215.1170"). An account exists
+    on some business units and not on others, and only some may be posted to (the chart's posting edit code, the
+    business unit's status). AP Coder knew a list of GL codes and a list of cost centers, each checked alone: a line
+    coded to an account of another business unit, to a closed one, or to a header account had no finding. The chart is
+    far too long for a model's list of choices or one drop-down (about 14,700 rows on 134 business units; about 720
+    strings used in a year, on 77 business units).
+  - **What:** The two fields stay (`predicted_cost_center`, `predicted_gl_code`), as the JD Edwards sync already writes
+    them. `core/chart.py` alone joins and splits the string (`join_account`, `split_account`, `code_of`, `split_code`).
+    Two tables hold the chart's rows and the business units as exported; the GL account and cost center lists are worked
+    out from them on import, so every reader of those lists is unchanged. `ReferenceData` gets an optional `pairs`: with
+    it, a line's pair is checked (not in the chart, not postable, a business unit that is not active, a reserved
+    subsidiary), suggestions and the model choose among a short list of valid strings for each line (never the whole
+    chart), and the review screen's picker shows the suggested accounts, the vendor's, and the business unit's before
+    the rest. The JD Edwards files split a code at its dot with no mapping row. An install with no chart loaded has no
+    `pairs` and behaves as before.
+  - **Not chosen:** One field holding the whole string (the learning index is by account: the same expense on two
+    business units would become two accounts, and a vendor's usual account and usual business unit are two separate
+    habits); a third field for the subsidiary (about 60 files for nothing the pair does not say: object and subsidiary
+    are never chosen apart); a mapping row for each account (it translates, it does not say which pairs exist).
+  - **Room for job costing:** the same three parts under other names (job, cost type, cost code): lists and labels,
+    since one module owns the string. A subledger for each line would be a new field.
+  - **Built in steps:** this entry is written with the first (`core/chart.py`); the tables, checks, importers, short
+    lists, picker and exports follow, each with its tests. The audit behind it measured today's behaviour on files made
+    up in the exports' layouts.
+  - (`ap_coder/core/chart.py`; `tests/core/test_chart.py`)
