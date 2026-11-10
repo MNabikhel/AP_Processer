@@ -3,7 +3,8 @@
 * Coding accuracy: first the corrections AP made and whether AP Coder had each right the next time; then accuracy
   against the 90% target, by week (an SVG line), recent lessons, accuracy by vendor, the
   most common corrections, the memory (every lesson, with the option to forget some) and teaching from past coding
-  (an ERP export of AP lines: upload, match the columns, teach).
+  (an ERP export of AP lines: upload, match the columns, teach; JD Edwards' Transaction Journal is recognised and
+  goes its own way: its summary first, then "Load this journal", each loaded journal listed with "Forget").
 * Supplier learning: what each vendor's reviewed invoices taught, the fields the clerk corrected, how far it is from
   going touchless, and an AP lead's "Keep supervised" / "Allow again" (recorded in the Activity log with their name).
 * Readers (a developer tool, shown with Settings → About's "Show developer tools" or AP_DEVELOPER_TOOLS=1, B-511):
@@ -37,6 +38,8 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import Store, reports
 from ap_coder.erp import insights
+from ap_coder.erp.journal import looks_like_journal
+from ap_coder.ops import journal_cmd
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import (
     TARGET_ACCURACY,
@@ -202,6 +205,64 @@ def get_upload(token: str | None) -> tuple[str, dict[str, tuple[list[str], list[
 
 def drop_upload(token: str) -> None:
     current_store().drop_ephemeral(HISTORY_KIND, token)
+
+
+# --- JD Edwards' Transaction Journal, uploaded and waiting to be loaded ------------------------------------------
+# The file is kept as it came under a one-off token, as a table's upload is: its summary is worked out from the
+# bytes at each view (with the objects in the address, when the boxes were changed), and nothing is written until
+# "Load this journal".
+
+JOURNAL_KIND = "ap-journal"
+JOURNAL_LABELS = {"trade": "Trade payable objects", "intercompany": "Intercompany payable objects",
+                  "tax": "Tax objects"}  # fmt: skip
+JOURNAL_NOTES = {journal_cmd.SAME_FILE: "Loaded already", journal_cmd.DIFFERS: "The control total differs",
+                 journal_cmd.REFUSED: "This file cannot be loaded as it is"}  # fmt: skip
+
+
+def keep_journal(name: str, data: bytes) -> str:
+    kept = name.encode("utf-8") + b"\0" + data
+    return current_store().keep_ephemeral(JOURNAL_KIND, kept, _UPLOAD_TTL, keep=_MAX_UPLOADS)
+
+
+def get_journal(token: str | None) -> tuple[str, bytes] | None:
+    kept = current_store().ephemeral(JOURNAL_KIND, token)
+    if kept is None:
+        return None
+    name, _, data = kept.partition(b"\0")
+    return name.decode("utf-8"), data
+
+
+def _outline(said: tuple[str, ...]) -> list[dict[str, Any]]:
+    """The summary's lines as a list with the indented ones under the line before them (two levels)."""
+    found: list[dict[str, Any]] = []
+    for line in said:
+        depth = (len(line) - len(line.lstrip())) // 2
+        item = {"text": line.strip(), "sub": []}
+        if depth == 0 or not found:
+            found.append(item)
+        elif depth == 1 or not found[-1]["sub"]:
+            found[-1]["sub"].append(item)
+        else:
+            found[-1]["sub"][-1]["sub"].append(item)
+    return found
+
+
+def _journal_context(store: Store, token: str | None, q: Any) -> dict[str, Any]:
+    """The journals loaded, and the uploaded one's summary (``journal_cmd.look``: the same as the command's)."""
+    loaded = [{**f, "when": f["loaded_at"].replace("T", " ")[:16]} for f in store.journal_files()]
+    context: dict[str, Any] = {"journals": loaded, "journal": None}
+    kept = get_journal(token)
+    if token and kept is None:
+        context["upload_gone"] = True
+    if kept:
+        name, data = kept
+        seen = journal_cmd.look(store, data, name, **{key: q.get(key) for key in JOURNAL_LABELS})
+        context["journal"] = {
+            "token": token, "name": name, "said": _outline(seen.said), "state": seen.state, "problem": seen.problem,
+            "note": JOURNAL_NOTES.get(seen.state, ""), "labels": JOURNAL_LABELS, "read": seen.journal is not None,
+            "objects": {key: ", ".join(seen.objects[key]) for key in JOURNAL_LABELS},
+        }  # fmt: skip
+    return context
 
 
 # --- Coding accuracy ----------------------------------------------------------------------------------------------
@@ -572,9 +633,11 @@ def learning_page(request: Request) -> HTMLResponse:
     if tab == "coding":
         # Teach from past coding is never replaced by "being worked out": the accuracy beside it waited for as
         # anywhere (B-2060); the tab alone may say so (D-201)
-        with reports.as_anywhere() if context["teach"] or q.get("history") else contextlib.nullcontext():
+        waited = context["teach"] or q.get("history") or q.get("journal")
+        with reports.as_anywhere() if waited else contextlib.nullcontext():
             context.update(corrections_context(store))
             context.update(_history_context(store, q.get("history"), q.get("sheet")))
+            context.update(_journal_context(store, q.get("journal"), q))
             context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
         context.update(suppliers_context(store, shown_count(q.get("shown"), SUPPLIERS_SHOWN)))
@@ -708,6 +771,15 @@ async def history_upload(request: Request, file: UploadFile = File(...)) -> JSON
 
 @one_connection
 def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse:
+    if not name.lower().endswith((".xlsx", ".xls")) and looks_like_journal(content):
+        # JD Edwards' Transaction Journal is a printed report, not a table: its own summary, then its own load
+        said = f"Read {name}: JD Edwards' Transaction Journal. Check the summary below, then load it."
+        return done(request, _url(journal=keep_journal(name, content)) + "#history", said)
+    return _table_upload(request, name, content)
+
+
+def _table_upload(request: Request, name: str, content: bytes) -> JSONResponse:
+    """A table of past lines read and kept, waiting for its columns."""
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
@@ -762,6 +834,50 @@ def _history_teach(request: Request, form: Any) -> JSONResponse:
 def history_forget(request: Request) -> JSONResponse:
     n = get_store(request).forget_history(actor=reviewer())
     return done(request, "/learning#history", f"Forgot {ui.plural(n, 'past line')}.")
+
+
+@router.post("/learning/journal/load")
+async def journal_load(request: Request) -> JSONResponse:
+    form = await posted_form(request)  # (read whole: a box left empty says "none", one not sent "work it out")
+    return await run_in_threadpool(_journal_load, request, form)
+
+
+@one_connection
+def _journal_load(request: Request, form: Any) -> JSONResponse:
+    """Load the uploaded journal with the objects its summary was shown with (a year: a second or two)."""
+    token = str(form.get("token") or "")
+    kept = get_journal(token)
+    if kept is None:
+        return refuse("That upload has expired. Upload the file again.")
+    name, data = kept
+    given = {key: form.get(key) for key in JOURNAL_LABELS}
+    outcome, said = journal_cmd.load(get_store(request), data, name, **given, anyway=bool(form.get("anyway")),
+                                     actor=reviewer())  # fmt: skip
+    if outcome in (journal_cmd.REFUSED, journal_cmd.DIFFERS):
+        return refuse(said[-1])
+    current_store().drop_ephemeral(JOURNAL_KIND, token)
+    return done(request, "/learning#history", said[-1], tone="ok" if outcome == journal_cmd.DONE else "warn")
+
+
+@router.post("/learning/journal/as-table")
+def journal_as_table(request: Request, token: str = Form("")) -> JSONResponse:
+    """The uploaded file read as a table of past lines after all: a table whose header names an account number and
+    a remark looks like the journal."""
+    kept = get_journal(token)
+    if kept is None:
+        return refuse("That upload has expired. Upload the file again.")
+    answer = _table_upload(request, *kept)
+    if answer.status_code == 200:
+        current_store().drop_ephemeral(JOURNAL_KIND, token)
+    return answer
+
+
+@router.post("/learning/journal/forget")
+def journal_forget(request: Request, file_id: str = Form(...)) -> JSONResponse:
+    forgotten, said = journal_cmd.forget(get_store(request), file_id, actor=reviewer())
+    if not forgotten:
+        return refuse("That journal is not loaded any more.")
+    return done(request, "/learning#history", said)
 
 
 @router.get("/learning/training.zip")

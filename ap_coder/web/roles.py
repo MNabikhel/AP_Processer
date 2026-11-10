@@ -160,6 +160,8 @@ RULES: dict[tuple[str, str], str] = {
         "POST /learning/lessons/retire", "POST /learning/suppliers/hold", "POST /learning/suppliers/allow",
         "POST /learning/suppliers/reset-layout", "POST /learning/memory/forget", "POST /learning/history/upload",
         "POST /learning/history/teach", "POST /learning/history/forget", "GET /learning/training.zip",
+        # JD Edwards' journal: as the past coding
+        "POST /learning/journal/load", "POST /learning/journal/forget", "POST /learning/journal/as-table",
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",

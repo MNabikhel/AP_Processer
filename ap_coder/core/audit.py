@@ -90,6 +90,8 @@ ACTIONS = {
     "reopened": ("undo", "warn", "Reopened for correction"),
     "erp_register_imported": ("receipt_long", "info", "ERP invoice register imported"),
     "history_imported": ("history_edu", "info", "History imported"),
+    "journal_imported": ("history_edu", "info", "JD Edwards journal loaded"),
+    "journal_forgotten": ("delete_sweep", "warn", "JD Edwards journal forgotten"),
     "vendors_imported": ("storefront", "info", "Vendor master imported"),
     "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
     "po_status": ("shopping_cart", "info", "Purchase order updated"),
@@ -437,6 +439,12 @@ def _import_text(action: str, d: dict[str, Any]) -> str | None:
         )
     if action == "history_imported":
         return f"{d.get('added', 0)} past line(s) taught" + (f", {d['skipped']} skipped" if d.get("skipped") else "")
+    if action == "journal_imported":
+        return (f"{d.get('file', '')}: {d.get('vouchers', 0)} voucher(s), {d.get('coding_lines', 0)} coding line(s), "
+                f"G/L dates {d.get('first_date', '')} to {d.get('last_date', '')}"
+                + (f"; {d['already']} already there from another file" if d.get("already") else ""))  # fmt: skip
+    if action == "journal_forgotten":
+        return f"{', '.join(d.get('files') or [])}: {d.get('vouchers', 0)} voucher(s) removed"
     if action == "vendors_imported":
         return f"{d.get('added', 0)} vendor(s) added, {d.get('updated', 0)} updated"
     if action == "pos_imported":

@@ -497,6 +497,42 @@ settings* on in Settings → About); a test checks that each one stays covered.
   the automation columns of the pay item.
 * Exchange rates: E1's table (VLCRR blank) or AP Coder's.
 
+## Last year's coding: the Transaction Journal (R09321)
+
+How AP coded each supplier before is in JD Edwards already. AP Coder reads it from report **R09321, "Transaction
+Journal"**, and keeps it apart from what it learns from approved invoices (`ap_coder/erp/journal.py` reads the file,
+`ap_coder/core/store/journal.py` keeps it).
+
+**Pull it.** Run R09321 for document type **PV** (vouchers), the **company**, and **12 months** of G/L dates, and
+save the report **as CSV**. Leave the file as it comes: the title rows, the page headers and the total rows are
+expected, and the `Grand Total` row at the end is what the load is checked against.
+
+**Load it.** Either way shows a summary first and writes nothing until asked:
+
+* **Learning & accuracy → Coding accuracy → Teach from past coding**: choose the file and *Read the file*. A
+  journal is recognised by itself; check the summary and the three boxes of object accounts, then **Load this
+  journal**. Each journal loaded is listed there (file, G/L dates, vouchers, who, when) with **Forget**. On the
+  company server this is an Admin's.
+* The console: `python -m ap_coder journal import FILE` (`--dry-run`: the summary only), `journal list`,
+  `journal forget ID` or `journal forget all`.
+
+**What is left out, and why.** A voucher in the journal has the lines AP typed and the lines JD Edwards added.
+Only AP's are coding:
+
+* The **payable lines** (trade payable, intercompany payable) and the **tax line** (GST clearing) are JD Edwards'
+  own. They are told by their **object account**, which is a company's own number, so AP Coder works the objects
+  out from the file and says why (the object that alone closes most vouchers is the trade payable one, and so on).
+  Correct them in the boxes, or with `--trade`, `--intercompany` and `--tax`; they are saved for the next journal.
+* A voucher with an **intercompany payable line** (an affiliate's) and a voucher whose **debits and credits
+  differ** are kept and marked, and not learned from.
+* A file whose lines **do not add up to its Grand Total** has rows missing: it is not loaded unless asked
+  (`--anyway`, or the tick on the page).
+
+The summary also names the suppliers that are not in the vendor master (matched by supplier number, the vendor
+master's ERP ID: import the supplier master first) and, with a chart of accounts imported, the account strings that
+are not in it or may not be posted to. The same file loaded twice adds nothing. Two files that cover some of the
+same months count each voucher once, and forgetting one of them takes nothing from the other.
+
 ## Through the API (AIS Server, D-104)
 
 Option 2 of the ways below is built, off until an Admin switches it on: **Settings → JD Edwards E1 → API

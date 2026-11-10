@@ -446,3 +446,81 @@ def test_a_journal_is_plain_frozen_data(journal):
 def test_a_file_that_is_no_csv_is_refused_in_plain_words():
     with pytest.raises(ValueError, match="could not be read as a CSV file"):
         read(b'R09321,"' + b"x" * 200_000)
+
+
+# --- Which objects are the payable and tax ones (suggest_objects) ----------------------------------------------------
+
+
+def _made_up(size, seed=1):
+    """A made-up company's journal for a year (``ap_coder.bench``): (its truth's company, the file's bytes)."""
+    from ap_coder.bench import jde_company, jde_exports
+
+    truth = jde_company.build(seed, size)
+    return truth.company, jde_exports.journal_csv(truth)
+
+
+def test_the_payable_and_tax_objects_are_worked_out_from_the_file():
+    company, data = _made_up("small")
+    objects, tax, why = jr.suggest_objects(data)
+    assert objects == jr.PayableObjects((company.payable_object,), (company.intercompany_object,))
+    assert tax == (company.gst_object,)
+    assert why == (
+        "Trade payable: object 2110 closes 103 of 119 vouchers that balance (its lines alone are the other side of "
+        "the coding lines).",
+        "Intercompany payable: object 2150 closes 16 of the 16 vouchers that 2110 is not on, for 2 suppliers with no "
+        "voucher that 2110 closes. An affiliate's vouchers are kept but not learned from; if this is a second trade "
+        "payable object, move it.",
+        "Tax: object 2420 is on 71 vouchers and is 5% of the rest of the voucher on 71 of them.",
+    )
+    for seed in (2, 3):
+        company, data = _made_up("small", seed)
+        assert jr.suggest_objects(data)[:2] == (jr.PayableObjects(("2110",), ("2150",)), ("2420",))
+
+
+def test_the_objects_of_a_year_of_vouchers_are_found():
+    company, data = _made_up("year")
+    objects, tax, why = jr.suggest_objects(data)
+    assert objects == jr.PayableObjects((company.payable_object,), (company.intercompany_object,))
+    assert tax == (company.gst_object,)
+    assert why[0].startswith("Trade payable: object 2110 closes 4,752 of 5,467 vouchers that balance")
+    assert "object 2150 closes 715 of the 715 vouchers that 2110 is not on, for 5 suppliers" in why[1]
+
+
+def test_the_tax_setups_objects_are_the_tax_objects_when_the_file_has_them():
+    _, data = _made_up("small")
+    objects, tax, why = jr.suggest_objects(data, ["2420 ", "2425", ""])  # (2425: in the setup, on no line)
+    assert objects.trade == ("2110",) and tax == ("2420",)
+    assert why[-1] == "Tax: object 2420 is a GL account of the tax setup; it is on 81 lines."
+    # A tax setup of another chart: none of its objects is in the file, so they are worked out from it.
+    assert jr.suggest_objects(data, ["1300", "1310"])[1:] == jr.suggest_objects(data)[1:]
+
+
+def test_a_guess_that_cannot_be_made_is_left_empty_and_said():
+    """Seven vouchers: the trade payable object is plain; one affiliate's voucher and three tax lines are too few
+    to go by."""
+    objects, tax, why = jr.suggest_objects(as_csv(rows_of(vouchers())))
+    assert objects == jr.PayableObjects((TRADE,)) and tax == ()
+    assert why == (
+        f"Trade payable: object {TRADE} closes 5 of 6 vouchers that balance (its lines alone are the other side of "
+        "the coding lines).",
+        f"Intercompany payable: none found among the 1 voucher that {TRADE} is not on.",
+        "Tax: no object is the same small share of its vouchers time after time, so none is taken. If the journal "
+        "has a tax line (GST clearing), name its object.",
+    )
+    only_odd = [v for v in vouchers() if v["number"] == "301355"]  # the one that does not balance
+    objects, tax, why = jr.suggest_objects(as_csv(rows_of(only_odd)))
+    assert objects == jr.PayableObjects(()) and tax == ()
+    assert why == ("Trade payable: no object closes most of the vouchers (its lines alone on one side, every other "
+                   "line on the other), so none is taken. Name the trade payable object.",)  # fmt: skip
+
+
+def test_an_expense_beside_others_is_not_taken_for_tax():
+    """Freight is on every voucher beside the goods, a different share each time: no tax object."""
+    found = [voucher(f"3/{day}/2025", "300417", "Kestrel Courier & Freight Ltd.",
+                     line(f"{MAIN}.7200.1105", f"{100 + 37 * day}.00", "", "paper"),
+                     line(f"{MAIN}.7410.2260", f"{3 + (day * 7) % 11}.00", "", "freight"),
+                     line(f"{MAIN}.{TRADE}", "", f"{103 + 37 * day + (day * 7) % 11}.00", "freight"))
+             for day in range(1, 13)]  # fmt: skip
+    objects, tax, why = jr.suggest_objects(as_csv(rows_of(found)))
+    assert objects == jr.PayableObjects((TRADE,)) and tax == ()
+    assert why[0].startswith(f"Trade payable: object {TRADE} closes 12 of 12 vouchers") and len(why) == 2

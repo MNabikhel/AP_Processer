@@ -181,6 +181,9 @@ def test_what_each_role_may_do(setup):
         "POST /settings/azure-check",
         "POST /learning/memory/forget",
         "POST /learning/history/forget",
+        "POST /learning/journal/load",
+        "POST /learning/journal/forget",
+        "POST /learning/journal/as-table",
         "GET /settings/data/backups/x.db",
     ):
         assert may("admin", route) and not may("approver", route), route
