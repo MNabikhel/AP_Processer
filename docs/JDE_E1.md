@@ -61,45 +61,77 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
 ## Keying vouchers by hand from the keying sheet
 
 Where vouchers are typed into JD Edwards by hand (Standard Voucher Entry) and not loaded as a batch, choose the ERP
-format **JD Edwards keying sheet** on the Exports page (`ap_coder/erp/jde_keying.py`, D-210). The batch's download is
-an Excel workbook to read, or print, while typing: one block per voucher on the sheet *Keying sheet*, and the
-invoices that are not ready on the sheet *Not ready*, each with why (the same checks as the batch files, below; a
-voucher JD Edwards already has through the API is there too, never to be typed twice). Past batches → *download
-again* also offers it as a CSV with the same values, one row per G/L line, for another tool: Excel drops the leading
-zeros of a code when it opens a CSV, so read the workbook.
+format **JD Edwards keying sheet** on the Exports page (`ap_coder/erp/jde_keying.py`, D-210).
+
+1. **Ready to export** lists, as for the Z-files, the invoices that cannot go to JD Edwards yet, each with why and
+   its invoice to open (the same checks as the batch files, below): they are not ticked and stay there. Only the
+   ready ones go on the batch; a batch of none is refused.
+2. The batch's download is an Excel workbook to read, or print, while typing: one block per voucher on the sheet
+   *Keying sheet*. Its invoices then read **On keying sheet 12** where an exported one reads "Exported in batch 12":
+   they are in JD Edwards once someone has typed them.
+3. To change an invoice on a sheet, **Undo this batch** (Past batches): its invoices go back to Ready to export.
+4. Downloaded again, the sheet holds the same vouchers, also once they are back in the ERP's invoice register (the
+   voucher list imported): a batch's own vouchers are not "already in the ERP". The sheet *Not ready* stays empty
+   for such a batch unless the settings changed since; it lists, with why, the invoices of a batch made in **another**
+   format whose keying sheet is asked for (Past batches → format), and the vouchers JD Edwards already has through
+   the API, never to be typed too.
+
+There is no CSV of the sheet: a spreadsheet opening one reads `0312005561.0042` as a number and `00052316` as
+52316, and the house way for a CSV (text as it is, for a loader; an apostrophe only against formulas) cannot keep
+a code text. The workbook does.
+
+**The settings for it in one step.** `jde.use_prototype(store)` (`ap_coder/erp/jde.py`, for a first-run step and
+tests) sets a data folder up as a department that types its vouchers and recovers the GST/HST only: Amounts = tax
+amounts, code V and a tax rate/area for each province (placeholders an Admin replaces in *Province → tax area*:
+`CDNGST`, a GST-only area, for AB, BC, MB, SK, QC and the territories; `ONHST`, `NBHST`, `NLHST`, `NSHST`, `PEHST`
+for the HST provinces), the remarks as typed, the default account rule (no mapping rows), *Show JD Edwards
+settings* on, and the QST set to *not recoverable: add to the expense line*. A new data folder's own defaults are
+the tax coded to G/L lines and JD Edwards hidden.
 
 The sheet says what the JD Edwards settings say, like the batch files: with *Amounts* = **Taxable / non-taxable / tax
-amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the taxable and tax
+amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the tax and taxable
 amounts) and the G/L lines are net of it; with **Tax coded to G/L accounts** each recoverable tax is a G/L line of
-its own and the pay item has no tax.
+its own and the pay item has no tax. It is always one pay item per voucher, whatever *Line numbering* says.
+
+A block follows the screen's order: the header, the pay item, the G/L distribution.
 
 | On the sheet | What it is | Where it is typed |
 | --- | --- | --- |
 | Supplier number, Supplier name | the vendor's address number (AN8) and its name, to check | *Supplier Number* |
+| Company | Settings → JD Edwards E1 | *Company* |
 | Invoice number | as printed | *Invoice Number* |
 | Invoice date, G/L date | real dates; the G/L date as Settings → JD Edwards E1 sets it | *Invoice Date*, *G/L Date* |
-| Gross amount, Currency | the invoice total, in the invoice's currency | the pay item's *Gross Amount*; the currency |
+| Currency | the invoice's; a note under a foreign voucher says to type its amounts in that currency, and the rate | the currency, before the amounts |
+| Gross amount | the invoice total, in the invoice's currency | the pay item's *Gross Amount* |
 | Payment terms | the JD Edwards terms code when the terms table has one, else the terms as printed | *Pymt Terms* |
-| PO number | as text, with its leading zeros | the purchase order, when the voucher has one |
-| Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
-| Taxable amount, Tax amount | the tax on the pay item: only what JD Edwards posts or is told (see below) | *Taxable Amount*, *Tax Amount* |
 | Remark | the first line's remark | the pay item's *Remark* |
+| Due date | printed or worked out from the printed terms; blank: JD Edwards works it out | *Due Date* |
+| PO number | as text, with its leading zeros; a note says when it is longer than the field's 8 characters | the purchase order, on the G/L distribution |
+| Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
+| Tax amount, Taxable amount | the tax on the pay item: what JD Edwards posts or is told (the notes say what it holds) | *Tax Amount*, *Taxable Amount* |
 | Account number | `BU.Object.Subsidiary`, typed as it is, without padding | G/L Distribution: *Account Number* |
 | Account description | the GL account's name in AP Coder, to compare with what JD Edwards shows | not typed |
 | Amount | the line's amount net of the tax JD Edwards posts; a tax left in the expense is inside it | *Amount* |
 | Explanation -Remark- | the line's remark: its description, cut at 30 characters | *Explanation -Remark-* |
 | Check | G/L lines + recovered tax = gross, and the lines' total | not typed: JD Edwards' amount to distribute |
+| Warning | a GST or HST that GL accounts & tax does not recover (also a finding on the review screen) | not typed: check it first |
+| Note | what would otherwise be worked out: a provincial tax not recovered and where it is; under code C, how much of the tax amount JD Edwards recovers and how much is the sales tax inside the lines; the half of the tax on meals that is not claimed and the line it is in; a foreign voucher's currency and rate; a PO number too long | not typed |
 
 Every code is a text cell (a business unit `0312005561`, an object `0042`, a PO `00052316` keep their zeros), amounts
-are numbers with two decimals and dates are dates. Printed, the sheet is upright, the column names on each page, and
-a voucher is not cut by a page unless it is longer than one.
+are numbers with two decimals and dates are dates. Printed, the sheet is upright, the column names on each page. A
+voucher that fits a page is never cut by one; a voucher longer than a page is cut between G/L lines only, each
+further page under its title ("Voucher 7 of 31, continued") and fields again.
 
 **A tax that is not recovered** (the QST of a company that claims the GST only): set it to *Not recoverable: add to
 the expense line* in GL accounts & tax, and give the province a GST-only tax area with code V. The pay item then
 carries the GST alone (taxable amount = the base, tax amount = the GST) and the G/L line holds the expense with its
 QST: gross = G/L lines + GST. **To confirm with the JDE team:** whether the tax left in the expense is entered as the
 pay item's non-taxable amount (what the batch files send in VLATXN: gross - taxable - tax), or the taxable amount is
-simply left at the base and JD Edwards works the rest out.
+simply left at the base and JD Edwards works the rest out. When **no** tax is left on the pay item (the GST set to
+not recoverable too) the voucher goes with the exempt code, as one that charges no tax, and is warned of. Under
+**code C** the tax amount is the GST and the provincial tax together: right for a tax area that holds the
+provincial tax as a sales tax (BC, SK, MB); a Quebec area on code C must hold the QST so, or use code V with a
+GST-only area as above.
 
 ## How the mapping works
 
@@ -278,6 +310,10 @@ Blocking problems, per invoice:
 * a distribution line whose GL code (+ cost center) has no JDE account, or an account too long (BU 12,
   object 6, subsidiary 8);
 * the GL distribution does not add up to the invoice total, or is *unbalanced* for the tax code (above);
+* the GST/HST charged at two rates (lines supplied in two provinces: GST on some, HST on others, or the HST at 13% and 15%):
+  a pay item has one tax area, so it is two pay items; held (JDE_TAX_AREA), the reason spelling out each pay item to
+  key by hand (tax area, taxable and tax amounts, its lines). Two provinces of one federal rate (Alberta and British
+  Columbia) cannot be told from the lines and are not held (B-2152);
 * currency not set up; province unknown while Canadian tax was charged; a tax code AP Coder cannot balance;
 * **duplicates**: the same supplier (address number, or vendor name) and invoice number (compared the way
   people mean them: `INV-00123` = `#123`) twice in the batch, already in a live export batch, or in the
