@@ -1167,9 +1167,10 @@ BLOCK, FIX, LOOK = "block", "err", "warn"
 GROUP_TITLES = {BLOCK: "Before you can approve", FIX: "Must be fixed", LOOK: "Check before approving"}
 
 
-def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[str, Any]:
+def checks_summary(report: Any, errors: list[Any], warnings: list[Any], account: bool = False) -> dict[str, Any]:
     """All the checks as one status: passed, or what needs attention (one line each; details below), grouped:
-    before you can approve (what keeps Approve closed), must be fixed, check before approving."""
+    before you can approve (what keeps Approve closed), must be fixed, check before approving. ``account``: a line
+    is one Account box (a chart of accounts), so a line without its account is one finding, not one a code."""
     low = low_confidence(report) if not errors else []
     items: list[dict[str, Any]] = []
     for bad, text, code, lines in grouped_issues(errors + warnings):
@@ -1180,13 +1181,15 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
                  if code == "DUPLICATE_INVOICE" else [])  # fmt: skip
         field = "" if lines else CODE_FIELDS.get(code) or FIELD_FLAGS.get(code, ("", None))[0]
         items.append({"bad": kind != LOOK, "kind": kind, "text": text, "goto": goto, "links": links, "code": code,
-                      "field": field})  # fmt: skip
+                      "field": field, "lines": lines})  # fmt: skip
     for text in low:
         items.append({"bad": False, "kind": LOOK, "text": text})
+    if account:
+        account_lines.said_once(items)
     if not items:
         return {"tone": "ok", "icon": "check_circle", "title": "All checks passed", "items": [], "groups": [],
                 "sub": "Totals reconcile, taxes verified, all codes valid."}  # fmt: skip
-    counts = {k: sum(1 for i in items if i["kind"] == k) for k in GROUP_TITLES}
+    counts = {k: sum(1 for i in items if i["kind"] == k and not i.get("folded")) for k in GROUP_TITLES}
     groups = [{"kind": k, "title": f"{GROUP_TITLES[k]} ({counts[k]})",
                "items": [i for i in items if i["kind"] == k]} for k in GROUP_TITLES if counts[k]]  # fmt: skip
     title = " · ".join(g["title"] for g in groups)
@@ -1871,10 +1874,11 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,
+        "account": taxes is not None,  # a chart of accounts: the review screen of D-214
         "problems": [],
         "amount_line": _amount_line(header),
         "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax),
-        "checks": checks_summary(report, errors, warnings),
+        "checks": checks_summary(report, errors, warnings, taxes is not None),
         "details": checks_details(report),
         "rules_applied": [rules.describe(c) for c in meta.get("rules_applied") or []],
         "rule_changes": {

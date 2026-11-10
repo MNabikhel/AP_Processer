@@ -69,7 +69,7 @@
 {# A line left for a person: why, and the accounts offered, each a button that fills the box. #}
 {% macro acct_slot(a) -%}
 {%- if a.state == "fix" %}<div class="acct-note fix"><p><span class="ms" aria-hidden="true">error</span><b>To fix:</b> <span data-acct-why>{{ a.note }}</span></p>
-  {%- if a.candidates %}<ol class="acct-cands" aria-label="Accounts offered for this line">{% for c in a.candidates %}
+  {%- if a.candidates %}<ol class="acct-cands" aria-label="Accounts offered for this line (the list of the Account box has them all)">{% for c in a.candidates[:3] %}
     <li><button type="button" data-use-account="{{ c.account }}" title="Put {{ c.account }} in the Account box"><span class="s">{{ c.account }}</span><span class="d">{{ c.name }}{% if c.unit %} · {{ c.unit }}{% endif %}</span><span class="e">{{ c.reason }}</span></button></li>{% endfor %}</ol>{% endif %}</div>
 {%- elif a.state == "check" %}<div class="acct-note check"><p><span class="ms" aria-hidden="true">visibility</span><b>To check:</b> <span data-acct-why>{{ a.note }}</span></p></div>
 {%- endif %}

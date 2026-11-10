@@ -15,10 +15,13 @@
 {% block header %}
 <header class="inv-top apc-anim">
   <nav class="rvw-nav" aria-label="Invoices">
+    {% set acct = mode == "review" and grid and grid.account %}{# a chart of accounts: the review screen of D-214 #}
+    {% if acct %}<button type="button" class="btn sm inv-menu-btn" data-menu-toggle aria-expanded="false" title="Show AP Coder's menu over the page (Esc closes it)"><span class="ms" aria-hidden="true">menu</span>Menu</button>{% endif %}
     <a class="btn sm ghost" href="{{ queue_url }}" data-nav="queue" aria-keyshortcuts="Alt+ArrowUp" title="Back to the queue (Alt+↑)"><span class="ms" aria-hidden="true">arrow_back</span>Queue</a>
     {% if nav.position is not none %}
     <span class="rvw-pos">Reviewing <b class="n">{{ nav.position + 1 }}</b> of {{ nav.count }}<span class="rvw-pos-bar" aria-hidden="true"><i style="width: {{ nav.done_pct }}%"></i></span></span>
     {% endif %}
+    {% if acct %}<b class="inv-top-name" title="{{ title }}">{{ title }}</b>{% endif %}
     <span class="spacer"></span>
     {% if mode == "review" %}
     <details class="pop">
@@ -87,7 +90,7 @@
 <div class="inv-draft-note small" role="status" data-others{% if not others %} hidden{% endif %}><span class="ms" aria-hidden="true">group</span>
   <span data-others-text>{{ others }}</span></div>
 
-<section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
+{% if not grid.account %}<section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>{% endif %}
 
 {% if draft_from and edit %}{# edits kept from before, not approved yet (B-826): said, with a way back to the invoice as read #}
 <div class="inv-draft-note small" role="status"><span class="ms" aria-hidden="true">history</span>
@@ -109,15 +112,15 @@
   <div class="rvw-status-sub">{% if ma.status == "sent_back" %}{{ ma.answer_note }}. Change the coding, then approve it or send it again.{% elif manager.changed %}The coding has changed since: the lines below are not the ones confirmed. Send it again, or approve knowing it changed.{% else %}The lines below are the ones confirmed: approve it as usual.{% endif %} <a href="/manager/{{ ma.id }}">See the request</a></div></div>
 {% endif %}
 
-<div class="inv-split">
+<div class="inv-split{% if grid.account %} inv-acct{% endif %}">
   {% include "_invoice_document.html" %}
 
   <div class="col">
     <section class="card inv-checks" data-live="checks" aria-live="polite">{{ live_ui.checks(live, inv.id) }}</section>
 
     {# The invoice details before the lines (D-63): the header is checked against the page first, then lines coded. #}
-    <section class="card inv-details">
-      {{ live_ui.head("Invoice details") }}
+    <section class="card inv-details{% if grid.account %} inv-head{% endif %}">
+      {% if not grid.account %}{{ live_ui.head("Invoice details") }}{% endif %}
       {% set flags = live.flags or {} %}{% set filled = (draft.from_vendor.fields or {}) %}
       {% macro menu_hint(label) -%}<button type="button" class="inv-menu-hint" data-menu-hint tabindex="-1" title="More options (right-click, or Shift+F10 in the box)" aria-label="More options for {{ label }}"><span class="ms" aria-hidden="true">more_vert</span></button>{%- endmacro %}
       {% macro help_slot(name) -%}{% set h = (live.help or {}).get(name) %}<span class="inv-help small" data-help{% if not h %} hidden{% endif %}><span class="ms" aria-hidden="true">lightbulb</span><span data-help-text>{{ h.text if h else "" }}</span>{% for a in (h.actions if h else []) %}<button type="button" class="btn sm ghost" data-help-use="{{ a.value }}">{{ a.label }}</button>{% endfor %}</span>{%- endmacro %}
@@ -138,9 +141,8 @@
       <label class="field" data-field="{{ name }}"><span class="lbl">{{ labels[name] }}{% if hint %} <span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
         <select name="{{ name }}" form="inv">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header[name] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       {%- endmacro %}
-      <div class="rvw-group">Supplier</div>
-      <div class="inv-grid">
-        {% set s = sure.get("vendor_name") %}
+      {% macro vendor_field() -%}
+        {% set s = sure.get("vendor_name") %}{% set flags = live.flags or {} %}{% set edit = not live.read_only %}
         <div class="field wide inv-vendor{% if 'vendor_name' in flags %} is-flagged{% endif %}{% if 'vendor_name' in (live.flag_errors or []) %} is-error{% endif %}" data-field="vendor_name">
           <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"{% if "vendor_name" in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
             <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span>{{ menu_hint(labels["vendor_name"]) }}</span></label>
@@ -176,25 +178,24 @@
           {% endif %}
           <script type="application/json" id="vendor-seed">{{ vendor_seed | tojson }}</script>
         </div>
+      {%- endmacro %}
+      {% macro tax_numbers() -%}
         {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
         {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
         {{ field("pst_registration_number", hint="The supplier's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST)") }}
         {{ province("supplier_province") }}
+      {%- endmacro %}
+      {% macro bank_field() -%}
+        {% set flags = live.flags or {} %}
         {# The vendor's banking details as read from the invoice: evidence, never edited or paid to (D-66). #}
         <div class="field inv-bank-printed{% if 'remit_bank_account' in flags %} is-flagged{% endif %}" data-field="remit_bank_account"{% if not bank_shown %} hidden{% endif %}>
           <span class="lbl">{{ labels["remit_bank_account"] }} <span class="rvw-hint" title="The vendor's banking details as printed, for fraud control: compared with the ones on this vendor's approved invoices. Never paid to from here: the bank account that pays is Pay from."><span class="ms" aria-hidden="true">info</span></span></span>
           <span class="inv-bank-value">{{ bank_shown }}</span>
           <span class="inv-flag small" data-flag{% if 'remit_bank_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("remit_bank_account", "") }}</span></span>
         </div>
-      </div>
-      <div class="rvw-group">Invoice</div>
-      <div class="inv-grid">
-        {{ field("invoice_number") }}
-        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
-        {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
-        {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
-        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
-        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
+      {%- endmacro %}
+      {% macro pay_from_field() -%}
+        {% set flags = live.flags or {} %}
         {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
         <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}{% if 'pay_from_account' in (live.flag_errors or []) %} is-error{% endif %}" data-field="pay_from_account">
           <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
@@ -208,6 +209,8 @@
           {% endif %}
           <span class="inv-flag small" data-flag{% if 'pay_from_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("pay_from_account", "") }}</span></span>
         </label>
+      {%- endmacro %}
+      {% macro supply_field() -%}
         <div class="field inv-supply" data-field="ship_to_province">
           <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
           <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
@@ -215,6 +218,62 @@
             <select name="ship_to_province" form="inv" aria-label="{{ labels['ship_to_province'] }}">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header["ship_to_province"] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
           </details>
         </div>
+      {%- endmacro %}
+      {% macro pay_note() -%}
+      {% if not pay_from.any and can("/accounts/bank/save") %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span><span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</span></p>{% endif %}
+      {%- endmacro %}
+      {% if grid.account %}
+      {# With a chart of accounts (D-214): what is checked on every invoice first, the rest under More details (it
+         opens itself when one of its fields has a finding); then what is keyed on the pay item, in one line. #}
+      {% set folded = ["gst_hst_registration_number", "qst_registration_number", "pst_registration_number", "supplier_province", "remit_bank_account", "po_number", "payment_terms", "pay_from_account", "ship_to_province", "original_invoice_number", "subtotal"] %}
+      {% set found = namespace(any=supply.open) %}
+      {% for name in folded %}{% if name in (live.flags or {}) %}{% set found.any = true %}{% endif %}{% endfor %}
+      <div class="inv-head-row one">
+        {{ vendor_field() }}
+        {{ field("invoice_number") }}
+        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
+      </div>
+      <div class="inv-head-row two">
+        {{ field("grand_total", type="number", step="0.01") }}
+        {{ field("tax_total", type="number", step="0.01") }}
+        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
+        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
+        <div class="inv-head-sum" data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
+      </div>
+      <div class="inv-keyed" data-live="keyed">{{ live_ui.keyed(live, inv.id) }}</div>
+      <details class="inv-more-details" data-more-details{% if found.any %} open{% endif %}>
+        <summary><span class="ms" aria-hidden="true">chevron_right</span><b>More details</b> <span class="muted">PO, terms, tax numbers, province, pay from</span></summary>
+        <div class="inv-grid">
+          {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
+          {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
+          {{ tax_numbers() }}
+          {{ bank_field() }}
+          {{ field("subtotal", type="number", step="0.01") }}
+          {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
+          {{ supply_field() }}
+          {{ pay_from_field() }}
+        </div>
+        {{ pay_note() }}
+        <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>
+        <section class="inv-reading" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
+      </details>
+      {% else %}
+      <div class="rvw-group">Supplier</div>
+      <div class="inv-grid">
+        {{ vendor_field() }}
+        {{ tax_numbers() }}
+        {{ bank_field() }}
+      </div>
+      <div class="rvw-group">Invoice</div>
+      <div class="inv-grid">
+        {{ field("invoice_number") }}
+        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
+        {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
+        {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
+        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
+        {{ field("currency", choices="CAD|Canadian dollar,USD|US dollar,EUR|Euro,GBP|British pound") }}
+        {{ pay_from_field() }}
+        {{ supply_field() }}
         {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
       </div>
       <div class="rvw-group">Amounts</div>
@@ -224,15 +283,16 @@
         {{ field("grand_total", type="number", step="0.01") }}
       </div>
       <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
-      {% if not pay_from.any and can("/accounts/bank/save") %}<p class="small muted inv-pay-note"><span class="ms" aria-hidden="true">account_balance</span><span>To choose which of your bank accounts pays (Pay from), <a class="link" href="/accounts?tab=bank">add your bank accounts</a> on GL accounts &amp; tax.</span></p>{% endif %}
+      {{ pay_note() }}
       <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>
+      {% endif %}
     </section>
 
 
     <section class="card inv-lines">
       {% if grid.account %}{# a chart of accounts is imported: one Account box a line (D-214) #}
       <div class="table-wrap">
-        <table class="apc-table inv-grid-table inv-lines-grid acct" id="lines" aria-label="Lines">
+        <table class="apc-table inv-grid-table inv-lines-grid acct{% if grid.lines | length > 8 %} many{% endif %}" id="lines" aria-label="Lines">
           <thead><tr><th class="c-no">#</th><th class="c-acct">Account</th><th class="r c-amt">Amount</th><th class="c-desc">Description</th><th class="c-tax">Tax</th><th class="c-del"><span class="rvw-sr">More for the line</span></th></tr></thead>
       {% else %}
       <div class="inv-lines-head">{{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid. Right-click a line for more.") }}
@@ -324,6 +384,7 @@
       <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
     </section>
 
+{% if grid.account %}<details class="card inv-fold" data-fold="tax"><summary><span class="ms" aria-hidden="true">chevron_right</span><b>Tax as printed</b> <span class="muted">the invoice's own tax lines</span></summary>{% endif %}
 <section class="card inv-tax">
   {{ live_ui.head("Tax lines, as printed on the invoice", "The taxes the invoice charges. A tax line's taxable amount follows the lines whose tax code carries it, unless you typed it; its amount is what the invoice charges.") }}
   <div class="table-wrap">
@@ -335,11 +396,13 @@
   {{ grids.tax_template(grid) }}
   {% if edit %}<button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>{% endif %}
 </section>
-
+{% if grid.account %}</details>
+<details class="card inv-fold" data-fold="posting"><summary><span class="ms" aria-hidden="true">chevron_right</span><b>What {{ "JD Edwards" if live.jde else "the ERP" }} gets</b> <span class="muted">the journal lines of this voucher</span></summary>{% endif %}
 <section class="card inv-posting">
   {{ live_ui.head("GL posting preview", "The journal lines approval sends to the ERP" ~ (", with each line's JD Edwards account (BU.Object.Subsidiary)." if live.jde else ".")) }}
   <div data-live="posting">{{ live_ui.posting(live, inv.id) }}</div>
 </section>
+{% if grid.account %}</details>{% endif %}
 
     <div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
     {% if not grid.account %}{# with a chart of accounts the accounts offered are under each line (D-214) #}

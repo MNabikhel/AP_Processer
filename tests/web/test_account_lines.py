@@ -55,7 +55,7 @@ def test_a_line_left_for_a_person_is_marked_with_why_and_the_accounts_offered(ch
         assert 'class="acct-row is-fix"' in row and f'name="{LINE_ACCOUNT}" value=""' in row
         assert "<b>To fix:</b>" in row and "went to 3 accounts" in row  # the line's own reason
         offered = re.findall(r'data-use-account="([^"]+)"', row)
-        assert offered == [c["account"] for c in line["candidates"]] and len(offered) >= 3
+        assert offered == [c["account"] for c in line["candidates"]][:3] and len(offered) == 3  # the first three
         assert line["candidates"][0]["name"] in row and "of this supplier" in row  # its name and why it is offered
 
 
@@ -151,3 +151,57 @@ def test_an_install_without_a_chart_keeps_its_own_row(demo_template, tmp_path):
     assert f'name="{LINE_ACCOUNT}"' not in text and "acct-row" not in text and "inv-lines-grid acct" not in text
     assert '<select name="line_gl" form="inv"' in text and 'data-live="suggest"' in text
     assert not account_lines.in_use(store.reference_data())
+
+
+# --- the frame (W2) -------------------------------------------------------------------------------------------------
+
+
+def test_the_screen_with_a_chart_puts_the_lines_under_a_compact_header(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "one_line")
+    text = page.text
+    assert "data-menu-toggle" in text and 'class="inv-split inv-acct"' in text
+    order = ['data-live="checks"', 'class="card inv-details inv-head"', 'data-live="keyed"', "data-more-details",
+             'id="lines"', 'data-fold="tax"', 'data-fold="posting"']  # fmt: skip
+    assert [text.index(mark) for mark in order] == sorted(text.index(mark) for mark in order)
+    head = text[text.index('class="card inv-details inv-head"') : text.index("data-more-details")]
+    for name in ("vendor_name", "invoice_number", "invoice_date", "grand_total", "tax_total", "currency", "due_date"):
+        assert f'name="{name}"' in head, name
+    folded = text[text.index("data-more-details") : text.index('id="lines"')]
+    for name in ("po_number", "payment_terms", "gst_hst_registration_number", "ship_to_province", "subtotal"):
+        assert f'name="{name}"' in folded and f'name="{name}"' not in head, name
+    assert '<details class="inv-more-details" data-more-details>' in text  # closed: nothing in it has a finding
+
+
+def test_what_is_keyed_on_the_pay_item_is_one_line_from_the_voucher(chart_company, chart_company_client):
+    from ap_coder.erp import jde
+
+    page = _page(chart_company, chart_company_client, "one_line")
+    store = chart_company.store
+    final = store.get_invoice(page.id)["ai_output"]
+    settings = jde.load(store)
+    keyed = jde.voucher_view(final, settings, jde.resolve_an8(final, store.vendor_ids(), settings))["keyed"]
+    assert keyed.startswith("Keyed on the pay item: ")
+    line = page.check()["sections"]["keyed"]
+    assert keyed.partition(": ")[2].split(" · ")[0] in line and "Keyed on the pay item" in line
+    four = _page(chart_company, chart_company_client, "four_lines")
+    assert "Not ready to key" in four.check()["sections"]["keyed"]  # no account yet: said, not a wrong voucher
+
+
+def test_a_line_without_its_account_is_one_finding(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "four_lines")
+    checks = page.check()["sections"]["checks"]
+    assert "Lines 1, 2, 3, 4: no account yet: pick one" in checks
+    assert "Before you can approve (1)" in checks and "no GL account yet" not in checks.split("Details and what")[0]
+    assert 'data-code="CC_UNASSIGNED" hidden>' in checks  # the same line's second code: in the list, not shown
+
+
+def test_an_install_without_a_chart_keeps_its_screen(demo_template, tmp_path):
+    store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
+    client = client_for(store)
+    invoice_id = store.list_invoices()[0]["id"]
+    page = ReviewPage(client, invoice_id)
+    assert "data-menu-toggle" not in page.text and "inv-acct" not in page.text and "data-fold" not in page.text
+    assert '<section class="card inv-summary" data-live="summary">' in page.text
+    assert '<section class="card inv-details">' in page.text and "data-more-details" not in page.text
+    answer = page.check()
+    assert "keyed" not in answer["sections"] and "lines" not in answer

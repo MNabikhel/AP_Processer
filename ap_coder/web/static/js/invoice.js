@@ -95,10 +95,38 @@ function applySections(answer, posted = null) {
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
+  openFlaggedDetails();
   showMailLanguage();
 }
 
 /* ---------- With a chart of accounts: a line is one Account box (D-214) ---------- */
+
+/** More details opens itself when one of its fields has a finding. */
+function openFlaggedDetails() {
+  document.querySelectorAll("details[data-more-details]:not([open])").forEach((fold) => {
+    if (fold.querySelector(".field.is-flagged, .field.is-error")) fold.open = true;
+  });
+}
+
+/* The Menu button (the menu is off this screen below 1820 px): it opens AP Coder's menu over the page; Esc, a
+   click outside it or a second press closes it. */
+const menuButton = document.querySelector("[data-menu-toggle]");
+function showMenu(open) {
+  document.documentElement.classList.toggle("menu-open", open);
+  menuButton?.setAttribute("aria-expanded", String(open));
+  if (open) document.querySelector(".rail a")?.focus({ preventScroll: true });
+}
+document.addEventListener("click", (e) => {
+  const open = document.documentElement.classList.contains("menu-open");
+  if (e.target.closest?.("[data-menu-toggle]")) showMenu(!open);
+  else if (open && !e.target.closest?.(".rail")) showMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !document.documentElement.classList.contains("menu-open")) return;
+  e.preventDefault();
+  showMenu(false);
+  menuButton?.focus({ preventScroll: true });
+});
 
 /** The row a box, a button or a cell is in (a line or a tax line). */
 const rowOf = (el) => el?.closest?.("[data-row]") || null;
@@ -2461,6 +2489,7 @@ function lineRowByNumber(number) {
 /** An invoice detail's box, focused in view. */
 function goToField(name) {
   const box = input(name);
+  box?.closest("details[data-more-details]:not([open])")?.setAttribute("open", ""); // folded under More details
   if (!box || !box.getClientRects().length) return false;
   const target = box.closest(".pk")?.querySelector(".pk-input") || box;
   target.scrollIntoView({ block: "center", behavior: "smooth" });

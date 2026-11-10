@@ -38,7 +38,7 @@
 {%- endmacro %}
 
 {% macro check_item(i) -%}
-<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
+<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}{% if i.folded %} hidden{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
     {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}</span></button>
     {%- else %}<span class="t">{{ i.text }}</span>{% endif %}
     {%- for l in i.links or [] %} <a class="rvw-dup-link" href="{{ l.href }}" target="_blank" rel="noopener" title="Opens in a new tab: this one stays as it is">{{ l.text }}<span class="ms" aria-hidden="true">open_in_new</span></a>{% endfor %}</li>
@@ -323,5 +323,14 @@
   {# last, after the voucher's values: not in the middle of the form's Tab order (B-804) #}
   {% if live.jde_settings %}<a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for {{ live.setup_contact or 'the pilot tester' }})">Change the settings<span class="ms" aria-hidden="true">settings</span></a>{% endif %}
 </div>
+{% endif %}
+{%- endmacro %}
+
+{# With a chart of accounts (D-214): what is keyed on the voucher's pay item, in one read-only line
+   (jde.voucher_view's ``keyed``: "Keyed on the pay item: …", or "Not ready to key: …" with the first reason). #}
+{% macro keyed(live, invoice_id) -%}
+{% set j = live.jde %}
+{% if j and j.keyed %}{% set said = j.keyed.partition(": ") %}
+<div class="inv-keyed-line{% if j.not_ready %} not-ready{% endif %}" title="{{ j.keyed }}"><span class="k">{{ said[0] }}</span> <span class="v">{{ said[2] }}</span></div>
 {% endif %}
 {%- endmacro %}

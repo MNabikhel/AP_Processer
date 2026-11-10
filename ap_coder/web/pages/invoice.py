@@ -684,6 +684,8 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     """Every section that follows the edits, drawn again (``_invoice_live.html``)."""
     mod = templates.env.get_template("_invoice_live.html").module
     names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar", "jde")
+    if live.get("account"):  # with a chart of accounts: the line of what is keyed on the pay item (D-214)
+        names += ("keyed",)
     if not live["ok"]:  # a field to fix: the coding can't be built, so the rest keeps its last state
         names = ("checks", "amounts", "taxcheck", "posting", "bar")
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}

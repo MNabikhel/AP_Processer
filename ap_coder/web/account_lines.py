@@ -72,6 +72,21 @@ def fill(lines: list[dict[str, Any]], gl: str, cc: str) -> tuple[list[dict[str, 
     return out, n
 
 
+def said_once(items: list[dict[str, Any]]) -> None:
+    """The findings' list (``invoice_view.checks_summary``'s items) as a screen with one Account box a line says
+    it: a line with no account is said once ("no account yet"), not once for its GL code and once for its business
+    unit: the second stays in the list, not shown (``folded``), so the page still carries its code."""
+    uncoded = {n for item in items if item.get("code") == "GL_UNASSIGNED" for n in item.get("lines") or []}
+    for item in items:
+        if item.get("code") == "GL_UNASSIGNED":
+            item["text"] = item["text"].replace("no GL account yet", "no account yet")
+        elif item.get("code") == "CC_UNASSIGNED" and item.get("lines") and set(item["lines"]) <= uncoded:
+            item["folded"] = True
+        elif item.get("code") == "CC_UNASSIGNED":
+            item["text"] = item["text"].replace("no cost center yet: pick one",
+                                                "no business unit yet: type the whole account")  # fmt: skip
+
+
 def why_words(decided_by: dict[str, Any] | None) -> str:
     """What decided a line's account (``LineItem.decided_by``), in plain words for under its box; "" when nothing
     is recorded."""
