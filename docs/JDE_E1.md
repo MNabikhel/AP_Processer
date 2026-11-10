@@ -58,6 +58,49 @@ Edwards batch made) has it turned on by itself when it is updated: nothing is ta
    number, so the Z-table keys never clash. A batch can be downloaded again at any time; it is rebuilt from the approved data
    with the current JD Edwards settings.
 
+## Keying vouchers by hand from the keying sheet
+
+Where vouchers are typed into JD Edwards by hand (Standard Voucher Entry) and not loaded as a batch, choose the ERP
+format **JD Edwards keying sheet** on the Exports page (`ap_coder/erp/jde_keying.py`, D-210). The batch's download is
+an Excel workbook to read, or print, while typing: one block per voucher on the sheet *Keying sheet*, and the
+invoices that are not ready on the sheet *Not ready*, each with why (the same checks as the batch files, below; a
+voucher JD Edwards already has through the API is there too, never to be typed twice). Past batches → *download
+again* also offers it as a CSV with the same values, one row per G/L line, for another tool: Excel drops the leading
+zeros of a code when it opens a CSV, so read the workbook.
+
+The sheet says what the JD Edwards settings say, like the batch files: with *Amounts* = **Taxable / non-taxable / tax
+amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the taxable and tax
+amounts) and the G/L lines are net of it; with **Tax coded to G/L accounts** each recoverable tax is a G/L line of
+its own and the pay item has no tax.
+
+| On the sheet | What it is | Where it is typed |
+| --- | --- | --- |
+| Supplier number, Supplier name | the vendor's address number (AN8) and its name, to check | *Supplier Number* |
+| Invoice number | as printed | *Invoice Number* |
+| Invoice date, G/L date | real dates; the G/L date as Settings → JD Edwards E1 sets it | *Invoice Date*, *G/L Date* |
+| Gross amount, Currency | the invoice total, in the invoice's currency | the pay item's *Gross Amount*; the currency |
+| Payment terms | the JD Edwards terms code when the terms table has one, else the terms as printed | *Pymt Terms* |
+| PO number | as text, with its leading zeros | the purchase order, when the voucher has one |
+| Tax explanation code, Tax rate/area | from the province of supply (*Province → tax area*) | *Tax Ex*, *Tax Rate/Area* |
+| Taxable amount, Tax amount | the tax on the pay item: only what JD Edwards posts or is told (see below) | *Taxable Amount*, *Tax Amount* |
+| Remark | the first line's remark | the pay item's *Remark* |
+| Account number | `BU.Object.Subsidiary`, typed as it is, without padding | G/L Distribution: *Account Number* |
+| Account description | the GL account's name in AP Coder, to compare with what JD Edwards shows | not typed |
+| Amount | the line's amount net of the tax JD Edwards posts; a tax left in the expense is inside it | *Amount* |
+| Explanation -Remark- | the line's remark: its description, cut at 30 characters | *Explanation -Remark-* |
+| Check | G/L lines + recovered tax = gross, and the lines' total | not typed: JD Edwards' amount to distribute |
+
+Every code is a text cell (a business unit `0312005561`, an object `0042`, a PO `00052316` keep their zeros), amounts
+are numbers with two decimals and dates are dates. Printed, the sheet is upright, the column names on each page, and
+a voucher is not cut by a page unless it is longer than one.
+
+**A tax that is not recovered** (the QST of a company that claims the GST only): set it to *Not recoverable: add to
+the expense line* in GL accounts & tax, and give the province a GST-only tax area with code V. The pay item then
+carries the GST alone (taxable amount = the base, tax amount = the GST) and the G/L line holds the expense with its
+QST: gross = G/L lines + GST. **To confirm with the JDE team:** whether the tax left in the expense is entered as the
+pay item's non-taxable amount (what the batch files send in VLATXN: gross - taxable - tax), or the taxable amount is
+simply left at the base and JD Edwards works the rest out.
+
 ## How the mapping works
 
 ### Formats
@@ -98,7 +141,8 @@ setting *Amounts* chooses one of three ways (D-93):
   (JDE_GROSS_TAX, B-921): a line exempt or zero-rated, or tax charged at another rate than the area's on the gross.
 * **Taxable / non-taxable / tax**: VLATXA (taxable), VLATXN (non-taxable = gross - taxable - tax) and
   VLSTAM (all Canadian tax charged); VLAG is blank (VLCTXA / VLCTXN / VLCTAM in a foreign currency).
-  E1 keeps the tax printed on the invoice.
+  E1 keeps the tax printed on the invoice. Under code V a tax the Tax setup leaves in the expense (the QST not
+  recovered) is not in VLATXA / VLSTAM: it is in the G/L lines and so in VLATXN (D-210).
 
 ### Tax areas and explanation codes
 
@@ -110,6 +154,7 @@ F4008 tax areas:
 | --- | --- | --- | --- |
 | ON, NB, NL, NS, PE (HST) | `ON-HST`, `NS-HST`, … | V | gross - HST |
 | QC (GST + QST) | `QC-GSTQST` | V | gross - GST - QST |
+| QC, the QST not recovered (Tax setup: added to the expense line) | your GST-only area | V | gross - GST (the QST stays in the expense lines, D-210) |
 | BC, SK, MB (GST + seller-charged PST) | `BC-GSTPST`, … | C | gross - GST (the PST stays in the expense lines) |
 | AB, NT, NU, YT (GST) | `AB-GST`, … | V | gross - GST |
 | BC, SK, MB with no PST charged, every line owing it | same area | B (self-assessed PST) | gross - GST; E1 accrues the PST |
@@ -151,6 +196,16 @@ province uses code C): E1 would post the PST twice or not at all, so the invoice
 recovers, rather than against the gross itself, because under V / C / B E1 adds the recoverable tax line
 itself; balancing to the gross would post that tax twice.
 
+**Code V and a tax left in the expense (D-210).** Code V has E1 post every tax on the pay item as recoverable. A
+tax the Tax setup does not recover (*add to the expense line*, or its own expense account: the QST of a company
+that claims the GST only) is therefore left off the pay item: VLATXA and VLSTAM hold the recovered taxes alone, the
+other tax stays in the G/L lines and in VLATXN, and the check is still gross = distribution + the tax E1 posts. The
+province's tax area must then be one with the recovered taxes only (a GST-only area for Quebec). With the gross
+amount only E1 would work the GST out of an amount that holds the QST, so such an invoice is held back
+(JDE_GROSS_TAX): send tax amounts, or code the tax to G/L accounts. Codes C and B are as before: the provincial tax
+is the area's sales tax, in VLSTAM. The other way round is still held as *unbalanced*: a tax the Tax setup recovers
+under a code that leaves it in the expense.
+
 ### Accounts: GL code → BU.Object.Subsidiary
 
 Each distribution line's GL code (and cost center) is looked up in the mapping table:
@@ -158,7 +213,9 @@ Each distribution line's GL code (and cost center) is looked up in the mapping t
 1. a row with the same GL code **and** cost center;
 2. else a row with the GL code and a blank cost center;
 3. else the **default rule** (if on): BU = the line's cost center (or the *Default BU* when the line has none,
-   or always when "BU = the line's cost center" is off), Object = the GL code, Subsidiary blank.
+   or always when "BU = the line's cost center" is off), Object = the GL code, Subsidiary blank. **A GL code
+   with a dot is split** (D-209): `6420.2210` is object `6420`, subsidiary `2210`, so a chart whose accounts are
+   `object.subsidiary` needs no mapping row for each.
 
 A row with a blank BU or object is completed by the default rule, so a mapping can change just the object.
 A line that finds no account is *unmapped*: the invoice is left out. With *Account* = one field, AP Coder
@@ -269,7 +326,7 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers; blank when the PO is longer (D-87) |
 | VLPDCT | PO document type (default `OP`) | with VLPO |
 | VLPKCO | PO company (default: the company) | with VLPO |
-| VLRMK | `AP Coder #<id>`, plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
+| VLRMK | `AP Coder #<id>`, or with *Remarks* = as typed by hand the first line's remark (D-210); plus `PO <number>` for a PO too long for VLPO when it fits in 30 characters | remark |
 | VLGLBA | G/L bank account of the invoice's *Pay from* account | **unconfirmed**; only when mapped (below) |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
 
@@ -319,7 +376,7 @@ up to R04110ZA's processing options: confirm it with the JDE team.
 | VNCRCD | Currency code | |
 | VNACR | Foreign amount | foreign currency |
 | VNEXA | Line description (≤30) | |
-| VNEXR | Invoice number (≤30) | remark |
+| VNEXR | Invoice number (≤30), or with *Remarks* = as typed by hand the line's remark (≤30, D-210) | remark: *Explanation -Remark-* on E1's G/L distribution |
 | VNTXA1, VNEXR1 | Tax area and code | optional (setting) |
 
 ## F0411Z1T: PO match lines (unconfirmed)

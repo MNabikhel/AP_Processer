@@ -344,6 +344,18 @@ def test_jde_general_settings_are_saved_and_checked(client, store):
     assert post(client, "/settings/jde", general_form(amount_mode="both")).status_code == 400
 
 
+def test_jde_remarks_choice_is_saved_and_a_form_without_it_keeps_it(client, store):
+    """D-210: what the vouchers' two remarks carry is chosen on the page; AP Coder's references until it is."""
+    assert jde.load(store).remarks == jde.REMARKS_REFERENCE
+    assert f'<option value="{jde.REMARKS_REFERENCE}" selected>' in client.get("/settings/jde").text
+    follow(client, post(client, "/settings/jde", general_form(remarks=jde.REMARKS_TYPED)))
+    assert jde.load(store).remarks == jde.REMARKS_TYPED
+    assert f'<option value="{jde.REMARKS_TYPED}" selected>' in client.get("/settings/jde").text
+    assert post(client, "/settings/jde", general_form(remarks="both")).status_code == 400
+    follow(client, post(client, "/settings/jde", general_form(company="7")))  # without the field: kept
+    assert jde.load(store).remarks == jde.REMARKS_TYPED
+
+
 def test_jde_open_period_and_the_apis_waits_are_saved_and_checked(client, store):
     """D-182: JD Edwards' open period (a G/L date before it moved or held) and the API's waits (a voucher's request,
     a posting run, a lost answer sent again) are set on the page; a form without them keeps them."""

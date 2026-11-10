@@ -4749,3 +4749,51 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     lists, picker and exports follow, each with its tests. The audit behind it measured today's behaviour on files made
     up in the exports' layouts.
   - (`ap_coder/core/chart.py`; `tests/core/test_chart.py`)
+- **D-210** · **Under tax explanation code V the pay item of a JD Edwards voucher carries only the taxes the Tax
+  setup recovers, with no new switch; and a keying sheet for vouchers typed by hand** (a head-office overhead
+  department's prototype; 10 Nov 2026).
+  - **Why:** The department claims the GST/HST only. It types the tax on the voucher's pay item (code V, a GST-only
+    tax area, the taxable amount and the GST) and leaves a provincial tax inside the expense line; JD Edwards makes
+    the GST line and the payable line itself. AP Coder took code V to recover every tax charged: a Quebec invoice
+    coded with the QST added to the expense line was held back as unbalanced (B-2086), so no setting could say what
+    the department does. It also types its vouchers, so it needs a sheet to read, not the Z-files.
+  - **What, the tax:** the invoice's stored G/L distribution already says which taxes are recovered (a recoverable
+    tax line of their own) and which are in the expense. Under code V a tax charged that the distribution does not
+    recover is left off the pay item (`jde._tax_amounts`, `_Voucher.expensed`): the taxable amount and the tax
+    amount are the recovered taxes' alone, the other tax stays in the G/L lines, and the voucher balances as before
+    (gross = distribution + the tax JD Edwards posts). In the batch files it is in the non-taxable amount (VLATXN =
+    gross - taxable - tax: the three amounts must add up to the gross, which is not sent). With the gross amount
+    only, JD Edwards would work the GST out of an amount that holds the QST: held back, with that reason
+    (JDE_GROSS_TAX).
+  - **No switch:** every voucher this changes was held back before, so nothing an install sends today moves: where
+    the Tax setup recovers each tax the code posts, the amounts are the same to the cent. Codes C and B are
+    untouched: there the provincial tax is the tax area's sales tax and stays in the tax amount, and a Quebec company
+    that prefers code C with an area holding the QST as a sales tax keeps that. What is lost is one catch: a tax set
+    to "not recoverable" by mistake under code V used to be held as unbalanced, and now goes out with the tax left
+    off the pay item, on a tax area that may hold it (JD Edwards' own tax tolerance is then the check). The other
+    way round is still held: a tax the Tax setup recovers under a code that expenses it.
+  - **Open, for the JDE team:** on a voucher with a provincial tax left in the expense, is that tax entered as the pay
+    item's non-taxable amount (what the batch files send), or is the taxable amount left at the base with nothing
+    else typed? The keying sheet shows gross, taxable and tax, which is the same either way.
+  - **What, the keying sheet** (`erp/jde_keying.py`; the Exports page's formats "JD Edwards keying sheet" and its
+    CSV): for a batch's invoices, a block for each voucher (the pay item's fields, then its G/L lines with the account
+    string as typed, the account's description, the amount and the remark, then a check line: lines + recovered tax
+    = gross), made of the same voucher as the batch files (`jde._prepare`), so the two cannot disagree. Codes are
+    text cells, amounts numbers, dates dates; it prints upright with the column names on each page and a voucher
+    kept on one page when it fits. An invoice the JD Edwards checks hold back, or that JD Edwards has through the
+    API, is on the sheet "Not ready" with why. A batch made in this format takes every ticked invoice (the sheet
+    says which are not ready), where a JD Edwards batch leaves them out.
+  - **Remarks:** `jde.line_remark` and `jde.voucher_remark` alone say a G/L line's remark (today its description cut
+    at 30 characters) and the pay item's (the first line's): the keying sheet always shows them, and one setting
+    (Remarks) chooses what the batch files carry: AP Coder's invoice number in VLRMK and the invoice number in VNEXR
+    (the default: what was sent before), or the pay item's remark in VLRMK and each line's in VNEXR, as typed by hand.
+  - **Not chosen:** a setting "the pay item's tax is only the taxes you recover" (the Tax setup already says it, and
+    two places to say it can disagree); the same rule under codes C and B (it would take the PST out of the tax
+    amount of every code C voucher sent today); a keying sheet built from the Excel export's rows (it knows no tax
+    area, explanation code or account string).
+  - **Left:** the Sales tax page takes only a batch made as "JD Edwards E1" for one whose self-assessed PST JD Edwards
+    accrues (code B): a keying-sheet batch typed with code B is not known to it. The worksheet for the JDE team has
+    no question yet for the open one above, nor for the remarks.
+  - (`ap_coder/erp/jde.py`, `ap_coder/erp/jde_keying.py`, `ap_coder/erp/exports.py`,
+    `ap_coder/web/pages/exports.py`, `ap_coder/web/pages/settings_jde.py`, `docs/JDE_E1.md`;
+    `tests/erp/test_jde.py`, `tests/erp/test_jde_keying.py`, `tests/web/test_web_settings.py`)

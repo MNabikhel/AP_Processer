@@ -884,3 +884,119 @@ def test_a_line_with_no_gl_account_yet_has_no_e1_account():
     settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, default_bu="CC400")
     assert jde.account_for("UNASSIGNED", "", settings) is None and jde.account_text("UNASSIGNED", "", settings) == ""
     assert jde.account_text("6010", "", settings) == "CC400.6010"
+
+
+def _recoded(stem, gl_code, cost_center, **kw):
+    """A sample invoice with every line coded to one account string's two codes."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
+    lines = [{**li, "predicted_gl_code": gl_code, "predicted_cost_center": cost_center} for li in doc["line_items"]]
+    return _invoice(stem, line_items=lines, **kw)
+
+
+def test_a_gl_code_with_a_dot_is_object_and_subsidiary_under_the_default_rule():
+    """B-2085: with the default account rule and no mapping row, a GL code "object.subsidiary" (D-209) was taken
+    whole as the object, so every such line was held as "too long". It is split at the dot; a mapping row wins."""
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
+    account = jde.account_for("6420.2210", "0312005561", settings)
+    assert (account.bu, account.obj, account.sub) == ("0312005561", "6420", "2210")
+    assert jde.ani(account) == jde.account_text("6420.2210", "0312005561", settings) == "0312005561.6420.2210"
+    plain = jde.account_for("3015", "0312005561", settings)
+    assert (plain.obj, plain.sub) == ("3015", "") and jde.ani(plain) == "0312005561.3015"  # no subsidiary: as before
+    inv = _recoded(AB, "6420.2210", "0312005561")
+    assert jde.validate([inv], settings, AN8) == {}
+    assert {r["VNANI"] for r in _files([inv], settings)[jde.DIST_FILE]} == {"0312005561.6420.2210"}
+    columns = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, account_mode=jde.ACCOUNT_COLUMNS)
+    assert jde.validate([inv], columns, AN8) == {}
+    assert {(r["VNMCU"], r["VNOBJ"], r["VNSUB"]) for r in _files([inv], columns)[jde.DIST_FILE]} == {
+        ("0312005561", "6420", "2210")
+    }
+    # A mapping row still wins: its object and subsidiary as they are, or its business unit alone.
+    mapped = jde.JdeSettings(gl_map=[jde.GlMap("6420.2210", "", "77", "7000", ""), jde.GlMap("6430.01", bu="88")])
+    assert jde.ani(jde.account_for("6420.2210", "0312005561", mapped)) == "77.7000"
+    assert jde.ani(jde.account_for("6430.01", "0312005561", mapped)) == "88.6430.01"
+    # A subsidiary longer than JD Edwards holds is still said.
+    reason = jde.validate([_recoded(AB, "6420.123456789", "0312005561")], settings, AN8)[1][0]
+    assert "too long" in reason and "0312005561.6420.123456789" in reason
+
+
+def _quebec_qst_in_the_expense(code="V", **settings):
+    """A Quebec invoice coded with the GST recovered and the QST left in the expense, and settings that send tax
+    amounts with Quebec on a GST-only tax area."""
+    inv = _invoice(QC, setup=_setup(QST=TaxTreatment("QST", "expense_to_line")))
+    js = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, **settings)
+    js.tax_map["QC"] = jde.TaxArea("QC-GST", code)
+    return inv, js
+
+
+def test_quebec_with_the_qst_left_in_the_expense_puts_only_the_gst_on_the_pay_item():
+    """B-2086: GST recovered and QST left in the expense lines (the Tax setup's "add to the expense line"), tax
+    explanation code V: the voucher was held as JDE_UNBALANCED, the code taken to recover the QST too. The pay item
+    carries the recovered tax only (D-210): taxable = the base, tax = the GST, the QST in the non-taxable amount and
+    inside the G/L lines, and the voucher balances."""
+    inv, settings = _quebec_qst_in_the_expense()
+    assert jde.validate([inv], settings, AN8) == {}
+    assert "JDE_UNBALANCED" not in {f[1] for f in jde.voucher_findings(inv["final_output"], settings, "10023")}
+    files = _files([inv], settings)
+    (head,) = files[jde.HEADER_FILE]
+    assert (head["VLTXA1"], head["VLEXR1"]) == ("QC-GST", "V")
+    assert (head["VLATXA"], head["VLSTAM"], head["VLATXN"]) == ("240000", "12000", "23940")
+    lines = [int(r["VNAA"]) for r in files[jde.DIST_FILE]]
+    assert lines == [131969, 37392, 94579] and sum(lines) == 275940 - 12000  # each line with its QST inside
+    assert jde.sent_tax(inv, settings, "10023") == 120.0
+    # One pay item per G/L line: each with its share of the GST only, and its QST as non-taxable.
+    each = _files([inv], _quebec_qst_in_the_expense(line_numbering=jde.MATCH_HEADER)[1])[jde.HEADER_FILE]
+    assert [(h["VLATXA"], h["VLSTAM"], h["VLATXN"]) for h in each] == [
+        ("120000", "6000", "11969"), ("34000", "1700", "3392"), ("86000", "4300", "8579"),
+    ]  # fmt: skip
+
+
+def test_what_the_tax_setup_recovers_is_still_all_on_the_pay_item_and_a_real_mismatch_still_held():
+    """D-210 changes nothing where the Tax setup recovers what the code posts, and still holds a voucher whose Tax
+    setup recovers a tax the code leaves in the expense."""
+    full = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    (qc,) = _files([_invoice(QC)], full)[jde.HEADER_FILE]  # GST and QST both recovered: both E1's to post
+    assert (qc["VLATXA"], qc["VLATXN"], qc["VLSTAM"]) == ("240000", "0", "35940")
+    (bc,) = _files([_invoice(BC)], full)[jde.HEADER_FILE]  # code C: the PST is the area's sales tax, as before
+    assert (bc["VLATXA"], bc["VLATXN"], bc["VLSTAM"]) == ("272600", "0", "32712")
+    recovered = _invoice(BC, setup=_setup(PST=TaxTreatment("PST", RECOVERABLE, "2330")))
+    assert "unbalanced" in jde.validate([recovered], full, AN8)[1][0]  # PST recovered, code C expenses it
+    # With the gross amount only, JD Edwards would work the GST out of an amount that holds the QST: held, and said.
+    inv, settings = _quebec_qst_in_the_expense()
+    settings.amount_mode = jde.AMOUNT_GROSS
+    (reason,) = jde.validate([inv], settings, AN8)[1]
+    assert "QST" in reason and "gross amount only" in reason and "tax amounts" in reason
+
+
+def test_the_remarks_stay_as_they_were_or_carry_what_a_person_types():
+    """D-210: one setting for the two remarks. As before, the pay item's (VLRMK) is AP Coder's invoice number and each
+    G/L line's (VNEXR) the invoice number; or both are the remarks a person types by hand (``jde.line_remark``,
+    ``jde.voucher_remark``: the keying sheet's too), the invoice number being in VLVINV either way."""
+    inv = _invoice(ON)
+    final = inv["final_output"]
+    described = [" ".join(li["description"].split())[:30].rstrip() for li in final["line_items"]]
+    assert [jde.line_remark(li) for li in final["line_items"]] == described and jde.voucher_remark(inv) == described[0]
+    assert jde.line_remark({"description": "  two\n lines  "}) == "two lines" and jde.line_remark({}) == ""
+    blank_first = {"final_output": {"line_items": [{"description": " "}, {"description": "Toner"}]}}
+    assert jde.voucher_remark(blank_first) == "Toner" and jde.voucher_remark({}) == ""
+
+    assert jde.JdeSettings().remarks == jde.REMARKS_REFERENCE
+    before = _files([inv])
+    assert before[jde.HEADER_FILE][0]["VLRMK"] == "AP Coder #1"
+    assert {r["VNEXR"] for r in before[jde.DIST_FILE]} == {final["invoice_number"]}
+    assert [r["VNEXA"] for r in before[jde.DIST_FILE]] == described
+
+    typed = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, remarks=jde.REMARKS_TYPED)
+    files = _files([inv], typed)
+    (head,) = files[jde.HEADER_FILE]
+    assert head["VLRMK"] == described[0] and head["VLVINV"] == final["invoice_number"]
+    assert [r["VNEXR"] for r in files[jde.DIST_FILE]] == [r["VNEXA"] for r in files[jde.DIST_FILE]] == described
+    # A PO number too long for VLPO is still added to the pay item's remark when it fits its 30 characters.
+    short = _invoice(ON, po_number="4500078813", line_items=[{**final["line_items"][0], "description": "Laptops"}],
+                     subtotal=final["line_items"][0]["amount"])  # fmt: skip
+    assert jde.voucher_rows(short, "10023", typed)[0][0]["VLRMK"] == "Laptops PO 4500078813"
+    assert _files([_invoice(ON, po_number="4500078813")], typed)[jde.HEADER_FILE][0]["VLRMK"] == described[0]
+
+    # Saved settings from before the choice, or with one not known: as they were.
+    assert jde.JdeSettings.from_json(json.dumps({"company": "00002"})).remarks == jde.REMARKS_REFERENCE
+    assert jde.JdeSettings.from_json(json.dumps({"remarks": "both"})).remarks == jde.REMARKS_REFERENCE
+    assert jde.JdeSettings.from_json(typed.to_json()).remarks == jde.REMARKS_TYPED
