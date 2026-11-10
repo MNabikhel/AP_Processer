@@ -25,6 +25,7 @@ from ._base import (
     _RESTORING_LOCK,
     _SCHEMA,
     ANSWER_WANTS,
+    CHART_TABLES,
     SCHEMA_VERSION,
     _forget_learning,
     _now,
@@ -664,6 +665,8 @@ class BackupsMixin:
             ):  # (the kept answers read as this version reads them: B-2045)
                 _answer_work(None, conn)
             conn.execute(ANSWER_WANTS)  # (the settled answers asked, D-198: a backup from before has none)
+            for table in CHART_TABLES:  # (the chart of accounts, D-209: the reference data asks them)
+                conn.execute(table)
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
                 conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE "
                              "SET value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip

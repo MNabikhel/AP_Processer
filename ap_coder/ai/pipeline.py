@@ -196,6 +196,22 @@ def discover_inputs(paths: list[str | Path]) -> list[Path]:
     return found
 
 
+def duplicates_known(store: Store, others: list[int], invoice_id: int | None) -> list[dict[str, Any]]:
+    """What DUPLICATE_INVOICE says of each other invoice with this vendor and invoice number
+    (``validation.duplicate_message``): whether it was received before this one (``invoice_id``; None: this one is
+    coming in now), where it stands, and when it was approved. Read as the checks run, so each of a pair says the
+    other's state as its screen is drawn (B-2101)."""
+    from ..core.store import APPROVED
+
+    known = []
+    for inv in store.get_invoices(others):
+        approved = inv["status"] == APPROVED
+        known.append({"id": inv["id"], "first": invoice_id is None or inv["id"] < invoice_id, "status": inv["status"],
+                      "approved": (inv.get("reviewed_at") or "") if approved else "",
+                      "exported": approved and inv.get("export_batch") is not None})  # fmt: skip
+    return known
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -219,12 +235,16 @@ def finalise_coding(
     else:
         history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
-        store.find_duplicates(
-            coding.vendor_name,
-            coding.invoice_number,
-            exclude_id=exclude_invoice_id,
-            grand_total=coding.grand_total,
-            key=key,
+        duplicates_known(
+            store,
+            store.find_duplicates(
+                coding.vendor_name,
+                coding.invoice_number,
+                exclude_id=exclude_invoice_id,
+                grand_total=coding.grand_total,
+                key=key,
+            ),
+            exclude_invoice_id,
         )
         if store is not None
         else None
@@ -337,8 +357,15 @@ def _picture(path: Path) -> bool:
 
 
 def plain_error(exc: Exception, path: Path) -> str:
-    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
-    technical detail is in the log), anything else as the error it is."""
+    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do
+    (``file_error``), anything else as the error it is."""
+    return file_error(exc, path) or f"{type(exc).__name__}: {exc}"
+
+
+def file_error(exc: Exception, path: Path) -> str | None:
+    """What is wrong with the file and what to do, when the error is the file's (too large or damaged a picture, an
+    empty or damaged PDF, a PDF with a password): AP Coder's window says that one line, not a traceback (B-2097).
+    None for an error nobody expected."""
     name = type(exc).__name__
     kind = path.suffix.lstrip(".").upper() or "picture"
     if name == "DecompressionBombError":  # Pillow's guard: over ~179 million pixels (a phone's 200 MP mode)
@@ -358,7 +385,7 @@ def plain_error(exc: Exception, path: Path) -> str:
                 "copy.")  # fmt: skip
     if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
         return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
-    return f"{name}: {exc}"
+    return None
 
 
 NO_PAGES = "{name} has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy."
@@ -626,12 +653,28 @@ class InvoicePipeline:
             log.warning("%s: %s", result.source.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
-            log.exception("Failed to process %s", result.source)
-            result.error = plain_error(exc, result.source)
+            result.error = file_error(exc, result.source)
+            if result.error:  # the file's own fault: one line in the window, as on the page
+                log.warning("%s", result.error)
+                log.debug("%s: the error as it was raised", result.source.name, exc_info=True)
+            else:
+                log.exception("Failed to process %s", result.source)
+                result.error = plain_error(exc, result.source)
         azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
                                                          pages_read, text_file)  # fmt: skip
         self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
+        if save and result.invoice_id and (result.original or result.source != Path(path)):
+            self._note_own_file(result.source)
         return result
+
+    def _note_own_file(self, path: Path) -> None:
+        """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
+        renamed to the kind it is, pages turned upright): kept as read by the pick-up, which read the file as it
+        came, so the import page does not list AP Coder's own file as a new one (B-2098)."""
+        from ..core.store.folder import read_file
+
+        with contextlib.suppress(OSError):  # gone meanwhile: nothing to list
+            self.store.note_files([read_file(path)])
 
     def _read_and_code(self, result: PipelineResult, page_text: list[str] | None, invoice_id: int | None,
                        text_file: bool, captured: dict[str, tuple[Any, str, Any]]) -> None:  # fmt: skip

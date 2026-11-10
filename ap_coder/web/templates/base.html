@@ -49,9 +49,11 @@
         {% endif %}
         {% if account %}
         {# Server mode (D-97): the person logged in, their role, their password, the users (Admin) and Log out. #}
-        <div class="apc-me" title="{{ account.username }} · {{ account.role_label }} · {{ approved_today | num }} approved today">
+        {# (a Manager approves no invoice: only the role) #}
+        {% set mine = account.role_label ~ ("" if account.role == "manager" else " · " ~ (approved_today | num) ~ " approved today") %}
+        <div class="apc-me" title="{{ account.username }} · {{ mine }}">
           {{ ui.avatar(account.name, "sm") }}
-          <div><div class="name">{{ account.name }}</div><div class="role">{{ account.role_label }} · {{ approved_today | num }} approved today</div></div>
+          <div><div class="name">{{ account.name }}</div><div class="role">{{ mine }}</div></div>
         </div>
         <div class="apc-me-links">
           <a href="/account/password">Your password</a>

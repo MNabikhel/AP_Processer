@@ -13,7 +13,9 @@
   {% if what_to_do %}<p class="center"><b>What to do:</b> {{ what_to_do }}</p>{% endif %}
   {% if again %}<p class="center muted">This page tries again by itself.</p>{% endif %}
   <div class="row center">
-    <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
+    {# a page the person's role may open: a Manager has its own, not the review queue (D-138) #}
+    {% if account and account.role == "manager" %}<a class="btn" href="/manager"><span class="ms" aria-hidden="true">inbox</span>Go to your confirmations</a>
+    {% else %}<a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>{% endif %}
     {% if code not in (403, 404, 503) %}<a class="btn" href="/help/report" data-busy="Gathering the reports…"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
   </div>
   {% if error_text %}

@@ -21,6 +21,8 @@ from ..types import (
 )
 from ._common import (
     _HEAD,
+    _PRETAX_HEAD,
+    _TAXED_HEAD,
     plain,
 )
 from .labels import (
@@ -146,6 +148,10 @@ _TAX_HEAD = re.compile(r"^(?:vat|tax|gst|hst|pst|qst|tps|tvq|tvh|tva|ust|mwst|iv
 
 _ROW_NUMBER_HEAD = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)\s+(?=[a-z])")  # "No. Description": the row number's heading
 
+_ROW_NUMBER_ALONE = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)$")  # the row number's heading in a segment of its own
+
+_ROW_NUMBER = re.compile(r"^\d{1,3}[.)]?$")  # a row's number under it: "1", "12.", "3)"
+
 # The heading of a line table's tax-code column ("Tax", "Tax code", "Tx", "GST/PST", "Code taxe"): its cells say which
 # taxes the line carries ("G", "GP", "G R", "E", "*"), kept as the line's ``tax_flags`` and not in its description.
 _TAX_CODE_HEAD = re.compile(
@@ -185,8 +191,56 @@ def tax_flag_cell(text: str) -> bool:
     return bool(_TAX_FLAG_CELL.match(" ".join((text or "").split())))
 
 
+def _tax_code_cells(segs: list[Line], amt_seg: Line | None, cols: dict[str, Box], column: Box | None) -> list[Line]:
+    """The tax-code column's cells of a row ("G R"): the line's tax code, not part of its description (D-64)."""
+    return [s for s in segs if s is not amt_seg and _under_tax_column(s, column)
+            and not ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)]  # fmt: skip
+
+
 def _under_tax_column(seg: Line, column: Box | None) -> bool:
     return column is not None and abs(seg.box.cx - column.cx) < max(0.035, column.width) and tax_flag_cell(seg.text)
+
+
+def row_number_column(row: list[Line], cols: dict[str, Box]) -> tuple[float, float] | None:
+    """Where the line table prints its rows' numbers (x from, to), when its heading row (``heading_row``'s lines)
+    names their column left of the named ones: a heading of its own ("#", "No.", "Pos."), or the word before the
+    description's ("# Description"). The column ends where the next heading starts. None when the rows have no
+    number column."""
+    left = min(box.x0 for box in cols.values())
+    for line in row:
+        p = plain(line.text).strip()
+        if _ROW_NUMBER_ALONE.match(p) and line.box.x1 <= left:
+            head, upto = line.box, left
+        elif _ROW_NUMBER_HEAD.match(p) and len(line.words) > 1 and line.box.x0 <= left:
+            head, upto = line.words[0].box, line.words[1].box.x0
+        else:
+            continue
+        return head.x0 - 0.015, min(head.x1 + 0.015, upto)
+    return None
+
+
+def _row_number(text: str, box: Box, column: tuple[float, float] | None) -> bool:
+    return column is not None and column[0] <= box.cx <= column[1] and bool(_ROW_NUMBER.match(text.strip()))
+
+
+def _without_row_number(seg: Line, column: tuple[float, float] | None) -> str:
+    """A cell's text without the row's number set close before it ("1 Copy paper" read as one cell)."""
+    first = seg.words[0] if len(seg.words) > 1 else None
+    if first is not None and _row_number(first.text, first.box, column) and seg.text.startswith(first.text):
+        return seg.text[len(first.text) :].lstrip()
+    return seg.text
+
+
+def _row_description(segs: list[Line], flags: list[Line], amt_seg: Line | None, cols: dict[str, Box],
+                     number_column: tuple[float, float] | None) -> str:  # fmt: skip
+    """A row's description: its cells but the tax code's (``flags``). A number cell (qty, price, amount, row number)
+    is not part of it; a description with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is, and
+    so is a number under the description's heading. The row's number under the "#" heading never is: in a cell of
+    its own beside the description's, or set close before it (B-2095)."""
+    return " ".join(_without_row_number(s, number_column) for s in segs
+                    if s not in flags and not _row_number(s.text, s.box, number_column)
+                    and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
+                         or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
 
 
 def _heading_name(text: str) -> str | None:
@@ -196,6 +250,8 @@ def _heading_name(text: str) -> str | None:
     it ("No. Description", "# Item"). None when it names none, or two."""
     text = _ROW_NUMBER_HEAD.sub("", text)
     longest = {name: m.end() for name, rx in _HEAD.items() if (m := rx.match(text))}
+    if _PRETAX_HEAD.match(text) and "unit_price" not in longest:  # "Net", "Excl. tax", "Montant HT": the amount
+        longest = {"amount": len(text)}
     if longest:
         top = max(longest.values())
         named = [name for name, end in longest.items() if end == top]
@@ -283,6 +339,69 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
     return out
 
 
+def _amount_rank(line: Line, box: Box) -> int:
+    """How surely a heading that names the amount names the amount before tax: 2 when it says so ("Net", "Excl.
+    tax", "Montant HT", "Subtotal"), 0 when it says the tax is in it ("Total incl. tax", "Montant TTC"), else 1
+    ("Amount", "Total": the first of them in the row is taken, as before)."""
+    words = plain(" ".join(w.text for w in line.words if box.x0 - 0.002 <= w.box.cx <= box.x1 + 0.002)).strip()
+    return 2 if _PRETAX_HEAD.match(words) else 0 if _TAXED_HEAD.match(words) else 1
+
+
+# The heading of a column that prints each line's tax as an amount: one tax ("GST", "PST", "TVQ"), or the tax
+# whichever it is ("Tax", "Tax amt", "GST/HST", "TPS/TVQ", "VAT").
+_TAX_AMOUNT_HEAD = re.compile(
+    r"^(?:(?P<GST>gst|tps)|(?P<HST>hst|tvh)|(?P<PST>pst|rst|tvp)|(?P<QST>qst|tvq)|tax(?:es?)?|vat|tva|"
+    r"(?:gst|tps)\s*/\s*(?:hst|tvh|pst|qst|tvq))(?:\s*(?:amt|amount|montant)\.?)?\s*:?$"
+)
+
+
+def tax_amount_columns(row: list[Line], cols: dict[str, Box], rows: dict[float, list[Line]]) -> list[tuple[str, Box]]:
+    """The line table's columns that print each line's tax as an amount, by its heading row (``heading_row``'s
+    lines): (the tax the heading names, "" when it names none or two; the heading's box). None unless a row of the
+    table (``rows``) prints an amount other than zero under one: a column of tax codes ("G", "E") is not one."""
+    found = []
+    for line in row:
+        m = _TAX_AMOUNT_HEAD.match(plain(line.text).strip())
+        if m and not any(abs(line.box.cx - b.cx) < 0.01 for b in cols.values()):
+            found.append((next((name for name, said in m.groupdict().items() if said), ""), line.box))
+    cells = [_tax_cell(segs, None, box) for segs in rows.values() for _, box in found]
+    return found if any(cells) else []
+
+
+def _tax_cell(segs: list[Line], amt_seg: Line | None, column: Box) -> float | None:
+    """The amount a row prints under a tax column's heading (None: nothing, or no amount)."""
+    for s in segs:
+        if s is not amt_seg and abs(s.box.cx - column.cx) < max(0.035, column.width) and (read := _amounts_in(s.text)):
+            return read[0][0]
+    return None
+
+
+def _row_tax(segs: list[Line], amt_seg: Line | None, columns: list[tuple[str, Box]]) -> tuple[str, float]:
+    """(what a row's tax amounts say of it, their sum): the taxes charged on it by the columns that name one
+    ("GST/PST"), "Exempt" when every tax cell is blank or zero (the line is not taxed), "" when it is taxed in a
+    column that names no tax (which tax is worked out from the invoice's taxes) or the table has no such column."""
+    cells = [(name, _tax_cell(segs, amt_seg, box) or 0.0) for name, box in columns]
+    charged = [name for name, value in cells if abs(value) >= 0.005]
+    named = "/".join(dict.fromkeys(name for name in charged if name))
+    return (named if charged else "Exempt" if cells else ""), round(sum(value for _, value in cells), 2)
+
+
+def _before_tax(amount: float, amt_seg: Line, tax: float, nums: list[tuple[Line, list[tuple[float, int, int]]]],
+                cols: dict[str, Box]) -> tuple[float, Line]:  # fmt: skip
+    """The row's amount before tax and its cell, when the amount read is the one with the tax in it: another figure
+    of the row and the row's tax (``tax``, from its tax columns) add up to it, to the cent. Proven by the row's own
+    arithmetic, whatever the columns are headed ("Base | Tax | Total")."""
+    if abs(tax) < 0.005:
+        return amount, amt_seg
+    priced = [cols[c].cx for c in ("quantity", "unit_price") if c in cols]
+    for seg, read in nums:
+        if seg is amt_seg or not read or any(abs(seg.box.cx - cx) < 0.05 for cx in priced):
+            continue
+        if abs(read[-1][0] + tax - amount) <= 0.011 and abs(read[-1][0] - tax) > 0.011:
+            return read[-1][0], seg
+    return amount, amt_seg
+
+
 def heading_row(page: PageLayout) -> tuple[Line, list[Line], dict[str, Box]] | None:
     """The line table's column headings on the page: (the first line of their row, the row's lines, {column: heading
     box}). A row of headings names the amount and the description or the quantity; of several, the one naming the
@@ -293,9 +412,13 @@ def heading_row(page: PageLayout) -> tuple[Line, list[Line], dict[str, Box]] | N
     for line in page.lines:
         row = [other for other in page.lines if abs(other.box.cy - line.box.cy) < 0.006]
         cols: dict[str, Box] = {}
+        rank = 0  # of the amount's heading: one that says before tax over a plain one, never one that says with tax
         for other in row:
             if id(other) in named:
-                for name, box in _heading_cells(other, cols):
+                for name, box in _heading_cells(other, {k: v for k, v in cols.items() if k != "amount"}):
+                    if name == "amount" and "amount" in cols and _amount_rank(other, box) <= rank:
+                        continue
+                    rank = _amount_rank(other, box) if name == "amount" else rank
                     cols[name] = box
         if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
             if best is None or len(cols) > len(best[2]):
@@ -583,6 +706,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             continue
         y_top, cols = header
         tax_column = tax_code_column(found[1], cols) if found else None
+        number_column = row_number_column(found[1], cols) if found else None
         rows: dict[float, list[Line]] = {}
         stop_y = stop_cy = 1.0
         for line in page.lines:
@@ -598,6 +722,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
             rows.setdefault(key, []).append(line)
         amount_x = cols["amount"].cx
+        tax_amounts = tax_amount_columns(found[1], cols, rows)  # each line's tax printed as an amount (B-2106)
         last: tuple[LineReading, float] | None = None  # the line item last read on this page, and its bottom
         for _, segs in sorted(rows.items()):
             if any(_CARRIED.match(plain(s.text).strip()) for s in segs):
@@ -623,13 +748,10 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
                 else:
                     last = None
                 continue
-            # The tax-code column's cell ("G R") is the line's tax code, not part of its description (D-64).
-            flags = [s for s in segs if s is not amt_seg and _under_tax_column(s, tax_column)
-                     and not ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)]  # fmt: skip
-            # A number cell (qty, price, amount, row number) is not part of the description; a description
-            # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
-            desc = " ".join(s.text for s in segs if s not in flags and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
-                            or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
+            taxed, tax = _row_tax(segs, amt_seg, tax_amounts)
+            amount, amt_seg = _before_tax(amount, amt_seg, tax, nums, cols)
+            flags = _tax_code_cells(segs, amt_seg, cols, tax_column)
+            desc = _row_description(segs, flags, amt_seg, cols, number_column)
             qty = price = None
             if "quantity" in cols:
                 q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
@@ -651,7 +773,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score,
-                                     tax_flags=" ".join(" ".join(s.text.split()) for s in flags)))  # fmt: skip
+                                     tax_flags=" ".join(" ".join(s.text.split()) for s in flags) or taxed))  # fmt: skip
             money.append(_printed_as_money(amt_token))
             last = (items[-1], max(seg.box.y1 for seg in segs))
     if guessed:  # kept only when they add up

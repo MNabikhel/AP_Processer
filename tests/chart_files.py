@@ -25,14 +25,14 @@ HOME, OTHER, CLOSED, NOT_USED, UNLISTED = "0731066120", "0731066135", "073106619
 CHART = [
     ("07310", "", "", "Head Office Balance Sheet", 3, ""),
     ("07310", "0042", "", "Objects under 1000 not GL", 5, "N"),
-    ("07310", "2100", "", "Current Liabilities", 5, "N"),
-    ("07310", "2140", "", "Accounts Payable Trade", 6, ""),
+    ("07310", "2100", "", "Amounts Owed", 5, "N"),
+    ("07310", "2140", "", "Trade Creditors", 6, ""),
     ("07310", "2140", "QC", "Payable Trade Quebec", 7, ""),
     ("07310", "2165", "60017734", "Deposits Held Lot", 7, ""),
     ("07310", "2190", "7QXR3", "Clearing Account", 7, ""),
     ("07310", "2310", "", "GST Paid on Purchases", 6, ""),
     ("07310K", "", "", "Head Office Annex", 3, "N"),
-    ("07310K", "5410", "", "Office Supplies", 6, ""),
+    ("07310K", "5410", "", "Stationery and Paper", 6, ""),
     ("0550421", "", "", "Fleet Vehicles", 3, "N"),
     ("0550421", "5600", "", "Vehicle Costs", 5, "N"),
     ("0550421", "5610", "", "Fuel", 6, ""),
@@ -44,7 +44,7 @@ CHART = [
     ("05504218", "5720", "", "Software Budget", 6, "B"),
     (HOME, "", "", "Head Office General", 3, "N"),
     (HOME, "5400", "", "Office and General Costs", 5, "N"),
-    (HOME, "5410", "", "Office Supplies", 6, ""),
+    (HOME, "5410", "", "Stationery and Paper", 6, ""),
     (HOME, "5410", "2210", "Coffee and Refreshments", 7, ""),
     (HOME, "5410", "7701", "Recoveries", 7, ""),
     (HOME, "5430", "", "Courier", 6, "I"),
@@ -53,16 +53,16 @@ CHART = [
     (HOME, "5710", "", "Software Subscriptions", 6, ""),
     (OTHER, "", "", "People and Culture", 3, "N"),
     (OTHER, "5400", "", "Office and General Costs", 5, "N"),
-    (OTHER, "5410", "", "Office Supplies", 6, ""),
+    (OTHER, "5410", "", "Stationery and Paper", 6, ""),
     (OTHER, "5450", "", "Training and Seminars", 6, ""),
     (NOT_USED, "", "", "Old Annex", 3, "N"),
     (NOT_USED, "5400", "", "Office and General Costs", 5, "N"),
-    (NOT_USED, "5410", "", "Office Supplies", 6, ""),
+    (NOT_USED, "5410", "", "Stationery and Paper", 6, ""),
     (UNLISTED, "", "", "Facilities", 3, "N"),
     (UNLISTED, "5470", "", "Utilities", 6, ""),
     (CLOSED, "", "", "Closed Branch", 3, "N"),
     (CLOSED, "5400", "", "Office and General Costs", 5, "N"),
-    (CLOSED, "5410", "", "Office Supplies", 6, ""),
+    (CLOSED, "5410", "", "Stationery and Paper", 6, ""),
     (CLOSED, "5460", "", "Rent", 6, ""),
 ]
 # (business unit, name, company, type, status): UNLISTED is not here, and 0731066188 has no account in the chart.
@@ -80,12 +80,12 @@ UNITS = [
 # What the chart and the business units above give: the GL accounts {code: (description, category)} and the cost
 # centers {business unit: name}.
 GL_ACCOUNTS = {
-    "2140": ("Accounts Payable Trade", "Current Liabilities"),
-    "2140.QC": ("Payable Trade Quebec", "Current Liabilities"),
-    "2165.60017734": ("Deposits Held Lot", "Current Liabilities"),
-    "2190.7QXR3": ("Clearing Account", "Current Liabilities"),
-    "2310": ("GST Paid on Purchases", "Current Liabilities"),
-    "5410": ("Office Supplies", "Office and General Costs"),
+    "2140": ("Trade Creditors", "Amounts Owed"),
+    "2140.QC": ("Payable Trade Quebec", "Amounts Owed"),
+    "2165.60017734": ("Deposits Held Lot", "Amounts Owed"),
+    "2190.7QXR3": ("Clearing Account", "Amounts Owed"),
+    "2310": ("GST Paid on Purchases", "Amounts Owed"),
+    "5410": ("Stationery and Paper", "Office and General Costs"),
     "5410.2210": ("Coffee and Refreshments", "Office and General Costs"),
     "5410.7701": ("Recoveries", "Office and General Costs"),
     "5450": ("Training and Seminars", "Office and General Costs"),
@@ -178,14 +178,22 @@ def _column(index: int) -> str:
 def write_big_chart(path: Path, rows: list[tuple]) -> Path:
     """The chart written as JD Edwards writes it: every cell an inline text (no shared texts), about 7 KB a row, so
     14,700 rows unzip to about 100 MB: more than any other workbook AP Coder opens may."""
-    names = [_column(i) for i in range(len(CHART_HEADERS))]
+    return write_inline(path, [CHART_HEADERS, *chart_cells(rows)])
+
+
+def write_inline(path: Path, table: list[list[str]], dimension: str = "", cut: int = 0, sheets: bool = True) -> Path:
+    """A workbook of one sheet, every cell an inline text, its first row first. ``dimension``: the size the sheet
+    says it has (its real one when not given); ``cut``: the sheet's XML stops that many bytes short of its end;
+    ``sheets`` False: the workbook lists no sheet at all."""
+    names = [_column(i) for i in range(max(len(row) for row in table))]
 
     def row_xml(number: int, cells: list[str]) -> str:
         text = '<c r="{}{}" t="inlineStr"><is><t xml:space="preserve">{}</t></is></c>'
         made = "".join(text.format(names[i], number, escape(cell)) for i, cell in enumerate(cells))
         return f'<row r="{number}">{made}</row>'
 
-    last = f"{names[-1]}{len(rows) + 1}"
+    last = dimension or f"A1:{names[-1]}{len(table)}"
+    listed = '<sheet name="Sheet1" sheetId="1" r:id="rId1"/>' if sheets else ""
     main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     rels = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     package = "http://schemas.openxmlformats.org/package/2006"
@@ -198,14 +206,13 @@ def write_big_chart(path: Path, rows: list[tuple]) -> Path:
                    'worksheet+xml"/></Types>')  # fmt: skip
         z.writestr("_rels/.rels", f'<Relationships xmlns="{package}/relationships"><Relationship Id="rId1" '
                    f'Type="{rels}/officeDocument" Target="xl/workbook.xml"/></Relationships>')  # fmt: skip
-        z.writestr("xl/workbook.xml", f'<workbook xmlns="{main}" xmlns:r="{rels}"><sheets><sheet name="Sheet1" '
-                   'sheetId="1" r:id="rId1"/></sheets></workbook>')  # fmt: skip
+        z.writestr("xl/workbook.xml", f'<workbook xmlns="{main}" xmlns:r="{rels}"><sheets>{listed}</sheets></workbook>')
         z.writestr("xl/_rels/workbook.xml.rels", f'<Relationships xmlns="{package}/relationships"><Relationship '
                    f'Id="rId1" Type="{rels}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')  # fmt: skip
         with z.open("xl/worksheets/sheet1.xml", "w", force_zip64=True) as sheet:
-            sheet.write(f'<worksheet xmlns="{main}"><dimension ref="A1:{last}"/><sheetData>'.encode())
-            sheet.write(row_xml(1, CHART_HEADERS).encode())
-            for number, cells in enumerate(chart_cells(rows), 2):
+            sheet.write(f'<worksheet xmlns="{main}"><dimension ref="{last}"/><sheetData>'.encode())
+            for number, cells in enumerate(table[:-1], 1):
                 sheet.write(row_xml(number, cells).encode())
-            sheet.write(b"</sheetData></worksheet>")
+            end = (row_xml(len(table), table[-1]) + "</sheetData></worksheet>").encode()
+            sheet.write(end[: len(end) - cut])
     return path

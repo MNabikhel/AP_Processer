@@ -191,9 +191,10 @@ CACHES: dict[str, Kept] = {
     "ap_coder.erp.accruals:_PARTS": Kept(16 * MB, "PARTS_KEPT period ends of the purchase orders' accruals"),
     "ap_coder.core.store._base:_NOT_FOUND": Kept(24 * MB, "LOOKED_KEPT invoices (B-2026)"),
     "ap_coder.core.store._base:_FOUND": Kept(12 * MB, "LOOKED_KEPT files"),
-    "ap_coder.core.store.accounts:_REFERENCE": Kept(8 * MB, "8 databases' reference data (a chart of 1,500 "
-                                                            "accounts: 0.7 MB; the pairs of a JD Edwards chart of "
-                                                            "14,700 rows, D-209: 2 MB more)"),
+    "ap_coder.core.store.accounts:_REFERENCE": Kept(8 * MB, "REFERENCE_KEPT databases' reference data (a chart of "
+                                                            "1,500 accounts: 0.7 MB), WITH_PAIRS_KEPT while one "
+                                                            "holds the pairs of a JD Edwards chart (14,700 "
+                                                            "accounts, D-209: 3 MB more)"),
     "ap_coder.ai.suggest:_ACCOUNT_STEMS": Kept(4 * MB, "4 charts of accounts (1,500 accounts: 0.7 MB; the 184 GL "
                                                        "codes of a JD Edwards chart of 14,000 rows: 0.1 MB)"),
     "ap_coder.web.pages.process:_LISTED": Kept(8 * MB, "8 folders' new files, LISTED_SECONDS (a laptop's: the "

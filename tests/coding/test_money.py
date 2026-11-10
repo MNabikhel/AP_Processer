@@ -408,3 +408,16 @@ def test_the_tax_checks_total_adds_the_tax_total_as_total_mismatch_does(referenc
     assert not row["ok"] and row["diff"] == "0.02" and "77.98" in row["hint"], row  # the total less the tax lines'
     codes = _codes(validate_coding(line_off, reference).issues)
     assert "TOTAL_MISMATCH" not in codes and "TAX_LINES_TOTAL_MISMATCH" in codes
+
+
+@pytest.mark.parametrize("amount", [1e22, 9.99e26, -1e27, 1e40, 1.7e308])
+def test_an_amount_beyond_any_invoice_is_rounded_not_an_error(amount):
+    """A 27-digit amount typed in a field raised decimal.InvalidOperation in ``half_up`` (the decimal's 28 digits ran
+    out at the cent) and the page answered 500 (B-2096): every helper rounds a number of any size."""
+    assert money.half_up(amount) == amount and money.half_up(amount, 6) == amount
+    assert money.add_up([amount, 0.01]) == amount
+    assert money.in_cents(amount) == int(Decimal(str(amount)) * 100)
+    assert sum(money.split(amount, [1.0, 3.0])) == pytest.approx(amount)
+    assert money.times(amount, 0.5) == pytest.approx(amount / 2)
+    assert money.times(amount, 1e30) == pytest.approx(amount * 1e30) or amount * 1e30 == float("inf")
+    assert not money.cash_rounded(1.0, amount, [0.02])

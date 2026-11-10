@@ -514,8 +514,9 @@ def _schemes(s: ServerSettings) -> tuple[str, ...]:
     return ("https", "http") if s.https else ("http", "https")
 
 
-def dashboard_health(data: Path, s: ServerSettings, timeout: float = 3.0) -> dict | None:
-    """The running dashboard's ``/healthz`` answer (None when none answers on this computer)."""
+def dashboard_answer(data: Path, s: ServerSettings, timeout: float = 3.0) -> tuple[str, dict] | None:
+    """How the running dashboard answers on this computer: ("https" or "http", its ``/healthz`` answer); None when
+    none does."""
     record = _read_json(data / SERVER_FILE)
     port = int(record.get("port") or s.port)
     for scheme in _schemes(s):
@@ -524,8 +525,14 @@ def dashboard_health(data: Path, s: ServerSettings, timeout: float = 3.0) -> dic
         except (OSError, ValueError):
             continue
         if isinstance(found, dict) and found.get("app") == "ap-coder":
-            return found
+            return scheme, found
     return None
+
+
+def dashboard_health(data: Path, s: ServerSettings, timeout: float = 3.0) -> dict | None:
+    """The running dashboard's ``/healthz`` answer (None when none answers on this computer)."""
+    found = dashboard_answer(data, s, timeout)
+    return found[1] if found else None
 
 
 def dashboard_stopped(data: Path, s: ServerSettings, wait: float = 45.0) -> bool:

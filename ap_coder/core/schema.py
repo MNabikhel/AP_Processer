@@ -94,7 +94,7 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
     cc_description = f"Cost center code from the Cost Center list, or {UNASSIGNED} if none fits."
     if reference is not None:
         if constrain_codes:
-            cost_centers = reference.cost_centers.codes if reference.cost_centers is not None else None
+            cost_centers = reference.line_cost_centers()
             gl_codes, cc_codes = plan_code_enums(line_gl_codes(reference), cost_centers)
         if reference.cost_centers is None:
             cc_codes, cc_description = [""], "Cost centers are not configured: always an empty string."

@@ -557,7 +557,7 @@ def _account_schema(reference: ReferenceData) -> dict[str, Any]:
         "reason": {"type": "string"},
     }
     if reference.cost_centers is not None:
-        line["cost_center"] = {"type": "string", "enum": [*reference.cost_centers.codes, ""]}
+        line["cost_center"] = {"type": "string", "enum": [*(reference.line_cost_centers() or ()), ""]}
     item = {"type": "object", "properties": line, "required": list(line), "additionalProperties": False}
     return {
         "type": "object",
@@ -605,7 +605,7 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     if history and budget:
         history, _ = local_llm.clip_document(history, SUGGEST_HISTORY_CHARS)
     valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
-    valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
+    valid_cc = set(coder.reference.line_cost_centers() or ())
     out: dict[int, tuple[str, str, str]] = {}
     # A long invoice is asked in batches; past SUGGEST_MAX_LINES the lines are left for AP.
     if len(lines) > SUGGEST_MAX_LINES:
