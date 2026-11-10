@@ -50,7 +50,7 @@ FORMATS = {
     ".xlsx export)",
     "jde": "JD Edwards E1 (F0411Z1 / F0911Z1): ZIP of Z-table files (Settings → JD Edwards E1)",
     "jde_keying": "JD Edwards keying sheet: an Excel workbook to read while typing vouchers into JD Edwards by hand, "
-    "a block per voucher; an invoice that is not ready is on its second sheet with why (Settings → JD Edwards E1)",
+    "a block per voucher; only invoices that pass the JD Edwards checks go on it (Settings → JD Edwards E1)",
     "jde_keying_csv": "JD Edwards keying sheet as CSV: the same values, one row per G/L line (codes keep their "
     "leading zeros in the Excel sheet; Excel drops them when it opens a CSV)",
 }

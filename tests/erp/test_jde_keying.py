@@ -348,24 +348,33 @@ def test_the_sheet_and_the_batch_files_say_the_same():
     assert typed == [(r["VNANI"], r["VNAA"] or r["VNACR"], r["VNEXA"]) for r in dist]
 
 
-def test_the_exports_page_offers_the_keying_sheet_and_downloads_it_for_a_batch(tmp_path, cost_centers_demo_template):
-    from tests.webclient import client_for, follow, post
+def demo(tmp_path, template):
+    """The demo's two approved invoices on a copy of ``cost_centers_demo_template``, the first ready for JD Edwards
+    and the second held back (its supplier number is not an address number); the dashboard on it."""
+    from tests.webclient import client_for
 
-    store = copy_database(cost_centers_demo_template, tmp_path / "private" / "ap_coder.db")
+    store = copy_database(template, tmp_path / "private" / "ap_coder.db")
     ready = store.unexported_approved()
     northwind, chinook = (next(i for i in ready if i["vendor_name"].startswith(name)) for name in ("North", "Chinook"))
     assert len(ready) == 2
     js = jde.load(store)
     js.default_bu = "HQ"  # the tax account's business unit (the tax coded to G/L accounts: D-93)
-    js.an8_overrides = {vendor_key(chinook["vendor_name"]): "C-41"}  # not an address number: held back
+    js.an8_overrides = {vendor_key(chinook["vendor_name"]): "C-41"}
     jde.save(store, js)
-    client = client_for(store)
+    return store, client_for(store), northwind, chinook
+
+
+def test_the_exports_page_offers_the_keying_sheet_and_downloads_it_for_a_batch(tmp_path, cost_centers_demo_template):
+    from tests.webclient import follow, post
+
+    store, client, northwind, chinook = demo(tmp_path, cost_centers_demo_template)
     page = client.get(f"/exports?fmt={jde_keying.FORMAT}").text
     assert "JD Edwards keying sheet</a>" in page and exports.FORMATS[jde_keying.FORMAT].split(":")[0] in page
-    ids = [i["id"] for i in ready]
-    text = follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": ids}))
+    text = follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]}))
     (batch,) = store.export_batches()
-    assert batch["format"] == jde_keying.FORMAT and store.batch_invoice_ids(batch["id"]) == sorted(ids)
+    assert batch["format"] == jde_keying.FORMAT and store.batch_invoice_ids(batch["id"]) == [northwind["id"]]
+    assert "Batch 1 created with 1 invoice. Download it below." in text and "not ready for JD Edwards" not in text
+    assert "while typing each voucher into JD Edwards" in text and "Import this file into your ERP" not in text
     assert f"/exports/batches/{batch['id']}/download?fmt={jde_keying.FORMAT}" in text
     answer = client.get(f"/exports/batches/{batch['id']}/download?fmt={jde_keying.FORMAT}")
     assert answer.status_code == 200 and f"ap_coder_jde_keying_{batch['id']}.xlsx" in answer.headers[
@@ -374,14 +383,103 @@ def test_the_exports_page_offers_the_keying_sheet_and_downloads_it_for_a_batch(t
     (block,) = blocks(wb[jde_keying.SHEET])
     assert field(block, "Supplier number").value == "10023"
     assert field(block, "Supplier name").value == northwind["vendor_name"]
-    assert block[9][0].value.startswith("CC") and block[9][1].value  # the account string and its description
-    assert values(block)[-1][3].endswith(": balanced")
-    held = list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True))
-    assert [(row[0], row[1], row[2]) for row in held] == [(chinook["id"], "C-41", chinook["vendor_name"])]
-    assert "is not a JDE address number" in held[0][7]
-    again = client.get(f"/exports/batches/{batch['id']}/download?fmt={jde_keying.CSV_FORMAT}")
-    assert again.status_code == 200 and again.content.decode("utf-8-sig").startswith("Voucher,AP Coder invoice,")
-    assert f'<option value="{jde_keying.CSV_FORMAT}"' in client.get(f"/exports?batch={batch['id']}").text
+    assert any(str(row[0].value).startswith("CC400.") and row[1].value for row in block)  # an account, described
+    assert block[-1][0].value == "Check" and block[-1][3].value.endswith(": balanced")
+    assert list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)) == []
+
+
+def test_only_invoices_ready_for_jd_edwards_go_on_a_keying_batch_and_the_page_says_which_are_not(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2148: a keying batch took every ticked invoice, one that cannot be typed too (it left Ready to export,
+    marked exported, with only the workbook's second sheet to say so), and a batch with nothing to type could be
+    made. As for a JD Edwards batch, the page lists what is not ready before the batch is made, each with why and
+    its invoice to open; only the ready ones go on the batch, and a batch of nothing is refused."""
+    from tests.webclient import follow, post
+
+    store, client, northwind, chinook = demo(tmp_path, cost_centers_demo_template)
+    page = client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    assert "1 invoice cannot go to JD Edwards yet and is left out of the" in page
+    assert "is not a JDE address number" in page and f'<a href="/review/{chinook["id"]}"' in page
+    held_box = page.split(f'name="ids" value="{chinook["id"]}"', 1)[1].split(">", 1)[0]
+    assert "disabled" in held_box and "Export 1 invoice" in page
+    # The held one alone: no batch of nothing.
+    answer = post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [chinook["id"]]})
+    assert (
+        answer.status_code == 400 and "None of the ticked invoices can go to JD Edwards yet" in answer.json()["error"]
+    )
+    assert store.export_batches() == []
+    # Both ticked (a page drawn before the supplier number went wrong): the ready one goes, the other stays.
+    both = {"fmt": jde_keying.FORMAT, "ids": [northwind["id"], chinook["id"]]}
+    text = follow(client, post(client, "/exports/create", both))
+    (batch,) = store.export_batches()
+    assert store.batch_invoice_ids(batch["id"]) == [northwind["id"]]
+    assert [i["id"] for i in store.unexported_approved()] == [chinook["id"]]
+    assert "Batch 1 created with 1 invoice." in text
+    assert "1 ticked invoice is not ready for JD Edwards and stays in Ready to export" in text
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/exports/batches/{batch['id']}/download").content))
+    assert len(blocks(wb[jde_keying.SHEET])) == 1 and wb[jde_keying.NOT_READY].max_row == 1
+
+
+def test_an_invoice_on_a_keying_sheet_says_so_and_undoing_the_batch_puts_it_back(tmp_path, cost_centers_demo_template):
+    """An invoice on a keying sheet is not in JD Edwards until someone types it: where its export is said, it is "on
+    keying sheet 1", not "exported"; the batch is undone like any other."""
+    from ap_coder.web.pages.review import exported_reason
+    from ap_coder.web.pages.statements import ap_status
+    from tests.webclient import follow, post
+
+    store, client, northwind, chinook = demo(tmp_path, cost_centers_demo_template)
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]}))
+    assert jde_keying.keying_batches(store) == {1}
+    page = client.get(f"/review/{northwind['id']}").text
+    assert "On keying sheet 1 (to type into JD Edwards)" in page and "Exported in batch" not in page
+    inv = store.get_invoice(northwind["id"])
+    assert exported_reason(store, inv) == "it is on keying sheet 1: undo the batch on the Exports page first"
+    answer = post(client, f"/review/{northwind['id']}/undo-approve")
+    assert answer.status_code == 400 and "it is on keying sheet 1" in answer.json()["error"]
+    line = type("Line", (), {"invoice_id": inv["id"], "ap_status": "approved"})()
+    assert ap_status(line, {inv["id"]: inv}, {1}) == "On keying sheet 1"
+    assert ap_status(line, {inv["id"]: inv}) == "Exported (batch 1)"
+    exports_page = client.get("/exports?batch=1").text
+    assert "On keying sheet" in exports_page
+    # Undone: back in Ready to export, and no longer on a sheet.
+    text = follow(client, post(client, "/exports/batches/1/undo"))
+    assert "Batch 1 undone" in text
+    assert northwind["id"] in [i["id"] for i in store.unexported_approved()]
+    assert jde_keying.keying_batches(store) == set()
+    assert "On keying sheet" not in client.get(f"/review/{northwind['id']}").text
+
+
+def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are_in_the_erp_register(
+    tmp_path, cost_centers_demo_template
+):
+    """B-2149: the vouchers typed from a keying sheet come back in the ERP's invoice register (the voucher list
+    imported): the same batch's sheet then listed each as "Not ready: already in the ERP", with nothing to type.
+    What was keyed is the batch's record: its own vouchers are not checked against the register, as a JD Edwards
+    batch's are not."""
+    from tests.webclient import follow, post
+
+    store, client, northwind, chinook = demo(tmp_path, cost_centers_demo_template)
+    follow(client, post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]}))
+
+    def sheet():
+        wb = openpyxl.load_workbook(io.BytesIO(client.get("/exports/batches/1/download").content))
+        return ([values(b) for b in blocks(wb[jde_keying.SHEET])],
+                list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)))  # fmt: skip
+
+    first = sheet()
+    assert len(first[0]) == 1 and first[1] == []
+    final = store.get_invoice(northwind["id"])["final_output"]
+    store.import_erp_register([{"vendor_name": final["vendor_name"], "invoice_number": final["invoice_number"],
+                                "total": final["grand_total"]}])  # fmt: skip
+    assert sheet() == first
+    # Another batch's sheet (made as Excel) is still checked against the register: that one is in the ERP already.
+    follow(client, post(client, "/exports/batches/1/undo"))
+    follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": [northwind["id"]]}))
+    wb = openpyxl.load_workbook(
+        io.BytesIO(client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").content))  # fmt: skip
+    assert blocks(wb[jde_keying.SHEET]) == []
+    assert "already in the ERP" in wb[jde_keying.NOT_READY]["H2"].value
 
 
 def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):

@@ -448,7 +448,7 @@
     <div class="row end">
       {% if can_stamp %}<a class="btn" href="/review/{{ inv.id }}/approved.pdf" title="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file."><span class="ms" aria-hidden="true">approval</span>Approved PDF</a>{% endif %}
       {% if inv.export_batch %}
-      <span class="muted">Exported in batch {{ inv.export_batch }}: to correct it, undo the batch on the Exports page first.</span>
+      <span class="muted">{% if on_keying_sheet %}On keying sheet {{ inv.export_batch }} (to type into JD Edwards){% else %}Exported in batch {{ inv.export_batch }}{% endif %}: to correct it, undo the batch on the Exports page first.</span>
       {% elif can("/review/1/correct") %}
       <details class="pop">
         <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Reopen for correction…</summary>

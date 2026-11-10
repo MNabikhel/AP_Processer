@@ -112,6 +112,12 @@ class Held:
     why: list[str]
 
 
+def keying_batches(store: Any) -> set[int]:
+    """The export batches made as a keying sheet (not undone): an invoice on one is to type into JD Edwards by hand,
+    so where its export is said it is "on keying sheet 12", not "exported"."""
+    return {int(b["id"]) for b in store.export_batches() if b["format"] == FORMAT and not b["undone_at"]}
+
+
 def vouchers(
     invoices: list[dict[str, Any]], settings: jde.JdeSettings, vendor_lookup: jde.VendorLookup = None, *,
     gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
