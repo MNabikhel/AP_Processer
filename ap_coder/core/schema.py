@@ -20,7 +20,7 @@ import re
 import unicodedata
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
 from .tax_setup import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
@@ -366,7 +366,28 @@ class LineItem(BaseModel):
     # vendor meant it (InvoiceCoding fills it: line_tax.legacy_exempt).
     tax_exempt: list[str] | None = None
     tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
+    # The tax amounts printed on this line, tax by tax ({"GST": 12.50}); None: the invoice prints no tax for a line
+    # (most print one total). The model is never asked for it (``build_json_schema`` leaves it out), and None is
+    # left out of what is stored, so an invoice without it is stored as it always was. ``taxmath.line_taxes`` reads it.
+    taxes_read: dict[str, float] | None = None
     reasoning_justification: str = ""
+
+    @field_validator("taxes_read", mode="before")
+    @classmethod
+    def _taxes_read(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out = {str(k).strip().upper(): v for k, v in value.items()}
+        if unknown := [k for k in out if k not in TAX_TYPES]:
+            raise ValueError(f"taxes_read entries must be one of {TAX_TYPES}, got {unknown[0]!r}")
+        return {t: out[t] for t in TAX_TYPES if t in out}
+
+    @model_serializer(mode="wrap")
+    def _without_taxes_not_read(self, handler: Any) -> dict[str, Any]:
+        out = handler(self)
+        if out.get("taxes_read") is None:
+            out.pop("taxes_read", None)
+        return out
 
     @field_validator("taxes_applied")
     @classmethod
