@@ -380,8 +380,8 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
         everything = confirmed_f >= set(all_fields) and confirmed_l >= set(all_lines)
         if confident and not disputed and not disputed_lines and everything:
             return Review(AGREED, {}, {}, done, round(clock() - start, 1), summary)
-        if (confident and not disputed and not disputed_lines and (hidden_f or hidden_l)
-                and confirmed_f | hidden_f >= set(all_fields) and confirmed_l | hidden_l >= set(all_lines)):  # fmt: skip
+        seen = confirmed_f | hidden_f >= set(all_fields) and confirmed_l | hidden_l >= set(all_lines)
+        if confident and not disputed and not disputed_lines and (hidden_f or hidden_l) and seen:
             # All it could see is right; another look at the same pages would show it no more.
             return Review(UNSURE, {}, {}, done, round(clock() - start, 1), summary,
                           _why_not_shown(given, hidden_f, hidden_l))  # fmt: skip

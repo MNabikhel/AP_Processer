@@ -204,6 +204,10 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     return out
 
 
+# Said before anything else there is to fix: nothing else matters for a document that is not an invoice.
+SAID_FIRST = frozenset({"NOT_AN_INVOICE"})
+
+
 def _said(issue: dict[str, Any]) -> str:
     """A finding's own sentence, as the queue says it: "Line 4: no GL account yet: pick one"."""
     words = str(issue.get("message") or "").strip().rstrip(".")
@@ -213,14 +217,16 @@ def _said(issue: dict[str, Any]) -> str:
 
 def first_to_fix(parts: tuple[str, str, int, int, bool], issues: list[dict[str, Any]], output: dict[str, Any],
                  counted: str) -> str:  # fmt: skip
-    """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). The
-    first error's own sentence; else why the first line without an account was left for a person ("Line 4: this
-    supplier's 9 lines last year went to 3 accounts ..."); else its Pay from account's trouble; else the first
-    finding a person looks at; else ``counted`` (``attention``'s own words: confidence under the threshold). What
-    else there is to fix is counted after it: "(and 2 more)"."""
+    """The queue's one sentence for an invoice that needs attention: the first thing to fix, in words (B-2219). That
+    it may not be an invoice (``SAID_FIRST``); else the first error's own sentence; else why the first line without
+    an account was left for a person ("Line 4: this supplier's 9 lines last year went to 3 accounts ..."); else its
+    Pay from account's trouble; else the first finding a person looks at; else ``counted`` (``attention``'s own
+    words: confidence under the threshold). What else there is to fix is counted after it: "(and 2 more)"."""
     to_pick, bank, errors, warned, _ = parts
-    first = ""
-    if errors:
+    first = next((_said(i) for i in issues if i.get("code") in SAID_FIRST), "")
+    if first:
+        pass
+    elif errors:
         first = next((_said(i) for i in issues if i.get("severity") == "error"), "")
     elif to_pick:
         from ap_coder.core.reference_data import UNASSIGNED

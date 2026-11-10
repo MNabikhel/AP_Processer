@@ -419,7 +419,8 @@ def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
 
 
 def test_pages_past_the_local_readers_limit_need_a_person(touchless, path, tmp_path):
-    """The local readers once read a file's first 20 pages (now 60, and a longer file's last pages). A 25-page invoice that the page reader read whole (its limit
+    """The local readers once read a file's first 20 pages (now 60, and a longer file's last pages). A 25-page
+    invoice that the page reader read whole (its limit
     raised to 30) was approved without a person, though pages 21-25 were read by one reader only: the capture counted
     20 pages, so no page looked unread."""
     import pymupdf

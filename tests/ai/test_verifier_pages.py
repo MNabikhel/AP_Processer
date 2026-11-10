@@ -48,9 +48,10 @@ def _invoice(tmp_path, pages: int, busy: int | None = None):
             items += [(50, 168 + 16 * row, f"Ground shipment waybill {page}0{row}", 10, page),
                       (350, 168 + 16 * row, "1", 10, page), (420, 168 + 16 * row, "10.25", 10, page),
                       (500, 168 + 16 * row, "10.25", 10, page)]  # fmt: skip
+    gst = round(cents * 0.05)
     items += [(400, 300, "Subtotal", 10, pages), (500, 300, f"{cents / 100:,.2f}", 10, pages),
-              (400, 316, "GST 5%", 10, pages), (500, 316, f"{round(cents * 0.05) / 100:,.2f}", 10, pages),
-              (400, 332, "Total Due", 10, pages), (500, 332, f"{round(cents * 1.05) / 100:,.2f}", 10, pages)]  # fmt: skip
+              (400, 316, "GST 5%", 10, pages), (500, 316, f"{gst / 100:,.2f}", 10, pages),
+              (400, 332, "Total Due", 10, pages), (500, 332, f"{(cents + gst) / 100:,.2f}", 10, pages)]  # fmt: skip
     return text_pdf(tmp_path, items, name=f"busy{pages}.pdf", pages=pages)
 
 

@@ -41,13 +41,17 @@ def test_a_statement_that_lost_its_title_is_told_by_its_table(tmp_path):
     rows = [(50, 60, "Northgate Supply Ltd."), (50, 150, "Invoice"), (170, 150, "Date"), (450, 150, "Balance")]
     for n in range(3):
         rows += [(50, 168 + 16 * n, f"7120{n}"), (170, 168 + 16 * n, "2026-01-05"), (450, 168 + 16 * n, "412.35")]
-    assert _finding(text_pdf(tmp_path, rows)) == [("warning", SAID.format(
-        why="it lists 3 invoices with their balances or payments, as a statement or a remittance advice does"))]  # fmt: skip
+    why = "it lists 3 invoices with their balances or payments, as a statement or a remittance advice does"
+    assert _finding(text_pdf(tmp_path, rows)) == [("warning", SAID.format(why=why))]
 
 
 def test_a_letter_with_no_invoice_number_and_no_amounts(tmp_path):
-    letter = [(50, 60, "Northgate Supply Ltd."), (50, 120, "Dear customer,"),
-              (50, 140, "Our office moves to 88 Harbour Street on the first of March."), (50, 180, "Regards,")]
+    letter = [
+        (50, 60, "Northgate Supply Ltd."),
+        (50, 120, "Dear customer,"),
+        (50, 140, "Our office moves to 88 Harbour Street on the first of March."),
+        (50, 180, "Regards,"),
+    ]
     assert _finding(text_pdf(tmp_path, letter)) == [("warning", SAID.format(
         why="no invoice number and no amounts were found on it"))]  # fmt: skip
 

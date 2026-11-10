@@ -26,22 +26,36 @@ def test_the_queue_says_the_first_thing_to_fix_in_words(chart_company, chart_com
 
 def test_the_first_thing_to_fix_in_order():
     """An error first; else the first line left; else the Pay from account; else the first warning; else the count."""
+    pick = "Pick a GL account for line 4"
     issues = [{"severity": "warning", "code": "NO_TAX_CHARGED", "message": "no tax was charged: check it."},
               {"severity": "warning", "code": "GL_UNASSIGNED", "message": "no GL account yet: pick one",
                "line_number": 4},
               {"severity": "error", "code": "TOTAL_MISMATCH", "message": "subtotal + tax = 105.00 but the total is "
                "150.00"}]  # fmt: skip
-    lines = [{"line_number": 3, "predicted_gl_code": "7620"},
-             {"line_number": 4, "predicted_gl_code": "UNASSIGNED",
-              "reasoning_justification": "This supplier's 9 lines last year went to 3 accounts: pick the account."}]
+    lines = [
+        {"line_number": 3, "predicted_gl_code": "7620"},
+        {
+            "line_number": 4,
+            "predicted_gl_code": "UNASSIGNED",
+            "reasoning_justification": "This supplier's 9 lines last year went to 3 accounts: pick the account.",
+        },
+    ]
     output = {"line_items": lines}
-    pick = "Pick a GL account for line 4"
     assert first_to_fix((pick, "", 1, 1, False), issues, output, "") == (
-        "Subtotal + tax = 105.00 but the total is 150.00 (and 2 more)")
+        "Subtotal + tax = 105.00 but the total is 150.00 (and 2 more)"
+    )
     assert first_to_fix((pick, "", 0, 1, False), issues[:2], output, "") == (
-        "Line 4: this supplier's 9 lines last year went to 3 accounts: pick the account (and 1 more)")
+        "Line 4: this supplier's 9 lines last year went to 3 accounts: pick the account (and 1 more)"
+    )
     assert first_to_fix((pick, "", 0, 0, False), [], {"line_items": [{"line_number": 4}]}, "") == pick
     assert first_to_fix(("", "Pick the account to pay from", 0, 1, False), issues[:1], output, "") == (
-        "Pick the account to pay from (and 1 more)")
+        "Pick the account to pay from (and 1 more)"
+    )
     assert first_to_fix(("", "", 0, 1, False), issues[:1], output, "") == "No tax was charged: check it"
     assert first_to_fix(("", "", 0, 0, True), [], output, "Confidence under 85%") == "Confidence under 85%"
+    # A document that may not be an invoice says so before anything else there is to fix.
+    other = {"severity": "warning", "code": "NOT_AN_INVOICE", "message": 'this may not be an invoice: its title is '
+             '"Statement of account"'}  # fmt: skip
+    assert first_to_fix((pick, "", 1, 2, False), [*issues, other], output, "") == (
+        'This may not be an invoice: its title is "Statement of account" (and 3 more)'
+    )

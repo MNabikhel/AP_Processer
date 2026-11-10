@@ -16,9 +16,9 @@ from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
-from .not_invoice import not_an_invoice
 from .locate import locate
 from .normalize import find_amounts
+from .not_invoice import not_an_invoice
 from .reader import (
     STRAIGHTEN_FROM,
     _on_tilted_page,

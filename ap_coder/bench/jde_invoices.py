@@ -23,6 +23,7 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import random
+import re
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
@@ -358,6 +359,115 @@ def write(folder: str | Path, truth: Truth, invoices: list[Invoice], seed: int =
     out = Path(folder)
     out.mkdir(parents=True, exist_ok=True)
     return [_write_case(out, invoice.name, *render(invoice, truth, seed), False, "") for invoice in invoices]
+
+
+# --- the hard cases ------------------------------------------------------------------------------
+
+HARD = ("sixty_lines", "usd", "do_not_use", "on_hold", "bc_pst", "odd_line")
+PRINTED = ("exempt_line", "two_provinces", "tax_column", "hash_column")
+HOLDS = ("Y", "1", "2")  # JD Edwards' hold payment codes that hold a supplier's payments
+_MARK = re.compile(r"[\s*-]*(\*+|DO NOT USE|DNU)[\s*]*$")  # how the master marks a supplier no longer to be used
+
+
+def hard_cases(truth: Truth, on: dt.date | None = None) -> list[Invoice]:
+    """The invoices of ``HARD``, in that order, from suppliers of the books, dated ``on`` (as for
+    ``named``): sixty lines from the supplier that always goes to one account; a USD invoice from a US supplier in
+    use; one from a supplier the master marks DO NOT USE (printed without the mark); one from a supplier whose
+    payments are held; GST and British Columbia's PST (the PST stays in the expense); and a lunch on the invoice of
+    the supplier that always goes to one account. ``LookupError`` when the books have no supplier for one."""
+    on = on or dt.date(truth.company.year + 1, 1, 20)
+    of = _suppliers_of_the_seven(truth)
+    trade = [s for s in truth.suppliers if s.kind == "trade" and s.accounts]
+
+    def first(what: str, fits) -> Supplier:
+        found = next((s for s in trade if fits(s)), None)
+        if found is None:
+            raise LookupError(f"These books have no supplier for the invoice {what}.")
+        return found
+
+    def words(account: str, which: int = 0) -> str:
+        return _words(truth.account(account), which, 40500 + which, on)
+
+    def line(text: str, quantity: str, price: str, account: str):
+        return text, Decimal(quantity), Decimal(price), [(account, 1)], False
+
+    def lines(supplier: Supplier, *prices: str):
+        return [line(words(supplier.accounts[0], n), "1", price, supplier.accounts[0])
+                for n, price in enumerate(prices)]  # fmt: skip
+
+    one = of["one_line"]
+    usd = first("usd", lambda s: _in_use(s) and s.currency == "USD")
+    retired = first("do_not_use", lambda s: s.hold_payment == "N" and s.currency == "CAD" and _MARK.search(s.name))
+    held = first("on_hold", lambda s: s.hold_payment in HOLDS and s.currency == "CAD" and not _MARK.search(s.name))
+    coast = first("bc_pst", lambda s: _in_use(s) and PROVINCES.get(s.provincial_rate) == "BC")
+    cents = random.Random("jde-invoice:sixty").sample(range(1800, 9600, 5), 60)
+    sixty = [line(words(one.accounts[0], n), "1", str(Decimal(c) / 100), one.accounts[0]) for n, c in enumerate(cents)]
+    made = {
+        "sixty_lines": _invoice(truth, "sixty_lines", one, "60988", on, sixty),
+        "usd": _invoice(truth, "usd", usd, "US-44817", on, lines(usd, "1250.00", "380.00"), layout="us_vendor"),
+        "do_not_use": _invoice(truth, "do_not_use", retired, "IW-20418", on, lines(retired, "214.60"),
+                               supplier_name=printed_name(_MARK.sub("", retired.name))),
+        "on_hold": _invoice(truth, "on_hold", held, "AT-7731", on, lines(held, "1900.00")),
+        "bc_pst": _invoice(truth, "bc_pst", coast, "BC-30117", on, lines(coast, "400.00", "150.00")),
+        "odd_line": _invoice(truth, "odd_line", one, "60991", on, [
+            *lines(one, "64.20"), line("Working lunch for the project kickoff, 12 people", "1", "186.40",
+                                       one.accounts[0])]),
+    }  # fmt: skip
+    return [made[name] for name in HARD]
+
+
+def printed_cases(truth: Truth, on: dt.date | None = None) -> dict[str, bytes]:
+    """Invoices set out plainly, where what is printed is the case (the names of ``PRINTED``), as PDFs: three lines
+    of which the GST is charged on two (the third says exempt); lines supplied in two provinces, the GST on Alberta's
+    and Ontario's HST on the other (each tax printed with what it is charged on); a line table of Description, Tax
+    and Amount (the tax of each line in a column of its own: the amounts are before tax); and a table with a "#"
+    column and one row. The first two are from the supplier of ``named``'s credit note (one account, too few lines
+    last year to code alone), the others from the one that always goes to one account."""
+    on = on or dt.date(truth.company.year + 1, 1, 20)
+    of = _suppliers_of_the_seven(truth)
+    us = printed_name(truth.company.name)
+
+    def head(supplier: Supplier, number: str) -> list[tuple[float, float, str]]:
+        return [(50, 60, printed_name(supplier.name)), (50, 76, "2210 Meridian Road NE, Calgary, AB T2A 2N6"),
+                (400, 76, f"Invoice No: {number}"), (400, 92, f"Invoice Date: {on.isoformat()}"),
+                (400, 108, "Terms: Net 30"), (50, 124, f"Bill to: {us}, 410 Elm Street, Edmonton, AB T5J 0N3"),
+                (50, 420, "GST/HST No. 814275533 RT0001")]  # fmt: skip
+
+    def table(*rows: tuple[str, str]) -> list[tuple[float, float, str]]:
+        return [(50, 200, "Description"), (500, 200, "Amount")] + [
+            cell for n, (text, amount) in enumerate(rows) for cell in ((50, 218 + 16 * n, text),
+                                                                      (500, 218 + 16 * n, amount))]  # fmt: skip
+
+    def totals(*rows: tuple[str, str]) -> list[tuple[float, float, str]]:
+        return [cell for n, (label, amount) in enumerate(rows) for cell in ((330, 300 + 16 * n, label),
+                                                                           (500, 300 + 16 * n, amount))]  # fmt: skip
+
+    plain, one = of["credit_note"], of["one_line"]
+    fees = [_words(truth.account(plain.accounts[0]), n, 40600 + n, on) for n in range(3)]
+    title = (400, 58, "INVOICE")
+    return {
+        "exempt_line": _page(
+            *head(plain, "KC-5524"),
+            *table((fees[0], "1,200.00"), (fees[1], "300.00"),
+                   ("Disbursement - government filing fee (exempt)", "250.00")),
+            *totals(("Subtotal", "1,750.00"), ("GST 5% on 1,500.00", "75.00"), ("Total", "1,825.00")), title=title),
+        "two_provinces": _page(
+            *head(plain, "KC-5530"),
+            *table((f"{fees[0]} - Calgary office", "1,000.00"), (f"{fees[1]} - Calgary office", "200.00"),
+                   (f"{fees[2]} - Toronto office", "500.00")),
+            *totals(("Subtotal", "1,700.00"), ("GST 5% on 1,200.00", "60.00"), ("HST 13% on 500.00", "65.00"),
+                    ("Total", "1,825.00")), title=title),
+        "tax_column": _page(
+            *head(one, "QC-77001"), (50, 200, "Description"), (400, 200, "Tax"), (500, 200, "Amount"),
+            (50, 218, "Courier service downtown"), (400, 218, "5.00"), (500, 218, "100.00"),
+            (50, 234, "Courier service airport"), (400, 234, "10.00"), (500, 234, "200.00"),
+            *totals(("Subtotal", "300.00"), ("GST 5%", "15.00"), ("Total", "315.00")), title=title),
+        "hash_column": _page(
+            *head(one, "QC-77002"), (50, 200, "#"), (90, 200, "Description"), (350, 200, "Qty"),
+            (420, 200, "Unit Price"), (500, 200, "Amount"), (50, 218, "1"), (90, 218, "Courier service downtown"),
+            (350, 218, "1"), (420, 218, "100.00"), (500, 218, "100.00"),
+            *totals(("Subtotal", "100.00"), ("GST 5%", "5.00"), ("Total", "105.00")), title=title),
+    }  # fmt: skip
 
 
 # --- documents that are not invoices -------------------------------------------------------------
