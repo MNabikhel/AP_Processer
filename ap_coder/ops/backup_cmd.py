@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.store import Store, backup_files
+from ..core.store.users import sign_in_accounts
 from . import service
 
 SERVER_FILE = service.SERVER_FILE  # written by the running dashboard
@@ -112,9 +113,12 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
     print(f"Restoring {backup.name} puts AP Coder in {data} back as it was then: the database and the invoice files, "
           "saved emails and attachments of that moment. What was done since is replaced; files added since are moved "
           "to backups/set-aside-<date>. The current state is backed up first, so this can be undone.")  # fmt: skip
-    if server:
+    if server and sign_in_accounts(db):
         print("The user accounts, their passwords and roles, and paused logins stay as they are now; everyone is "
               "logged out.")  # fmt: skip
+    elif server:  # a new server, restored before its first Admin (B-2113)
+        print("This data folder has no user account yet: the backup's accounts, with their passwords and roles, "
+              "come back with it.")  # fmt: skip
     if not yes:
         try:
             answer = input("Type yes to restore: ").strip().lower()

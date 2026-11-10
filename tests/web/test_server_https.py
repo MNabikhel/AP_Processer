@@ -103,6 +103,33 @@ def test_the_server_starts_on_https_with_a_certificate(tmp_path):
     assert f"https://127.0.0.1:{port}" in out, out
 
 
+def test_laptop_mode_never_starts_on_the_data_of_the_team_server(tmp_path):
+    """B-2119, with the real server: while it serves the team over HTTPS (a self-signed certificate), ``serve`` by hand
+    in laptop mode took the next free port and opened the same database with no sign-in. It is refused, and names the
+    team's address; and once the team has an account, also while the server is stopped (D-211)."""
+    from ap_coder.core.store import Store
+
+    def laptop_start(*more: str) -> subprocess.CompletedProcess:
+        command = [sys.executable, "-m", "ap_coder", "--env-file", str(tmp_path / "empty.env"), "--db",
+                   str(tmp_path / "private" / "ap_coder.db"), "serve", "--no-browser", *more]  # fmt: skip
+        environment = {**os.environ, "BROWSER": "none", offline.SERVER_ENV: "0"}
+        return subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=120)
+
+    proc, port = _start(tmp_path, "--server", "--certfile", str(CERT), "--keyfile", str(KEY))
+    try:
+        _get(f"https://localhost:{port}/healthz", ssl.create_default_context(cafile=str(CERT)))
+        for more in ((), ("--without-sign-in",)):
+            beside = laptop_start(*more)
+            assert beside.returncode == 2, beside.stderr
+            assert "AP Coder is serving your team from this computer (sign in at https://" in beside.stderr
+            assert f":{port}): it was not started a second time" in beside.stderr
+    finally:
+        _stop(proc)
+    Store(tmp_path / "private" / "ap_coder.db").add_user("jsmith", "correct horse battery staple 42", role="admin")
+    stopped = laptop_start()
+    assert stopped.returncode == 2 and "it was not started without sign-in" in stopped.stderr, stopped.stderr
+
+
 def test_the_certificate_can_come_from_the_environment(tmp_path):
     proc, port = _start(tmp_path, "--server", env={"AP_TLS_CERT": str(CERT), "AP_TLS_KEY": str(KEY)})
     try:

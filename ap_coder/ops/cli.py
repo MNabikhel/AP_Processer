@@ -231,6 +231,11 @@ def _add_serve_commands(sub: Any) -> None:
         p.add_argument("--new-database", action="store_true",
                        help="Server mode: begin with a new, empty database although this data folder had one (its "
                        "file is missing): only on purpose; else restore a backup (D-188)")  # fmt: skip
+        p.add_argument("--without-sign-in", action="store_true",
+                       help="Open, in laptop mode again, a data folder that was set up to serve a team (it has "
+                       "sign-in accounts, or server settings): on purpose, with no sign-in for whoever uses this "
+                       "computer. The accounts stay in the database, unused. Only while the server is stopped "
+                       "(D-211)")  # fmt: skip
         p.add_argument("--background-work", action="store_true", help=argparse.SUPPRESS)  # (the server's own)
         p.add_argument("--capture-work", action="store_true", help=argparse.SUPPRESS)  # (its capture processes)
 
@@ -412,12 +417,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return server.run_background(Store(Path(args.db)))
     if args.capture_work:  # one of its capture processes, which read the import queue (D-168)
         return server.run_capture(Store(Path(args.db)))
-    from .safety import serve_refusal
+    from .safety import serve_refusal, team_server
 
     refused = serve_refusal(Path(args.db), server_mode(), args.new_database)  # its folder checked first (D-188)
     if refused:
         print(refused, file=sys.stderr)
         return 2
+    # Laptop mode never opens, by accident, the data a server-mode AP Coder serves with sign-in (D-211).
+    team = None if server_mode() else team_server(private_dir(), Path(args.db))
+    if team:
+        why, to_do = team.refusal(args.without_sign_in)
+        if why:
+            print(f"{why} {to_do}.", file=sys.stderr)
+            if team.running and not args.no_browser:
+                server.open_in_browser(team.address)
+            return 2
+        print(team.on_purpose(), file=sys.stderr)
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None
@@ -1128,7 +1143,7 @@ def cmd_users(args: argparse.Namespace) -> int:
     if action == "list":
         found = store.list_users()
         if not found:
-            print("No accounts yet. Add the first Admin: python -m ap_coder users add <username> --role admin")
+            print("No accounts yet. Add the first Admin: python -m ap_coder users add --admin <username>")
         for u in found:
             state = "turned off" if not u["active"] else ("temporary password" if u["must_change"] else "active")
             codes = "codes set up" if u["totp_on"] else "codes not set up"  # the authenticator app (D-146)
