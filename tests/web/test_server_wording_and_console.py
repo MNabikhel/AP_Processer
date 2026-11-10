@@ -135,14 +135,14 @@ def test_the_quick_start_on_the_server_leaves_out_the_laptop(store):
 
 def test_on_the_server_the_setup_findings_say_an_admin(store, monkeypatch):
     """B-1112: the JD Edwards vendor error said "ask the pilot tester" on the server, where an Admin sets it up."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_review, jde_settings
 
     output = {"vendor_name": "Nobody Ltd.", "invoice_number": "1", "currency": "CAD", "grand_total": 10}
-    settings = jde.JdeSettings()
+    settings = jde_settings.JdeSettings()
     monkeypatch.delenv(offline.SERVER_ENV, raising=False)
-    laptop = [f[2] for f in jde.voucher_findings(output, settings, "")]  # no settings yet, no AN8
+    laptop = [f[2] for f in jde_review.voucher_findings(output, settings, "")]  # no settings yet, no AN8
     monkeypatch.setenv(offline.SERVER_ENV, "1")
-    server = [f[2] for f in jde.voucher_findings(output, settings, "")]
+    server = [f[2] for f in jde_review.voucher_findings(output, settings, "")]
     assert any("an Admin" in t for t in server) and not any("pilot tester" in t for t in server)
     assert any("Settings → JD Edwards E1 → Supplier address numbers" in t for t in laptop)  # where, since B-1297
     assert offline.setup_contact("Ask the pilot tester to map it") == "Ask an Admin to map it"

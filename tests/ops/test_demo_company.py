@@ -4,10 +4,11 @@ that codes each line to a JD Edwards account string, as the ``chart_company`` fi
 import pytest
 
 from ap_coder.bench import jde_company, jde_exports, jde_invoices
+from ap_coder.coding.tax import OUTSIDE_CANADA
 from ap_coder.core import chart
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.core.tax_setup import EXPENSE_TO_LINE, RECOVERABLE
-from ap_coder.erp import jde
+from ap_coder.erp import jde_prototype, jde_settings
 from ap_coder.ops import cli, demo
 from ap_coder.web.core import simple_screens
 
@@ -37,19 +38,19 @@ def test_the_company_is_set_up_the_way_a_department_that_types_its_vouchers_keys
     tax = {tax_type: (t.treatment, t.gl_code) for tax_type, t in store.tax_treatments().items()}
     assert tax["GST"] == tax["HST"] == (RECOVERABLE, company.gst_object)
     assert tax["PST"] == tax["QST"] == (EXPENSE_TO_LINE, "")
-    js = jde.load(store)
-    # The department's way (``jde.prototype_settings``: the one definition) over the company's own two values; the
-    # company's GST-only tax area is the one the department's placeholder is named after.
-    own = jde.JdeSettings(company=company.number, terms_codes={"Net 30": company.payment_terms})
-    assert js == jde.prototype_settings(own) and jde.in_use(store)
-    assert (js.company, js.amount_mode, js.remarks) == ("00210", jde.AMOUNT_TAX, jde.REMARKS_TYPED)
+    js = jde_settings.load(store)
+    # The department's way (``jde_prototype.prototype_settings``: the one definition) over the company's own two values;
+    # the company's GST-only tax area is the one the department's placeholder is named after.
+    own = jde_settings.JdeSettings(company=company.number, terms_codes={"Net 30": company.payment_terms})
+    assert js == jde_prototype.prototype_settings(own) and jde_settings.in_use(store)
+    assert (js.company, js.amount_mode, js.remarks) == ("00210", jde_settings.AMOUNT_TAX, jde_settings.REMARKS_TYPED)
     assert js.terms_codes == {"Net 30": "N30"}
-    assert company.tax_area == jde.PROTOTYPE_GST_AREA == "CDNGST"
+    assert company.tax_area == jde_prototype.PROTOTYPE_GST_AREA == "CDNGST"
     assert {(area.tax_area, area.code) for p, area in js.tax_map.items() if p in ("AB", "BC", "QC", "SK", "MB")} == {
         ("CDNGST", "V")
     }
     assert (js.tax_map["ON"].tax_area, js.tax_map["ON"].code) == ("ONHST", "V")
-    assert js.tax_map[jde.OUTSIDE_CANADA] == jde.TaxArea("", "")
+    assert js.tax_map[OUTSIDE_CANADA] == jde_settings.TaxArea("", "")
 
 
 def test_the_seven_invoices_are_in_the_review_queue_read_from_their_pdfs(chart_company):

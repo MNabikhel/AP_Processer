@@ -4,7 +4,7 @@ activity."""
 
 from __future__ import annotations
 
-from ap_coder.erp import exports, jde
+from ap_coder.erp import exports, jde, jde_accounts, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import AN8, ON, _files, _invoice
 
@@ -25,13 +25,13 @@ def test_an_unassigned_cost_center_is_blank_in_every_erp_file():
     inv = _unassigned_cost_centers()
     rows = exports.line_rows([inv])
     assert rows and {r["cost_center"] for r in rows} == {""}
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, default_bu="100")
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, default_bu="100")
     assert jde.validate([inv], settings, AN8) == {}
-    lines = _files([inv], settings)[jde.DIST_FILE]
+    lines = _files([inv], settings)[jde_zfiles.DIST_FILE]
     assert lines and all(r["VNANI"].startswith("100.") for r in lines), [r["VNANI"] for r in lines]
-    assert jde.account_for("1500", "UNASSIGNED", settings).bu == "100"
+    assert jde_accounts.account_for("1500", "UNASSIGNED", settings).bu == "100"
     # Without a default business unit the line is held back, never sent with UNASSIGNED.
-    assert jde.account_for("1500", "UNASSIGNED", jde.JdeSettings()) is None
+    assert jde_accounts.account_for("1500", "UNASSIGNED", jde_settings.JdeSettings()) is None
 
 
 def _cli_args(tmp_path, *args):

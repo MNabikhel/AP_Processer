@@ -28,7 +28,7 @@ from ap_coder.bench.fake_model import FakeModel
 from ap_coder.bench.generator import make_stream_case
 from ap_coder.core.config import LocalLLMSettings, Settings
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.web.core import SHOW_JDE
 from tests.ai.test_local_llm import REAL_FETCH
 from tests.conftest import SAMPLE_STEM, SAMPLES
@@ -125,7 +125,7 @@ def setup(tmp_path, lm):
     store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store, cost_centers=False)
     store.set_setting(SHOW_JDE, "1")  # JD Edwards is the export: its findings are part of every check (D-75)
-    jde.save(store, jde.JdeSettings(default_bu="CC700"))
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC700"))
     settings = Settings(llm=LocalLLMSettings(provider="local", base_url=lm.base_url))
     return store, settings
 

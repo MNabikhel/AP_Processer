@@ -9,7 +9,7 @@ import pytest
 
 from ap_coder.coding.terms import parse_terms, terms_key, terms_label
 from ap_coder.core.store import Store
-from ap_coder.erp import jde
+from ap_coder.erp import jde, jde_review, jde_settings, jde_voucher, jde_zfiles
 from tests.erp.test_jde import AN8, ON, _files, _invoice
 
 
@@ -40,32 +40,44 @@ def test_terms_are_keyed_by_what_they_mean(printed, key):
 
 
 def test_the_code_is_looked_up_by_meaning_then_the_default():
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30", "2/10 Net 30": "210"})
-    assert jde.terms_code({"payment_terms": "30 days"}, settings) == ("N30", "Net 30", jde.TERMS_TABLE)
-    assert jde.terms_code({"payment_terms": "2% 10, net 30"}, settings) == ("210", "2/10 Net 30", jde.TERMS_TABLE)
-    assert jde.terms_code({"payment_terms": "Net 45"}, settings) == ("", "Net 45", "")
+    settings = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30", "2/10 Net 30": "210"}
+    )
+    assert jde_voucher.terms_code({"payment_terms": "30 days"}, settings) == ("N30", "Net 30", jde_voucher.TERMS_TABLE)
+    assert jde_voucher.terms_code({"payment_terms": "2% 10, net 30"}, settings) == (
+        "210",
+        "2/10 Net 30",
+        jde_voucher.TERMS_TABLE,
+    )
+    assert jde_voucher.terms_code({"payment_terms": "Net 45"}, settings) == ("", "Net 45", "")
     settings.payment_terms_code = "Z"
-    assert jde.terms_code({"payment_terms": "Net 45"}, settings) == ("Z", "Net 45", jde.TERMS_DEFAULT)
-    assert jde.terms_code({"payment_terms": ""}, settings) == ("Z", "", jde.TERMS_DEFAULT)
+    assert jde_voucher.terms_code({"payment_terms": "Net 45"}, settings) == ("Z", "Net 45", jde_voucher.TERMS_DEFAULT)
+    assert jde_voucher.terms_code({"payment_terms": ""}, settings) == ("Z", "", jde_voucher.TERMS_DEFAULT)
 
 
 def test_vlptc_is_filled_from_the_table():
     inv = _invoice(ON)  # "Net 30"
-    head = _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))[jde.HEADER_FILE][
-        0
-    ]
+    head = _files(
+        [inv], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+    )[jde_zfiles.HEADER_FILE][0]
     assert head["VLPTC"] == "N30"
     head = _files(
-        [inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}, payment_terms_code="DFT")
-    )[jde.HEADER_FILE][0]
+        [inv],
+        jde_settings.JdeSettings(
+            amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}, payment_terms_code="DFT"
+        ),
+    )[jde_zfiles.HEADER_FILE][0]
     assert head["VLPTC"] == "DFT"
     assert (
-        _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))[jde.HEADER_FILE][0]["VLPTC"] == ""
+        _files([inv], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS))[jde_zfiles.HEADER_FILE][0][
+            "VLPTC"
+        ]
+        == ""
     )  # no table: E1 takes the supplier's
 
 
 def _terms_findings(final, settings):
-    return [f for f in jde.voucher_findings(final, settings, "10023") if f[1] == "JDE_TERMS_NO_CODE"]
+    return [f for f in jde_review.voucher_findings(final, settings, "10023") if f[1] == "JDE_TERMS_NO_CODE"]
 
 
 def test_terms_without_a_code_are_a_note_once_the_table_is_in_use():
@@ -74,23 +86,30 @@ def test_terms_without_a_code_are_a_note_once_the_table_is_in_use():
     from ap_coder.coding.bulk import needs_a_person
 
     final = _invoice(ON, payment_terms="2/10 Net 45")["final_output"]
-    (finding,) = _terms_findings(final, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))
+    (finding,) = _terms_findings(
+        final, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+    )
     assert finding[0] == "info" and not needs_a_person(finding[0], finding[1])
     assert finding[2] == ("Payment terms 2/10 Net 45 have no JD Edwards code: add it in Settings → JD Edwards E1 "
                           "(or ask the pilot tester)")  # fmt: skip
     assert not _terms_findings(
-        final, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}, payment_terms_code="Z")
+        final,
+        jde_settings.JdeSettings(
+            amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}, payment_terms_code="Z"
+        ),
     )
-    assert not _terms_findings(final, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"2/10 Net 45": "245"}))
     assert not _terms_findings(
-        final, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
+        final, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"2/10 Net 45": "245"})
+    )
+    assert not _terms_findings(
+        final, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS)
     )  # no table: E1 takes the supplier's own terms, as before
     unread = _invoice(ON, payment_terms="As agreed")["final_output"]
     assert not _terms_findings(
-        unread, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+        unread, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
     )  # TERMS_NOT_FOUND says it
     # not held back from a batch: a warning only
-    table = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+    table = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
     assert jde.validate([_invoice(ON, payment_terms="2/10 Net 45")], table, AN8) == {}
 
 
@@ -99,15 +118,18 @@ def test_a_credit_memo_is_sent_without_a_terms_code():
     left blank on a credit memo, and nothing asks for its code (B-896)."""
     from tests.erp.test_jde import CREDIT
 
-    settings = jde.JdeSettings(
-        amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30", "2/10 Net 30": "210"}, payment_terms_code="DFT"
+    settings = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_GROSS,
+        terms_codes={"Net 30": "N30", "2/10 Net 30": "210"},
+        payment_terms_code="DFT",
     )
     inv = _invoice(CREDIT, 3, payment_terms="2/10 Net 30")
-    assert _files([inv], settings)[jde.HEADER_FILE][0]["VLPTC"] == ""
+    assert _files([inv], settings)[jde_zfiles.HEADER_FILE][0]["VLPTC"] == ""
     assert not _terms_findings(
-        inv["final_output"], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+        inv["final_output"],
+        jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}),
     )
-    view = jde.voucher_view(inv["final_output"], settings, "10023")
+    view = jde_review.voucher_view(inv["final_output"], settings, "10023")
     assert next(r for r in view["rows"] if r["column"] == "VLPTC")["value"] == (
         "Not sent (a credit): JD Edwards takes no terms code on a credit memo"
     )
@@ -120,24 +142,28 @@ def test_the_voucher_block_shows_the_code_beside_the_terms():
     final = _invoice(ON)["final_output"]
 
     def row(settings):
-        view = jde.voucher_view(final, settings, "10023")
+        view = jde_review.voucher_view(final, settings, "10023")
         return next(r for r in view["rows"] if r["column"] == "VLPTC")["value"], view
 
-    value, view = row(jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))
+    value, view = row(jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))
     assert value == "N30 (Net 30)" and view["terms_code"] == "N30" and view["terms_sent"]
     value, _ = row(
-        jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}, payment_terms_code="DFT")
+        jde_settings.JdeSettings(
+            amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}, payment_terms_code="DFT"
+        )
     )
     assert value == "DFT (the default for terms not in the table)"
-    value, _ = row(jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}))
+    value, _ = row(jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 45": "N45"}))
     assert value == "Not sent: no code for Net 30, JD Edwards uses the supplier's own terms"
-    value, view = row(jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS))
+    value, view = row(jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS))
     assert value == "Not sent: JD Edwards uses the supplier's own terms" and not view["terms_sent"]
 
 
 def test_the_dry_run_shows_each_vouchers_terms_code():
     invoices = [_invoice(ON), _invoice(ON, inv_id=2, invoice_number="X-2", payment_terms="Net 60")]
-    report = jde.dry_run(invoices, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}), AN8)
+    report = jde.dry_run(
+        invoices, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}), AN8
+    )
     text = jde.dry_run_text(report)
     assert "payment terms Net 30 -> N30" in text
     assert "payment terms Net 60 -> none (no code: JD Edwards uses the supplier's own terms)" in text
@@ -152,19 +178,19 @@ def test_the_settings_table_round_trip(tmp_path):
     page = client.get("/settings/jde").text
     assert "Payment terms → JD Edwards code" in page
     assert "Examples: check each code against your JD Edwards payment terms" in page  # pre-filled, not in use yet
-    assert 'value="N30"' in page and jde.load(store).terms_codes == {}
+    assert 'value="N30"' in page and jde_settings.load(store).terms_codes == {}
     form = {"terms": ["30 days", "2% 10 net 30", "N30", "", "As agreed"], "terms_code": ["n30", "210", "X", "Y", ""],
             "default_terms_code": "z"}  # fmt: skip
     answer = post(client, "/settings/jde/terms", form)
     assert answer.status_code == 400 and "Net 30" in answer.text  # the same meaning twice
     form["terms"][2], form["terms_code"][2] = "net 60", "n60"  # a row with no terms, or no code, is dropped
     follow(client, post(client, "/settings/jde/terms", form))
-    saved = jde.load(store)
+    saved = jde_settings.load(store)
     assert saved.terms_codes == {"Net 30": "N30", "2/10 Net 30": "210", "Net 60": "N60"}
     assert saved.payment_terms_code == "Z"
     page = client.get("/settings/jde").text
     assert "Examples: check" not in page and 'value="2/10 Net 30"' in page and 'value="Z"' in page
-    assert json.loads(store.get_setting(jde.SETTING_KEY))["terms_codes"]["Net 60"] == "N60"
+    assert json.loads(store.get_setting(jde_settings.SETTING_KEY))["terms_codes"]["Net 60"] == "N60"
     unknown = {"terms": ["sometime"], "terms_code": ["S"], "default_terms_code": ""}
     answer = post(client, "/settings/jde/terms", unknown)
     assert answer.status_code == 400 and "sometime" in answer.text
@@ -176,8 +202,10 @@ def test_the_review_screen_shows_the_code_beside_the_terms(tmp_path):
 
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
-    store.set_setting(jde.SHOW_SETTING, "1")
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, terms_codes={"Net 30": "N30"}))
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(
+        store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS, terms_codes={"Net 30": "N30"})
+    )
     page = client_for(store).get(f"/review/{add_clean(store, ON)}").text
     assert "Sent to JD Edwards as code N30" in page  # under the Payment terms box
     block = page.split('aria-label="JD Edwards voucher"')[1]

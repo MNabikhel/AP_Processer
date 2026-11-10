@@ -15,7 +15,7 @@ from ap_coder.core import chart
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import load_sample_setup
-from ap_coder.web.invoice_view import is_hard
+from ap_coder.web.invoice_findings import is_hard
 from tests import chart_files as cf
 from tests.chart_files import CLOSED, HOME, NOT_USED, OTHER
 from tests.conftest import SAMPLES

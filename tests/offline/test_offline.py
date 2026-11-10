@@ -12,6 +12,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,7 @@ def no_network(monkeypatch):
 
     for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)  # a proxy on this computer would hide where a request goes
+    monkeypatch.setattr(urllib.request, "_opener", None)  # (urllib's kept opener has the proxies of before, B-2310)
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
@@ -83,6 +85,18 @@ def test_the_guard_catches_a_connection(no_network):
     with pytest.raises(OSError):
         urllib.request.urlopen("https://example.com/", timeout=2)
     assert no_network  # recorded, so the tests below would see one
+
+
+def test_the_guard_catches_a_connection_after_an_earlier_request_through_a_proxy_on_this_computer(monkeypatch, request):
+    """B-2310: urllib keeps the first opener it builds, with the proxies the environment had then. Where the proxy is
+    on this computer, a request made after any earlier one went to the proxy, a local address, and was not refused."""
+    for name in ("HTTPS_PROXY", "https_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    monkeypatch.setattr(urllib.request, "_opener", urllib.request.build_opener())  # as an earlier request leaves it
+    attempts = request.getfixturevalue("no_network")
+    with pytest.raises(OSError):
+        urllib.request.urlopen("https://example.com/", timeout=2)
+    assert any("example.com" in a for a in attempts)
 
 
 ocr = pytest.mark.skipif(not layout.ocr_available(), reason="local OCR not installed (pip install -e .[ocr])")
@@ -125,7 +139,7 @@ def demo_db(tmp_path):
 
 def test_demo_review_and_jde_export_offline(no_network, demo_db):
     """The demo invoices through validation, tax checks, capture and a JD Edwards batch, offline."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde, jde_settings
     from ap_coder.ops.demo import load_demo
 
     store = Store(demo_db)
@@ -133,7 +147,7 @@ def test_demo_review_and_jde_export_offline(no_network, demo_db):
     assert counts["added"] >= 5
     approved = [store.get_invoice(i["id"]) for i in store.list_invoices(APPROVED)]
     assert approved
-    data, name, _ = jde.build_zip(approved, jde.JdeSettings(), lambda final: "10023", batch=1)
+    data, name, _ = jde.build_zip(approved, jde_settings.JdeSettings(), lambda final: "10023", batch=1)
     assert name.endswith(".zip") and zipfile.ZipFile(__import__("io").BytesIO(data)).namelist()
     assert no_network == []
 

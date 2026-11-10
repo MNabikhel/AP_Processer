@@ -10,7 +10,7 @@ import re
 
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import REVIEW
-from ap_coder.erp import jde
+from ap_coder.erp import jde, jde_settings
 from tests.ops.test_pilot_score import pilot
 from tests.web.test_web_invoice import PAGE, check
 from tests.web.test_web_review_signoff import _jde_on, demo_db, me, store
@@ -49,7 +49,7 @@ def test_a_new_vendor_with_jd_edwards_on_can_be_given_its_address_number_where_i
     added = client.post(f"/review/{cascade['id']}/vendor", headers=PAGE,
                         data={"name": cascade["vendor_name"], "an8": "40123"}).json()  # fmt: skip
     assert added["ok"] and "40123" in added["toast"]["text"]
-    assert jde.load(store).an8_overrides[vendor_key(cascade["vendor_name"])] == "40123"
+    assert jde_settings.load(store).an8_overrides[vendor_key(cascade["vendor_name"])] == "40123"
     sections = json.dumps(check(client, cascade["id"])["sections"])
     assert "JDE_NO_AN8" not in sections and "VENDOR_ADDED_HERE" in sections
 
@@ -153,7 +153,7 @@ def test_the_jd_edwards_step_is_done_only_when_the_export_has_a_business_unit_fo
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
     _jde_on(store)
-    jde.save(store, jde.JdeSettings(company="00001"))
+    jde_settings.save(store, jde_settings.JdeSettings(company="00001"))
 
     def step() -> tuple[str, str]:
         return next((s[0], s[2]) for s in process.setup_steps(store, Settings()) if s[1] == process.JDE_STEP)
@@ -161,14 +161,14 @@ def test_the_jd_edwards_step_is_done_only_when_the_export_has_a_business_unit_fo
     state, detail = step()
     assert state == "todo" and "Default BU" in detail and "2310" in detail, detail
     assert "no JD Edwards business unit" in detail
-    jde.save(store, jde.JdeSettings(company="00001", default_bu="100"))
+    jde_settings.save(store, jde_settings.JdeSettings(company="00001", default_bu="100"))
     state, detail = step()
     assert state == "ok" and "Default BU 100" in detail, detail
     # without a default BU, every account it needs mapped
     accounts = [a["code"] for a in store.list_accounts("gl_accounts")]
     taxes = [t.gl_code for t in store.tax_treatments().values() if t.needs_gl and t.gl_code]
-    rows = [jde.GlMap(code, "", "100", code) for code in dict.fromkeys(accounts + taxes)]
-    jde.save(store, jde.JdeSettings(company="00001", gl_map=rows))
+    rows = [jde_settings.GlMap(code, "", "100", code) for code in dict.fromkeys(accounts + taxes)]
+    jde_settings.save(store, jde_settings.JdeSettings(company="00001", gl_map=rows))
     assert step()[0] == "ok"
 
 
@@ -184,7 +184,9 @@ def test_the_why_not_list_says_an_unmapped_account_once_with_its_line_numbers(gr
         li["predicted_gl_code"], li["predicted_cost_center"] = "1500", ""
     numbers = [str(li["line_number"]) for li in output["line_items"]]
     assert len(numbers) > 1
-    reasons = jde.validate([{"id": 1, "final_output": output}], jde.JdeSettings(company="00001"), lambda _f: "4012")[1]
+    reasons = jde.validate(
+        [{"id": 1, "final_output": output}], jde_settings.JdeSettings(company="00001"), lambda _f: "4012"
+    )[1]
     said = [r for r in reasons if r.startswith("GL 1500 ")]
     assert said == [f"GL 1500 has no JDE account (lines {', '.join(numbers)}): add it to the account mapping "
                     "(BU.Object.Subsidiary)"], reasons  # fmt: skip
@@ -283,7 +285,7 @@ def test_pilot_score_says_one_voucher_dated_outside_in_the_singular(pilot, tmp_p
     """B-1306: pilot-score said "1 vouchers dated outside…"."""
     import csv
 
-    from ap_coder.erp.jde import julian
+    from ap_coder.erp.jde_formats import julian
     from ap_coder.ops import pilot_score
     from tests.ops.test_pilot_score import _posted
 

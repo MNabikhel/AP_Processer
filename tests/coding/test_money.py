@@ -19,7 +19,7 @@ from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import validate_coding
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.web.invoice_view import tax_check
+from ap_coder.web.invoice_totals import tax_check
 from tests.conftest import SAMPLES
 
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))

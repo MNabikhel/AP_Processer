@@ -31,7 +31,7 @@ from ap_coder.core.store import purchasing as purchasing_module
 from ap_coder.core.store._base import VENDOR_CHANGES_KEPT
 from ap_coder.core.store.summary import SUMMARY_TRIGGERS
 from ap_coder.ops.demo import load_demo, remove_demo
-from ap_coder.web.invoice_view import po_section
+from ap_coder.web.invoice_coding import po_section
 from ap_coder.web.pages.purchase_orders import po_detail
 from tests.webclient import gt as _gt
 

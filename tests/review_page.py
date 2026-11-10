@@ -3,7 +3,7 @@ fixture): open an invoice, read what each line shows (its account string, amount
 account, split a line, check, approve.
 
 The one place that knows the screen's markup, through as few hooks as it can: the controls of the form "inv" by their
-posted names (``invoice_view.LINE_INPUTS``, ``LINE_TAX_CODE``, the "Approve anyway" box), a finding by its
+posted names (``invoice_form.LINE_INPUTS``, ``LINE_TAX_CODE``, the "Approve anyway" box), a finding by its
 ``data-code`` and the closed Approve by its ``data-not-ready``. A line's account is ONE box, the whole string
 (``account_lines.LINE_ACCOUNT``, D-214), which the server reads; the row's two hidden cells (the business unit in
 ``line_cc``, ``object.subsidiary`` in ``line_gl``) follow it as the screen's script makes them. ``Row.account``,
@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 from ap_coder.core import chart
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.web.account_lines import LINE_ACCOUNT
-from ap_coder.web.invoice_view import LINE_INPUTS, LINE_TAX_CODE
+from ap_coder.web.invoice_form import LINE_INPUTS, LINE_TAX_CODE
 
 from .webclient import PAGE
 

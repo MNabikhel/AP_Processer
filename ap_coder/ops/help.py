@@ -43,7 +43,7 @@ CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
 CHART_IMPORT = "Setup → JD Edwards files"
 
 CHECKS: dict[str, CheckHelp] = {
-    # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
+    # --- JD Edwards voucher (erp/jde_review.py voucher_findings, D-75): what its batch would hold back -------------
     "JDE_SETTINGS": CheckHelp(
         ERP, "JD Edwards settings incomplete",
         "A setting every JD Edwards voucher needs (company, user ID, batch prefix, document type or currency) is not "
@@ -192,7 +192,7 @@ CHECKS: dict[str, CheckHelp] = {
         "Something JD Edwards needs on the voucher is missing or not valid.",
         "Read the message, fix it on the invoice, or ask the pilot tester.",
     ),
-    # --- Dates and currency typed on the review screen (web/invoice_view.py) ---------------------------------------
+    # --- Dates and currency typed on the review screen (web/invoice_fields.py) -------------------------------------
     "INVOICE_DATE_INVALID": CheckHelp(
         TOTALS, "Invoice date to fix",
         "The invoice date is missing or is not a date AP Coder can read.",
@@ -282,12 +282,22 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",
         "The vendor's GST/HST number differs from the number in the vendor list or, when it has none, from its "
-        "earlier approved invoices. Fake invoices often imitate a real supplier with different details.",
+        "earlier approved invoices. Fake invoices often imitate a real supplier with different details. (The same "
+        "nine digits with other digits after RT is another GST/HST account of the same business: only a warning.)",
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying."
         " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail."
         " When the number differs from the vendor list's, someone else then confirms it: where people sign in, the"
         " voucher waits for a second approval by an Approver or an Admin; on one person's laptop the keying sheet"
         " says on the voucher to confirm before paying.",
+    ),
+    "VENDOR_TAX_ACCOUNT_DIFFERS": CheckHelp(
+        FRAUD, "Another GST/HST account of the same business",
+        "The invoice's GST/HST number has the same nine-digit business number as the vendor's (in the vendor list or, "
+        "when it has none, on its earlier approved invoices), with other digits after RT. The nine digits are the "
+        "business registered with the CRA; the four digits after RT only say which of its GST/HST accounts it is: a "
+        "branch or a division can have its own (RT0001, RT0002).",
+        "Nothing to fix: approve as usual, with no reason to give and no second approval. If in doubt, look the "
+        "number up on the CRA's GST/HST registry.",
     ),
     "VENDOR_ADDED_HERE": CheckHelp(
         FRAUD, "New vendor added here",

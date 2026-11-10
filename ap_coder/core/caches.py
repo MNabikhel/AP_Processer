@@ -216,7 +216,7 @@ CACHES: dict[str, Kept] = {
     "ap_coder.ops.health:_LOOKED": Kept(1 * MB, "one look a database and part"),
     "ap_coder.ops.health:_monitors": Kept(1 * MB, "one a server.json"),
     "ap_coder.ops.offline:_checked": Kept(1 * MB, "one SHA-256 a model file's version"),
-    "ap_coder.erp.jde:_RATES": Kept(1 * MB, "the tax rates' table"),
+    "ap_coder.erp.jde_voucher:_RATES": Kept(1 * MB, "the tax rates' table"),
     "ap_coder.web.pages.help:_setup_cache": Kept(1 * MB, "one report a database"),
     # Pure functions' answers (lru_cache): their maxsize, at the size measured of an entry.
     "ap_coder.ai.line_match:word_match": Kept(34 * MB, "131,072 pairs of words, 0.25 KB each"),

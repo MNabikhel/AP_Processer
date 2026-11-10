@@ -885,7 +885,7 @@ def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own
 def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain_sql_changes_it(tmp_path, ground_truth):
     """The invoice page's Previous and Next (``navigation``) read the queue's kept list: an invoice parked through
     another Store, a confidence changed by plain SQL, move them at once."""
-    from ap_coder.web.pages.invoice import navigation
+    from ap_coder.web.pages.invoice_navigation import navigation
 
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
@@ -904,7 +904,7 @@ def test_previous_and_next_in_the_queues_own_order_read_its_ids_alone(tmp_path, 
     or new invoice (its rows kept until the list changes: at once under 100 people, 5.1% of the busy web workers' CPU
     at 300,000 invoices), only to step through its ids. In the queue's own order (no search, no other sort or view)
     they are read alone, off the queue's index: the same ids, the same steps."""
-    from ap_coder.web.pages.invoice import navigation
+    from ap_coder.web.pages.invoice_navigation import navigation
 
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
@@ -2324,7 +2324,7 @@ def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_proces
     from dataclasses import replace
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.pages import exports as page
 
     worked, rows_of = [], page.problem_rows  # (the shared answer's work: its invoices given, read once)
@@ -2358,7 +2358,10 @@ def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_proces
     _plain(store, "UPDATE invoices SET final_output = json_set(final_output, '$.invoice_number', 'J-1') WHERE id = ?",
            ids[2])  # fmt: skip
     assert f"same supplier and invoice number as AP Coder #{ids[0]}" in reasons(shown("worker 2")) and len(worked) == 4
-    jde.save(other, replace(jde.load(other), gl_date=jde.GL_DATE_EXPORT, open_to=dt.date.today().isoformat()))
+    jde_settings.save(
+        other,
+        replace(jde_settings.load(other), gl_date=jde_settings.GL_DATE_EXPORT, open_to=dt.date.today().isoformat()),
+    )
     assert "after the open period" not in reasons(shown("worker 1")) and len(worked) == 5
     tomorrow = dt.date.today() + dt.timedelta(days=1)
 
@@ -2369,7 +2372,7 @@ def test_the_jde_check_of_the_ready_invoices_is_worked_out_once_for_every_proces
 
     later = types.SimpleNamespace(date=Tomorrow, datetime=dt.datetime, timedelta=dt.timedelta)
     monkeypatch.setattr(page, "dt", later)
-    monkeypatch.setattr(jde, "dt", later)
+    monkeypatch.setattr(jde_settings, "dt", later)
     assert reasons(shown("worker 1")).count("after the open period") == 3 and len(worked) == 6
     assert shown("worker 2", ids[:1]) != shown("worker 2") and len(worked) == 7  # (another question: its own answer)
 
@@ -2383,13 +2386,13 @@ def test_the_jde_check_of_the_ready_invoices_follows_the_tax_rate_file(tmp_path,
 
     from ap_coder.core import tax_setup
     from ap_coder.core.paths import private_dir
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.pages import exports as page
     from tests.webclient import client_for
 
     store = Store(tmp_path / "ap.db")
     ids = [_approved(store, tmp_path, ground_truth, "G-1")]
-    jde.save(store, replace(jde.load(store), amount_mode=jde.AMOUNT_GROSS))
+    jde_settings.save(store, replace(jde_settings.load(store), amount_mode=jde_settings.AMOUNT_GROSS))
 
     def reasons() -> str:
         rows = page.ready_problems(store, ids)
@@ -2422,25 +2425,25 @@ def test_the_jde_check_of_the_ready_invoices_is_by_the_settings_it_is_kept_for(t
     from dataclasses import replace
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.pages import exports as page
 
     store, other = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")
     ids = [_approved(other, tmp_path, ground_truth, "S-1")]
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     checked = page.problem_rows(store, page.jde_check(store, ids)[1])
     overridden = replace(settings, an8_overrides={vendor_key(ground_truth["vendor_name"]): "ABC"})
     reads = store.get_invoices
 
     def saved_meanwhile(asked: list[int]) -> list[dict]:  # (the check's work under way: the settings saved)
         monkeypatch.setattr(store, "get_invoices", reads)
-        jde.save(other, overridden, actor="Ann")
+        jde_settings.save(other, overridden, actor="Ann")
         return reads(asked)
 
     monkeypatch.setattr(store, "get_invoices", saved_meanwhile)
     assert page.ready_problems(store, ids) == checked  # (by the settings it was asked with)
     assert "supplier number 'ABC'" in page.ready_problems(store, ids)[0]["reasons"][0]  # (asked with the new ones)
-    jde.save(other, settings, actor="Ann")
+    jde_settings.save(other, settings, actor="Ann")
     assert page.ready_problems(store, ids) == checked  # (the one kept for the settings before, as they are again)
 
 

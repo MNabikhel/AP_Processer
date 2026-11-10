@@ -11,7 +11,7 @@
 
 Either answer puts the invoice back in the review queue; AP approves it as before. Every handler checks the request
 is the asker's own (a Manager) or that the asker is AP: a Manager never opens another manager's request or any other
-invoice. The invoice is sent from the review screen (``POST /review/<id>/manager``, ``pages/invoice.py``).
+invoice. The invoice is sent from the review screen (``POST /review/<id>/manager``, ``pages/invoice_approve.py``).
 """
 
 from __future__ import annotations

@@ -21,8 +21,8 @@ from ap_coder.bench.generator import make_stream_case
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
-from ap_coder.erp import jde
-from ap_coder.erp.jde import julian
+from ap_coder.erp import jde_settings
+from ap_coder.erp.jde_formats import julian
 from ap_coder.ops import pilot_score
 
 SEED, SUPPLIERS, PER_SUPPLIER = 5, (2, 3, 7), 3
@@ -139,7 +139,7 @@ def _posted(done, tmp: Path) -> tuple[Path, Path]:
 def test_the_report_finds_exactly_the_differences_put_in(pilot, tmp_path):
     store, done = pilot
     # the vouchers carry the tax in RPSTAM, as the tax amounts mode sends it (the G/L tax mode: B-1023)
-    jde.save(store, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))
+    jde_settings.save(store, jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX))
     ids = {(s, i): inv_id for s, i, inv_id, _ in done}
     f0411, f0911 = _posted(done, tmp_path)
     report, folder = pilot_score.run(store, f0411, f0911, tmp_path / "out")

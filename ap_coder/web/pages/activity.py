@@ -72,7 +72,7 @@ def invoice_label(event: dict[str, Any]) -> str:
 
 def timeline_items(events: list[dict[str, Any]], with_invoice: bool = True) -> list[dict[str, str]]:
     """Events as ``ui.timeline`` items (plain text; the timeline escapes it), newest first; ``with_invoice``: each
-    title names its invoice (not on the invoice's own screen, ``invoice.history``)."""
+    title names its invoice (not on the invoice's own screen, ``invoice_approve.history``)."""
     items = []
     for e in events:
         icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))

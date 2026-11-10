@@ -11,7 +11,7 @@ name again. For each request, ``Identity`` (ASGI middleware) puts the person in 
   from the same computer as the first is refused, whatever name it gives;
 * every event the store records names them (``actor``) and their address (``detail["address"]``,
   ``store.EVENT_ORIGIN``);
-* the review screen keeps their unsaved edits apart (``pages/invoice.py``).
+* the review screen keeps their unsaved edits apart (``pages/invoice_drafts.py``).
 
 A browser on another computer without a valid cookie sees only the "Who are you?" page (a page asked for is sent
 there; an action is refused), the styles and scripts, and ``/healthz``.

@@ -538,7 +538,7 @@ launcher.
   view leaves out at once the files put in line or read since; a file saved in the folder shows within a minute. On a
   laptop each view lists the folder as before.
 
-  The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice.py:vendor_list`, `summary_memo` on
+  The review screen's (D-160): its vendor list (`ap_coder/web/pages/invoice_lookups.py:vendor_list`, `summary_memo` on
   `changes/vendors`: its JSON, gzipped, version and index, about 21 MB for 19,000 vendors), which the screen fetches
   from `GET /review/vendors.json?v=<version>` (a laptop's browser keeps it; the server's answers behind the login are
   `no-store`, B-1070); and each vendor's invoices (`ap_coder/core/store/vendors.py:_keep_vendor_rows`, a cache of its

@@ -19,7 +19,7 @@ from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 # Every page module imported now, before `me` patches web/core.py: a module imported while it is patched would keep
 # the patched `reviewer` it imports by name, for the tests of the files that run after this one.
@@ -36,7 +36,7 @@ def demo_db(cost_centers_demo_template):
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
     """A fixed reviewer and login (not this computer's)."""
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Jordan Lee", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "jlee", raising=False)
 
@@ -139,7 +139,7 @@ def test_apply_to_all_lines_refuses_a_code_not_in_the_lists(client, store):
 
 
 def test_a_vendors_one_usual_cost_center_is_offered_for_its_lines(client, store):
-    from ap_coder.web import invoice_view
+    from ap_coder.web import invoice_grid
 
     reference = store.reference_data()
     cc, other = reference.cost_centers.codes[:2]
@@ -149,7 +149,7 @@ def test_a_vendors_one_usual_cost_center_is_offered_for_its_lines(client, store)
     for li in approved["line_items"]:
         li["predicted_cost_center"] = cc
     store.approve_invoice(first["id"], approved, "Jordan Lee")
-    assert invoice_view.usual_cost_center(store, reference, vendor) == cc
+    assert invoice_grid.usual_cost_center(store, reference, vendor) == cc
 
     output = copy.deepcopy(second["ai_output"])  # another invoice of the same vendor, its cost centers left blank
     output["vendor_name"] = vendor
@@ -165,7 +165,7 @@ def test_a_vendors_one_usual_cost_center_is_offered_for_its_lines(client, store)
     # One past line on another cost center: there is no single usual one any more.
     line = {**output["line_items"][0], "predicted_cost_center": other}
     store.approve_invoice(second["id"], {**output, "line_items": [line]}, "Jordan Lee")
-    assert invoice_view.usual_cost_center(store, reference, vendor) == ""
+    assert invoice_grid.usual_cost_center(store, reference, vendor) == ""
 
 
 # --- 4. The second approval on one laptop -----------------------------------------------------------------------

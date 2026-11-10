@@ -1,11 +1,11 @@
-"""The review screen's math, line by line (invoice_view.math_check): the Canadian cases a pilot tester meets."""
+"""The review screen's math, line by line (coding.taxmath.math_check): the Canadian cases a pilot tester meets."""
 
 from __future__ import annotations
 
 import pytest
 
+from ap_coder.coding.taxmath import math_check
 from ap_coder.core.schema import InvoiceCoding
-from ap_coder.web.invoice_view import math_check
 
 
 def _coding(lines, taxes, *, province="BC", currency="CAD", total=None):

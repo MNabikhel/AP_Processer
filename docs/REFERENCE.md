@@ -485,7 +485,11 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
     review.py        grid edits → InvoiceCoding
     bulk.py · rules.py · taxmath.py · taxreturn.py · vendor_mail.py
   erp/               ERP files and reports
-    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export;  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
+    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export: a batch's checks, its ZIP and the dry run. Its parts, one
+                     subject each (D-222): jde_formats.py (dates, amounts) · jde_settings.py · jde_prototype.py
+                     (the department's preset) · jde_accounts.py (supplier numbers, accounts) · jde_voucher.py
+                     (one voucher) · jde_remarks.py · jde_zfiles.py (columns, rows, CSVs) · jde_review.py (the
+                     review screen);  jde_ais.py · jde_post.py · jde_sync.py: the AIS API
     hub/             the finance hub feed (tables, landing folder, OneLake)
     statements.py    vendor statement reconciliation;  accruals.py: month-end accruals
     recurring.py     recurring vendors
@@ -503,8 +507,9 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
   bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation,
                      GL coding without an AI model (bench coding)
   web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
-                     (`serve`), security.py (this computer only), pages/ (one module per page), templates/,
-                     static/
+                     (`serve`), security.py (this computer only), pages/ (one module per page; the review
+                     screen's routes, one module a subject: invoice.py and invoice_<subject>.py, as what it
+                     shows is: invoice_view.py and invoice_<subject>.py, D-223), templates/, static/
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds

@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 from ap_coder.coding import banks
 from ap_coder.core.store import APPROVED, REJECTED, REVIEW
-from ap_coder.erp import jde
-from ap_coder.web import invoice_view
+from ap_coder.erp import jde_settings
+from ap_coder.web import invoice_coding
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, form_of
 from tests.webclient import client_for, web_settings
@@ -24,7 +24,7 @@ def _id(store, vendor: str, status: str = REVIEW) -> int:
 
 
 def _jde_on(store) -> None:
-    store.set_setting(jde.SHOW_SETTING, "1")
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
 
 
 def _open(browser, path: str, width=1366, height=768, wait_viewer=True):
@@ -448,4 +448,4 @@ def test_the_differs_check_treats_every_blank_account_alike():
     shown = InvoiceCoding.model_validate(
         {**base, "line_items": [{**base["line_items"][0], "predicted_cost_center": "UNASSIGNED"}]}
     )
-    assert not invoice_view.differs_from_stored(shown, base)
+    assert not invoice_coding.differs_from_stored(shown, base)

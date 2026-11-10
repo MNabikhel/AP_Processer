@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from ap_coder.web import identity
 from ap_coder.web.core import done, local_url, page_router, refuse, render, reviewer, server_mode
-from ap_coder.web.pages.invoice import rename_drafts
+from ap_coder.web.pages.invoice_drafts import rename_drafts
 
 router = page_router()  # each plain handler: one connection a request
 

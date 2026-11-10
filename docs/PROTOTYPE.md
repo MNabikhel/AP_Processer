@@ -145,7 +145,9 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      with one click (*Use ...*) when another supplier is chosen. A number that differs from the chosen supplier's
      is an error: *Approve anyway* with a reason approves it, and the keying sheet then says on that voucher
      "Tax ID differs from the supplier list: confirm before paying". Where people sign in, such a voucher waits
-     for a second approval by an Approver or an Admin before it can be exported.
+     for a second approval by an Approver or an Admin before it can be exported. The same nine digits with other
+     digits after RT (123456789 RT0002 for RT0001) is another GST/HST account of the same business: a warning
+     only, with nothing to fix, no reason to give and no second approval.
    - **Bank account** (once a bank account is entered): shown in the header, set to the one this supplier was
      last paid from, else the default of the invoice's currency; pick another from the list. An invoice in a
      currency no bank account is in gets a warning and is not held.

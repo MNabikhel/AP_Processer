@@ -204,7 +204,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
     each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
     non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to.
-    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde.taxes_e1_posts``)."""
+    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde_review.taxes_e1_posts``)."""
     check = _start_tax_check(coding, setup)
     _tax_lines_add_up(check)
     _lines_for_two_provinces(check)

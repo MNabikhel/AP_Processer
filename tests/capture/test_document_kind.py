@@ -11,7 +11,7 @@ from ap_coder.capture.types import CaptureResult
 from ap_coder.core.config import Settings
 from ap_coder.core.store import load_sample_setup
 from ap_coder.web.app import create_app
-from ap_coder.web.invoice_view import document_kind
+from ap_coder.web.invoice_reading import document_kind
 from tests.conftest import SAMPLE_STEM, SAMPLES
 
 

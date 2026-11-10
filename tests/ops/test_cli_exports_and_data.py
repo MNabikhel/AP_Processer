@@ -22,7 +22,7 @@ from ap_coder.ai.extraction import DocumentExtractor
 from ap_coder.core import envfile, paths
 from ap_coder.core.config import DocumentIntelligenceSettings, Settings
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import jde
+from ap_coder.erp import jde, jde_settings, jde_zfiles
 from ap_coder.ops import cli
 from ap_coder.ops.doctor import run_checks
 from tests.conftest import SAMPLE_STEM, SAMPLES
@@ -35,7 +35,7 @@ from tests.scripts import load_script
 def test_jde_a_date_e1_cannot_hold_is_left_out_not_a_crash():
     """An invoice dated 1899 (a typo for 1999 / 2026) passed the checks, then the batch's ZIP could not be built
     (julian() raised): the whole batch, every invoice in it, could not be downloaded."""
-    settings = jde.JdeSettings()
+    settings = jde_settings.JdeSettings()
     for changes in ({"invoice_date": "1899-05-01"}, {"due_date": "0026-05-01"}):
         inv = _invoice(ON, **changes)
         problems = jde.validate([inv], settings, AN8)
@@ -55,10 +55,10 @@ def test_jde_text_starting_like_a_formula_is_written_as_it_is_and_fits_its_colum
     inv = _invoice(ON, invoice_number=number)
     inv["final_output"]["gl_distribution"][0]["description"] = "-" + "x" * 40
     files = _files([inv])
-    line = files[jde.DIST_FILE][0]
+    line = files[jde_zfiles.DIST_FILE][0]
     assert line["VNEXA"] == "-" + "x" * 29
     assert line["VNEXR"] == number
-    assert files[jde.HEADER_FILE][0]["VLVINV"] == number
+    assert files[jde_zfiles.HEADER_FILE][0]["VLVINV"] == number
 
 
 # --- Labels workbook (python -m ap_coder labels) ---------------------------------------------------------------

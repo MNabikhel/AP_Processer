@@ -11,7 +11,7 @@ from ap_coder.coding import banks
 from ap_coder.coding.validation import Issue
 from ap_coder.core.schema import FROM_VENDOR_LIST
 from ap_coder.core.store import APPROVED, REVIEW, Store
-from ap_coder.web import invoice_view as view
+from ap_coder.web import invoice_fields, invoice_findings, invoice_form
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import PAGE, _open_review, browser, check, demo_db, form_of, me  # noqa: F401
 from tests.web.test_web_pilot_walkthrough import LAPTOP
@@ -30,51 +30,51 @@ def _header(vendor: str = "Acme", **values: str) -> dict[str, str]:
 
 def test_a_vendor_fills_the_blank_tax_numbers_only():
     header = _header(**{PST: "PST-9999-0000"})  # the PST number printed
-    state, changed = view.fill_from_vendor(header, {}, [], ACME)
+    state, changed = invoice_form.fill_from_vendor(header, {}, [], ACME)
     assert changed == {GST: "123456782 RT0001", QST: "1234567890 TQ0001"}
     assert header[GST] == "123456782 RT0001" and header[PST] == "PST-9999-0000"  # printed: never touched
     assert state == {"vendor": "acme", "fields": {GST: "123456782 RT0001", QST: "1234567890 TQ0001"}}
     # the same vendor again: nothing to do
-    assert view.fill_from_vendor(header, state, [], ACME) == (state, {})
+    assert invoice_form.fill_from_vendor(header, state, [], ACME) == (state, {})
 
 
 def test_a_number_filled_from_the_vendor_follows_the_vendor():
     header = _header()
-    state, _ = view.fill_from_vendor(header, {}, [], ACME)
+    state, _ = invoice_form.fill_from_vendor(header, {}, [], ACME)
     header["vendor_name"] = "Other Co"
-    state, changed = view.fill_from_vendor(header, state, [], OTHER)
+    state, changed = invoice_form.fill_from_vendor(header, state, [], OTHER)
     assert changed == {GST: "741852966 RT0001", QST: "", PST: "PST-1234-5678"}  # replaced, cleared, filled
     assert state["fields"] == {GST: "741852966 RT0001", PST: "PST-1234-5678"}
     header["vendor_name"] = "Not In The List"
-    state, changed = view.fill_from_vendor(header, state, [], None)
+    state, changed = invoice_form.fill_from_vendor(header, state, [], None)
     assert changed == {GST: "", PST: ""} and state == {"vendor": "not in the list", "fields": {}}
 
 
 def test_a_number_typed_or_cleared_is_the_reviewers():
     header = _header()
-    state, _ = view.fill_from_vendor(header, {}, [], ACME)
+    state, _ = invoice_form.fill_from_vendor(header, {}, [], ACME)
     header[GST] = "999999999 RT0001"  # typed over the filled number
     header[QST] = ""  # the filled one cleared
-    state, changed = view.fill_from_vendor(header, state, [], ACME)
+    state, changed = invoice_form.fill_from_vendor(header, state, [], ACME)
     assert changed == {} and state["fields"] == {}  # the same vendor: not filled again
     header["vendor_name"] = "Other Co"
-    state, changed = view.fill_from_vendor(header, state, [], OTHER)
+    state, changed = invoice_form.fill_from_vendor(header, state, [], OTHER)
     assert header[GST] == "999999999 RT0001"  # typed: never overwritten, even when the vendor changes
     assert changed == {PST: "PST-1234-5678"} and header[QST] == ""  # (OTHER has no QST number)
 
 
 def test_a_field_marked_not_on_the_invoice_is_not_filled():
     header = _header()
-    state, changed = view.fill_from_vendor(header, {}, [GST], ACME)
+    state, changed = invoice_form.fill_from_vendor(header, {}, [GST], ACME)
     assert GST not in changed and header[GST] == "" and changed == {QST: "1234567890 TQ0001"}
 
 
 def test_the_draft_keeps_what_was_filled_and_the_stored_coding_remembers_it():
     form = {"from_vendor": json.dumps({"vendor": "acme", "fields": {GST: "1", "remit_bank_account": "x"}})}
-    base = view.Draft.stored({"vendor_name": "Acme"})
-    assert view.Draft.from_form(form, base).from_vendor == {"vendor": "acme", "fields": {GST: "1"}}
-    assert view.Draft.from_form({"from_vendor": "not json"}, base).from_vendor == {}
-    stored = view.Draft.stored({"vendor_name": "Acme", GST: "123456782 RT0001", FROM_VENDOR_LIST: [GST]})
+    base = invoice_form.Draft.stored({"vendor_name": "Acme"})
+    assert invoice_form.Draft.from_form(form, base).from_vendor == {"vendor": "acme", "fields": {GST: "1"}}
+    assert invoice_form.Draft.from_form({"from_vendor": "not json"}, base).from_vendor == {}
+    stored = invoice_form.Draft.stored({"vendor_name": "Acme", GST: "123456782 RT0001", FROM_VENDOR_LIST: [GST]})
     assert stored.from_vendor == {"vendor": "acme", "fields": {GST: "123456782 RT0001"}}
 
 
@@ -88,13 +88,13 @@ def test_the_checks_about_one_detail_highlight_it(tmp_path):
     issues = [Issue("warning", code, "") for code in (
         "VENDOR_TAX_NUMBER_CHANGED", "GST_NUMBER_CHECK_DIGIT", "VENDOR_QST_CHANGED", "VENDOR_BANK_CHANGED",
         "VENDOR_PST_CHANGED", "AMOUNT_UNUSUAL")]  # fmt: skip
-    flags = view.field_flags(issues, store, coding)
+    flags = invoice_fields.field_flags(issues, store, coding)
     assert flags[GST] == "Vendor list: 123456782 RT0001 · Fails the CRA check digit"
     assert flags[QST] == "Vendor list: 1234567890 TQ0001"
     assert flags["remit_bank_account"].startswith("Not the account on this vendor's approved invoices")
     assert flags[PST] == "Differs from this vendor's"  # no PST number in the list, no history: the check says more
     assert "AMOUNT_UNUSUAL" not in str(flags) and len(flags) == 4
-    assert set(view.FIELD_FLAGS) >= {"GST_HST_NUMBER_FORMAT", "QST_NUMBER_FORMAT", "PAY_FROM_CURRENCY"}
+    assert set(invoice_findings.FIELD_FLAGS) >= {"GST_HST_NUMBER_FORMAT", "QST_NUMBER_FORMAT", "PAY_FROM_CURRENCY"}
 
 
 def test_the_input_tax_credit_note_needs_the_tax_charged_and_100_dollars():
@@ -107,16 +107,16 @@ def test_the_input_tax_credit_note_needs_the_tax_charged_and_100_dollars():
                                          "taxable_amount": total, "tax_amount": 5} for t in taxes])  # fmt: skip
 
     both = [GST, QST]
-    codes = [i.code for i in view.not_printed(coding(105, ["GST", "QST"]), both)]
+    codes = [i.code for i in invoice_fields.not_printed(coding(105, ["GST", "QST"]), both)]
     assert codes == ["GST_HST_NUMBER_NOT_PRINTED", "QST_NUMBER_NOT_PRINTED"]
-    note = view.not_printed(coding(100, ["GST"]), both)[0]
+    note = invoice_fields.not_printed(coding(100, ["GST"]), both)[0]
     assert note.severity == "info" and note.message == (
         "The GST/HST number isn't printed on this invoice: CRA needs it on the invoice to claim the input tax credit "
         "for purchases of $100 or more"
     )
-    assert view.not_printed(coding(99.99, ["GST"]), both) == []  # under $100: no number needed
-    assert view.not_printed(coding(500, []), both) == []  # no tax charged: no credit to claim
-    assert view.not_printed(coding(500, ["GST"]), [QST]) == []  # the GST/HST number was printed
+    assert invoice_fields.not_printed(coding(99.99, ["GST"]), both) == []  # under $100: no number needed
+    assert invoice_fields.not_printed(coding(500, []), both) == []  # no tax charged: no credit to claim
+    assert invoice_fields.not_printed(coding(500, ["GST"]), [QST]) == []  # the GST/HST number was printed
 
 
 # --- On the review screen -------------------------------------------------------------------------------------------
@@ -167,6 +167,18 @@ def test_a_printed_number_that_differs_from_the_vendor_list_is_highlighted(clien
     page = client.get(f"/review/{invoice_id}").text
     field = page.split(f'data-field="{GST}"', 1)[0].rsplit("<label", 1)[1]
     assert "is-flagged" in field
+
+
+def test_another_gst_account_of_the_same_business_is_said_under_the_number_in_amber(client, store):
+    """VENDOR_TAX_ACCOUNT_DIFFERS (D-219 amended) is a warning: its hint is under the GST/HST box, which is not among
+    the details in red."""
+    invoice_id = _red_river(store)
+    answer = check(client, invoice_id, form_of(store, invoice_id, **{GST: "741852966 RT0002"}))
+    assert answer["header"]["flags"][GST] == (
+        "Vendor list: 741852966 RT0001, another GST/HST account of the same business"
+    )
+    assert GST not in answer["header"]["flag_errors"]
+    assert "another of its GST/HST accounts" in html.unescape(answer["sections"]["checks"])  # the checks list it too
 
 
 # --- In a browser ---------------------------------------------------------------------------------------------------
@@ -414,7 +426,7 @@ def test_numbers_marked_from_the_vendor_list_are_always_this_vendors():
     (an Undo that kept the vendor but put back another one's numbers) follows the vendor now in the field."""
     header = _header("Other Co", **{GST: "123456782 RT0001", QST: "1234567890 TQ0001"})
     state = {"vendor": "other", "fields": {GST: "123456782 RT0001", QST: "1234567890 TQ0001"}}
-    state, changed = view.fill_from_vendor(header, state, [], OTHER)
+    state, changed = invoice_form.fill_from_vendor(header, state, [], OTHER)
     assert changed == {GST: "741852966 RT0001", QST: ""}
     assert state == {"vendor": "other", "fields": {GST: "741852966 RT0001"}}
 
@@ -506,8 +518,11 @@ def test_a_posted_vendor_bank_detail_is_ignored(client, store):
     with sqlite3.connect(store.path) as conn:
         conn.execute("UPDATE invoices SET ai_output = json_set(ai_output, '$.remit_bank_account', ?) WHERE id = ?",
                      (printed, invoice_id))  # fmt: skip
-    base = view.Draft.stored(store.get_invoice(invoice_id)["ai_output"])
-    assert view.Draft.from_form({"remit_bank_account": "Account 999"}, base).header["remit_bank_account"] == printed
+    base = invoice_form.Draft.stored(store.get_invoice(invoice_id)["ai_output"])
+    assert (
+        invoice_form.Draft.from_form({"remit_bank_account": "Account 999"}, base).header["remit_bank_account"]
+        == printed
+    )
     data = _approvable(client, invoice_id, form_of(store, invoice_id, remit_bank_account="Account 999"))
     client.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE)
     assert store.get_invoice(invoice_id)["final_output"]["remit_bank_account"] == printed
@@ -523,7 +538,7 @@ def test_only_a_number_not_read_is_filled_from_the_vendor_list_and_not_a_correct
 
     # the rules: only a field the reading left blank is filled and marked; the clerk's clearing is the clerk's edit
     header = _header()
-    state, changed = view.fill_from_vendor(header, {}, [], ACME, unread={QST, PST})
+    state, changed = invoice_form.fill_from_vendor(header, {}, [], ACME, unread={QST, PST})
     assert GST not in changed and header[GST] == "" and state["fields"] == {QST: "1234567890 TQ0001"}
     final = {GST: "123456782 RT0001", QST: "1234567890 TQ0001", FROM_VENDOR_LIST: [GST, QST]}
     assert as_read(final, {GST: "999999998 RT0001", QST: ""}) == {**final, QST: ""}  # a reading kept is no fill

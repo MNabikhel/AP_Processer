@@ -8,7 +8,7 @@ import pytest
 from ap_coder.coding.tax import TaxRateTable, TaxSetup, build_gl_distribution, load_tax_mapping
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
-from ap_coder.erp import jde
+from ap_coder.erp import jde, jde_review, jde_settings, jde_voucher, jde_zfiles
 from tests.conftest import DATA
 
 
@@ -45,11 +45,11 @@ def coded(d, setup=None, inv_id=1):
 
 
 def GL(**kw):  # noqa: N802
-    return jde.JdeSettings(amount_mode=jde.AMOUNT_GL, default_bu="CORP", **kw)
+    return jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GL, default_bu="CORP", **kw)
 
 
 def rows(inv, settings):
-    return jde.voucher_rows(inv, "10023", settings)
+    return jde_zfiles.voucher_rows(inv, "10023", settings)
 
 
 def total(dist, col="VNAA"):
@@ -60,26 +60,30 @@ def total(dist, col="VNAA"):
 
 
 def test_new_setups_code_tax_to_gl_and_saved_ones_keep_their_mode(tmp_path):
-    assert jde.JdeSettings().amount_mode == jde.AMOUNT_GL
-    assert jde.JdeSettings.from_json(None).amount_mode == jde.AMOUNT_GL
-    assert jde.load(Store(tmp_path / "a.db")).amount_mode == jde.AMOUNT_GL
-    for mode in (jde.AMOUNT_GROSS, jde.AMOUNT_TAX, jde.AMOUNT_GL):
-        assert jde.JdeSettings.from_json(jde.JdeSettings(amount_mode=mode).to_json()).amount_mode == mode
+    assert jde_settings.JdeSettings().amount_mode == jde_settings.AMOUNT_GL
+    assert jde_settings.JdeSettings.from_json(None).amount_mode == jde_settings.AMOUNT_GL
+    assert jde_settings.load(Store(tmp_path / "a.db")).amount_mode == jde_settings.AMOUNT_GL
+    for mode in (jde_settings.AMOUNT_GROSS, jde_settings.AMOUNT_TAX, jde_settings.AMOUNT_GL):
+        assert (
+            jde_settings.JdeSettings.from_json(jde_settings.JdeSettings(amount_mode=mode).to_json()).amount_mode == mode
+        )
     # Settings saved before the mode existed (no amount_mode in them, or one no longer known): gross, as they were.
-    assert jde.JdeSettings.from_json(json.dumps({"company": "00002"})).amount_mode == jde.AMOUNT_GROSS
-    assert jde.JdeSettings.from_json(json.dumps({"amount_mode": "odd"})).amount_mode == jde.AMOUNT_GROSS
-    assert "G/L" in jde.AMOUNT_MODES[jde.AMOUNT_GL]
+    assert jde_settings.JdeSettings.from_json(json.dumps({"company": "00002"})).amount_mode == jde_settings.AMOUNT_GROSS
+    assert (
+        jde_settings.JdeSettings.from_json(json.dumps({"amount_mode": "odd"})).amount_mode == jde_settings.AMOUNT_GROSS
+    )
+    assert "G/L" in jde_settings.AMOUNT_MODES[jde_settings.AMOUNT_GL]
 
 
 def test_old_settings_rebuild_old_batches_unchanged(tmp_path):
     store = Store(tmp_path / "a.db")
-    old = jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS)
-    jde.save(store, old)
+    old = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GROSS)
+    jde_settings.save(store, old)
     inv = coded(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
-    assert jde.load(store).amount_mode == jde.AMOUNT_GROSS
-    assert jde.export_batch([inv], jde.load(store), {"acme": "10023"}, batch=3) == jde.export_batch(
-        [inv], old, {"acme": "10023"}, batch=3
-    )
+    assert jde_settings.load(store).amount_mode == jde_settings.AMOUNT_GROSS
+    assert jde_zfiles.export_batch(
+        [inv], jde_settings.load(store), {"acme": "10023"}, batch=3
+    ) == jde_zfiles.export_batch([inv], old, {"acme": "10023"}, batch=3)
 
 
 # --- Balancing, province by province ---------------------------------------------------------------------------
@@ -110,7 +114,7 @@ def test_each_province_balances_to_the_gross_with_the_tax_on_its_own_gl_lines(na
     inv = coded(doc(lines, taxes, prov=prov))
     settings = GL()
     assert jde.validate([inv], settings, lambda f: "10023") == {}
-    assert jde.voucher_findings(inv["final_output"], settings, "10023") == []
+    assert jde_review.voucher_findings(inv["final_output"], settings, "10023") == []
     (header,), dist, matches = rows(inv, settings)
     gross = round(inv["final_output"]["grand_total"] * 100)
     assert header["VLAG"] == gross and header["VLTXA1"] == "" and header["VLEXR1"] == "E"
@@ -119,7 +123,7 @@ def test_each_province_balances_to_the_gross_with_the_tax_on_its_own_gl_lines(na
     assert total(dist) == gross and not matches
     # F0911Z1 is the stored distribution, line for line (nothing dropped, nothing left for E1's AAIs)
     assert [round(e["amount"] * 100) for e in inv["final_output"]["gl_distribution"]] == [r["VNAA"] for r in dist]
-    assert not jde.accrues_use_tax(inv["final_output"], settings)
+    assert not jde_voucher.accrues_use_tax(inv["final_output"], settings)
 
 
 def test_the_tax_area_checks_are_not_asked():
@@ -135,8 +139,10 @@ def test_self_assessed_pst_goes_to_the_self_assessment_report():
     inv = coded(doc([line(1, 1000.0, taxes=["GST"])], [tl("GST", "", 0.05, 1000.0, 50.0)], prov="BC"))
     (header,), dist, _ = rows(inv, GL())
     assert header["VLEXR1"] == "E" and header["VLTXA1"] == ""
-    assert not jde.accrues_use_tax(inv["final_output"], GL())
-    assert jde.accrues_use_tax(inv["final_output"], jde.JdeSettings(amount_mode=jde.AMOUNT_TAX))
+    assert not jde_voucher.accrues_use_tax(inv["final_output"], GL())
+    assert jde_voucher.accrues_use_tax(
+        inv["final_output"], jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_TAX)
+    )
     assert total(dist) == 105000
 
 
@@ -147,7 +153,7 @@ def test_meals_post_the_claimable_half_on_the_tax_line_and_no_meals_hold():
                     qst_registration_number="1234567890TQ0001"), s)  # fmt: skip
     settings = GL()
     assert jde.validate([inv], settings, lambda f: "10023") == {}
-    codes = {f[1] for f in jde.voucher_findings(inv["final_output"], settings, "10023")}
+    codes = {f[1] for f in jde_review.voucher_findings(inv["final_output"], settings, "10023")}
     assert "JDE_MEALS_GROSS" not in codes
     (header,), dist, _ = rows(inv, settings)
     stored = inv["final_output"]["gl_distribution"]
@@ -158,7 +164,9 @@ def test_meals_post_the_claimable_half_on_the_tax_line_and_no_meals_hold():
     # On a PO-matched voucher E1 distributes from the receipts: still held back (JDE_MEALS_PO)
     again = {k: x for k, x in inv["final_output"].items() if k != "gl_distribution"}
     po = coded({**again, "po_number": "PO1"}, s)
-    assert "JDE_MEALS_PO" in {f[1] for f in jde.voucher_findings(po["final_output"], GL(po_matched=True), "10023")}
+    assert "JDE_MEALS_PO" in {
+        f[1] for f in jde_review.voucher_findings(po["final_output"], GL(po_matched=True), "10023")
+    }
 
 
 def test_credit_memo_balances():
@@ -180,7 +188,7 @@ def test_usd_goes_in_the_foreign_columns():
 def test_match_header_is_one_pay_item_per_gl_line_with_no_tax_share():
     inv = coded(doc([line(1, 100.0, taxes=["HST"]), line(2, 50.0, exempt=["HST"], status="exempt")],
                     [tl("HST", "ON", 0.13, 100.0, 13.0)]))  # fmt: skip
-    settings = GL(line_numbering=jde.MATCH_HEADER, dist_tax_columns=True)
+    settings = GL(line_numbering=jde_settings.MATCH_HEADER, dist_tax_columns=True)
     assert jde.validate([inv], settings, lambda f: "10023") == {}
     headers, dist, _ = rows(inv, settings)
     assert [(h["VLEDLN"], h["VLAG"], h["VLEXR1"], h["VLTXA1"]) for h in headers] == [
@@ -195,7 +203,7 @@ def test_po_matched_with_tax_is_held_back_and_without_tax_goes():
     settings = GL(po_matched=True)
     problems = jde.validate([taxed], settings, lambda f: "10023")
     assert problems and "receipts" in problems[1][0]
-    assert "JDE_GL_PO" in {f[1] for f in jde.voucher_findings(taxed["final_output"], settings, "10023")}
+    assert "JDE_GL_PO" in {f[1] for f in jde_review.voucher_findings(taxed["final_output"], settings, "10023")}
     untaxed = coded(doc([line(1, 100.0, status="exempt")], [], po_number="PO2"))
     assert jde.validate([untaxed], settings, lambda f: "10023") == {}
     (header,), dist, matches = rows(untaxed, settings)
@@ -204,13 +212,18 @@ def test_po_matched_with_tax_is_held_back_and_without_tax_goes():
 
 def test_a_tax_account_with_no_jde_account_is_said_clearly():
     inv = coded(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
-    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_GL)  # no default BU: the tax line (no cost center) has no BU
+    # no default BU: the tax line (no cost center) has no BU
+    settings = jde_settings.JdeSettings(amount_mode=jde_settings.AMOUNT_GL)
     problems = jde.validate([inv], settings, lambda f: "10023")
     assert problems and "2310" in problems[1][0]
-    (finding,) = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_NO_ACCOUNT"]
+    (finding,) = [
+        f for f in jde_review.voucher_findings(inv["final_output"], settings, "10023") if f[1] == "JDE_NO_ACCOUNT"
+    ]
     assert "2310" in finding[2] and "HST" in finding[2] and "tax" in finding[2]
     # mapped in the account mapping: it goes
-    mapped = jde.JdeSettings(amount_mode=jde.AMOUNT_GL, gl_map=[jde.GlMap("2310", "", "HQ", "2310")])
+    mapped = jde_settings.JdeSettings(
+        amount_mode=jde_settings.AMOUNT_GL, gl_map=[jde_settings.GlMap("2310", "", "HQ", "2310")]
+    )
     assert jde.validate([inv], mapped, lambda f: "10023") == {}
     assert [r["VNANI"] for r in rows(inv, mapped)[1]] == ["CC100.6010", "HQ.2310"]
 
@@ -226,11 +239,11 @@ def test_a_tax_line_with_no_gl_account_is_held_back():
 
 def test_views_say_the_mode():
     inv = coded(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))
-    view = jde.voucher_view(inv["final_output"], GL(), "10023")
+    view = jde_review.voucher_view(inv["final_output"], GL(), "10023")
     tax_row = next(r for r in view["rows"] if r["column"] == "VLTXA1 / VLEXR1")
     assert "G/L" in tax_row["value"]
     report = jde.dry_run([inv], GL(), lambda f: "10023")
     assert "G/L" in report["vouchers"][0]["balance"]
-    files = jde.export_batch([inv], GL(), lambda f: "10023")
+    files = jde_zfiles.export_batch([inv], GL(), lambda f: "10023")
     text = jde.readme(files, GL(), 1, [inv])
     assert "G/L accounts" in text and "code E" in text

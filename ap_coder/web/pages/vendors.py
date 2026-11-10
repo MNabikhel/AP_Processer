@@ -62,7 +62,7 @@ from ap_coder.web.files import (
     receive_sheet,
     sheet_context,
 )
-from ap_coder.web.invoice_view import gl_name
+from ap_coder.web.invoice_grid import gl_name
 
 router = page_router()  # each plain handler: one connection a request
 LIFT_HOLD = "Only an Approver can take a vendor off hold."

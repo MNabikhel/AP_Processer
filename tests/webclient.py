@@ -15,9 +15,14 @@ from ap_coder.core.store import Store
 from ap_coder.web import identity
 from ap_coder.web.app import create_app
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 
 PAGE = {"X-AP-Coder": "1"}  # what AP Coder's own page sends with every action
+# The modules of the review screen's routes (ap_coder/web/pages/invoice*.py, D-223): a test that says who the
+# reviewer is sets ``reviewer`` and ``login`` in each, where their handlers look them up.
+REVIEW_SCREEN = tuple(
+    f"ap_coder.web.pages.{p.stem}" for p in sorted((ROOT / "ap_coder" / "web" / "pages").glob("invoice*.py"))
+)
 
 
 def web_settings() -> Settings:
@@ -85,15 +90,15 @@ def follow(client: TestClient, response: Any) -> str:
 
 def draft_form(client: TestClient, invoice_id: int) -> dict[str, Any]:
     """The review form as the page posts it after a grid action: the draft the screen keeps for the invoice."""
-    from ap_coder.web import invoice_view
+    from ap_coder.web import invoice_form
 
     saved = client.app.state.invoice_drafts[invoice_id]
     rows, taxes = saved["lines"], saved["taxes"]
     data: dict[str, Any] = {**saved["header"], "grids": "1", "line_key": [f"r{i}" for i in range(len(rows))]}
-    for column, name in invoice_view.LINE_INPUTS.items():
+    for column, name in invoice_form.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
-    for column, name in invoice_view.TAX_INPUTS.items():
+    data[invoice_form.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
+    for column, name in invoice_form.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in taxes]
     return data
 

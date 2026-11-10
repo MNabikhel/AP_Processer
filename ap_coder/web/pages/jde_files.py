@@ -37,7 +37,7 @@ from ap_coder.core import chart, ui
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
 from ap_coder.core.store.vendor_master import name_marker
-from ap_coder.erp import jde, registers
+from ap_coder.erp import jde_settings, registers
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import chart_cmd, journal_cmd
 from ap_coder.web.core import current_store, done, get_store, one_connection, page_router, refuse, render, reviewer
@@ -166,8 +166,8 @@ def _company_offer(store: Store, units: list[chart.BuRow]) -> str:
     """The one company every business unit loaded belongs to, when JD Edwards' company number is still the one a
     new installation starts with and is another ("" otherwise: several companies, none, or a number set already)."""
     companies = {unit.company for unit in units if unit.company}
-    settings = jde.load(store)
-    if len(companies) != 1 or settings.company != jde.JdeSettings().company:
+    settings = jde_settings.load(store)
+    if len(companies) != 1 or settings.company != jde_settings.JdeSettings().company:
         return ""
     (company,) = companies
     return "" if company in (settings.company, settings.company_code) else company
@@ -304,11 +304,11 @@ def company_use(request: Request) -> JSONResponse:
     """Make the one company of the business units JD Edwards' company number (Settings → JD Edwards E1)."""
     store = get_store(request)
     company = _company_offer(store, store.business_units())
-    wanted = dataclasses.replace(jde.load(store), company=company)
-    if not company or jde.settings_problems(wanted):
+    wanted = dataclasses.replace(jde_settings.load(store), company=company)
+    if not company or jde_settings.settings_problems(wanted):
         return refuse("The business units loaded do not give one company number to use. Set it in Settings, under "
                       "JD Edwards E1.")  # fmt: skip
-    jde.save(store, wanted, actor=reviewer())
+    jde_settings.save(store, wanted, actor=reviewer())
     return _said(request, "units", [f"JD Edwards' company number is now {company}, the company of the business "
                                     "units loaded: vouchers and the keying sheet carry it. It is changed in "
                                     "Settings, under JD Edwards E1."])  # fmt: skip

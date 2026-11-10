@@ -14,13 +14,13 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_findings, invoice_form
 from ap_coder.web.app import create_app
-from ap_coder.web.invoice_view import Draft
+from ap_coder.web.invoice_form import Draft
 from tests.browser import browser_on
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import check, form_of
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 LAPTOP = {"width": 1366, "height": 768}
 SHOTS = None  # set by the screenshot test: where the pictures of each menu go
@@ -43,7 +43,7 @@ def client(store):
 
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
 
@@ -96,12 +96,12 @@ def test_a_field_marked_not_on_this_invoice_is_no_longer_asked_for(client, store
 
 def test_a_value_typed_in_again_unmarks_the_field_and_needed_fields_are_never_absent():
     form = {"absent": json.dumps(["po_number", "invoice_number", "vendor_name", "grand_total", "nope", "po_number"])}
-    header = {name: "" for name in invoice_view.FORM_FIELDS}
-    assert invoice_view.parse_absent(form["absent"], header) == ["po_number"]
-    assert invoice_view.parse_absent(form["absent"], {**header, "po_number": "PO-1"}) == []
-    assert invoice_view.parse_absent("not json", header) == [] and invoice_view.parse_absent('{"a": 1}', header) == []
+    header = {name: "" for name in invoice_form.FORM_FIELDS}
+    assert invoice_form.parse_absent(form["absent"], header) == ["po_number"]
+    assert invoice_form.parse_absent(form["absent"], {**header, "po_number": "PO-1"}) == []
+    assert invoice_form.parse_absent("not json", header) == [] and invoice_form.parse_absent('{"a": 1}', header) == []
     for needed in ("vendor_name", "invoice_number", "invoice_date", "currency", "subtotal", "grand_total"):
-        assert needed not in invoice_view.ABSENT_FIELDS
+        assert needed not in invoice_form.ABSENT_FIELDS
     base = Draft(header=header, lines=[], taxes=[], absent=["po_number"])
     assert Draft.from_form({}, base).absent == ["po_number"]  # not posted: as it was
     assert Draft.from_form({"absent": "[]"}, base).absent == []
@@ -113,7 +113,7 @@ def test_errors_are_never_settled_by_absent():
 
     issues = [Issue("warning", "GST_HST_NUMBER_MISSING", "x"), Issue("info", "PO_NOT_QUOTED", "y"),
               Issue("error", "MISSING_INVOICE_NUMBER", "z"), Issue("warning", "QST_NUMBER_MISSING", "q")]  # fmt: skip
-    out = invoice_view.settle_absent(issues, ["gst_hst_registration_number", "po_number"])
+    out = invoice_findings.settle_absent(issues, ["gst_hst_registration_number", "po_number"])
     assert [(i.severity, i.code) for i in out] == [
         ("info", "GST_HST_NUMBER_ABSENT"), ("error", "MISSING_INVOICE_NUMBER"), ("warning", "QST_NUMBER_MISSING")
     ]  # fmt: skip

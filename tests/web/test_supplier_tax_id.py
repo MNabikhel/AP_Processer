@@ -5,6 +5,7 @@ one person works alone."""
 
 from __future__ import annotations
 
+import html
 import json
 import re
 
@@ -19,6 +20,8 @@ from tests.webclient import PAGE, add_clean, client_for, gt
 
 NORTHWIND, NUMBER = gt()["vendor_name"], gt()["gst_hst_registration_number"]  # "123456782 RT0001"
 OTHER, OTHER_NUMBER = "Quarry Road Signs Inc.", "704129930RT0001"
+SISTER = "704129930 RT0002"  # another GST/HST account of the same business (a branch's, a division's)
+GST = "gst_hst_registration_number"
 
 
 @pytest.fixture
@@ -143,3 +146,36 @@ def test_where_people_sign_in_the_mismatch_waits_for_someone_else_whatever_the_a
     assert exports.tax_id_warnings(listed, [inv]) == {}  # confirmed by a second person
     final = listed.events(invoice_id, ["final_approved"])[0]["detail"]
     assert final["second_reason"] == TAX_ID_DIFFERS
+
+
+# --- Another GST/HST account of the same business (D-219, amended): a warning that holds nothing -------------------
+
+
+def test_another_account_of_the_same_business_is_approved_as_it_is_and_the_keying_sheet_says_nothing(listed):
+    client = client_for(listed)
+    invoice_id = add_clean(listed, vendor_name=OTHER, **{GST: SISTER})
+    data = form_of(listed, invoice_id)
+    answer = check(client, invoice_id, data)
+    checks = html.unescape(answer["sections"]["checks"])
+    assert "another of its GST/HST accounts" in checks and OTHER_NUMBER in checks and SISTER in checks
+    assert "Must be fixed" not in checks and GST not in answer["header"]["flag_errors"]  # no error, nothing in red
+    assert 'name="override"' not in answer["sections"]["bar"]  # no "Approve anyway", so no reason to give
+    assert client.post(f"/review/{invoice_id}/approve", data={**data, "why_done": "1"}, headers=PAGE).json()["ok"]
+    inv = listed.get_invoice(invoice_id)
+    assert inv["status"] == APPROVED
+    detail = listed.events(invoice_id, ["approved"])[0]["detail"]
+    assert "tax_id_differs" not in detail and "needs_second" not in detail
+    assert "confirm before paying" not in client.get("/activity").text
+    assert exports.tax_id_warnings(listed, [inv]) == {}
+
+
+def test_where_people_sign_in_another_account_of_the_same_business_waits_for_nobody(listed):
+    invoice_id = add_clean(listed, vendor_name=OTHER, **{GST: SISTER})
+    account(listed, "ann", "clerk", "Ann Lee")
+    ann = server_client(listed)
+    log_in(ann, "ann")
+    data = {**form_of(listed, invoice_id), "why_done": "1"}
+    assert "a second approver is needed" not in check(ann, invoice_id, data)["sections"]["bar"]
+    assert ann.post(f"/review/{invoice_id}/approve", data=data, headers=PAGE).json()["ok"]
+    assert listed.get_invoice(invoice_id)["status"] == APPROVED  # no second approval
+    assert [i["id"] for i in listed.unexported_approved()] == [invoice_id]  # ready for a keying sheet

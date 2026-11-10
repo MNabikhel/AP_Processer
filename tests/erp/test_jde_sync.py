@@ -13,7 +13,7 @@ from ap_coder.coding.vendors import vendor_findings
 from ap_coder.core import caches
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
-from ap_coder.erp import jde, jde_ais, jde_sync
+from ap_coder.erp import jde_ais, jde_settings, jde_sync
 from tests.fake_ais import PASSWORD, FakeAis
 
 
@@ -53,7 +53,7 @@ def test_a_first_sync_fills_every_table_through_the_imports(store, ais):
     codes = {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}
     assert codes == {"6100": "Office supplies", "6200": "Courier and freight", "6200.01": "Courier - same day",
                      "1310": "GST/HST receivable"}  # the inactive 6999 left out  # fmt: skip
-    mapped = jde.load(store).gl_map
+    mapped = jde_settings.load(store).gl_map
     assert [(m.gl_code, m.obj, m.sub) for m in mapped] == [("6200.01", "6200", "01")]
     assert {r["code"] for r in store.list_accounts("cost_centers")} == {"CC100", "CC200"}
     po = store.purchase_order("4512")
@@ -313,12 +313,12 @@ def test_with_a_chart_imported_the_sync_leaves_the_accounts_and_business_units_a
     store.import_business_units(rows(chart.bu_rows, cf.BU_HEADERS, cf.bu_cells()))
     store.import_chart(rows(chart.chart_rows, cf.CHART_HEADERS, cf.chart_cells()))
     lists = (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers"))
-    stamp, mapped = store.checks_stamp(), jde.load(store).gl_map
+    stamp, mapped = store.checks_stamp(), jde_settings.load(store).gl_map
     connect(store, ais)
     report = jde_sync.sync(store, actor="jane")
     assert report["ok"], report["errors"]
     assert (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers")) == lists
-    assert {r["code"] for r in lists[0]} == set(cf.GL_ACCOUNTS) and jde.load(store).gl_map == mapped
+    assert {r["code"] for r in lists[0]} == set(cf.GL_ACCOUNTS) and jde_settings.load(store).gl_map == mapped
     assert store.get_vendor("acme office supplies") and store.purchase_order("4512")  # the other parts as before
     said = jde_sync.report_lines(report)
     why = "not synced: the chart of accounts is imported from JD Edwards' export, which says which accounts exist"

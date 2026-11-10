@@ -340,9 +340,13 @@ def typed(posted: Any, before: Mapping[str, Any] | None = None) -> tuple[str, st
 
 def remarks_typed(store: Any) -> bool:
     """Whether the remarks go to JD Edwards as typed (Settings → JD Edwards E1 → Remarks), JD Edwards in use."""
-    from ..erp import jde
+    from ..erp import jde_settings
 
-    return store is not None and jde.in_use(store) and jde.load(store).remarks == jde.REMARKS_TYPED
+    return (
+        store is not None
+        and jde_settings.in_use(store)
+        and jde_settings.load(store).remarks == jde_settings.REMARKS_TYPED
+    )
 
 
 def fill_remarks(coding: Any, store: Any, reference: ReferenceData, wanted: bool | None = None) -> None:

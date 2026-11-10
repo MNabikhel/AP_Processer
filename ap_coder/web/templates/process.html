@@ -66,13 +66,11 @@
         <div><b>Start here:</b> choose one invoice or a few, then click <b>Process</b>. They wait for you in the review
           queue.</div></div>
       {% endif %}
-      {% if demo_first %}
-      <div class="flash warn" role="status" id="demo-first"><span class="ms" aria-hidden="true">science</span>
-        <div><div><b>Remove the demo invoices before you import your own.</b> Otherwise the demo's approvals, lessons and
-          vendors are counted with yours: in coding accuracy, Activity and the vendor list.</div>
-          {% if can("/demo/remove") and can("/settings/data", "GET") %}
-          <div>Remove them in <a href="/settings/data#demo">Settings → Data &amp; backups</a>.</div>
-          {% else %}<div>Ask an Admin to remove them.</div>{% endif %}</div></div>
+      {% if demo_count %}{# said for as long as they are loaded, your own invoices there or not; nothing is asked #}
+      <div class="flash info" role="status" id="demo-loaded"><span class="ms" aria-hidden="true">science</span>
+        <div><b>{{ demo_count | plural("demo invoice") }} loaded.</b> Demo invoices are in the review queue, the exports and what AP Coder learns, beside your own.
+          {% if can("/demo/remove") and can("/settings/data", "GET") %}They can be removed in <a href="/settings/data#demo">Settings → Data &amp; backups</a>.
+          {%- else %}An Admin can remove them in Settings → Data &amp; backups.{% endif %}</div></div>
       {% endif %}
       <p class="muted">Each file is saved to the invoices folder {{ "on the server" if server_mode else "on this computer" }}, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>

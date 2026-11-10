@@ -433,10 +433,10 @@ class InvoicesMixin:
             self._recheck_duplicates(row["vendor_name"] or "", row["invoice_number"] or "", row["vendor_key"])
 
     # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
-    # One row per invoice and person ("" this computer, else a colleague's key on the office network: web/pages/
-    # invoice.py), so the edits outlive a restart, as the screen says. Dropped on approval, rejection, Start over.
-    # A draft a review screen's own check dropped names that screen a short while (the ``ephemeral`` row
-    # "draft-dropped:<invoice id>" of the person, D-184).
+    # One row per invoice and person ("" this computer, else a colleague's key on the office network:
+    # web/pages/invoice_drafts.py), so the edits outlive a restart, as the screen says. Dropped on approval,
+    # rejection, Start over. A draft a review screen's own check dropped names that screen a short while (the
+    # ``ephemeral`` row "draft-dropped:<invoice id>" of the person, D-184).
 
     def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any] | None, *, screen: str = "",
                            seconds: float = 0, expect: Callable[[dict[str, Any] | None], bool] | None = None

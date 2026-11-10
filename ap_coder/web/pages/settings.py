@@ -673,7 +673,7 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         return refuse(f"Not restored: {exc}.")
     except OSError as exc:  # the safety copy of the current state could not be made (a full disk): nothing changed
         return refuse(f"Not restored: {exc}.")
-    from ap_coder.web.pages.invoice import forget_all_drafts
+    from ap_coder.web.pages.invoice_drafts import forget_all_drafts
 
     forget_all_drafts(request)  # edits made on the replaced invoices would open on the restored ones
     cleared = " The second backup folder was cleared: set it again below." if had_copy_dir else ""

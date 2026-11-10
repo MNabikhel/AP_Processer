@@ -1,9 +1,8 @@
 """Settings → JD Edwards E1: company, batch, amount and account formats, the GL → BU.Object.Subsidiary mapping, the
 province → tax area table, the payment terms → terms code table (D-91), PO-matched vouchers and supplier address
-numbers. Saved with ``ap_coder.erp.jde.save``
-(logged), checked with ``jde.settings_problems``. The **API connection** card (D-104: the AIS address, environment,
-user, password kept in the .env, step 1 and step 2, Test connection, Sync now) is ``ap_coder.erp.jde_ais`` /
-``jde_sync``; an Admin's, like the rest of the tab.
+numbers. Saved with ``ap_coder.erp.jde_settings.save`` (logged), checked with ``jde_settings.settings_problems``. The
+**API connection** card (D-104: the AIS address, environment, user, password kept in the .env, step 1 and step 2, Test
+connection, Sync now) is ``ap_coder.erp.jde_ais`` / ``jde_sync``; an Admin's, like the rest of the tab.
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
 per row); a row without a GL code (or vendor) is dropped, which is how a row is removed without JavaScript.
@@ -24,7 +23,7 @@ from ap_coder.coding.terms import terms_key
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
-from ap_coder.erp import jde, jde_ais, jde_sync, jde_worksheet
+from ap_coder.erp import jde_accounts, jde_ais, jde_settings, jde_sync, jde_voucher, jde_worksheet
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, jobs, one_connection, page_router, posted_form, refuse, reviewer
 from ap_coder.web.files import TOO_BIG, XLSX, SheetError, download, read_capped, read_csv, read_excel
@@ -74,12 +73,12 @@ UPPER = {"document_type", "domestic_currency", "credit_document_type", "po_docum
          "exempt_code"}  # fmt: skip
 # (field, label, choices, help) of the radio groups.
 CHOICES = [
-    ("amount_mode", "Amounts", jde.AMOUNT_MODES,
+    ("amount_mode", "Amounts", jde_settings.AMOUNT_MODES,
      "Tax coded to G/L accounts: your tax accounts are in GL accounts & tax, each mapped below like any account; the "
      "tax areas are not used. Otherwise gross or tax amounts, never both: E1 rejects a voucher with both."),
-    ("decimals", "Amount format", jde.DECIMAL_MODES, ""),
-    ("account_mode", "Account", jde.ACCOUNT_MODES, ""),
-    ("line_numbering", "Line numbering (VNEDLN) · unconfirmed", jde.LINE_NUMBERING,
+    ("decimals", "Amount format", jde_settings.DECIMAL_MODES, ""),
+    ("account_mode", "Account", jde_settings.ACCOUNT_MODES, ""),
+    ("line_numbering", "Line numbering (VNEDLN) · unconfirmed", jde_settings.LINE_NUMBERING,
      "Oracle's notes say VNEDLN must match VLEDLN; most loads number the lines 1, 2, 3 under pay item 1."),
 ]  # fmt: skip
 TOGGLES = ["po_matched", "use_default_rule", "bu_from_cost_center", "send_due_date", "send_po_reference",
@@ -90,7 +89,7 @@ TAX_CODES = ["V", "C", "B", "E", ""]
 
 
 def jde_context(store: Store) -> dict[str, Any]:
-    js = jde.load(store)
+    js = jde_settings.load(store)
     names = {v["vendor_key"]: v["display_name"] for v in store.master_vendors()}
     order = [*PROVINCES, OUTSIDE_CANADA]
     return {
@@ -98,9 +97,9 @@ def jde_context(store: Store) -> dict[str, Any]:
         "header_fields": HEADER_FIELDS,
         "more_fields": MORE_FIELDS,
         "choices": CHOICES,
-        "gl_dates": jde.GL_DATES,
-        "closed_periods": jde.CLOSED_PERIODS,
-        "remarks": jde.REMARKS,
+        "gl_dates": jde_settings.GL_DATES,
+        "closed_periods": jde_settings.CLOSED_PERIODS,
+        "remarks": jde_settings.REMARKS,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -121,7 +120,9 @@ def jde_context(store: Store) -> dict[str, Any]:
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
         # The payment terms table (D-91): the examples, pre-filled and not in use, until the pilot tester saves it.
         "terms_examples": not js.terms_codes,
-        "terms_rows": [{"terms": k, "code": c} for k, c in (js.terms_codes or jde.EXAMPLE_TERMS_CODES).items()],
+        "terms_rows": [
+            {"terms": k, "code": c} for k, c in (js.terms_codes or jde_settings.EXAMPLE_TERMS_CODES).items()
+        ],
         "checklist": minimd.render(CHECKLIST),
         "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
         "api": api_context(store),
@@ -144,7 +145,7 @@ def api_context(store: Store) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def bank_rows(store: Store, js: jde.JdeSettings) -> list[dict[str, str]]:
+def bank_rows(store: Store, js: jde_settings.JdeSettings) -> list[dict[str, str]]:
     """Each bank account in use, with its G/L bank account (VLGLBA), then any code mapped that is no longer one."""
     from ap_coder.coding import banks
 
@@ -155,8 +156,8 @@ def bank_rows(store: Store, js: jde.JdeSettings) -> list[dict[str, str]]:
     return rows
 
 
-def copy(js: jde.JdeSettings) -> jde.JdeSettings:
-    return jde.JdeSettings.from_json(js.to_json())
+def copy(js: jde_settings.JdeSettings) -> jde_settings.JdeSettings:
+    return jde_settings.JdeSettings.from_json(js.to_json())
 
 
 @router.post("/settings/jde")
@@ -172,7 +173,7 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
     def text(name: str) -> str:
         return str(form.get(name) or "").strip()
 
-    new = copy(jde.load(store))
+    new = copy(jde_settings.load(store))
     for name, _, _, _ in HEADER_FIELDS + MORE_FIELDS:
         setattr(new, name, text(name).upper() if name in UPPER else text(name))
     new.currencies = [c.strip().upper() for c in text("currencies").replace(";", ",").split(",") if c.strip()]
@@ -181,7 +182,7 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         if value not in choices:
             return refuse(f"Choose one of the options for {label}.")
         setattr(new, name, value)
-    if text("gl_date") not in jde.GL_DATES:
+    if text("gl_date") not in jde_settings.GL_DATES:
         return refuse("Choose the G/L date.")
     new.gl_date = text("gl_date")
     # The open period and the API's waits (D-182): a form without them keeps them.
@@ -192,11 +193,11 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
             except ValueError:
                 return refuse(f"Give {label} as a date (YYYY-MM-DD), or leave it blank.")
     if "closed_period" in form:
-        if text("closed_period") not in jde.CLOSED_PERIODS:
+        if text("closed_period") not in jde_settings.CLOSED_PERIODS:
             return refuse("Choose what is done with a G/L date in a closed period.")
         new.closed_period = text("closed_period")
     if "remarks" in form:  # (D-210)
-        if text("remarks") not in jde.REMARKS:
+        if text("remarks") not in jde_settings.REMARKS:
             return refuse("Choose what the remarks carry.")
         new.remarks = text("remarks")
     waits = (("voucher_timeout", "a voucher's wait", 1, 900), ("post_minutes", "a posting run's time", 1, 1440),
@@ -210,11 +211,11 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
             if not low <= value <= high:
                 return refuse(f"Give {label} as a number from {low} to {high}.")
             setattr(new, name, value)
-    least = new.voucher_timeout + jde.RESEND_MARGIN  # JD Edwards may still be making a voucher (D-182)
+    least = new.voucher_timeout + jde_settings.RESEND_MARGIN  # JD Edwards may still be making a voucher (D-182)
     if ("resend_minutes" in form or "voucher_timeout" in form) and new.resend_minutes * 60 < least:
         return refuse(f"Give the wait before sending a lost one again as at least {least / 60:g} minutes: a "
-                      f"voucher's wait ({new.voucher_timeout:g} seconds) and {jde.RESEND_MARGIN:g} seconds more, as "
-                      "JD Edwards may still be making it then.")  # fmt: skip
+                      f"voucher's wait ({new.voucher_timeout:g} seconds) and {jde_settings.RESEND_MARGIN:g} seconds "
+                      "more, as JD Edwards may still be making it then.")  # fmt: skip
     for name in TOGGLES:
         setattr(new, name, str(form.get(name) or "") in ("1", "on", "true"))
     new.default_bu = text("default_bu")
@@ -229,10 +230,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         new.bank_glba = {str(c).strip().upper(): str(values[i] if i < len(values) else "").strip()
                          for i, c in enumerate(codes)
                          if str(c).strip() and str(values[i] if i < len(values) else "").strip()}  # fmt: skip
-    problems = jde.settings_problems(new)
+    problems = jde_settings.settings_problems(new)
     if problems:
         return refuse(" ".join(problems))
-    changed = jde.save(store, new, actor=reviewer())
+    changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL, "JD Edwards settings saved." if changed else "Nothing changed.")
 
 
@@ -249,10 +250,10 @@ def _save_gl_map(request: Request, form: Any) -> JSONResponse:
     count = len(columns["gl_code"])
     if any(len(values) != count for values in columns.values()):
         return refuse("The mapping table arrived incomplete: reload the page and try again.")
-    rows = [jde.GlMap(**{name: columns[name][i] for name in columns}) for i in range(count)]
-    new = copy(jde.load(store))
+    rows = [jde_settings.GlMap(**{name: columns[name][i] for name in columns}) for i in range(count)]
+    new = copy(jde_settings.load(store))
     new.gl_map = [r for r in rows if r.gl_code]
-    changed = jde.save(store, new, actor=reviewer())
+    changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#gl-map",
                 f"{ui.plural(len(new.gl_map), 'mapping row')} saved." if changed else "Nothing changed.")  # fmt: skip
 
@@ -296,14 +297,14 @@ def _import_gl_map(request: Request, name: str, content: bytes, replace: str) ->
         return refuse(str(exc))
     except ValueError as exc:
         return refuse(f"This file could not be read as a spreadsheet: {exc}.")
-    rows = jde.gl_map_from_records(records)
+    rows = jde_accounts.gl_map_from_records(records)
     if not rows:
         return refuse("No row with a GL code was found: the file needs a GL code column.")
-    new = copy(jde.load(store))
+    new = copy(jde_settings.load(store))
     kept = [] if replace in ("1", "on", "true") else new.gl_map
     keys = {(r.gl_code.upper(), r.cost_center.upper()) for r in rows}
     new.gl_map = [m for m in kept if (m.gl_code.upper(), m.cost_center.upper()) not in keys] + rows
-    jde.save(store, new, actor=reviewer())
+    jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#gl-map", f"{ui.plural(len(rows), 'mapping row')} imported.")
 
 
@@ -316,7 +317,7 @@ async def save_tax_map(request: Request) -> JSONResponse:
 @one_connection
 def _save_tax_map(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
-    new = copy(jde.load(store))
+    new = copy(jde_settings.load(store))
     provinces = [str(p) for p in form.getlist("province")]
     areas = [str(a).strip().upper() for a in form.getlist("tax_area")]
     codes = [str(c).strip().upper() for c in form.getlist("code")]
@@ -327,8 +328,8 @@ def _save_tax_map(request: Request, form: Any) -> JSONResponse:
             continue
         if code not in TAX_CODES:
             return refuse(f"The code for {province} must be V, C, B, E or blank.")
-        new.tax_map[province] = jde.TaxArea(area[:10], code)
-    changed = jde.save(store, new, actor=reviewer())
+        new.tax_map[province] = jde_settings.TaxArea(area[:10], code)
+    changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#tax-map", "Tax areas saved." if changed else "Nothing changed.")
 
 
@@ -358,15 +359,15 @@ def _save_terms(request: Request, form: Any) -> JSONResponse:
                           "or 2/10 Net 30.")  # fmt: skip
         if key in table:
             return refuse(f"Two rows mean {key}: keep one.")
-        if len(code) > jde.PTC_WIDTH:
-            return refuse(f"The code for {key} must be {jde.PTC_WIDTH} characters or fewer (VLPTC).")
+        if len(code) > jde_voucher.PTC_WIDTH:
+            return refuse(f"The code for {key} must be {jde_voucher.PTC_WIDTH} characters or fewer (VLPTC).")
         table[key] = code
     default = str(form.get("default_terms_code") or "").strip().upper()
-    if len(default) > jde.PTC_WIDTH:
-        return refuse(f"The default code must be {jde.PTC_WIDTH} characters or fewer (VLPTC).")
-    new = copy(jde.load(store))
+    if len(default) > jde_voucher.PTC_WIDTH:
+        return refuse(f"The default code must be {jde_voucher.PTC_WIDTH} characters or fewer (VLPTC).")
+    new = copy(jde_settings.load(store))
     new.terms_codes, new.payment_terms_code = table, default
-    changed = jde.save(store, new, actor=reviewer())
+    changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#terms",
                 f"{ui.plural(len(table), 'payment terms row')} saved." if changed else "Nothing changed.")  # fmt: skip
 
@@ -384,9 +385,9 @@ def _save_an8(request: Request, form: Any) -> JSONResponse:
     numbers = [str(a).strip() for a in form.getlist("an8")]
     if len(vendors) != len(numbers):
         return refuse("The address number table arrived incomplete: reload the page and try again.")
-    new = copy(jde.load(store))
+    new = copy(jde_settings.load(store))
     new.an8_overrides = {vendor_key(v): a[:8] for v, a in zip(vendors, numbers, strict=True) if vendor_key(v) and a}
-    changed = jde.save(store, new, actor=reviewer())
+    changed = jde_settings.save(store, new, actor=reviewer())
     return done(request, URL + "#an8", "Address numbers saved." if changed else "Nothing changed.")
 
 
@@ -397,10 +398,10 @@ def _save_an8(request: Request, form: Any) -> JSONResponse:
 def jde_worksheet_download(request: Request) -> Response:
     """Every question AP Coder needs the JDE team to answer, what it uses now, and a column for the answers."""
     store = get_store(request)
-    js, lookup = jde.load(store), store.vendor_ids()
+    js, lookup = jde_settings.load(store), store.vendor_ids()
     data = jde_worksheet.build(
         js, store.list_accounts("gl_accounts"), store.vendor_summaries(),
-        lambda name: jde.resolve_an8({"vendor_name": name}, lookup, js),
+        lambda name: jde_accounts.resolve_an8({"vendor_name": name}, lookup, js),
     )  # fmt: skip
     return download(data, "AP Coder - questions for the JDE team.xlsx", XLSX)
 
@@ -417,11 +418,11 @@ async def jde_worksheet_import(request: Request, file: UploadFile = File(...)) -
 @one_connection
 def _jde_worksheet_import(request: Request, content: bytes) -> JSONResponse:
     store = get_store(request)
-    result = jde_worksheet.read(content, jde.load(store))
+    result = jde_worksheet.read(content, jde_settings.load(store))
     if not result.changes and result.problems:
         return refuse(" ".join(result.problems[:5]))
     if result.changes:
-        jde.save(store, result.settings, reviewer())
+        jde_settings.save(store, result.settings, reviewer())
     from ap_coder.web.core import flash_message
 
     head = (f"{ui.plural(len(result.changes), 'answer')} applied from the JDE team's worksheet." if result.changes

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from ap_coder.web.app import create_app
 from ap_coder.web.core import SHOW_JDE
 from ap_coder.web.pages import process
@@ -62,7 +62,8 @@ def test_the_next_step_walks_through_them_one_by_one(fresh):
     assert "Import your vendor master" in card() and f'href="{process.STEP_LINKS[process.VENDOR_STEP]}"' in card()
     fresh.import_vendor_master([{"vendor_name": "Northwind Supply", "erp_id": "1001", "status": "active"}])
     assert "JD Edwards settings" in card() and 'href="/settings/jde"' in card()
-    jde.save(fresh, jde.JdeSettings(company="00001", default_bu="100"))  # what the export needs (B-1300)
+    # what the export needs (B-1300)
+    jde_settings.save(fresh, jde_settings.JdeSettings(company="00001", default_bu="100"))
     assert "Teach AP Coder your past coding" in card() and WHY in card()
     assert f'href="{process.STEP_LINKS[process.HISTORY_STEP]}"' in card()
     fresh.import_history([{"vendor_name": "Northwind Supply", "description": "Copy paper", "gl_code": "6000",

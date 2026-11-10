@@ -277,11 +277,11 @@ def late_after(store: Store, period_end: str) -> str:
     and a G/L date in a closed period is moved into it (D-182: an invoice of the period in a batch made since goes
     with a G/L date after it, B-1883); with the invoice date as its G/L date (the default), a voucher exported later
     still lands in its own month, so no batch is late."""
-    from . import jde
+    from . import jde_settings
 
-    settings = jde.load(store)
-    moved = settings.closed_period == jde.CLOSED_MOVE and settings.open_from > period_end
-    return period_end if settings.gl_date == jde.GL_DATE_EXPORT or moved else "9999-12-31"
+    settings = jde_settings.load(store)
+    moved = settings.closed_period == jde_settings.CLOSED_MOVE and settings.open_from > period_end
+    return period_end if settings.gl_date == jde_settings.GL_DATE_EXPORT or moved else "9999-12-31"
 
 
 def _unposted_note(status: str) -> str:

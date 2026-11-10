@@ -778,12 +778,12 @@ def warm_steps(store: Store, settings_factory: Callable[[], Any]) -> Any:
     from ap_coder.core.store import REVIEW
     from ap_coder.core.store.vendors import VENDOR_ROWS_KEPT
     from ap_coder.web.core import reading_status_or_none
-    from ap_coder.web.pages import invoice, learning
+    from ap_coder.web.pages import invoice_lookups, learning
 
     yield "the invoice's and the queue's templates", lambda: _templates(WARM_TEMPLATES)
     yield "the learning memory", store.feedback_rows
     yield "the GL suggestions' index", lambda: _suggestions_index(store)
-    yield "the vendor list", lambda: invoice.vendor_list(store)
+    yield "the vendor list", lambda: invoice_lookups.vendor_list(store)
     yield "the vendors' ERP IDs", store.vendor_ids
     yield "the vendors on hold's numbers", lambda: _held_numbers(store)
     yield "the reading status", lambda: reading_status_or_none(settings_factory(), store)

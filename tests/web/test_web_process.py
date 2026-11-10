@@ -430,7 +430,7 @@ def _demo_section(client) -> str:
 
 def test_demo_invoices_load_and_remove(client, store):
     """D-221: the demo invoices are loaded and removed in Settings → Data & backups, which says how many are loaded;
-    a first start, the queue and Import invoices say nothing of them."""
+    a first start, the queue and Import invoices say nothing of them while none is loaded."""
     for page in ("/review", "/process"):
         assert "demo invoices" not in client.get(page).text.lower(), page
     section = _demo_section(client)
@@ -445,7 +445,7 @@ def test_demo_invoices_load_and_remove(client, store):
     for page in ("/review", "/process"):  # the pages keep to their work: no card to load or remove them
         text = client.get(page).text
         assert "/demo/remove" not in text and "/demo/load" not in text, page
-    assert 'href="/settings/data#demo"' in client.get("/process").text  # (B-468's warning says where to remove them)
+    assert 'href="/settings/data#demo"' in client.get("/process").text  # (its notice says where they can be removed)
     back = re.search(r'name="back" value="([^"]+)"', section).group(1)
     assert client.post("/demo/remove", data={"back": back}, headers=PAGE).status_code == 400  # not ticked
     assert store.demo_count() == 10
@@ -634,7 +634,7 @@ def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoe
     """D-166: the setup step's count of the vendor master, and of its vendors with an address number (AN8), is kept in
     each process until the vendor list changes (``changes/vendors``: another Store, plain SQL) or the numbers set in
     Settings → JD Edwards do (what it is asked): 20,000 vendors read at every view of Import invoices took 0.23 s."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.core import SHOW_JDE
     from ap_coder.web.pages.process import VENDOR_STEP, pilot_steps
     from tests.core.test_kept_answers import _plain
@@ -652,9 +652,9 @@ def test_the_vendor_master_step_follows_the_vendor_list_and_the_numbers_set_whoe
     assert step() == "1 vendor, 1 with an address number (AN8)"
     _plain(store, "UPDATE vendors SET erp_id = '' WHERE in_master = 1")
     assert step().startswith("1 vendor, but no address number")
-    settings = jde.load(other)
+    settings = jde_settings.load(other)
     settings.an8_overrides = {store.master_vendor_ids()[0][0]: "2002"}
-    jde.save(other, settings)
+    jde_settings.save(other, settings)
     assert step() == "1 vendor, 1 with an address number (AN8)"
     other.import_vendor_master([{"vendor_name": "Harbourview Paper", "status": "active"}])
     assert step() == "2 vendors, 1 with an address number (AN8)"

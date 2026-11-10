@@ -68,7 +68,7 @@ def test_service_address_is_a_ship_to():
 
 
 def test_an_inferred_tax_line_follows_the_place_of_supply_changed():
-    from ap_coder.web.invoice_view import Draft
+    from ap_coder.web.invoice_form import Draft
 
     base = Draft(
         header={"ship_to_province": "", "invoice_date": "2026-05-01"},

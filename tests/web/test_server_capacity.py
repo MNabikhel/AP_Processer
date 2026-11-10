@@ -1213,10 +1213,10 @@ def _reads(monkeypatch) -> collections.Counter:
     and Learning's latest lessons (by how many), the vendor list, each vendor's lessons and invoices (by its key; its
     invoices all of them, or those changed since)."""
     from ap_coder.core.store import learning as lessons
-    from ap_coder.web.pages import invoice as invoice_page
+    from ap_coder.web.pages import invoice_lookups
 
     read: collections.Counter = collections.Counter()
-    fetch, vendor_list, vendor_invoices = lessons.fetch_rows, invoice_page._vendor_list, Store._vendor_invoices
+    fetch, vendor_list, vendor_invoices = lessons.fetch_rows, invoice_lookups._vendor_list, Store._vendor_invoices
 
     def fetching(conn, sql, params=()):
         if sql.startswith("SELECT * FROM feedback ORDER BY"):
@@ -1234,7 +1234,7 @@ def _reads(monkeypatch) -> collections.Counter:
         return vendor_invoices(self, key, ids, **kw)
 
     monkeypatch.setattr(lessons, "fetch_rows", fetching)
-    monkeypatch.setattr(invoice_page, "_vendor_list", listing)
+    monkeypatch.setattr(invoice_lookups, "_vendor_list", listing)
     monkeypatch.setattr(Store, "_vendor_invoices", invoices)
     return read
 

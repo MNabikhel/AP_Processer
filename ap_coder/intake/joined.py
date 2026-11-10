@@ -69,9 +69,9 @@ def _one_tax_area(store: Any, files: list[dict[str, Any]]) -> None:
     export in use (a pay item has one tax area: the voucher would be held, B-2288). Receipts not read yet say nothing
     here: the voucher's own finding does (``claim.two_areas``)."""
     from ..coding.claim import tax_area, two_areas
-    from ..erp import jde
+    from ..erp import jde_settings
 
-    if not jde.in_use(store) or jde.load(store).tax_on_gl:
+    if not jde_settings.in_use(store) or jde_settings.load(store).tax_on_gl:
         return
     read = []
     for f in files:

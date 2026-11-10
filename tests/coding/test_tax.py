@@ -425,7 +425,7 @@ def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
 
     from ap_coder.ai.pipeline import finalise_coding
     from ap_coder.core.config import Settings
-    from ap_coder.web.invoice_view import supply_line
+    from ap_coder.web.invoice_grid import supply_line
 
     ours = replace(reference, tax=replace(reference.tax, our_province="AB", site_provinces={"CC400": "BC"}))
     doc = _gt("chinook_AB_GST_CCO-26-10418")

@@ -61,17 +61,17 @@ def test_a_part_backup_left_by_a_crash_is_removed_when_backups_run(tmp_path):
 
 def _form(store: Store, invoice_id: int) -> dict:
     """The review form as the page posts it (tests/web/test_web_invoice.py ``form_of``)."""
-    from ap_coder.web import invoice_view
-    from ap_coder.web.invoice_view import Draft
+    from ap_coder.web import invoice_form
+    from ap_coder.web.invoice_form import Draft
 
     inv = store.get_invoice(invoice_id)
     draft = Draft.stored(inv["final_output"] or inv["ai_output"])
     rows = [dict(r) for r in draft.lines]
     data = {**draft.header, "grids": "1", "line_key": [f"r{i}" for i in range(len(rows))]}
-    for column, name in invoice_view.LINE_INPUTS.items():
+    for column, name in invoice_form.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
-    for column, name in invoice_view.TAX_INPUTS.items():
+    data[invoice_form.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
+    for column, name in invoice_form.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in draft.taxes]
     return data
 
@@ -264,12 +264,12 @@ def test_long_lists_are_saved_on_every_page_that_posts_them(tmp_path):
 def test_the_po_company_goes_out_only_with_the_po_number():
     """With "Send the PO number" off, the pay item had no PO number (VLPO) nor PO type (VLPDCT) but still the PO
     company (VLPKCO), where docs/JDE_E1.md says all three go out together when there is a PO to send."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings, jde_zfiles
     from tests.erp.test_jde import ON, _files, _invoice
 
-    off = _files([_invoice(ON)], jde.JdeSettings(send_po_reference=False))[jde.HEADER_FILE][0]
+    off = _files([_invoice(ON)], jde_settings.JdeSettings(send_po_reference=False))[jde_zfiles.HEADER_FILE][0]
     assert (off["VLPO"], off["VLPDCT"], off["VLPKCO"]) == ("", "", "")
-    on = _files([_invoice(ON)], jde.JdeSettings())[jde.HEADER_FILE][0]
+    on = _files([_invoice(ON)], jde_settings.JdeSettings())[jde_zfiles.HEADER_FILE][0]
     assert (on["VLPO"], on["VLPDCT"], on["VLPKCO"]) == ("PO-88213", "OP", "00001")
 
 

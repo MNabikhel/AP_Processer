@@ -24,7 +24,8 @@ from ap_coder.web.core import done, get_store, local_url, page_router, refuse, r
 from ap_coder.web.files import XLSX, download
 from ap_coder.web.identity import person
 from ap_coder.web.pages import downloads
-from ap_coder.web.pages.invoice import approved_pdf_download, changed_meanwhile
+from ap_coder.web.pages.invoice_document import approved_pdf_download
+from ap_coder.web.pages.invoice_drafts import changed_meanwhile
 
 router = page_router()  # each plain handler: one connection a request
 

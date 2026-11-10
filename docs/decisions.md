@@ -5318,6 +5318,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it, and the bar says so before approving. On one person's laptop there is nobody else: the approval asks for
     the reason, Activity records it, and the keying sheet says on that voucher "Tax ID differs from the supplier
     list: confirm before paying" (`pages/exports.tax_id_warnings`, asked of the stored coding and today's list).
+  - **Amended (10 Nov 2026): another GST/HST account of the same business is a warning, not a hold.** The nine
+    digits are the business (the legal entity registered with the CRA); the four digits after RT only say which
+    of its GST/HST accounts it is, and a branch or a division can have its own (RT0001, RT0002). An invoice
+    printing `123456789 RT0003` for a supplier listed as `123456789RT0002` was held like a stranger's number.
+    Now, when both are full RT accounts with the same nine digits and other digits after RT
+    (`core/keys.other_tax_account`), the finding is the warning VENDOR_TAX_ACCOUNT_DIFFERS: it names both numbers,
+    says there is nothing to fix and to look the number up on the CRA's GST/HST registry if in doubt. No "Approve
+    anyway", no reason, no second approval, no note on the keying sheet (`Store.tax_id_differs` is "" for it);
+    the same against the supplier's earlier approved invoices as against the list. Being a warning it still goes
+    to a person (bulk approval and touchless leave it). Other nine digits: the error and everything above,
+    unchanged. A side with only the nine digits still matches, and who a number selects (`same_tax_number`,
+    `supplier_of_tax_number`) is unchanged. QST and PST numbers are as they were. The note under the GST/HST box
+    says "…, another GST/HST account of the same business" (`vendors.expected_tax_numbers`).
+    (`ap_coder/core/keys.py`, `coding/vendors.py`, `core/store/vendor_master.py`, `ops/help.py`;
+    `tests/coding/test_vendors.py`, `tests/web/test_supplier_tax_id.py`)
+    - *Not chosen:* making `same_tax_number` say the two are the same: nothing would be said at all, and a number
+      would select a supplier by another account than its own.
   - **With D-221.** What the list gives is seen with the suppliers loaded (`core/store/loaded.py`: tax ID as
     written, currency, address, e-mail, business unit, read from `vendor_info` by supplier number; searched, in
     the CSV, not changed by hand). The list's load goes through `Store.import_vendor_master`, so a GST/HST number
@@ -5399,6 +5416,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     which says how many are loaded; the routes and their roles are unchanged (an Admin's in server mode), and so
     is `python -m ap_coder demo`. Import invoices still warns while the demo is loaded and none of your own
     invoices are (B-468), and points to Settings.
+    - **Amended (10 Nov 2026): a flag, never an order.** That warning said "Remove the demo invoices before you
+      import your own" and went away with the first invoice of your own, when the demo was still loaded. Import
+      invoices now says, for as long as any demo invoice is loaded (your own there or not): how many are loaded,
+      that demo invoices are in the review queue, the exports and what AP Coder learns beside your own, and where
+      they can be removed (the link to Settings → Data & backups for those who may; "An Admin can remove them"
+      for the others). A plain notice: nobody is told to remove them, and nothing is refused, removed or sent
+      elsewhere because they are loaded. `/demo/load` still refuses to add the samples beside invoices of your
+      own (D-137), and `/demo/remove` removes them only when asked, ticked.
+      (`ap_coder/web/templates/process.html`, every page's `demo_count`;
+      `tests/coding/test_guesses_and_learned_codes.py`)
   - *An older data folder* keeps showing every page (`first_run` leaves an existing database as it is), so after an
     update the person saw the old menu and wondered whether it had worked. A laptop's database on which the
     Screens choice was never saved shows a card on the queue page, once: what is new, "Use the simple screens" or
@@ -5410,3 +5437,65 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ops/chart_cmd.py`; `_demo_card.html`, `settings_data.html`, `web/pages/process.py`; `_screens_card.html`,
     `web/core.py`, `web/pages/settings.py`, `review.py`; `tests/core/test_by_hand.py`,
     `tests/web/test_web_jde_loaded.py`, `test_web_process.py`, `test_simple_screens.py`)
+- **D-222** · **`erp/jde.py` is split by subject, each definition moved whole; a new JD Edwards function goes in
+  the module of its subject.** At 2,271 lines every task on JD Edwards read around it, and work done side by side
+  met in it. Nothing was rewritten: each of its 150 top-level definitions is word for word in one module (checked
+  by script: the same text, one home each), `scripts/same_behaviour.py` says SAME (tax, approve, read, pipeline)
+  and the tests pass.
+  - *The cut, lowest first: a module imports only the ones before it, so there is no cycle.* `jde_formats.py`
+    (E1's dates and amounts, the small readers of a value), `jde_settings.py` (`JdeSettings`, `load`, `save`,
+    `settings_problems`, `in_use`, a voucher's G/L date in the open period), `jde_prototype.py` (the department's
+    preset: `use_prototype`), `jde_accounts.py` (`resolve_an8`, `account_for`, the mapping import),
+    `jde_voucher.py` (one voucher worked out once, `_prepare`, and what holds it back), `jde_remarks.py`,
+    `jde_zfiles.py` (the Z-files' columns, `voucher_rows`, `export_batch`), `jde_review.py` (`voucher_findings`,
+    `voucher_view`, the tax on the pay item), then `jde.py`: a batch as a whole (`validate`,
+    `duplicate_problems`, `readme`, `build_zip`, `dry_run`). The top of `jde.py` keeps the list.
+  - *The rule.* A function goes in the module of its subject, a new subject in a new `jde_<subject>.py` placed
+    in that order. Other code imports a name from its home (`jde_settings.load`, not `jde.load`), and a test
+    patches the module where the code looks the name up (`jde_zfiles._keys`, `jde_settings.RESEND_MARGIN`). No
+    module hands another's names on.
+  - `web/invoice_view.py` and `web/pages/invoice.py` were being split at the same time (D-223) and reached six
+    names as `jde.<name>`; when the two splits were joined their new modules took each name from its home, so
+    `jde.py` hands nothing on.
+  - Older entries, here and in BUGS.md, that say `jde.<name>` or `erp/jde.py` mean the module the name is in now.
+  - (`ap_coder/erp/jde.py`, `jde_formats.py`, `jde_settings.py`, `jde_prototype.py`, `jde_accounts.py`,
+    `jde_voucher.py`, `jde_remarks.py`, `jde_zfiles.py`, `jde_review.py`; their importers in `ap_coder/` and
+    `tests/`; `core/caches.py`, `tests/meta/test_function_length.py`, `tests/ops/test_help.py`;
+    `docs/REFERENCE.md`, `JDE_E1.md`, `HANDOFF.md`)
+- **D-223** · **The review screen's two big modules are split by subject, one subject a module, nothing changed.**
+  `web/invoice_view.py` (2,486 lines) and `web/pages/invoice.py` (1,899) were read and edited by nearly every task
+  on the review screen: each task paid to read around them, and parallel work collided in them. A pure move: no
+  function renamed or changed, every top-level statement in exactly one new module with the same syntax tree,
+  `scripts/same_behaviour.py` the same as before, the same routes (their order within the screen's router differs,
+  and no request is answered by another route for it).
+  - *What the screen shows* (no web code): `web/invoice_form.py` (the form's fields, `Draft`, what the server fills
+    in, the words taught on the page), `invoice_grid.py` (the line and tax grids, the choices of their cells, the
+    actions on the lines), `invoice_reading.py` (what was read from the page, OvisOCR2 and the AI reviewer for this
+    invoice), `invoice_findings.py` (the checks as the screen says them, what keeps Approve closed),
+    `invoice_fields.py` (the note under each invoice detail, the dates and currency typed), `invoice_totals.py`
+    (the summary, the Tax check, the GL posting preview), `invoice_coding.py` (why these codes, suggestions, the PO
+    match, what approving teaches); `invoice_view.py` keeps `analyse`, which puts them together.
+  - *Its routes*, still on ONE router (`pages/invoice_router.py`, with what every handler starts with), registered
+    as before through `pages/invoice.py`, which opens and draws the screen and imports the others (`web/roles.py`
+    is unchanged): `invoice_drafts.py` (each person's edits not approved yet, who else has the invoice open, a
+    screen out of date), `invoice_navigation.py` (Previous / Next), `invoice_check.py` (check, start over),
+    `invoice_lines.py` (the actions on the lines), `invoice_approve.py` (approve, why, undo, park, the manager,
+    reject, note, bring back, reopen), `invoice_lookups.py` (the vendor and account lists as JSON, add a vendor),
+    `invoice_document.py` (the pages, the screen's poll, the approved copy, teaching a field, OvisOCR2).
+  - *The rule:* a new piece of the review screen goes in the module of its subject: what is worked out in
+    `web/invoice_<subject>.py`, its route in `web/pages/invoice_<subject>.py`, declared on the one router. A new
+    subject gets a module of its own (with routes: imported by `pages/invoice.py`), before one of these passes
+    about 900 lines. A name is imported from the module that defines it: none passes another's names on. The
+    imports only point one way: `invoice_form`, then `invoice_grid`, `invoice_reading`, `invoice_findings`, then
+    `invoice_fields`, `invoice_totals`, `invoice_coding`, then `invoice_view`; for the routes `invoice_router`,
+    `invoice_drafts`, `invoice_navigation`, the route modules, then `invoice`. (`invoice_grid.grid` names
+    `Analysis` for its type only, under `TYPE_CHECKING`.)
+  - *Tests* patch a name in the module whose code looks it up: the vendor list in `invoice_lookups`, the check in
+    `invoice_check`; who the reviewer is, in every module of the screen's routes (`tests/webclient.py`
+    `REVIEW_SCREEN`, read from the file names, so a new one is included).
+  - Rejected: a package `pages/invoice/` (the flat names sort together and say their subject in a file list, and
+    `MORE_MODULES` and each `pages/*.py` glob stay as they are); `invoice_view.py` passing every name on (two
+    homes for a name, and a test's patch that reaches the wrong one); declaring the routes in one table to keep
+    their old order (the handlers would lose their decorators: no longer a move).
+  - (`ap_coder/web/invoice_*.py`, `ap_coder/web/pages/invoice*.py`; their importers in `ap_coder/web/pages/`,
+    `web/server.py`, `bench/coding.py` and the tests)

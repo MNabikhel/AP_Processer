@@ -510,8 +510,8 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
     picked for the lines left for AP (as a reviewer does)."""
     from ap_coder.coding.line_tax import tax_code_of
     from ap_coder.core.store import REVIEW
-    from ap_coder.web import invoice_view
-    from ap_coder.web.invoice_view import Draft
+    from ap_coder.web import invoice_form
+    from ap_coder.web.invoice_form import Draft
 
     store = app.state.store
     gl = store.list_accounts("gl_accounts")[0]["code"]
@@ -530,10 +530,10 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
                     r[column] = code
         pairs = [(k, str(v)) for k, v in draft.header.items() if v is not None] + [("grids", "1")]
         pairs += [("line_key", f"r{i}") for i in range(len(lines))]
-        for column, name in invoice_view.LINE_INPUTS.items():
+        for column, name in invoice_form.LINE_INPUTS.items():
             pairs += [(name, "" if r.get(column) is None else str(r.get(column))) for r in lines]
-        pairs += [(invoice_view.LINE_TAX_CODE, tax_code_of(r)) for r in lines]  # one tax code a line (D-64)
-        for column, name in invoice_view.TAX_INPUTS.items():
+        pairs += [(invoice_form.LINE_TAX_CODE, tax_code_of(r)) for r in lines]  # one tax code a line (D-64)
+        for column, name in invoice_form.TAX_INPUTS.items():
             pairs += [(name, "" if t.get(column) is None else str(t.get(column))) for t in draft.taxes]
         checked = offline_flow.post_form(base, f"/review/{row['id']}/check", pairs)  # the page checks each edit
         tick = re.search(r'name=\\?"override\\?" value=\\?"(\w+)', checked.text)  # "Approve anyway", ticked

@@ -43,12 +43,24 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every
   check code needs a `CheckHelp` in `ops/help.py` (`tests/ops/test_help.py` enforces it).
-- Exports: `erp/exports.py` (Excel/CSV), `erp/jde.py` (JD Edwards; its AIS API: `erp/jde_ais.py`, `jde_sync.py`,
-  `jde_post.py`; the JDE worksheet `erp/jde_worksheet.py`), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
-- The review screen: routes `web/pages/invoice.py`, view `web/invoice_view.py`, `web/templates/invoice.html`,
-  `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF beside it). Other pages:
-  `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is `web/pages/review.py` (`coding/review.py`
-  is the line grid's edits; bulk approval `coding/bulk.py`).
+- Exports: `erp/exports.py` (Excel/CSV), Finance Hub `erp/hub/`. Reports: the rest of `erp/`.
+- JD Edwards E1 vouchers, one subject a module (D-222; each imports only the ones before it, and a name is imported
+  from its home: `jde_settings.load`, not `jde.load`): `erp/jde_formats.py` (dates, amounts), `jde_settings.py`
+  (`JdeSettings`, `load`, `save`, `in_use`, the open period), `jde_prototype.py` (`use_prototype`),
+  `jde_accounts.py` (`resolve_an8`, `account_for`), `jde_voucher.py` (one voucher: `_prepare`, tax area and code,
+  terms, what holds it back), `jde_remarks.py`, `jde_zfiles.py` (columns, `voucher_rows`, `export_batch`),
+  `jde_review.py` (`voucher_findings`, `voucher_view`), `jde.py` (a batch: `validate`, `build_zip`, `dry_run`). Its
+  AIS API: `erp/jde_ais.py`, `jde_sync.py`, `jde_post.py`; the JDE worksheet `erp/jde_worksheet.py`.
+- The review screen, one subject a module (D-223). What it shows, `web/invoice_<subject>.py`: `form` (the fields,
+  `Draft`), `grid` (line and tax grids, line actions), `reading` (the page as read), `findings` (the checks' words,
+  `FIELD_FLAGS`, `HARD_CODES`, what to fix first), `fields` (notes under the details, dates, currency), `totals`
+  (summary, Tax check, posting), `coding` (why these codes, suggestions, PO, what is learned); `invoice_view.py`
+  (`analyse`) puts them together. Its routes, on one router: `web/pages/invoice.py` (opens the screen) and
+  `pages/invoice_<subject>.py`: `router`, `drafts` (unsaved edits, who has it open), `navigation`, `check`, `lines`,
+  `approve` (approve, park, reject, notes, reopen), `lookups` (vendors/accounts JSON), `document` (pages, the poll,
+  teach). `web/templates/invoice.html`, `web/static/js/invoice.js` (the form) and `invoice_viewer.js` (the PDF
+  beside it). Other pages: `web/pages/<page>.py` + `web/templates/<page>.html`; the review queue is
+  `web/pages/review.py` (`coding/review.py` is the line grid's edits; bulk approval `coding/bulk.py`).
   A page module's `router = page_router()` (`web/core.py`): each plain handler shares one database connection a
   request.
 - Amounts and dates: `capture/normalize.py` for what is read off an invoice, `core/safe.py` / `core/csvio.py` for

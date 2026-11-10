@@ -9,7 +9,7 @@ import json
 import pytest
 
 from ap_coder.core.store import Store
-from ap_coder.erp import jde, jde_ais, jde_post
+from ap_coder.erp import jde_ais, jde_post, jde_settings, jde_zfiles
 from tests.erp.test_jde import ON, QC, _invoice
 from tests.fake_ais import PASSWORD, FakeAis
 
@@ -30,8 +30,8 @@ def connect(store: Store, fake: FakeAis, **changes) -> None:
     cfg = fake.settings(**changes)
     store.set_setting(jde_ais.SETTING_KEY, cfg.to_json())
     if "timeout" in changes:  # a voucher's own wait (R04110ZA runs in it, D-182) too: the stand-in's late answers late
-        settings = json.loads(jde.load(store).to_json())
-        store.set_setting(jde.SETTING_KEY, json.dumps({**settings, "voucher_timeout": cfg.timeout}))
+        settings = json.loads(jde_settings.load(store).to_json())
+        store.set_setting(jde_settings.SETTING_KEY, json.dumps({**settings, "voucher_timeout": cfg.timeout}))
 
 
 def long_after_the_loss(store: Store) -> None:
@@ -45,7 +45,7 @@ def batch_of(tmp_path, fake: FakeAis, *stems: str) -> tuple[Store, int]:
     """A JD Edwards batch of these approved samples, their supplier and accounts known to the stand-in's JDE."""
     store = Store(tmp_path / "ap_coder.db")
     # JDE's "not there" believed at once after a lost answer (resend_minutes, D-182) unless a test says otherwise
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, resend_minutes=0))
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False, resend_minutes=0))
     ids = []
     for n, stem in enumerate(stems or (ON,), 1):
         final = _invoice(stem, n)["final_output"]
@@ -53,7 +53,7 @@ def batch_of(tmp_path, fake: FakeAis, *stems: str) -> tuple[Store, int]:
         inv = store.add_invoice(tmp_path / f"{n}.pdf", final, {})
         store.approve_invoice(inv, final, "Jane")
         ids.append(inv)
-    batch = store.create_export_batch(ids, jde.FORMAT)
+    batch = store.create_export_batch(ids, jde_settings.FORMAT)
     for payload in jde_post.payloads(store, batch)[0].values():
         for line in payload["gl_lines"]:
             bu, obj = line["VNANI"].split(".")[:2]
@@ -83,7 +83,7 @@ def test_dry_run_then_post_keeps_the_voucher_number(tmp_path, ais):
     )
     head = proof[0]["PayItems"][0]  # the Z-tables' keys: of the batch and the invoice, each with its code (D-182)
     assert head["VLEDBT"].startswith(f"APC{batch}-")
-    assert head["VLEDTN"] == f"APC1-{jde.invoice_site(store.get_invoice(1))}"
+    assert head["VLEDTN"] == f"APC1-{jde_zfiles.invoice_site(store.get_invoice(1))}"
     assert proof[0]["GLLines"] and ais.vouchers()[-1]["invoice_number"] == "INV-7001"  # nothing posted by the proof
     result = jde_post.post(store, batch, actor="sam")
     assert result["posted"] == 1 and result["error"] == ""
@@ -129,7 +129,7 @@ def test_an_invoice_held_back_here_is_refused_without_asking_jde(tmp_path, ais):
 def test_a_change_after_the_dry_run_needs_a_new_one(tmp_path, ais):
     store, batch = batch_of(tmp_path, ais)
     jde_post.dry_run(store, batch)
-    jde.save(store, jde.JdeSettings(default_bu="CC100", bu_from_cost_center=False, user="OTHER"))
+    jde_settings.save(store, jde_settings.JdeSettings(default_bu="CC100", bu_from_cost_center=False, user="OTHER"))
     with pytest.raises(ValueError):
         jde_post.post(store, batch)
 

@@ -9,8 +9,9 @@ E1's Voucher Batch Processor (**R04110ZA**, or the older R04110Z) reads from its
 | `F0911Z1.csv` | F0911Z1 (Journal Entry Transactions - Batch File) | G/L distribution line |
 | `F0411Z1T.csv` | *(not a standard table: see "PO-matched vouchers")* | PO match line |
 
-The code is in `ap_coder/erp/jde.py` (pure logic), the settings in `ap_coder/web/pages/settings_jde.py`
-(Settings → **JD Edwards E1**) and the export on the Exports page (ERP format **JD Edwards E1**).
+The code is in `ap_coder/erp/jde.py` and the `jde_<subject>.py` modules beside it (pure logic; the top of `jde.py`
+says what each holds), the settings in `ap_coder/web/pages/settings_jde.py` (Settings → **JD Edwards E1**) and the
+export on the Exports page (ERP format **JD Edwards E1**).
 
 ## Using it
 
@@ -80,13 +81,13 @@ There is no CSV of the sheet: a spreadsheet opening one reads `0312005561.0042` 
 52316, and the house way for a CSV (text as it is, for a loader; an apostrophe only against formulas) cannot keep
 a code text. The workbook does.
 
-**The settings for it in one step.** `jde.use_prototype(store)` (`ap_coder/erp/jde.py`, for a first-run step and
-tests) sets a data folder up as a department that types its vouchers and recovers the GST/HST only: Amounts = tax
-amounts, code V and a tax rate/area for each province (placeholders an Admin replaces in *Province → tax area*:
-`CDNGST`, a GST-only area, for AB, BC, MB, SK, QC and the territories; `ONHST`, `NBHST`, `NLHST`, `NSHST`, `PEHST`
-for the HST provinces), the remarks as typed, the default account rule (no mapping rows), *Show JD Edwards
-settings* on, and the QST set to *not recoverable: add to the expense line*. A new data folder's own defaults are
-the tax coded to G/L lines and JD Edwards hidden.
+**The settings for it in one step.** `jde_prototype.use_prototype(store)` (`ap_coder/erp/jde_prototype.py`, for a
+first-run step and tests) sets a data folder up as a department that types its vouchers and recovers the GST/HST only:
+Amounts = tax amounts, code V and a tax rate/area for each province (placeholders an Admin replaces in *Province → tax
+area*: `CDNGST`, a GST-only area, for AB, BC, MB, SK, QC and the territories; `ONHST`, `NBHST`, `NLHST`, `NSHST`,
+`PEHST` for the HST provinces), the remarks as typed, the default account rule (no mapping rows), *Show JD Edwards
+settings* on, and the QST set to *not recoverable: add to the expense line*. A new data folder's own defaults are the
+tax coded to G/L lines and JD Edwards hidden.
 
 The sheet says what the JD Edwards settings say, like the batch files: with *Amounts* = **Taxable / non-taxable / tax
 amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the tax and taxable
@@ -661,8 +662,8 @@ The files are the first step. Three ways to skip them, in order of preference fo
 1. **Insert into the Z-tables, then R04110ZA on a schedule** (recommended for high volume). AP Coder (or a
    small service next to it) inserts the same rows straight into F0411Z1 / F0911Z1 through a database account
    limited to those tables, and a scheduled R04110ZA job (proof, then final, e.g. every hour) creates the
-   vouchers. The mapping and checks in `jde.py` stay the same; only the transport changes. Errors come back
-   through the Z-tables (VLEDSP stays 0) and the job report.
+   vouchers. The mapping and checks in `jde.py` and its modules stay the same; only the transport changes. Errors
+   come back through the Z-tables (VLEDSP stays 0) and the job report.
 2. **AIS / Orchestrator**: one REST call per invoice to an E1 orchestration, e.g. the delivered
    **JDE_ORCH_04_Add_Supplier_Invoice** (Accounts Payable orchestrations), or a **custom orchestration** that
    calls the voucher entry form (P0411 / P051111) or R04110ZA. Real-time answers (voucher number or the error)

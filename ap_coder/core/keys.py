@@ -60,6 +60,18 @@ def same_tax_number(a: Any, b: Any) -> bool:
     return bn_a.group(1) == bn_b.group(1)
 
 
+_RT_ACCOUNT = re.compile(r"(\d{9})rt\d{4}")
+
+
+def other_tax_account(a: Any, b: Any) -> bool:
+    """Whether two GST/HST numbers are two accounts of one business: both a full account ("123456789 RT0001"), the
+    same nine digits (the Business Number: the legal entity registered with the CRA) and other four digits after RT
+    (which of its GST/HST accounts: a branch or a division can have its own). The same business, so no changed
+    number (D-219); ``same_tax_number`` still says they are not the same registration."""
+    a, b = _RT_ACCOUNT.fullmatch(norm_tax_number(a)), _RT_ACCOUNT.fullmatch(norm_tax_number(b))
+    return bool(a and b) and a.group(1) == b.group(1) and a.group(0) != b.group(0)
+
+
 def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
     """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by its GST/HST number
     however much of it either side keeps (``same_tax_number``: the master's 9-digit Business Number for the invoice's

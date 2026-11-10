@@ -286,7 +286,7 @@ def test_the_queue_says_clean_and_ready_by_todays_checks_after_a_setting_changes
     and Ready from the checks stored at intake, and bulk approval then approved none ("have no JDE account"). The
     queue re-checks what a settings change can change; back as before, they are clean again. A finding made after
     processing (the Azure check) still holds its invoice back."""
-    from ap_coder.erp import jde
+    from ap_coder.erp import jde_settings
     from ap_coder.web.pages.review import attention
 
     store = demo_store
@@ -294,18 +294,18 @@ def test_the_queue_says_clean_and_ready_by_todays_checks_after_a_setting_changes
     assert len(ids) >= 2
     pending = [i for i in store.list_invoices(REVIEW) if i["id"] in ids]
     assert not set(attention(store, store.reference_data(), pending)) & set(ids)  # Ready
-    store.set_setting(jde.SHOW_SETTING, "1")
-    jde.save(store, jde.JdeSettings(use_default_rule=False, bu_from_cost_center=False))
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
+    jde_settings.save(store, jde_settings.JdeSettings(use_default_rule=False, bu_from_cost_center=False))
     assert clean_candidates(store) == []
     reasons = attention(store, store.reference_data(), pending)
     assert set(ids) <= set(reasons) and all("error" in reasons[i] for i in ids)
     assert bulk_approve(store, store.reference_data(), Settings(), ids, "jane")["approved"] == []
-    store.set_setting(jde.SHOW_SETTING, "0")
+    store.set_setting(jde_settings.SHOW_SETTING, "0")
     assert sorted(c["id"] for c in clean_candidates(store)) == sorted(ids)
     assert not set(attention(store, store.reference_data(), pending)) & set(ids)
     issue = {"severity": "warning", "code": "AZURE_DI_DISAGREES", "message": "Azure read the total as 1,234.00"}
     assert store.update_after_check(ids[0], None, issue, ("AZURE_DI_DISAGREES",))
-    store.set_setting(jde.SHOW_SETTING, "")
+    store.set_setting(jde_settings.SHOW_SETTING, "")
     assert ids[0] not in [c["id"] for c in clean_candidates(store)]
 
 

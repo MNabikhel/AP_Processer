@@ -18,13 +18,13 @@ from ap_coder.coding.rules import Rule
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_form
 from ap_coder.web.app import create_app
-from ap_coder.web.invoice_view import Draft
+from ap_coder.web.invoice_form import Draft
 from tests.browser import browser_on, wait_until
 from tests.conftest import chromium_path
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +37,7 @@ def demo_db(cost_centers_demo_template):
 def me(monkeypatch):
     """A fixed reviewer and login (not this computer's)."""
     who = {"name": "Jordan Lee", "login": "jlee"}
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: who["name"], raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: who["login"], raising=False)
     return who
@@ -53,10 +53,10 @@ def form_of(store: Store, invoice_id: int, lines: Any = None, **header: str) -> 
         rows = lines(rows)
     data: dict[str, Any] = {**draft.header, **header, "grids": "1"}
     data["line_key"] = [f"r{i}" for i in range(len(rows))]
-    for column, name in invoice_view.LINE_INPUTS.items():
+    for column, name in invoice_form.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
-    for column, name in invoice_view.TAX_INPUTS.items():
+    data[invoice_form.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
+    for column, name in invoice_form.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in draft.taxes]
     return data
 
@@ -304,7 +304,7 @@ def test_teaching_a_field_sets_it_and_the_approval_teaches_the_template(client, 
                        headers=PAGE).status_code == 400  # fmt: skip
     inv = store.get_invoice(inv_id)
     data = form_of(store, inv_id, taught='{"invoice_number": [[1, 0.1, 0.1, 0.3, 0.12]], "nope": [[1, 0, 0, 1, 1]]}')
-    assert invoice_view.parse_taught(data["taught"]) == {"invoice_number": [[1, 0.1, 0.1, 0.3, 0.12]]}
+    assert invoice_form.parse_taught(data["taught"]) == {"invoice_number": [[1, 0.1, 0.1, 0.3, 0.12]]}
     assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()["ok"]
     key = store.supplier_key_for(inv["ai_output"]["vendor_name"], inv["ai_output"].get("gst_hst_registration_number"))
     assert (store.get_supplier_profile(key) or {}).get("template")
@@ -548,10 +548,10 @@ def test_the_page_keeps_the_dashboards_protections(client, store):
 
 
 def test_form_values_from_the_words_on_the_page():
-    assert invoice_view.form_value("grand_total", "$ 1,234.50") == 1234.5
-    assert invoice_view.form_value("invoice_date", "October 1, 2026") == "2026-10-01"
-    assert invoice_view.form_value("vendor_name", "  Acme \n Ltd ") == "Acme Ltd"
-    assert invoice_view.parse_taught("not json") == {} and invoice_view.parse_taught('{"po_number": "x"}') == {}
+    assert invoice_form.form_value("grand_total", "$ 1,234.50") == 1234.5
+    assert invoice_form.form_value("invoice_date", "October 1, 2026") == "2026-10-01"
+    assert invoice_form.form_value("vendor_name", "  Acme \n Ltd ") == "Acme Ltd"
+    assert invoice_form.parse_taught("not json") == {} and invoice_form.parse_taught('{"po_number": "x"}') == {}
 
 
 def test_bulk_approve_leaves_an_invoice_with_open_edits_for_its_review_screen(client, store):
@@ -636,7 +636,7 @@ def test_the_vendor_list_comes_gzipped_from_an_address_of_its_version_which_a_la
     import gzip
     import json
 
-    from ap_coder.web.pages.invoice import vendor_list, vendor_options
+    from ap_coder.web.pages.invoice_lookups import vendor_list, vendor_options
 
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page = client.get(f"/review/{invoice_id}").text
@@ -671,7 +671,7 @@ def test_the_page_names_the_vendors_it_shows_as_it_opens_and_what_it_looked_up(c
     import sqlite3
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.web.pages.invoice import business_number
+    from ap_coder.web.pages.invoice_lookups import business_number
 
     cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
     page = client.get(f"/review/{cascade['id']}").text
@@ -692,7 +692,7 @@ def test_the_page_names_the_vendors_it_shows_as_it_opens_and_what_it_looked_up(c
 
 def _two_with_numbers(listed: list[dict]) -> tuple[dict, dict]:
     """Two vendors of the list, the first of their key, with GST/HST business numbers of their own."""
-    from ap_coder.web.pages.invoice import business_number
+    from ap_coder.web.pages.invoice_lookups import business_number
 
     firsts = [v for i, v in enumerate(listed) if not any(o["key"] == v["key"] for o in listed[:i])]
     found = [v for v in firsts if business_number(v["gst"])]
@@ -707,30 +707,30 @@ def test_the_vendor_list_is_built_once_per_change_of_it_whichever_worker_changed
     import sqlite3
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.web.pages import invoice as invoice_page
+    from ap_coder.web.pages import invoice_lookups
     from tests.webclient import add_clean, gt
 
     built: list[int] = []
-    real = invoice_page.vendor_options
-    monkeypatch.setattr(invoice_page, "vendor_options", lambda s: built.append(1) or real(s))
+    real = invoice_lookups.vendor_options
+    monkeypatch.setattr(invoice_lookups, "vendor_options", lambda s: built.append(1) or real(s))
     one, two = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")  # two workers' stores on one database
     invoice_id = add_clean(one)
-    empty = invoice_page.vendor_list(one)
-    assert empty.count == 0 and invoice_page.vendor_list(one) is empty and len(built) == 1
+    empty = invoice_lookups.vendor_list(one)
+    assert empty.count == 0 and invoice_lookups.vendor_list(one) is empty and len(built) == 1
     one.approve_invoice(invoice_id, gt(), "Ann")  # no vendor master: the vendors approved before
-    approved = invoice_page.vendor_list(one)
+    approved = invoice_lookups.vendor_list(one)
     assert approved.count == 1 and not approved.enforced and len(built) == 2
     assert approved.by_key[vendor_key(gt()["vendor_name"])]["name"] == gt()["vendor_name"]
     two.import_vendor_master([{"vendor_name": "Acme Supply Ltd", "erp_id": "V1", "gst": "123456789RT0001"}])
-    master = invoice_page.vendor_list(one)
+    master = invoice_lookups.vendor_list(one)
     assert master.enforced and [v["name"] for v in master.by_key.values()] == ["Acme Supply Ltd"]
     assert master.by_number["123456789"]["id"] == "V1" and master.version != approved.version
-    assert invoice_page.vendor_list(two) is master and len(built) == 3  # (one process: one answer for both)
+    assert invoice_lookups.vendor_list(two) is master and len(built) == 3  # (one process: one answer for both)
     one.approve_invoice(add_clean(one, invoice_number="N-2"), {**gt(), "invoice_number": "N-2"}, "Ann")
-    assert invoice_page.vendor_list(one) is master and len(built) == 3  # with a vendor master: not the list
+    assert invoice_lookups.vendor_list(one) is master and len(built) == 3  # with a vendor master: not the list
     with sqlite3.connect(one.path) as conn:
         conn.execute("UPDATE vendors SET expected_gst = '987654321RT0001'")
-    assert "987654321" in invoice_page.vendor_list(one).by_number and len(built) == 4
+    assert "987654321" in invoice_lookups.vendor_list(one).by_number and len(built) == 4
 
 
 # --- Words picked on the page by dragging a box --------------------------------------------------------------------
@@ -761,7 +761,7 @@ def test_the_vendor_list_is_built_once_per_change_of_it_whichever_worker_changed
     ],
 )
 def test_words_picked_for_a_line_cell(field, text, value):
-    assert invoice_view.line_value(field, text) == value
+    assert invoice_form.line_value(field, text) == value
 
 
 def test_dragged_words_fill_a_line_or_make_a_new_one(client, store):
@@ -789,7 +789,7 @@ def test_a_new_line_from_a_long_run_of_words_is_read_quickly(client, store):
     answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_new", "text": text}, headers=PAGE).json()
     assert time.perf_counter() - started < 1.5
     assert answer["value"]["amount"] == 12.5 and answer["value"]["description"].endswith("1 1 x")
-    assert invoice_view.line_value("line_new", "Item" + " 1" * 8000 + " 12.50") == {"description": "Item",
+    assert invoice_form.line_value("line_new", "Item" + " 1" * 8000 + " 12.50") == {"description": "Item",
                                                                                    "amount": 12.5}  # fmt: skip
 
 
@@ -812,7 +812,7 @@ def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
     assert "Math: All adds up" in sections["bar"]
     # The first line made "GST only": the PST charged is no longer 7% of the lines marked PST.
     data = form_of(store, pacific["id"])
-    data[invoice_view.LINE_TAX_CODE][0] = "GST"
+    data[invoice_form.LINE_TAX_CODE][0] = "GST"
     answer = check(client, pacific["id"], data)
     sections = answer["sections"]
     assert "Math: 1 difference: PST" in sections["bar"] and '<b class="tc-diff">62.30</b>' in sections["taxcheck"]
@@ -829,7 +829,7 @@ def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
     ],
 )
 def test_a_numbers_label_marks_picked_with_it_are_dropped(field, text, value):
-    assert invoice_view.form_value(field, text) == value
+    assert invoice_form.form_value(field, text) == value
 
 
 # --- The AI reviewer -----------------------------------------------------------------------------------------------

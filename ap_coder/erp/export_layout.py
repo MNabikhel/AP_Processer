@@ -104,7 +104,7 @@ def _money(value: Any, places: int) -> Decimal:
 def _line_amounts(rows: list[dict[str, Any]]) -> dict[int, Decimal]:
     """Each row's posting amount (by position), rounded to what its currency holds. In a currency without cents (the
     yen), lines spread in cents (10.66 + 10.67 + 10.67) each rounded to the yen can be a yen off the invoice's total:
-    when the lines balance in cents, the largest takes the difference (like jde.py's vouchers)."""
+    when the lines balance in cents, the largest takes the difference (like jde_voucher.py's vouchers)."""
     out: dict[int, Decimal] = {}
     whole: dict[Any, list[int]] = {}
     for i, row in enumerate(rows):

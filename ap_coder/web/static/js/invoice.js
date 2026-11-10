@@ -477,7 +477,7 @@ let lastCheckOk = false; // the last check answered (its edits are kept as a dra
 let lastDraft = false; // the last check kept the edits as a draft
 let edited = false; // an edit made on this page (a check without one keeps nothing new)
 
-/** The time now as the server says a draft's (invoice.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
+/** The time now as the server says a draft's (invoice_drafts.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
 function clock() {
   const d = new Date();
   const h = d.getHours();
@@ -1044,7 +1044,7 @@ function setVendor(name) {
    A vendor of the vendor list fills each blank GST/HST, QST and PST number with its own, and says so under the field
    ("From the vendor list — not printed on the invoice"); a number filled from the vendor follows it when the vendor
    changes. A number read from the invoice or typed is never touched. The server applies the same rule on every check
-   (invoice_view.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
+   (invoice_form.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
 
 const TAX_FIELDS = { gst_hst_registration_number: "gst", qst_registration_number: "qst", pst_registration_number: "pst" };
 const fromVendorBox = document.querySelector("input[data-from-vendor]");

@@ -9,9 +9,10 @@ import re
 
 import pytest
 
+from ap_coder.core import memory
 from ap_coder.core.store import APPROVED, PENDING, REVIEW
-from ap_coder.erp import jde
-from ap_coder.web import invoice_view
+from ap_coder.erp import jde, jde_settings
+from ap_coder.web import invoice_fields, invoice_findings, invoice_form, invoice_reading
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, clean_invoice, form_of
 
@@ -24,9 +25,9 @@ def _id(store, vendor: str) -> int:
 
 
 def _jde_on(store, **settings) -> None:
-    store.set_setting(jde.SHOW_SETTING, "1")
+    store.set_setting(jde_settings.SHOW_SETTING, "1")
     if settings:
-        jde.save(store, jde.JdeSettings(**settings))
+        jde_settings.save(store, jde_settings.JdeSettings(**settings))
 
 
 # --- 1. JD Edwards readiness before approval -----------------------------------------------------------------------
@@ -41,7 +42,7 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
 
     vendor = store.get_invoice(invoice_id)["ai_output"]["vendor_name"]
     # no business unit for the lines (none from the cost center), and a supplier number that isn't an AN8
-    _jde_on(store, bu_from_cost_center=False, an8_overrides={jde.vendor_key(vendor): "V10104"})
+    _jde_on(store, bu_from_cost_center=False, an8_overrides={memory.vendor_key(vendor): "V10104"})
     answer = check(client, invoice_id, form_of(store, invoice_id))
     checks = answer["sections"]["checks"]
     assert "JD Edwards: the supplier number V10104 is not an address number" in checks
@@ -72,7 +73,7 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
     assert "Not sent: JD Edwards uses the supplier&#39;s own terms" in block
 
     # The pilot tester sets the AN8 and a default business unit: nothing holds it back, the accounts show.
-    _jde_on(store, an8_overrides={jde.vendor_key(vendor): "10104"}, default_bu="CC400", bu_from_cost_center=False)
+    _jde_on(store, an8_overrides={memory.vendor_key(vendor): "10104"}, default_bu="CC400", bu_from_cost_center=False)
     answer = check(client, invoice_id, form_of(store, invoice_id))
     assert "JD Edwards" not in answer["sections"]["checks"] and answer["header"]["an8"] == "10104"
     assert "CC400.6010" in answer["sections"]["posting"]
@@ -81,9 +82,9 @@ def test_with_jd_edwards_in_use_the_screen_says_what_its_batch_would_hold_back(c
 def test_an_invoice_approved_on_the_screen_is_never_held_back_at_export(client, store):
     """What the screen allowed, the JD Edwards batch takes: the screen asks jde.validate's questions."""
     _jde_on(store, default_bu="CC400")
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     settings.an8_overrides = {v["vendor_key"]: str(10000 + n) for n, v in enumerate(store.vendor_choices())}
-    jde.save(store, settings)
+    jde_settings.save(store, settings)
     approved = 0
     for inv in store.list_invoices(REVIEW):
         data = form_of(store, inv["id"])
@@ -94,7 +95,7 @@ def test_an_invoice_approved_on_the_screen_is_never_held_back_at_export(client, 
         approved += 1
     assert approved
     done = [store.get_invoice(i["id"]) for i in store.unexported_approved()]
-    assert done and jde.validate(done, jde.load(store), store.vendor_ids()) == {}
+    assert done and jde.validate(done, jde_settings.load(store), store.vendor_ids()) == {}
 
 
 def test_bulk_approval_asks_the_same_jd_edwards_questions(store):
@@ -105,7 +106,7 @@ def test_bulk_approval_asks_the_same_jd_edwards_questions(store):
     from ap_coder.core.schema import InvoiceCoding
 
     inv = store.get_invoice(_id(store, "Prairie"))
-    _jde_on(store, bu_from_cost_center=False, an8_overrides={jde.vendor_key(inv["vendor_name"]): "V10104"})
+    _jde_on(store, bu_from_cost_center=False, an8_overrides={memory.vendor_key(inv["vendor_name"]): "V10104"})
     coded = {k: v for k, v in inv["ai_output"].items() if k != "gl_distribution"}
     _, report = finalise_coding(InvoiceCoding.model_validate(coded), store.reference_data(), Settings(), store=store)
     assert {"JDE_BAD_AN8", "JDE_NO_ACCOUNT"} <= {i.code for i in report.issues}
@@ -138,7 +139,7 @@ def test_what_makes_a_voucher_invalid_is_never_approved_anyway(client, store, ch
 def test_the_hard_codes_are_errors_raised_somewhere():
     from ap_coder.ops.help import CHECKS
 
-    assert invoice_view.HARD_CODES <= set(CHECKS)
+    assert invoice_findings.HARD_CODES <= set(CHECKS)
 
 
 def test_a_vendor_on_hold_is_never_approved_anyway(client, store):
@@ -441,10 +442,10 @@ def test_a_check_about_one_field_is_shown_under_it(client, store):
 
 
 def test_a_problem_that_stops_the_coding_is_said_in_plain_words():
-    assert invoice_view.plain_problem("line_items.1.amount: Value error, must be a number") == (
+    assert invoice_fields.plain_problem("line_items.1.amount: Value error, must be a number") == (
         "Line 2 amount: must be a number"
     )
-    assert invoice_view.plain_problem("due_date: Value error, x") == "Due date: x"
+    assert invoice_fields.plain_problem("due_date: Value error, x") == "Due date: x"
 
 
 def test_the_readings_badge_is_left_out_beside_an_empty_or_changed_field(client, store):
@@ -452,8 +453,8 @@ def test_the_readings_badge_is_left_out_beside_an_empty_or_changed_field(client,
     invoice_id = _id(store, "Prairie")
     inv = store.get_invoice(invoice_id)
     sure = {"invoice_number": {"text": "Verified"}, "po_number": {"text": "Likely"}, "currency": {"text": "Check"}}
-    header = {**invoice_view.Draft.stored(inv["ai_output"]).header, "invoice_number": "", "po_number": "X1"}
-    shown = invoice_view.shown_sure(sure, header, inv["ai_output"], None)
+    header = {**invoice_form.Draft.stored(inv["ai_output"]).header, "invoice_number": "", "po_number": "X1"}
+    shown = invoice_reading.shown_sure(sure, header, inv["ai_output"], None)
     assert "invoice_number" not in shown and "po_number" not in shown and "currency" in shown
 
 

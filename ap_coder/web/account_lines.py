@@ -127,7 +127,7 @@ def fill(lines: list[dict[str, Any]], gl: str, cc: str) -> tuple[list[dict[str, 
 
 
 def said_once(items: list[dict[str, Any]]) -> None:
-    """The findings' list (``invoice_view.checks_summary``'s items) as a screen with one Account box a line says
+    """The findings' list (``invoice_findings.checks_summary``'s items) as a screen with one Account box a line says
     it: a line with no account is said once ("no account yet"), not once for its GL code and once for its business
     unit: the second stays in the list, not shown (``folded``), so the page still carries its code."""
     uncoded = {n for item in items if item.get("code") == "GL_UNASSIGNED" for n in item.get("lines") or []}

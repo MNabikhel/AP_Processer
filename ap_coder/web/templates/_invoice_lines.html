@@ -1,5 +1,5 @@
 {# The review screen's grids: the line items with their GL coding, and the sales tax lines. Every cell belongs to the
-   form "inv" (the approve form); a row's cells are posted in order, one value per row (invoice_view.LINE_INPUTS). #}
+   form "inv" (the approve form); a row's cells are posted in order, one value per row (invoice_form.LINE_INPUTS). #}
 
 {% macro opts(options, current) -%}
 {% for code, label in options %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -57,7 +57,7 @@
 
 {# ---- With a chart of accounts (D-214): one row a line, # · Account · Amount · Description · Tax, and under the
    boxes what the line says about itself. ``row.acct``: account_lines.row_views. The cells marked data-live-line are
-   drawn again by each check (pages/invoice.py ``_line_views``); they hold no box, so the focus is never lost. #}
+   drawn again by each check (pages/invoice_check.py ``_line_views``); they hold no box, so the focus is never lost. #}
 
 {# Under the Account box: the account's name · its business unit · why the line was coded so. #}
 {% macro acct_cap(a) -%}

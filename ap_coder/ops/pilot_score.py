@@ -41,7 +41,7 @@ from ..core.headers import match_columns
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED
 from ..core.safe import csv_row, parse_amount
-from ..erp import jde
+from ..erp import jde_accounts, jde_settings, jde_voucher, jde_zfiles
 from ..erp.statements import day_first_order, read_date
 
 REPORT, DIFFERENCES, FIGURES = "pilot_score.md", "pilot_score_differences.csv", "pilot_score.json"
@@ -385,9 +385,9 @@ class Ours:
         return vendor_key(self.vendor_name)
 
 
-def _account(gl: str, cc: str, settings: jde.JdeSettings) -> tuple[str, str, str] | None:
+def _account(gl: str, cc: str, settings: jde_settings.JdeSettings) -> tuple[str, str, str] | None:
     """(BU, object, subsidiary) of a GL code and cost center through Settings → JD Edwards' account mapping."""
-    account = jde.account_for(gl, cc, settings)
+    account = jde_accounts.account_for(gl, cc, settings)
     return (account.bu.upper(), account.obj.upper(), account.sub.upper()) if account is not None else None
 
 
@@ -402,14 +402,14 @@ def _would_be_touchless(inv: dict[str, Any]) -> bool:
         READY, AUTONOMOUS)  # fmt: skip
 
 
-def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: bool = False) -> list[Ours]:
+def our_invoices(store: Any, settings: jde_settings.JdeSettings | None = None, proposed: bool = False) -> list[Ours]:
     """Every invoice fully approved in AP Coder, oldest first, as JD Edwards would get it: one still waiting for its
     second approval is not exported yet (B-1012). ``proposed``: every invoice in review, parked, waiting for its
     second approval or approved, each as AP Coder proposed it before a person changed anything (``ai_output``)."""
     from ..core.store import ACTIVE_STATUSES, APPROVED
     from ..erp.exports import distribution
 
-    settings = settings or jde.load(store)
+    settings = settings or jde_settings.load(store)
     ids = store.vendor_ids()
     treatments = store.tax_treatments() if proposed else None
     rows = sorted(store.list_invoices(statuses=ACTIVE_STATUSES if proposed else (APPROVED,)), key=lambda r: r["id"])
@@ -421,7 +421,7 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: 
         final = inv.get("final_output") or {}
         if not final:
             continue
-        an8 = jde.resolve_an8(final, ids, settings)
+        an8 = jde_accounts.resolve_an8(final, ids, settings)
         taxes = [t for t in final.get("tax_lines") or [] if abs(float(t.get("tax_amount") or 0)) > 0.004]
         tax_total = final.get("tax_total")
         if tax_total is None and taxes:
@@ -429,9 +429,9 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: 
         # What the voucher sent (B-933, B-934): its due date (a credit memo's is its invoice date; none when it was
         # only a guess, E1 then works it out) and the tax E1 was given (the claimable tax, or the tax on its own G/L
         # lines; with the gross only, the tax charged).
-        due = jde.sent_due(final, inv) if settings.send_due_date else None
+        due = jde_voucher.sent_due(final, inv) if settings.send_due_date else None
         try:
-            given = jde.sent_tax(inv, settings, an8 or "0")
+            given = jde_voucher.sent_tax(inv, settings, an8 or "0")
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: the tax as charged
             given = None
         o = Ours(
@@ -444,7 +444,7 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: 
             tax_on_gl=settings.tax_on_gl, status=str(inv.get("status") or ""),
         )  # fmt: skip
         try:  # the tax area and explanation code the voucher would carry
-            header = jde.voucher_rows(inv, an8 or "0", settings)[0]
+            header = jde_zfiles.voucher_rows(inv, an8 or "0", settings)[0]
             o.tax_area, o.tax_code = str(header[0].get("VLTXA1") or ""), str(header[0].get("VLEXR1") or "").upper()
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: its tax treatment is not compared
             pass
@@ -1017,7 +1017,7 @@ def run(
     """Score the pilot from the export files; writes the report and returns (report, folder written to).
     ``start``/``end``: invoice dates kept (default: the dates of the invoices approved in AP Coder, so the export may
     hold more; ``every_voucher`` keeps every voucher of the export)."""
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     voucher_rows, sheets = read_table(vouchers)
     dist_rows: list[dict[str, str]] | None = None
     if distribution:

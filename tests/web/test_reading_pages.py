@@ -463,7 +463,7 @@ def test_an_edit_made_as_the_reading_arrives_is_kept(client, store, status):
 
 
 def test_agreement_line_counts_every_field_compared():
-    from ap_coder.web.invoice_view import agreement_line
+    from ap_coder.web.invoice_reading import agreement_line
 
     line = agreement_line({"agree": ["a", "b", "c"], "differ": ["d"], "only": ["e"], "seconds": 90})
     assert line == ("OvisOCR2 read this invoice: 3 of 5 fields agree (1 read differently, marked Check; 1 found only "

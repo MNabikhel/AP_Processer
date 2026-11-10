@@ -235,7 +235,7 @@ def test_a_lesson_on_a_blank_account_reads_left_blank_not_unassigned(tmp_path):
 
 def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnings():
     from ap_coder.coding.validation import ERROR, WARNING, Issue
-    from ap_coder.web.invoice_view import checks_details, checks_summary
+    from ap_coder.web.invoice_findings import checks_details, checks_summary
 
     errors = [Issue(ERROR, "TOTAL_MISMATCH", "subtotal + tax = 10.00 but the total is 12.00")]
     warnings = [Issue(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", 1),
@@ -252,17 +252,41 @@ def test_what_keeps_approve_closed_is_its_own_group_before_the_errors_and_warnin
     )
 
 
-# --- B-468: the demo before the first real import ---------------------------------------------------------------------
+# --- The demo invoices on Import invoices: said while they are loaded, never asked to be removed (was B-468) ----------
 
 
-def test_the_import_page_asks_to_remove_the_demo_before_the_first_real_invoice(tmp_path, demo_template):
+def _demo_notice(client) -> str:
+    """Import invoices' notice that demo invoices are loaded ("" when it shows none)."""
+    page = client.get("/process").text
+    return page.split('id="demo-loaded"', 1)[1].split("</div></div>", 1)[0] if 'id="demo-loaded"' in page else ""
+
+
+def test_the_import_page_says_demo_invoices_are_loaded_and_never_asks_to_remove_them(tmp_path, demo_template):
+    from ap_coder.ops.demo import remove_demo
+    from tests.web.test_server_web import account, log_in, server_client
 
     store = copy_database(demo_template, tmp_path / "private" / "ap.db")
     client = client_for(store)
-    assert "Remove the demo invoices before you import your own" in client.get("/process").text
     line = {"description": "Audit", "amount": 50.0, "predicted_gl_code": "6100", "reasoning_justification": "x"}
-    store.add_invoice(tmp_path / "real.pdf", _invoice([line]), {"requires_review": True})
-    assert "Remove the demo invoices before you import your own" not in client.get("/process").text
+    for own in (False, True):  # the demo alone, then with an invoice of your own beside it
+        if own:
+            store.add_invoice(tmp_path / "real.pdf", _invoice([line]), {"requires_review": True})
+        notice = _demo_notice(client)
+        assert "<b>10 demo invoices loaded.</b>" in notice, own
+        assert "in the review queue, the exports and what AP Coder learns, beside your own" in notice
+        assert 'href="/settings/data#demo"' in notice  # where they can be removed, for those who may
+        page = client.get("/process").text
+        assert "Remove the demo invoices before" not in page and "Ask an Admin" not in page  # a flag, never an order
+        assert 'id="upload-form"' in page  # and nothing is blocked
+    assert store.demo_count() == 10  # nor removed
+    account(store, "ann", "clerk", "Ann Lee")  # where people sign in, a Clerk may not remove them: told who can
+    ann = server_client(store)
+    log_in(ann, "ann")
+    notice = _demo_notice(ann)
+    assert "<b>10 demo invoices loaded.</b>" in notice and "An Admin can remove them in Settings" in notice
+    assert "href=" not in notice
+    remove_demo(store)
+    assert _demo_notice(client) == ""  # none loaded: nothing to say
 
 
 # --- B-469: long overdue, and an invoice dated more than a year back --------------------------------------------------
@@ -331,7 +355,7 @@ def test_the_queue_says_no_vendor_name_and_marks_a_name_to_check(tmp_path):
 
 def test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested(tmp_path):
     """BDO's only line had no GL account yet and the bar said "Teaches from 1 line · all as suggested"."""
-    from ap_coder.web.invoice_view import learn_text
+    from ap_coder.web.invoice_coding import learn_text
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -365,7 +389,7 @@ def test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_co
     marked a guess, the bar said "1 guessed account to check", and the approval recorded the model's guess as the
     AI's proposal, corrected ("6010" -> "6000")."""
     from ap_coder.coding import rules
-    from ap_coder.web.invoice_view import learn_text
+    from ap_coder.web.invoice_coding import learn_text
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -386,7 +410,7 @@ def test_a_coding_rule_over_a_guess_is_the_rules_coding_not_a_guess_and_not_a_co
 def test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again(tmp_path):
     """The review: the hidden reasoning kept the model's text, so the mark came back on the reviewer's own account
     after the server drew the grid again (an added line, a split, a page reload)."""
-    from ap_coder.web import invoice_view
+    from ap_coder.web import invoice_grid
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -395,9 +419,9 @@ def test_an_account_the_reviewer_picked_over_a_guess_is_never_marked_again(tmp_p
                     "reasoning_justification": f"{MODEL_SUGGESTED}: office"}])  # fmt: skip
     draft = SimpleNamespace(lines=[dict(ai["line_items"][0])], taxes=[])
     reference = store.reference_data()
-    assert invoice_view.grid(reference, draft, ai)["lines"][0]["guessed"]
+    assert invoice_grid.grid(reference, draft, ai)["lines"][0]["guessed"]
     draft.lines[0]["predicted_gl_code"] = "6010"  # picked by the reviewer; the hidden reasoning is still the model's
-    assert not invoice_view.grid(reference, draft, ai)["lines"][0]["guessed"]
+    assert not invoice_grid.grid(reference, draft, ai)["lines"][0]["guessed"]
 
 
 def test_the_approval_message_says_you_coded_for_a_kept_guess(tmp_path):
@@ -493,7 +517,7 @@ def test_without_a_cost_center_list_a_cost_center_from_memory_is_no_change(tmp_p
     """B-562: with no cost center list the page shows (and posts) no cost center. A line the AI coded with one from
     coding memory (ERP history, approvals before the list was removed), approved untouched, is kept as suggested:
     not "1 you changed", not a correction, not an edit."""
-    from ap_coder.web.invoice_view import ai_changes, learn_text
+    from ap_coder.web.invoice_coding import ai_changes, learn_text
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store, cost_centers=False)

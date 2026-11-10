@@ -36,7 +36,7 @@ from ..core.reference_data import UNASSIGNED
 from ..core.safe import csv_row
 from ..core.store.journal import supplier_key
 from ..core.ui import plural
-from ..erp import jde
+from ..erp import jde_settings
 from ..erp import journal as jr
 from . import pilot_score as ps
 from .journal_score import account_of, the_journal
@@ -315,7 +315,7 @@ def run(store: Any, vouchers: str | Path, journal: str | Path | None = None, out
         implied_decimals: bool = False) -> tuple[dict[str, Any], Path]:  # fmt: skip
     """Score the invoices in ``store`` as proposed against the voucher list and the journal (the file, else the one
     loaded here), and write the three files; returns (the report, the folder written to)."""
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
     read, source = the_journal(store, journal)
     posted, notes = ps.posted_vouchers(ps.read_table(vouchers)[0], implied_decimals=implied_decimals,
                                        domestic=settings.domestic_currency)  # fmt: skip

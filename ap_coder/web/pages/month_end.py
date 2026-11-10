@@ -16,7 +16,7 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.erp import accruals
 from ap_coder.web.core import address_day, get_store, money, page_router, reference_or_none, render
 from ap_coder.web.files import download
-from ap_coder.web.invoice_view import NEEDS_CC, NEEDS_GL
+from ap_coder.web.invoice_grid import NEEDS_CC, NEEDS_GL
 from ap_coder.web.pages import downloads
 
 router = page_router()  # each plain handler: one connection a request

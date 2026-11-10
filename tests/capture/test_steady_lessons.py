@@ -99,7 +99,7 @@ def test_ap_keeping_another_value_ends_the_lesson(tmp_path, store):
 
 
 def test_the_review_screen_says_the_value_is_as_ap_set_it(tmp_path, store):
-    from ap_coder.web.invoice_view import capture_confidence
+    from ap_coder.web.invoice_reading import capture_confidence
 
     for n in range(3):
         path = _invoice(tmp_path / f"{n}.pdf", f"LF-{100 + n}", "250.00")

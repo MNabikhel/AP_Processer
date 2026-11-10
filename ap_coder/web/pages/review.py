@@ -71,7 +71,8 @@ from ap_coder.web.core import (
     server_mode,
 )
 from ap_coder.web.identity import shown_path
-from ap_coder.web.invoice_view import confidence_pct, document_kind
+from ap_coder.web.invoice_findings import confidence_pct
+from ap_coder.web.invoice_reading import document_kind
 
 router = page_router()  # each plain handler: one connection a request
 
@@ -275,7 +276,7 @@ def draft_reasons(request: Request, pending: list[dict[str, Any]]) -> dict[int, 
     """The queue's reason for each invoice of ``pending`` with edits kept on this person's review screen: the draft's
     own check, not the stored one ("Pick a GL account for line 4" after line 4 was coded in the draft, B-996). Never
     Ready: bulk approval leaves an invoice with a draft alone, and the edits are approved on its screen."""
-    from ap_coder.web.pages.invoice import my_drafts
+    from ap_coder.web.pages.invoice_drafts import my_drafts
 
     ids = {i["id"] for i in pending}
     out = {}
@@ -308,10 +309,10 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
                others: dict[int, list[str]] | None = None,
                parts: dict[int, tuple[str, str, int, int, bool]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``.
-    ``others``: the names of those who have an invoice open (``invoice.open_elsewhere``, D-184). ``parts``: what
+    ``others``: the names of those who have an invoice open (``invoice_drafts.open_elsewhere``, D-184). ``parts``: what
     ``attention`` made the reasons of: each of these says the first thing to fix in words (``first_to_fix``), the
     others ``reasons``' own (a draft's, one flagged before)."""
-    from ap_coder.web.pages.invoice import names_text
+    from ap_coder.web.pages.invoice_drafts import names_text
 
     reasons, others, parts = reasons or {}, others or {}, parts or {}
     ids = [i["id"] for i in shown]
@@ -501,7 +502,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     context["bulk_job"] = bulk_notice(store)  # the person's bulk approval under way, or ended since (D-185)
     context["choose_screens"] = screens_to_choose(request, store)  # an older data folder: asked once (D-221)
     if tab == "review":
-        from ap_coder.web.pages.invoice import open_elsewhere
+        from ap_coder.web.pages.invoice_drafts import open_elsewhere
 
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
@@ -834,7 +835,7 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
     store = get_store(request)
     if store.get_invoice(invoice_id) is None:
         return refuse("That invoice is no longer in AP Coder.", 404)
-    from ap_coder.web.pages.invoice import forget_everyones_draft
+    from ap_coder.web.pages.invoice_drafts import forget_everyones_draft
 
     try:
         delete_invoice(store, invoice_id)
@@ -881,7 +882,7 @@ def review_separate(request: Request, invoice_id: int) -> JSONResponse:
     and its files go back in the invoices folder and in line, each to be read as an invoice of its own."""
     from ap_coder.core.store.folder import read_file
     from ap_coder.intake.joined import CannotJoin, separate
-    from ap_coder.web.pages.invoice import forget_everyones_draft
+    from ap_coder.web.pages.invoice_drafts import forget_everyones_draft
     from ap_coder.web.pages.process import queue_files
 
     store = get_store(request)

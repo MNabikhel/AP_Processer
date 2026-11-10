@@ -249,11 +249,13 @@ def setup_key(store: Store) -> tuple[Any, ...]:
     """What ``build`` and ``self_assessment`` read beside the invoices' summary: the tax setup, the rate table, our
     provinces, and whether JD Edwards accrues the PST (its settings, its batches): an answer of theirs kept for a page
     is one for these (the Sales tax page's, D-179), so that a change of one of them is worked out at once."""
-    from ..erp import jde
+    from ..erp import jde_settings
 
-    batches = [b["id"] for b in store.export_batches() if b.get("format") in jde.FORMATS and not b.get("undone_at")]
+    batches = [
+        b["id"] for b in store.export_batches() if b.get("format") in jde_settings.FORMATS and not b.get("undone_at")
+    ]
     return (store.tax_treatments(), TaxRateTable.load(), store.our_province(), store.site_provinces(), batches,
-            jde.in_use(store), store.get_setting(jde.SETTING_KEY))  # fmt: skip
+            jde_settings.in_use(store), store.get_setting(jde_settings.SETTING_KEY))  # fmt: skip
 
 
 def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str, Any]:
@@ -389,19 +391,21 @@ JDE_WILL_ACCRUE = "JD Edwards will accrue this one once exported (code B): don't
 def _jde_accruing(store: Store) -> Any:
     """The note of a coded invoice whose PST JD Edwards accrues itself with the self-assessed code (B): exported to
     JD Edwards (in a batch not undone), or not exported yet while JD Edwards is the export in use ("" otherwise)."""
-    from ..erp import jde
+    from ..erp import jde_settings, jde_voucher
 
-    batches = {b["id"] for b in store.export_batches() if b.get("format") in jde.FORMATS and not b.get("undone_at")}
-    pending = jde.in_use(store)
+    batches = {
+        b["id"] for b in store.export_batches() if b.get("format") in jde_settings.FORMATS and not b.get("undone_at")
+    }
+    pending = jde_settings.in_use(store)
     if not batches and not pending:
         return lambda batch, doc: ""
-    settings = jde.load(store)
+    settings = jde_settings.load(store)
 
     def note(batch: Any, doc: Any) -> str:  # ``doc``: the coding, read when it is needed
         if batch in batches:
-            return JDE_ACCRUES if jde.accrues_use_tax(doc(), settings) else ""
+            return JDE_ACCRUES if jde_voucher.accrues_use_tax(doc(), settings) else ""
         if batch is None and pending:
-            return JDE_WILL_ACCRUE if jde.accrues_use_tax(doc(), settings) else ""
+            return JDE_WILL_ACCRUE if jde_voucher.accrues_use_tax(doc(), settings) else ""
         return ""
 
     return note

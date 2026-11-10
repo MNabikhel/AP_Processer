@@ -10,8 +10,8 @@ from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding.remark import suggest_remark, suggested
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED
-from ap_coder.erp import jde
-from ap_coder.web.invoice_view import LINE_REMARK
+from ap_coder.erp import jde_remarks, jde_settings
+from ap_coder.web.invoice_form import LINE_REMARK
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE
 
@@ -123,7 +123,7 @@ def test_the_second_part_of_a_split_line_takes_the_remark_of_the_first(chart_com
 def test_a_remark_over_30_characters_keeps_approve_closed_while_remarks_go_to_jd_edwards_as_typed(
         chart_company, chart_company_client):  # fmt: skip
     store = chart_company.store
-    assert jde.load(store).remarks == jde.REMARKS_TYPED
+    assert jde_settings.load(store).remarks == jde_settings.REMARKS_TYPED
     page, _, _ = _open(chart_company_client, chart_company)
     long = "coffee supplies for the 3rd floor kitchen"
     answer = _post(page, "check", [long])
@@ -131,8 +131,11 @@ def test_a_remark_over_30_characters_keeps_approve_closed_while_remarks_go_to_jd
     assert not answer["allow"] and "41 characters" in said and "coffee supplies for the 3rd" in said
     assert not page.approve().get("ok")
     # Where the remarks sent are AP Coder's references it is a warning: approved, kept whole, keyed fitted.
-    jde.save(store, replace(jde.load(store), remarks=jde.REMARKS_REFERENCE))
+    jde_settings.save(store, replace(jde_settings.load(store), remarks=jde_settings.REMARKS_REFERENCE))
     assert _post(page, "check", [long])["allow"], page.findings
     assert page.approve()["ok"]
     assert _line(store, page.id) == (long, "person")
-    assert jde.line_remark(store.get_invoice(page.id)["final_output"]["line_items"][0]) == "coffee supplies for the 3rd"
+    assert (
+        jde_remarks.line_remark(store.get_invoice(page.id)["final_output"]["line_items"][0])
+        == "coffee supplies for the 3rd"
+    )

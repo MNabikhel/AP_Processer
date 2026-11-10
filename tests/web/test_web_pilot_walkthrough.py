@@ -15,14 +15,14 @@ from fastapi.testclient import TestClient
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_findings, invoice_form, invoice_reading, invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import invoice as _invoice_page  # noqa: F401 - imported before `me` patches web.core (below)
 from ap_coder.web.pages import review as _review_page  # noqa: F401
 from tests.browser import browser_on
 from tests.conftest import SAMPLES
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 LAPTOP = {"width": 1366, "height": 768}
 
@@ -41,7 +41,7 @@ def client(store):
 def me(monkeypatch):
     """A fixed reviewer. The page modules are imported at the top: patched before them, ``web.core.reviewer`` would be
     copied into them patched, and monkeypatch would keep the patched one as theirs for the rest of the run."""
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
 
@@ -110,7 +110,7 @@ def test_approve_also_opens_the_invoice_that_followed_on_screen(client, store):
     ready = [
         i
         for i in ids
-        if (lines := invoice_view.Draft.stored(store.get_invoice(i)["ai_output"]).lines)
+        if (lines := invoice_form.Draft.stored(store.get_invoice(i)["ai_output"]).lines)
         and all(li.get("predicted_gl_code") != UNASSIGNED for li in lines)
     ]  # every line coded (D-89's order)
     current = ready[0]
@@ -121,7 +121,7 @@ def test_approve_also_opens_the_invoice_that_followed_on_screen(client, store):
     answer = client.post(f"/review/{current}/approve", data=data, headers=PAGE).json()
     if not answer.get("ok"):  # a check to tick first: "Approve anyway"
         key = invoice_view.analyse(store, Settings(), store.reference_data(), store.get_invoice(current),
-                                   invoice_view.Draft.stored(store.get_invoice(current)["ai_output"]),
+                                   invoice_form.Draft.stored(store.get_invoice(current)["ai_output"]),
                                    "Pat Tester").live["bar"]["override_key"]  # fmt: skip
         answer = client.post(
             f"/review/{current}/approve",
@@ -141,10 +141,10 @@ def test_the_last_invoice_offers_no_next_one_to_wrap_to(client, store):
 
 def test_check_messages_name_fields_in_plain_english():
     """ "Subtotal + tax = 62.00 but grand_total = 0.00" and "quantity x unit_price = 20.00": the code's field names."""
-    assert invoice_view.readable("subtotal + tax = 62.00 but grand_total = 0.00") == (
+    assert invoice_findings.readable("subtotal + tax = 62.00 but grand_total = 0.00") == (
         "Subtotal + tax = 62.00 but the total = 0.00"
     )
-    assert invoice_view.readable("quantity x unit_price = 20.00 but amount = 40.00", cap=False) == (
+    assert invoice_findings.readable("quantity x unit_price = 20.00 but amount = 40.00", cap=False) == (
         "quantity × unit price = 20.00 but amount = 40.00"
     )
 
@@ -156,7 +156,7 @@ def test_the_details_use_the_same_plain_words():
                             message="subtotal + tax = 62.00 but grand_total = 0.00")  # fmt: skip
     report = SimpleNamespace(issues=[issue], requires_review=True, adjusted_confidence=0.2, review_threshold=0.85,
                              checks={})  # fmt: skip
-    (detail, *_rest) = invoice_view.checks_details(report)
+    (detail, *_rest) = invoice_findings.checks_details(report)
     assert "grand_total" not in detail["message"] and "the total" in detail["message"]
 
 
@@ -172,7 +172,7 @@ def test_each_field_says_how_sure_it_is_in_words():
         "invoice_date": FieldResult("invoice_date", "2026-01-02", 0.4, "likely",
                                     reasons=["check failed: after the due date"]),
     })  # fmt: skip
-    sure = invoice_view.capture_confidence(capture)
+    sure = invoice_reading.capture_confidence(capture)
     assert sure["invoice_number"]["text"] == "Verified"
     assert sure["po_number"]["text"] == "Likely 97%"
     assert sure["due_date"]["text"] == "Check 51%"
@@ -409,7 +409,7 @@ def test_each_line_without_an_account_in_the_checks_goes_to_its_line(client, sto
 
     inv = next(
         i for i in store.list_invoices(REVIEW)
-        if len(invoice_view.Draft.stored(store.get_invoice(i["id"])["ai_output"]).lines) >= 2
+        if len(invoice_form.Draft.stored(store.get_invoice(i["id"])["ai_output"]).lines) >= 2
     )  # fmt: skip
 
     def unassign(rows):

@@ -13,6 +13,8 @@ data/tax_gl_mapping.csv
 data/vendor_master.csv
 docs/screenshots/invoice-directory.png
 docs/screenshots/invoice-review.png
+docs/screenshots/jde-files.png
+docs/screenshots/keying-sheet.png
 docs/screenshots/learning.png
 docs/screenshots/review-queue.png
 docs/screenshots/sales-tax.png

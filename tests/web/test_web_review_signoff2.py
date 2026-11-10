@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import re
 
+from ap_coder.core import memory
 from ap_coder.core.store import APPROVED, REVIEW
-from ap_coder.erp import jde
+from ap_coder.erp import jde_settings
 from tests.browser import wait_until
 from tests.web.test_web_invoice import PAGE, check, form_of
 from tests.web.test_web_review_signoff import _id, _jde_on, _open, _overlap, _review, browser, demo_db, me, store
@@ -155,7 +156,8 @@ def test_in_a_browser_notes_under_the_vendor_take_their_findings_colour(browser,
     page.close()
     _jde_on(store)
     vendor = store.get_invoice(_id(store, "Prairie"))["ai_output"]["vendor_name"]
-    jde.save(store, jde.JdeSettings(an8_overrides={jde.vendor_key(vendor): "V10104"}))  # a supplier number no AN8
+    # a supplier number no AN8
+    jde_settings.save(store, jde_settings.JdeSettings(an8_overrides={memory.vendor_key(vendor): "V10104"}))
     page = _review(browser, store, "Prairie")
     page.wait_for_selector(".inv-details [data-field=vendor_name] [data-flag]:not([hidden])")
     assert "ok" not in page.get_attribute("[data-vendor-match]", "class").split()

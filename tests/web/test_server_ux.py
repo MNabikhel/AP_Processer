@@ -260,22 +260,22 @@ def test_a_draft_is_keyed_by_the_account_on_the_server():
 
 
 def test_two_accounts_keep_drafts_of_their_own(store):
-    from ap_coder.web.pages import invoice
+    from ap_coder.web.pages import invoice_drafts
 
     app = create_app(settings(), store, start_reader=False)
     request = SimpleNamespace(app=app, state=SimpleNamespace())
     token = as_person(user_id=1, username="one", role="clerk")
     try:
-        invoice._drafts(request)[5] = {"header": {}}
+        invoice_drafts._drafts(request)[5] = {"header": {}}
     finally:
         identity.PERSON.reset(token)
     token = as_person(user_id=2, username="two", role="clerk")
     try:
-        assert invoice._drafts(request) == {}
+        assert invoice_drafts._drafts(request) == {}
     finally:
         identity.PERSON.reset(token)
     assert app.state.person_drafts[("", "user:1")] == {5: {"header": {}}}
-    assert invoice._drafts(request) is app.state.invoice_drafts
+    assert invoice_drafts._drafts(request) is app.state.invoice_drafts
 
 
 def test_is_admin_on_a_laptop_and_on_the_server(monkeypatch):
