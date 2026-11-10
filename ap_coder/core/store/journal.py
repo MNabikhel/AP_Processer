@@ -44,9 +44,8 @@ SETTING_KEYS = {"trade": "journal_payable_trade", "intercompany": "journal_payab
                 "tax": "journal_tax_objects"}  # fmt: skip
 VERSION_KEY = "journal_version"
 VOUCHERS_A_WRITE = 250  # vouchers written in one transaction, with their lines
-STOPPED_AFTER = dt.timedelta(
-    hours=1
-)  # a load not finished this long after it began stopped half way (it takes seconds)
+# A load not finished this long after it began stopped half way (a load takes seconds).
+STOPPED_AFTER = dt.timedelta(hours=1)
 SAME_FILE = "this file is loaded already"
 IN_ANOTHER_FILE = "the same voucher is in a file loaded before"
 NO_VOUCHER = "This file has no voucher that could be read: nothing was loaded."
