@@ -210,6 +210,23 @@ def _scored(line: Any, posted: jde_company.CodingLine, li: Any, top: list[Any]) 
     }  # fmt: skip
 
 
+def _remark(store: Any, reference: Any, vendor: str, coding: Any, li: Any,
+            posted: jde_company.CodingLine) -> dict[str, Any]:  # fmt: skip
+    """The remark suggested for a line once it has its true account, against the one the department keyed (D-213):
+    whether it has the same shape (``supplier_prior.remark_shape``) and whether it is exactly it. {} for a line
+    keyed with no remark."""
+    from ap_coder.ai.supplier_prior import prior_for, remark_shape
+    from ap_coder.coding.remark import suggest_remark
+
+    if not posted.remark.strip():
+        return {}
+    prior = prior_for(store, store.find_vendor(vendor) or vendor, always=reference.pairs is not None)
+    text, why = suggest_remark(li, coding, prior, posted.account, reference)
+    return {"remark_keyed": posted.remark, "remark": text, "remark_why": why,
+            "remark_shape": remark_shape(text) == remark_shape(posted.remark),
+            "remark_exact": text == posted.remark.strip()}  # fmt: skip
+
+
 def simulate(seed: int = 1, size: str = "year", how: str = JOURNAL, approve: bool = False) -> list[dict[str, Any]]:
     """Every line of every held-out invoice of a trade supplier, with what was proposed and the truth. ``approve``:
     AP approves each invoice with its true accounts before the next one is read."""
@@ -246,7 +263,8 @@ def simulate(seed: int = 1, size: str = "year", how: str = JOURNAL, approve: boo
                 top = _ranked(store, reference, vendor, line.text, feedback)
                 rows.append({"supplier": supplier.number, "vendor": vendor, "kind": kinds[supplier.number],
                              "document": voucher.document, **_scored(line, posted, li, top), "seconds": took,
-                             "first_of_vendor": vendor not in met})  # fmt: skip
+                             "first_of_vendor": vendor not in met,
+                             **_remark(store, reference, vendor, coding, li, posted)})  # fmt: skip
             met.add(vendor)
             if approve:
                 _approve(store, tmp, coding, voucher)
@@ -282,9 +300,18 @@ def _median_ms(seconds: list[float]) -> float:
     return round(1000 * sorted(seconds)[len(seconds) // 2], 2) if seconds else 0.0
 
 
+def remark_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Of the lines keyed with a remark: the share suggested a remark of the same shape, and the very remark."""
+    keyed = [r for r in rows if r.get("remark_keyed")]
+    n = len(keyed)
+    return {"lines": n, "same_shape": sum(1 for r in keyed if r["remark_shape"]) / n if n else 0.0,
+            "exact": sum(1 for r in keyed if r["remark_exact"]) / n if n else 0.0}  # fmt: skip
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_kind = {kind: line_stats([r for r in rows if r["kind"] == kind]) for kind in KINDS}
     return {"all": line_stats(rows), "by_kind": by_kind, "sure_grid": sure_grid(rows),
+            "remarks": remark_stats(rows),
             "ms_a_line": _median_ms([r["seconds"] for r in rows]),
             "ms_a_line_first": _median_ms([r["seconds"] for r in rows if r["first_of_vendor"]]),
             "ms_a_line_after": _median_ms([r["seconds"] for r in rows if not r["first_of_vendor"]]),
@@ -336,6 +363,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         grid_table(report),
         f"\nTime to code a line (median): {s['ms_a_line_first']} ms on a vendor's first invoice of the run, "
         f"{s['ms_a_line_after']} ms after; the slowest line {s['ms_a_line_most']} ms.",
+        f"\nThe remark suggested for a line with its true account (``coding/remark.py``), on the "
+        f"{s['remarks']['lines']} held-out lines keyed with one: the same shape as the department's "
+        f"{_pct(s['remarks']['same_shape'])}, exactly its remark {_pct(s['remarks']['exact'])} (the made-up "
+        "department picks the office and the wording at random, so the exact figure is a floor).",
     ])  # fmt: skip
 
 

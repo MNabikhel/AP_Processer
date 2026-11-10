@@ -186,7 +186,8 @@ CREATE TABLE IF NOT EXISTS feedback (
     suggested_gl TEXT, final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT,
     outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL, final_tax_code TEXT NOT NULL DEFAULT '',
     tax_source TEXT NOT NULL DEFAULT '', tax_province TEXT NOT NULL DEFAULT '',
-    tax_uncollected TEXT NOT NULL DEFAULT '');
+    tax_uncollected TEXT NOT NULL DEFAULT '', final_remark TEXT NOT NULL DEFAULT '',
+    remark_from TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
 CREATE TABLE IF NOT EXISTS events (

@@ -16,6 +16,8 @@ from ..core.memory import pair_lines
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding, decided
 from .money import half_up, times
+from .remark import one_line
+from .remark import typed as typed_remark
 from .rules import Rule, decided_by_rule, rule_for
 
 if TYPE_CHECKING:  # imported where a grid is split: the queue's summary reads ``codes_to_pick`` without pandas
@@ -77,9 +79,14 @@ def coding_from_inputs(
     (``UNASSIGNED`` when cost centers are configured, so the check says what is missing). ``ai``: the coding
     proposed, which says what decided each line still coded as proposed (``decided_on_screen``); ``rules``: the
     fixed coding rules, for the lines a person had a rule code.
+
+    A line's remark (D-213) is the grid's ``remark`` column: with a ``remark_from`` column beside it, as that says
+    (the review screen's draft: ``remark.typed`` read the posted cell); without one, a remark that is not the one
+    proposed is a person's. A grid with no ``remark`` column keeps the remark each line was proposed with.
     """
     problems: list[str] = []
     line_items = []
+    remarks: list[tuple[str, str | None] | None] = []  # each line's (remark, where from) as the grid has it
     used = {int(n) for n in lines.get("line_number", []) if not is_blank(n)}
     next_no = max(used, default=0) + 1
     for row in lines.to_dict("records"):
@@ -94,6 +101,8 @@ def coding_from_inputs(
         def text(field: str, default: str = "", row: dict[str, Any] = row) -> str:
             return default if is_blank(row.get(field)) else str(row[field])
 
+        remarks.append((text("remark"), text("remark_from") if "remark_from" in row else None)
+                       if "remark" in row else None)  # fmt: skip
         line_items.append(
             {
                 "line_number": int(number),
@@ -127,6 +136,12 @@ def coding_from_inputs(
             }
         )
     decided_on_screen(line_items, ai.get("line_items") or [], str(header.get("vendor_name") or ""), rules)
+    for cell, (before, li) in zip(remarks, pair_lines(ai.get("line_items") or [], line_items), strict=True):
+        if cell is None:
+            cell = (str((before or {}).get("remark") or ""), str((before or {}).get("remark_from") or ""))
+        li["remark"], li["remark_from"] = (
+            (one_line(cell[0]), cell[1]) if cell[1] is not None else typed_remark(cell[0], before)
+        )
     data = {**header, "tax_lines": tax_lines, "line_items": line_items,
             "confidence_score": ai.get("confidence_score", 0.0)}  # fmt: skip
     try:

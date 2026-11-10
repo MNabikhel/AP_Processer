@@ -213,11 +213,11 @@ def test_the_ready_invoices_are_approved_and_the_keying_sheet_is_what_ap_keys(ch
         assert _lines(block) == [(part.account, part.amount) for part in invoice.parts], name
         assert {(a.data_type, a.number_format) for a, _, _, _ in lines} == {("s", "@")}, name  # text: zeros kept
         assert all(description.value for _, description, _, _ in lines), name  # the account's name from the chart
-        # The remark is the start of the line as printed, cut at 30 characters (D-210). The remark build (a remark
-        # of the line's own: the department's words, ``Part.remark``) changes this column.
-        printed = [line.description for line in invoice.lines for _ in line.parts]
-        assert all(0 < len(remark.value) <= 30 and text.startswith(remark.value)
-                   for (_, _, _, remark), text in zip(lines, printed, strict=True)), name  # fmt: skip
+        # The remark is the line's own (D-213): the one approved with it (the supplier's usual remark for the
+        # account, else the invoice line's words), 30 characters at most.
+        approved = store.get_invoice(chart_company.invoices[name][1])["final_output"]["line_items"]
+        assert all(0 < len(li["remark"]) <= 30 for li in approved), name
+        assert [remark.value for _, _, _, remark in lines] == [li["remark"] for li in approved], name
         assert field(block, "Remark").value == lines[0][3].value, name
         assert check[0].value == "Check" and _cents(check[2].value) == invoice.total - invoice.recovered, name
         assert check[3].value.endswith(": balanced"), name

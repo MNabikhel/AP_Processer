@@ -356,6 +356,9 @@ class TaxLine(BaseModel):
 # words of an account's name; the chat model (a guess); a person on the review screen.
 DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
 CANDIDATES_KEPT = 5  # accounts kept with a line left for a person
+# Where a line's remark came from (``LineItem.remark_from``, D-213): the supplier's usual remark, the invoice's own
+# line, the account's name, or a person who typed it.
+REMARK_SOURCES = ("supplier", "invoice", "account", "person")
 
 
 def decided(source: str, **evidence: Any) -> dict[str, Any]:
@@ -397,6 +400,12 @@ class LineItem(BaseModel):
     # by: "rule_id" and "rule", "lines" / "of" / "share", "similarity", "was"...}. Left out of the stored coding when
     # nothing is recorded (a line with no account, an invoice stored before).
     decided_by: dict[str, Any] = Field(default_factory=dict)
+    # The remark AP keys with the line in JD Edwards, in its own short words ("May janitorial 410 Elm"; D-213), and
+    # where it came from (``REMARK_SOURCES``; "person": typed on the review screen, never replaced by a suggestion).
+    # JD Edwards keeps 30 characters (``coding/remark.py`` fits it). The model is never asked for either, and both
+    # are left out of the stored coding when empty.
+    remark: str = ""
+    remark_from: str = ""
 
     @field_validator("candidates")
     @classmethod
@@ -410,14 +419,24 @@ class LineItem(BaseModel):
             raise ValueError(f"decided_by's source must be one of {DECIDED_SOURCES}, got {value.get('source')!r}")
         return value
 
+    @field_validator("remark_from")
+    @classmethod
+    def _remark_source(cls, value: str) -> str:
+        if value and value not in REMARK_SOURCES:
+            raise ValueError(f"remark_from must be one of {REMARK_SOURCES}, got {value!r}")
+        return value
+
     @model_serializer(mode="wrap")
     def _without_empty(self, handler: Any) -> dict[str, Any]:
-        # An invoice with no candidates and no decision recorded is stored as it always was: the two keys are there
-        # only when they say something.
+        # An invoice with no candidates, no decision recorded, no remark and no tax read on its lines is stored as it
+        # always was: the keys are there only when they say something. The line's one serializer: pydantic keeps
+        # only the last one a model defines (B-2187).
         data = handler(self)
-        for name in ("candidates", "decided_by"):
+        for name in ("candidates", "decided_by", "remark", "remark_from"):
             if not data.get(name):
                 data.pop(name, None)
+        if data.get("taxes_read") is None:
+            data.pop("taxes_read", None)
         return data
 
     @field_validator("taxes_read", mode="before")
@@ -429,13 +448,6 @@ class LineItem(BaseModel):
         if unknown := [k for k in out if k not in TAX_TYPES]:
             raise ValueError(f"taxes_read entries must be one of {TAX_TYPES}, got {unknown[0]!r}")
         return {t: out[t] for t in TAX_TYPES if t in out}
-
-    @model_serializer(mode="wrap")
-    def _without_taxes_not_read(self, handler: Any) -> dict[str, Any]:
-        out = handler(self)
-        if out.get("taxes_read") is None:
-            out.pop("taxes_read", None)
-        return out
 
     @field_validator("taxes_applied")
     @classmethod

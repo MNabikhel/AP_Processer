@@ -70,6 +70,7 @@ from typing import Any
 
 from ..coding import money
 from ..coding.line_tax import exempt_of, legacy_basis
+from ..coding.remark import fit
 from ..coding.tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from ..coding.terms import terms_key
 from ..coding.vendors import norm_invoice_number
@@ -784,9 +785,10 @@ REMARK_WIDTH = 30  # VLRMK
 
 
 def line_remark(line: Mapping[str, Any]) -> str:
-    """The remark of a G/L line as JD Edwards holds it (30 characters): today the line's description. The batch
-    files and the keying sheet (``jde_keying``) both ask here: a line with a remark of its own changes this alone."""
-    return _text(line.get("description"), REMARK_WIDTH)
+    """The remark of a G/L line as JD Edwards holds it (30 characters): the line's own remark (suggested or typed,
+    D-213; ``remark.fit``: the whole words that fit), else the line's description cut at 30. The batch files and
+    the keying sheet (``jde_keying``) both ask here."""
+    return fit(line.get("remark"))[0] or _text(line.get("description"), REMARK_WIDTH)
 
 
 def voucher_remark(invoice: Mapping[str, Any]) -> str:
@@ -1103,6 +1105,11 @@ def _check_distribution(v: _Voucher, final: dict[str, Any], settings: JdeSetting
             "POSTING_UNBALANCED",
         )
     _distribution_entries(v, settings, dist)
+    from .exports import entry_lines
+
+    for e, li in zip(v.entries, entry_lines(v.entries, final.get("line_items") or []), strict=True):
+        if li is not None and li.get("remark"):  # the invoice line's own remark (``line_remark``, D-213)
+            e["remark"] = li["remark"]
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
     kept_cents = sum(_units(e.get("amount")) for e in v.entries)

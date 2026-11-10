@@ -523,6 +523,13 @@ CHECKS: dict[str, CheckHelp] = {
         "The AI could not decide on a GL account for this line.",
         "Pick the GL account in the line table; approving teaches the AI for next time.",
     ),
+    "REMARK_LONG": CheckHelp(
+        CODING, "Remark too long for JD Edwards",
+        "The remark typed for this line is longer than the 30 characters JD Edwards keeps. Nothing is cut without "
+        "saying: the check shows what would be keyed (the whole words that fit). A warning, unless the remarks go to "
+        "JD Edwards as typed (Settings → JD Edwards E1 → Remarks): then it holds the invoice back.",
+        "Shorten the remark to 30 characters in your own words, or clear it to get the suggested one back.",
+    ),
     "GL_UNKNOWN": CheckHelp(
         CODING, "GL account not in your list",
         "The GL account is not in your GL accounts (it may have been removed or mistyped).",

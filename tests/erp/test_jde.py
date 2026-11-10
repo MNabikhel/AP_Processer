@@ -1172,3 +1172,25 @@ def test_the_prototype_settings_are_the_way_of_a_department_that_types_its_vouch
     assert (kept.company, kept.an8_overrides, kept.amount_mode) == ("00042", {"acme": "77"}, jde.AMOUNT_TAX)
     assert saved.amount_mode == jde.AMOUNT_GROSS  # not changed in place
     assert jde.JdeSettings.from_json(js.to_json()) == js
+
+
+def test_a_line_with_a_remark_of_its_own_is_sent_with_it_fitted_to_30_characters():
+    """D-213: ``jde.line_remark`` is the line's remark when it has one (the whole words that fit JD Edwards' 30
+    characters), else its description cut at 30 as before; the pay item's remark is the first line's."""
+    assert jde.line_remark({"description": "Courier", "remark": "KT May.parcels 3-1-204"}) == "KT May.parcels 3-1-204"
+    assert jde.line_remark({"description": "Courier", "remark": " "}) == "Courier"
+    assert jde.line_remark({"remark": "coffee supplies for the 3rd floor kitchen"}) == "coffee supplies for the 3rd"
+    inv = _invoice(ON)
+    final = inv["final_output"]
+    described = [" ".join(li["description"].split())[:30].rstrip() for li in final["line_items"]]
+    final["line_items"][0].update(remark="May janitorial 410 Elm", remark_from="supplier")
+    expected = ["May janitorial 410 Elm", *described[1:]]
+    assert jde.voucher_remark(inv) == "May janitorial 410 Elm"
+
+    files = _files([inv])  # the references as before: the remark is the line's explanation
+    lines = [r for r in files[jde.DIST_FILE]]
+    assert [r["VNEXA"] for r in lines][: len(expected)] == expected
+    assert files[jde.HEADER_FILE][0]["VLRMK"] == "AP Coder #1"
+    typed = _files([inv], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS, remarks=jde.REMARKS_TYPED))
+    assert [r["VNEXR"] for r in typed[jde.DIST_FILE]][: len(expected)] == expected
+    assert typed[jde.HEADER_FILE][0]["VLRMK"] == "May janitorial 410 Elm"
