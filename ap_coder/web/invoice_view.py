@@ -57,6 +57,7 @@ from ap_coder.coding.line_tax import (
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
+from ap_coder.coding.remark import PERSON, one_line
 from ap_coder.coding.remark import typed as typed_remark
 from ap_coder.coding.review import (
     codes_to_pick,
@@ -1250,6 +1251,18 @@ def coding_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
             (False, True): "cost centers"}.get((gl, cc), EDIT_LABELS["line_coding"])  # fmt: skip
 
 
+def remarks_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """The lines whose remark a person typed over the one suggested, as the approved invoice says it: "remark changed
+    on line 1", "remarks changed on lines 1, 3"; "" when none was."""
+    paired = pair_lines(ai.get("line_items") or [], final.get("line_items") or [])
+    numbers = [str(li.get("line_number")) for before, li in paired if li.get("remark_from") == PERSON
+               and one_line(li.get("remark")) != one_line((before or {}).get("remark"))]  # fmt: skip
+    if not numbers:
+        return ""
+    s = "s" if len(numbers) > 1 else ""
+    return f"remark{s} changed on line{s} {', '.join(numbers)}"
+
+
 def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:
     """The lines whose suggested coding the reviewer changed, counted as the approval counts them: a GL account or
     cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught.
@@ -1893,7 +1906,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         hard += [Issue(i.severity, i.code, f"Only an Approver can approve it. {i.message[:1].upper()}{i.message[1:]}")
                  for i in soft if i.code == MOVED_OFF_HOLD]  # fmt: skip
         soft = [i for i in soft if i.code != MOVED_OFF_HOLD]
-    blockers = ordered_blockers(line_pick, bank, hard)
+    blockers = ordered_blockers(line_pick, bank, hard, account_lines.bar_words(coding.line_items, reference))
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
@@ -2239,16 +2252,17 @@ SCREEN_ORDER = (
 _CODE_PLACES = {"NO_LINE_ITEMS": "lines", "POSTING_UNBALANCED": "posting"}
 
 
-def ordered_blockers(line_pick: str, bank: str, hard: list[Any]) -> list[dict[str, str]]:
+def ordered_blockers(line_pick: str, bank: str, hard: list[Any], said: str = "") -> list[dict[str, str]]:
     """Everything that keeps Approve closed, in the order of the screen: {"text", "kind"} (``pick``: a line's account
-    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid)."""
+    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid).
+    ``said``: the pick as a screen with one Account box a line says it (``account_lines.bar_words``), its ``said``."""
     place = {name: i for i, name in enumerate(SCREEN_ORDER)}
     found: list[tuple[int, int, dict[str, str]]] = []
     for n, (_bad, text, code, lines) in enumerate(grouped_issues(hard)):
         where = "lines" if lines else CODE_FIELDS.get(code) or _CODE_PLACES.get(code) or "posting"
         found.append((place.get(where, len(place)), n, {"text": _short_reason(text), "kind": "hard"}))
     if line_pick:
-        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick"}))
+        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick", **({"said": said} if said else {})}))
     if bank:
         found.append((place["pay_from_account"], -1, {"text": bank, "kind": "bank"}))
     return [b for _, _, b in sorted(found, key=lambda f: (f[0], f[1]))]

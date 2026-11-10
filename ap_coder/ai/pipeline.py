@@ -302,6 +302,7 @@ def finalise_coding(
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
         erp_findings=erp_findings,
         remarks_typed=remarks_typed,
+        erp_posts_tax=jde.taxes_e1_posts(output, js) if js is not None else frozenset(),
     )
     return output, report
 

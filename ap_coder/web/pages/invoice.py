@@ -677,7 +677,7 @@ def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True, d
     the JD Edwards settings are an Admin's. ``draft_rev``: the draft revision the screen is at (D-184)."""
     first = (live.get("bar") or {}).get("first") if live.get("account") else None
     return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
-            **({"bar_fix": account_lines.pick_words(first["text"])} if first and first["kind"] == "pick" else {}),
+            **({"bar_fix": first["said"]} if first and first.get("said") else {}),
             "setup_contact": "an Admin" if server_mode(request) else "the pilot tester",
             "draft_rev": draft_rev}  # fmt: skip
 
@@ -1047,8 +1047,9 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
         edits = inv.get("edits") or []
         changed = [e for e in edits if e != "line_coded"]
         labels = {**view.EDIT_LABELS, "line_coding": view.coding_changed(inv.get("ai_output") or {}, doc)}
-        out["edits"] = ("no changes to the suggested coding" if not changed
-                        else "changed: " + ", ".join(labels.get(e, e) for e in changed))  # fmt: skip
+        said = [("changed: " + ", ".join(labels.get(e, e) for e in changed)) if changed else "",
+                view.remarks_changed(inv.get("ai_output") or {}, doc)]  # fmt: skip
+        out["edits"] = "; ".join(filter(None, said)) or "no changes to the suggested coding"
         if "line_coded" in edits:  # the reviewer's own coding where the AI proposed none (B-670)
             n = coded_blanks(inv.get("ai_output"), inv.get("final_output"))
             out["edits"] += (

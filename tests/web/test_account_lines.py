@@ -111,6 +111,55 @@ def test_an_account_a_person_picks_says_so_and_approves(chart_company, chart_com
     assert {li["decided_by"]["source"] for li in stored} == {"person"}
 
 
+def test_a_line_a_person_coded_no_longer_says_to_pick_the_account(chart_company, chart_company_client):
+    """B-2260: a line left for a person ("…: pick the account.") kept that sentence as its reason once a person had
+    picked its account, and was stored with it. It says who picked it; a line still without an account keeps why."""
+    invoice, _ = chart_company.invoices["four_lines"]
+    page = _page(chart_company, chart_company_client, "four_lines")
+    assert all(row.reason.endswith(": pick the account.") for row in page.lines)
+    for n, part in enumerate(invoice.parts, start=1):
+        page.set_account(n, part.account)
+    assert page.approve()["ok"]
+    stored = chart_company.store.get_invoice(page.id)["final_output"]["line_items"]
+    assert [li["reasoning_justification"] for li in stored] == ["Picked by a person."] * 4
+
+
+def test_a_reason_a_person_picked_keeps_what_the_line_says_of_its_tax():
+    from ap_coder.coding.line_tax import GUESS_NOTE
+    from ap_coder.coding.review import decided_on_screen
+
+    left = "This supplier's 3 lines last year went to 3 accounts: 33% / 33% / 33%: pick the account."
+    proposed = [{"line_number": n, "description": f"item {n}", "predicted_gl_code": "UNASSIGNED",
+                 "predicted_cost_center": "UNASSIGNED", "reasoning_justification": f"{left} {GUESS_NOTE}"}
+                for n in (1, 2)]  # fmt: skip
+    lines = [{**proposed[0], "predicted_gl_code": "7420.4213", "predicted_cost_center": "0021061010"},
+             dict(proposed[1])]  # fmt: skip
+    decided_on_screen(lines, proposed)
+    assert lines[0]["reasoning_justification"] == f"Picked by a person. {GUESS_NOTE}"
+    assert lines[1]["reasoning_justification"] == f"{left} {GUESS_NOTE}"  # no account yet: why it was left
+    decided_on_screen(lines, proposed)
+    assert lines[0]["reasoning_justification"] == f"Picked by a person. {GUESS_NOTE}"  # checked again: the same
+
+
+def test_words_in_the_account_box_say_one_thing_and_an_empty_box_is_counted_once(chart_company, chart_company_client):
+    """B-2262: "off" typed in line 1's Account box read "Line 1: cost center off is not in your cost centers", and
+    the bar asked for "the business unit of the account of lines 2, 3, 4", whose boxes are empty."""
+    page = _page(chart_company, chart_company_client, "four_lines")
+    form = {**page.form, LINE_ACCOUNT: ["off", "", "", ""]}
+    answer = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()
+    checks, bar = (html_unescape(answer["sections"][part]) for part in ("checks", "bar"))
+    assert "Line 1: “off” is not an account: pick one from the list" in checks
+    assert "Lines 2, 3, 4: no account yet: pick one" in checks and "Lines 1, 2, 3, 4" not in checks
+    assert "cost center off" not in checks and "CC_UNKNOWN" not in checks
+    assert "To fix: an account for 4 lines</button>" in bar and "business unit" not in bar
+    assert "“off” is not an account: pick one from the list" in html_unescape(answer["lines"][0]["slot"])
+    # A line with its GL code and no business unit is still asked for it.
+    code = chart.split_account(chart_company.invoices["four_lines"][0].parts[0].account)[1]
+    form = {**page.form, LINE_ACCOUNT: [code, "", "", ""]}
+    bar = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()["sections"]["bar"]
+    assert "To fix: an account for lines 2, 3, 4 and the business unit of the account of line 1</button>" in bar
+
+
 def test_the_same_account_for_all_fills_the_lines_without_one(chart_company, chart_company_client):
     invoice, _ = chart_company.invoices["four_lines"]
     page = _page(chart_company, chart_company_client, "four_lines")

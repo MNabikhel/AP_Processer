@@ -187,6 +187,10 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any], cost_centers: bool = 
                 after = code_label(tax_code_of(line, legacy_basis(final_lines, final.get("tax_lines") or [])))
             if _fmt(before) != _fmt(after):
                 changes.append({"what": f"line {n} {label}", "before": _fmt(before), "after": _fmt(after)})
+        # A remark a person typed over the one suggested (one that followed its account is no change of theirs).
+        if line.get("remark_from") == "person" and _fmt(original.get("remark")) != _fmt(line.get("remark")):
+            changes.append({"what": f"line {n} remark", "before": _fmt(original.get("remark")),
+                            "after": _fmt(line.get("remark"))})  # fmt: skip
         # A PST exemption inferred when the invoice was read, confirmed by the reviewer (who and when: the approval's
         # own event, B-715).
         from ..coding.line_tax import exemption_to_confirm

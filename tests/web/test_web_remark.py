@@ -86,6 +86,40 @@ def test_a_typed_remark_is_a_persons_kept_by_the_draft_learned_on_approval(chart
     assert text == typed and why.startswith("the remark AP typed for this supplier's account here")
 
 
+def test_an_approval_that_changed_only_the_remark_says_so(chart_company, chart_company_client):
+    """B-2264: an invoice approved with its remark typed over the one suggested read "no changes to the suggested
+    coding", and the activity "all as the AI suggested"."""
+    store = chart_company.store
+    page, was, _ = _open(chart_company_client, chart_company)
+    assert _post(page, "check", ["courier nov 2026 waybill"])["allow"], page.findings
+    assert page.approve()["ok"]
+    closed = chart_company_client.get(f"/review/{page.id}").text
+    assert "remark changed on line 1" in closed and "no changes to the suggested coding" not in closed
+    (approved,) = store.events(page.id, ["approved"], limit=1)
+    assert approved["detail"]["changes"] == [
+        {"what": "line 1 remark", "before": was["remark"], "after": "courier nov 2026 waybill"}]  # fmt: skip
+    # Approved as suggested: nothing changed.
+    other = ReviewPage(chart_company_client, chart_company.invoices["quebec"][1])
+    assert other.approve()["ok"]
+    assert "no changes to the suggested coding" in chart_company_client.get(f"/review/{other.id}").text
+    assert store.events(other.id, ["approved"], limit=1)[0]["detail"]["changes"] == []
+
+
+def test_the_second_part_of_a_split_line_takes_the_remark_of_the_first(chart_company, chart_company_client):
+    """B-2263, on the screen: line 2 split 60/40 over two business units; the supplier has a remark for the first
+    part's account only."""
+    invoice, invoice_id = chart_company.invoices["split_line"]
+    page = ReviewPage(chart_company_client, invoice_id)
+    here, there = (part.account for part in invoice.lines[1].parts)
+    page.set_account(1, invoice.lines[0].parts[0].account)
+    page.split(2, {here: 60, there: 40})
+    assert page.check()["allow"], page.findings
+    assert page.approve()["ok"]
+    _, first, second = chart_company.store.get_invoice(invoice_id)["final_output"]["line_items"]
+    assert "(60%)" in first["description"] and "(40%)" in second["description"]
+    assert first["remark"] and second["remark"] == first["remark"] and "%" not in first["remark"]
+
+
 def test_a_remark_over_30_characters_keeps_approve_closed_while_remarks_go_to_jd_edwards_as_typed(
         chart_company, chart_company_client):  # fmt: skip
     store = chart_company.store

@@ -109,8 +109,9 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      is refused, never replaced.
    - **Remark:** suggested from the supplier's past remarks, 30 characters at most, yours to change.
    - **Tax:** every line says which tax it carries and how much, each tax its own amount ("read" when the invoice
-     prints it on the line). A line taxed differently from the rest is marked. The sums under the lines must match
-     the invoice.
+     prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice
+     is marked under the lines and in the findings; it does not stop the approval by itself, so look before
+     approving.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
 3. **To key into JDE:** **Export** puts the approved invoices on a **keying sheet**: one block a voucher, the
    header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax

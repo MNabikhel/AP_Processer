@@ -1181,6 +1181,47 @@ def test_the_prototype_settings_are_the_way_of_a_department_that_types_its_vouch
     assert jde.JdeSettings.from_json(js.to_json()) == js
 
 
+def test_a_recovered_tax_on_the_pay_item_needs_no_sales_tax_account(tmp_path):
+    """B-2259: a new laptop keys the recovered tax on the voucher's pay item (code V: JD Edwards makes the GST line
+    itself), so no sales-tax GL account of ours is posted to and a missing one is not a finding. Where the account
+    is posted to it is asked for as before: the Excel/CSV export, the tax coded to G/L lines, a code that recovers
+    nothing."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.bench import jde_exports
+    from ap_coder.core.config import Settings
+    from ap_coder.ops import chart_cmd
+    from ap_coder.web.core import first_run
+    from tests.erp.test_jde_gl_mode import doc, line, tl
+
+    store = first_run(tmp_path / "private" / "ap_coder.db", server=False)
+    books = tmp_path / "books"
+    jde_exports.write_all(books)
+    chart_cmd.import_files(store, books / jde_exports.CHART_FILE, books / jde_exports.UNITS_FILE)
+    pairs = store.account_pairs()
+    unit = pairs.business_units()[0]
+    code = next(c for c in pairs.accounts_of(unit) if pairs.offered(unit, c))
+    alberta = doc([line(1, 240.0, code, ["GST"], cc=unit)], [tl("GST", "", 0.05, 240.0, 12.0)], prov="AB")
+    quebec = doc([line(1, 100.0, code, ["GST", "QST"], cc=unit)],
+                 [tl("GST", "", 0.05, 100.0, 5.0), tl("QST", "QC", 0.09975, 100.0, 9.98)], prov="QC",
+                 qst_registration_number="1234567890TQ0001")  # fmt: skip
+
+    def said(d):
+        report = finalise_coding(InvoiceCoding.model_validate(d), store.reference_data(), Settings(), store=store)[1]
+        return [i.message for i in report.issues if i.code == "TAX_GL_UNMAPPED"]
+
+    assert not store.tax_treatments().get("GST") or not store.tax_treatments()["GST"].gl_code  # none set yet
+    assert said(alberta) == [] and said(quebec) == []  # the QST is in the expense line, the GST on the pay item
+    saved = jde.load(store)
+    saved.tax_map["AB"] = jde.TaxArea("", "E")  # exempt in JD Edwards: the GST is a G/L line of ours
+    jde.save(store, saved)
+    assert said(alberta) == ["no GL account is set for GST: set it in GL accounts & tax"] and said(quebec) == []
+    jde.save(store, jde.JdeSettings())  # the tax coded to G/L lines
+    assert len(said(alberta)) == len(said(quebec)) == 1
+    jde.use_prototype(store)
+    jde.show(store, False)  # the Excel/CSV export
+    assert len(said(alberta)) == len(said(quebec)) == 1
+
+
 def test_a_line_with_a_remark_of_its_own_is_sent_with_it_fitted_to_30_characters():
     """D-213: ``jde.line_remark`` is the line's remark when it has one (the whole words that fit JD Edwards' 30
     characters), else its description cut at 30 as before; the pay item's remark is the first line's."""

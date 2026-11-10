@@ -144,6 +144,19 @@ def test_a_finding_about_the_coding_keeps_the_invoice_for_a_person(reference, gr
     assert report.requires_review is True
 
 
+def test_a_line_with_no_account_yet_is_not_held_against_what_reviewers_coded(reference, ground_truth):
+    """B-2261: "reviewers coded similar lines from this vendor to GL …" was raised on a line left for a person, which
+    has no account to compare; it is said of a line that has one."""
+    gt = dict(ground_truth)
+    gt["line_items"] = [dict(li) for li in gt["line_items"]]
+    gt["line_items"][0]["predicted_gl_code"] = "UNASSIGNED"
+    first, second = (li["line_number"] for li in gt["line_items"][:2])
+    history = [{"line_number": n, "status": "conflict", "history_gl": "6999", "decisions": 3} for n in (first, second)]
+    report = validate_coding(InvoiceCoding.model_validate(gt), reference, history=history)
+    assert [i.line_number for i in report.issues if i.code == "HISTORY_CONFLICT"] == [second]
+    assert report.checks["history"] == history  # what reviewers used is still known for the line
+
+
 def test_a_duplicate_says_which_came_first_and_where_the_other_stands():
     """Both invoices of a duplicate pair said the same, "reject this one" (B-2101): the message names which was
     received first and the other's state, and tells the one that came first to reject the other, unless the other
