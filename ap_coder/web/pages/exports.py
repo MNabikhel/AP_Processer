@@ -323,6 +323,8 @@ def exports_page(
             columns = list(df.columns)
             chosen_cols = picked_columns({}, REGISTER_LABELS, columns, registers.map_columns(columns))
             reg = sheet_context(register, upload, df, sheets, sheet, REGISTER_LABELS, chosen_cols, registers.REQUIRED)
+            found = jde_vouchers(store, df)  # JD Edwards' voucher list: read as it comes, no column to pick
+            reg["vouchers"] = registers.vouchers_said(found[1]) if found else ""
         except SheetError as exc:
             reg_error = str(exc)
 
@@ -576,6 +578,31 @@ async def register_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_register_import, request, form)  # a large company's list: 600,000 rows
 
 
+def jde_vouchers(store: Store, df: Any) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """JD Edwards' voucher list (Supplier Ledger Inquiry's grid, one row per pay item) read as it comes: (the
+    register's vouchers, what was read), its suppliers named from the vendor master by their number; None when the
+    file is any other list, whose columns are picked (B-2084)."""
+    columns = registers.voucher_columns(list(df.columns))
+    if not columns:
+        return None
+    names = {v["erp_id"]: v["display_name"] for v in store.master_vendors() if v.get("erp_id")}
+    return registers.vouchers_from_pay_items(df.to_dict("records"), columns, names)
+
+
+def _vouchers_import(request: Request, form: Any, token: str, rows: list[dict[str, Any]],
+                     read: dict[str, Any]) -> JSONResponse:  # fmt: skip
+    """JD Edwards' voucher list into the register, saying what was read."""
+    store, said = get_store(request), registers.vouchers_said(read)
+    if not rows:  # "Replace" would empty the list the duplicate checks look in (B-1405)
+        return refuse(f"No voucher of this list can be kept: nothing was imported, the list is as it was. {said}")
+    total = store.import_erp_vouchers(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
+    drop_upload(token)
+    text = f"{total:,} ERP invoices known. {said}"
+    if repeats := store.erp_register_repeats():
+        text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
+    return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
+
+
 @one_connection
 def _register_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
@@ -586,6 +613,8 @@ def _register_import(request: Request, form: Any) -> JSONResponse:
         return refuse(str(exc))
     if df.empty:
         return refuse(NO_ROWS)
+    if found := jde_vouchers(store, df):
+        return _vouchers_import(request, form, token, *found)
     chosen = picked_columns(form, REGISTER_LABELS, list(df.columns), {})
     missing = [REGISTER_LABELS[f] for f in registers.REQUIRED if f not in chosen]
     if missing:

@@ -288,6 +288,9 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   duplicates in the ERP.
 - **Import:** Vendors page → upload CSV/Excel (Admin). Only the name is required; columns: vendor id (JDE's AN8),
   name, GST/HST number, QST, PST, province, terms, status/hold, default GL. Or synced from JD Edwards (6.2).
+  E1's supplier master grid imports as it is exported, no column to pick: `Hold Payment Code` is the hold (`Y`, `1`,
+  `2` hold, `N` does not; the codes are on the import's form), `Individual Tax ID` (free text) is not taken as the
+  GST/HST number, and a name marked `DO NOT USE` / `DNU` / `*` is found by its real name and put on hold.
 - **The company supplies:** E1's supplier export (AN8, alpha name, tax IDs, terms, hold code, province).
 - **Code and tests:** `core/store/vendors.py`, `coding/vendors.py`; `tests/core/test_vendor_master.py`,
   `tests/coding/test_vendors.py`.
@@ -327,7 +330,9 @@ aliases each). Every import and setting page is Admin-only in server mode (`web/
   amount, received quantity, GL, cost center, status). 2-way matching, 3-way when receipts are known (tolerances in
   `coding/po.py`). Or synced from E1 (`APC_OpenPOs_Read`).
 - **ERP invoice register** (what is already in E1, for duplicates): Exports → *Invoices already in the ERP* → import
-  (vendor, invoice number, total required). Or synced (`APC_Vouchers_Read`).
+  (vendor, invoice number, total required). Or synced (`APC_Vouchers_Read`). E1's voucher list (Supplier Ledger
+  Inquiry's grid, one row per pay item) is read as it is exported: the supplier by its number, a voucher's pay items
+  added up, its document number and batch kept (`Store.erp_vouchers_of`).
 - **Not confirmed:** E1's own receipt matching (P4314, F0411Z1T) for PO-matched vouchers.
 - **Left to expense** (D-139): the review screen's PO match shows what is left on each PO line after the invoice, from
   the line's amount or, when the PO file has it, an *Open amount* column (E1's AOPN, as of the last import). The AIS

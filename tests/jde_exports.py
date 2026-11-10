@@ -62,6 +62,29 @@ def pay_item(document: int, item: str, gross: float, supplier_number: int, name:
             "Pay Item": item, "Curr Code": currency, "Business Unit": "  0880133142"}  # fmt: skip
 
 
+LONG_NAME = "GREAT PLAINS INDUSTRIAL EQUIPMENT RENTAL"  # 40 characters; the voucher grid shows the first 30
+
+
+def sample_pay_items() -> list[dict[str, Any]]:
+    """Eleven pay items of seven vouchers: one of three pay items (one negative: 700.00 in all), one in USD (1,100.00
+    by its foreign amounts), one with a purchase order, the same document number in a second company, one with no
+    invoice number and one adding up to nothing."""
+    courier = (410002, "QUICKSHIP COURIER CANADA LTD")
+    return [
+        pay_item(700101, "001", 214.20, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "INV-0042"),
+        pay_item(700102, "001", 300.00, *courier, "7-100-20001", batch=5550002),
+        pay_item(700102, "002", 494.25, *courier, "7-100-20001", batch=5550002),
+        pay_item(700102, "003", -94.25, *courier, "7-100-20001", batch=5550002),
+        pay_item(700103, "001", 1005.65, 410005, "HARBOUR TELECOM", "00812", order="00051234"),
+        pay_item(700104, "001", 1370.00, 410009, LONG_NAME, "US-5001", foreign=1000.00, currency="USD"),
+        pay_item(700104, "002", 137.00, 410009, LONG_NAME, "US-5001", foreign=100.00, currency="USD"),
+        pay_item(700105, "001", 50.00, 410001, "MAPLE LEAF COFFEE SERVICES INC.", BLANK),
+        pay_item(700106, "001", 80.00, *courier, "V-77"),
+        pay_item(700106, "002", -80.00, *courier, "V-77"),
+        pay_item(700101, "001", 61.00, *courier, "Q-9", company="08802"),
+    ]
+
+
 def voucher_headers(items: list[dict[str, Any]], head: list[str] | None = None) -> bytes:
     """The pay items and the grid's totals row: every cell empty but the gross and open amounts added up."""
     totals = {h: None for h in VOUCHER_HEAD}
