@@ -250,6 +250,9 @@ def test_a_heading_that_says_before_tax_outranks_a_plain_one_only_beside_a_tax(t
     rated = [["Network cabling", "226.00", "13%", "200.00"], ["Patch panel", "113.00", "13%", "100.00"]]
     heads = [("Description", 50), ("Total", 400, "r"), ("Tax", 470, "r"), ("Net", 550, "r")]
     assert [li.amount for li in _rows_read(tmp_path, heads, rated)] == [200.0, 100.0]
+    heads = [("Description", 50), ("Net", 400, "r"), ("Tax %", 470, "r"), ("Total", 550, "r")]  # (a rate's heading)
+    rated = [[d, net, rate, total] for d, total, rate, net in rated]
+    assert [li.amount for li in _rows_read(tmp_path, heads, rated)] == [200.0, 100.0]
     # Never the heading that says the tax is in it while another could be the amount, whichever comes first.
     both = [["Network cabling", "226.00", "200.00"], ["Patch panel", "113.00", "100.00"]]
     for second in ("Amount", "Excl. tax"):
@@ -298,13 +301,26 @@ def test_headings_left_or_centred_over_right_aligned_numbers_read_each_cell_in_i
     assert not _codes(result) & {"SUBTOTAL_MISMATCH", "TAX_BASE_MISMATCH", "EXEMPT_LINE_TAXED", FOUND}
 
 
-def test_quantity_price_and_total_under_left_aligned_headings(pipe, tmp_path):
-    """Without a tax column the PRICE was the amount (10.00 for 100.00)."""
-    heads = [("Description", 50), _left("Qty", 375, 440), _left("Price", 440, 505), _left("Total", 505, 570)]
+@pytest.mark.parametrize("width", [65, 90])
+def test_quantity_price_and_total_under_left_aligned_headings(width, pipe, tmp_path):
+    """Without a tax column the PRICE was the amount (10.00 for 100.00); in columns 90 points wide still, the
+    quantity's heading being too far from its numbers to have them."""
+    x3, x2, x1, x0 = 570, 570 - width, 570 - 2 * width, 570 - 3 * width
+    heads = [("Description", 50), _left("Qty", x0, x1), _left("Price", x1, x2), _left("Total", x2, x3)]
     rows = [["Server rack, 42U", "1", "1,200.00", "1,200.00"], ["Patch cords", "10", "10.00", "100.00"],
             ["Training day", "2", "50.00", "100.00"]]  # fmt: skip
     result = pipe.process(_invoice(tmp_path, "X-2", ON, heads, rows, HST3), save=False)
     assert _amounts(result) == [1200.0, 100.0, 100.0] and not _codes(result) & {"SUBTOTAL_MISMATCH", "LINE_MATH"}
+
+
+def test_a_heading_never_takes_the_numbers_printed_wholly_to_its_left(tmp_path):
+    """With a tax column no row fills, there is one column of numbers fewer than headings: each left-aligned heading
+    took the column before its own (the numbers that end just before it), the amount's the unit prices."""
+    heads = [("Description", 50), _left("Qty", 300, 360), _left("Price", 360, 430), _left("Amount", 430, 500),
+             _left("Tax", 500, 570)]  # fmt: skip
+    rows = [["Training day", "2", "50.00", "100.00", ""], ["Postage", "10", "1.20", "12.00", ""]]
+    read = _rows_read(tmp_path, heads, rows)
+    assert [(li.quantity, li.unit_price, li.amount) for li in read] == [(2.0, 50.0, 100.0), (10.0, 1.2, 12.0)]
 
 
 def test_a_heading_over_tax_codes_or_numbers_among_words_take_no_column_of_amounts(tmp_path):

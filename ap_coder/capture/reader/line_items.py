@@ -375,8 +375,9 @@ def _amount_heading(row: list[Line], named: list[tuple[Line, Box]]) -> Box:
        Price | Subtotal | Discount | Total" reads Total; "Price | Discount | Net" reads Net).
     2. Never a heading that says the tax is in it ("Total incl. tax", "Montant TTC") while another could be it.
     3. A heading that says before tax ("Net", "Excl. tax", "Before tax", "Montant HT", "Subtotal") over a plain one
-       ("Amount", "Total"), but only in a table that also has a tax column or a heading that says the tax is in it
-       ("Net | Tax | Total", "Excl. tax | Incl. tax"); in any other table the plain one over it ("Gross | Tare | Net |
+       ("Amount", "Total"), but only in a table that also has a tax column (its amounts, its rate or its code) or a
+       heading that says the tax is in it ("Net | Tax | Total", "Net | Tax % | Total", "Excl. tax | Incl. tax"); in
+       any other table the plain one over it ("Gross | Tare | Net |
        Rate | Amount": Net is a weight; "Subtotal | Total": quantity x list price, then the line's amount).
     4. Of equals, the first in the row.
 
@@ -384,7 +385,7 @@ def _amount_heading(row: list[Line], named: list[tuple[Line, Box]]) -> Box:
     of money that makes the amount with each row's tax, or the column that adds up to the invoice's subtotal."""
     says = [_heading_says(line, box) for line, box in named]
     heads = [plain(other.text).strip() for other in row]
-    taxed = ("with" in says or any(_TAX_AMOUNT_HEAD.match(p) for p in heads)
+    taxed = ("with" in says or any(_TAX_HEAD.match(p) for p in heads)
              or any(_TAXED_HEAD.match(p) and not p.startswith("gross") for p in heads))  # fmt: skip
     after = max((o.box.x1 for o, p in zip(row, heads, strict=True) if _DISCOUNT_HEAD.match(p)), default=None)
     pool = [k for k, (_, box) in enumerate(named) if after is None or box.x0 >= after - 0.002] or range(len(named))
@@ -552,7 +553,9 @@ def _columns_under(heads: list[Box], spans: list[Box]) -> dict[int, int]:
     those, in the order both come across the page and within ``HEADING_REACH``: as many pairs as can be made, the
     closest overall. Headings printed from their columns' left edges over numbers that end at their right edges
     ("Tax" and "Total" as a spreadsheet prints them) so keep their own columns, though the numbers of the column
-    before end nearer to each. A heading with no column in reach has none (a column of words, or of blanks)."""
+    before end nearer to each: a heading never has the numbers printed wholly to its left, which are the column
+    before's (a heading sits over its numbers, or starts before them). A heading with no column in reach has none (a
+    column of words, or of blanks)."""
 
     def over(i: int, j: int) -> float | None:
         width = min(heads[i].x1, spans[j].x1) - max(heads[i].x0, spans[j].x0)
@@ -569,7 +572,8 @@ def _columns_under(heads: list[Box], spans: list[Box]) -> dict[int, int]:
 
         def near(i: int, j: int, hs: range = hs, cs: range = cs) -> float | None:
             away = off(heads[hs[i]], spans[cs[j]])
-            return -away if away <= HEADING_REACH else None
+            behind = spans[cs[j]].x1 < heads[hs[i]].x0 - 0.002  # the numbers end before the heading starts
+            return -away if away <= HEADING_REACH and not behind else None
 
         pairs.update({hs[i]: cs[j] for i, j in _paired(len(hs), len(cs), near).items()})
     return pairs

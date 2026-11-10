@@ -4991,7 +4991,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     discount column only the headings right of it; never one that says the tax is in it; one that says before tax
     over a plain one only beside a tax column or a total with tax, else the plain one; of equals the first), then by
     where the numbers are printed (`_columns_under`: a heading has the column of numbers printed under it, else
-    headings and columns are paired in the order they come across the page). The numbers may change the COLUMN, not
+    headings and columns are paired in the order they come across the page, never a heading with the numbers
+    printed wholly to its left; a heading over words, a tax code's, has none). The numbers may change the COLUMN, not
     a row's figure: a column of money that makes the amount read with the tax on every row that prints one is the
     amount before tax; another column headed as an amount that adds up to the invoice's subtotal is the amount.
     A charge outside the table is a line only when it is read from the page (the freight beside the subtotal, an
