@@ -146,6 +146,10 @@ _TAX_HEAD = re.compile(r"^(?:vat|tax|gst|hst|pst|qst|tps|tvq|tvh|tva|ust|mwst|iv
 
 _ROW_NUMBER_HEAD = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)\s+(?=[a-z])")  # "No. Description": the row number's heading
 
+_ROW_NUMBER_ALONE = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)$")  # the row number's heading in a segment of its own
+
+_ROW_NUMBER = re.compile(r"^\d{1,3}[.)]?$")  # a row's number under it: "1", "12.", "3)"
+
 # The heading of a line table's tax-code column ("Tax", "Tax code", "Tx", "GST/PST", "Code taxe"): its cells say which
 # taxes the line carries ("G", "GP", "G R", "E", "*"), kept as the line's ``tax_flags`` and not in its description.
 _TAX_CODE_HEAD = re.compile(
@@ -187,6 +191,36 @@ def tax_flag_cell(text: str) -> bool:
 
 def _under_tax_column(seg: Line, column: Box | None) -> bool:
     return column is not None and abs(seg.box.cx - column.cx) < max(0.035, column.width) and tax_flag_cell(seg.text)
+
+
+def row_number_column(row: list[Line], cols: dict[str, Box]) -> tuple[float, float] | None:
+    """Where the line table prints its rows' numbers (x from, to), when its heading row (``heading_row``'s lines)
+    names their column left of the named ones: a heading of its own ("#", "No.", "Pos."), or the word before the
+    description's ("# Description"). The column ends where the next heading starts. None when the rows have no
+    number column."""
+    left = min(box.x0 for box in cols.values())
+    for line in row:
+        p = plain(line.text).strip()
+        if _ROW_NUMBER_ALONE.match(p) and line.box.x1 <= left:
+            head, upto = line.box, left
+        elif _ROW_NUMBER_HEAD.match(p) and len(line.words) > 1 and line.box.x0 <= left:
+            head, upto = line.words[0].box, line.words[1].box.x0
+        else:
+            continue
+        return head.x0 - 0.015, min(head.x1 + 0.015, upto)
+    return None
+
+
+def _row_number(text: str, box: Box, column: tuple[float, float] | None) -> bool:
+    return column is not None and column[0] <= box.cx <= column[1] and bool(_ROW_NUMBER.match(text.strip()))
+
+
+def _without_row_number(seg: Line, column: tuple[float, float] | None) -> str:
+    """A cell's text without the row's number set close before it ("1 Copy paper" read as one cell)."""
+    first = seg.words[0] if len(seg.words) > 1 else None
+    if first is not None and _row_number(first.text, first.box, column) and seg.text.startswith(first.text):
+        return seg.text[len(first.text) :].lstrip()
+    return seg.text
 
 
 def _heading_name(text: str) -> str | None:
@@ -583,6 +617,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             continue
         y_top, cols = header
         tax_column = tax_code_column(found[1], cols) if found else None
+        number_column = row_number_column(found[1], cols) if found else None
         rows: dict[float, list[Line]] = {}
         stop_y = stop_cy = 1.0
         for line in page.lines:
@@ -627,9 +662,12 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             flags = [s for s in segs if s is not amt_seg and _under_tax_column(s, tax_column)
                      and not ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)]  # fmt: skip
             # A number cell (qty, price, amount, row number) is not part of the description; a description
-            # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
-            desc = " ".join(s.text for s in segs if s not in flags and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
-                            or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
+            # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is. The row's number under the
+            # "#" heading is never part of it: in a cell of its own beside the description's, or set close before it.
+            desc = " ".join(_without_row_number(s, number_column) for s in segs
+                            if s not in flags and not _row_number(s.text, s.box, number_column)
+                            and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
+                                 or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
             qty = price = None
             if "quantity" in cols:
                 q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
