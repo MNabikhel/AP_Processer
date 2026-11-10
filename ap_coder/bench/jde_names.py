@@ -205,6 +205,112 @@ FOUNDATION, COMMUNITY SOCIETY | 7810
 AUTO SERVICE, FUEL STOP | 7830
 MOVING & STORAGE, VAN LINES, FURNISHED SUITES | 1450
 """
+# What a supplier prints on its invoice for a purchase AP codes to an account: object, subsidiary ("-": every
+# subsidiary of the object) | its phrasings, a semicolon between. The supplier's own words for what it sold, not the
+# department's remark ("Ground shipment waybill 77812" where AP writes "courier charges"): most share no word with
+# the remarks. ``{n}`` a reference number, ``{qty}`` a quantity, ``{month}`` the month billed, ``{who}`` the person
+# the account's description names.
+INVOICE_WORDING = """
+1450 - | Household goods move - transferee {who}; Furnished suite 30 nights - guest {who}; Storage in transit - {who}
+1620 110 | 3-year term licence - paid upfront; Enterprise agreement - 36 month term; Platform licence prepaid {n}
+1620 120 | Annual premium - commercial package policy {n}; Policy term renewal - paid in advance; Premium deposit {n}
+1620 130 | Corporate membership 12 months; Association membership - annual term; Member renewal - account {n}
+2190 64020118 | Server chassis - shared rack; Storage array expansion shelf; Blade enclosure - pooled
+2230 AB | Employer premium instalment - account {n}; Assessment - Alberta account {n}
+2230 BC | Employer assessment - British Columbia account {n}; Quarterly remittance - account {n}
+2230 SK | Employer assessment - Saskatchewan firm {n}; Payroll assessment instalment
+2240 BC | Employer health instalment - quarter; Payroll levy instalment - account {n}
+2240 MB | Payroll levy - Manitoba account {n}; Levy remittance {month}
+2260 010 | Member contributions - plan {n}; Employer and member deposits {month}
+2260 020 | Payroll deduction deposits - plan {n}; Contributions {month}
+2270 110 | Member required contributions {month}; Employee deductions - plan {n}
+2270 120 | Employer required contributions {month}; Company match - plan {n}
+2270 130 | Contributions while on leave - member {n}; Leave period arrears
+2280 - | Per capita remittance {month}; Member deductions {month}
+2480 310 | Sundry purchase - receipt {n}; Balance carried forward
+2480 320 | Cardholder purchase - not business; Purchase to be repaid
+2480 330 | Statement balance - account ending {n}; New balance {month}
+7120 2107 | Permanent placement - successful hire; Search fee 20% of first-year salary; Contingency search fee
+7120 2113 | 30-day job slot; Sponsored listing - analyst role; Careers site advertising package
+7120 2141 | Campus career fair booth; Co-op student luncheon; Student info night - refreshments
+7140 2207 | Registration - 2-day workshop; Online course enrolment x {qty}; Seminar tuition
+7140 2213 | Annual member dues; Practising licence fee; Chapter dues renewal
+7140 2231 | Executive coaching - 4 sessions; Leadership cohort program - module {qty}; 360 assessment and debrief
+7160 2307 | Summer picnic - 80 guests; Holiday reception - venue and dinner; Bowling night lane rental
+7160 2313 | On-site immunization clinic; Lunch-and-learn: ergonomics; Yoga instructor - 6 classes
+7160 2331 | Engraved plaques x {qty}; Milestone gift cards; Crystal award - 25 years
+7160 2343 | Embroidered softshell jackets x {qty}; Logo polo shirts - screen print; Custom toques with logo
+7310 3107 | Base rent - Suite {n} - {month}; Minimum rent {month}; Rent - premises {n}
+7310 3113 | Additional rent - CAM estimate {month}; Common area maintenance reconciliation; Realty tax and recoveries
+7310 3121 | Reserved parking - {qty} stalls {month}; Underground parkade passes; Monthly parking permits
+7330 3207 | Service call - replace door closer; Labour and materials - faucet leak; Ballast replacement - 6 fixtures
+7330 3213 | Quarterly preventive maintenance - rooftop units; Replace pleated filters x {qty}; Furnace tune-up
+7330 3227 | Security system monitoring - quarterly; Proximity fobs x {qty}; Intrusion panel service
+7330 3233 | Suite ID plaques; Wayfinding directory insert; Vinyl lettering - reception glass
+7340 3307 | Nightly office cleaning - {month}; Custodial services - 5 nights per week; Day porter service {month}
+7340 3313 | Hot water extraction - 4,000 sq ft; Exterior glass washing - spring; Steam clean boardroom carpets
+7340 3321 | Secure destruction - {qty} consoles; Confidential paper bin exchange; Blue bin collection {month}
+7350 3407 | Energy charge {qty} kWh; Electric service {month} - site {n}; Distribution and transmission charges
+7350 3413 | Gas delivery {qty} GJ; Heating fuel service {month}; Fixed delivery and commodity charge
+7350 3421 | Water consumption {qty} m3; Wastewater and drainage charges; Utility account {n} - water service
+7360 3507 | Commercial property policy - business contents; Office contents coverage renewal; Tenant's policy {n}
+7360 3513 | Tax levy - roll {n}; Annual municipal assessment notice; Final tax notice - roll {n}
+7410 4107 | Ballpoint pens blue 12/pk; Sticky notes 3x3 yellow; File folders letter 100/box
+7410 4113 | Dark roast pods 96 ct; Paper cups 12 oz sleeve; Bottled water 18.9 L x {qty}
+7410 4121 | Black cartridge high yield {n}; Multipurpose paper 8.5x11 case; Cyan cartridge {n}
+7410 4133 | Ergonomic task chair mesh back; 2-drawer lateral file; Dual monitor mount
+7410 4141 | Bandage and antiseptic refill pack; AED replacement pads; Eyewash station bottles
+7420 4207 | Ground shipment waybill {n}; Next-day letter Calgary-Edmonton; Fuel surcharge - waybill {n}
+7420 4213 | International express waybill {n}; Duties and brokerage - entry {n}; Worldwide priority parcel
+7420 4221 | Meter refill {n}; Stamps roll of 100; Mail machine ink cartridge
+7430 4307 | Multifunction device rental {month}; Overage - black and colour clicks; Meter read billing - serial {n}
+7430 4313 | 500 cards 2-sided 16pt; Coil-bound reports x {qty}; Retractable banner stand 33x80
+7440 4407 | Digital edition - annual; Weekly magazine 52 issues; Print + online access renewal
+7440 4413 | Building code 2024 edition; Standards handbook - hardcover; Practice manual update service
+7440 4421 | Database access - 5 seats; Legal research platform {month}; Search credits pack
+7450 4507 | Carton storage {qty} cu ft {month}; Retrieval and delivery - {qty} cartons; Monthly vault storage
+7450 4513 | Document imaging - {qty} pages; Backfile conversion batch {n}; Indexing and OCR - {qty} images
+7510 5107 | Wireless voice & data plan - {qty} subscribers; Smartphone device balance; Roaming and airtime usage
+7510 5113 | Business lines x {qty} - {month}; SIP trunk channels; Toll-free service usage
+7510 5121 | Audio bridge minutes {month}; Virtual meeting host licences x {qty}; Webcast event - 500 attendees
+7520 5207 | Dedicated fibre 500 Mbps - {month}; Business broadband service; Static IP block
+7520 5213 | MPLS circuit site {n}; Private line - secondary path; SD-WAN service {month}
+7520 5221 | Wireless AP ceiling mount x {qty}; 48-port PoE switch; Cat6 patch cables 25 pk
+7530 5307 | SaaS seats x {qty} - annual; Named-user plan {month}; Team plan renewal - {qty} users
+7530 5313 | Support and updates 12 months; Maintenance agreement {n} renewal; Premier support contract
+7530 5321 | Compute and storage usage {month}; Virtual machines - reserved instances; Data egress charges
+7540 5407 | Notebook 14in i7 16GB; Ultrabook with dock bundle; Thunderbolt dock x {qty}
+7540 5413 | 27in display x {qty}; Wireless headset USB; Mechanical keyboard and mouse combo
+7540 5421 | Out-of-warranty repair - motherboard; LCD panel replacement; Diagnostic and bench fee
+7550 5507 | Monthly managed IT - {qty} endpoints; Help desk block - 20 hours; Remote monitoring and patching
+7550 5513 | Professional services - migration project; Senior consultant {qty} hrs; Statement of work {n}
+7610 6107 | Professional fees - file {n}; For services rendered to {month} 30; Disbursements and fees - corporate file
+7610 6113 | File {n} - termination advice; Workplace investigation - fees; Review of employment agreement
+7620 6207 | Year-end engagement - progress bill 2; Financial statement audit - interim; Final billing - engagement {n}
+7620 6213 | Corporate return preparation; SR&ED claim assistance; Transfer pricing memo
+7630 6307 | Advisory services - phase 1; Facilitated planning workshop; Engagement fees {month}
+7630 6313 | EN-FR 2,400 words; French version of policy manual; Rush linguistic review
+7630 6321 | Employee engagement questionnaire - platform fee; Focus group sessions x {qty}; Benchmark study report
+7640 6407 | Commercial general liability policy {n}; Umbrella coverage renewal; D&O policy premium
+7640 6413 | Placement fee - renewal; Policy administration charge; Risk advisory retainer
+7710 7107 | YYC-YVR economy fare; Ticket reissue fee; Round trip e-ticket {n}
+7710 7113 | 2 nights king room; Room and tax - folio {n}; Corporate rate stay {month}
+7710 7121 | Airport sedan transfer; Compact vehicle 3 days; Kilometre charge and fuel
+7710 7133 | Room service dinner; Breakfast buffet x 2; Restaurant - guest folio {n}
+7720 7207 | Sandwich platter for 12; Boxed lunches x {qty}; Pizza order - delivery
+7720 7213 | Private dining - party of 8; Suite tickets and catering; Tasting menu x 6
+7730 7307 | Delegate pass - full conference; Early bird attendee x {qty}; Summit admission
+7730 7313 | Boardroom half day; Projector and screen package; Ballroom A - full day
+7730 7321 | Continental breakfast for 20; Coffee and pastry service; Hot lunch buffet - 30 people
+7730 7333 | Retreat package - lodge 2 days; Facilitator and venue - strategy day; Group activity - ropes course
+7810 8107 | Gift receipt {n}; Fundraising gala table; Pledge - annual campaign
+7810 8113 | Gold level event partner; Jersey sponsor - minor hockey; Banner placement - community rink
+7810 8121 | Bursary fund contribution; Student award endowment; Entrance award {n}
+7820 8207 | Account maintenance fee; Outgoing wire transfer; Cheque image service
+7820 8213 | Discount rate fees {month}; Terminal rental; Chargeback fee
+7830 8307 | Regular unleaded {qty} L; Diesel - card {n}; Fleet card purchases {month}
+7830 8313 | Lube, oil and filter; 4 all-season tires installed; Brake pads and rotors - front
+"""
 PREFIXES = (
     "ALDERBROOK, AMBERLEY, ASPEN RIDGE, BIRCHWAY, BLUE HERON, BRACKEN, CEDAR HOLLOW, COPPER KETTLE, CROWFOOT, "
     "DRIFTWOOD, EASTGATE, ELKHORN, FERNDALE, FOXGLOVE, GREYSTONE, HAWTHORN, HEARTHSIDE, IRONWOOD, JUNIPER LANE, "
