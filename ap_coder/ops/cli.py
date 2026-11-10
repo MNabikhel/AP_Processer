@@ -315,8 +315,21 @@ def _add_report_commands(sub: Any, private: Path, out_dir: Path) -> None:
     p = sub.add_parser(
         "pilot-score", help="The pilot's score: compare what AP Coder approved with what AP posted in JD Edwards"
     )
-    p.add_argument("--vouchers", required=True, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
+    p.add_argument("--vouchers", default=None, help="The F0411 voucher export from JD Edwards (CSV or Excel)")
     p.add_argument("--distribution", default=None, help="The F0911 G/L distribution export (optional: the coding)")
+    p.add_argument(
+        "--journal", nargs="?", const="", default=None, metavar="FILE",
+        help="How AP Coder would have coded last year's vouchers: the last months of the Transaction Journal "
+             "(R09321 as CSV; no FILE: the journal loaded here) held out and coded from the months before. With "
+             "--proposed: the journal the keyed accounts are read from",
+    )  # fmt: skip
+    p.add_argument("--hold-out", type=int, default=2, metavar="N",
+                   help="With --journal: how many of the journal's last months are held out (default 2)")  # fmt: skip
+    p.add_argument(
+        "--proposed", action="store_true",
+        help="Score what AP Coder proposed for the invoices here, in review or approved, against the vouchers keyed "
+             "for them: --vouchers the voucher list, the accounts from the journal (--journal FILE, or loaded here)",
+    )  # fmt: skip
     p.add_argument("-o", "--out", default=None, help="Folder for the report (default: pilot_score in the data folder)")
     p.add_argument("--implied-decimals", action="store_true", help="Amounts without a decimal point (550 = 5.50)")
     p.add_argument("--from", dest="start", default="", help="Only invoices dated on or after this day (YYYY-MM-DD)")
@@ -1068,9 +1081,34 @@ def cmd_export_training(args: argparse.Namespace) -> int:
     return 0 if counts["invoices"] else 1
 
 
+def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
+    """``pilot-score --journal`` (last year's journal, its last months held out) and ``pilot-score --proposed`` (what
+    AP Coder proposed for real invoices against the vouchers keyed for them): the report's first paragraph, said."""
+    from . import journal_score
+    from .pilot_score import ExportError
+
+    store = Store(args.db)
+    try:
+        report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
+        said, module = [journal_score.paragraph(report), journal_score.UPPER_BOUND], journal_score
+    except ExportError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print("\n".join(said))
+    print(f"Report: {folder / module.REPORT}")
+    print(f"The misses, one per row: {folder / module.MISSES}")
+    return 0
+
+
 def cmd_pilot_score(args: argparse.Namespace) -> int:
     from .pilot_score import ExportError, run
 
+    if args.proposed or args.journal is not None:
+        return _pilot_score_of_past_vouchers(args)
+    if not args.vouchers:
+        print("pilot-score needs the voucher export: --vouchers F0411.xlsx (or --journal, for last year's journal)",
+              file=sys.stderr)  # fmt: skip
+        return 2
     try:
         report, folder = run(Store(args.db), args.vouchers, args.distribution, args.out,
                              implied_decimals=args.implied_decimals, start=args.start, end=args.end,

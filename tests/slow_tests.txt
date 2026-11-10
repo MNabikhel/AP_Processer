@@ -447,3 +447,4 @@ tests/web/test_web_settings.py::test_jde_gl_mapping_tax_areas_and_address_number
 tests/web/test_web_tax_codes.py::test_the_dropdown_offers_the_codes_of_the_place_of_supply
 tests/web/test_web_viewer.py::test_the_page_picture_comes_at_three_scales
 tests/web/test_web_viewer.py::test_the_sharper_pictures_are_capped
+tests/ops/test_pilot_score_journal.py::test_a_year_of_vouchers_is_scored_in_seconds
