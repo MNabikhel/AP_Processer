@@ -170,7 +170,9 @@ CHECKS: dict[str, CheckHelp] = {
         "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
         "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
-        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason.",
+        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason. For "
+        "the receipts of one expense claim, the finding names the receipts of each tax area: make them separate "
+        "invoices again, then choose each tax area's receipts again on Add invoices as a claim of their own.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",
@@ -826,9 +828,12 @@ CHECKS: dict[str, CheckHelp] = {
     "CLAIM_RECEIPT_NOT_ADDED": CheckHelp(
         READING, "Receipt not in the claim's total",
         "One of the receipts joined into this expense claim adds nothing to it: its total could not be read, or it "
-        "is in another currency than the claim. The finding names the file and its page; its line is there at 0.00.",
-        "Look at the receipt's page and type its amount on its line (in the claim's currency), or leave it at 0.00 "
-        "when it is not part of the claim.",
+        "is in another currency than the claim (with as many receipts in each of two currencies, the claim is put "
+        "in CAD and the finding names the receipts of both). The finding names the file and its page; its line is "
+        "there at 0.00.",
+        "Look at the receipt's page and type its amount on its line (in the claim's currency; change the claim's "
+        "currency first if it is the other one), or leave it at 0.00 when it is not part of the claim. Once the "
+        "amount is typed the finding goes and the claim's totals take it.",
     ),
     "FILE_CUT_OFF": CheckHelp(
         READING, "File cut off",

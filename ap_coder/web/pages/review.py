@@ -807,8 +807,13 @@ def review_sample_gl(request: Request, back: str = Form("/review")) -> JSONRespo
 def delete_invoice(store: Store, invoice_id: int) -> None:
     """Delete an invoice; if its file is in the invoices folder, move it to ``invoices/deleted`` so the folder
     pick-up doesn't offer it again."""
+    from ap_coder.intake import joined
+
     inv = store.get_invoice(invoice_id) or {}
+    parts = store.joined_files(invoice_id=invoice_id)
     store.delete_invoice(invoice_id, actor=reviewer(), keep_approved=True)
+    if parts:  # a voucher made of several files (D-216): they go with it
+        joined.removed(store, inv, parts)
     folder = invoice_dir(store)
     path = Path(inv.get("source_path") or "")
     try:

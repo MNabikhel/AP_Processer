@@ -38,6 +38,8 @@ ACTIONS = {
     "approved": ("task_alt", "ok", "Approved"),
     "rejected": ("block", "gray", "Rejected"),
     "deleted": ("delete", "gray", "Deleted"),
+    "joined": ("call_merge", "info", "Files joined into one voucher"),
+    "separated": ("call_split", "info", "Made separate invoices again"),
     "exported": ("ios_share", "violet", "Exported"),
     "accounts_imported": ("upload", "info", "Accounts imported"),
     "accounts_edited": ("edit", "info", "Accounts edited"),
@@ -336,6 +338,15 @@ def _review_text(action: str, d: dict[str, Any]) -> str | None:
         )
     if action == "deleted":
         return f"{d.get('vendor') or d.get('file', '')} {d.get('invoice_number') or ''}".strip()
+    if action == "joined":
+        took = [f"#{n}" for n in d.get("took") or []]
+        return (f"{d.get('file', '')}: {', '.join(d.get('files') or [])} joined as "
+                f"{JOINED_AS.get(d.get('kind'), 'one voucher')}"
+                + (f" · invoice {' and '.join(took)}, read on {'its' if len(took) == 1 else 'their'} own before, "
+                   f"{'is' if len(took) == 1 else 'are'} part of it now" if took else ""))  # fmt: skip
+    if action == "separated":
+        return (f"{d.get('file', '')} ({JOINED_AS.get(d.get('kind'), 'one voucher')}): "
+                f"{', '.join(d.get('files') or [])} back in line, each read as an invoice of its own")  # fmt: skip
     if action == "exported":
         return f"in export batch {d.get('batch', '')}"
     if action == "export_undone":
@@ -344,6 +355,7 @@ def _review_text(action: str, d: dict[str, Any]) -> str | None:
     return None
 
 
+JOINED_AS = {"pages": "the pages of one invoice", "claim": "the receipts of one claim"}  # (``store.joined``'s kinds)
 _SET_ASIDE = (("meals", "meals tick", "meals ticks"), ("categories", "category", "categories"),
               ("managers", "manager", "managers"))  # fmt: skip
 

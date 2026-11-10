@@ -309,7 +309,7 @@ def finalise_coding(
         erp_posts_tax=jde.taxes_e1_posts(output, js) if js is not None else frozenset(),
     )
     if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
-        claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id))
+        claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)
     return output, report
 
 
@@ -726,7 +726,7 @@ class InvoicePipeline:
         their own as an invoice is (``_read_and_code``; of ``page_text``, its own pages), then one voucher of them
         (``coding.claim.claim_coding``) checked as any invoice is. A receipt that can't be read is named in a
         finding, and the others are still read."""
-        from ..coding.claim import Receipt, claim_coding
+        from ..coding.claim import Receipt, claim_coding, tax_area
         from ..intake.joined import pages_of
 
         _check_pdf(result.source)
@@ -746,7 +746,10 @@ class InvoicePipeline:
                     log.warning("%s: %s could not be read (%s)", result.source.name, f["name"], exc)
                     said = str(exc) if isinstance(exc, CannotRead) else plain_error(exc, target)
                     receipts.append(Receipt(f["name"], None, said.rstrip(".")))
-        coding, notes = claim_coding(receipts, self.reference.tax)
+        coding, notes = claim_coding(receipts, self.reference.tax, self.reference.cost_centers is not None)
+        # the tax area of each receipt in the total: two of them are one voucher a tax area for JD Edwards (B-2288)
+        taxes = [tax_area(r.coding.tax_lines) if r.coding is not None and not note else ""
+                 for r, note in zip(receipts, notes, strict=True)]  # fmt: skip
         result.extraction = ExtractionResult(
             source=str(result.source), model_id=read[0].extraction.model_id if read else "",
             content="\n\n".join(f"## {r.source.name}\n\n{r.extraction.content}" for r in read),
@@ -758,11 +761,12 @@ class InvoicePipeline:
         result.chat_deferred = any(r.chat_deferred for r in read)
         for step in ("extraction", "inference"):
             result.timings[step] = sum(r.timings.get(step, 0.0) for r in read)
-        self.store.note_joined_files(files[0]["joined"], notes)
+        self.store.note_joined_files(files[0]["joined"], notes, taxes)
         result.output, result.report = finalise_coding(coding, self.reference, self.settings, result.extraction,
                                                        store=self.store, exclude_invoice_id=invoice_id)  # fmt: skip
         if invoice_id is None:  # (read again, ``finalise_coding`` finds the invoice's files itself)
-            claim_findings(result.report, [{**f, "note": note} for f, note in zip(files, notes, strict=True)])
+            said = [{**f, "note": note, "tax": tax} for f, note, tax in zip(files, notes, taxes, strict=True)]
+            claim_findings(result.report, said, coding)
 
     def _note_own_file(self, path: Path) -> None:
         """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
@@ -950,6 +954,7 @@ class InvoicePipeline:
             )
             if result.capture is not None:
                 self.store.save_capture(result.invoice_id, result.capture.to_dict())
+            self.store.joined_read(result.invoice_id)  # who joined its files is in its history (B-2284)
             azure_check.queue(self.store, result.invoice_id, azure)
             verifier.queue(self.store, result.invoice_id, reviewer_plan,
                            held=bool(result.autonomy.get("verifier_hold")))  # fmt: skip

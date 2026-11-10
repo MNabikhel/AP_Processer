@@ -1072,8 +1072,10 @@ def _save_and_start(request: Request, files: list[UploadFile], voucher: str = ""
             if mails or left:
                 raise joined.CannotJoin(left[0][0]["text"] if left else "A saved email can't be one of a voucher's "
                                         "files: choose its attachments, as PDFs or pictures.")  # fmt: skip
-            saved = [join_files(store, folder, [Path(place) for place, *_ in saved], voucher)]
+            return _started(join_files(request, folder, [Path(place) for place, *_ in saved], voucher, "upload"))
         except joined.CannotJoin as exc:
+            if len(store.known_files([sha for *_, sha in saved])) == len(saved):  # all in AP Coder: none is listed
+                return refuse(str(exc))
             return refuse(f"{exc} The files you chose are in the invoices folder now, listed on this page.")
     unreadable: list[Path] = []
     attached = _read_saved(mails, unreadable)
@@ -1088,15 +1090,19 @@ def _save_and_start(request: Request, files: list[UploadFile], voucher: str = ""
     return _started(queued)
 
 
-def join_files(store: Store, folder: Path, paths: list[Path], kind: str) -> Any:
-    """``read_file`` of the one document made of the files at ``paths`` (``joined.join``, D-216), made while no
-    pick-up of the folder runs: a scheduled watch would put the same files in line one by one. Raises
-    ``joined.CannotJoin``."""
+def join_files(request: Request, folder: Path, paths: list[Path], kind: str, source: str,
+               include_failed: bool = False) -> dict[str, Any]:  # fmt: skip
+    """The files at ``paths`` made one document (``joined.join``, D-216) and that document put in line (what
+    ``queue_files`` returns), both while no pick-up of the folder runs: a scheduled watch would put the same files in
+    line one by one, and a second person's join of one of them is refused, its voucher being in line by then
+    (B-2283). Raises ``joined.CannotJoin``."""
+    store = get_store(request)
     lock = wait_for_pickup(data_dir(store), lambda: None, most=PICKUP_PATIENCE)
     if lock is None:
         raise joined.CannotJoin(BUSY_PICKUP)
     try:
-        return read_file(joined.join(store, folder, paths, kind))
+        made = read_file(joined.join(store, folder, paths, kind, reviewer()))
+        return queue_files(request, [made], source=source, include_failed=include_failed)
     finally:
         lock.close()
 
@@ -1164,10 +1170,9 @@ def process_voucher(request: Request, names: list[str] = Form([]), kind: str = F
     if gone:
         return refuse(f"{', '.join(gone)} is no longer in the invoices folder: reload the page.", 409)
     try:
-        made = join_files(store, folder, paths, kind)
+        queued = join_files(request, folder, paths, kind, "folder", include_failed=True)
     except joined.CannotJoin as exc:
         return refuse(str(exc))
-    queued = queue_files(request, [made], source="folder", include_failed=True)
     if server_mode(request):  # the list kept for every process no longer has the files joined (D-176)
         with contextlib.suppress(OSError):
             list_folder(store, folder).keep(store)

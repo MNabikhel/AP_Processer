@@ -34,8 +34,8 @@ router = page_router()  # each plain handler: one connection a request
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",
                  "sent_to_manager", "manager_confirmed", "manager_sent_back", "manager_request_withdrawn",
-                 "note", "rejected", "deleted", "exported", "proposal_updated", "verified", "azure_checked",
-                 "azure_check_disagrees", "jde_api_dry_run", "jde_api_approved", "jde_voucher_posted",
+                 "note", "rejected", "deleted", "joined", "separated", "exported", "proposal_updated", "verified",
+                 "azure_checked", "azure_check_disagrees", "jde_api_dry_run", "jde_api_approved", "jde_voucher_posted",
                  "jde_voucher_refused", "jde_voucher_mismatch", "jde_voucher_released", "jde_file_downloaded"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "cost_center_manager_set",
               "tax_setup_changed", "policy_changed",
