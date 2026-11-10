@@ -554,14 +554,20 @@ def run_summary(ok: int, read: int, skipped: list[str], emails: int, to_person: 
                                       list(skipped), "content_copy"))  # fmt: skip
     if not read and not skipped and not emails:
         messages.append(flash_message("Nothing new to read.", "info"))
-    label = f"Processed {ok} of {read + len(skipped)}" if read else "Nothing new to read"
-    if read and skipped:  # every file of the run counted, the ones not read said (B-1184)
-        label += f": {len(skipped)} already in AP Coder"
+    # The files of an upload left out before the reading (too large, a kind not read, a text with no amounts, not
+    # saved: ``_left_out``) are files picked too: counted, as the button that sent them counted them (B-2100).
+    left = sum(1 for m in notes or [] if m.get("left_out"))
+    label = f"Processed {ok} of {read + len(skipped) + left}" if read else "Nothing new to read"
+    aside = [f"{len(skipped)} already in AP Coder"] if read and skipped else []  # (each said: B-1184)
+    aside += [f"{left} left out"] if left else []
+    if aside:
+        label += f": {', '.join(aside)}"
     if to_person:  # every email counted, the ones sorted to a person too (B-1303)
-        files = read + len(skipped)
+        files = read + len(skipped) + left
         parts = [f"{ui.plural(ok, 'invoice')} processed" if ok == files
                  else f"{ok} of {ui.plural(files, 'file')} processed"] if files else []  # fmt: skip
         parts += [f"{len(skipped)} already in AP Coder"] if skipped else []
+        parts += [f"{left} left out"] if left else []
         parts.append(f"{to_person} sent to Emails that need a person")
         label = f"{ui.plural(emails, 'email')}: {', '.join(parts)}"
     return messages, label
@@ -1011,29 +1017,37 @@ def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:
     return name, content if len(content) <= limit else None
 
 
+def _left_out(name: str, why: str, text: str, tone: str = "warn") -> tuple[dict[str, Any], dict[str, str]]:
+    """A file of an upload left out before the reading: (its message, marked so the run counts it among the files
+    picked; its line on the card, said as the run starts), B-2100."""
+    line = {"text": f"{name}: left out, {why}", "tone": tone, "icon": "block"}
+    return {**flash_message(text, tone), "left_out": True}, line
+
+
 def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
-    saved, mails, notes = [], [], []
+    saved, mails, notes, left = [], [], [], []
     for upload in files:
         name, content = _read_upload(upload)
         if content is None:  # over the limit (B-981): an invoice is never this large
-            email = Path(name).suffix.lower() in EMAIL_EXTENSIONS
-            notes.append(flash_message(f"{name} was not read: it is larger than {'100' if email else '50'} MB. An "
-                                       "invoice is far smaller: scan it again at 300 dpi, or save it as a PDF.",
-                                       "warn"))  # fmt: skip
+            most = "100" if Path(name).suffix.lower() in EMAIL_EXTENSIONS else "50"
+            left.append(_left_out(name, f"larger than {most} MB",
+                                  f"{name} was not read: it is larger than {most} MB. An invoice is far smaller: "
+                                  "scan it again at 300 dpi, or save it as a PDF."))  # fmt: skip
             continue
         if Path(name).suffix.lower() not in ACCEPT:
-            notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
-                                       "BMP, WEBP, GIF), saved emails (.eml, .msg) and invoices saved as text (.txt). "
-                                       "Save it as PDF or JPEG to have it read.", "warn"))  # fmt: skip
+            left.append(_left_out(name, "not a kind of file AP Coder reads",
+                                  f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, "
+                                  "WEBP, GIF), saved emails (.eml, .msg) and invoices saved as text (.txt). Save it "
+                                  "as PDF or JPEG to have it read."))  # fmt: skip
             continue
         if Path(name).suffix.lower() in TEXT_EXTENSIONS and not looks_like_an_invoice_text(content):
-            notes.append(flash_message(f"{name} was not read: a text file (.txt, .md) is read as an invoice only "
-                                       "when it has amounts in it (like 125.00 or Total $105), and this one has none.",
-                                       "warn"))  # fmt: skip
+            left.append(_left_out(name, "a text file with no amounts in it",
+                                  f"{name} was not read: a text file (.txt, .md) is read as an invoice only when it "
+                                  "has amounts in it (like 125.00 or Total $105), and this one has none."))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)
@@ -1042,9 +1056,10 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
                 continue
             saved.append(noted(target, content))  # hashed once, from what was uploaded (D-168)
         except OSError as exc:
-            notes.append(flash_message(f"{name} could not be saved to the invoices folder "
-                                       f"({exc.strerror or type(exc).__name__}). Rename it or save it there yourself.",
-                                       "err"))  # fmt: skip
+            left.append(_left_out(name, "it could not be saved to the invoices folder",
+                                  f"{name} could not be saved to the invoices folder "
+                                  f"({exc.strerror or type(exc).__name__}). Rename it or save it there yourself.",
+                                  "err"))  # fmt: skip
             continue
     unreadable: list[Path] = []
     attached = _read_saved(mails, unreadable)
@@ -1052,7 +1067,8 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     if unreadable:  # an email's attachment saved, then locked meanwhile (an antivirus): the folder's pick-up reads it
         notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened just now: picked up "
                                    "next time.", "warn", [p.name for p in unreadable]))  # fmt: skip
-    lines = _email_lines(store, mails, attached, include_failed=False)
+    notes = [note for note, _ in left] + notes
+    lines = [line for _, line in left] + _email_lines(store, mails, attached, include_failed=False)
     queued = queue_files(request, saved, source="upload", notes=notes, lines=lines, emails=len(mails),
                          to_person=_to_person(mails))  # fmt: skip
     return _started(queued)

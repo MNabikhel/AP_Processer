@@ -458,7 +458,7 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
     assert reasons  # lines to code: the queue flags them
     lines = [line["text"] for line in snap["lines"]]
     for inv in pending:
-        said = [t for t in lines if t.startswith(f"{inv['vendor_name']}:")]
+        said = [t for t in lines if t.startswith(f"{inv['vendor_name']}, invoice {inv['invoice_number']}:")]
         assert said and all(t.endswith("needs attention" if inv["id"] in reasons else "ready") for t in said), (
             said,
             reasons.get(inv["id"]),
@@ -718,3 +718,48 @@ def test_in_a_browser_a_running_imports_card_does_not_show_the_last_runs_time(ch
             assert page.locator("#job-when").inner_text().strip() == ""
         finally:
             release.set()
+
+
+def test_an_imports_lines_name_each_invoice_not_only_its_vendor(app, client, store):
+    """B-2100: three invoices of one vendor gave three lines the same ("Northwind IT Solutions Inc.: needs
+    attention"). Each line names the invoice number read, or the file when none was."""
+    from ap_coder.intake.imports import result_line
+
+    upload(client, f"{STEM}.pdf", f"{OTHER}.pdf")
+    texts = [line["text"] for line in finished(app, client)["lines"]]
+    by_file = {inv["file_name"]: inv for inv in store.list_invoices(REVIEW)}
+    assert len(texts) == 2
+    for name in (f"{STEM}.pdf", f"{OTHER}.pdf"):
+        vendor, number = by_file[name]["vendor_name"], by_file[name]["invoice_number"]
+        assert vendor and number and [t for t in texts if t.startswith(f"{vendor}, invoice {number}: ")], texts
+    said = [result_line("scan 12.pdf", output, flagged)["text"] for output, flagged in (
+        ({"vendor_name": "Acme Supply Ltd", "invoice_number": "A-1001", "grand_total": 105.0}, False),
+        ({"vendor_name": "Acme Supply Ltd", "invoice_number": "", "grand_total": 105.0}, True),
+        ({"vendor_name": "Acme Supply Ltd", "invoice_number": "CN-7", "grand_total": -20.0}, True),
+        ({"vendor_name": "", "invoice_number": "A-1002"}, True),
+        ({}, True),
+    )]  # fmt: skip
+    assert said == ["Acme Supply Ltd, invoice A-1001: ready", "Acme Supply Ltd (scan 12.pdf): needs attention",
+                    "Acme Supply Ltd, credit note CN-7: needs attention",
+                    "scan 12.pdf, invoice A-1002: needs attention", "scan 12.pdf: needs attention"]  # fmt: skip
+
+
+def test_a_file_left_out_of_an_upload_is_counted_and_said_with_why(app, client, store):
+    """B-2100: six files picked ("Process 6 uploaded invoices"), one of them a text file with no amounts, ended as
+    "Processed 2 of 5": the file left out before the reading was in neither count. The run counts every file picked
+    and says which was left out and why, in its lines as it runs and in its messages."""
+    files = [("files", (f"{STEM}.pdf", (SAMPLES / f"{STEM}.pdf").read_bytes(), "application/pdf")),
+             ("files", ("notes.txt", b"call the vendor back\n", "text/plain")),
+             ("files", ("contract.docx", b"PK\x03\x04 a document", "application/octet-stream"))]  # fmt: skip
+    assert client.post("/process/upload", files=files, headers=PAGE).status_code == 200
+    snap = finished(app, client)
+    assert snap["result"]["label"] == "Processed 1 of 3: 2 left out"
+    texts = [line["text"] for line in snap["lines"]]
+    assert "notes.txt: left out, a text file with no amounts in it" in texts
+    assert "contract.docx: left out, not a kind of file AP Coder reads" in texts
+    assert [m["text"].split(":")[0] for m in snap["result"]["messages"] if "was not read" in m["text"]] == [
+        "notes.txt was not read", "contract.docx was not read"]  # fmt: skip
+    assert "Processed 1 of 3: 2 left out" in client.get("/process").text
+    only = client.post("/process/upload", files=files[1:2], headers=PAGE)
+    assert only.status_code == 200
+    assert finished(app, client)["result"]["label"] == "Nothing new to read: 1 left out"

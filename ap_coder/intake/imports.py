@@ -40,6 +40,21 @@ RESTORING = "A backup is being restored: the invoices in line are read once it i
 Read = tuple[str, int | None, int | None, str]  # (place, size, time in nanoseconds, SHA-256), as ``read_file``
 
 
+def result_line(name: str, output: dict[str, Any], flagged: bool) -> dict[str, str]:
+    """The line an import's card says of a file read: its vendor and invoice number ("Acme Supply Ltd, invoice
+    A-1001: ready"), so three invoices of one vendor are three different lines (B-2100); the file's name where no
+    number, or no vendor, was read."""
+    vendor, number = str(output.get("vendor_name") or "").strip(), str(output.get("invoice_number") or "").strip()
+    try:
+        credit = float(output.get("grand_total") or 0) < 0
+    except (TypeError, ValueError):
+        credit = False
+    numbered = f"{vendor or name}, {'credit note' if credit else 'invoice'} {number}"
+    what = numbered if number else f"{vendor} ({name})" if vendor else name
+    return {"text": f"{what}: {'needs attention' if flagged else 'ready'}", "tone": "warn" if flagged else "ok",
+            "icon": "flag" if flagged else "check_circle"}  # fmt: skip
+
+
 def owner_id(kind: str) -> str:
     """What the queue's rows name a reader by: its kind, computer, process and a token (a process number given again
     after a restart is another reader)."""
@@ -298,9 +313,7 @@ class Reader:
                 flagged = self.attention(self.store, getattr(pipeline, "reference", None), result)
             except Exception:  # noqa: BLE001 - only what the line says
                 flagged = bool(result.report and result.report.requires_review)
-            vendor = (result.output or {}).get("vendor_name") or name
-            line = {"text": f"{vendor}: {'needs attention' if flagged else 'ready'}", "tone": "warn" if flagged
-                    else "ok", "icon": "flag" if flagged else "check_circle"}  # fmt: skip
+            line = result_line(name, result.output or {}, flagged)
         else:
             line = {"text": f"{name}: {result.error}", "tone": "err", "icon": "error"}
         self.store.finish_import(row["id"], self.owner, IMPORT_DONE if result.ok else IMPORT_FAILED,
