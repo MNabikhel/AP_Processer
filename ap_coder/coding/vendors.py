@@ -9,7 +9,8 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_CHANGED_FROM_HELD (error, an Approver's to approve: D-142; the server's review screen, ``moved_off_hold``): a
   held vendor's invoice (by the vendor read, its GST/HST number or bank account) coded to another vendor
 * VENDOR_TAX_NUMBER_CHANGED (error, approved only with a reason: D-141): GST/HST number differs from earlier invoices /
-  the vendor master, a classic sign of a fake invoice or changed payment details
+  the vendor master, a classic sign of a fake invoice or changed payment details; and VENDOR_TAX_ACCOUNT_DIFFERS
+  (warning): the same nine-digit business number with another GST/HST account after RT (a branch's: D-219)
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
@@ -50,6 +51,7 @@ from ..core.keys import (  # noqa: F401  (the names this module had: imported fr
     master_vendor_id,
     norm_invoice_number,
     norm_tax_number,
+    other_tax_account,
     same_tax_number,
 )
 from ..core.keys import BUSINESS_NUMBER as _BUSINESS_NUMBER
@@ -214,12 +216,23 @@ _TAX_NUMBERS = (
 )  # fmt: skip
 
 
+def _another_account(field: str, printed: Any, known: Any) -> bool:
+    """Whether the GST/HST number an invoice prints is none of the vendor's (``known``) but another GST/HST account
+    of the same business as one of them (``other_tax_account``): a warning, not a changed number (D-219)."""
+    return (
+        field == "gst_hst_registration_number"
+        and not any(same_tax_number(printed, k) for k in known)
+        and any(other_tax_account(printed, k) for k in known)
+    )
+
+
 def tax_number_findings(
     coding: InvoiceCoding, master: dict[str, Any] | None, history: list[dict[str, Any]]
 ) -> list[tuple[str, str, str]]:
     """Each tax number printed on the invoice (GST/HST, QST, PST) against the vendor's: the one in the vendor list
     when it has one, else the ones on this vendor's approved invoices. A different number is a classic sign of a
-    fake invoice or a bill from another company under a known name."""
+    fake invoice or a bill from another company under a known name; a GST/HST number with the vendor's nine digits
+    and other digits after RT is the same business, and only said (``_another_account``)."""
     out = []
     for severity, code, field, column, past, name, norm, same in _TAX_NUMBERS:
         printed = str(getattr(coding, field, "") or "")
@@ -230,7 +243,12 @@ def tax_number_findings(
         else:
             known = {h.get(past) or "" for h in history if h["status"] == "approved"} - {""}
             where = "this vendor's usual"
-        if known and not any(same(printed, k) for k in known):
+        if _another_account(field, printed, known):
+            out.append((WARNING, "VENDOR_TAX_ACCOUNT_DIFFERS",
+                        f"{name} {printed} has the same business number as {where} ({', '.join(sorted(known))}) but "
+                        "is another of its GST/HST accounts (a branch or a division can have its own); nothing to "
+                        "fix: look the number up on the CRA's GST/HST registry if in doubt"))  # fmt: skip
+        elif known and not any(same(printed, k) for k in known):
             out.append((severity, code, f"{name} {printed} differs from {where} ({', '.join(sorted(known))}); "
                         "confirm with the vendor before paying"))  # fmt: skip
     return out
@@ -260,7 +278,8 @@ def vendor_number_problems(vendor: dict[str, Any]) -> list[str]:
 def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None) -> dict[str, str]:
     """{invoice field: what it is compared with} for the tax numbers ``tax_number_findings`` checks, in a few words
     for the note under the field on the review screen (D-65): "Vendor list: 123456789 RT0001", else "Usual for this
-    vendor: …" from its approved invoices."""
+    vendor: …" from its approved invoices; and when the invoice's GST/HST number is another account of the same
+    business (``VENDOR_TAX_ACCOUNT_DIFFERS``), that it is."""
     key = store.vendor_key_for(coding.vendor_name, getattr(coding, "gst_hst_registration_number", None))
     if not key:
         return {}
@@ -269,11 +288,16 @@ def expected_tax_numbers(coding: InvoiceCoding, store: Store, exclude_invoice_id
     out = {}
     for _severity, _code, field, column, past, _name, norm, _same in _TAX_NUMBERS:
         if master and norm(master.get(column)):
-            out[field] = f"Vendor list: {master[column]}"
-            continue
-        known = sorted({h.get(past) or "" for h in history if h["status"] == "approved"} - {""})
+            known, said = [master[column]], "Vendor list"
+        else:
+            known = sorted({h.get(past) or "" for h in history if h["status"] == "approved"} - {""})
+            said = "Usual for this vendor"
         if known:
-            out[field] = f"Usual for this vendor: {', '.join(known)}"
+            out[field] = f"{said}: {', '.join(known)}" + (
+                ", another GST/HST account of the same business"
+                if _another_account(field, getattr(coding, field, ""), known)
+                else ""
+            )
     return out
 
 
