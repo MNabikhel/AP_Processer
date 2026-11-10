@@ -312,6 +312,14 @@ def _copy_hashed(source: Path, out: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _private(path: Path) -> None:
+    """The sign-in codes' key put back by a restore, and its copy among a backup's files: readable by this account
+    only, as the key is made (``authenticator.load_key``; B-2114). Not on Windows, where the folder's permissions say."""
+    if os.name != "nt":
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+
+
 def _incoming(folder: Path) -> Path:
     root = folder / OBJECTS
     root.mkdir(parents=True, exist_ok=True)
@@ -432,6 +440,8 @@ def snapshot(backup: Path, data: Path, hashed: bool = True, database: Path | Non
             skipped.append({"path": rel, "why": why})
             return None
         sha, size = _keep(source, folder)
+        if rel == KEY_FILE:
+            _private(object_path(folder, sha))
         return {"path": rel, "sha256": sha, "size": size, "mtime_ns": st.st_mtime_ns}
 
     for rel in data_files(data):
@@ -836,6 +846,8 @@ def _put_back(wanted: dict[str, dict[str, Any]], folders: list[Path], data: Path
                 if target.exists():
                     set_aside(target, rel)
                 os.replace(part, target)
+                if rel == KEY_FILE:
+                    _private(target)
                 with contextlib.suppress(OSError):
                     os.utime(target, ns=(entry.get("mtime_ns") or time.time_ns(),) * 2)
         if why:
