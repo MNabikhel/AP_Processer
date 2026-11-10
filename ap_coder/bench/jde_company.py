@@ -29,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
+from ..core.chart import code_of, join_account, split_account, split_code
 from .jde_names import (
     AFFILIATES,
     CHART,
@@ -63,7 +64,7 @@ def money(x: Decimal | float | int | str) -> Decimal:
 
 def account_string(business_unit: str, object_account: str, subsidiary: str = "") -> str:
     """The account as AP types it: ``BusinessUnit.Object.Subsidiary``, the subsidiary left off when there is none."""
-    return ".".join(part for part in (business_unit, object_account, subsidiary) if part)
+    return join_account(business_unit, code_of(object_account, subsidiary))
 
 
 @dataclass(frozen=True)
@@ -233,7 +234,7 @@ class Voucher:
 
     @property
     def business_units(self) -> set[str]:
-        return {line.account.split(".")[0] for line in self.lines}
+        return {split_account(line.account)[0] for line in self.lines}
 
 
 @dataclass
@@ -576,7 +577,8 @@ def _chart(rng: random.Random, plan: Size, units: list[BusinessUnit], rows: list
             chosen[(MAIN_UNIT, row.object, row.subsidiary)] = row
     for supplier in suppliers:
         for string in supplier.accounts:
-            unit, obj, sub = (string.split(".") + [""])[:3]
+            unit, code = split_account(string)
+            obj, sub = split_code(code)
             chosen.setdefault((unit, obj, sub), by_pair[(obj, sub)])
     objects = [row for row in overhead if not row.subsidiary]
     departments = [u.number for u in units if len(u.number) == 10 and u.number not in (MAIN_UNIT, RELOCATION_UNIT)]
@@ -673,7 +675,8 @@ class _Entry:
             return [pool[i % len(pool)] for i in range(count)]
         picks = pool[start : start + count] or rng.choices(pool, weights=[1 / (i + 1) for i in range(len(pool))])
         first = picks[0]
-        ring = [a for a in pool if a.split(".")[0] == first.split(".")[0]] if rng.random() < self.STAYS else pool
+        unit = split_account(first)[0]
+        ring = [a for a in pool if split_account(a)[0] == unit] if rng.random() < self.STAYS else pool
         while len(picks) < count:
             picks.append(ring[(ring.index(first) + len(picks)) % len(ring)])
         return picks

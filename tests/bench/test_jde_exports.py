@@ -17,6 +17,7 @@ import pytest
 
 from ap_coder.bench import jde_company, jde_exports, jde_names
 from ap_coder.bench.jde_company import ALLOCATION, MAIN_UNIT, RECOVERIES
+from ap_coder.erp import journal as reader
 
 COLUMNS = {"chart_of_accounts": 110, "business_units": 67, "supplier_master": 10, "voucher_headers": 56,
            "gl_distribution": 36, "pay_items": 44, "payment_history": 24}  # fmt: skip
@@ -357,6 +358,51 @@ def test_the_journal_ends_with_the_company_total_and_the_grand_total(small):
     assert debit != credit  # one voucher does not balance
 
 
+def test_the_journal_reader_reads_the_generated_journal_as_the_truth_has_it(small):
+    """The two halves agree on the layout: what ``jde_exports`` writes, ``erp/journal.py`` reads back as the truth
+    has it: every voucher, every line with its account, amount, remark and kind, and the control total."""
+    truth, folder = small
+    company = truth.company
+    objects = reader.PayableObjects(trade=(company.payable_object,), intercompany=(company.intercompany_object,))
+    raw = (folder / jde_exports.JOURNAL_FILE).read_bytes()
+    assert reader.looks_like_journal(raw)
+    journal = reader.read_journal(raw, payable_objects=objects, tax_objects=(company.gst_object,))
+    assert len(journal.vouchers) == len(truth.vouchers)
+    for read, voucher in zip(journal.vouchers, truth.vouchers, strict=True):
+        supplier, odd = truth.supplier(voucher.supplier), voucher.oddity == "unbalanced"
+        assert (read.doc_type, read.company, read.gl_date) == ("PV", "00210", voucher.gl_date.isoformat())
+        assert (read.supplier_number, read.supplier_name) == (str(supplier.number), supplier.name[:26].strip())
+        assert [line.kind for line in read.lines[: len(voucher.lines)]] == [reader.CODING] * len(voucher.lines)
+        for line, coded in zip(read.lines, voucher.lines, strict=False):
+            account = truth.account(coded.account)
+            assert (line.account, line.remark) == (coded.account, coded.remark)
+            assert (line.business_unit, line.object, line.subsidiary) == (
+                account.business_unit, account.object, account.subsidiary)  # fmt: skip
+            assert line.description == account.description[:24].strip()
+            assert Decimal(str(line.amount)) == (-coded.amount if odd else coded.amount)  # printed as credits
+        expected = []
+        for item in voucher.pay_items:
+            expected += [reader.PAYABLE, reader.TAX] if item.tax else [reader.PAYABLE]
+        assert [line.kind for line in read.lines[len(voucher.lines) :]] == expected
+        assert read.affiliate == (supplier.kind == "affiliate") and read.balanced != odd and read.both_columns == odd
+        if not odd:
+            assert (Decimal(str(read.gross)), Decimal(str(read.tax))) == (voucher.gross, voucher.tax)
+            assert read.credit == (voucher.gross < 0)
+    totals = journal.totals
+    coding = sum(len(voucher.lines) for voucher in truth.vouchers)
+    items = [item for voucher in truth.vouchers for item in voucher.pay_items]
+    assert (totals.vouchers, totals.coding, totals.payable, totals.tax) == (
+        len(truth.vouchers), coding, len(items), sum(bool(item.tax) for item in items))  # fmt: skip
+    assert not totals.differ and (totals.file_debit, totals.file_credit) == (totals.debit, totals.credit)
+    assert totals.debit != totals.credit  # the voucher that does not balance
+    assert (totals.first_date, totals.last_date) == (
+        truth.vouchers[0].gl_date.isoformat(), truth.vouchers[-1].gl_date.isoformat())  # fmt: skip
+    assert not any("left out" in note for note in journal.notes)
+    learned = reader.coding_lines(journal)  # not an affiliate's, not the one that does not balance
+    plain = [v for v in truth.vouchers if truth.supplier(v.supplier).kind != "affiliate" and v.oddity != "unbalanced"]
+    assert [line.line.account for line in learned] == [x.account for voucher in plain for x in voucher.lines]
+
+
 # --- the voucher grids -------------------------------------------------------------------------
 
 
@@ -561,6 +607,11 @@ def test_a_years_files_are_written_in_the_same_layouts(tmp_path):
     assert sum(row[0] == "PV" for row in rows) == 5500 and rows[-1][7] == "Grand Total"
     big = next(v for v in truth.vouchers if v.oddity == "many_lines")
     assert len(big.lines) == 130 and len(big.business_units) > 50
+    objects = reader.PayableObjects((truth.company.payable_object,), (truth.company.intercompany_object,))
+    raw = (tmp_path / jde_exports.JOURNAL_FILE).read_bytes()
+    totals = reader.read_journal(raw, payable_objects=objects, tax_objects=(truth.company.gst_object,)).totals
+    assert (totals.vouchers, totals.coding) == (5500, sum(len(v.lines) for v in truth.vouchers))
+    assert not totals.differ and totals.file_debit == totals.debit  # the reader's control total holds for a year
 
 
 # --- no value of a real company ----------------------------------------------------------------

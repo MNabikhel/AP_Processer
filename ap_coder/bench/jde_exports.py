@@ -41,6 +41,7 @@ from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
 
+from ..core.chart import join_account, split_account
 from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Truth, Voucher, build
 
 BLANK = " "  # an empty text field of a grid's export
@@ -122,8 +123,7 @@ def _unit(number: str) -> str:
 
 def _padded(account: str) -> str:
     """An account string as the exports print it: its business unit right-justified to 12."""
-    unit, dot, rest = account.partition(".")
-    return unit.rjust(12) + dot + rest
+    return " " * (12 - len(split_account(account)[0])) + account
 
 
 def _number(amount: Decimal | None, always: bool = False) -> Any:
@@ -262,8 +262,8 @@ def _journal_lines(truth: Truth, voucher: Voucher) -> list[tuple]:
         description = truth.account(line.account).description
         lines.append((line.account, description, debit, credit, line.remark, voucher.oddity != "no_address"))
     remark = voucher.lines[-1].remark
-    payable = truth.account(f"{company.main_business_unit}.{voucher.payable_object}")
-    clearing = truth.account(f"{company.main_business_unit}.{company.gst_object}")
+    payable = truth.account(join_account(company.main_business_unit, voucher.payable_object))
+    clearing = truth.account(join_account(company.main_business_unit, company.gst_object))
     for item in voucher.pay_items:
         lines.append((payable.string, payable.description, *_sides(-item.gross, odd), remark, True))
         if item.tax:
