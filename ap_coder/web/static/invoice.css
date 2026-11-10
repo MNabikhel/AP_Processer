@@ -794,7 +794,7 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
   .inv-split.inv-acct > .inv-doc {top: 42px;}
 }
 /* The findings: a compact list above the header (the checks card's own markup). */
-.inv-acct .inv-checks {padding: 0; border: 0; background: none; box-shadow: none;}
+.inv-split.inv-acct .card.inv-checks {padding: 0; border: 0; background: none; box-shadow: none;}
 .inv-acct .inv-checks > * + * {margin-top: 4px;}
 .inv-acct .inv-checks .rvw-status {padding: 6px 10px;}
 .inv-acct .inv-checks .rvw-status ul {margin-top: 2px; gap: 1px;}
@@ -811,6 +811,9 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 .inv-head-row .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}
 .inv-head-row .field.wide {grid-column: auto;}
 .inv-head-row .lbl {flex-wrap: nowrap; white-space: nowrap; overflow: hidden;}
+/* how sure the reading is: its mark alone beside the label (its words are the mark's title), so no label is cut */
+.inv-head-row .inv-sure {font-size: 0; gap: 0;}
+.inv-head-row .inv-sure .ms {font-size: 14px;}
 .inv-head-row .inv-vendor-add {position: absolute; top: -4px; right: 0;}
 .inv-head-row .inv-vendor {position: relative;}
 .inv-head-row .inv-vendor .inv-vendor-match:empty {display: none;}
