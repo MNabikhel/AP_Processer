@@ -99,6 +99,19 @@ def row_view(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     }
 
 
+def _rule_named(store: Any, rule_id: int) -> str:
+    """The fixed coding rule the directory is filtered by, named as it is now (as it last was, for one removed);
+    "" when it is filtered by none."""
+    if not rule_id:
+        return ""
+    found = next((r for r in store.coding_rules() if r.id == rule_id), None)
+    if found is not None:
+        return f"‘{found.label}’"
+    last = store.coding_rule_history(rule_id, limit=1)
+    was = (last[0].before or last[0].after) if last else None
+    return f"‘{was.label}’ (removed since)" if was else f"number {rule_id}"
+
+
 @router.get("/search", response_class=HTMLResponse)
 def search_page(request: Request) -> HTMLResponse:
     store = get_store(request)
@@ -120,7 +133,8 @@ def search_page(request: Request) -> HTMLResponse:
         presets=directory.shown_presets(store, _owner(request)),
         default_preset=(directory.default_preset(store, _owner(request)) or {}).get("name", ""),
         here=query.query_string(),
-        filtered=bool(query.filters or query.q),
+        filtered=bool(query.filters or query.q or query.rule),
+        by_rule=_rule_named(store, query.rule),
         kinds={"money": directory.MONEY, "date": directory.DATE, "number": directory.NUMBER},
         all_columns=directory.COLUMNS,
         default_columns=list(directory.DEFAULT_COLUMNS),

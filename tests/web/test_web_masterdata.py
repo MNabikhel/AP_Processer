@@ -32,7 +32,7 @@ MASTER_PAGES = [
     "/accounts?tab=cc",
     "/accounts?tab=tax",
     "/accounts?tab=policy",
-    "/accounts?tab=rules",
+    "/rules",
     "/accounts?tab=bank",
 ]
 
@@ -774,7 +774,7 @@ def test_tax_setup_policy_and_rules(client, busy):
     page = follow(
         client,
         client.post(
-            "/accounts/rules",
+            "/rules",
             data={
                 "vendor": ["Purolator", "", "", ""],
                 "contains": ["", "freight", "", ""],
@@ -786,17 +786,17 @@ def test_tax_setup_policy_and_rules(client, busy):
     )
     assert [(r.vendor, r.contains) for r in busy.coding_rules()] == [("Purolator", ""), ("", "freight")]
     assert "2 coding rules saved; 1 incomplete row left out" in page.text
-    follow(client, client.post("/accounts/rules/add", data={"vendor": "Acme", "gl_code": gl}, headers=PAGE))
+    follow(client, client.post("/rules/add", data={"vendor": "Acme", "gl_code": gl}, headers=PAGE))
     assert Rule("Acme", "", gl, "") in [
         Rule(r.vendor, r.contains, r.gl_code, r.cost_center) for r in busy.coding_rules()
     ]
-    assert client.post("/accounts/rules/add", data={"vendor": "Acme"}, headers=PAGE).status_code == 400
-    assert 'value="Purolator"' in client.get("/accounts?tab=rules").text
+    assert client.post("/rules/add", data={"vendor": "Acme"}, headers=PAGE).status_code == 400
+    assert 'value="Purolator"' in client.get("/rules").text
 
 
 def test_rules_need_gl_accounts_first(client, store):
-    assert "Import your GL accounts first" in client.get("/accounts?tab=rules").text
-    assert client.post("/accounts/rules", data={"vendor": ["x"], "gl_code": ["1"]}, headers=PAGE).status_code == 400
+    assert "Import your GL accounts first" in client.get("/rules").text
+    assert client.post("/rules", data={"vendor": ["x"], "gl_code": ["1"]}, headers=PAGE).status_code == 400
 
 
 def test_an_excel_cell_reading_na_is_kept_as_typed():

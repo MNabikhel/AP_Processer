@@ -181,6 +181,10 @@ def test_what_each_role_may_do(setup):
         "POST /exports/batches/1/download",
         "POST /vendors/save",
         "GET /process",
+        "GET /rules",  # the fixed coding rules: anyone who reviews invoices changes and undoes them (D-217)
+        "POST /rules",
+        "POST /rules/add",
+        "POST /rules/undo",
     ):
         assert may("clerk", route) and not may("readonly", route), route
     for route in ("POST /review/1/final-approve",):

@@ -5067,3 +5067,44 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Where:** `ap_coder/capture/reader/line_items.py` (`_amount_heading`, `_Columns`, `_columns_under`),
     `ap_coder/capture/bridge.py` (`printed_taxes`), `ap_coder/ai/offline_coder.py` (`_charges_outside`,
     `_lines_to_check`), `ap_coder/ops/help.py`; `tests/capture/test_line_table_columns.py`.
+
+- **D-217** · **The coding rules are anyone's to change, on a page of their own that keeps every change, undoes any
+  of them and says what each rule coded** (the same department's prototype, stage 2; 10 Nov 2026).
+  - **Why:** The rules were a tab of *GL accounts & tax* that only an Admin could change on the server. The
+    department wants anyone who reviews invoices to change them, and to see how the rules worked over time: who
+    changed what, and which invoices a rule coded. Saving the rules also rewrote every rule as new (B-2231).
+  - **What:** `/rules` (*Coding rules* under More; **Rules** in the Simple menu, one click). On the server
+    `GET /rules`, `POST /rules`, `/rules/add` and `/rules/undo` are a Clerk's and above (`web/roles.py`); a
+    Read-only account does not open the page (as *GL accounts & tax*). A laptop is as before: on the office
+    network a colleague's browser still does not change the rules (`identity.SETUP_CHANGES_HERE_ONLY`).
+    `/accounts?tab=rules` goes to the page.
+  - **A rule's number is its own** (`coding_rules.id`, which every database has had since schema 11: nothing to
+    migrate). A save changes a rule in place, a number is never given to another rule, and an undone removal has
+    its number again. A rule has no name of its own: it is named by what it matches (`Rule.label`, as `decided_by`
+    already kept it), so "renaming" it is changing its vendor or words.
+  - **History:** `coding_rule_history` (by `_SCHEMA`, no schema version): rule, when, who, the rule before and
+    after as JSON. The page lists it newest first in plain words (`rules.change_words`), each with **Undo**: the
+    rule goes back to what it was before that entry, and the undo is an entry (so it can be undone). When the rule
+    is not as the entry left it, the page says "changed again since", names the newer change in the question it
+    asks, and only then overwrites (`overwrite=1`; without it the store refuses, `CHANGED_SINCE`). An entry whose
+    rule is already as it was before it has no Undo.
+  - **What a rule coded:** a line's `decided_by` already kept the rule's number and its words (D-212); nothing was
+    added to the line. `summary_rules` (invoice, rule, lines), filled with the invoices' summary from the coding as
+    approved, else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice
+    directory's `?rule=<number>` filter (`rules.RULE_FILTER`). `SUMMARY_RULES` is not raised (no rebuild of every
+    summary for a table that starts empty): an invoice is counted once it is coded or changed from the first start
+    of this version, the day kept as the setting `rule_use_since` and said on the page. Nothing is guessed for the
+    invoices before.
+  - **With a chart of accounts** the rule's account is one box holding `business unit.object.subsidiary`, read as
+    the review screen's Account box is (`account_lines.posted`; joined and split only by `core/chart.py`). A rule
+    added or changed is refused, and nothing saved, when the pair is not in the chart, takes no postings or is on a
+    business unit that is not active, in the line check's own words (`validation.account_problem`), or names no
+    business unit. An account never offered (reserved) is allowed: the rule is a person's decision, and the line's
+    check still warns. A rule saved before the chart, left as it is, does not stop the others being saved: its row
+    says what is wrong. An undo to such a rule is refused with the same words.
+  - **Left:** the Account box has no search list (the review screen's is tied to its own script): the string is
+    typed or pasted; the history shows its newest 100 entries.
+  - (`ap_coder/coding/rules.py`, `ap_coder/coding/validation.py`, `ap_coder/core/store/rules.py`, `summary.py`,
+    `migrations.py`, `_base.py`, `ap_coder/erp/directory.py`, `ap_coder/web/pages/rules.py`, `search.py`,
+    `accounts.py`, `ap_coder/web/roles.py`, `identity.py`, `ap_coder/web/templates/rules.html`, `search.html`;
+    `tests/core/test_rules_store.py`, `tests/web/test_web_rules.py`)

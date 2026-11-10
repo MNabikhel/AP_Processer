@@ -15,7 +15,7 @@ leaving the machine:
 One class, ``Store``, built from a part per subject (D-69): ``_base`` (the schema, migrations, connections, shared
 helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, tax setup), ``invoices`` (saving,
 approving, the second approval), ``register`` (the ERP's invoice register, JD Edwards' vouchers in it, D-181),
-``purchasing`` (POs, export batches, coding rules), ``capture``
+``purchasing`` (POs, export batches), ``capture``
 (supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
 D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors`` (the vendor list) and ``vendor_master`` (the
 ERP's vendor master: its import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the
@@ -34,7 +34,8 @@ jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller
 accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out from
 them, D-209), ``journal`` (last year's coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
 apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
-a vendor's approved lines, counted, D-212). A test that patches a module-level name (``_now``, ``json``...) patches
+a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
+lines each coded, D-217). A test that patches a module-level name (``_now``, ``json``...) patches
 it in the part that uses it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
@@ -137,6 +138,7 @@ from .purchasing import PurchasingMixin
 from .register import RegisterMixin
 from .reports import ReportsMixin
 from .review_queue import ReviewQueueMixin
+from .rules import RulesMixin
 from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
 from .transaction import TransactionMixin
@@ -174,6 +176,7 @@ class Store(
     ChartMixin,
     JournalMixin,
     PriorMixin,
+    RulesMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

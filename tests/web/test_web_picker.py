@@ -476,14 +476,14 @@ def test_in_a_browser_the_list_is_not_cut_off_and_flips_above_near_the_bottom(br
 
 
 def test_in_a_browser_the_accounts_rules_and_statements_selects_are_pickers(browser, store):
-    page, errors = _open(browser, "/accounts?tab=rules")
+    page, errors = _open(browser, "/rules")
     rules = page.locator("select[name=gl_code]").count()
     assert rules >= 3 and page.locator(".pk-input[data-picker-name=gl_code]").count() == rules
     page.locator(".pk-input[data-picker-name=gl_code]").first.click()
     page.keyboard.type(_accounts(store)[0])
     page.keyboard.press("Enter")  # picks: the rules form is not sent
     assert page.locator("select[name=gl_code]").first.input_value() == _accounts(store)[0]
-    assert page.url.endswith("/accounts?tab=rules")
+    assert page.url.endswith("/rules")
     page, errors2 = _open(browser, "/statements")
     pick = page.locator(".pk-input[data-picker-name=vendor]").first
     pick.click()

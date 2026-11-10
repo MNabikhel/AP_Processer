@@ -455,31 +455,31 @@ def test_the_queue_says_what_is_ready_to_export(client, store, setup_demo_templa
     assert "ready to export" in client.get("/review").text  # the demo's approved invoices are not exported yet
 
 
-def test_coding_rules_tab_suggests_and_adds_a_rule(client, store):
+def test_the_coding_rules_page_suggests_and_adds_a_rule(client, store):
     doc = gt()
     same = {**doc, "line_items": [{**li, "predicted_gl_code": "6010"} for li in doc["line_items"]]}
     store.approve_invoice(store.add_invoice(store.path.parent / "a.pdf", same, {}), same, "Jane")
-    page = client.get("/accounts?tab=rules").text
+    page = client.get("/rules").text
     assert "Suggested from past coding" in page and 'name="gl_code" value="6010"' in page
-    follow(client, post(client, "/accounts/rules/add", {"vendor": doc["vendor_name"], "gl_code": "6010"}))
+    follow(client, post(client, "/rules/add", {"vendor": doc["vendor_name"], "gl_code": "6010"}))
     (rule,) = store.coding_rules()
     assert (rule.vendor, rule.gl_code) == (doc["vendor_name"], "6010")
-    assert "Suggested from past coding" not in client.get("/accounts?tab=rules").text  # covered now
+    assert "Suggested from past coding" not in client.get("/rules").text  # covered now
 
 
 def test_rule_and_vendor_names_are_shown_as_text(client, store):
     name = "Price $5 & $10 *Wholesale* <b>"
-    page = follow(client, post(client, "/accounts/rules/add", {"vendor": name, "gl_code": "6010"}))
+    page = follow(client, post(client, "/rules/add", {"vendor": name, "gl_code": "6010"}))
     assert "Rule added: Price $5 &amp; $10 *Wholesale* &lt;b&gt; → 6010." in page
 
 
-def test_the_rules_tab_shows_the_rules_of_a_restored_backup(client, store):
+def test_the_rules_page_shows_the_rules_of_a_restored_backup(client, store):
     store.save_coding_rules([Rule("Purolator", "", "6900")])
     backup = store.backup_now("manual")
     store.save_coding_rules([Rule("Bell", "", "6200")])
-    assert 'value="Bell"' in client.get("/accounts?tab=rules").text
+    assert 'value="Bell"' in client.get("/rules").text
     follow(client, post(client, "/settings/data/restore", {"name": backup.name, "confirm": "RESTORE"}))
-    page = client.get("/accounts?tab=rules").text
+    page = client.get("/rules").text
     assert 'value="Purolator"' in page and 'value="Bell"' not in page
 
 

@@ -749,7 +749,7 @@ def nav_counts(store: Store) -> dict[str, int]:
 def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
     """The rail's groups, each page with its count: the everyday pages (``main``), the pages folded under More
     (``more``) and Settings and Help, pinned at its foot (``pinned``). In Simple screens (``simple_screens``): the
-    five everyday pages under their names there, the pages under "Setup" (``setup``) and Help, with no More."""
+    everyday pages under their names there, the pages under "Setup" (``setup``) and Help, with no More."""
     counts = nav_counts(store)
 
     def items(pages: list[Any]) -> list[dict[str, Any]]:

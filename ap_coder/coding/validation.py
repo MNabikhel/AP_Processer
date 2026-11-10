@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from ..ai.extraction import ExtractionResult
@@ -272,6 +273,14 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
     else:
         why = f"no business unit has an account {gl}: pick one from the list"
     return ERROR, "ACCOUNT_NOT_IN_CHART", f"account {account} is not in the chart of accounts: {why}"
+
+
+def account_problem(reference: ReferenceData, gl: str, cc: str) -> str:
+    """Why nothing may be coded to GL account ``gl`` on business unit ``cc``, in the words a line's check says it
+    (``_pair_issue``'s errors), for what codes lines without being one: a fixed coding rule. "" for a pair that
+    exists and may be posted to (one never offered too: the line's check warns of it), and with no chart."""
+    found = _pair_issue(reference, SimpleNamespace(predicted_gl_code=gl, predicted_cost_center=cc), ())
+    return found[2] if found and found[0] == ERROR else ""
 
 
 def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:

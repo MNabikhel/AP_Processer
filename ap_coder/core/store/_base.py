@@ -48,7 +48,9 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
 # of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209), and
 # journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
-# JD Edwards' Transaction Journal has it, journal.py)
+# JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
+# summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
+# rules.py, D-217
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -217,6 +219,11 @@ CREATE TABLE IF NOT EXISTS erp_invoices (
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
+-- every add, change and removal of a rule: the rule before and after (JSON; none: added, removed), D-217
+CREATE TABLE IF NOT EXISTS coding_rule_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, rule_id INTEGER NOT NULL, at TEXT NOT NULL, actor TEXT, before TEXT,
+    after TEXT, undo_of INTEGER);
+CREATE INDEX IF NOT EXISTS coding_rule_history_rule ON coding_rule_history (rule_id, id);
 CREATE TABLE IF NOT EXISTS invoice_capture (
     invoice_id INTEGER PRIMARY KEY REFERENCES invoices (id) ON DELETE CASCADE, capture_json TEXT NOT NULL,
     layout_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);

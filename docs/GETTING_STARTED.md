@@ -157,8 +157,9 @@ Things to try:
 - Approve a few, then look at **Exports** (export a batch, then *Approved PDFs*), **Learning &
   accuracy**, **Insights**, **Spend** and **Activity**. The duplicate payment audit is on **Exports** (*Run the
   audit* for possible duplicate payments).
-- **GL accounts & tax** → **Fixed rules**: add a rule such as *line contains "delivery" → 6800*; open
-  an invoice and *Apply the coding rules*.
+- **Coding rules** (under *More*; **Rules** in Simple screens): add a rule such as *line contains "delivery" →
+  6800*; open an invoice and *Apply the coding rules*. The page lists every change with **Undo**, and how many
+  lines each rule coded.
 - **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`, then open
   *Ask the vendor for the missing invoices*.
 - **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
@@ -216,8 +217,8 @@ Open **GL accounts & tax**:
    - Then **Save tax setup**.
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
-5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
-   whatever the AI says. Vendors your team always coded the same way are suggested.
+5. **Coding rules** (their own page): lines that must always go to one account (a vendor, words in the line, or
+   both), whatever the AI says. Vendors your team always coded the same way are suggested.
 
 Optional, any time later; for the pilot with JD Edwards ([PILOT_PLAN.md](PILOT_PLAN.md)), do the vendor master, the JD Edwards settings and
 the past coding before the first invoices, in that order (the welcome page's *Next step* leads you through them):
