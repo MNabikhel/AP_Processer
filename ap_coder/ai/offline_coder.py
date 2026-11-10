@@ -15,6 +15,7 @@ import datetime as dt
 import functools
 import logging
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -310,7 +311,12 @@ def default_currency(supplier_province: str) -> str:
     return "USD" if supplier_province == OUTSIDE_CANADA else "CAD"
 
 
-def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None) -> list[TaxLine]:
+def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None,
+               amounts: Sequence[float] = ()) -> list[TaxLine]:  # fmt: skip
+    """The tax lines of a reading: each tax's amount, on the subtotal until the lines' tax codes say which lines
+    carry it (``line_tax.settled_tax_lines``). ``amounts``: the lines' amounts."""
+    from ..coding.line_tax import can_explain
+
     out = []
     table = _rate_table()
     for field, tax_type in _TAXES:
@@ -319,6 +325,14 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
             continue
         official = table.rate_for(tax_type, province, on) if table and province in PROVINCE_VALUES else None
         charged = abs(amount / subtotal) if subtotal else 0.0
+        where = province
+        if tax_type == "HST" and official is None and all(abs(charged - r) > 0.002 for r in _OFFICIAL["HST"]):
+            # HST where the place of supply levies none, and not on the whole subtotal: some lines were supplied in
+            # another province. Its rate is the one HST rate that some of the lines make it at, in the province
+            # that rate names (B-2226).
+            fits = [r for r in _OFFICIAL["HST"] if can_explain(amounts, amount, r)]
+            if len(fits) == 1:
+                official, where = fits[0], _RATE_PROVINCE.get(("HST", fits[0]), "")
         # Less tax than the province's rate on the whole subtotal: charged on part of it (delivery exempt from
         # Manitoba RST), the province's rate on its base. More than that (14% Nova Scotia HST with the province
         # read as Ontario) is no partial base: the rate the amounts show is kept, with the province it names,
@@ -327,7 +341,7 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
         if official and tax_type != "GST" and abs(charged - official) > 0.002 and partial:
             base = round(amount / official, 2)
             out.append(
-                TaxLine(tax_type=tax_type, province=province, rate=official, taxable_amount=base, tax_amount=amount)
+                TaxLine(tax_type=tax_type, province=where, rate=official, taxable_amount=base, tax_amount=amount)
             )
             continue
         rate = abs(amount / subtotal) if subtotal else 0.0
@@ -531,7 +545,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     ours = getattr(getattr(reference, "tax", None), "our_province", "") or ""
     tax_lines = _tax_lines(
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
-        dt.date.fromisoformat(invoice_on) if invoice_on else None,
+        dt.date.fromisoformat(invoice_on) if invoice_on else None, [float(li.amount) for li in readings],
     )  # fmt: skip
     default_gl, key, found = "", vendor_key(vendor), None
     if store is not None and vendor:
@@ -581,15 +595,11 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              for number, reading in enumerate(readings_data, 1)]  # fmt: skip
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
-    lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
-                      supplier_province=supplier_province,
-                      pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
-                      vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
-                      vendor_key=key)  # fmt: skip
-    if tip:  # a voluntary tip is no taxable supply
-        from ..coding.line_tax import OUT_OF_SCOPE
-
-        lines[-1] = lines[-1].model_copy(update={"taxes_applied": [], "tax_exempt": [], "tax_status": OUT_OF_SCOPE})
+    lines, tax_lines = _taxed(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province,
+                              invoice_on, tip, supplier_province=supplier_province,
+                              pst_number=str(values.get("pst_registration_number") or ""), feedback=feedback,
+                              vendor=vendor, qst_number=str(values.get("qst_registration_number") or ""),
+                              vendor_key=key)  # fmt: skip
 
     # The coding's confidence_score is the Reading (D-89): how sure the header is. How sure the lines' accounts and
     # tax codes are is the Coding, worked out from the lines by the checks (``validation.coding_confidence``).
@@ -669,17 +679,21 @@ def _money_of(text: str) -> float:
         return 0.0
 
 
-def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
-              invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
-              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
-              vendor: str = "", qst_number: str | None = None,
-              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
-    """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
-    the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
-    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
-    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
-    from ..coding.line_tax import learned_codes, parse_legend, prefill
+def _taxed(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
+           invoice_on: str, tip: bool, **vendor: Any) -> tuple[list[LineItem], list[TaxLine]]:  # fmt: skip
+    """The lines with their tax codes (``tax_codes``; a voluntary tip is no taxable supply), then the tax lines with
+    what each tax was charged on, now that the codes say which lines carry it (``line_tax.settled_tax_lines``)."""
+    from ..coding.line_tax import OUT_OF_SCOPE, settled_tax_lines
 
+    lines = tax_codes(lines, tax_lines, flags, text, province, invoice_on, **vendor)
+    if tip:
+        lines[-1] = lines[-1].model_copy(update={"taxes_applied": [], "tax_exempt": [], "tax_status": OUT_OF_SCOPE})
+    return lines, settled_tax_lines(lines, tax_lines, _rates_in_force(province, invoice_on))
+
+
+def _rates_in_force(province: str, invoice_on: str = "") -> Callable[[str, str], float | None]:
+    """``rate_for(tax_type, province)``: a tax's official rate on the invoice's date, in the province its tax line
+    names, else where the invoice is supplied (``province``). None without a rate table, or where it is not levied."""
     table = _rate_table()
     try:
         on = dt.date.fromisoformat(invoice_on) if invoice_on else None
@@ -692,6 +706,21 @@ def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str],
             return None
         return table.rate_for(tax_type, where if where != OUTSIDE_CANADA else "", on)
 
+    return rate_for
+
+
+def tax_codes(lines: list[LineItem], tax_lines: list[TaxLine], flags: list[str], text: str, province: str,
+              invoice_on: str = "", keep: list[int] | None = None, *, supplier_province: str | None = None,
+              pst_number: str | None = None, feedback: list[dict[str, Any]] | None = None,
+              vendor: str = "", qst_number: str | None = None,
+              vendor_key: str | None = None) -> list[LineItem]:  # fmt: skip
+    """The lines with their tax codes (``line_tax.prefill``): ``flags`` the tax-code cell read on each line, ``text``
+    the page text (its legend: "Tax codes: G = GST 5%, R = Manitoba RST 7%"), the official rates in force on the
+    invoice's date where it is supplied; ``feedback`` (the learning memory) and ``vendor``: the codes AP approved on
+    the vendor's similar lines before (``line_tax.learned_codes``, D-70)."""
+    from ..coding.line_tax import learned_codes, parse_legend, prefill
+
+    rate_for = _rates_in_force(province, invoice_on)
     # A vendor out of the province of supply, or without a PST (QST) number that charges none (B-715, B-719): the
     # provincial tax it does not charge on a line is due (self-assess). The codes learned are only those approved
     # where the vendor collected the provincial taxes as it does now (B-760).

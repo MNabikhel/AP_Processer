@@ -192,3 +192,44 @@ def test_a_prior_is_small_and_kept_within_the_caches_bytes(store):
     sizes = [size_of(prior_for(store, f"Supplier {n:02d} Services")) for n in range(40)]
     assert max(sizes) < 8_000  # (the made-up year's 950 suppliers: 4.6 KB each at the median, 5 MB in all)
     assert sp._KEPT.held <= sp._KEPT.most and len(sp._KEPT) >= 40
+
+
+def _line_of(store, reference, vendor, text):
+    return code_from_capture(captured(vendor, text), reference, store.feedback_rows(), store).coding.line_items[0]
+
+
+def test_a_line_that_plainly_says_another_kind_of_thing_is_not_coded_to_the_suppliers_one_account(store):
+    """B-2228: a supplier whose every line went to one account had ALL its lines coded there with no one picking,
+    a lunch or a box of stationery on a courier's invoice too. The one account still codes a line whose words say
+    nothing of any account (the supplier's own: a waybill, a surcharge); a line that reads as a meal, or like the
+    name of another account, is left for a person with both accounts offered."""
+    reference = load_chart(store)
+    _vendor(store, "RAPIDWAY COURIER CANADA LTD.", 3001)
+    load_journal(store, monthly(3001, "RAPIDWAY COURIER CANADA LT", COURIER, "{month} courier charges", 12))
+    vendor = "Rapidway Courier Canada Ltd."
+    for text in ("Ground shipment waybill 77812", "Fuel surcharge", "Courier charges March", "Desk to desk delivery"):
+        line = _line_of(store, reference, vendor, text)
+        assert f"{line.predicted_cost_center}.{line.predicted_gl_code}" == COURIER, text
+        assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")
+    lunch = _line_of(store, reference, vendor, "Working lunch for the project kickoff, 12 people")
+    assert lunch.predicted_gl_code == "UNASSIGNED" and lunch.candidates[0]["account"] == COURIER
+    assert lunch.reasoning_justification == (
+        f"This supplier's lines usually go to {COURIER}, but this line reads like a meal: check it.")  # fmt: skip
+    paper = _line_of(store, reference, vendor, "Stationery and desk supplies")
+    stationery = f"{MAIN}.7410.4107"
+    assert paper.predicted_gl_code == "UNASSIGNED"
+    assert [c["account"] for c in paper.candidates[:2]] == [COURIER, stationery]
+    assert paper.reasoning_justification == (
+        f"This supplier's lines usually go to {COURIER}, but this line reads like Stationery & Desk Supplies "
+        f"({stationery}): check it.")  # fmt: skip
+
+
+def test_a_meal_on_the_invoice_of_a_supplier_of_meals_is_coded_to_its_one_account(store):
+    """The guard is for another kind of thing: a caterer's lunch is its usual account's, as AP's remarks for it
+    say."""
+    reference = load_chart(store)
+    _vendor(store, "HARVEST TABLE CATERING INC.", 5200)
+    load_journal(store, monthly(5200, "HARVEST TABLE CATERING INC", f"{MAIN}.7410.4107", "{month} staff lunch", 12))
+    line = _line_of(store, reference, "Harvest Table Catering Inc.", "Sandwich platters - board lunch")
+    assert line.predicted_gl_code == "7410.4107"
+    assert line.reasoning_justification.startswith("12 of this supplier's 12 lines last year")

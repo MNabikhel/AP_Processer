@@ -913,7 +913,8 @@ def _two_tax_areas(v: _Voucher, final: dict[str, Any], settings: JdeSettings) ->
     """Why a voucher whose recovered GST/HST is charged at more than one rate is held back ("" otherwise): its lines
     were supplied in two provinces (the GST on some and the HST on others, or the HST at 13% and at 15%), a pay item
     has one tax area, and AP Coder makes one pay item. The reason spells out the pay items to key by hand, each with
-    its tax area, taxable and tax amounts, and its lines where the lines' tax codes tell (B-2152).
+    its tax area, taxable and tax amounts, and its lines where the lines' tax codes or amounts tell (B-2152): the
+    figures are ``taxmath.invoice_taxes``'s ``areas``, as the review screen's Tax check has them (B-2227).
 
     Told from the tax lines' types and rates alone. Not seen: two provinces of one federal rate (Alberta and British
     Columbia or Quebec: the same GST, the provincial tax on some lines only, as on an invoice with exempt lines)."""
@@ -928,6 +929,7 @@ def _two_tax_areas(v: _Voucher, final: dict[str, Any], settings: JdeSettings) ->
     if len(kinds) < 2:
         return ""
     on = _date(final.get("invoice_date"))
+    areas = _federal_taxes(final)
     labels, items = [], []
     for n, (kind, rate) in enumerate(kinds, 1):
         # (an HST line whose rate was not read goes with the first rate; the GST has one)
@@ -937,10 +939,9 @@ def _two_tax_areas(v: _Voucher, final: dict[str, Any], settings: JdeSettings) ->
             province = v.province
         row = settings.tax_map.get(province) or TaxArea("", "")
         label = f"{kind} {rate * 100:.6g}%" if rate else kind
-        alone = sum(1 for k, _ in kinds if k == kind) == 1  # then the lines' tax codes say which lines are its
-        numbers = [li.get("line_number") for li in final.get("line_items") or []
-                   if alone and isinstance(li, dict) and kind in (li.get("taxes_applied") or [])]  # fmt: skip
-        taxable, tax = (sum(_units(t.get(key), v.decimals) for t in mine) for key in ("taxable_amount", "tax_amount"))
+        theirs = [a for a in areas if a.tax_type == kind and (kind == "GST" or (round(a.rate, 5) or rated[0]) == rate)]
+        numbers = sorted({x for a in theirs for x in a.line_numbers})
+        taxable, tax = (sum(_units(getattr(a, key), v.decimals) for a in theirs) for key in ("taxable", "tax"))
         labels.append(label)
         items.append(
             f"Pay item {n:03d}: tax area {row.tax_area.strip() or 'the one of the province it was supplied in'}, "
@@ -951,6 +952,17 @@ def _two_tax_areas(v: _Voucher, final: dict[str, Any], settings: JdeSettings) ->
     return (f"{' and '.join(labels)} are {'both' if len(kinds) == 2 else 'all'} charged (lines supplied in {count} "
             f"provinces): a pay item has one tax area, so this voucher is {count} pay items, to key by hand with the "
             f"G/L lines as coded. {'. '.join(items)}")  # fmt: skip
+
+
+def _federal_taxes(final: dict[str, Any]) -> tuple[Any, ...]:
+    """The GST and each province's HST the invoice charges, with the lines that carry each
+    (``taxmath.invoice_taxes``'s ``areas``)."""
+    from ..coding.tax import TaxSetup
+    from ..coding.taxmath import invoice_taxes
+    from ..core.schema import InvoiceCoding
+
+    coding = InvoiceCoding.model_validate({k: x for k, x in final.items() if k != "gl_distribution"})
+    return invoice_taxes(coding, TaxSetup(_rates(), {})).areas
 
 
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:

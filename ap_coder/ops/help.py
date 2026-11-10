@@ -630,6 +630,13 @@ CHECKS: dict[str, CheckHelp] = {
         "A provincial tax belongs to a province other than the place of supply.",
         "Check the ship-to address. The tax should follow where the goods or services are delivered.",
     ),
+    "TAX_TWO_PROVINCES": CheckHelp(
+        TAX, "Lines for two provinces",
+        "The invoice charges GST on some lines and HST on others (or the HST of two provinces), each at its "
+        "official rate on lines of its own: the lines were supplied in two provinces.",
+        "Check that each line's tax code is the tax of the province it was supplied in; if every line was supplied "
+        "in one province, ask the vendor for a corrected invoice.",
+    ),
     "TAX_PROVINCE_UNKNOWN": CheckHelp(
         TAX, "Tax province unknown", "The province of a tax line is not known, so its rate cannot be checked.",
         "Set the province on the tax line.",

@@ -4899,7 +4899,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the last line a person approved here did not go elsewhere (`SURE_SHARE`, `SURE_LINES`). Never on a guessed
     business unit, never from another vendor's line, and not when the same words went to several business units
     (who ordered decides: `UNIT_SURE_LINES` approvals on one unit settle it) or to several accounts of one voucher of
-    the past coding. A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
+    the past coding. Nor does the supplier's one account code a line that plainly says another kind of thing
+    (B-2228, `suggest._unless_another_kind`): one that reads as a meal while nothing of the account does, or that is
+    `ANOTHER_ALIKE` (0.5) to the name of another account offered, and in both cases is not alike to AP's remarks
+    for the account, the lines approved to it here or its name. It is left with "This supplier's lines usually go to
+    X, but this line reads like Y: check it" and both offered; a supplier's own words that name no account ("waybill
+    77812") are still coded (the journal bench's one-account lines: 77% coded alone, 88 of 88 right, before and
+    after). A line left says why ("This supplier's 20 lines last year went to 3 accounts: 60% / 25% / 15%",
     "A new supplier: not in last year's journal", "The supplier's usual account … is no longer in the chart (business
     unit … is no longer active)") and keeps up to 5 `candidates`. Every line with an account keeps `decided_by`
     (`core/schema.decided`): `source` rule, vendor, supplier, others, words, model or person, with the rule's id, the

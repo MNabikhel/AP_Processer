@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .money import PRINTED_BASE, half_up, in_cents, nil, solver_cents, times, within
+from .money import CENT, PRINTED_BASE, half_up, in_cents, nil, solver_cents, tax_right, times, within
 from .tax import CANADIAN_TAX_TYPES, LAWFUL_OTHER_RATES, REGIME, TAX_TYPES
 
 EXEMPT, ZERO_RATED, OUT_OF_SCOPE = "exempt", "zero_rated", "out_of_scope"
@@ -665,6 +665,29 @@ def prefill(
     return done
 
 
+def settled_tax_lines(lines: Sequence[Any], tax_lines: Sequence[Any],
+                      rate_for: Callable[[str, str], float | None]) -> list[Any]:  # fmt: skip
+    """The tax lines of a reading that gives each tax's amount and not what it was charged on, once the lines' tax
+    codes are settled (``prefill``): a tax that some lines carry and others do not (an exempt line, lines for another
+    province) was charged on the lines that carry it, at the rate in force (``rate_for``), when those make the tax
+    charged. Until then its taxable amount was the whole subtotal and its rate the tax over that, a rate no one
+    charged (B-2225). A tax its lines do not make at the rate in force is left as it was: the checks say so."""
+    out = []
+    for tl in tax_lines:
+        tax_type, tax = str(_get(tl, "tax_type") or ""), float(_get(tl, "tax_amount") or 0)
+        amounts = [float(_get(li, "amount") or 0) for li in lines if tax_type in (_get(li, "taxes_applied") or [])]
+        alone = sum(1 for t in tax_lines if _get(t, "tax_type") == tax_type) == 1
+        rate = rate_for(tax_type, str(_get(tl, "province") or "")) if tax_type != "OTHER" and not nil(tax) else None
+        base = half_up(sum(amounts))
+        if (rate and alone and amounts and len(amounts) < len(lines)
+                and not within(base, float(_get(tl, "taxable_amount") or 0), CENT)
+                and tax_right(tax, (times(base, rate), half_up(sum(times(a, rate) for a in amounts))))):  # fmt: skip
+            update = {"rate": rate, "taxable_amount": base}
+            tl = {**tl, **update} if isinstance(tl, dict) else tl.model_copy(update=update)
+        out.append(tl)
+    return out
+
+
 def _with_note(line: Any, note: str) -> Any:
     """``line`` with ``note`` added to its reasoning (once): a dict changed in place, a ``LineItem`` copied."""
     reason = str(_get(line, "reasoning_justification") or "")
@@ -865,6 +888,8 @@ def _write_codes(items: list[Any], tax_lines: Sequence[Any], charged: list[str],
             # not to: exempt); a tax charged on no line stays due (D-64). Nothing charged on a line while the vendor
             # charges tax on others: an exempt line.
             exempt = [t for t in canadian if t not in taxes]
+            if {"GST", "HST"} & set(taxes):  # GST lines beside HST lines (two provinces): neither is an exemption
+                exempt = [t for t in exempt if t not in ("GST", "HST")]
             if "PST" in exempt and not collects_now("PST"):  # out of province, or no PST number: due, not exempt
                 exempt.remove("PST")
             if not taxes and canadian and set(exempt) == set(canadian):

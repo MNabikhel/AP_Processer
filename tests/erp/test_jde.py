@@ -1101,14 +1101,21 @@ def test_two_federal_rates_on_one_invoice_are_two_pay_items_spelled_out_and_the_
 
     ready, held = jde_keying.vouchers([inv], tax_amounts, AN8)
     assert not ready and held[0].why == [reason]
-    # HST at two rates (Ontario and Nova Scotia): the lines of each cannot be told from the lines' tax codes.
+    # HST at two rates (Ontario and Nova Scotia): the lines' tax codes do not say which lines are whose, their
+    # amounts do (``taxmath.invoice_taxes``'s ``areas``, B-2227); two lines of one amount are not told apart.
     lines = [line(1, 1000.0, "6010", ["HST"]), line(2, 500.0, "6010", ["HST"])]
     two_hst = _two_provinces([tl("HST", "ON", 0.13, 1000.0, 130.0), tl("HST", "NS", 0.14, 500.0, 70.0)], lines,
                              ship_to_province="ON", supplier_province="ON")  # fmt: skip
     (reason,) = jde.validate([two_hst], tax_amounts, AN8)[1]
     assert reason.startswith("HST 13% and HST 14% are both charged (lines supplied in two provinces)")
-    assert "Pay item 001: tax area ON-HST, code V, taxable amount 1,000.00, tax amount 130.00 (HST 13%)." in reason
-    assert reason.endswith("Pay item 002: tax area NS-HST, code V, taxable amount 500.00, tax amount 70.00 (HST 14%)")
+    assert ("Pay item 001: tax area ON-HST, code V, taxable amount 1,000.00, tax amount 130.00 (HST 13%: line 1)."
+            in reason)  # fmt: skip
+    assert reason.endswith("Pay item 002: tax area NS-HST, code V, taxable amount 500.00, tax amount 70.00 (HST 14%: "
+                           "line 2)")  # fmt: skip
+    lines = [line(1, 500.0, "6010", ["HST"]), line(2, 500.0, "6010", ["HST"])]
+    alike = _two_provinces([tl("HST", "ON", 0.13, 500.0, 65.0), tl("HST", "NS", 0.14, 500.0, 70.0)], lines,
+                           ship_to_province="ON", supplier_province="ON")  # fmt: skip
+    assert jde.validate([alike], tax_amounts, AN8)[1][0].endswith("taxable amount 500.00, tax amount 70.00 (HST 14%)")
     # One federal rate is one pay item: the same tax printed twice (goods, freight), a tax line with no rate read,
     # GST with a provincial tax; and with the tax coded to G/L accounts there is no tax area to split by.
     one = [line(1, 1000.0, "6010", ["GST"]), line(2, 100.0, "6010", ["GST"])]
