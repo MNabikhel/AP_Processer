@@ -383,6 +383,78 @@ def test_an_approved_remark_is_learned_and_a_typed_one_outweighs_last_years(book
     assert again.remark_keys == prior_for(store, vendor).use(COURIER).remark_keys == prior.use(COURIER).remark_keys
 
 
+def _split(store, reference, vendor, first_account, second_account):
+    """A one-line invoice of ``vendor`` split 60/40 over two accounts, as ``review.split_line`` leaves its parts."""
+    coding = _coding(store, reference, "Parcel pick-up", "Parcel pick-up", vendor=vendor)
+    for li, account, share in zip(coding.line_items, (first_account, second_account), ("60%", "40%"), strict=True):
+        li.predicted_cost_center, li.predicted_gl_code = account.split(".", 1)
+        li.description, li.reasoning_justification = f"Parcel pick-up ({share})", f"Split from line 1 ({share})."
+    return coding
+
+
+def test_the_parts_of_a_split_line_share_the_lines_remark_without_the_splits_mark(books):
+    """B-2263: the second part of a split, on an account the supplier has no remark for, took the description with
+    the split's mark ("Parcel pick-up (40%)") as its remark. It takes the remark the first part has, or the one
+    suggested for its own account when there is one; a remark typed on it stays."""
+    store, reference, _ = books
+    load_journal(store, monthly(6300, "TWO LINE COURIER", COURIER, "courier charges", 2), name="third.csv")
+    elsewhere = f"{FACILITIES}.7420.4207"
+    coding = _split(store, reference, "Two Line Courier", COURIER, elsewhere)
+    first, second = coding.line_items
+    rk.fill_remarks(coding, store, reference)
+    assert (first.remark, first.remark_from) == ("courier charges", "supplier")
+    assert (second.remark, second.remark_from) == ("courier charges", "supplier")
+    # Neither account has a remark: the line's own words, without "(60%)" and "(40%)".
+    coding = _split(store, reference, "Nobody Known Ltd.", elsewhere, COURIER)
+    rk.fill_remarks(coding, store, reference)
+    assert [(li.remark, li.remark_from) for li in coding.line_items] == [("Parcel pick-up", "invoice")] * 2
+    # The part's own account has a remark: that one. A remark a person typed on the part stays.
+    coding = _split(store, reference, "Brightway Janitorial Ltd.", JANITOR, CARPET)
+    rk.fill_remarks(coding, store, reference)
+    assert [li.remark for li in coding.line_items] == ["Jan janitorial 410 Elm", "carpet cleaning 3-1-204"]
+    coding = _split(store, reference, "Two Line Courier", COURIER, elsewhere)
+    first, second = coding.line_items
+    second.remark, second.remark_from = "parcels annex", "person"
+    rk.fill_remarks(coding, store, reference)
+    assert (second.remark, second.remark_from) == ("parcels annex", "person")
+    # A remark typed on the first part is the line's: the second part, not typed, follows it.
+    second.remark, second.remark_from = "", ""
+    first.remark, first.remark_from = "KT parcels 3-1-204", "person"
+    rk.fill_remarks(coding, store, reference)
+    assert (second.remark, second.remark_from) == ("KT parcels 3-1-204", "invoice")
+
+
+@pytest.mark.parametrize(
+    ("typed_on", "typed", "next_on", "carried"),
+    [
+        ("2026-11-12", "courier nov 2026 waybill", "2026-12-10", "courier dec 2026 waybill"),
+        ("2026-11-12", "courier nov 2026 waybill", "2026-11-26", "courier nov 2026 waybill"),  # the same month
+        ("2026-12-10", "courier Dec 2026 waybill", "2027-01-14", "courier Jan 2027 waybill"),  # across a year end
+        ("2026-12-10", "courier dec/26 waybill", "2027-01-14", "courier jan/27 waybill"),
+        ("2026-12-10", "courier December waybill", "2027-01-14", "courier January waybill"),
+    ],
+)
+def test_a_remark_typed_with_a_month_names_the_next_invoices_month(books, tmp_path, typed_on, typed, next_on, carried):
+    """A remark a person typed once is the supplier's from then on: the month (and year) it names is the one of the
+    invoice it is carried to, never the one it was typed in."""
+    store, reference, _ = books
+    vendor = "Rapidway Courier Inc."
+    load_journal(store, monthly(8800, "RAPIDWAY COURIER INC.", COURIER, "courier charges", 4), name="courier.csv")
+
+    def read(number, on):
+        coding = code_from_capture(captured(vendor, "Overnight parcel", number=number), reference, [], store,
+                                   text="").coding  # fmt: skip
+        coding.invoice_date = dt.date.fromisoformat(on)
+        rk.fill_remarks(coding, store, reference)
+        return coding
+
+    first = read("RC-1", typed_on)
+    first.line_items[0].remark, first.line_items[0].remark_from = typed, "person"
+    approve(store, tmp_path, first, [COURIER])
+    (li,) = read("RC-2", next_on).line_items
+    assert (li.remark, li.remark_from) == (carried, "supplier")
+
+
 def test_a_database_made_before_gets_the_remark_columns(store):
     with store._conn() as conn:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(feedback)")]

@@ -57,6 +57,7 @@ from ap_coder.coding.line_tax import (
 from ap_coder.coding.line_tax import options as tax_code_options
 from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
+from ap_coder.coding.remark import PERSON, one_line
 from ap_coder.coding.remark import typed as typed_remark
 from ap_coder.coding.review import (
     codes_to_pick,
@@ -1248,6 +1249,18 @@ def coding_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
         cc = cc or (bool(s_cc) and (li.get("predicted_cost_center") or "") != s_cc)
     return {(True, True): "GL accounts and cost centers", (True, False): "GL accounts",
             (False, True): "cost centers"}.get((gl, cc), EDIT_LABELS["line_coding"])  # fmt: skip
+
+
+def remarks_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """The lines whose remark a person typed over the one suggested, as the approved invoice says it: "remark changed
+    on line 1", "remarks changed on lines 1, 3"; "" when none was."""
+    paired = pair_lines(ai.get("line_items") or [], final.get("line_items") or [])
+    numbers = [str(li.get("line_number")) for before, li in paired if li.get("remark_from") == PERSON
+               and one_line(li.get("remark")) != one_line((before or {}).get("remark"))]  # fmt: skip
+    if not numbers:
+        return ""
+    s = "s" if len(numbers) > 1 else ""
+    return f"remark{s} changed on line{s} {', '.join(numbers)}"
 
 
 def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:

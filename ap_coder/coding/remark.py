@@ -15,8 +15,8 @@ c. else from the invoice: the line's own description shortened to 30 characters 
 
 Nothing is ever longer than ``REMARK_MOST`` and nothing is cut without saying: ``fit`` returns the text and whether
 it was shortened. ``typed`` reads the review screen's remark cell (a person's remark is ``PERSON``, which no
-suggestion replaces), ``fill_remarks`` gives each line of a coding its remark, ``long_remarks`` finds the ones too
-long for JD Edwards (the check ``REMARK_LONG``).
+suggestion replaces), ``fill_remarks`` gives each line of a coding its remark (the parts of a split line share the
+line's), ``long_remarks`` finds the ones too long for JD Edwards (the check ``REMARK_LONG``).
 """
 
 from __future__ import annotations
@@ -78,6 +78,11 @@ _FILLER = frozenset(
 )
 
 
+# A part of a split line (``review.split_line``): its reason names the line it was split from and its share, the mark
+# its description ends with ("Diesel - card 30419 (40%)").
+_SPLIT = re.compile(r"^Split from line (\d+) \((.+?)\)\.")
+
+
 class Period(NamedTuple):
     """The period an invoice is for: its year, month and quarter."""
 
@@ -114,6 +119,22 @@ def fit(text: Any) -> tuple[str, bool]:
 
 def _get(thing: Any, name: str) -> Any:
     return thing.get(name) if isinstance(thing, Mapping) else getattr(thing, name, None)
+
+
+def _described(line: Any) -> str:
+    """A line's description as the invoice prints it: a part of a split line without the split's mark."""
+    text = one_line(_get(line, "description"))
+    part = _SPLIT.match(str(_get(line, "reasoning_justification") or ""))
+    return text.removesuffix(f"({part[2]})").rstrip() if part else text
+
+
+def _first_part(line: Any, coding: Any) -> Any:
+    """The first part of the split line ``line`` is another part of (it keeps the line's number, and comes before
+    it); None for a first part and for a line that is no part."""
+    part = _SPLIT.match(str(line.reasoning_justification or ""))
+    if not part or int(part[1]) == line.line_number:
+        return None
+    return next((li for li in coding.line_items if li.line_number == int(part[1])), None)
 
 
 def _date(value: Any) -> dt.date | None:
@@ -278,10 +299,9 @@ def suggested(line: Any, invoice: Any, prior: Prior | None, account: str,
         if text:
             return Suggestion(text, why + (f", shortened to {REMARK_MOST} characters" if cut else ""), SUPPLIER)
     cut = f", shortened to {REMARK_MOST} characters"
-    text = shortened(_get(line, "description"))
+    text = shortened(_described(line))
     if text:
-        return Suggestion(text, "from the invoice's line" + (cut if text != one_line(_get(line, "description"))
-                                                             else ""), INVOICE)  # fmt: skip
+        return Suggestion(text, "from the invoice's line" + (cut if text != _described(line) else ""), INVOICE)
     name = ""
     if reference is not None and account:  # (a GL code alone, or a business unit and its code)
         name = account_name(reference, "", account) or account_name(reference, *split_account(account))
@@ -328,9 +348,10 @@ def remarks_typed(store: Any) -> bool:
 def fill_remarks(coding: Any, store: Any, reference: ReferenceData, wanted: bool | None = None) -> None:
     """Give each line of ``coding`` its remark (``LineItem.remark`` and ``remark_from``): the one suggested for the
     account it is coded to now, so a line whose account changes gets that account's; a line with no account gets
-    the invoice's wording. A remark a person typed (``remark_from`` "person") is never replaced; typed exactly as
-    suggested, it is the suggestion. Only where remarks are used (``wanted``, default: a chart of accounts is
-    imported, or the remarks go to JD Edwards as typed): any other install stores its invoices as before."""
+    the invoice's wording. A part of a split line with no remark of the supplier's for its own account takes the
+    line's remark as the first part has it. A remark a person typed (``remark_from`` "person") is never replaced;
+    typed exactly as suggested, it is the suggestion. Only where remarks are used (``wanted``, default: a chart of
+    accounts is imported, or the remarks go to JD Edwards as typed): any other install stores its invoices as before."""
     if wanted is None:
         wanted = reference.pairs is not None or remarks_typed(store)
     if not wanted:
@@ -340,6 +361,11 @@ def fill_remarks(coding: Any, store: Any, reference: ReferenceData, wanted: bool
         prior = prior_for(store, coding.vendor_name, always=reference.pairs is not None)
     for line in coding.line_items:
         found = suggested(line, coding, prior, account_of(line), reference)
+        first = _first_part(line, coding)
+        if first is not None and found.source != SUPPLIER and one_line(first.remark):
+            # (typed on the first part, it is no person's remark here: this part follows the first)
+            source = INVOICE if first.remark_from == PERSON else first.remark_from
+            found = Suggestion(one_line(first.remark), "the remark of the line's first part", source)
         if line.remark_from == PERSON and one_line(line.remark) not in ("", found.text):
             continue
         line.remark, line.remark_from = found.text, found.source
