@@ -675,6 +675,77 @@ def _line_verdict(gl: str, account: Account | None, cc: str, t: dict[str, Any]) 
     return gl_ok, cc_ok
 
 
+def _compare_lines(o: Ours, p: Posted, coding: dict[str, int], diff: Any) -> dict[str, int]:
+    """One invoice's lines against its voucher's G/L distribution (``_pair_lines``): the counts go into ``coding``,
+    each difference to ``diff``; returns the invoice's own {"n": lines, "right", "proposed_right"}."""
+    lines = {"n": 0, "right": 0, "proposed_right": 0}
+    paired, amounts = _pair_lines(o, p)
+    for what, mine, theirs, account in amounts:
+        diff(o, p, "line", what, mine, theirs, account)
+    for mine, theirs, same_account in paired:
+        if mine is not None and mine["recoverable_tax"]:
+            continue  # E1 posts recoverable tax from its own tax rules: not coding
+        if mine is None:
+            coding["posted_only"] += 1
+            diff(
+                o,
+                p,
+                "line",
+                "Posted line not in AP Coder",
+                "",
+                theirs["amount"],
+                f"{_account_text(_posted_account(theirs))} {theirs['explanation']}".strip(),
+            )
+            continue
+        coding["lines"] += 1
+        lines["n"] += 1
+        if theirs is None:
+            coding["not_posted"] += 1
+            diff(
+                o,
+                p,
+                "line",
+                "Line with neither its account nor its amount posted",
+                mine["amount"],
+                "",
+                f"{_account_text(mine['account'], mine['gl'])} {mine['description']}".strip(),
+            )
+            continue
+        coding["compared"] += 1
+        posted_account = _account_text(_posted_account(theirs))
+        gl_ok, cc_ok = _line_verdict(mine["gl"], mine["account"], mine["cc"], theirs)
+        if gl_ok:
+            coding["gl_right"] += 1
+            lines["right"] += 1
+        else:
+            diff(
+                o,
+                p,
+                "line",
+                "GL account",
+                _account_text(mine["account"], mine["gl"]),
+                posted_account,
+                mine["description"],
+            )
+        if cc_ok is not None:
+            coding["cc_n"] += 1
+            coding["cc_right"] += cc_ok
+            if gl_ok and not cc_ok:
+                diff(o, p, "line", "Cost center (business unit)", (mine["account"] or ("",))[0] or mine["cc"],
+                     theirs["bu"], mine["description"])  # fmt: skip
+        if not same_account and not _close(mine["amount"], theirs["amount"]):
+            diff(o, p, "line", "Line amount", mine["amount"], theirs["amount"], mine["description"])
+        if mine["proposed_gl"] in ("", UNASSIGNED):
+            coding["proposed_blank"] += 1
+        else:
+            p_ok, p_cc = _line_verdict(mine["proposed_gl"], mine["proposed_account"], mine["proposed_cc"],
+                                       theirs)  # fmt: skip
+            if p_ok and p_cc is not False:
+                coding["proposed_right"] += 1
+                lines["proposed_right"] += 1
+    return lines
+
+
 def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None) -> dict[str, Any]:
     """The figures and the differences of a pilot (see the module's docstring)."""
     pairs, ours_only, posted_only = match(ours, posted)
@@ -723,72 +794,7 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
                 else:
                     tax_wrong = True
                     diff(o, p, "tax treatment", label, mine, theirs)
-        lines = {"n": 0, "right": 0, "proposed_right": 0}
-        if p.has_lines:
-            paired, amounts = _pair_lines(o, p)
-            for what, mine, theirs, account in amounts:
-                diff(o, p, "line", what, mine, theirs, account)
-            for mine, theirs, same_account in paired:
-                if mine is not None and mine["recoverable_tax"]:
-                    continue  # E1 posts recoverable tax from its own tax rules: not coding
-                if mine is None:
-                    coding["posted_only"] += 1
-                    diff(
-                        o,
-                        p,
-                        "line",
-                        "Posted line not in AP Coder",
-                        "",
-                        theirs["amount"],
-                        f"{_account_text(_posted_account(theirs))} {theirs['explanation']}".strip(),
-                    )
-                    continue
-                coding["lines"] += 1
-                lines["n"] += 1
-                if theirs is None:
-                    coding["not_posted"] += 1
-                    diff(
-                        o,
-                        p,
-                        "line",
-                        "Line with neither its account nor its amount posted",
-                        mine["amount"],
-                        "",
-                        f"{_account_text(mine['account'], mine['gl'])} {mine['description']}".strip(),
-                    )
-                    continue
-                coding["compared"] += 1
-                posted_account = _account_text(_posted_account(theirs))
-                gl_ok, cc_ok = _line_verdict(mine["gl"], mine["account"], mine["cc"], theirs)
-                if gl_ok:
-                    coding["gl_right"] += 1
-                    lines["right"] += 1
-                else:
-                    diff(
-                        o,
-                        p,
-                        "line",
-                        "GL account",
-                        _account_text(mine["account"], mine["gl"]),
-                        posted_account,
-                        mine["description"],
-                    )
-                if cc_ok is not None:
-                    coding["cc_n"] += 1
-                    coding["cc_right"] += cc_ok
-                    if gl_ok and not cc_ok:
-                        diff(o, p, "line", "Cost center (business unit)", (mine["account"] or ("",))[0] or mine["cc"],
-                             theirs["bu"], mine["description"])  # fmt: skip
-                if not same_account and not _close(mine["amount"], theirs["amount"]):
-                    diff(o, p, "line", "Line amount", mine["amount"], theirs["amount"], mine["description"])
-                if mine["proposed_gl"] in ("", UNASSIGNED):
-                    coding["proposed_blank"] += 1
-                else:
-                    p_ok, p_cc = _line_verdict(mine["proposed_gl"], mine["proposed_account"], mine["proposed_cc"],
-                                               theirs)  # fmt: skip
-                    if p_ok and p_cc is not False:
-                        coding["proposed_right"] += 1
-                        lines["proposed_right"] += 1
+        lines = _compare_lines(o, p, coding, diff) if p.has_lines else {"n": 0, "right": 0, "proposed_right": 0}
         per_invoice.append({"id": o.id, "supplier": o.vendor_name, "vkey": o.vkey, "an8": o.an8 or p.an8,
                             "fields": sum(1 for n in HEADER_FIELDS if _posted_value(p, n) not in (None, "")),
                             "fields_wrong": len(wrong_fields), "lines": lines["n"], "lines_right": lines["right"],

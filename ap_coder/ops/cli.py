@@ -1098,7 +1098,8 @@ def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
             said, module = [proposed_score.paragraph(report)], proposed_score
         else:
             report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
-            said, module = [journal_score.paragraph(report), journal_score.UPPER_BOUND], journal_score
+            said = [journal_score.paragraph(report), journal_score.figures_said(report), journal_score.UPPER_BOUND]
+            module = journal_score
     except ExportError as exc:
         print(str(exc), file=sys.stderr)
         return 1

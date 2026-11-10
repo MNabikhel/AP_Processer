@@ -154,6 +154,7 @@ def test_the_command_says_the_paragraph_and_where_the_report_is(company, tmp_pat
     said = capsys.readouterr().out
     assert code == 0 and journal_score.paragraph(company.report) in said and journal_score.UPPER_BOUND in said
     assert str(out / journal_score.REPORT) in said and (out / journal_score.MISSES).exists()
+    assert "First suggestion right: " in said and "business unit right: " in said
     assert cli.main(["--db", str(company.store.path), "pilot-score", "--journal", "--out", str(out)]) == 0
 
 
@@ -173,6 +174,17 @@ def test_more_months_held_out_and_what_cannot_be_scored_is_said(company, tmp_pat
     not_one.write_text("a,b\n1,2\n", encoding="utf-8")
     with pytest.raises(pilot_score.ExportError, match="not a Transaction Journal"):
         journal_score.run(company.store, not_one, tmp_path / "refused")
+
+
+def test_a_data_folder_with_no_chart_of_accounts_is_scored_too(company, tmp_path):
+    """GL accounts and cost centers typed in, no chart imported: the temporary database gets the two lists."""
+    plain = Store(tmp_path / "plain" / "ap_coder.db")
+    plain.save_accounts("gl_accounts", [{"code": "7340.2210", "description": "Courier", "category": ""}])
+    plain.save_accounts("cost_centers", [{"code": "0021061010", "description": "General Administration",
+                                          "category": ""}])  # fmt: skip
+    before = _dump(plain)
+    report, _ = journal_score.run(plain, company.file)
+    assert report["all"]["lines"] == company.report["all"]["lines"] and _dump(plain) == before
 
 
 def test_a_year_of_vouchers_is_scored_in_seconds(tmp_path):

@@ -122,12 +122,13 @@ def books_copy(live: Any, path: Path) -> Any:
     from ..core.store import Store
 
     store = Store(path)
-    store.import_business_units(live.business_units())
-    store.import_chart(live.chart_accounts())
-    if not live.has_chart():  # the lists typed or imported as they are
+    if live.has_chart():
+        store.import_business_units(live.business_units())
+        store.import_chart(live.chart_accounts())
+        store.save_chart_settings(live.chart_settings())
+    else:  # no chart imported: the two lists as they were typed or imported
         for table in ("gl_accounts", "cost_centers"):
             store.save_accounts(table, live.list_accounts(table))
-    store.save_chart_settings(live.chart_settings())
     store.import_vendor_master([
         {"vendor_name": v["display_name"], "erp_id": str(v.get("erp_id") or ""), "status": v.get("status") or "active",
          "gst": v.get("expected_gst") or "", "terms": v.get("terms") or "", "default_gl": v.get("default_gl") or ""}
@@ -273,6 +274,14 @@ def paragraph(report: dict[str, Any]) -> str:
             f"another {report['offered']:,} the keyed account was among its first three suggestions; "
             f"{report['left']:,} it would have left to a person without the keyed account among them. It knew only the "
             f"vouchers keyed before, {c['first_date']} to {c['learned_to']}.")  # fmt: skip
+
+
+def figures_said(report: dict[str, Any]) -> str:
+    """The score's other figures in one line, for the screen."""
+    s, share = report["all"], measure._pct
+    return (f"First suggestion right: {share(s['first_right'])} of the lines; right answer in the first three: "
+            f"{share(s['in_top3'])}; object.subsidiary right: {share(s['code_right'])}; business unit right: "
+            f"{share(s['unit_right'])}.")  # fmt: skip
 
 
 def _pct(a: float, b: float) -> str:
