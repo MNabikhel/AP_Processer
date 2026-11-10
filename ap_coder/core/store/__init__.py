@@ -17,7 +17,8 @@ helpers), ``accounts`` (GL accounts, cost centers, audit trail, bank accounts, t
 approving, the second approval), ``register`` (the ERP's invoice register, JD Edwards' vouchers in it, D-181),
 ``purchasing`` (POs, export batches, coding rules), ``capture``
 (supplier learning, touchless, reader scores, the Azure check's queue), ``page_queue`` (the page reader's queue,
-D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors``, ``backups`` (and ``backup_files``: the
+D-171), ``lessons`` (lessons and the AI reviewer's queue), ``vendors`` (the vendor list) and ``vendor_master`` (the
+ERP's vendor master: its import, hold codes, retired names, people), ``backups`` (and ``backup_files``: the
 invoice files and others a backup holds, D-143; the copies server-update makes of a database file without opening a
 Store on it, D-189), ``learning`` (the feedback memory, metrics), ``ephemeral`` (messages and uploads kept for a short
 while), ``samples``, ``users`` (server mode's accounts, sessions and login attempts, D-97), ``hub`` (what the finance
@@ -138,6 +139,7 @@ from .summary import SummaryMixin
 from .suppliers import SuppliersMixin
 from .transaction import TransactionMixin
 from .users import UsersMixin
+from .vendor_master import VendorMasterMixin
 from .vendors import VendorsMixin
 
 
@@ -154,6 +156,7 @@ class Store(
     SuppliersMixin,
     LessonsMixin,
     VendorsMixin,
+    VendorMasterMixin,
     BackupsMixin,
     LearningMixin,
     EphemeralMixin,
