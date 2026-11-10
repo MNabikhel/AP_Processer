@@ -287,6 +287,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=AP-LAPTOP" -addex
 ```
 
 It writes `apcoder.pem` (the certificate) and `apcoder.key.pem` (its private key: it never leaves the data folder).
+`python -m ap_coder share` (section 16) runs this same command for the computer's own names when it finds `openssl`,
+and says so when it does not.
 
 - **The name** is the one colleagues type: the computer's own name (`hostname` shows it) and, when the office DNS
   gives it one, its full name. Not its address: a laptop's changes between the Wi-Fi and the dock. AP Coder answers to
@@ -622,12 +624,15 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
 
 ## 9. Backups
 
-- **Every day, automatically**: a backup in `D:\APCoderData\backups`, when AP Coder starts and once a day while it
-  runs. Kept (D-187): the newest 14 daily ones, then the newest of each of the last 8 weeks and of each of the last
+- **Every day, automatically**: a backup in `D:\APCoderData\backups`, at the time set on *Settings* → *Data &
+  backups* (*Back up every day at*, 17:30 until another is saved; made at the next start when AP Coder was not
+  running then, and the page says so; D-218). Kept (D-187):
+  the newest 14 daily ones, then the newest of each of the last 8 weeks and of each of the last
   12 months that have one, so a mistake found at the month end or the year end can still be undone; a backup with a
   label (yours, an update's, a restore's) is always kept, and the newest complete one is never deleted.
-  - **When:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in the morning, not
-    during the working day. The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
+  - **When, on a big server:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in
+    the morning, not during the working day; those hours then decide, and the time on the Settings page is not used
+    (the page says so). The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
     server's clock. A year's database (300,000 invoices) is about 10 GB: the copy takes minutes of disk work. If the
     server was off during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped
     (B-1671).
@@ -1760,7 +1765,42 @@ unused (30 minutes unless `server.json` says more, section 10); and, when a seco
 the second approval: for 7 days an account can't give it to invoices first approved by the Admin who added it from
 the *Users* page, so add the second approver from the console (`users add`), or name a second Admin.
 
-**The ten steps:**
+**The short way: one command.** On the laptop, in the AP Coder folder, as its owner (no administrator rights):
+
+```bat
+.venv\Scripts\python.exe -m ap_coder share
+```
+
+It checks what sharing needs, says each missing thing in plain words with its next step, does itself what needs no
+administrator rights, then serves AP Coder with sign-in over HTTPS from the laptop's own data folder until its window
+is closed (or `python -m ap_coder share --stop` from another window). Run it again after each step it names: it
+starts once the certificate and the first Admin are there. To start it with a double-click, make a file `Share AP Coder.cmd` on the desktop
+holding these three lines (the last keeps the window open, so what it said can be read):
+
+```bat
+cd /d <the AP Coder folder>
+.venv\Scripts\python.exe -m ap_coder share
+pause
+```
+
+What it does, and what it leaves to a person:
+
+| What sharing needs | What `share` does |
+|---|---|
+| A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
+| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. |
+| `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
+| The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another. |
+| The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
+| The address | Prints what colleagues type, `https://AP-LAPTOP:8501`. |
+
+It needs no `setx`, no service and no second account: it runs as the owner, on the data folder AP Coder already
+uses, while the window is open and the laptop is awake. That is the price of the short way: nobody can sign in while
+the owner is logged off, and nothing starts it again after a restart (the service of step 4 does both). It always
+serves over HTTPS with sign-in: `--insecure-http` is not its to start. Steps 1, 5, 8 and 9 below still apply; the
+others are what `share` does.
+
+**The ten steps, by hand:**
 
 1. **Close laptop mode cleanly.** Finish or approve what is open on a review screen, press *Settings* → *Data &
    backups* → *Back up now*, and close AP Coder's window. Note the data folder that page names.
@@ -1785,7 +1825,8 @@ the *Users* page, so add the second approver from the console (`users add`), or 
      .venv\Scripts\python.exe -m ap_coder service status
      ```
 
-   - *The prototype's way, a window the owner opens each morning*: it runs as the owner, only while they are logged
+   - *The prototype's way, a window the owner opens each morning*: `python -m ap_coder share`, above. By hand it
+     is this: it runs as the owner, only while they are logged
      on and the window is open, and nothing starts it again after a restart. Write `server.json` in the data folder:
 
      ```json
@@ -1817,11 +1858,13 @@ the *Users* page, so add the second approver from the console (`users add`), or 
    The owner opens `https://AP-LAPTOP:8501`, chooses a password and sets up the authenticator app, then adds the
    colleagues on the *Users* page (Clerk; an Approver when a second approval is used), giving each their temporary
    password in person: it works for 3 days.
-7. **Backups** (step 9): *Settings* → *Data & backups* → *Also copy each backup to* the second folder. The automatic
-   backup is made when AP Coder starts and once a day while it runs, so on a laptop started each morning the day's
-   work is in no backup until the next morning: set `AP_BACKUP_HOURS=15-18` in the data folder's `.env` (a wide
-   window: a closed laptop misses a narrow one), or press *Back up now* before leaving. After any restore, set the
-   second folder again: a restore clears it, and the page says so.
+7. **Backups** (step 9): *Settings* → *Data & backups* → *Also copy each backup to* the second folder (one
+   `server.json` allows: `share --allow-folder`, or `allowed_folders`). The automatic backup is made every day at the
+   time set on that page (*Back up every day at*, 17:30 until another is saved: the end of the day, with the day's
+   work in it), while AP Coder is running. A laptop asleep or AP Coder closed at that time makes it at the next
+   start, and the page says when the last one was made and why ("made at start: AP Coder was not running at
+   17:30"): so leave the window open until that time, or press *Back up now* before closing it. After any restore,
+   set the second folder again: a restore clears it, and the page says so.
 8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*;
    Windows Update's restarts outside working hours. A laptop asleep answers nobody; awake again it goes on, and
    whoever was away longer than the session's idle time logs in again, their typed edits kept. LM Studio: started
@@ -1841,6 +1884,10 @@ the system's environment variables, and start with `APProcessor.bat --without-si
 accounts, so each laptop-mode start asks for that option, on purpose (D-211).
 
 **Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
+`share` itself (it was run on Linux: the certificate made, the first Admin, the server answering with sign-in, a
+plain start refused, `share --stop`): that it finds Git for Windows' `openssl`, that `netsh` shows the firewall rule
+without administrator rights, that closing its window leaves no `python.exe` of AP Coder in Task Manager, and what
+Windows' own firewall question does when it is cancelled;
 `service install` and `service status` there, and the task coming back after a Windows Update restart with nobody
 logged on; the hand-started window; the firewall rule's profile on the office Wi-Fi and the dock, and that the port
 is closed on a home network; that colleagues' PCs find the laptop by its name; the lid, sleep and the dock.

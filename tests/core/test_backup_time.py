@@ -125,27 +125,27 @@ def test_the_running_dashboard_backs_up_as_the_clock_passes_the_time(tmp_path):
     made_at(store.backup_now(), now - dt.timedelta(hours=3))  # the day's, made before its start
     clock = Clock(now)
     backup = DailyBackup(store, clock=clock.wall, monotonic=clock.monotonic)
-    backup.check()
+    backup.check(look=True)
     clock.now = now + dt.timedelta(minutes=1)
-    backup.check()
+    backup.check(look=True)
     assert backup.thread is None and len(store.list_backups()) == 1  # not yet
     clock.now = soon + dt.timedelta(seconds=20)
-    backup.check()
+    backup.check(look=True)
     backup.thread.join(30)
     assert len(store.list_backups()) == 2
     assert store.last_timed_backup()["why"] == f"made at its time, {soon.hour:02d}:{soon.minute:02d}"
     first = backup.thread
     clock.now = soon + dt.timedelta(minutes=5)
-    backup.check()
+    backup.check(look=True)
     assert backup.thread is first  # the day's is made: nothing to look at before the hour is up
     # The time is moved to a quarter of an hour from now: followed, with no restart.
     later = clock.now + dt.timedelta(minutes=15)
     store.set_setting(BACKUP_AT, f"{later.hour:02d}:{later.minute:02d}")
     clock.now += dt.timedelta(minutes=2)
-    backup.check()
+    backup.check(look=True)
     assert backup.thread is first
     clock.now = later + dt.timedelta(seconds=5)
-    backup.check()
+    backup.check(look=True)
     assert backup.thread is not first
     backup.thread.join(30)
     assert len(store.list_backups()) == 3
@@ -176,7 +176,7 @@ def test_with_no_set_time_the_backup_is_made_once_a_day_at_start_as_before(tmp_p
     first = backup.thread
     assert len(store.list_backups()) == 1 and store.last_timed_backup() == {}
     clock.now += dt.timedelta(hours=5)
-    backup.check()  # the hour is up: looked at, and the day's is there
+    backup.check(look=True)  # the hour is up: looked at, and the day's is there
     backup.thread.join(30)
     assert backup.thread is not first and len(store.list_backups()) == 1
 
@@ -198,3 +198,19 @@ def test_the_time_is_set_on_settings_and_the_page_says_when_the_last_one_was_mad
     assert client.post("/settings/data/backup-time", data={"at": ""}, headers=PAGE).json()["ok"]
     assert store.backup_at() is None
     assert 'name="at" value=""' in client.get("/settings/data").text
+
+
+def test_a_page_asked_for_never_reads_the_time_from_the_database(tmp_path):
+    """Each request lets the daily backup look at the clock (``app.BackupCheck``): it goes by the time as the
+    half-minute watch last read it, and opens no connection of its own."""
+    store = Store(tmp_path / "ap.db")
+    clock = Clock(dt.datetime.now())
+    backup = DailyBackup(store, clock=clock.wall, monotonic=clock.monotonic)
+    read = []
+    store.backup_at = lambda: read.append(1) or HALF_PAST_FIVE
+    backup.check()
+    clock.now += dt.timedelta(minutes=5)
+    backup.check()
+    assert read == [] and backup.thread is None
+    backup.check(look=True)
+    assert read == [1] and backup.at == HALF_PAST_FIVE

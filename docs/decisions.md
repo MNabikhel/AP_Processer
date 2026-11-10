@@ -5067,3 +5067,64 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Where:** `ap_coder/capture/reader/line_items.py` (`_amount_heading`, `_Columns`, `_columns_under`),
     `ap_coder/capture/bridge.py` (`printed_taxes`), `ap_coder/ai/offline_coder.py` (`_charges_outside`,
     `_lines_to_check`), `ap_coder/ops/help.py`; `tests/capture/test_line_table_columns.py`.
+- **D-218** · **The last pieces of one laptop serving a few AP processors: a backup at a set time each day, one
+  command to start sharing with sign-in, and a "why?" asked after a surprising correction** (10 Nov 2026).
+  - **A backup at a set time.** The daily backup was made when AP Coder started, then not again for 20 hours: on a
+    laptop started each morning the day's work was in no backup until the next morning. *Settings* → *Data &
+    backups* now has *Back up every day at* (`backup_at`, kept with the other backup settings; 17:30 until one is
+    saved, so an install that never saw the page gets the end-of-day backup too; saved empty, "off": no set time,
+    the 20-hour rule as before). With a time, the day's backup is the one made since the clock last showed it
+    (`backups.backup_due`): made as the clock passes it while AP Coder runs, and at the next check when it did not
+    (the start's, as before), with why kept and shown ("made at start: AP Coder was not running at 17:30", "made
+    late: this computer was asleep or busy at 17:30"). The clock is the business time zone's where `server.json`
+    has one. Who looks at the clock: `app.DailyBackup`, every half minute, in the process that does the background
+    work (the laptop's own; on the server its background process, never a web worker), and it reads the time again
+    once a minute, so a time saved on the page is followed with no restart. The free-space check, the second folder
+    and the retention are `backup_now`'s and `drop_old`'s, unchanged.
+    - *Not chosen:* a time that also governs a server whose IT set `AP_BACKUP_HOURS`: those hours were chosen on
+      purpose (B-1671), so they decide, the page shows the time greyed and says so. A Windows scheduled task for
+      the backup: it needs AP Coder closed or a second process on the database, and administrator rights.
+  - **`python -m ap_coder share`** (`ops/share.py`), the short way through docs/SERVER.md section 16. It checks,
+    in order: an AP Coder already running on this data (shared: says the address; the owner's own window: asks to
+    close it); the certificate (`server.json`'s, else the data folder's `tls` files, else the guide's self-signed
+    one made with this computer's `openssl`, as section 3 already allowed by hand); the first Admin (asked for at
+    the console: the name on the owner's approvals, a username, a password); then writes `server.json`, allows the
+    second backup folder chosen in laptop mode (`allowed_folders`, D-109: from the console, by the person who chose
+    it, and only while the data has no account yet; later `--allow-folder`), says the firewall rule and the address,
+    and runs `serve --server` as the service's host does (`serve_command`, `serve_env`), in its window, with 2 web
+    workers unless `server.json` says. `share --stop` asks that server to stop (`dashboard_stopped`).
+    - *Never:* a start without sign-in or over plain HTTP (`insecure_http` in `server.json` is ignored here); a
+      change to Windows' firewall or anything else that needs administrator rights (the rule is looked for with
+      `netsh ... show rule` and its command printed); `server.json` before the first Admin exists (a person who
+      stops at the password prompt still has a laptop that opens with a double-click). After it, D-211 holds: the
+      accounts and `server.json` mark the folder, and a plain start refuses it.
+    - *What could not be made simpler, and is said so:* the certificate without `openssl` (Windows writes no PEM
+      files; no certificate library is a dependency, and none was added for this); the firewall rule; the Windows
+      licence; a laptop asleep answers nobody. Not tried on Windows 11 (section 16 lists what to check there).
+  - **The "why?" after a surprising correction.** There was one question already, before saving: the same
+    correction of one situation made `why_after` times (D-72's lessons, `lessons.due_for_why`), its answer the
+    lesson's reason. Added (`lessons.surprise`): after an approval, never holding it, the next page asks once "Why
+    7340 and not 7420 for “Working lunch”?" when the person changed an account AP Coder expected: one it had coded
+    with no one picking (not a guess: `decided_by` "model", or a reason that says so), or the first account offered
+    on a line it left, when that came from this supplier's own history ("vendor", "supplier") with at least half
+    of its lines. Of several, the one it was surest of (a rule's, then a coded line by its share, then an offered
+    one): one question an invoice. Never for a line left with nothing offered, or offered from words alone, or a
+    line the person added; never in a bulk approval (it does not go through the review screen); not after the
+    question before saving. The message carries a short box, Skip, and one-click reasons built from what the line
+    kept, no model asked: "This supplier's lines like this go there", what may have changed by where the account
+    came from ("Last year's account no longer applies", "The rule does not fit this line"...), or "The unit named
+    on the line" when the line names the business unit chosen; and "One-off: don't learn from it".
+    - *Where the answer goes:* `explain_lesson` on that line's lesson, so What was learned → Lessons shows it and
+      one correction with its reason reaches the AI (D-72). For an account only offered, the lesson holds no
+      correction: its reason is listed all the same (`list_lessons`) and says both accounts, and is not sent to the
+      AI (the coding memory already learned the account chosen).
+    - *One-off:* the existing way a line is kept out of what teaches is Learning → Coding memory → Forget
+      (`delete_feedback`, which withdraws what the line taught its lessons, B-1422). `forget_one_off` uses it for
+      the invoice's lines of that kind and writes `lesson_one_off` in the invoice's history. No second path: a
+      one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity page say it.
+    - *The setting:* Settings → Review, "Ask why after a surprising correction" (`why_surprise`), on until turned
+      off. Off turns both questions off: "never asked" would not be true with the older question still asking.
+  - (`ap_coder/core/store/backups.py`, `ap_coder/web/app.py`, `ap_coder/web/pages/settings.py`,
+    `settings_data.html`; `ap_coder/ops/share.py`, `ap_coder/ops/cli.py`; `ap_coder/ai/lessons.py`,
+    `ap_coder/web/pages/invoice.py`, `ap_coder/core/store/learning.py`, `lessons.py`, `base.html`, `js/app.js`;
+    `tests/core/test_backup_time.py`, `tests/ops/test_share.py`, `tests/ai/test_why_question.py`)

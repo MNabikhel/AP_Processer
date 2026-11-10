@@ -107,8 +107,9 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
         os.chmod(key, 0o600)
     say(
         f"Made a certificate for this computer's name ({', '.join(names())}), good for {CERT_DAYS} days: {cert}. "
-        "Nobody signed it, so each colleague's browser warns once (“Your connection isn't private”): Advanced, then "
-        "Continue. docs/SERVER.md section 3 says how to trust it on their PCs, and when to ask IT for a real one."
+        "Nobody signed it, so each colleague's browser warns (“Your connection isn't private”) in each new browser "
+        "session: Advanced, then Continue. docs/SERVER.md section 3 says how to trust it on their PCs, so that it "
+        "no longer warns, and when to ask IT for a real one."
     )
     return str(cert), str(key)
 

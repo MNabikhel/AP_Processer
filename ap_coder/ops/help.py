@@ -1056,8 +1056,8 @@ FAQ: list[tuple[str, str]] = [
         "Export batches can be "
         "undone on the Exports page. For anything else, Settings → Data & backups → Restore this state puts AP Coder "
         "back as it was at a backup: the database and the invoice files, saved emails and attachments (one is made "
-        "automatically once a day when AP Coder starts, the newest 14 are kept (on the company server also one a week "
-        "for 8 weeks and one a month for a year), and one before any restore). Files "
+        "automatically once a day, at the time set there, the newest 14 are kept (on the company server also one a "
+        "week for 8 weeks and one a month for a year), and one before any restore). Files "
         "that came in since are moved to a set-aside folder in backups, never deleted.",
     ),
     (

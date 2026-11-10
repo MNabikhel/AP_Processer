@@ -127,8 +127,8 @@ class DailyBackup:
     invoice file, minutes to a slow network share (B-1553). ``auto_backup`` keeps its rules: once a day, the newest
     14 kept. ``now``: one asked for on Settings, on the same thread (never two at once). With a time of day set
     (Settings → Data & backups, ``Store.backup_at``, D-218) a check as the clock passes it makes the day's backup
-    then; ``watch`` checks every half minute with no page asked for. ``clock``, ``monotonic``: the time, for a test
-    to set."""
+    then; ``watch`` checks every half minute with no page asked for, and reads the time set (a check for a page
+    asked for never reads the database). ``clock``, ``monotonic``: the time, for a test to set."""
 
     def __init__(self, store: Store, every: float = 3600, clock: Callable[[], dt.datetime] = dt.datetime.now,
                  monotonic: Callable[[], float] = time.monotonic) -> None:  # fmt: skip
@@ -146,21 +146,23 @@ class DailyBackup:
         with self._lock:
             self._spawn(lambda: self._run(started=True))
 
-    def check(self) -> None:
+    def check(self, look: bool = False) -> None:
+        """``look``: a check of the clock's own (``watch``, the server's background process), which may read the
+        time set; one made for a page asked for goes by the time as last read."""
         now = self.monotonic()
         with self._lock:
             if self.thread is not None and self.thread.is_alive():
                 return
-            if now - self.last < self.every and not self._time_came(now):
+            if now - self.last < self.every and not self._time_came(now, look):
                 return
             self.last = now
             self._spawn(self._run)
 
-    def _time_came(self, now: float) -> bool:
-        """Whether the clock passed the backup's set time since the last check. The time is read again once a
-        minute: one saved on Settings, in this process or another, is followed without a restart."""
+    def _time_came(self, now: float, look: bool) -> bool:
+        """Whether the clock passed the backup's set time since the last check. With ``look`` the time is read
+        again once a minute: one saved on Settings, in this process or another, is followed without a restart."""
         wall = self.clock()
-        if self._read is None or now - self._read >= 60:
+        if look and (self._read is None or now - self._read >= 60):
             self._read = now
             try:
                 at = self.store.backup_at()
@@ -184,7 +186,7 @@ class DailyBackup:
 
         def look() -> None:
             while not self._halt.wait(every):
-                self.check()
+                self.check(look=True)
 
         threading.Thread(target=look, name="ap-coder-backup-clock", daemon=True).start()
 

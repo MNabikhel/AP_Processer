@@ -137,9 +137,12 @@ that may not be an invoice, pages it could not read.
 ## What a prototype does not do yet
 
 - **Several people.** This page is one person on one laptop. The same laptop can serve a few colleagues with
-  sign-in ([SERVER.md](SERVER.md), "From one person's laptop to a few people on the same laptop"); ask IT first about
-  the firewall and the
-  Windows licence.
+  sign-in during working hours: `python -m ap_coder share` in the AP Coder folder checks what is missing, says each
+  next step (the certificate, your own Admin account, the firewall rule), then serves until you close its window;
+  the day's backup is made at the time set on *Settings* → *Data & backups* (17:30 unless you change it), so leave
+  the window open until then or press *Back up now* first. Two steps are not yours alone: the firewall rule needs
+  administrator rights, and the Windows licence is IT's to confirm ([SERVER.md](SERVER.md), "From one person's
+  laptop to a few people on the same laptop").
 - **Purchase orders, statements, month-end and the other pages** are hidden in Simple screens, not removed.
 - **Posting into JD Edwards by itself.** Vouchers are keyed from the sheet, or loaded as a batch file by the JDE
   team.
