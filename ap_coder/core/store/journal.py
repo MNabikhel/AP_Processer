@@ -220,7 +220,7 @@ class JournalMixin:
             for start in range(0, len(vouchers), VOUCHERS_A_WRITE):
                 with self._conn() as conn:
                     dialect.begin_write(conn)
-                    self._write_vouchers(conn, file_id, vouchers[start : start + VOUCHERS_A_WRITE])
+                    self._write_journal_vouchers(conn, file_id, vouchers[start : start + VOUCHERS_A_WRITE])
             with self._conn() as conn:
                 dialect.begin_write(conn)
                 added = self._finish_file(conn, file_id)
@@ -237,7 +237,7 @@ class JournalMixin:
         return result
 
     @staticmethod
-    def _write_vouchers(conn: sqlite3.Connection, file_id: int, vouchers: Sequence[Any]) -> None:
+    def _write_journal_vouchers(conn: sqlite3.Connection, file_id: int, vouchers: Sequence[Any]) -> None:
         """Some of a file's vouchers and their lines, not counted yet (``_finish_file``). A voucher's ``id`` is the
         next after the highest there is."""
         first = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM journal_vouchers").fetchone()[0]

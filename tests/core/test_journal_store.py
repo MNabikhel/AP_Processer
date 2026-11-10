@@ -284,7 +284,7 @@ def test_a_journal_with_no_voucher_is_refused_and_nothing_is_written(store, trut
 
 def test_a_load_that_stopped_half_way_is_never_read_and_the_file_loads_again(store, truth, monkeypatch):
     monkeypatch.setattr(part, "VOUCHERS_A_WRITE", 50)
-    wrote = part.JournalMixin._write_vouchers
+    wrote = part.JournalMixin._write_journal_vouchers
     calls = []
 
     def stops(conn, file_id, vouchers):
@@ -293,13 +293,13 @@ def test_a_load_that_stopped_half_way_is_never_read_and_the_file_loads_again(sto
             raise OSError("the disk is full")
         wrote(conn, file_id, vouchers)
 
-    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(stops))
+    monkeypatch.setattr(part.JournalMixin, "_write_journal_vouchers", staticmethod(stops))
     with pytest.raises(OSError):
         _load(store, truth)
     # The first 50 vouchers were written, in a transaction of their own: none is counted, listed or read.
     assert calls == [50, 50] and store.journal_files() == [] and store.journal_vouchers() == []
     assert store.journal_suppliers() == [] and store.journal_stamp() == 0 and _rows(store) == (1, 50)
-    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(wrote))
+    monkeypatch.setattr(part.JournalMixin, "_write_journal_vouchers", staticmethod(wrote))
     # Another file loaded soon after leaves it be (it may still be under way); the file itself replaces it.
     other = _load(store, replace(truth, vouchers=truth.vouchers[:10]), "other.csv")
     assert other["added"] == 10 and _rows(store) == (2, 60)
@@ -316,17 +316,17 @@ def _rows(store):
 
 
 def test_what_an_old_stopped_load_left_is_removed_at_the_next_load(store, truth, monkeypatch):
-    wrote = part.JournalMixin._write_vouchers
+    wrote = part.JournalMixin._write_journal_vouchers
 
     def stops(conn, file_id, vouchers):
         wrote(conn, file_id, vouchers[:5])
         conn.commit()
         raise OSError("the computer stopped")
 
-    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(stops))
+    monkeypatch.setattr(part.JournalMixin, "_write_journal_vouchers", staticmethod(stops))
     with pytest.raises(OSError):
         _load(store, replace(truth, vouchers=truth.vouchers[:20]), "stopped.csv")
-    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(wrote))
+    monkeypatch.setattr(part.JournalMixin, "_write_journal_vouchers", staticmethod(wrote))
     assert _rows(store) == (1, 5) and store.journal_vouchers() == []
     monkeypatch.setattr(part, "STOPPED_AFTER", -part.STOPPED_AFTER)  # (as if it had begun over an hour ago)
     assert _load(store, truth)["added"] == 120
@@ -338,7 +338,7 @@ def test_what_an_old_stopped_load_left_is_removed_at_the_next_load(store, truth,
 
 def test_the_same_file_loaded_twice_at_the_same_moment_is_kept_once(store, truth, monkeypatch):
     monkeypatch.setattr(part, "VOUCHERS_A_WRITE", 50)
-    wrote = part.JournalMixin._write_vouchers
+    wrote = part.JournalMixin._write_journal_vouchers
     calls = []
 
     def meanwhile(conn, file_id, vouchers):
@@ -347,7 +347,7 @@ def test_the_same_file_loaded_twice_at_the_same_moment_is_kept_once(store, truth
             assert _load(store, truth, actor="sam")["added"] == 120
         wrote(conn, file_id, vouchers)
 
-    monkeypatch.setattr(part.JournalMixin, "_write_vouchers", staticmethod(meanwhile))
+    monkeypatch.setattr(part.JournalMixin, "_write_journal_vouchers", staticmethod(meanwhile))
     with pytest.raises(ValueError, match="loaded a second time at the same moment"):
         _load(store, truth, actor="pat")
     (kept,) = store.journal_files()
