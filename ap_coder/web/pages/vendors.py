@@ -34,6 +34,7 @@ from ap_coder.coding.vendors import (
 )
 from ap_coder.core import ui
 from ap_coder.core.store import PARKED, REVIEW, Store, reports
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
@@ -81,6 +82,7 @@ MASTER_LABELS = {
     "gst": "GST/HST number",
     "terms": "Payment terms",
     "status": "Status",
+    "hold": "Hold payment code (JD Edwards)",
     "default_gl": "Default GL account",
 }
 TARGET = 0.9  # the AI accuracy shown in green from here
@@ -264,6 +266,7 @@ def vendors_page(
                 master_error = NO_ROWS
             chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
             master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
+            master |= {"hold_codes": ", ".join(store.hold_codes()), "skip_words": ", ".join(store.skip_words())}
         except SheetError as exc:
             master_error = str(exc)
 
@@ -370,6 +373,18 @@ async def master_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
 
 
+def save_import_rules(store: Store, form: Any) -> None:
+    """The import's own rules as typed on its form, kept for the next import and the JD Edwards sync: the hold payment
+    codes that put a supplier on hold (left blank: as they were), and the words that mark a retired supplier (left
+    blank: none, a star still does)."""
+    codes = ", ".join(code.upper() for code in listed(form.get("hold_codes")))
+    if codes and codes != ", ".join(store.hold_codes()):
+        store.set_setting(HOLD_CODES_SETTING, codes, actor=reviewer())
+    words = form.get("skip_words")
+    if words is not None and listed(words) != store.skip_words():
+        store.set_setting(SKIP_WORDS_SETTING, ", ".join(listed(words)), actor=reviewer())
+
+
 @one_connection
 def _master_import(request: Request, form: Any) -> JSONResponse:
     store = get_store(request)
@@ -383,6 +398,7 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
     chosen = picked_columns(form, MASTER_LABELS, list(df.columns), {})
     if "vendor_name" not in chosen:
         return refuse("Pick the column with the vendor name.")
+    save_import_rules(store, form)
     result = store.import_vendor_master(master_rows(df.to_dict("records"), chosen), actor=reviewer())
     drop_upload(token)
     notes = [

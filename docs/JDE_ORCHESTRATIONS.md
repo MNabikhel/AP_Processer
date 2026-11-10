@@ -98,7 +98,7 @@ Output `Suppliers`, one row per supplier (search type V, or the types your compa
 | `AdditionalTaxId` | F0101.ABTX2 | QST number (Quebec suppliers), else PST number. CONFIRM where QST / PST numbers are kept |
 | `PaymentTermsCode` | F0401.A6TRAP | the terms, through Settings → JD Edwards E1's terms table when no description |
 | `PaymentTermsDescription` | F0014.PNPTD | the terms as words ("Net 30") |
-| `HoldPaymentCode` | F0401.A6HDPY | not blank: the vendor is **on hold** in AP Coder |
+| `HoldPaymentCode` | F0401.A6HDPY | `Y`, `1` or `2`: the vendor is **on hold** in AP Coder (`Y` and `1`: payments held and new vouchers stopped; `2`: payments held). `N`, JDE's usual value, and blank: not on hold. Another code your company uses (`0`?) holds once it is listed with them (Vendors → the vendor master's import → *Hold payment codes that hold*). CONFIRM the codes in use |
 | `BankTransit` | F0030.AYTNST | with the next, the account JDE pays on ("00012-003 …4567"), for the bank-change check |
 | `BankAccountLast4` | the last 4 digits of F0030.AYCBNK | **only the last four digits**: never the whole account |
 | `State` | F0116.ALADDS | province |
