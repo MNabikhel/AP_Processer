@@ -5318,6 +5318,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it, and the bar says so before approving. On one person's laptop there is nobody else: the approval asks for
     the reason, Activity records it, and the keying sheet says on that voucher "Tax ID differs from the supplier
     list: confirm before paying" (`pages/exports.tax_id_warnings`, asked of the stored coding and today's list).
+  - **With D-221.** What the list gives is seen with the suppliers loaded (`core/store/loaded.py`: tax ID as
+    written, currency, address, e-mail, business unit, read from `vendor_info` by supplier number; searched, in
+    the CSV, not changed by hand). The list's load goes through `Store.import_vendor_master`, so a GST/HST number
+    or terms an Admin changed by hand are put back after it, as after the supplier master's grid.
   - Scoring and learning are not touched. (`ap_coder/coding/vendor_info.py`, `core/chart_file.py`,
     `core/store/vendor_master.py`, `core/store/invoices.py`, `web/pages/jde_files.py`, `web/invoice_view.py`,
     `web/pages/exports.py`, `erp/jde_keying.py`, `bench/jde_exports.py`; `tests/coding/test_vendor_info.py`,

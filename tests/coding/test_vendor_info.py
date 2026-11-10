@@ -187,3 +187,36 @@ def test_the_made_up_list_has_the_layout_of_the_export(truth):
     assert names == sorted(names) and names[0].startswith(" ")  # by name as stored: a space first
     assert any(name.startswith("(DNU)") for name in names) and any("DO NOT USE" in name for name in names)
     assert any(" O/A " in name for name in names) and any(name.endswith("     00417") for name in names)
+
+
+def test_a_tax_id_changed_by_hand_is_kept_when_either_supplier_file_is_loaded_again(store, truth, listed):
+    """D-221's promise holds for both exports: the vendor information list's load is the vendor master's import
+    too, so the tax ID an Admin corrected by hand is put back after it, as after the supplier master's grid."""
+    _load_master(store, truth)
+    _load_info(store, listed)
+    vendor = next(v for v in store.master_vendors() if v["erp_id"] == "900001")
+    assert vendor["expected_gst"] == "70412 9930 RT0001"
+    store.edit_supplier(vendor["vendor_key"], {"expected_gst": "881042267RT0001"}, actor="Pat")
+    again = _load_info(store, listed)
+    assert again["by_hand"] == ["900001 HARBOURVIEW MARINE SUPPLY LTD"]
+    assert store.get_vendor(vendor["vendor_key"])["expected_gst"] == "881042267RT0001"
+    _load_master(store, truth)
+    assert store.get_vendor(vendor["vendor_key"])["expected_gst"] == "881042267RT0001"
+    assert store.vendor_info("900001")["tax_id"] == "70412 9930 RT0001"  # what the list says, as written
+
+
+def test_what_the_list_gives_is_seen_with_the_suppliers_loaded_under_readable_headings(store, listed):
+    _load_info(store, listed)
+    labels = {column.key: column.label for column in store.loaded_columns("suppliers")}
+    assert labels["tax_id"] == "Tax ID (as written)" and labels["expected_gst"] == "GST/HST number"
+    assert (labels["currency"], labels["terms"], labels["address1"], labels["city"], labels["state"]) == (
+        "Currency", "Payment terms", "Address line 1", "City", "Province or state")  # fmt: skip
+    assert (labels["country"], labels["postal_code"], labels["email"]) == ("Country", "Postal code", "E-mail")
+    assert not any("bank" in key or "bank" in label.lower() for key, label in labels.items())
+    page = store.loaded_page("suppliers", q="Halifax")  # searched by what the list gives too
+    assert page["count"] == 1 and page["total"] == len(listed["rows"])
+    (row,) = page["rows"]
+    assert (row["erp_id"], row["tax_id"], row["currency"], row["postal_code"]) == (
+        "900001", "70412 9930 RT0001", "CAD", "B3J 1P3")  # fmt: skip
+    word = store.loaded_page("suppliers", q="CHARITABLE")["rows"]
+    assert {r["tax_id"] for r in word} == {"CHARITABLE"} and {r["expected_gst"] for r in word} == {""}

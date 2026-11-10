@@ -31,6 +31,14 @@ CHOICES_MOST = 60  # a filter with more values than this is typed, not picked fr
 BLANK = "(blank)"  # a filter's value for rows whose column is empty (an empty value is no filter)
 BY_HAND = "by_hand"  # the filter of the rows a person changed by hand
 TEXT, CODE, AMOUNT, WHOLE, FLAG = "text", "code", "amount", "whole", "flag"
+# The columns of JD Edwards' vendor information list shown with a supplier (``vendor_info``, D-219), under what each
+# is called. Its payment terms are the supplier's own column.
+SUPPLIER_INFO = (
+    ("tax_id", "Tax ID (as written)"), ("currency", "Currency"), ("address1", "Address line 1"),
+    ("address2", "Address line 2"), ("address3", "Address line 3"), ("address4", "Address line 4"), ("city", "City"),
+    ("state", "Province or state"), ("country", "Country"), ("postal_code", "Postal code"), ("email", "E-mail"),
+    ("business_unit", "Business unit"),
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -114,10 +122,16 @@ def _view(conn: sqlite3.Connection, what: str) -> View:
     if what == SUPPLIERS:
         fields = by_hand.supplier_fields(conn)
         kinds = dialect.column_kinds(conn, by_hand.SUPPLIERS)
+        own = tuple(Column(f.name, f.label, f"v.{f.name}", CODE if kinds[f.name] == "TEXT" else WHOLE)
+                    for f in fields)  # fmt: skip
+        # What JD Edwards' vendor information list says of the supplier of that number (D-219): seen and searched
+        # with the supplier's own columns, not changed here (the next list brings it again).
+        listed = tuple(Column(name, label, f"COALESCE(i.{name}, '')", CODE) for name, label in SUPPLIER_INFO)
         return View(
-            SUPPLIERS, "supplier", "vendors v", "v.in_master = 1",
-            tuple(Column(f.name, f.label, f"v.{f.name}", CODE if kinds[f.name] == "TEXT" else WHOLE) for f in fields),
-            tuple(f"v.{f.name}" for f in fields if kinds[f.name] == "TEXT"), ("v.vendor_key",),
+            SUPPLIERS, "supplier", "vendors v LEFT JOIN vendor_info i ON i.erp_id = v.erp_id", "v.in_master = 1",
+            (*own, *listed),
+            (*(f"v.{f.name}" for f in fields if kinds[f.name] == "TEXT"), *(c.sql for c in listed)),
+            ("v.vendor_key",),
             (Filter("status", "On hold (AP's own)", "v.status", ((by_hand.ON_HOLD, "on hold"),
                                                                  (by_hand.IN_USE, "not on hold"))),
              Filter("erp_hold", "JD Edwards' hold payment code", "v.erp_hold", ((BLANK, "blank: no hold"),))),
