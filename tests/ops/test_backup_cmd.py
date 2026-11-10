@@ -74,6 +74,25 @@ def test_the_guides_new_server_steps_restore_while_the_service_is_stopped():
     assert steps.index("--no-start") < steps.index("backup restore <name>") < steps.index("`service start`")
 
 
+def test_restore_on_a_new_server_says_the_backups_accounts_come_back(tmp_path, ground_truth, capsys, monkeypatch):
+    """B-2113: on a server with no account yet (a new server, restored before its first Admin) the restore said "The
+    user accounts ... stay as they are now", where the backup's accounts are what comes back."""
+    share = tmp_path / "share"
+    store, _data_folder = _data(tmp_path, ground_truth, share)
+    store.add_user("jsmith", "correct horse battery staple 42", role="admin")
+    name = store.backup_now().name
+    new = tmp_path / "new"
+    new.mkdir()
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    restore = ["--db", str(new / "ap_coder.db"), "backup", "restore", name, "--from", str(share), "--yes"]
+    assert cli.main(restore) == 0
+    out = capsys.readouterr().out
+    assert "no user account yet" in out and "the backup's accounts" in out and "stay as they are now" not in out
+    assert [u["username"] for u in Store(new / "ap_coder.db").list_users()] == ["jsmith"]
+    assert cli.main(restore) == 0  # again, the accounts there now: kept
+    assert "stay as they are now" in capsys.readouterr().out
+
+
 def test_check_reads_every_file_and_says_what_is_missing_or_damaged(tmp_path, ground_truth, capsys):
     store, data = _data(tmp_path, ground_truth)
     made = store.backup_now("manual")
