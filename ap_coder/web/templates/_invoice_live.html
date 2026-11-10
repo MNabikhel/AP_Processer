@@ -277,6 +277,33 @@
 {% if live.draft_rev %}<input type="hidden" name="draft_rev" form="inv" value="{{ live.draft_rev }}">{% endif %}
 {% if not live.ok %}
 <div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
+{% elif live.account %}
+{# With a chart of accounts (D-214): one sentence, what approving does and what is still to fix. The first Ctrl+Enter
+   with something to check says so here (invoice.js fills data-bar-check); the second approves. #}
+{% set b = live.bar %}
+{% set does = ("Approving credits " if b.credit else "Approving posts ") ~ b.amount ~ " " ~ b.currency ~ " on " ~ (b.lines | plural("line")) ~ " and teaches AP Coder this coding" %}
+<div class="rvw-post acct-bar" data-not-ready="{{ b.first.text if b.first else '' }}" data-credit="{{ '1' if b.credit else '' }}" title="What approving teaches AP Coder: {{ b.learn }}.">
+  {% if live.read_only %}<span class="acct-bar-say">{{ b.amount }} {{ b.currency }} on {{ b.lines | plural("line") }}.</span>
+  {% elif b.first and b.first.kind == "pick" %}
+  <button type="button" class="apc-pill err inv-pick" data-goto-pick aria-keyshortcuts="F8" title="Go to it (F8)"><span class="ms" aria-hidden="true">arrow_downward</span>To fix: {{ live.bar_fix or b.first.text }}</button>
+  <span class="acct-bar-say">{{ does }} once that is fixed.</span>
+  {% elif b.first %}
+  <span class="apc-pill err inv-hard" role="note" title="{{ b.blockers | map(attribute='text') | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">To fix: {{ b.first.text }}</span>{% if b.blockers | length > 1 %}<span class="more">+{{ b.blockers | length - 1 }}</span>{% endif %}</span>
+  <span class="acct-bar-say">{{ does }} once that is fixed.</span>
+  {% elif b.errors %}
+  <span class="acct-bar-say">{{ does }}: {{ b.errors | plural("error") }} to fix first, or</span>
+  {% else %}
+  <span class="apc-pill ok acct-ready"><span class="ms" aria-hidden="true">check</span>Ready</span>
+  <span class="acct-bar-say">{{ does }}, then opens the next one (Ctrl+Enter).</span>
+  {% endif %}
+  {% if b.second %}<span class="acct-bar-say" data-second-why>{{ b.second[:1] | upper }}{{ b.second[1:] }}: a second approver is needed.</span>{% endif %}
+  <span class="apc-pill warn acct-bar-check" data-bar-check role="status" hidden></span>
+  <span data-change-count="{{ b.changed }}" hidden>{{ b.learn }}</span>
+</div>
+{% if not live.read_only and not b.first and b.errors %}
+<label class="check inv-override" title="Errors only: what makes the voucher invalid can never be approved anyway"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
+  Approve anyway, despite {{ b.errors | plural("error") }}</label>
+{% endif %}
 {% else %}
 {% set b = live.bar %}
 {# Why Approve is closed: the first blocker in screen order (B-797); "Approve anyway" and its reason are the box's own,

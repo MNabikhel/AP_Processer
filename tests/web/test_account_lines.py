@@ -342,3 +342,31 @@ def test_an_install_without_a_chart_has_no_account_list(demo_template, tmp_path)
     assert client.get("/review/accounts.json").status_code == 404
     text = client.get(f"/review/{store.list_invoices()[0]['id']}").text
     assert 'id="account-seed"' not in text and 'id="gl-options"' in text
+
+
+# --- approving (W6) -------------------------------------------------------------------------------------------------
+
+
+def test_the_bar_says_in_one_sentence_what_approving_does_and_what_is_to_fix(chart_company, chart_company_client):
+    ready = _page(chart_company, chart_company_client, "one_line").check()["sections"]["bar"]
+    assert ">Ready</span>" in ready and 'data-not-ready=""' in ready
+    assert "Approving posts 5,040.00 CAD on 1 line and teaches AP Coder this coding, then opens the next one" in ready
+    four = _page(chart_company, chart_company_client, "four_lines")
+    closed = four.check()["sections"]["bar"]
+    assert "To fix: an account for 4 lines</button>" in closed and "data-goto-pick" in closed
+    assert "Approving posts 1,393.61 CAD on 4 lines and teaches AP Coder this coding once that is fixed." in closed
+    assert four.not_ready.startswith("Pick a GL account for 4 lines")  # what the approval's refusal says, as before
+    credit = _page(chart_company, chart_company_client, "credit_note").check()["sections"]["bar"]
+    assert "Approving credits -606.90 CAD on 1 line" in credit
+
+
+def test_what_approval_still_needs_in_the_words_of_one_account_box():
+    words = account_lines.pick_words
+    assert words("Pick a GL account for 4 lines and a cost center for 4 lines to approve (or use Apply to all "
+                 "lines…)") == "an account for 4 lines"  # fmt: skip
+    assert words("Pick a GL account for line 2 and a cost center for lines 1, 2 to approve") == (
+        "an account for line 2 and the business unit of the account of lines 1, 2")  # fmt: skip
+    assert words("Pick a cost center for line 3 to approve") == "the business unit of the account of line 3"
+    confirm = "Confirm the PST on line 1: exempt, or not charged (self-assess)?"
+    assert words(f"Pick a GL account for line 2 to approve. {confirm}") == f"an account for line 2. {confirm}"
+    assert words(confirm) == confirm

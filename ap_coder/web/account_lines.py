@@ -61,14 +61,33 @@ def posted(text: Any, pairs: chart.AccountPairs | None = None) -> tuple[str, str
     return code, unit
 
 
+_PICK = re.compile(r"^Pick (?:a GL account for (?P<gl>.+?))?(?: and )?(?:a cost center for (?P<cc>.+?))? to approve"
+                   r"(?: \(or use Apply to all lines…\))?(?P<rest>.*)$")  # fmt: skip
+
+
+def pick_words(text: str) -> str:
+    """What approval still needs on the lines (``review.codes_to_pick``'s sentence, which names a GL account and a
+    cost center), as a screen with one Account box a line says it: "an account for line 4", "an account for 4
+    lines"; a line that has its GL code and no business unit: "the business unit of line 2's account". What the
+    sentence says after (a tax exemption to confirm) is kept; any other sentence comes back as it is."""
+    found = _PICK.match(text or "")
+    if not found or not (found["gl"] or found["cc"]):
+        return text
+    parts = [
+        f"an account for {found['gl']}" if found["gl"] else "",
+        f"the business unit of the account of {found['cc']}" if found["cc"] not in (None, found["gl"]) else "",
+    ]
+    return f"{' and '.join(filter(None, parts))}{found['rest']}"
+
+
 SUPPLIER_MOST = 8  # of a supplier's accounts last year, offered first in an Account box's list
 
 
 def supplier_accounts(store: Any, reference: ReferenceData, vendor_name: str) -> list[list[Any]]:
     """The accounts this supplier's lines went to last year and since, the most used first, each [the account
     string, its lines, its name, its business unit's name]: only those the chart still offers, ``SUPPLIER_MOST`` at
-    most. From the supplier's prior
-    (``supplier_prior.prior_for``, kept in this process): asked once a page or a check, never per key typed."""
+    most. From the supplier's prior (``supplier_prior.prior_for``, kept in this process): asked once a page or a
+    check, never per key typed."""
     if not in_use(reference) or not (vendor_name or "").strip():
         return []
     pairs = reference.pairs

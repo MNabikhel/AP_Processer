@@ -104,6 +104,73 @@ function applySections(answer, posted = null) {
 
 /* ---------- With a chart of accounts: a line is one Account box (D-214) ---------- */
 
+const chartScreen = Boolean(document.querySelector(".inv-split.inv-acct"));
+
+/** The boxes of what must be fixed before approving, in screen order: an invoice detail in error, a line with no
+    account or one the chart refuses, a remark longer than JD Edwards keeps. */
+function toFix() {
+  const details = [...document.querySelectorAll(".inv-details [data-field].is-error")].map((f) => input(f.dataset.field));
+  const lines = gridRows().flatMap((row) => [
+    row.classList.contains("is-fix") ? accountBox(row) : null,
+    row.querySelector("input[data-remark-box].is-over"),
+  ]);
+  return [...details, ...lines].filter(Boolean);
+}
+
+/** The boxes of what a person looks at before approving: an account that is a guess (or not offered for invoices),
+    a tax code the Tax check points at, a suggested remark no one has been in yet. */
+function toCheck() {
+  return gridRows().flatMap((row) => [
+    row.classList.contains("is-check") ? accountBox(row) : null,
+    row.querySelector(".c-tax.is-taxcheck select"),
+    row.querySelector("input[data-remark-box].is-suggested"),
+  ]).filter(Boolean);
+}
+
+/** The focus to the next of ``boxes`` after the one that has it (``by`` -1: the one before), in view above the bar;
+    a box folded under More details is unfolded first. False when there is none. */
+function goToNext(boxes, by = 1) {
+  if (!boxes.length) return false;
+  const at = boxes.indexOf(document.activeElement);
+  const box = boxes[(at + by + boxes.length) % boxes.length] || boxes[0];
+  box.closest("details:not([open])")?.setAttribute("open", "");
+  const target = box.closest(".pk")?.querySelector(".pk-input") || box;
+  target.scrollIntoView({ block: "center" });
+  target.focus({ preventScroll: true });
+  return true;
+}
+
+/* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
+   (no dialog). Any edit between the two starts again. */
+let checkAsked = false;
+function checkSaid() {
+  const rows = gridRows();
+  const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
+  const taxes = rows.filter((row) => row.querySelector(".c-tax.is-taxcheck")).map(lineNo);
+  const remarks = rows.filter((row) => row.querySelector("input[data-remark-box].is-suggested")).length;
+  const of = (numbers) => (numbers.length === 1 ? `line ${numbers[0]}` : `lines ${numbers.join(", ")}`);
+  return [
+    guesses.length ? `the account of ${of(guesses)}` : "",
+    taxes.length ? `the tax of ${of(taxes)}` : "",
+    remarks ? `${remarks === 1 ? "1 suggested remark" : `${remarks} suggested remarks`} not looked at` : "",
+  ].filter(Boolean).join("; ");
+}
+function checkedOrAsked() {
+  const boxes = toCheck();
+  if (!boxes.length || checkAsked) return true;
+  checkAsked = true;
+  showBarState();
+  goToNext(boxes.includes(document.activeElement) ? [document.activeElement] : boxes);
+  return false;
+}
+for (const type of ["input", "change"]) {
+  document.addEventListener(type, (e) => {
+    if (!checkAsked || e.target.form !== form) return;
+    checkAsked = false;
+    showBarState();
+  });
+}
+
 /** More details opens itself when one of its fields has a finding. */
 function openFlaggedDetails() {
   document.querySelectorAll("details[data-more-details]:not([open])").forEach((fold) => {
@@ -1711,12 +1778,21 @@ document.addEventListener("keydown", (e) => {
     if (elsewhere(e.target) || stale) return;
     e.preventDefault();
     flush().then(() => {
-      if (!approveButton.disabled) form.requestSubmit(approveButton);
-      else {
+      if (!approveButton.disabled) {
+        if (chartScreen && !checkedOrAsked()) return; // something to check: said in the bar, the next one approves
+        form.requestSubmit(approveButton);
+      } else {
         toast({ text: `Not ready to approve: ${notReady()}`, tone: "warn" }); // the reason, not "see the bar" (B-743)
-        focusNotReady();
+        if (!(chartScreen && goToNext(toFix()))) focusNotReady();
       }
     });
+    return;
+  }
+  // F8 (Shift+F8 back): the next thing to fix on a screen with a chart of accounts, then the next to check (D-214)
+  if (e.key === "F8" && chartScreen && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.("dialog, [role=dialog]")) {
+    e.preventDefault();
+    const fix = toFix();
+    goToNext(fix.length ? fix : toCheck(), e.shiftKey ? -1 : 1);
     return;
   }
   // From a text box too, where the page puts the focus on opening: on Windows Alt+arrows are no text-editing keys
@@ -2790,6 +2866,12 @@ function showBarState() {
   const credit = document.querySelector("[data-live=bar] [data-credit]")?.dataset.credit === "1";
   const label = approveButton?.querySelector("[data-approve-label]");
   if (label) label.textContent = credit ? "Approve credit note" : "Approve & teach";
+  const ask = document.querySelector("[data-live=bar] [data-bar-check]"); // with a chart: what is to check, once asked
+  if (ask) {
+    const said = checkAsked ? checkSaid() : "";
+    ask.textContent = said ? `To check: ${said}. Ctrl+Enter again approves.` : "";
+    ask.hidden = !said;
+  }
 }
 
 document.addEventListener("change", (e) => {
@@ -2901,6 +2983,8 @@ function focusFirstToCheck(always = false) {
       .find((b) => blank(b));
     box = pick ? pick.closest(".pk")?.querySelector(".pk-input") || pick : null;
   }
+  // With a chart of accounts (D-214): the first thing to fix, else Approve when it is open.
+  if (chartScreen) box = toFix().find((b) => b.getClientRects().length) || (approveButton && !approveButton.disabled ? approveButton : box);
   box = box || vendorInput;
   if (!box || !box.getClientRects().length) return false;
   // Focused for the clerk, not by them: Space with the pointer on the page still holds the Hand (B-591) until they

@@ -28,7 +28,8 @@
       <summary class="btn sm ghost"><span class="ms" aria-hidden="true">keyboard</span>Shortcuts</summary>
       <div class="pop-body">
         <table class="apc-table"><tbody>
-          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Enter") }}</td><td>Approve &amp; teach</td></tr>
+          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Enter") }}</td><td>Approve &amp; teach{% if acct %} (with something to check: once to see what, again to approve){% endif %}</td></tr>
+          {% if acct %}<tr><td>{{ ui.kbd("F8") }}</td><td>Next thing to fix, then to check ({{ ui.kbd("Shift") }} + {{ ui.kbd("F8") }}: the one before)</td></tr>{% endif %}
           <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("→") }}</td><td>Next invoice</td></tr>
           <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("←") }}</td><td>Previous invoice</td></tr>
           <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("↑") }}</td><td>Back to the queue</td></tr>

@@ -882,3 +882,11 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
     ". slot slot slot slot slot" ". more more more more more";}
   .inv-lines-grid.acct tr:not(.has-keyed) .c-keyed {display: none;}
 }
+/* ---- The approve bar with a chart of accounts (D-214): one sentence, what approving does and what is to fix. ---- */
+.acct-bar {display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-width: 0; font-size: 13px;}
+.acct-bar-say {color: var(--lg-muted); min-width: 0; overflow-wrap: anywhere;}
+.acct-bar .apc-pill {white-space: normal; max-width: 100%;}
+.acct-bar .acct-ready {flex: none;}
+.acct-bar-check[hidden] {display: none;}
+html:has(.inv-acct) .inv-actionbar-left {flex: 1 1 0; min-width: 0;}
+html:has(.inv-acct) .inv-actionbar-left .rvw-post {flex: 1 1 auto;}

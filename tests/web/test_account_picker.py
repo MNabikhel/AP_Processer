@@ -132,3 +132,52 @@ def test_ctrl_enter_with_a_list_open_only_closes_it_then_approves(browser, chart
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
     assert store.get_invoice(invoice_id)["status"] == APPROVED
     assert not errors
+
+
+def _focused(page) -> str:
+    """What has the focus: the Account box of line N ("account 2"), "approve", or the element's name."""
+    return page.evaluate("""() => {
+      const el = document.activeElement;
+      if (el?.matches?.("[data-approve]")) return "approve";
+      const row = el?.closest?.('[data-grid="lines"] [data-row]');
+      const at = row ? [...row.parentElement.children].indexOf(row) + 1 : 0;
+      if (row && el.matches("input[data-account]")) return `account ${at}`;
+      return el?.name || el?.tagName || "";
+    }""")
+
+
+def test_the_screen_opens_on_the_first_thing_to_fix_else_on_approve_and_f8_goes_to_the_next(browser, chart_company):
+    page, errors = _review(browser, chart_company, "four_lines")
+    assert _focused(page) == "account 1"  # four lines to fix: the first
+    page.keyboard.press("F8")
+    assert _focused(page) == "account 2"
+    page.keyboard.press("F8")
+    page.keyboard.press("F8")
+    assert _focused(page) == "account 4"
+    page.keyboard.press("F8")
+    assert _focused(page) == "account 1"  # round again
+    page.keyboard.press("Shift+F8")
+    assert _focused(page) == "account 4"
+    ready, more = _review(browser, chart_company, "one_line")
+    assert _focused(ready) == "approve"  # nothing to fix
+    assert not errors and not more
+
+
+def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_approves(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    reserved = next(a for a in chart_company.truth.accounts if a.reserved).string  # may be posted to, never offered
+    page.click(FIRST)
+    page.keyboard.press("Control+a")
+    page.keyboard.type(reserved)
+    page.keyboard.press("Escape")
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1).is-check')
+    page.keyboard.press("Control+Enter")
+    page.wait_for_selector("[data-bar-check]:not([hidden])")
+    said = page.inner_text("[data-bar-check]")
+    assert said == "To check: the account of line 1. Ctrl+Enter again approves."
+    assert store.get_invoice(invoice_id)["status"] == REVIEW and _focused(page) == "account 1"
+    page.keyboard.press("Control+Enter")
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+    assert not errors
