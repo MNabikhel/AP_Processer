@@ -92,8 +92,16 @@
 {%- if a.taxes and a.taxes.keyed %}<span title="The line with the tax that is not recovered: the amount keyed into the ledger for it">keyed <b>{{ a.taxes.keyed }}</b></span>{% endif %}
 {%- endmacro %}
 
+{# Under the Remark box: the finding's words when it is longer than JD Edwards keeps, then the line as the invoice
+   prints it. ``r``: account_lines.remark_view. #}
+{% macro acct_remark(r) -%}
+{%- if r.note %}<span class="rm-note">{{ r.note }}</span>{% endif %}
+{%- if r.printed %}<span class="rm-printed" title="The line as the invoice prints it (the row's menu → Show its details changes it)">“{{ r.printed }}”</span>{% endif %}
+{%- endmacro %}
+
 {% macro account_row(row, g, key) -%}
 {%- set a = row.acct or g.acct_empty %}
+{%- set r = a.remark %}
 <tr data-row="{{ key }}" class="acct-row{% if a.state %} is-{{ a.state }}{% endif %}{% if a.taxes and a.taxes.keyed %} has-keyed{% endif %}"{% if row.tax_inferred %} data-tax-inferred="{{ row.tax_inferred }}"{% endif %}>
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
@@ -103,8 +111,11 @@
   <td class="c-acct"><input type="text" name="line_account" value="{{ a.text }}" form="inv" data-account data-picker="free" data-picker-noun="account" data-picker-sections="account" data-picker-width="680" data-candidates="{{ a.listed | tojson | forceescape }}" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="{{ line_label(row, 'Account') }}" aria-describedby="cap-{{ key }}">
     <input type="hidden" name="line_gl" value="{{ row.predicted_gl_code or 'UNASSIGNED' }}" form="inv"><input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or 'UNASSIGNED' }}" form="inv"></td>
   <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="{{ line_label(row, 'Amount') }}"></td>
-  <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="{{ line_label(row, 'Description') }}" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>
-    {%- if row.read_as %}<span class="inv-readas" data-read-as title="This supplier's line is printed “{{ row.read_as }}”: AP approved it as described here on an earlier invoice, so it is named so again"><span class="ms" aria-hidden="true">school</span>Named as approved before · printed “{{ row.read_as }}”</span>{% endif %}</td>
+  {# The remark keyed with the line (D-213), 30 characters in JD Edwards: suggested, and marked so (a dashed edge)
+     until a person has been in the box. What is posted is the hidden cell: blank while it is the suggestion, so it
+     follows the line's account; the text once a person typed one (invoice.js). Never cut: past 30 it is to fix. #}
+  <td class="c-desc c-remark"><input type="text" form="inv" data-remark-box value="{{ r.text }}" class="{{ 'is-suggested' if r.text and not r.typed else '' }}{{ ' is-over' if r.over else '' }}" autocomplete="off" aria-label="{{ line_label(row, 'Remark') }}" aria-describedby="rcap-{{ key }}"{% if r.why and not r.typed %} title="{{ r.why }}"{% endif %}>
+    <input type="hidden" name="line_remark" value="{{ r.text if r.typed else '' }}" form="inv"></td>
   {% set guess = "Worked out from the tax charged: several sets of lines add up, check it" if row.tax_guess else "" %}
   {% set mark = (g.tax_marks or {}).get(row.line_number) or guess %}
   {% set code = row.tax_code if row.tax_code is defined else g.tax_default %}
@@ -112,10 +123,13 @@
     <span class="inv-taxnote" data-tax-note{% if not mark %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-tax-note-text>{{ mark }}</span></span></td>
   <td class="c-del"><button type="button" class="icon-btn acct-menu" data-row-menu tabindex="-1" title="More for this line: split, copy the account above, insert, delete (or right-click, or Shift+F10)" aria-label="More for this line" aria-haspopup="menu"><span class="ms" aria-hidden="true">more_vert</span></button></td>
   <td class="c-cap" id="cap-{{ key }}" data-live-line="cap">{{ acct_cap(a) }}</td>
+  <td class="c-rcap" id="rcap-{{ key }}"><span class="rm-count{{ ' over' if r.over else '' }}" data-remark-count>{{ r.count }} / 30{% if r.over %}: {{ r.count - 30 }} too many{% endif %}</span><span class="rm-said" data-live-line="remark">{{ acct_remark(r) }}</span></td>
   <td class="c-keyed" data-live-line="keyed">{{ acct_keyed(a) }}</td>
   <td class="c-taxcap" data-live-line="tax">{{ acct_tax(a) }}</td>
   <td class="c-slot" data-live-line="slot">{{ acct_slot(a) }}</td>
   <td class="c-more" data-row-more hidden>
+    <label class="field wide">The line as the invoice prints it<textarea name="line_description" rows="1" form="inv" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>
+      {%- if row.read_as %}<span class="inv-readas" data-read-as title="This supplier's line is printed “{{ row.read_as }}”: AP approved it as described here on an earlier invoice, so it is named so again"><span class="ms" aria-hidden="true">school</span>Named as approved before · printed “{{ row.read_as }}”</span>{% endif %}</label>
     <label class="field">Quantity<input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv"></label>
     <label class="field">Unit price<input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv"></label></td>
 </tr>

@@ -12,6 +12,7 @@ import pytest
 from ap_coder.core import chart
 from ap_coder.web import account_lines
 from ap_coder.web.account_lines import LINE_ACCOUNT
+from ap_coder.web.invoice_view import LINE_REMARK
 from tests.conftest import copy_database
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE, client_for
@@ -317,8 +318,10 @@ def test_the_account_list_is_fetched_once_not_printed_in_the_page(chart_company,
     assert other.status_code == 200 and other.headers["cache-control"] == "private, no-cache"
     unchanged = client.get("/review/accounts.json?v=0123", headers={"If-None-Match": tag})
     assert unchanged.status_code == 304 and not unchanged.content
-    # the fifteen-line page with the made-up chart: lighter than the same page with the chart printed in it twice
-    assert len(page.text.encode()) < 181_955, len(page.text.encode())
+    # The page's weight no longer follows the chart's size: of the chart it holds only the accounts offered for its
+    # own lines and the supplier's of last year.
+    named = [row[0] for row in rows if row[0] in page.text]
+    assert 0 < len(named) <= 5 * 15 + 8 and len(named) < len(rows) / 2, (len(named), len(rows))
 
 
 def test_the_page_offers_the_suppliers_accounts_and_each_lines_candidates(chart_company, chart_company_client):
@@ -370,3 +373,58 @@ def test_what_approval_still_needs_in_the_words_of_one_account_box():
     confirm = "Confirm the PST on line 1: exempt, or not charged (self-assess)?"
     assert words(f"Pick a GL account for line 2 to approve. {confirm}") == f"an account for line 2. {confirm}"
     assert words(confirm) == confirm
+
+
+# --- the Remark box (W7) --------------------------------------------------------------------------------------------
+
+
+def _remark_boxes(text: str) -> list[tuple[str, str]]:
+    """Each row's Remark box as drawn: (what it shows, its classes)."""
+    return [(html_unescape(value), classes) for value, classes in
+            re.findall(r'data-remark-box value="([^"]*)" class="([^"]*)"', text)]  # fmt: skip
+
+
+def test_every_line_has_a_remark_box_showing_the_suggestion_marked_as_suggested(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "four_lines")
+    proposed = chart_company.store.get_invoice(page.id)["ai_output"]["line_items"]
+    boxes = _remark_boxes(page.text)[:4]
+    assert [shown for shown, _ in boxes] == [li["remark"] for li in proposed]
+    assert all("is-suggested" in classes and "is-over" not in classes for _, classes in boxes)
+    assert page.form[LINE_REMARK] == [""] * 4  # a suggestion is not posted: it follows the line's account
+    rows = _rows(page.text)
+    for row, li in zip(rows, proposed, strict=True):
+        assert f"{len(li['remark'])} / 30</span>" in row  # the count under the box
+        assert f"“{li['description']}”" in html_unescape(row)  # the line as the invoice prints it
+        assert 'name="line_description"' in row  # still posted (the row's details change it)
+    assert ">suggested</span>" in page.text  # the column's legend
+
+
+def test_the_suggested_remark_follows_the_account_and_a_typed_one_stays(chart_company, chart_company_client):
+    invoice, _ = chart_company.invoices["one_line"]
+    page = _page(chart_company, chart_company_client, "one_line")
+    before = _remark_boxes(page.text)[0][0]
+    (row,) = page.check()["lines"]
+    assert row["remark_box"] == {"text": before, "typed": False, "why": row["remark_box"]["why"]}
+    assert row["remark_box"]["why"].startswith("Suggested")
+    typed = "KT parcels 3-1-204"
+    form = {**page.form, LINE_REMARK: [typed]}
+    (row,) = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()["lines"]
+    assert row["remark_box"] == {"text": typed, "typed": True, "why": ""}
+    page.open()  # the draft kept it: drawn as a person's, posted as typed
+    assert _remark_boxes(page.text)[0] == (typed, "") and page.form[LINE_REMARK] == [typed]
+    assert page.approve()["ok"]
+    stored = chart_company.store.get_invoice(page.id)["final_output"]["line_items"][0]
+    assert (stored["remark"], stored["remark_from"]) == (typed, "person")
+
+
+def test_a_remark_over_30_characters_is_never_cut_and_says_the_findings_words(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "one_line")
+    long = "coffee supplies for the 3rd floor kitchen"
+    form = {**page.form, LINE_REMARK: [long]}
+    answer = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()
+    (row,) = answer["lines"]
+    assert not answer["allow"] and row["remark_box"]["text"] == long  # whole, as typed
+    assert "The remark has 41 characters and JD Edwards keeps 30" in row["remark"]  # REMARK_LONG's words, on the line
+    page.open()
+    shown, classes = _remark_boxes(page.text)[0]
+    assert shown == long and "is-over" in classes and "41 / 30: 11 too many" in page.text

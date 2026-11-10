@@ -294,7 +294,7 @@
       {% if grid.account %}{# a chart of accounts is imported: one Account box a line (D-214) #}
       <div class="table-wrap">
         <table class="apc-table inv-grid-table inv-lines-grid acct{% if grid.lines | length > 8 %} many{% endif %}" id="lines" aria-label="Lines">
-          <thead><tr><th class="c-no">#</th><th class="c-acct">Account</th><th class="r c-amt">Amount</th><th class="c-desc">Description</th><th class="c-tax">Tax</th><th class="c-del"><span class="rvw-sr">More for the line</span></th></tr></thead>
+          <thead><tr><th class="c-no">#</th><th class="c-acct">Account</th><th class="r c-amt">Amount</th><th class="c-desc">Remark <span class="rm-legend" title="A remark with a dashed edge is AP Coder's suggestion: no one has been in its box yet">suggested</span></th><th class="c-tax">Tax</th><th class="c-del"><span class="rvw-sr">More for the line</span></th></tr></thead>
       {% else %}
       <div class="inv-lines-head">{{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid. Right-click a line for more.") }}
         <label class="check small inv-qty-toggle" title="Show each line's quantity and unit price"><input type="checkbox" data-show-qty{% if grid.show_qty %} checked{% endif %}> Qty and price</label></div>

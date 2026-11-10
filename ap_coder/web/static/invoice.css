@@ -816,8 +816,9 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 .inv-head-row .inv-vendor .inv-vendor-match:empty {display: none;}
 .inv-head-sum {align-self: end; padding-bottom: 6px; min-width: 0;}
 .inv-keyed:empty, .inv-head-sum:empty {display: none;}
+/* one line: its title says it whole when the window cuts it */
 .inv-keyed-line {padding: 3px 8px; border: 1px dashed var(--lg-border); border-radius: 6px; font-size: 12.5px;
-  line-height: 18px; color: var(--lg-muted); overflow-wrap: anywhere;}
+  line-height: 18px; color: var(--lg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .inv-keyed-line .k {font-weight: 600;} .inv-keyed-line .k::after {content: ":";}
 .inv-keyed-line .v {color: var(--lg-text); font-variant-numeric: tabular-nums;}
 .inv-keyed-line.not-ready {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
@@ -883,10 +884,35 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
   .inv-lines-grid.acct tr:not(.has-keyed) .c-keyed {display: none;}
 }
 /* ---- The approve bar with a chart of accounts (D-214): one sentence, what approving does and what is to fix. ---- */
-.acct-bar {display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-width: 0; font-size: 13px;}
+.rvw-post.acct-bar {display: flex; flex-direction: row; align-items: center; gap: 4px 10px; flex-wrap: wrap;
+  min-width: 0; font-size: 13px;}
 .acct-bar-say {color: var(--lg-muted); min-width: 0; overflow-wrap: anywhere;}
 .acct-bar .apc-pill {white-space: normal; max-width: 100%;}
 .acct-bar .acct-ready {flex: none;}
 .acct-bar-check[hidden] {display: none;}
 html:has(.inv-acct) .inv-actionbar-left {flex: 1 1 0; min-width: 0;}
 html:has(.inv-acct) .inv-actionbar-left .rvw-post {flex: 1 1 auto;}
+/* ---- The Remark box (D-213, D-214): suggested and marked so (a dashed edge) until someone has been in it; the
+   count under it; past 30 characters a red edge and the finding's words; then the line as the invoice prints it. ---- */
+.inv-lines-grid.acct {--areas: "no acct amt del" ". cap cap cap" ". keyed keyed keyed" ". desc tax tax" ". rcap taxcap taxcap"
+  ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct .c-rcap {grid-area: rcap; display: flex; gap: 0 6px; min-width: 0; padding: 0 2px 1px;
+  font-size: 11.5px; line-height: 15px; color: var(--lg-muted);}
+.inv-lines-grid.acct input[data-remark-box].is-suggested {border-style: dashed; border-color: var(--lg-subtle);}
+.inv-lines-grid.acct input[data-remark-box].is-over {border: 2px solid var(--lg-danger); padding: 0 5px;}
+.rm-legend {margin-left: 4px; padding: 0 4px; border: 1px dashed var(--lg-subtle); border-radius: 4px; font-weight: 400;
+  font-size: 10.5px; color: var(--lg-muted);}
+.rm-count {flex: none; font-variant-numeric: tabular-nums;}
+.rm-count.over {color: var(--lg-danger); font-weight: 600;}
+.rm-said {flex: 1 1 0; min-width: 0; overflow-wrap: anywhere;}
+.rm-said .rm-note {display: block; color: var(--lg-danger);}
+.rm-said .rm-printed {display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.inv-lines-grid.acct tr[data-row]:focus-within .rm-printed {white-space: normal;}
+.inv-lines-grid.acct td.c-more {flex-wrap: wrap;}
+.inv-lines-grid.acct td.c-more .field.wide {flex: 1 1 100%;}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--areas: "no acct amt desc tax del" ". cap cap rcap taxcap ." ". slot slot slot slot slot"
+    ". more more more more more";}
+  .inv-lines-grid.acct tr.has-keyed {grid-template-areas: "no acct amt desc tax del" ". cap keyed rcap taxcap ."
+    ". slot slot slot slot slot" ". more more more more more";}
+}

@@ -233,17 +233,79 @@ function accountText(gl, cc) {
   return code && unit ? `${unit}.${code}` : code || unit;
 }
 
+/* ---------- The remark keyed with a line (D-213): 30 characters in JD Edwards, never cut without a word ----------
+   The box shows the remark; what is posted is the row's hidden line_remark: blank while the box holds AP Coder's
+   suggestion (the server then suggests again for the account the line has now), the text once a person typed one.
+   A suggestion is marked (a dashed edge) until someone has been in its box. */
+const REMARK_MOST = 30; // coding/remark.py REMARK_MOST
+
+function remarkBox(row) {
+  return row?.querySelector?.("input[data-remark-box]") || null;
+}
+
+/** The count under a line's Remark box ("21 / 30"), and past 30 how many too many: the box is then to fix. */
+function showRemarkCount(row) {
+  const box = remarkBox(row);
+  const count = row?.querySelector("[data-remark-count]");
+  if (!box || !count) return;
+  const n = box.value.trim().replace(/\s+/g, " ").length;
+  const over = n > REMARK_MOST;
+  box.classList.toggle("is-over", over);
+  count.classList.toggle("over", over);
+  count.textContent = over ? `${n} / ${REMARK_MOST}: ${n - REMARK_MOST} too many` : `${n} / ${REMARK_MOST}`;
+}
+
+/** A line's Remark box as the check answered it: a suggestion follows the line's account (the box takes it, marked
+    as suggested unless it is the one already seen there); a remark a person typed is left as it is. */
+function applyRemark(row, said) {
+  const box = remarkBox(row);
+  const posted = row.querySelector('[name="line_remark"]');
+  if (!box || !posted || !said) return;
+  if (said.typed) {
+    if (!posted.value) {  // a row drawn again (Undo): its box shows the remark it posts
+      posted.value = said.text;
+      box.value = said.text;
+    }
+    box.classList.remove("is-suggested");
+    box.removeAttribute("title");
+  } else {
+    posted.value = ""; // typed exactly as suggested: the suggestion
+    if (box.value !== said.text) box.value = said.text;
+    box.classList.toggle("is-suggested", Boolean(said.text) && box.dataset.seen !== said.text);
+    if (said.why) box.title = said.why;
+  }
+  showRemarkCount(row);
+}
+
+document.addEventListener("input", (e) => {
+  if (!e.target.matches?.("input[data-remark-box]")) return;
+  const row = rowOf(e.target);
+  const posted = row?.querySelector('[name="line_remark"]');
+  if (posted) posted.value = e.target.value; // a person's remark now: posted as typed
+  e.target.classList.remove("is-suggested");
+  e.target.removeAttribute("title");
+  showRemarkCount(row);
+});
+document.addEventListener("focusin", (e) => {
+  if (!e.target.matches?.("input[data-remark-box]")) return;
+  e.target.dataset.seen = e.target.value; // looked at: no longer marked as a suggestion no one has seen
+  e.target.classList.remove("is-suggested");
+});
+
 /** What each line's row says under its boxes, as the check answered it (in row order): the cells marked
     data-live-line are drawn again, never a box, so the focus stays where it is. A row whose Account box changed
     since the check was sent keeps what it shows until the next one. */
 function applyLineViews(views, posted) {
   const rows = gridRows();
   const sent = posted ? posted.getAll("line_account") : null;
+  const sentRemarks = posted ? posted.getAll("line_remark") : null;
   if (rows.length !== views.length || (sent && sent.length !== rows.length)) return;
   rows.forEach((row, i) => {
     const box = accountBox(row);
     if (!box || (sent && box.value !== sent[i])) return;
     const view = views[i];
+    // (a remark typed in since the check was sent waits for the next one)
+    if (!sentRemarks || row.querySelector('[name="line_remark"]')?.value === sentRemarks[i]) applyRemark(row, view.remark_box);
     row.classList.toggle("is-fix", view.state === "fix");
     row.classList.toggle("is-check", view.state === "check");
     row.classList.toggle("has-keyed", Boolean(view.has_keyed));
@@ -530,6 +592,7 @@ document.addEventListener("click", (e) => {
     enhance(body.lastElementChild);
     // a new line: its description, where it starts (B-742); a tax line: its tax
     const fresh = body.lastElementChild;
+    if (which === "lines") fresh?.querySelector("[data-row-more]")?.removeAttribute("hidden"); // (no printed line: its details to type)
     (accountBox(fresh) || fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
@@ -1903,6 +1966,10 @@ function makeRow(which, state, after = null) {
     else el.value = value;
   }
   tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
+  if (remarkBox(tr)) {  // a person's remark shows at once; a suggestion comes with the next check
+    remarkBox(tr).value = tr.querySelector('[name="line_remark"]')?.value || "";
+    showRemarkCount(tr);
+  }
   const cell = tr.querySelector(".c-gl");
   if (cell && state.guess !== null && state.guess !== undefined) {
     cell.classList.add("is-guess");
@@ -2200,7 +2267,7 @@ function deleteRow(tr) {
     tr.remove();
     if (which === "lines") fillSplitLines();
     // the focus to the line that took its place (its description), else the button that adds one (B-742)
-    const to = next?.querySelector('[name="line_description"]') || next?.querySelector("input:not([type=hidden]), textarea, select") ||
+    const to = accountBox(next) || next?.querySelector('[name="line_description"]') || next?.querySelector("input:not([type=hidden]), textarea, select") ||
       document.querySelector(`[data-add-row="${which}"]`);
     to?.focus({ preventScroll: true });
     to?.scrollIntoView({ block: "nearest" });
@@ -2252,7 +2319,8 @@ function insertBelow(tr) {
     const row = makeRow("lines", { key: newKey(), values: {}, taxes: [] }, tr);
     numberNew(row);
     fillSplitLines();
-    row.querySelector('[name="line_description"]')?.focus();
+    row.querySelector("[data-row-more]")?.removeAttribute("hidden");
+    (accountBox(row) || row.querySelector('[name="line_description"]'))?.focus();
     soon(0);
   });
 }
@@ -2298,7 +2366,7 @@ function lineMenu(tr) {
       const copy = makeRow("lines", { ...rowState(tr), key: newKey() }, tr);
       numberNew(copy);
       fillSplitLines();
-      copy.querySelector('[name="line_description"]')?.focus();
+      (accountBox(copy) || copy.querySelector('[name="line_description"]'))?.focus();
       soon(0);
     }) },
     n ? { icon: "call_split", label: "Split this line…", id: "split", run: () => openSplit(tr) } : null,

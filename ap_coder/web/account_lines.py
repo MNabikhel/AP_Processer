@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
+from ap_coder.coding.remark import PERSON, REMARK_MOST, one_line
 from ap_coder.coding.review import is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
@@ -29,8 +30,14 @@ NO_ACCOUNT = "No account yet: type its number or words, or pick one"
 GUESS = "The account is AP Coder's guess, not learned yet: check it"
 OFFERED_MOST = 3  # business units offered for an account its line's business unit does not have
 _PARTS = re.compile(r"[\d.\s]+")  # an account's parts pasted with spaces or tabs between them
+NO_REMARK: dict[str, Any] = {"text": "", "typed": False, "why": "", "note": "", "count": 0, "over": False,
+                             "printed": ""}  # fmt: skip
 EMPTY: dict[str, Any] = {"text": "", "state": "", "name": "", "unit": "", "why": "", "note": "", "candidates": [],
-                         "listed": [], "taxes": None}  # fmt: skip
+                         "listed": [], "taxes": None, "remark": NO_REMARK}  # fmt: skip
+# Where a suggested remark comes from (``LineItem.remark_from``), said on its box.
+REMARK_WHY = {"supplier": "Suggested: this supplier's usual remark for this account",
+              "invoice": "Suggested from the line as the invoice prints it",
+              "account": "Suggested from the account's name"}  # fmt: skip
 
 
 def in_use(reference: ReferenceData | None) -> bool:
@@ -190,23 +197,44 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
     return view
 
 
+def remark_view(row: dict[str, Any], coded: dict[str, Any] | None, issue: Any = None) -> dict[str, Any]:
+    """A line's Remark box (D-213): the remark of the coding on screen (``coded``: the suggestion follows the line's
+    account), else the draft row's; ``typed``: a person's, which no suggestion replaces; ``note``: the finding's
+    words when it is longer than JD Edwards keeps (``issue``, REMARK_LONG); ``printed``: the line as the invoice
+    prints it, for under the box."""
+    line = coded if coded is not None else row
+    text = one_line(line.get("remark"))
+    source = str(line.get("remark_from") or "")
+    return {"text": text, "typed": source == PERSON, "why": REMARK_WHY.get(source, ""),
+            "note": _sentence(issue.message) if issue is not None else "", "count": len(text),
+            "over": len(text) > REMARK_MOST, "printed": one_line(row.get("description"))}  # fmt: skip
+
+
 def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: list[dict[str, Any]],
-              issues: Any = (), taxes: InvoiceTaxes | None = None) -> list[dict[str, Any]]:  # fmt: skip
+              issues: Any = (), taxes: InvoiceTaxes | None = None,
+              coded: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """What each line of ``lines`` (the draft's rows) shows in its row. ``proposed``: the lines as AP Coder proposed
-    them; ``issues``: the checks' findings (the chart's are said on the line); ``taxes``: ``taxmath.invoice_taxes``
-    of the coding on screen, None while it is not worked out (the row then shows no tax amounts)."""
+    them; ``issues``: the checks' findings (the chart's and the remark's are said on the line); ``taxes``:
+    ``taxmath.invoice_taxes`` of the coding on screen, None while it is not worked out (the row then shows no tax
+    amounts); ``coded``: that coding's lines as checked (each with its remark), None likewise."""
     found: dict[Any, Any] = {}
+    long: dict[Any, Any] = {}
     for issue in issues or ():
         if issue.code in CHART_CODES and issue.line_number is not None:
             found.setdefault(issue.line_number, issue)
+        elif issue.code == "REMARK_LONG" and issue.line_number is not None:
+            long.setdefault(issue.line_number, issue)
     by_position = {line.position: line for line in taxes.lines} if taxes is not None else {}
     views, position = [], 0
     for before, row in pair_lines(proposed, lines):
         view = _view(reference, row, before or {}, found.get(row.get("line_number")))
         # the coding leaves out a row with no description and no amount (``coding_from_inputs``)
+        mine = None
         if not all(is_blank(row.get(k)) for k in ("description", "amount")):
             view["taxes"] = tax_view(by_position[position]) if position in by_position else None
+            mine = coded[position] if coded is not None and position < len(coded) else None
             position += 1
+        view["remark"] = remark_view(row, mine, long.get(row.get("line_number")))
         # what the Account box's list offers first: [account, its name, its business unit's name, why]
         view["listed"] = [[c["account"], c["name"], c["unit"], c["reason"]] for c in view["candidates"]]
         views.append(view)

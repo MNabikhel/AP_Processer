@@ -128,7 +128,10 @@ def test_ctrl_enter_with_a_list_open_only_closes_it_then_approves(browser, chart
     page.keyboard.press("Control+Enter")
     page.wait_for_timeout(400)
     assert not page.query_selector(LIST) and store.get_invoice(invoice_id)["status"] == REVIEW  # only closed
-    page.keyboard.press("Control+Enter")  # nothing to fix or to check: approves
+    page.keyboard.press("Control+Enter")  # the suggested remark no one looked at: said in the bar first
+    page.wait_for_selector("[data-bar-check]:not([hidden])")
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+    page.keyboard.press("Control+Enter")  # again: approves
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
     assert store.get_invoice(invoice_id)["status"] == APPROVED
     assert not errors
@@ -175,9 +178,59 @@ def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_a
     page.keyboard.press("Control+Enter")
     page.wait_for_selector("[data-bar-check]:not([hidden])")
     said = page.inner_text("[data-bar-check]")
-    assert said == "To check: the account of line 1. Ctrl+Enter again approves."
+    assert said == "To check: the account of line 1; 1 suggested remark not looked at. Ctrl+Enter again approves."
     assert store.get_invoice(invoice_id)["status"] == REVIEW and _focused(page) == "account 1"
     page.keyboard.press("Control+Enter")
     wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
     assert store.get_invoice(invoice_id)["status"] == APPROVED
     assert not errors
+
+
+REMARK = '[data-grid="lines"] [data-row]:nth-child(1) input[data-remark-box]'
+POSTED = '[data-grid="lines"] [data-row]:nth-child(1) input[name="line_remark"]'
+COUNT = '[data-grid="lines"] [data-row]:nth-child(1) [data-remark-count]'
+
+
+def test_the_remark_box_is_marked_suggested_until_visited_counts_and_is_never_cut(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    suggested = page.input_value(REMARK)
+    assert suggested and "is-suggested" in page.get_attribute(REMARK, "class")
+    assert page.input_value(POSTED) == ""  # a suggestion is not posted: it follows the line's account
+    assert page.inner_text(COUNT) == f"{len(suggested)} / 30"
+    page.keyboard.press("Control+Enter")  # a suggested remark no one looked at: said first, not approved
+    page.wait_for_selector("[data-bar-check]:not([hidden])")
+    assert page.inner_text("[data-bar-check]") == (
+        "To check: 1 suggested remark not looked at. Ctrl+Enter again approves.")  # fmt: skip
+    assert page.evaluate("document.activeElement.matches('input[data-remark-box]')")  # and it goes to it
+    assert "is-suggested" not in page.get_attribute(REMARK, "class")  # visited
+    page.keyboard.press("Control+a")
+    page.keyboard.type("KT parcels 3-1-204")
+    assert page.input_value(POSTED) == "KT parcels 3-1-204" and page.inner_text(COUNT) == "18 / 30"
+    assert page.is_hidden("[data-bar-check]")  # an edit: the two steps start again
+    page.keyboard.type(" for the third floor kitchen")
+    assert page.inner_text(COUNT) == "46 / 30: 16 too many" and "is-over" in page.get_attribute(REMARK, "class")
+    assert page.input_value(REMARK) == "KT parcels 3-1-204 for the third floor kitchen"  # whole, never cut
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1) .rm-note')  # the finding's words, on the line
+    assert "JD Edwards keeps 30" in page.inner_text('[data-grid="lines"] [data-row]:nth-child(1) .rm-note')
+    assert page.is_disabled("[data-approve]")
+    assert not errors
+
+
+def test_the_suggested_remark_follows_the_account_picked(browser, chart_company):
+    from ap_coder.ai.supplier_prior import prior_for
+    from ap_coder.coding.remark import suggested
+
+    store = chart_company.store
+    invoice, invoice_id = chart_company.invoices["four_lines"]
+    page, errors = _review(browser, chart_company, "four_lines")
+    proposed = store.get_invoice(invoice_id)["ai_output"]
+    line = proposed["line_items"][0]
+    assert page.input_value(REMARK) == line["remark"]
+    account = line["candidates"][0]["account"]
+    page.click(f'[data-grid="lines"] [data-row]:nth-child(1) [data-use-account="{account}"]')
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1):not(.is-fix)')
+    usual = suggested(line, proposed, prior_for(store, proposed["vendor_name"], always=True), account,
+                      store.reference_data())  # fmt: skip
+    wait_until(page, lambda: page.input_value(REMARK) == usual.text)
+    assert page.input_value(REMARK) == usual.text and page.input_value(POSTED) == ""
+    assert page.input_value(FIRST) == account and not errors
