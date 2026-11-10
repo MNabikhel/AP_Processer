@@ -71,7 +71,7 @@ AGAIN_FORMATS = {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)",
 # JD Edwards' formats: the Z-files to load and the sheet to type from. A batch made in one holds only invoices that
 # passed the JD Edwards checks (the others stay in Ready to export, listed with why: B-2148).
 JDE_FORMATS = (jde.FORMAT, jde_keying.FORMAT)
-FORMAT_SETTING = "export_format"  # the format of the last batch made: the page opens on it (Excel at first)
+FORMAT_SETTING = jde.EXPORT_FORMAT  # the format of the last batch made: the page opens on it (Excel at first)
 
 
 def shown_formats(store: Store, *keep: str) -> list[str]:
