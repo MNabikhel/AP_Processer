@@ -160,11 +160,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the currency on the page; if it is right, ask the pilot tester to add it in Settings → JD Edwards E1.",
     ),
     "JDE_TAX_AREA": CheckHelp(
-        ERP, "No JD Edwards tax area",
+        ERP, "No JD Edwards tax area, or two on one invoice",
         "JD Edwards needs a tax area and explanation code for the province of supply, and there is none for this "
-        "invoice.",
+        "invoice. Or the invoice charges the GST/HST at two rates (lines supplied in two provinces: GST on some, HST "
+        "on others): a voucher's pay item has one tax area, so it is two pay items, which AP Coder does not make "
+        "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
-        "Edwards E1.",
+        "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
+        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",

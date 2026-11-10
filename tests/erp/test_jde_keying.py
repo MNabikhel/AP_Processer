@@ -620,3 +620,53 @@ def test_a_keying_sheet_batch_typed_with_code_b_counts_as_jd_edwards_accruing_th
     assert notes == {ids[0]: taxreturn.JDE_ACCRUES, ids[1]: taxreturn.JDE_WILL_ACCRUE}
     store.create_export_batch([ids[1]], "xlsx", actor="Pat Tester")  # an Excel batch: not in JD Edwards
     assert {s.invoice_id: s.note for s in taxreturn.self_assessment(store, day, day)}[ids[1]] == ""
+
+
+def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_is_on_the_keying_sheet(tmp_path):
+    """The department's way in one step (`jde.use_prototype`): JD Edwards shown, the tax on the pay item with code V
+    and a tax rate/area, the QST not recovered, the account the line's own string. With a new data folder's defaults
+    (tax coded to G/L lines, JD Edwards hidden) the same invoice was held back from the sheet."""
+    from ap_coder.bench import jde_company, jde_exports
+    from ap_coder.core.store import Store
+    from ap_coder.ops import chart_cmd
+    from ap_coder.web.pages import exports as exports_page
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    books = tmp_path / "books"
+    jde_exports.write_all(books)
+    chart_cmd.import_files(store, books / jde_exports.CHART_FILE, books / jde_exports.UNITS_FILE)
+    pairs = store.account_pairs()
+    unit = pairs.business_units()[0]
+    code = next(c for c in pairs.accounts_of(unit) if pairs.offered(unit, c) and "." in c)
+    final = coded(doc([line(1, 240.0, code, ["GST"], desc="Fibre line October", cc=unit)],
+                      [tl("GST", "", 0.05, 240.0, 12.0)], prov="AB", vendor_name="Prairie Office Supply Ltd.",
+                      invoice_number="POS-3301", invoice_date="2026-10-02"))["final_output"]  # fmt: skip
+    store.import_vendor_master([{"vendor_name": final["vendor_name"], "erp_id": "40417"}])
+    inv = store.add_invoice(tmp_path / "a.pdf", final, {})
+    store.approve_invoice(inv, final, "Jane")
+
+    def sheet():
+        batch = store.create_export_batch([inv], jde_keying.FORMAT)
+        wb = openpyxl.load_workbook(io.BytesIO(exports_page.batch_file(store, batch, jde_keying.FORMAT)[0]))
+        store.undo_export_batch(batch)
+        return blocks(wb[jde_keying.SHEET]), list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True))
+
+    assert not jde.in_use(store) and not exports_page.shown_formats(store).count(jde_keying.FORMAT)
+    ready, held = sheet()  # a new data folder: the tax on G/L lines, whose tax account has no business unit
+    assert len(held) == 1 and "has no JDE account" in held[0][7]
+
+    js = jde.use_prototype(store, actor="Setup")
+    assert jde.load(store) == js == jde.prototype_settings() and jde.in_use(store)
+    assert jde_keying.FORMAT in exports_page.shown_formats(store)
+    assert store.tax_treatments()["QST"].treatment == "expense_to_line"
+    (block,), held = sheet()
+    assert held == []
+    assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == (
+        "V", jde_company.TAX_AREA)  # fmt: skip
+    assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (240, 12)
+    assert lines_and_check(block) == [
+        [f"{unit}.{code}", pairs.description(unit, code) or None, 240, "Fibre line October"],
+        ["Check", "G/L lines + recovered tax = gross", 240, "240.00 + 12.00 = 252.00: balanced"],
+    ]
+    jde.show(store, False)
+    assert not jde.in_use(store)

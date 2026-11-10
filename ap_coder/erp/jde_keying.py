@@ -139,10 +139,8 @@ def vouchers(
                              str(final.get("invoice_number") or "").strip(), str(final.get("invoice_date") or ""),
                              v.gross / 100, v.currency, why))  # fmt: skip
             continue
-        # The pay item's tax as ``voucher_rows`` sends it: none with the tax on G/L lines, the exempt code or no tax.
-        exempt = ("", "E", settings.exempt_code.strip().upper())
-        taxed = not settings.tax_on_gl and v.tax_code not in exempt and bool(v.stam)
-        warnings, notes = _said(v, settings, taxed, fx_rates)
+        tax, taxable = jde.pay_item_tax(v, settings)
+        warnings, notes = _said(v, settings, tax is not None, fx_rates)
         ready.append(Voucher(
             invoice_id=v.inv_id, supplier_number=an8, supplier_name=str(final.get("vendor_name") or ""),
             company=settings.company_code, invoice_number=str(final.get("invoice_number") or "").strip(),
@@ -151,7 +149,7 @@ def vouchers(
             terms=jde.terms_code(final, settings)[0] or str(final.get("payment_terms") or "").strip(),
             remark=jde.voucher_remark(inv), due=jde.sent_due(final, inv) if settings.send_due_date else None,
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,
-            tax=v.stam / 100 if taxed else None, taxable=v.atxa / 100 if taxed else None,
+            tax=None if tax is None else tax / 100, taxable=None if taxable is None else taxable / 100,
             recovered=v.recoverable / 100, po_matched=v.po_matched,
             lines=[Line(jde.ani(e["account"]), str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde.line_remark(e)) for e in v.entries],

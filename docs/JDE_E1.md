@@ -80,6 +80,14 @@ There is no CSV of the sheet: a spreadsheet opening one reads `0312005561.0042` 
 52316, and the house way for a CSV (text as it is, for a loader; an apostrophe only against formulas) cannot keep
 a code text. The workbook does.
 
+**The settings for it in one step.** `jde.use_prototype(store)` (`ap_coder/erp/jde.py`, for a first-run step and
+tests) sets a data folder up as a department that types its vouchers and recovers the GST/HST only: Amounts = tax
+amounts, code V and a tax rate/area for each province (placeholders an Admin replaces in *Province → tax area*:
+`CDNGST`, a GST-only area, for AB, BC, MB, SK, QC and the territories; `ONHST`, `NBHST`, `NLHST`, `NSHST`, `PEHST`
+for the HST provinces), the remarks as typed, the default account rule (no mapping rows), *Show JD Edwards
+settings* on, and the QST set to *not recoverable: add to the expense line*. A new data folder's own defaults are
+the tax coded to G/L lines and JD Edwards hidden.
+
 The sheet says what the JD Edwards settings say, like the batch files: with *Amounts* = **Taxable / non-taxable / tax
 amounts** the tax is on the pay item (the tax explanation code and tax rate/area of the province, the tax and taxable
 amounts) and the G/L lines are net of it; with **Tax coded to G/L accounts** each recoverable tax is a G/L line of
@@ -302,6 +310,10 @@ Blocking problems, per invoice:
 * a distribution line whose GL code (+ cost center) has no JDE account, or an account too long (BU 12,
   object 6, subsidiary 8);
 * the GL distribution does not add up to the invoice total, or is *unbalanced* for the tax code (above);
+* the GST/HST charged at two rates (lines supplied in two provinces: GST on some, HST on others, or the HST at 13% and 15%):
+  a pay item has one tax area, so it is two pay items; held (JDE_TAX_AREA), the reason spelling out each pay item to
+  key by hand (tax area, taxable and tax amounts, its lines). Two provinces of one federal rate (Alberta and British
+  Columbia) cannot be told from the lines and are not held (B-2152);
 * currency not set up; province unknown while Canadian tax was charged; a tax code AP Coder cannot balance;
 * **duplicates**: the same supplier (address number, or vendor name) and invoice number (compared the way
   people mean them: `INV-00123` = `#123`) twice in the batch, already in a live export batch, or in the
