@@ -157,11 +157,13 @@ def _check(v: Voucher) -> str:
     return f"{said}: balanced" if v.balanced else f"{v.lines_total:,.2f} + {v.recovered:,.2f} is not {v.gross:,.2f}"
 
 
-def _block(v: Voucher, n: int, count: int) -> list[list[tuple[Any, str]]]:
-    """A voucher's rows, each four (value, kind) cells: its title, the pay item's fields two a row, the G/L lines
-    and the check line."""
-    rows = [
-        [(f"Voucher {n} of {count}", TITLE), (f"AP Coder invoice {v.invoice_id}", TITLE), ("", TITLE), ("", TITLE)],
+Row = list[tuple[Any, str]]  # a sheet row: four (value, kind) cells
+
+
+def _head(v: Voucher, title: str) -> list[Row]:
+    """A voucher's title and the pay item's fields, two a row."""
+    return [
+        [(title, TITLE), (f"AP Coder invoice {v.invoice_id}", TITLE), ("", TITLE), ("", TITLE)],
         [("Supplier number", LABEL), (v.supplier_number, TEXT), ("Supplier name", LABEL), (v.supplier_name, PLAIN)],
         [("Invoice number", LABEL), (v.invoice_number, TEXT), ("PO number", LABEL), (v.po_number, TEXT)],
         [("Invoice date", LABEL), (v.invoice_date, DATE), ("G/L date", LABEL), (v.gl_date, DATE)],
@@ -171,10 +173,25 @@ def _block(v: Voucher, n: int, count: int) -> list[list[tuple[Any, str]]]:
         [("Taxable amount", LABEL), (v.taxable, MONEY), ("Tax amount", LABEL), (v.tax, MONEY)],
         [("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)],
     ]  # fmt: skip
-    rows += [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT)] for li in v.lines]
-    rows.append([("Check", LABEL), ("G/L lines + recovered tax = gross", PLAIN), (v.lines_total, MONEY),
-                 (_check(v), PLAIN)])  # fmt: skip
-    return rows
+
+
+def _parts(v: Voucher, n: int, count: int) -> list[list[Row]]:
+    """A voucher's rows (its title and fields, the G/L lines, the check line) as the parts that each fit a printed
+    page: one, unless it is longer than a page. Then it is cut between G/L lines, each further part under the
+    title and fields again ("Voucher 7 of 31, continued"), the check line with the last lines."""
+    title = f"Voucher {n} of {count}"
+    lines: list[Row] = [[(li.account, TEXT), (li.description, PLAIN), (li.amount, MONEY), (li.remark, TEXT)]
+                        for li in v.lines]  # fmt: skip
+    tail: list[Row] = [[("Check", LABEL), ("G/L lines + recovered tax = gross", PLAIN), (v.lines_total, MONEY),
+                        (_check(v), PLAIN)]]  # fmt: skip
+    head = _head(v, title)
+    room = ROWS_A_PAGE - len(head) - 1  # G/L lines (and the check line) a page holds under the fields, a blank row left
+    parts: list[list[Row]] = []
+    while len(lines) + len(tail) > room:
+        cut = min(room, len(lines) - 1)  # the last part keeps a line above the check line
+        parts.append([*head, *lines[:cut]])
+        head, lines = _head(v, f"{title}, continued"), lines[cut:]
+    return [*parts, [*head, *lines, *tail]]
 
 
 def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
@@ -189,26 +206,29 @@ def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
     left = Alignment(horizontal="left")
     at, on_page = 1, 0  # the last row written; rows on the printed page so far
     for n, v in enumerate(ready, 1):
-        block = _block(v, n, len(ready))
-        if on_page and on_page + len(block) > ROWS_A_PAGE:  # it would run over the page: it starts the next one
-            ws.row_breaks.append(Break(id=at))
-            on_page = 0
-        for row in block:
-            ws.append(xlsx_row([None if value in ("", None) else value for value, _ in row]))
-            at += 1
-            pair = row[0][1] == LABEL and row[2][1] == LABEL  # a row of the pay item's fields: read left to right
-            for cell, (_, kind) in zip(ws[at], row, strict=True):
-                if kind in (LABEL, TITLE):
-                    cell.font = Font(bold=True)
-                if kind == TITLE:
-                    cell.fill = fill
-                if kind in (TEXT, MONEY, DATE):
-                    cell.number_format = {TEXT: TEXT_FORMAT, MONEY: MONEY_FORMAT, DATE: DATE_FORMAT}[kind]
-                if pair:
-                    cell.alignment = left
+        for i, part in enumerate(_parts(v, n, len(ready))):
+            # A part that would run over the page starts the next one, as each further part of a long voucher does
+            # (B-2147: a break is written every time, so no stretch between two is longer than a page).
+            if on_page and (i or on_page + len(part) + 1 > ROWS_A_PAGE):
+                ws.row_breaks.append(Break(id=at))
+                on_page = 0
+            for row in part:
+                ws.append(xlsx_row([None if value in ("", None) else value for value, _ in row]))
+                at += 1
+                pair = row[0][1] == LABEL and row[2][1] == LABEL  # the pay item's fields: read left to right
+                for cell, (_, kind) in zip(ws[at], row, strict=True):
+                    if kind in (LABEL, TITLE):
+                        cell.font = Font(bold=True)
+                    if kind == TITLE:
+                        cell.fill = fill
+                    if kind in (TEXT, MONEY, DATE):
+                        cell.number_format = {TEXT: TEXT_FORMAT, MONEY: MONEY_FORMAT, DATE: DATE_FORMAT}[kind]
+                    if pair:
+                        cell.alignment = left
+            on_page += len(part)
         ws.append([])
         at += 1
-        on_page = (on_page + len(block) + 1) % ROWS_A_PAGE
+        on_page += 1
     for i, width in enumerate(WIDTHS, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
@@ -224,6 +244,10 @@ def build_xlsx(ready: list[Voucher], held: list[Held]) -> bytes:
     for row in other.iter_rows(min_row=2):
         row[1].number_format, row[5].number_format = TEXT_FORMAT, MONEY_FORMAT
         row[-1].alignment = Alignment(wrap_text=True, vertical="top")
+    other.page_setup.orientation = "landscape"  # one page wide, the reasons wrapped, not a column alone on a page
+    other.page_setup.fitToWidth, other.page_setup.fitToHeight = 1, 0
+    other.sheet_properties.pageSetUpPr.fitToPage = True
+    other.print_title_rows = "1:1"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

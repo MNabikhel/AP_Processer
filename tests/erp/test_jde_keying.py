@@ -241,6 +241,44 @@ def test_the_sheet_prints_with_its_column_names_on_each_page_and_no_voucher_cut_
     assert all(end - start <= jde_keying.ROWS_A_PAGE for start, end in zip(page_ends, page_ends[1:], strict=False))
 
 
+def long_voucher(inv_id, count=130):
+    """Alberta, 130 lines: more than a printed page holds."""
+    lines = [line(n, 10.0, "6431", ["GST"], desc=f"Parcel {n}", cc=HQ) for n in range(1, count + 1)]
+    taxes = [tl("GST", "", 0.05, 10.0 * count, 0.5 * count)]
+    d = doc(lines, taxes, prov="AB", vendor_name="Lakehead Courier Inc.", invoice_number=f"LC-{inv_id:05}",
+            invoice_date="2026-10-05")  # fmt: skip
+    return coded(d, inv_id=inv_id)
+
+
+def test_no_stretch_between_page_breaks_is_longer_than_a_page_whatever_the_vouchers():
+    """B-2147: the count of rows on the printed page wrapped back to nothing without a page break being written
+    (a voucher ending on the page's last rows), so the next vouchers ran on and a page ended inside one. A voucher
+    that fits a page is never cut; one longer than a page is cut between G/L lines only, its fields said again."""
+    many = [split(n) if n % 3 == 0 else one_line(n) for n in range(1, 40)]
+    many += [long_voucher(40), one_line(41), split(42)]
+    ws = workbook(many)[jde_keying.SHEET]
+    breaks = sorted(b.id for b in ws.row_breaks.brk)
+    page_ends = [1, *breaks, ws.max_row]
+    assert max(end - start for start, end in zip(page_ends, page_ends[1:], strict=False)) <= jde_keying.ROWS_A_PAGE
+    found = blocks(ws)
+    assert len(found) == 42
+    for block in found:
+        first, last = block[0][0].row, block[-1][0].row
+        inside = [b for b in breaks if first <= b < last]
+        if block is not found[39]:
+            assert not inside, block[0][0].value  # a voucher that fits a page is on one page
+            continue
+        assert len(inside) >= 3  # 130 lines: four pages or more
+        rows = {row[0].row: row for row in block}
+        for b in inside:  # each page ends on a G/L line and the next begins with the voucher's fields again
+            assert rows[b][0].value == f"{HQ}.6431"
+            assert [c.value for c in rows[b + 1][:2]] == ["Voucher 40 of 42, continued", "AP Coder invoice 40"]
+            assert [c.value for c in rows[b + 2][:2]] == ["Supplier number", "600233"]
+        assert [row[3].value for row in block if row[0].value == f"{HQ}.6431"] == [f"Parcel {n}" for n in range(1, 131)]
+        assert [row[0].value for row in block].count("Check") == 1 and block[-1][0].value == "Check"
+        assert [row[0].value for row in block].count("Voucher 40 of 42") == 1
+
+
 def test_text_that_looks_like_a_formula_is_kept_as_text():
     final = {k: v for k, v in one_line()["final_output"].items() if k != "gl_distribution"}
     final["line_items"][0]["description"] = "+1 800 555 0100"
