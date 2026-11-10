@@ -37,7 +37,11 @@ from ap_coder.core.store.backups import BACKUP_STATUS
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
+    EVERYTHING,
+    SCREENS,
     SHOW_JDE,
+    SIMPLE,
+    SIMPLE_HIDDEN_TABS,
     STALE_PAGE,
     data_dir,
     developer_env_on,
@@ -56,6 +60,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
     server_mode,
+    simple_screens,
 )
 
 router = page_router()  # each plain handler: one connection a request
@@ -80,8 +85,10 @@ def tab_url(tab: str) -> str:
 
 
 def shown_tabs(store: Store) -> list[tuple[str, str]]:
-    """The tab bar: every tab but JD Edwards E1 while it is hidden (on a laptop: Excel and CSV exports only)."""
-    return [(key, label) for key, label in TABS if key != "jde" or jde_shown(store)]
+    """The tab bar: every tab but JD Edwards E1 while it is hidden (on a laptop: Excel and CSV exports only) and, in
+    Simple screens, Automation and Finance hub."""
+    left_out = SIMPLE_HIDDEN_TABS if simple_screens(store) else ()
+    return [(key, label) for key, label in TABS if (key != "jde" or jde_shown(store)) and key not in left_out]
 
 
 def render_tab(request: Request, tab: str, **context: Any) -> HTMLResponse:
@@ -635,16 +642,23 @@ def about_context(store: Store) -> dict[str, Any]:
             ("Computer", f"{platform.system()} {platform.release()}", False),
         ],
         "show_jde": jde_shown(store),
+        "simple": simple_screens(store),
         "developer_tools": developer_tools(store),
         "developer_env": developer_env_on(),
     }
 
 
 @router.post("/settings/about/show")
-def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form("")) -> JSONResponse:
-    """What is shown (D-52): the JD Edwards E1 settings and export, and the developer tools. Logged."""
+def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form(""),
+               screens: str = Form("")) -> JSONResponse:  # fmt: skip
+    """What is shown (D-52): the JD Edwards E1 settings and export, the developer tools, and the screens (Simple:
+    the short menu; Everything: every page; not sent: as they are). Logged."""
     store = get_store(request)
     changed, keys = [], []
+    if screens in (SIMPLE, EVERYTHING) and (screens == SIMPLE) != simple_screens(store):
+        store.set_setting(SCREENS, screens, actor=reviewer())
+        changed.append("Simple screens" if screens == SIMPLE else "every screen shown")
+        keys.append(SCREENS)
     switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
     if not developer_env_on():  # set by AP_DEVELOPER_TOOLS: shown as on, never stored (B-527)
         switches.append((DEVELOPER_TOOLS, developer, "developer tools", developer_tools(store)))
