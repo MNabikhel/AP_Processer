@@ -15,7 +15,8 @@ more; 200,000 rows in 18 s holding 40 MB, their import 2 s under the write lock;
 after 15 s with nothing held. A file that is no such workbook is refused in plain words that say what to do, never
 with a traceback (B-2124).
 
-Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's bytes), giving ``chart.Rows``.
+Entry points: ``read_chart``, ``read_business_units`` (a path, or an upload's bytes), giving ``chart.Rows``;
+``read_rows``, the rows as they are, for another of JD Edwards' long exports (the vendor information list, D-219).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import itertools
 import zipfile
 import zlib
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -138,9 +140,28 @@ def read_export(source: str | Path | bytes, columns_of: Callable[[list[str], str
     (``header_row``) and the columns found (``found``). ``ChartError``, in plain words that name the file, when it
     is not that export or cannot be read; a file open in another program is the caller's to say
     (``PermissionError``)."""
+    name = chart.FILE if isinstance(source, bytes) else Path(source).name
+    with _first_sheet(source, name) as sheet:
+        rows = sheet.iter_rows(values_only=True)
+        kept = _columns(rows, columns_of, name, sheet.title, {} if about is None else about)
+        for row in rows:
+            yield {column: row[at] if at < len(row) else None for at, column in kept}
+
+
+def read_rows(source: str | Path | bytes, name: str = chart.FILE) -> Iterator[tuple[Any, ...]]:
+    """The first sheet's rows as they are, one at a time, for an export read by where its columns are (the vendor
+    information list has two columns of one name): bounded as ``read_export`` is, and refused in the same plain
+    words (``ChartError``), which call the file ``name``."""
+    with _first_sheet(source, name) as sheet:
+        yield from sheet.iter_rows(values_only=True)
+
+
+@contextmanager
+def _first_sheet(source: str | Path | bytes, name: str) -> Iterator[Any]:
+    """The workbook's first sheet, opened to be read a row at a time once the file is within its bounds, and closed
+    at the end. ``ChartError`` for a file that is none, or cannot be read (while it is read too)."""
     import openpyxl
 
-    name = chart.FILE if isinstance(source, bytes) else Path(source).name
     opened = io.BytesIO(source) if isinstance(source, bytes) else Path(source)
     workbook = None
     try:
@@ -148,10 +169,7 @@ def read_export(source: str | Path | bytes, columns_of: Callable[[list[str], str
         workbook = openpyxl.load_workbook(opened, read_only=True, data_only=True)
         sheet = workbook.worksheets[0]
         sheet.reset_dimensions()  # the rows as they are, whatever size the file says the sheet has
-        rows = sheet.iter_rows(values_only=True)
-        kept = _columns(rows, columns_of, name, sheet.title, {} if about is None else about)
-        for row in rows:
-            yield {column: row[at] if at < len(row) else None for at, column in kept}
+        yield sheet
     except (ChartError, PermissionError):
         raise
     except UNREADABLE as exc:

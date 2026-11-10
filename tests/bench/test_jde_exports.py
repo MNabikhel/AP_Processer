@@ -20,7 +20,8 @@ from ap_coder.bench.jde_company import ALLOCATION, MAIN_UNIT, RECOVERIES
 from ap_coder.erp import journal as reader
 
 COLUMNS = {"chart_of_accounts": 110, "business_units": 67, "supplier_master": 10, "voucher_headers": 56,
-           "gl_distribution": 36, "pay_items": 44, "payment_history": 24}  # fmt: skip
+           "gl_distribution": 36, "pay_items": 44, "payment_history": 24, "vendor_info": 22}  # fmt: skip
+TWICE = {"vendor_info": 1}  # a column name a grid has twice: the vendor information list's two "Business Unit"
 AMOUNT = re.compile(r"\d*\.\d\d")  # two decimals, no thousands separator; ".26", never "0.26"
 DATE = re.compile(r"[1-9]\d?/[1-9]\d?/\d{4}")  # m/d/yyyy, not zero-padded
 
@@ -70,7 +71,7 @@ def test_each_grid_is_one_sheet_with_its_header_in_row_1_and_its_number_of_colum
         rows = _cells(path)
         assert len(rows[0]) == COLUMNS[kind], path.name
         assert all(isinstance(cell.value, str) and cell.value.strip() for cell in rows[0]), path.name
-        assert len(set(cell.value for cell in rows[0])) == len(rows[0]), path.name
+        assert len(set(cell.value for cell in rows[0])) == len(rows[0]) - TWICE.get(kind, 0), path.name
         assert openpyxl.load_workbook(path).properties.creator == "Apache POI"
         seen.add(kind)
         for row in rows[1:]:  # a blank field is one space or a truly empty cell, never an empty string
@@ -530,7 +531,7 @@ def test_the_same_seed_gives_the_same_bytes_and_another_seed_other_books(small, 
     again = jde_exports.write_all(tmp_path / "again")
     assert again == truth and truth == jde_company.build(1, "small")
     names = sorted(path.name for path in folder.iterdir())
-    assert names == sorted(path.name for path in (tmp_path / "again").iterdir()) and len(names) == 14
+    assert names == sorted(path.name for path in (tmp_path / "again").iterdir()) and len(names) == 15
     for name in names:
         assert (folder / name).read_bytes() == (tmp_path / "again" / name).read_bytes(), name
     other = jde_company.build(2, "small")

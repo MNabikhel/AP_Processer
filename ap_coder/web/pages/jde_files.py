@@ -3,8 +3,11 @@ one place, in the order they depend on each other.
 
 1. the chart of accounts and 2. the business units (``ops/chart_cmd.import_files``, the reader's own size limit:
    ``core/chart_file``), with the chart's settings a person must set (``Store.save_chart_settings``);
-3. the suppliers (the vendor master's import, as on Vendors: ``coding/vendors.master_rows``,
-   ``Store.import_vendor_master``);
+3. the suppliers, either of two exports told apart by their column names: the supplier master's grid (the vendor
+   master's import, as on Vendors: ``coding/vendors.master_rows``, ``Store.import_vendor_master``), which gives the
+   payment holds, and the vendor information list (``coding/vendor_info``, ``Store.import_vendor_info``, D-219),
+   which gives the tax IDs, currencies, terms and addresses. Each goes to the supplier of its number, and neither
+   removes what only the other gives;
 4. last year's coding, the Transaction Journal (``ops/journal_cmd``: ``look``, then ``load``; ``forget``);
 5. the vouchers already in JD Edwards (the voucher list, as on Exports: ``erp/registers``,
    ``Store.import_erp_vouchers``).
@@ -28,10 +31,12 @@ from fastapi import File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from ap_coder.coding import vendor_info
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, ui
 from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
+from ap_coder.core.store.vendor_master import name_marker
 from ap_coder.erp import jde, registers
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import chart_cmd, journal_cmd
@@ -46,6 +51,7 @@ router = page_router()  # each plain handler: one connection a request
 HERE = "/jde-files"
 SAID_KIND = "jde-files-said"  # what a load said, kept for the page that follows it
 SAID_TTL = 3600
+INFO_KIND = "jde-vendor-info"  # the vendor information list as read at its upload, kept for its summary and its load
 ORDER = ("Load them in this order: the chart of accounts and the business units first, because the suppliers, last "
          "year's coding and the vouchers are checked against them; then the suppliers; then last year's coding; "
          "then the vouchers already in JD Edwards.")  # fmt: skip
@@ -88,9 +94,36 @@ def _suppliers_problem(empty: bool, columns: dict[str, str]) -> str:
     return "" if "erp_id" in columns else NO_NUMBER_COLUMN
 
 
-def _suppliers_look(token: str) -> dict[str, Any]:
+def _keep_vendor_info(name: str, content: bytes) -> tuple[str, str]:
+    """(token, "") of an uploaded workbook that is the vendor information list, read once (20,000 suppliers: about
+    5 s) and kept as read for its summary and its load; ("", why) when its rows cannot be read; ("", "") for any
+    other file."""
+    try:
+        read = vendor_info.read(content, name)
+    except chart.ChartError as exc:
+        return "", str(exc)
+    if read is None:
+        return "", ""
+    kept = json.dumps(read, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return current_store().keep_ephemeral(INFO_KIND, kept, SAID_TTL, keep=2), ""
+
+
+def _vendor_info_look(store: Store, token: str, read: dict[str, Any]) -> dict[str, Any]:
+    """The vendor information list as it would be loaded, nothing written (``vendor_info.said``)."""
+    words = store.supplier_markers()
+    known = {str(number).strip().lstrip("0") for _key, number in store.master_vendor_ids() if number}
+    marked = sum(1 for row in read["rows"] if name_marker(row["vendor_name"], words)[1])
+    return {"token": token, "name": read["name"], "info": True, "kept": len(read["rows"]),
+            "said": vendor_info.said(read, known, marked), "found": read["found"], "missing": read["missing"],
+            "problem": "" if read["rows"] else NO_ROWS}  # fmt: skip
+
+
+def _suppliers_look(store: Store, token: str) -> dict[str, Any]:
     """The uploaded supplier list as it would be loaded, nothing written: its rows, the columns found by their
-    names and the ones that were not."""
+    names and the ones that were not; the vendor information list, what it holds (``_vendor_info_look``)."""
+    kept = current_store().ephemeral(INFO_KIND, token)
+    if kept is not None:
+        return _vendor_info_look(store, token, json.loads(kept))
     try:
         upload, df, _sheets = read_upload(token)
     except SheetError as exc:
@@ -171,7 +204,8 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
         "chart_settings": settings.saved(),
         "home_name": pairs.name_of(settings.home_business_unit) if pairs and settings.home_business_unit else "",
         "said": json.loads(said) if said else None,
-        "suppliers": _suppliers_look(q["suppliers"]) if q.get("suppliers") else None,
+        "suppliers": _suppliers_look(store, q["suppliers"]) if q.get("suppliers") else None,
+        "tax_ids": store.vendor_info_count(),
         "vouchers": _vouchers_look(store, q["vouchers"]) if q.get("vouchers") else None,
         **journals,
     }
@@ -276,6 +310,17 @@ def company_use(request: Request) -> JSONResponse:
 
 @router.post(HERE + "/suppliers/upload")
 async def suppliers_upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Either supplier export. The vendor information list (told by its column names) is read here, once, by the
+    reader of JD Edwards' long exports: its sheet unzips to more than any other spreadsheet may."""
+    name = Path(file.filename or "").name
+    if name.lower().endswith(".xlsx"):
+        content = await read_capped(file)
+        if content is None:
+            return refuse(TOO_BIG)
+        token, problem = await run_in_threadpool(_keep_vendor_info, name, content)
+        if token or problem:
+            return refuse(problem) if problem else done(request, _url("suppliers", suppliers=token))
+        await file.seek(0)
     token, problem = await receive_sheet(file)
     if problem:
         return refuse(problem)
@@ -289,16 +334,32 @@ async def suppliers_load(request: Request, token: str = Form("")) -> JSONRespons
 
 @one_connection
 def _suppliers_load(request: Request, token: str) -> JSONResponse:
-    try:
-        _upload, df, _sheets = read_upload(token)
-    except SheetError as exc:
-        return refuse(str(exc))
-    columns = master_columns(list(df.columns))
-    if problem := _suppliers_problem(df.empty, columns):
-        return refuse(problem)
-    result = get_store(request).import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer())
-    drop_upload(token)
-    said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
+    """Load the uploaded supplier list as its summary showed it. Each row goes to the supplier of its number
+    (``by_erp_id``): of two suppliers by one name, each keeps its own number, hold and tax ID whatever order a list
+    is in (B-2298)."""
+    store = get_store(request)
+    kept = current_store().ephemeral(INFO_KIND, token)
+    if kept is not None:
+        rows = json.loads(kept)["rows"]
+        if not rows:
+            return refuse(NO_ROWS)
+        result = store.import_vendor_info(vendor_info.master_rows(rows), rows, actor=reviewer())
+        current_store().drop_ephemeral(INFO_KIND, token)
+        said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated, from the vendor information "
+                f"list. Tax IDs kept for {sum(1 for row in rows if row['tax_id']):,} of them; the payment holds "
+                "are as they were."]  # fmt: skip
+    else:
+        try:
+            _upload, df, _sheets = read_upload(token)
+        except SheetError as exc:
+            return refuse(str(exc))
+        columns = master_columns(list(df.columns))
+        if problem := _suppliers_problem(df.empty, columns):
+            return refuse(problem)
+        result = store.import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer(),
+                                            by_erp_id=True)  # fmt: skip
+        drop_upload(token)
+        said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
     if dupes := result["duplicates"]:
         said.append(f"{ui.plural(len(dupes), 'supplier')} {'appears' if len(dupes) == 1 else 'appear'} more than "
                     "once in the file under similar names (merged here; one on hold keeps the supplier on hold): "

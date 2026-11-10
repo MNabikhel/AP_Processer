@@ -50,7 +50,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
 # JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
 # summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
-# rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218)
+# rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218); and
+# vendor_info (by _SCHEMA: what JD Edwards' vendor information list says of each supplier, vendor_master.py, D-219)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -199,6 +200,15 @@ CREATE INDEX IF NOT EXISTS events_invoice ON events (invoice_id);
 CREATE TABLE IF NOT EXISTS vendors (
     vendor_key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
     expected_gst TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+-- what JD Edwards' vendor information list says of a supplier, by its number (vendors.erp_id): the tax ID as written
+-- and as compared ('' for a word), and the rest as written (D-219)
+CREATE TABLE IF NOT EXISTS vendor_info (
+    erp_id TEXT PRIMARY KEY, tax_id TEXT NOT NULL DEFAULT '', tax_id_norm TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT '', terms TEXT NOT NULL DEFAULT '', address1 TEXT NOT NULL DEFAULT '',
+    address2 TEXT NOT NULL DEFAULT '', address3 TEXT NOT NULL DEFAULT '', address4 TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
+    postal_code TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', business_unit TEXT NOT NULL DEFAULT '',
+    business_unit_name TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
 CREATE TABLE IF NOT EXISTS export_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,
