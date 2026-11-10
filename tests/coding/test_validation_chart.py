@@ -144,7 +144,7 @@ def test_the_help_of_each_check_says_it_applies_once_a_chart_is_loaded_and_how_t
     for code in ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED"):
         assert CHECKS[code].meaning.startswith("Once a chart of accounts is loaded from JD Edwards: "), code
     for code in ("ACCOUNT_NOT_IN_CHART", "BU_INACTIVE"):
-        assert "python -m ap_coder chart import" in CHECKS[code].action, code
+        assert "JD Edwards files" in CHECKS[code].action, code
 
 
 def test_a_list_changed_by_hand_since_the_import_is_still_checked(reference, ground_truth, store):
