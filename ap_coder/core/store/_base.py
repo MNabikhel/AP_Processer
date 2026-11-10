@@ -45,7 +45,8 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # and bulk_jobs (by _SCHEMA, no version of its own either: bulk approvals as jobs, bulk_jobs.py, D-185), and
 # billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
 # purchasing.py, D-194), and answer_wants (by _SCHEMA, no version of its own either: the settled answers the server's
-# background process works out again, reports.py, D-198)
+# background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
+# of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -333,6 +334,11 @@ CREATE TABLE IF NOT EXISTS bulk_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, owne
 CREATE UNIQUE INDEX IF NOT EXISTS bulk_jobs_one ON bulk_jobs (owner, db) WHERE state IN ('waiting', 'running');
 CREATE INDEX IF NOT EXISTS bulk_jobs_state ON bulk_jobs (state, id);
 CREATE INDEX IF NOT EXISTS bulk_jobs_owner ON bulk_jobs (owner, id);
+CREATE TABLE IF NOT EXISTS chart_accounts (bu TEXT NOT NULL, object TEXT NOT NULL DEFAULT '', subsidiary TEXT NOT NULL
+    DEFAULT '', description TEXT NOT NULL DEFAULT '', lod INTEGER NOT NULL DEFAULT 0, posting_edit TEXT NOT NULL
+    DEFAULT '', category TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, subsidiary));
+CREATE TABLE IF NOT EXISTS business_units (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', company TEXT NOT NULL
+    DEFAULT '', type TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '');
 """
 _SCHEMA += ANSWER_WANTS + ";\n"  # (made in a restore's copy of an older backup too)
 

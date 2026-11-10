@@ -29,8 +29,9 @@ lists and facts, kept in each process and followed by the summary's log of the q
 pages that list them, D-157), ``folder`` (what the pick-up read of the invoices folder's files, D-155), ``imports``
 (the import queue: the files waiting to be read, D-168), ``reports`` (the big answers worked out once for every process
 of the company server, and the downloads its background process makes, D-169), ``bulk_jobs`` (bulk approvals as
-jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189). A test that patches a
-module-level name (``_now``, ``json``...) patches it in the part that uses it.
+jobs, D-185), ``transaction`` (several calls kept in one transaction by a caller, D-189), ``chart`` (the chart of
+accounts and the business units as JD Edwards exports them, and the GL accounts and cost centers worked out from
+them, D-209). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
 tools excepted), so moving to another database changes this folder only.
@@ -115,6 +116,7 @@ from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: fo
 from .backups import BackupsMixin
 from .bulk_jobs import BulkJobsMixin
 from .capture import CaptureMixin
+from .chart import ChartMixin
 from .ephemeral import EphemeralMixin
 from .folder import FolderMixin
 from .hub import HubMixin
@@ -161,6 +163,7 @@ class Store(
     BulkJobsMixin,
     PostingsMixin,
     TransactionMixin,
+    ChartMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
 

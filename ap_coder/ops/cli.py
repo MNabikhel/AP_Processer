@@ -178,6 +178,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     backup_cmd.add_parser(sub)  # the backups from the console (D-143)
 
+    from . import chart_cmd
+
+    chart_cmd.add_parser(sub)  # the chart of accounts and the business units from JD Edwards' exports (D-209)
+
     _add_hub_command(sub)
 
     p = sub.add_parser("schema", help="Developers: print the coding schema a cloud build sends to Azure OpenAI")
@@ -1171,6 +1175,12 @@ def _backup(args: argparse.Namespace) -> int:
     return backup_cmd.main(args)
 
 
+def _chart(args: argparse.Namespace) -> int:
+    from . import chart_cmd
+
+    return chart_cmd.main(args)
+
+
 def cmd_hub(args: argparse.Namespace) -> int:
     """``hub export [--full] [--dry-run]`` and ``hub status`` (D-103)."""
     from ..erp.hub.run import HubConfig, export, last_run
@@ -1258,6 +1268,7 @@ def main(argv: list[str] | None = None) -> int:
         "users": lambda: cmd_users(args),
         "jde": lambda: _jde(args),
         "backup": lambda: _backup(args),
+        "chart": lambda: _chart(args),
         "hub": lambda: cmd_hub(args),
     }
     try:

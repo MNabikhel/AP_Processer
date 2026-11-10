@@ -100,6 +100,7 @@ def jde_context(store: Store) -> dict[str, Any]:
         "choices": CHOICES,
         "gl_dates": jde.GL_DATES,
         "closed_periods": jde.CLOSED_PERIODS,
+        "remarks": jde.REMARKS,
         "currencies": ", ".join(js.currencies),
         "extras": ", ".join(f"{k}={v}" for k, v in js.po_extra_columns.items()),
         "bank_rows": bank_rows(store, js),
@@ -194,6 +195,10 @@ def _save_general(request: Request, form: Any) -> JSONResponse:
         if text("closed_period") not in jde.CLOSED_PERIODS:
             return refuse("Choose what is done with a G/L date in a closed period.")
         new.closed_period = text("closed_period")
+    if "remarks" in form:  # (D-210)
+        if text("remarks") not in jde.REMARKS:
+            return refuse("Choose what the remarks carry.")
+        new.remarks = text("remarks")
     waits = (("voucher_timeout", "a voucher's wait", 1, 900), ("post_minutes", "a posting run's time", 1, 1440),
              ("resend_minutes", "the wait before sending a lost one again", 0, 1440))  # fmt: skip
     for name, label, low, high in waits:

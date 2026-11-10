@@ -38,7 +38,8 @@ BANK_COLUMNS = ("code", "name", "currency", "institution", "transit", "account_n
 # The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
 _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
-# Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds.
+# Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds. The
+# chart of accounts' pairs (D-209) by the count of its imports and its settings (``chart.SETTING_KEYS``), not its rows.
 _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(code || '|' || description || '|' || category || '|' || meals, char(10))
      FROM (SELECT * FROM gl_accounts ORDER BY code)),
@@ -47,7 +48,8 @@ _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(tax_type || '|' || treatment || '|' || gl_code, char(10))
      FROM (SELECT * FROM tax_treatments ORDER BY tax_type)),
     (SELECT group_concat(key || '=' || value, char(10))
-     FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes') ORDER BY key))"""
+     FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes', 'chart_version',
+           'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels') ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
 # B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made: whether there is one, not how many,
@@ -650,4 +652,5 @@ class AccountsMixin:
                 meals_gl_codes=frozenset(r["code"] for r in gl if r.get("meals")),
             ),
             notes=parse_policy_notes(self.get_setting("policy_notes")),
+            pairs=self._account_pairs(),  # None with no chart imported (chart.py, D-209)
         )

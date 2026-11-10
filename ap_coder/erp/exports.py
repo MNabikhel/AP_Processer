@@ -16,6 +16,8 @@ The two CSV files are for the ERP's loader, like the JD Edwards files: their tex
 is, with no spreadsheet apostrophe (an invoice number ``'+A-100`` would miss the ERP's duplicate check).
 The xlsx workbook is opened by people, so its formula-looking text is stored as plain text.
 * ``jde``: JD Edwards E1 Z-table files (F0411Z1 / F0911Z1), built by ``jde.build_zip``.
+* ``jde_keying`` / ``jde_keying_csv``: the sheet read while typing vouchers into JD Edwards, built by
+  ``jde_keying.build``.
 
 Entry points: ``build`` (one batch's file in a format), ``distribution`` (an approved invoice's posting lines,
 as stored or built again), ``line_rows`` / ``invoice_rows`` and ``entry_lines`` (the invoice line behind a
@@ -47,6 +49,10 @@ FORMATS = {
     "custom": "Custom CSV: your ERP's columns (set up below), for the ERP loader (to look at it in Excel, use the "
     ".xlsx export)",
     "jde": "JD Edwards E1 (F0411Z1 / F0911Z1): ZIP of Z-table files (Settings → JD Edwards E1)",
+    "jde_keying": "JD Edwards keying sheet: an Excel workbook to read while typing vouchers into JD Edwards by hand, "
+    "a block per voucher; an invoice that is not ready is on its second sheet with why (Settings → JD Edwards E1)",
+    "jde_keying_csv": "JD Edwards keying sheet as CSV: the same values, one row per G/L line (codes keep their "
+    "leading zeros in the Excel sheet; Excel drops them when it opens a CSV)",
 }
 
 INVOICE_COLUMNS = [
@@ -481,6 +487,8 @@ def build(
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
     if fmt == "jde":  # needs its settings and checks: see ap_coder.erp.jde.build_zip
         raise ValueError("JD Edwards files are built with ap_coder.erp.jde.build_zip")
+    if fmt.startswith("jde_keying"):  # the JD Edwards settings and checks too
+        raise ValueError("The JD Edwards keying sheet is built with ap_coder.erp.jde_keying.build")
     if fmt == "csv":
         return (
             build_csv(invoices, gl_names, batch, vendor_ids, tax_treatments, bank_accounts),
