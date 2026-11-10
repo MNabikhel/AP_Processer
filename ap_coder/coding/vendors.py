@@ -544,7 +544,8 @@ def voucher_hold(store: Store, vendor_key: Any, an8: Any) -> str:
         if vendor.get("status") == ON_HOLD:
             return f"{name} is on hold in AP Coder's vendor list" + (f" ({vendor['notes']})" if vendor.get("notes")
                                                                       else "")  # fmt: skip
-        return f"{name} is on hold in JD Edwards (hold code {vendor['erp_hold']}, as the last supplier sync read it)"
+        return (f"{name} is on hold in JD Edwards (hold code {vendor['erp_hold']}, as the supplier list was last "
+                "synced or imported)")  # fmt: skip
     return ""
 
 
