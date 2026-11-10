@@ -619,6 +619,10 @@ select {max-width: 100%; text-overflow: ellipsis;} /* a long vendor name in its 
   font-weight: 600; cursor: pointer;}
 .flash .flash-act:hover {background: rgba(255, 255, 255, .6);}
 .flash .flash-act .ms {font-size: 15px; vertical-align: -3px; margin-right: 3px;}
+/* The question after a surprising correction: a short box and its one-click answers, under the question. */
+.flash-why {display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px;}
+.flash-why input[type="text"] {flex: 1 1 220px; min-width: 0; max-width: 420px;}
+.flash-why .flash-act {margin: 0;}
 
 /* ==== Process invoices ======================================================================================= */
 .dropzone {display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 16px; text-align: center;

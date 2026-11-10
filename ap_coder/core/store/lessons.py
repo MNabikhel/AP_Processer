@@ -153,8 +153,9 @@ class LessonsMixin:
         return out
 
     def list_lessons(self, *, include_retired: bool = False, limit: int = 500) -> list[dict[str, Any]]:
-        """Every lesson AP corrected at least once, the most corrected since its last reason first."""
-        where = "corrected > 0" + ("" if include_retired else " AND retired = 0")
+        """Every lesson AP corrected at least once, the most corrected since its last reason first; and the ones
+        with AP's reason for an account AP Coder had only offered (no correction, D-218)."""
+        where = "(corrected > 0 OR explanation != '')" + ("" if include_retired else " AND retired = 0")
         with self._conn() as conn:
             rows = conn.execute(f"{_LESSON} WHERE {where} ORDER BY since_why DESC, updated_at DESC "
                                 "LIMIT ?", (limit,)).fetchall()  # fmt: skip

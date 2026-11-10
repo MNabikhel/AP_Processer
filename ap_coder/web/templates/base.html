@@ -115,6 +115,14 @@
           <div><div class="flash-text">{{ f.text }}</div>
             {% if f.details %}<ul>{% for d in f.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
             {% if f.more %}<details class="flash-more"><summary>{{ f.more_label or "More" }}</summary><div>{{ f.more }}</div></details>{% endif %}
+            {% if f.why %}{# the question after a surprising correction (D-218): answered once, or skipped #}
+            <form method="post" action="{{ f.why.url }}" class="flash-why" data-once>
+              <input type="hidden" name="situation" value="{{ f.why.key }}">
+              <input type="text" name="answer" maxlength="300" placeholder="In a few words (optional)" aria-label="Why">
+              <button type="submit" class="flash-act">Keep</button>
+              {% for r in f.why.reasons %}<button type="submit" class="flash-act" name="reason" value="{{ r.code }}">{{ r.label }}</button>{% endfor %}
+              <button type="button" class="flash-act" data-dismiss>Skip</button>
+            </form>{% endif %}
           </div>
           {% if f.undo %}<form method="post" action="{{ f.undo }}" class="flash-undo"><button type="submit" class="flash-act" title="Put it back in the review queue as it was (Ctrl+Z)" aria-keyshortcuts="Control+Z"><span class="ms" aria-hidden="true">undo</span>Undo<kbd class="flash-key" aria-hidden="true">Ctrl+Z</kbd></button></form>{% endif %}
           <button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>

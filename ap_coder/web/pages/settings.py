@@ -193,6 +193,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
         "why_after": lessons.why_after(store),
+        "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
         "uses_cost_centers": bool(store.list_accounts("cost_centers")),
         "provinces": PROVINCE_NAMES,
@@ -231,7 +232,7 @@ def _save_review(request: Request, form: Any) -> JSONResponse:
     supply_part = _supply_part(request, our_province, site_provinces)
     if isinstance(supply_part, JSONResponse):
         return supply_part
-    saved = name_part() + approval_part() + supply_part() + _duties_part(request, form)
+    saved = name_part() + approval_part() + supply_part() + _duties_part(request, form) + _why_part(request, form)
     if saved:
         from ap_coder.web.pages.help import forget_setup_report
 
@@ -249,6 +250,7 @@ SAVED_WORDS = {
     "default_terms_days": ("the days to pay", False),
     "fx_rates": ("the exchange rates", False),
     lessons.SETTING: ("when to ask why", False),
+    lessons.ASK: ("whether to ask why", False),
     "our_province": ("your province", True),
     "site_provinces": ("the sites in other provinces", True),
 }
@@ -341,6 +343,20 @@ def _duties_part(request: Request, form: Any) -> list[str]:
     store.set_setting("poster_not_approver", "1" if on else "0", actor=reviewer())
     store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["poster_not_approver"]})
     return ["poster_not_approver"]
+
+
+def _why_part(request: Request, form: Any) -> list[str]:
+    """ "Ask why after a surprising correction" (D-218), saved when the form shows it (a checkbox not ticked posts
+    nothing)."""
+    store = get_store(request)
+    if form.get("why_shown") is None:
+        return []
+    on = str(form.get(lessons.ASK) or "") == "1"
+    if on == lessons.asks_why(store):
+        return []
+    store.set_setting(lessons.ASK, "1" if on else "0", actor=reviewer())
+    store.log_event("settings_changed", actor=reviewer(), detail={"keys": [lessons.ASK]})
+    return [lessons.ASK]
 
 
 def _approval_part(

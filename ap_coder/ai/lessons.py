@@ -10,6 +10,13 @@ Settings → Review), the next approval that corrects it asks one short question
 value?". The answer is kept on the lesson. It is asked again only if the corrections keep coming: the loop goes on
 until the situation needs no correction.
 
+A second question comes after an approval, never holding it (D-218): when the person changed an account AP Coder had
+coded by itself, or had offered first from this supplier's own history, the next page asks once "Why 7340 and not
+7420 for “Working lunch”?" (``surprise``: the most surprising line of the invoice, built from what the line kept:
+``LineItem.decided_by`` and ``candidates``; no model is asked). The answer, typed or one click, is kept as that
+lesson's reason; "one-off" forgets the line from the coding memory instead. Settings → Review turns both questions
+off (``asks_why``).
+
 The lessons go, as short plain sentences (``prompt_lines``), to the AI: the AI reviewer's prompt (verifier.py) and
 the GL suggestions (inference.suggest_accounts); and to the reviewer, as "Learned" hints on the review screen. AP
 edits or retires them on the Learning page.
@@ -26,6 +33,17 @@ from ..core.ui import FIELD_WORDS as _WORDS
 
 SETTING = "why_after"  # corrections of one situation since its last reason before the "why" question
 DEFAULT_WHY_AFTER = 3
+ASK = "why_surprise"  # Settings → Review, "Ask why after a surprising correction": "0", no question is ever asked
+# The one-click answers to the question after a surprising correction (``surprise``'s "reasons").
+KIND, UNIT, CHANGED, ONE_OFF = "kind", "unit", "changed", "one_off"
+# A line's account came from this supplier's own history (``LineItem.decided_by``'s and a candidate's "source"): one
+# offered first from it was nearly sure.
+OWN_HISTORY = ("vendor", "usual", "supplier")
+NEARLY = 0.5  # ...when it counts its lines: with at least this share of the supplier's (its lines' usual account)
+# What may have changed, by where the account AP Coder chose came from.
+_CHANGED = {"supplier": "Last year's account no longer applies", "vendor": "It changed: these go there from now on",
+            "usual": "It changed: these go there from now on", "rule": "The rule does not fit this line",
+            "others": "The words on the line mislead here", "words": "The words on the line mislead here"}  # fmt: skip
 INVOICE, CREDIT_NOTE = "invoice", "credit note"
 MAX_PROMPT_LINES = 8
 
@@ -61,6 +79,14 @@ def why_after(store: Any) -> int:
         return max(1, min(20, int(store.get_setting(SETTING) or DEFAULT_WHY_AFTER)))
     except (TypeError, ValueError):
         return DEFAULT_WHY_AFTER
+
+
+def asks_why(store: Any) -> bool:
+    """Whether AP is ever asked why (Settings → Review, on until turned off)."""
+    try:
+        return str(store.get_setting(ASK) or "1").strip() != "0"
+    except Exception:  # noqa: BLE001 - an older store: asked, as before
+        return True
 
 
 def _shown(value: Any) -> str:
@@ -135,6 +161,8 @@ def _key_of(store: Any, doc: dict[str, Any]) -> str:
 def due_for_why(store: Any, proposed: dict[str, Any], final: dict[str, Any]) -> list[dict[str, Any]]:
     """The corrections in this approval that AP has made ``why_after`` times (this one included) since the last
     reason: [{key, field, label, pattern, proposed, value, times, explanation}]. [] when nothing is asked."""
+    if not asks_why(store):
+        return []
     threshold = why_after(store)
     asked = []
     for row in outcomes(proposed, final, _key_of(store, final)):
@@ -150,6 +178,97 @@ def due_for_why(store: Any, proposed: dict[str, Any], final: dict[str, Any]) -> 
                           "proposed": row["proposed"], "value": row["value"], "times": times,
                           "explanation": lesson.get("explanation") or ""})  # fmt: skip
     return asked
+
+
+def _code(value: Any) -> str:
+    text = str(value or "").strip()
+    return "" if text == UNASSIGNED else text
+
+
+def _expected(before: dict[str, Any]) -> tuple[str, str, str, float] | None:
+    """What AP Coder expected for a line as proposed: (GL code, business unit or "", where it came from, how sure:
+    from 1, an account offered first, to 4, a rule's). None when it expected nothing: a guess, or a line left for a
+    person with no account offered first from this supplier's own history, or one with under ``NEARLY`` of the
+    supplier's lines (they went to several accounts: it was not nearly sure)."""
+    from .offline_coder import unsure
+
+    gl, by = _code(before.get("predicted_gl_code")), before.get("decided_by") or {}
+    if gl:  # coded with no one picking
+        source = str(by.get("source") or "")
+        if source in ("model", "person") or unsure(before.get("reasoning_justification")):
+            return None
+        sure = (3.0 if source == "rule" else 2.0) + float(by.get("share") or 0)
+        return gl, _code(before.get("predicted_cost_center")), source, sure
+    first = next(iter(before.get("candidates") or []), None)
+    if not first or first.get("source") not in OWN_HISTORY or not _code(first.get("code")):
+        return None
+    if first.get("of") and float(first.get("share") or 0) < NEARLY:
+        return None
+    unit = "" if first.get("guess") else _code(first.get("business_unit"))
+    return _code(first.get("code")), unit, str(first["source"]), 1.0 + float(first.get("share") or 0)
+
+
+def surprise(store: Any, proposed: dict[str, Any], final: dict[str, Any],
+             reference: Any = None) -> dict[str, Any] | None:  # fmt: skip
+    """The account of this approval AP Coder least expected to be changed (D-218): {key (the lesson's situation),
+    field, line, description, pattern, was, now, coded (AP Coder had coded it; False: offered first), question,
+    reasons: [{code, label}]}. Of the lines whose account the person changed from the one AP Coder had coded by
+    itself or offered first (``_expected``), the one it was surest of; None when there is none. As ``outcomes``,
+    the first line of a kind speaks for it. A business unit changed alone counts where accounts are whole strings
+    (``reference`` has a chart)."""
+    from ..core import chart
+
+    vendor = str(final.get("vendor_name") or "")
+    if not vendor_key(vendor):
+        return None
+    units = reference is not None and getattr(reference, "pairs", None) is not None
+    best: dict[str, Any] | None = None
+    seen: set[str] = set()
+    for before, after in pair_lines((proposed or {}).get("line_items") or [], final.get("line_items") or []):
+        pattern = line_pattern(after.get("description") or "")
+        if not pattern or pattern in seen or before is None:
+            continue
+        seen.add(pattern)
+        expected = _expected(before)
+        now_gl, now_cc = _code(after.get("predicted_gl_code")), _code(after.get("predicted_cost_center"))
+        if expected is None or not now_gl:
+            continue
+        was_gl, was_cc, source, sure = expected
+        moved = units and bool(was_cc and now_cc) and was_cc != now_cc  # to another business unit
+        if (now_gl == was_gl and not moved) or (best is not None and sure <= best["sure"]):
+            continue
+        was, now = was_gl, now_gl
+        if moved:
+            was, now = chart.join_account(was_cc, was_gl), chart.join_account(now_cc, now_gl)
+        description = " ".join(str(after.get("description") or "").split())[:80]
+        reasons = [{"code": KIND, "label": "This supplier's lines like this go there"}]
+        if moved and now_cc in _units_named(reference, description):
+            reasons.append({"code": UNIT, "label": f"The unit named on the line ({reference.pairs.name_of(now_cc)})"})
+        elif source in _CHANGED:
+            reasons.append({"code": CHANGED, "label": _CHANGED[source]})
+        reasons.append({"code": ONE_OFF, "label": "One-off: don't learn from it"})
+        field = LINE_GL if now_gl != was_gl else LINE_CC
+        best = {"key": situation(vendor, kind_of(final), field, pattern, key=_key_of(store, final)), "field": field,
+                "line": after.get("line_number"), "description": description, "pattern": pattern, "was": was,
+                "now": now, "coded": bool(_code(before.get("predicted_gl_code"))), "sure": sure,
+                "question": f"Why {now} and not {was} for “{description}”?", "reasons": reasons}  # fmt: skip
+    return best
+
+
+def _units_named(reference: Any, description: str) -> dict[str, int]:
+    from .supplier_prior import units_named
+
+    return units_named(reference, description)
+
+
+def reason_kept(found: dict[str, Any], code: str, typed: str) -> str:
+    """The reason to keep for an answer to ``surprise``'s question: the one-click reason's words and what was typed;
+    "" when neither. For an account only offered, the lesson shows no correction: the two accounts are said."""
+    label = next((r["label"] for r in found["reasons"] if r["code"] == code and code != ONE_OFF), "")
+    said = ": ".join(part for part in (label, " ".join(str(typed or "").split())[:300]) if part)
+    if said and not found["coded"]:
+        said = f"{found['now']}, not the {found['was']} offered first: {said}"
+    return said
 
 
 def sentence(lesson: dict[str, Any], gl_names: dict[str, str] | None = None) -> str:

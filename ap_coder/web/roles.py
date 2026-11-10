@@ -109,6 +109,7 @@ RULES: dict[tuple[str, str], str] = {
         # The review screen: edits, checks, the first approval, park, reject, reopen, undo (their own approval).
         "POST /review/{invoice_id:int}/vendor", "POST /review/{invoice_id:int}/check",
         "POST /review/{invoice_id:int}/approve", "POST /review/{invoice_id:int}/undo-approve",
+        "POST /review/{invoice_id:int}/why",
         "POST /review/{invoice_id:int}/park", "POST /review/{invoice_id:int}/reject",
         "POST /review/{invoice_id:int}/note", "POST /review/{invoice_id:int}/teach",
         "POST /review/{invoice_id:int}/split", "POST /review/{invoice_id:int}/apply-rules",
