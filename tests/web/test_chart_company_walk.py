@@ -194,23 +194,23 @@ def test_the_four_line_invoice_is_left_with_the_account_of_each_line_offered_fir
     assert page.not_ready == PICK.format(lines="4 lines") + " (or use Apply to all lines…)"
 
 
-def test_the_fifteen_line_invoice_is_left_with_the_suppliers_most_used_business_units_offered(
+def test_the_fifteen_line_invoice_is_left_with_the_account_on_the_business_unit_each_line_names_offered_first(
     chart_company, chart_company_client
 ):
     """One object.subsidiary on thirteen business units (who ordered decides): no line is coded with no one picking.
-    Each keeps five of the supplier's accounts, the most used first whichever business unit the line names: the
-    right account is first on one line of the fifteen, among the five on seven, and not offered on eight."""
+    Each keeps five of the supplier's accounts: the one on the business unit the line names first (B-2253: the most
+    used came first whichever unit a line named, the right account first on one line of the fifteen and not among
+    the five on eight), then the most used."""
     invoice, page, stored = _arrived(chart_company, chart_company_client, "fifteen_lines")
     history = _last_year(chart_company.truth, invoice.supplier)
     assert (len(history), len(set(history))) == (23, 13)
     reason = SEVERAL.format(lines=23, accounts=13, shares="26% / 13% / 9% / 9% / ...")
     assert [(row.account, row.reason) for row in page.lines] == [("", reason)] * 15
-    _left(stored, reason, [history[0]] * 15)
+    right = [line.parts[0].account for line in invoice.lines]
+    _left(stored, reason, right)
     offered = [[c["account"] for c in line["candidates"]] for line in stored]
     assert all(len(found) == 5 and set(found) <= set(invoice.supplier.accounts) for found in offered)
-    right = [line.parts[0].account for line in invoice.lines]
-    place = [found.index(account) + 1 if account in found else 0 for found, account in zip(offered, right, strict=True)]
-    assert place == [2, 4, 1, 0, 0, 0, 0, 0, 3, 0, 5, 0, 0, 2, 4]  # 0: not among the five kept
+    assert all(history[0] in found[:2] for found in offered)  # (the most used: first, or next after the unit named)
     assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED"]
     assert page.not_ready == PICK.format(lines="15 lines") + " (or use Apply to all lines…)"
 
