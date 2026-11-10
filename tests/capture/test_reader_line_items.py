@@ -301,3 +301,48 @@ def test_an_amount_run_together_with_the_vat_rate_beside_it_is_read_under_its_he
         ("Steel rods", 0.28, 0.36, 0.46), ("2", 0.54, 0.55, 0.46), ("50.00 20.00", 0.619, 0.74, 0.46),
     )  # fmt: skip
     assert [a for *_r, a in _read(words)] == [100.0, 50.0]
+
+
+def _numbered(y: float, number: str, desc: str, qty: str, price: str, amount: str, number_y: float | None = None):
+    """A row of a table with a "#" column: its number under the "#", then ``_row``'s cells further right."""
+    cells = [(text, x0 + 0.04, x1 + 0.04, cy) if x0 == 0.10 else (text, x0, x1, cy)
+             for text, x0, x1, cy in _row(y, desc, qty, price, amount)]  # fmt: skip
+    return [(number, 0.10, 0.10 + 0.008 * len(number), y if number_y is None else number_y), *cells]
+
+
+NUMBERED_HEADINGS = (("#", 0.10, 0.108, 0.20), ("Description", 0.14, 0.24, 0.20), *HEADINGS[1:])
+
+
+def test_a_row_number_under_its_own_heading_is_no_part_of_the_description():
+    """A table with a "#" column and one row read "1 Copy paper, letter" (B-2095): the row's number was taken for
+    the start of the description, and only two rows or more, each starting with its own number, lost it. OCR sets
+    the number a hair lower than the row, so it came last ("Copy paper, letter 1"), in a table of any length."""
+    one = _words(*NUMBERED_HEADINGS, *_numbered(0.24, "1", "Copy paper, letter", "40", "52.00", "2,080.00"))
+    assert _read(one) == [("Copy paper, letter", 40.0, 52.0, 2080.0)]
+    for heading in ("No.", "Pos", "N°"):
+        named = _words((heading, 0.10, 0.12, 0.20), *NUMBERED_HEADINGS[1:],
+                       *_numbered(0.24, "1", "Copy paper, letter", "40", "52.00", "2,080.00"))  # fmt: skip
+        assert _read(named) == [("Copy paper, letter", 40.0, 52.0, 2080.0)], heading
+    lower = _words(*NUMBERED_HEADINGS,
+                   *_numbered(0.24, "1", "Copy paper, letter", "40", "52.00", "2,080.00", number_y=0.244),
+                   *_numbered(0.27, "2", "Toner cartridges", "2", "89.00", "178.00", number_y=0.274))  # fmt: skip
+    assert [d for d, *_r in _read(lower)] == ["Copy paper, letter", "Toner cartridges"]
+    # The number set close to the description reads as one cell with it ("1 Copy paper", under "# Description").
+    close = _words(("# Description", 0.10, 0.204, 0.20), *HEADINGS[1:],
+                   ("7 Copy paper, letter", 0.10, 0.26, 0.24), ("40", 0.56, 0.576, 0.24), ("52.00", 0.70, 0.74, 0.24),
+                   ("2,080.00", 0.836, 0.90, 0.24))  # fmt: skip
+    assert _read(close) == [("Copy paper, letter", 40.0, 52.0, 2080.0)]
+
+
+def test_a_number_that_starts_a_description_is_kept_where_no_row_number_is_printed():
+    """ "6 Dell monitors" on its own is a description, with no "#" column; with one, a description that starts with
+    a number keeps it ("1 year licence", row 3), and a description that is a number alone stays one."""
+    plain = _words(*HEADINGS, *_row(0.24, "6 Dell monitors", "6", "200.00", "1,200.00"))
+    assert _read(plain) == [("6 Dell monitors", 6.0, 200.0, 1200.0)]
+    part = _words(*HEADINGS, ("4021", 0.10, 0.132, 0.24), ("2", 0.56, 0.568, 0.24), ("50.00", 0.70, 0.74, 0.24),
+                  ("100.00", 0.852, 0.90, 0.24))  # fmt: skip
+    assert _read(part) == [("4021", 2.0, 50.0, 100.0)]
+    licence = _words(*NUMBERED_HEADINGS, *_numbered(0.24, "3", "1 year licence", "1", "900.00", "900.00"))
+    assert _read(licence) == [("1 year licence", 1.0, 900.0, 900.0)]
+    unnumbered = _words(*NUMBERED_HEADINGS, *_numbered(0.24, "", "1 year licence", "1", "900.00", "900.00")[1:])
+    assert _read(unnumbered) == [("1 year licence", 1.0, 900.0, 900.0)]

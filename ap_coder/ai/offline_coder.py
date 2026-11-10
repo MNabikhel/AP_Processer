@@ -393,6 +393,15 @@ def _unlisted_charge(text: str, amount: float) -> str:
     return "Charges not in the line table"
 
 
+def _charge_outside(short: float, tax_charged: float) -> bool:
+    """Whether what the lines fall ``short`` of the subtotal (plus freight read beside it) is a charge printed
+    outside the table. Not when the lines add up to the total, their tax in them (a "Tax | Total" table): taking the
+    tax off as a charge "not in the line table" hid it; the lines stay as printed and the check says they include
+    the tax (B-2107)."""
+    with_tax = abs(tax_charged) >= 0.01 and abs(short + tax_charged) < 0.01
+    return abs(short) >= 0.01 and not with_tax
+
+
 def not_sure(top: Any) -> str:
     """Why a line with a suggestion was left without an account."""
     if getattr(top, "check", ""):
@@ -476,13 +485,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     listed = round(sum(r[3] for r in readings_data), 2)
     if readings and subtotal < 0 < listed and abs(listed + subtotal) < 0.01:
         readings_data = [(d, q, -u, -a) for d, q, u, a in readings_data]
-    # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
+    tax_charged = _amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2)
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
-    if (readings or freight) and abs(short) >= 0.01:
+    if (readings or freight) and _charge_outside(short, tax_charged if readings else 0.0):
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     # A tip printed between the tax and the total (a restaurant's "Gratuity 120.00"): a line with no tax, in the
     # subtotal, so the invoice adds up (B-931).
-    tax_charged = _amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2)
     tip = _tip_after_tax(text, round(_amount(values, "grand_total") - subtotal - freight - tax_charged, 2))
     if tip:
         readings_data.append((tip[0], 1.0, tip[1], tip[1]))

@@ -54,7 +54,7 @@ from ap_coder.coding.line_tax import (
     tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
-from ap_coder.coding.money import tax_right
+from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
 from ap_coder.coding.review import (
     codes_to_pick,
@@ -226,19 +226,20 @@ NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount"
 
 
 def _number_cell(value: Any) -> str:
-    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity),
-    which the checks and the page could not use."""
+    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity) or
+    is longer than any amount (27 digits, B-2096), which the checks and the page could not use."""
     text = str(value or "").strip()
     return text if _finite(text) is not None else ""
 
 
 def _finite(value: Any) -> float | None:
-    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number."""
+    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number, or one beyond the largest
+    amount (``money.LARGEST``)."""
     try:
         number = float(str(value or 0).replace(",", "").replace("$", ""))
     except ValueError:
         return None
-    return number if math.isfinite(number) else None
+    return number if abs(number) < LARGEST else None  # (a NaN is under nothing)
 
 
 def _line_number(value: Any) -> int | None:
@@ -600,8 +601,9 @@ def header_values(header: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
                 number = to_number(text)
             except ValueError:
                 number = math.nan
-            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit).
-            if math.isfinite(number):
+            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit); nor
+            # 27 digits, longer than any amount (B-2096).
+            if abs(number) < LARGEST:
                 out[name] = number
             else:
                 problems.append(f"{FIELD_LABELS[name]}: “{text}” is not an amount")
@@ -1196,6 +1198,20 @@ def checks_details(report: Any) -> list[dict[str, str]]:
             }
         )
     return items
+
+
+def coding_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """What an approval changed of the lines' coding proposed, as the approved invoice says it ("changed: …"): the
+    GL accounts, the cost centers, or both, where it said "GL coding" of a cost center alone (B-2104). "GL coding"
+    still when neither differs from what was proposed (a line changed after a reopen)."""
+    gl = cc = False
+    for before, li in pair_lines(ai.get("line_items") or [], final.get("line_items") or []):
+        s_gl, s_cc = ((before.get("predicted_gl_code"), before.get("predicted_cost_center") or "") if before
+                      else (None, ""))  # fmt: skip
+        gl = gl or (s_gl not in (None, "", UNASSIGNED) and li.get("predicted_gl_code") != s_gl)
+        cc = cc or (bool(s_cc) and (li.get("predicted_cost_center") or "") != s_cc)
+    return {(True, True): "GL accounts and cost centers", (True, False): "GL accounts",
+            (False, True): "cost centers"}.get((gl, cc), EDIT_LABELS["line_coding"])  # fmt: skip
 
 
 def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:

@@ -48,6 +48,18 @@ _HEAD = {
     "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|extension|net\s*(?:worth|amount|value)|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
 }  # fmt: skip
 
+# A line table's amount before tax under a heading that says so ("Net", "Excl. tax", "Before tax", "Pre-tax", "Montant
+# HT", "Subtotal"), and its amount with the tax in it ("Incl. tax", "After tax", "Gross", "Montant TTC"): beside a tax
+# column the first is the line's amount, never the second (B-2106).
+_BEFORE_TAX_WORDS = (r"(?:excl(?:uding|\.)?\s*(?:of\s*)?tax(?:es)?|before\s*tax(?:es)?|pre-?\s*tax|hors\s*taxes?|"
+                     r"avant\s*taxes?|h\.?t\.?)")  # fmt: skip
+_WITH_TAX_WORDS = (r"(?:incl(?:uding|\.)?\s*(?:of\s*)?tax(?:es)?|after\s*tax(?:es)?|with\s*tax(?:es)?|"
+                   r"taxes?\s*incl(?:uded|uses|\.)?|t\.?t\.?c\.?)")  # fmt: skip
+_AMOUNT_WORD = r"(?:amount|montant|total|prix|price|line\s*total)"
+_PRETAX_HEAD = re.compile(rf"^(?:net(?:\s*(?:amount|total))?|(?:{_AMOUNT_WORD}\s*)?{_BEFORE_TAX_WORDS}|sub\s*-?\s*total|"
+                          rf"sous\s*-?\s*total)\s*:?$")  # fmt: skip
+_TAXED_HEAD = re.compile(rf"^(?:(?:{_AMOUNT_WORD}\s*)?{_WITH_TAX_WORDS}|gross(?:\s*(?:amount|total))?)\s*:?$")
+
 # A state and ZIP code after a city, a comma or at the start of a line ("Seattle, WA 98101", "Boise ID 83702", "WA
 # 98101"); not after a label: "Order ID 77812", "Store IN 46204" are a label's numbers, not Idaho or Indiana.
 _ID_LABEL_WORDS = (
@@ -73,14 +85,20 @@ PREPAID = TAKEN_OFF  # a payment made before the invoice, taken off its total
 
 
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
-    """The line is a column heading of a line-item table (two or more other headings beside it)."""
-    others = 0
+    """The line is a column heading of a line-item table (two or more other headings beside it; beside the
+    description's or the quantity's, a heading that says before or after tax is one too: "Description | Before tax |
+    Tax | After tax", whose "Tax" is no label of the invoice's tax)."""
+    others = worded = 0
+    table = False
     for other in page_lines:
         if other is not line and abs(other.box.cy - line.box.cy) < 0.006:
             p = plain(other.text).strip()
             if any(rx.match(p) for rx in _HEAD.values()):
                 others += 1
-    return others >= 2
+                table = table or bool(_HEAD["description"].match(p) or _HEAD["quantity"].match(p))
+            elif _PRETAX_HEAD.match(p) or _TAXED_HEAD.match(p):
+                worded += 1
+    return others >= 2 or (table and others + worded >= 2)
 
 
 def plain_with_offsets(text: str) -> tuple[str, list[int]]:

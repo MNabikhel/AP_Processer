@@ -116,6 +116,33 @@ def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_scree
     assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).status_code < 500
 
 
+@pytest.mark.parametrize("typed", ["9" * 27, "-" + "9" * 40, "1e30"])
+@pytest.mark.parametrize("field", ["line_amount", "line_quantity", "line_unit_price", "tax_rate_pct", "tax_amount",
+                                   "tax_taxable"])  # fmt: skip
+def test_a_number_cell_too_long_to_be_a_number_never_breaks_the_review_screen(
+    client, store, field, typed, demo_template
+):
+    """27 digits or more in a cell of the grids (an amount, a quantity, a rate): the rounding ran out of digits and
+    checking answered 500 (B-2096). Such a cell counts as empty, as "abc" does, and so does a share of the split
+    form ("every part needs a percentage")."""
+    from tests.web.test_web_invoice import form_of
+
+    fill_from(store, demo_template)
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    data = form_of(store, inv_id)
+    posted = {**data, field: [typed] * len(data[field])}
+    check = client.post(f"/review/{inv_id}/check", data=posted, headers=PAGE)
+    assert check.status_code == 200, check.text
+    assert typed.lstrip("-")[:20] not in check.json()["sections"].get("lines", "")
+    split = {**posted, "split_line": "1", "part_gl": ["6000", "6010"], "part_pct": ["50", "50"]}
+    assert client.post(f"/review/{inv_id}/split", data=split, headers=PAGE).status_code < 500
+    assert client.post(f"/review/{inv_id}/approve", data=posted, headers=PAGE).status_code < 500
+    for by, name in (("percent", "part_pct"), ("amount", "part_amount")):
+        parts = {**data, "split_line": "1", "split_by": by, "part_gl": ["6000", "6010"], name: [typed, "50"]}
+        refused = client.post(f"/review/{inv_id}/split", data=parts, headers=PAGE)
+        assert refused.status_code == 400 and refused.json()["error"].startswith("Not split:"), refused.text
+
+
 def test_clearing_your_name_in_settings_goes_back_to_the_default_name(client, store, monkeypatch):
     """A name saved by mistake on a shared computer could not be removed: clearing the box said "Nothing changed."
     and the name stayed on every approval."""
