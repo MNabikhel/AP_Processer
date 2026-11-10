@@ -232,6 +232,27 @@ def test_an_empty_damaged_or_locked_pdf_is_one_warning_line_not_a_traceback(pipe
     assert len(failed) == 1 and failed[0].levelname == "ERROR" and failed[0].exc_info
 
 
+def test_a_bug_while_a_picture_is_made_a_pdf_keeps_its_traceback_in_the_log(pipeline, caplog, monkeypatch):
+    """Any TypeError, SyntaxError or OSError raised while the file was still a picture was "damaged: ask the vendor
+    for a new copy", in one line, its traceback at DEBUG, which no log keeps (B-2204): only what Pillow itself raises
+    on a picture it cannot decode is the file's fault. A bug of AP Coder's own stays an error with its traceback."""
+    from PIL import Image
+
+    from ap_coder.intake import pictures
+
+    store, pipe, folder = pipeline
+    Image.new("RGB", (60, 40), "white").save(folder / "photo.jpg")
+
+    def bug(path):
+        return None + 1.0  # (a TypeError of AP Coder's own making)
+
+    monkeypatch.setattr(pictures, "to_pdf", bug)
+    result = pipe.process(folder / "photo.jpg")
+    assert result.error.startswith("TypeError: unsupported operand") and "damaged" not in result.error
+    failed = [r for r in caplog.records if r.getMessage().startswith("Failed to process")]
+    assert len(failed) == 1 and failed[0].levelname == "ERROR" and failed[0].exc_info
+
+
 # --- B-263: a text file saved as "Unicode" by Notepad, or one that is not text at all --------------------------------
 
 TEXT_INVOICE = (

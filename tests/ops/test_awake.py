@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -13,18 +14,34 @@ from ap_coder.ops import awake
 CONTINUOUS, SYSTEM, DISPLAY = 0x80000000, 0x00000001, 0x00000002
 
 
+class _Asked(list):
+    """Every state asked of the stand-in kernel32, in order; ``threads``: the thread that asked each; ``kernel32``:
+    the stand-in itself; ``opened``: the libraries AP Coder opened for itself."""
+
+    threads: list[int]
+    kernel32: SimpleNamespace
+    opened: list[str]
+
+
 @pytest.fixture
 def windows(monkeypatch):
-    """Windows as ``stay_awake`` sees it, its kernel32 a stand-in: every state asked of it, in order."""
-    asked: list[int] = []
+    """Windows as ``stay_awake`` sees it, its kernel32 a stand-in: every state asked of it, in order, and by which
+    thread."""
+    asked = _Asked()
+    asked.threads, asked.opened = [], []
 
     def set_state(state):
         asked.append(int(getattr(state, "value", state)))
+        asked.threads.append(threading.get_ident())
         return CONTINUOUS  # (the state before: not 0, which is a failure)
 
+    def library(name, **options):
+        asked.opened.append(name)
+        return asked.kernel32
+
+    asked.kernel32 = SimpleNamespace(SetThreadExecutionState=set_state)
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=SimpleNamespace(SetThreadExecutionState=set_state)),
-                        raising=False)  # fmt: skip
+    monkeypatch.setattr(ctypes, "WinDLL", library, raising=False)
     monkeypatch.delenv("AP_SERVER_MODE", raising=False)
     return asked
 
@@ -60,9 +77,60 @@ def test_a_windows_that_refuses_never_stops_the_reading(windows, monkeypatch):
     def refused(state):
         raise OSError("no such call here")
 
-    monkeypatch.setattr(ctypes.windll.kernel32, "SetThreadExecutionState", refused)
+    monkeypatch.setattr(windows.kernel32, "SetThreadExecutionState", refused)
     with awake.stay_awake() as asked:
         assert not asked
+
+
+def test_a_block_inside_another_on_one_thread_keeps_the_outer_request(windows):
+    """The inner block ending sent ES_CONTINUOUS, which clears the thread's request: the outer block then read on
+    with nothing keeping the laptop awake (B-2205). Only the outermost block asks, and gives back."""
+    with awake.stay_awake() as outer:
+        with awake.stay_awake() as inner:
+            assert outer and inner and windows == [CONTINUOUS | SYSTEM]
+        assert windows == [CONTINUOUS | SYSTEM]  # nothing given back while the outer block still reads
+        with pytest.raises(RuntimeError), awake.stay_awake():
+            raise RuntimeError("a page could not be read")
+        assert windows == [CONTINUOUS | SYSTEM]
+    assert windows == [CONTINUOUS | SYSTEM, CONTINUOUS]
+    with awake.stay_awake():  # and asked afresh by the next reading
+        assert windows[2:] == [CONTINUOUS | SYSTEM]
+    assert windows[2:] == [CONTINUOUS | SYSTEM, CONTINUOUS] and set(windows.threads) == {threading.get_ident()}
+
+
+def test_two_threads_reading_at_once_each_ask_and_give_back_their_own(windows):
+    """The request is the thread's own (Windows keeps the laptop awake until every thread has given its back): a
+    thread inside a block never counts as another's, and each gives back on the thread that asked."""
+    both_inside = threading.Barrier(2)
+    seen: list[bool] = []
+
+    def read():
+        with awake.stay_awake() as asked:
+            both_inside.wait(timeout=10)
+            seen.append(asked)
+
+    readers = [threading.Thread(target=read) for _ in range(2)]
+    for reader in readers:
+        reader.start()
+    for reader in readers:
+        reader.join(timeout=10)
+    by_thread: dict[int, list[int]] = {}
+    for state, thread in zip(windows, windows.threads, strict=True):
+        by_thread.setdefault(thread, []).append(state)
+    assert seen == [True, True] and len(by_thread) == 2
+    assert all(states == [CONTINUOUS | SYSTEM, CONTINUOUS] for states in by_thread.values())
+
+
+def test_the_call_is_made_through_a_library_of_its_own_with_its_types(windows):
+    """``ctypes.windll.kernel32`` and its function objects are shared by every library in the process: one that sets
+    other argument types on ``SetThreadExecutionState`` made AP Coder's call fail, unseen. Its own handle, with the
+    documented types (a DWORD in, the state before out)."""
+    from ctypes import wintypes
+
+    with awake.stay_awake() as asked:
+        assert asked
+    call = windows.kernel32.SetThreadExecutionState
+    assert set(windows.opened) == {"kernel32"} and call.argtypes == [wintypes.DWORD] and call.restype is wintypes.DWORD
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows' own call")
