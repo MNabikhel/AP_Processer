@@ -40,7 +40,7 @@ CLOUD_CHECKS = frozenset(
 )
 # How the four checks of an account on its business unit begin (D-209): they are only made with a chart loaded.
 CHART_LOADED = "Once a chart of accounts is loaded from JD Edwards"
-CHART_IMPORT = "python -m ap_coder chart import: docs/JDE_E1.md"
+CHART_IMPORT = "python -m ap_coder chart import (the JD Edwards E1 guide: loading the chart of accounts)"
 
 CHECKS: dict[str, CheckHelp] = {
     # --- JD Edwards voucher (erp/jde.py voucher_findings, D-75): what its batch would hold back --------------------
