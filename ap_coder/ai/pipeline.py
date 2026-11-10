@@ -623,7 +623,18 @@ class InvoicePipeline:
         azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
                                                          pages_read, text_file)  # fmt: skip
         self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
+        if save and result.invoice_id and (result.original or result.source != Path(path)):
+            self._note_own_file(result.source)
         return result
+
+    def _note_own_file(self, path: Path) -> None:
+        """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
+        renamed to the kind it is, pages turned upright): kept as read by the pick-up, which read the file as it
+        came, so the import page does not list AP Coder's own file as a new one (B-2098)."""
+        from ..core.store.folder import read_file
+
+        with contextlib.suppress(OSError):  # gone meanwhile: nothing to list
+            self.store.note_files([read_file(path)])
 
     def _read_and_code(self, result: PipelineResult, page_text: list[str] | None, invoice_id: int | None,
                        text_file: bool, captured: dict[str, tuple[Any, str, Any]]) -> None:  # fmt: skip

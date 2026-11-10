@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import io
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -82,6 +83,48 @@ def test_a_picture_named_as_a_pdf_is_made_into_a_pdf_and_kept(pipeline):
     assert result.original["file"] == "invoice 77.png"
     assert (folder / "originals" / "invoice 77.png").read_bytes() == raw  # the picture as it came
     assert store.find_by_hash(folder / "originals" / "invoice 77.png")["id"] == result.invoice_id
+
+
+def _picture_file(kind: str, pages: int = 1) -> bytes:
+    frames = [Image.open(io.BytesIO(_png_bytes((600 + 10 * n, 800)))).convert("RGB") for n in range(pages)]
+    buf = io.BytesIO()
+    frames[0].save(buf, kind, save_all=pages > 1, append_images=frames[1:]) if pages > 1 else frames[0].save(buf, kind)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("name, kind, pages", [("scan photo.jpg", "JPEG", 1), ("fax.tiff", "TIFF", 1),
+                                               ("scanner.tif", "TIFF", 3), ("phone.heic", "HEIF", 1),
+                                               ("named wrong.pdf", "PNG", 1)])  # fmt: skip
+def test_the_pdf_made_from_a_picture_in_the_invoices_folder_is_not_listed_as_a_new_file(pipeline, name, kind, pages):
+    """A picture dropped in the invoices folder is made a PDF there as it is read. The Import page then listed that
+    PDF, AP Coder's own, under "Process 1 file" (B-2098): the pick-up had only ever read the picture. The same for a
+    multi-page TIFF (one PDF), a HEIC photo and a picture named as a PDF."""
+    from ap_coder.intake import imports
+
+    if kind == "HEIF" and not layout.register_heif():
+        pytest.skip("pillow-heif is not installed")
+    store, pipe, folder = pipeline
+    picture = folder / name
+    picture.write_bytes(_picture_file(kind, pages))
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == [name]
+    result = pipe.process(picture)
+    assert result.ok and result.source.suffix == ".pdf" and result.source.parent == folder, result.error
+    with pymupdf.open(result.source) as doc:
+        assert doc.page_count == pages
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == []
+    result.source.write_bytes(SAMPLE.read_bytes())  # another invoice saved over it is a new file all the same
+    assert [Path(f[0]).name for f in imports.list_folder(store, folder).new] == [result.source.name]
+
+
+def test_a_file_renamed_to_what_it_is_is_not_listed_as_a_new_file(pipeline):
+    """A PDF saved as ".jpg" is renamed ".pdf" as it is read: under its new name the pick-up had never read it."""
+    from ap_coder.intake import imports
+
+    store, pipe, folder = pipeline
+    (folder / "scan from vendor.jpg").write_bytes(SAMPLE.read_bytes())
+    result = pipe.process(folder / "scan from vendor.jpg")
+    assert result.ok and result.source.name == "scan from vendor.pdf"
+    assert imports.list_folder(store, folder).new == []
 
 
 def test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words(pipeline):
