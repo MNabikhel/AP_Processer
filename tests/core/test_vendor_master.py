@@ -11,6 +11,7 @@ from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_mas
 from ap_coder.core.store.vendors import HOLD_CODES_SETTING
 from ap_coder.erp import exports
 from ap_coder.ops.demo import load_demo, remove_demo
+from tests.jde_exports import records, supplier, supplier_master
 from tests.webclient import gt as _gt
 
 
@@ -239,3 +240,107 @@ def test_only_the_hold_codes_listed_put_a_supplier_on_hold_in_jd_edwards(tmp_pat
     assert "hold payment code 0" in _said(store, "VENDOR_ON_HOLD", vendor_name="Prairie Office Furniture")[0]
     store.set_erp_bank_and_hold({"410002": ("", "n")})  # released in JD Edwards
     assert "Northern Paper" not in _held(store)
+
+
+LONG_NAME = "GREAT PLAINS INDUSTRIAL EQUIPMENT RENTAL"  # 40 characters: where JD Edwards cuts a name
+SUPPLIERS = [
+    supplier(410001, "MAPLE LEAF COFFEE SERVICES INC."),
+    supplier(410002, "QUICKSHIP COURIER CANADA LTD", tax="VERIFIED BY PHONE 2019"),
+    supplier(410003, "NORTHERN PAPER CO  DO NOT USE", "Y"),
+    supplier(410004, "DNU - OLD PRINT SHOP", "1"),
+    supplier(410005, "HARBOUR TELECOM", "2", tax="123456789RT0001"),
+    supplier(410006, "PRAIRIE OFFICE FURNITURE", "0", tax="12-3456789"),
+    supplier(410007, "*LAKESIDE CATERING", tax="N/A"),
+    supplier(410008, "DOE, JANE Q."),
+    supplier(410009, LONG_NAME, tax="987654321", long="AND SUPPLY"),
+]
+
+
+def _by_id(store):
+    return {v["erp_id"]: v for v in store.master_vendors()}
+
+
+def _import_export(store, **picked):
+    """The supplier master's export imported as the Vendors page does: the columns as guessed, but those ``picked``."""
+    columns, rows = records("suppliers.xlsx", supplier_master(SUPPLIERS))
+    chosen = {**master_columns(columns), **picked}
+    store.import_vendor_master(master_rows(rows, chosen))
+    return chosen
+
+
+def test_jd_edwards_supplier_master_imports_as_it_comes_with_no_column_picked(tmp_path):
+    """B-2082: the export's hold is ``Hold Payment Code``, which no column guess knew: the blank ``Status`` column was
+    taken, so a held supplier came in active. Read as the JDE sync reads the code (B-2081); the tax ID column, free
+    text, is never guessed as the GST/HST number, and ``Long Address`` is left alone."""
+    assert len(LONG_NAME) == 40
+    store = Store(tmp_path / "a.db")
+    chosen = _import_export(store)
+    assert chosen == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "status": "Status",
+                      "hold": "Hold Payment Code"}  # fmt: skip
+    vendors = _by_id(store)
+    assert sorted(vendors) == [str(n) for n in range(410001, 410010)]  # the address number, a number in the file
+    assert {i: v["erp_hold"] for i, v in vendors.items() if v["erp_hold"]} == {"410003": "Y", "410004": "1",
+                                                                                "410005": "2"}  # fmt: skip
+    assert {"Harbour Telecom".upper(), "DNU - OLD PRINT SHOP"} <= set(_held(store))
+    assert "hold payment code 2" in _said(store, "VENDOR_ON_HOLD", vendor_name="Harbour Telecom")[0]
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="Maple Leaf Coffee Services Inc.") == []
+    assert vendors["410001"]["status"] == "active" and vendors["410006"]["status"] == "active"  # 0: not listed
+    assert {v["expected_gst"] for v in vendors.values()} == {""}
+    assert vendors["410009"]["display_name"] == LONG_NAME  # the long address is not glued on: mostly an address
+    # Imported again once the JDE team says 0 holds: one setting away.
+    store.set_setting(HOLD_CODES_SETTING, "Y, 1, 2, 0")
+    _import_export(store)
+    assert _by_id(store)["410006"]["erp_hold"] == "0"
+    # A file with no hold column (the sample vendor master) leaves JD Edwards' hold as it is.
+    store.import_vendor_master(master_rows([{"Vendor Name": "Harbour Telecom", "Vendor ID": "410005"}],
+                                           {"vendor_name": "Vendor Name", "erp_id": "Vendor ID"}))  # fmt: skip
+    assert _by_id(store)["410005"]["erp_hold"] == "2"
+
+
+def test_a_tax_id_column_picked_by_hand_gives_only_canadian_gst_hst_numbers(tmp_path):
+    """B-2082: JD Edwards' ``Individual Tax ID`` holds notes, "N/A" and other countries' numbers. Picked by hand as the
+    GST/HST number, a note was stored as the vendor's number; only a value shaped like one (#########RT####) is."""
+    store = Store(tmp_path / "a.db")
+    _import_export(store, gst="Individual Tax ID")
+    assert {i: v["expected_gst"] for i, v in _by_id(store).items() if v["expected_gst"]} == {
+        "410005": "123456789RT0001"
+    }
+    # A column the guess knows as the GST/HST number keeps what it holds, as before (a master with the 9 digits only).
+    known = master_columns(["Vendor", "Business Number"])
+    assert master_rows([{"Vendor": "Beta Inc", "Business Number": "987654321"}], known)[0]["gst"] == "987654321"
+
+
+def test_the_hold_payment_code_picked_by_hand_as_the_status_is_read_as_the_code(tmp_path):
+    """B-2082: with ``Hold Payment Code`` picked as the Status column, Y, 1 and 2 were not hold words: all active."""
+    store = Store(tmp_path / "a.db")
+    columns, rows = records("suppliers.xlsx", supplier_master(SUPPLIERS))
+    store.import_vendor_master(master_rows(rows, {"vendor_name": "Alpha Name", "erp_id": "Address Number",
+                                                  "status": "Hold Payment Code"}))  # fmt: skip
+    vendors = _by_id(store)
+    assert [i for i, v in sorted(vendors.items()) if v["erp_hold"]] == ["410003", "410004", "410005"]
+    assert vendors["410001"]["erp_hold"] == "" and vendors["410006"]["erp_hold"] == ""
+
+
+def test_the_sample_vendor_master_imports_as_it_did(tmp_path):
+    """The repo's sample list (``data/vendor_master.csv``): the same columns guessed, no hold of JD Edwards', every
+    number kept as written."""
+    import csv
+
+    from ap_coder.core.store.samples import SAMPLE_DATA_DIR
+
+    with (SAMPLE_DATA_DIR / "vendor_master.csv").open(encoding="utf-8-sig", newline="") as fh:
+        listed = list(csv.DictReader(fh))
+    chosen = master_columns(list(listed[0]))
+    assert chosen == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number",
+                      "terms": "payment_terms", "status": "status", "default_gl": "default_gl"}  # fmt: skip
+    rows = master_rows(listed, chosen)
+    assert all(r["hold"] is None for r in rows)
+    assert [(r["vendor_name"], r["erp_id"], r["gst"], r["terms"], r["default_gl"]) for r in rows] == [
+        (r["vendor_name"], r["vendor_id"], r["gst_hst_number"], r["payment_terms"], r["default_gl"]) for r in listed
+    ]
+    store = Store(tmp_path / "a.db")
+    load_sample_vendor_master(store)
+    vendors = store.master_vendors()
+    assert len(vendors) == len(listed) and {v["erp_hold"] for v in vendors} == {""}
+    assert {v["status"] for v in vendors} == {r["status"] for r in listed}
+    assert {v["notes"] for v in vendors} == {""}

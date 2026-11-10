@@ -16,6 +16,10 @@
   {{ preview(master, "/vendors", {"file": master.token}) }}
   <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(master) }}
+    <div class="map-grid">
+      <label class="field">Hold payment codes that hold
+        <input type="text" name="hold_codes" value="{{ master.hold_codes }}" maxlength="60" title="JD Edwards' hold payment codes that put a supplier on hold, with commas between them. N and blank never hold."></label>
+    </div>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
       <a class="link" href="/vendors">Cancel</a>

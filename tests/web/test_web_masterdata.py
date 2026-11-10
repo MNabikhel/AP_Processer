@@ -343,6 +343,75 @@ def test_the_vendor_master_is_uploaded_checked_and_imported(client, busy):
     assert any(v["erp_id"] == "V1" for v in busy.master_vendors())
 
 
+def guessed(html: str) -> dict[str, str]:
+    """{field: the column the page offers already chosen} of an import's column choices ("" for none)."""
+    chosen = {}
+    for field, options in re.findall(r'<select name="col_(\w+)">(.*?)</select>', html, re.S):
+        picked = re.search(r'<option value="([^"]*)" selected>', options)
+        chosen[field] = picked.group(1) if picked else ""
+    return chosen
+
+
+def test_jd_edwards_supplier_master_is_imported_as_the_page_offers_it(client, store):
+    """B-2082: the supplier master's export uploaded and imported with the columns the page guesses, none picked: the
+    hold is ``Hold Payment Code`` (Y, 1 and 2 hold; N, JD Edwards' usual value, does not), the free-text tax ID is not
+    the GST/HST number, and a code the JDE team confirms later (0) is one setting away, on the same form."""
+    from tests.jde_exports import supplier, supplier_master
+
+    listed = [supplier(410001, "MAPLE LEAF COFFEE SERVICES INC."), supplier(410002, "QUICKSHIP COURIER CANADA LTD"),
+              supplier(410005, "HARBOUR TELECOM", "2", tax="123456789RT0001"),
+              supplier(410006, "PRAIRIE OFFICE FURNITURE", "0", tax="VERIFIED BY PHONE 2019"),
+              supplier(410010, "CEDAR RIDGE TOWING", "Y"), supplier(410011, "SUMMIT PEST CONTROL", "1")]  # fmt: skip
+
+    def imported(**typed):
+        page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed))
+        offered = guessed(page.text)
+        data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}, **typed}
+        follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+        return page, offered
+
+    page, offered = imported()
+    assert offered == {"vendor_name": "Alpha Name", "erp_id": "Address Number", "gst": "", "terms": "",
+                       "status": "Status", "hold": "Hold Payment Code", "default_gl": ""}  # fmt: skip
+    assert 'name="hold_codes" value="Y, 1, 2"' in page.text
+    vendors = {v["erp_id"]: v for v in store.master_vendors()}
+    assert {i: v["erp_hold"] for i, v in vendors.items()} == {"410001": "", "410002": "", "410005": "2", "410006": "",
+                                                              "410010": "Y", "410011": "1"}  # fmt: skip
+    assert {(v["status"], v["expected_gst"]) for v in vendors.values()} == {("active", "")}
+    assert sorted(v["display_name"] for v in store.held_vendors()) == ["CEDAR RIDGE TOWING", "HARBOUR TELECOM",
+                                                                      "SUMMIT PEST CONTROL"]  # fmt: skip
+    page, _ = imported(hold_codes="y,1 , 2, 0")
+    assert store.get_vendor("prairie office furniture")["erp_hold"] == "0"
+    assert store.hold_codes() == ["Y", "1", "2", "0"]
+    assert (
+        'name="hold_codes" value="Y, 1, 2, 0"'
+        in upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed)).text
+    )
+
+
+def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
+    """The repo's ``data/vendor_master.csv`` through the Vendors page, with the columns it offers: the same vendors,
+    field for field, as ``load_sample_vendor_master`` makes, none on hold in JD Edwards."""
+    from ap_coder.core.store import load_sample_vendor_master
+    from ap_coder.core.store.samples import SAMPLE_DATA_DIR
+
+    page = upload(client, "/vendors/master/upload", "vendor_master.csv",
+                  (SAMPLE_DATA_DIR / "vendor_master.csv").read_bytes())  # fmt: skip
+    offered = guessed(page.text)
+    assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number",
+                       "terms": "payment_terms", "status": "status", "hold": "", "default_gl": "default_gl"}  # fmt: skip
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}, "hold_codes": "Y, 1, 2"}
+    follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
+    loaded = Store(tmp_path / "loaded.db")
+    load_sample_vendor_master(loaded)
+
+    def rows(of):
+        return sorted(tuple((k, v) for k, v in r.items() if k != "updated_at") for r in of.master_vendors())
+
+    assert rows(store) == rows(loaded) and len(rows(store)) == 8
+    assert {v["erp_hold"] for v in store.master_vendors()} == {""}
+
+
 # --- Long lists, a part at a time (D-162) -------------------------------------------------------------------------
 
 

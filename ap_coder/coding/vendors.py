@@ -428,8 +428,12 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "province": ("province", "prov", "state", "region", "provincestate"),
     "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode"),
     "status": ("status", "active", "blocked", "hold", "statut"),
+    # JD Edwards' hold payment code (its supplier master's export): read as the sync reads it, kept apart from the
+    # status (B-2082). Its "Individual Tax ID" is free text and "Long Address" mostly an address: neither is guessed.
+    "hold": ("holdpaymentcode", "holdpayment", "paymentholdcode", "holdcode"),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
+_GST_HST_NUMBER = re.compile(r"\d{9}rt\d{4}")  # a Canadian GST/HST number, as ``norm_tax_number`` writes it
 _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "closed", "disabled", "i", "h", "b",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
 
@@ -638,8 +642,20 @@ def master_columns(headers: list[str]) -> dict[str, str]:
     return match_columns(headers, MASTER_ALIASES)
 
 
+def _is_column_of(header: Any, field: str) -> bool:
+    """Whether a column with this header is one of ``field``'s as the guess knows them (MASTER_ALIASES): a "Hold"
+    column, yes or no, is a status, not JD Edwards' hold payment code."""
+    return _norm_header(header) in {_norm_header(name) for name in MASTER_ALIASES[field]}
+
+
 def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[dict[str, Any]]:
-    """Vendor master rows from a spreadsheet, using ``master_columns`` output (a vendor name is required)."""
+    """Vendor master rows from a spreadsheet, using ``master_columns`` output (a vendor name is required). ``hold``:
+    JD Edwards' hold payment code as written (None: no such column), also when its column was picked as the status.
+    A GST/HST column picked by hand (one the guess does not know: JD Edwards' free-text tax ID) gives only the values
+    shaped like a Canadian GST/HST number (B-2082)."""
+    if "hold" not in columns and "status" in columns and _is_column_of(columns["status"], "hold"):
+        columns = {**{k: v for k, v in columns.items() if k != "status"}, "hold": columns["status"]}
+    free_text_gst = "gst" in columns and not _is_column_of(columns["gst"], "gst")
     rows = []
     for rec in records:
 
@@ -659,10 +675,13 @@ def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[
             on_hold = status in ("yes", "y", "true", "1", "x", "all", "payment", "payments", "blocked", "oui")
         else:  # a status column with words or codes
             on_hold = status in _HOLD_WORDS
-        row = {"vendor_name": name, "gst": get("gst"), "status": ON_HOLD if on_hold else ACTIVE,
+        gst = get("gst")
+        if free_text_gst and not _GST_HST_NUMBER.fullmatch(norm_tax_number(gst)):
+            gst = ""
+        row = {"vendor_name": name, "gst": gst, "status": ON_HOLD if on_hold else ACTIVE,
                "status_given": bool(status), "qst": get("qst"), "pst": get("pst"),
                "province": _province_or_blank(get("province"))}  # fmt: skip
-        for field in ("erp_id", "terms", "default_gl"):  # None: not in this file, so the vendor keeps its value
+        for field in ("erp_id", "terms", "default_gl", "hold"):  # None: not in this file, the vendor keeps its value
             row[field] = get(field) if field in columns else None
         rows.append(row)
     return rows

@@ -336,10 +336,13 @@ class VendorsMixin:
         merged: dict[str, dict[str, Any]] = {}
         names: dict[str, list[str]] = {}
         known = self._master_rows_named(rows) if by_erp_id else {}
+        holding = self.hold_codes()
         for row in rows:
             key = vendor_key(row["vendor_name"])
             if not key:
                 continue
+            if row.get("hold") is not None:  # JD Edwards' hold payment code, kept when it holds (B-2082)
+                row = {**row, "hold": hold_code(row["hold"], holding)}
             if known and key not in merged:
                 key = self._earlier_row(key, row, known, merged, names)
             first = merged.get(key)
@@ -355,7 +358,7 @@ class VendorsMixin:
                 first = merged[key]
                 if row.get("status") == "on_hold":
                     first["status"], first["status_given"] = "on_hold", True
-                for field in ("erp_id", "gst", "terms", "default_gl", "qst", "pst", "province"):
+                for field in ("erp_id", "gst", "terms", "default_gl", "qst", "pst", "province", "hold"):
                     first[field] = first.get(field) or row.get(field) or first.get(field)
             else:
                 merged[key] = dict(row)
@@ -368,9 +371,10 @@ class VendorsMixin:
                     continue
                 conn.execute(
                     """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
-                       terms, default_gl, in_master, qst_number, pst_number, province)
-                       VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?)
+                       terms, default_gl, in_master, qst_number, pst_number, province, erp_hold)
+                       VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?)
                        ON CONFLICT(vendor_key) DO UPDATE SET
+                       erp_hold = CASE WHEN ? THEN excluded.erp_hold ELSE vendors.erp_hold END,
                        qst_number = CASE WHEN excluded.qst_number != '' THEN excluded.qst_number
                                     ELSE vendors.qst_number END,
                        pst_number = CASE WHEN excluded.pst_number != '' THEN excluded.pst_number
@@ -385,8 +389,8 @@ class VendorsMixin:
                        status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
                     (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
                      row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
-                     row.get("qst") or "", row.get("pst") or "", row.get("province") or "",
-                     *(row.get(f) is not None for f in ("erp_id", "terms", "default_gl")),
+                     row.get("qst") or "", row.get("pst") or "", row.get("province") or "", row.get("hold") or "",
+                     *(row.get(f) is not None for f in ("hold", "erp_id", "terms", "default_gl")),
                      bool(row.get("status_given"))),
                 )  # fmt: skip
                 if key in existing:
