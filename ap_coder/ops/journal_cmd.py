@@ -26,6 +26,7 @@ from typing import Any
 from ..core import chart
 from ..core.store import Store
 from ..core.store.journal import supplier_key
+from ..core.tax_setup import RECOVERABLE
 from ..core.ui import plural
 from ..erp import journal as jr
 
@@ -83,7 +84,8 @@ def _objects(store: Store, data: bytes, given: dict[str, Any],
             found[name], origin[name] = saved[name], "saved"
     why: tuple[str, ...] = ()
     if len(found) < len(NAMES):
-        mapped = [chart.split_code(t.gl_code)[0] for t in store.tax_treatments().values() if t.gl_code]
+        mapped = [chart.split_code(t.gl_code)[0] for t in store.tax_treatments().values()
+                  if t.gl_code and t.treatment == RECOVERABLE]  # fmt: skip
         payable, tax, why = jr.suggest_objects(data, mapped)
         guessed = {"trade": payable.trade, "intercompany": payable.intercompany, "tax": tax}
         for name in NAMES:

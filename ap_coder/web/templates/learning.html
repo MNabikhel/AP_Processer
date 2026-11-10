@@ -69,6 +69,12 @@
   {% else %}
   <p><a class="btn" href="/learning#history">Back</a></p>
   {% endif %}
+  {% if journal.state != "same_file" and can("/learning/journal/as-table") %}
+  <form method="post" action="/learning/journal/as-table" data-busy="Reading…">
+    <input type="hidden" name="token" value="{{ journal.token }}">
+    <button class="btn sm" type="submit">Not a Transaction Journal? Read it as a table of past lines</button>
+  </form>
+  {% endif %}
   {% elif upload %}
   <p><b>{{ upload.name }}</b> · {{ upload.rows | plural("line") }}</p>
   {% if upload.sheets | length > 1 %}

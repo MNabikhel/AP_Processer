@@ -173,6 +173,22 @@ def test_a_table_of_past_lines_still_goes_to_its_columns(store, data):
     assert post(client, "/learning/journal/load", {"token": "not-a-token"}).status_code == 400
 
 
+def test_a_table_whose_header_looks_like_the_journals_can_still_be_read_as_a_table(store):
+    client = client_for(store)
+    table = "Vendor,Remark,Account Number,Dept\nAcme,Paper,6100,100\nAcme,Toner,6100,\n"
+    answer = _upload(client, table.encode(), "lines.csv")
+    token = _token(answer)  # (the header names an account number and a remark)
+    page = client.get(answer.json()["redirect"]).text
+    assert "This file cannot be loaded as it is" in page and "No voucher could be read from this file." in page
+    assert "Not a Transaction Journal? Read it as a table of past lines" in page
+    as_table = post(client, "/learning/journal/as-table", {"token": token})
+    assert as_table.status_code == 200 and "history=" in as_table.json()["redirect"]
+    page = client.get(as_table.json()["redirect"]).text
+    assert "Teach 2 lines" in page and '<option value="Vendor" selected>' in page
+    assert post(client, "/learning/journal/as-table", {"token": token}).status_code == 400  # used up
+    assert store.journal_files() == []
+
+
 def test_a_page_with_no_journal_says_nothing_of_one(store):
     page = client_for(store).get("/learning").text
     assert "JD Edwards journals loaded" not in page and "journal-summary" not in page

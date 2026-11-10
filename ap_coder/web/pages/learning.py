@@ -775,6 +775,11 @@ def _history_upload(request: Request, name: str, content: bytes) -> JSONResponse
         # JD Edwards' Transaction Journal is a printed report, not a table: its own summary, then its own load
         said = f"Read {name}: JD Edwards' Transaction Journal. Check the summary below, then load it."
         return done(request, _url(journal=keep_journal(name, content)) + "#history", said)
+    return _table_upload(request, name, content)
+
+
+def _table_upload(request: Request, name: str, content: bytes) -> JSONResponse:
+    """A table of past lines read and kept, waiting for its columns."""
     try:
         sheets = read_sheets(name, content)
     except ValueError as exc:
@@ -852,6 +857,19 @@ def _journal_load(request: Request, form: Any) -> JSONResponse:
         return refuse(said[-1])
     current_store().drop_ephemeral(JOURNAL_KIND, token)
     return done(request, "/learning#history", said[-1], tone="ok" if outcome == journal_cmd.DONE else "warn")
+
+
+@router.post("/learning/journal/as-table")
+def journal_as_table(request: Request, token: str = Form("")) -> JSONResponse:
+    """The uploaded file read as a table of past lines after all: a table whose header names an account number and
+    a remark looks like the journal."""
+    kept = get_journal(token)
+    if kept is None:
+        return refuse("That upload has expired. Upload the file again.")
+    answer = _table_upload(request, *kept)
+    if answer.status_code == 200:
+        current_store().drop_ephemeral(JOURNAL_KIND, token)
+    return answer
 
 
 @router.post("/learning/journal/forget")

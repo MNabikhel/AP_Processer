@@ -184,6 +184,16 @@ def test_saved_objects_of_another_company_are_passed_over_for_the_files_own(tmp_
     assert _store(tmp_path).journal_objects()["trade"] == ("2188",)
 
 
+def test_the_tax_setups_recoverable_account_is_the_tax_object(tmp_path, capsys, truth):
+    store = _store(tmp_path)
+    store.set_tax_treatment("GST", "recoverable", "2420.10")
+    store.set_tax_treatment("PST", "expense_separate", "7510")  # an expense account of the journal: not a tax line
+    code, out, _ = _run(tmp_path, capsys, "import", _file(tmp_path, truth), "--dry-run")
+    assert code == 0 and "  The tax object: 2420 (worked out from this file)." in out
+    assert "    Object 2420 is a GL account of the tax setup; it is on 81 lines." in out
+    assert "7510" not in out
+
+
 def test_suppliers_and_accounts_are_looked_up_in_the_vendor_master_and_the_chart(tmp_path, capsys, truth):
     used = sorted({line.account for v in truth.vouchers for line in v.lines})
     gone, held = used[5], used[9]
