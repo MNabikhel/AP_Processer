@@ -131,6 +131,35 @@ def test_in_a_browser_the_first_sign_in_sets_a_password_then_the_authenticator_a
     assert errors == []
 
 
+def _look(page, selector: str) -> dict:
+    """How a box of a form looks, nothing in the page focused: what the stylesheet gives every text box."""
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    return page.eval_on_selector(selector, """e => { const s = getComputedStyle(e); return {
+        height: s.height, width: s.width, radius: s.borderTopLeftRadius, border: s.borderTopWidth + ' ' +
+        s.borderTopColor, padding: s.paddingLeft, font: s.fontSize + ' ' + s.fontFamily, back: s.backgroundColor}; }""")
+
+
+def test_in_a_browser_every_password_box_looks_like_the_other_boxes(browser, store):
+    """B-2109: the stylesheet every page loads styled text, email, search, number and date boxes, not password ones:
+    on the login page, the first password, *Your password* (and the keys of Settings' forms outside its own
+    stylesheet) they were the browser's own thin boxes under a rounded, taller username box."""
+    chromium, base = browser
+    store.add_user("newbie", "abcd-efgh-jkmn-pqrs", role="clerk", display_name="New Bie")
+    page = chromium.new_page(viewport=LAPTOP)
+    page.goto(base + "/login")
+    usual = _look(page, "input[name=username]")
+    assert usual["height"] == "34px" and usual["radius"] != "0px"
+    assert _look(page, "input[name=password]") == usual
+    page.fill("input[name=username]", "newbie")
+    page.fill("input[name=password]", "abcd-efgh-jkmn-pqrs")
+    page.click("button:has-text('Log in')")
+    page.wait_for_url("**/login/new-password*")  # the first password
+    assert [_look(page, f"input[name={name}]") for name in ("current", "new", "again")] == [usual] * 3
+    page, errors = _log_in(browser, store, "boss", path="/account/password")  # Your password
+    boxes = [_look(page, f"input[name={name}]") for name in ("current", "new", "again")]
+    assert all({**box, "width": ""} == {**usual, "width": ""} for box in boxes) and errors == []
+
+
 def test_in_a_browser_read_only_opens_an_invoice_without_a_refusal(browser, store):
     """B-1100: opening an invoice posted its check, which Read-only is refused (a 403 toast); B-1101: its fields
     could be typed in. Read-only sees the stored checks, posts nothing and changes nothing."""

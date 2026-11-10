@@ -546,8 +546,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .btn:disabled, .btn[aria-disabled="true"] {background: var(--lg-hover); border-color: var(--lg-hairline); color: var(--lg-subtle);
   cursor: not-allowed;}
 .btn.busy, a.busy {opacity: .7; cursor: progress;}
-input[type="text"], input[type="email"], input[type="search"], input[type="number"], input[type="date"], select,
-textarea {
+input[type="text"], input[type="password"], input[type="email"], input[type="search"], input[type="number"],
+input[type="date"], select, textarea {
   height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
   color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}
 textarea {height: auto; padding: 8px 10px; line-height: 1.45;}
