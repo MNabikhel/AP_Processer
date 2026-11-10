@@ -154,6 +154,41 @@ def test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is
     assert opened.ok and opened.output["grand_total"] == 18017.85
 
 
+def test_an_empty_damaged_or_locked_pdf_is_one_warning_line_in_the_window_not_a_traceback(pipeline, caplog, monkeypatch):
+    """Each printed about twenty lines of Python traceback in AP Coder's window (B-2097): a file AP can do something
+    about is one line saying what is wrong and what to do, as on the page; the traceback stays for the unexpected."""
+    import logging
+
+    store, pipe, folder = pipeline
+    (folder / "empty.pdf").write_bytes(b"")
+    (folder / "broken.pdf").write_bytes(b"%PDF-1.7\nthis is not a pdf at all\n")
+    with pymupdf.open(SAMPLE) as doc:
+        doc.save(folder / "locked.pdf", encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="secret", owner_pw="owner")
+    said = {"empty.pdf": "empty.pdf can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a "
+                         "new copy.",
+            "broken.pdf": "broken.pdf can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor "
+                          "for a new copy.",
+            "locked.pdf": "locked.pdf is protected by a password, so it can't be read. Ask the vendor for a copy "
+                          "without one."}  # fmt: skip
+    for name, text in said.items():
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="ap_coder.ai.pipeline"):
+            result = pipe.process(folder / name)
+        assert result.error == text
+        shown = [r for r in caplog.records if r.name == "ap_coder.ai.pipeline" and r.levelno >= logging.WARNING]
+        assert [(r.levelname, r.getMessage(), r.exc_info) for r in shown] == [("WARNING", text, None)], name
+
+    def unexpected(*args, **kwargs):
+        raise RuntimeError("the disk went away")
+
+    monkeypatch.setattr(pipe, "_read_and_code", unexpected)
+    caplog.clear()
+    result = pipe.process(SAMPLE)
+    assert result.error == "RuntimeError: the disk went away"
+    failed = [r for r in caplog.records if r.getMessage().startswith("Failed to process")]
+    assert len(failed) == 1 and failed[0].levelname == "ERROR" and failed[0].exc_info
+
+
 # --- B-263: a text file saved as "Unicode" by Notepad, or one that is not text at all --------------------------------
 
 TEXT_INVOICE = (

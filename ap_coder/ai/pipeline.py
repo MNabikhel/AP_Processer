@@ -327,8 +327,15 @@ def _picture(path: Path) -> bool:
 
 
 def plain_error(exc: Exception, path: Path) -> str:
-    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
-    technical detail is in the log), anything else as the error it is."""
+    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do
+    (``file_error``), anything else as the error it is."""
+    return file_error(exc, path) or f"{type(exc).__name__}: {exc}"
+
+
+def file_error(exc: Exception, path: Path) -> str | None:
+    """What is wrong with the file and what to do, when the error is the file's (too large or damaged a picture, an
+    empty or damaged PDF, a PDF with a password): AP Coder's window says that one line, not a traceback (B-2097).
+    None for an error nobody expected."""
     name = type(exc).__name__
     kind = path.suffix.lstrip(".").upper() or "picture"
     if name == "DecompressionBombError":  # Pillow's guard: over ~179 million pixels (a phone's 200 MP mode)
@@ -348,7 +355,7 @@ def plain_error(exc: Exception, path: Path) -> str:
                 "copy.")  # fmt: skip
     if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
         return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
-    return f"{name}: {exc}"
+    return None
 
 
 NO_PAGES = "{name} has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy."
@@ -606,8 +613,13 @@ class InvoicePipeline:
             log.warning("%s: %s", result.source.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
-            log.exception("Failed to process %s", result.source)
-            result.error = plain_error(exc, result.source)
+            result.error = file_error(exc, result.source)
+            if result.error:  # the file's own fault: one line in the window, as on the page
+                log.warning("%s", result.error)
+                log.debug("%s: the error as it was raised", result.source.name, exc_info=True)
+            else:
+                log.exception("Failed to process %s", result.source)
+                result.error = plain_error(exc, result.source)
         azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
                                                          pages_read, text_file)  # fmt: skip
         self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
