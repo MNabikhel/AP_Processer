@@ -59,3 +59,22 @@ def test_the_code_compared_with_sees_the_models_this_checkout_has(tmp_path):
     bare.mkdir()
     tool.share_models(tmp_path / "none", bare)
     assert not (bare / "models").exists()
+
+
+def test_the_migrate_probe_leaves_out_the_clock_time_a_database_is_brought_up_to_date(tmp_path, monkeypatch):
+    """B-2306: bringing a database up to date writes when it began to keep its coding rules' use
+    (``rule_use_since``, D-217): the clock's time, which the probe printed with the settings. The two trees run side
+    by side a second apart, so ``migrate`` said DIFFERENT for a change that made none. What the clock writes is left
+    out, as the id made anew each time is: two databases brought up to date at different times read the same."""
+    from ap_coder.core.store import Store, migrations
+
+    spec = importlib.util.spec_from_file_location("migrate_probe", ROOT / "scripts" / "probes" / "migrate.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    read = []
+    for n, at in enumerate(("2026-11-10T19:20:19", "2026-11-10T19:20:20")):
+        monkeypatch.setattr(migrations, "_now", lambda at=at: at)
+        Store(tmp_path / f"{n}.db")
+        read.append(probe.contents(tmp_path / f"{n}.db"))
+    assert dict(read[0]["tables"]["settings"])["rule_use_since"] == "(new each time)"
+    assert read[0] == read[1]

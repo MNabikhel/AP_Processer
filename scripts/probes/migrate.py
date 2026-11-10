@@ -18,6 +18,8 @@ OLD = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "old_schemas"
 VENDORS = ["Hydro-Québec", "Smith & Sons Ltd.", "Société ABC S.E.N.C.", "Acme Inc.", "Énergir Limitée", "Lakeshore"]
 STATUSES = ["review", "approved", "approved", "parked", "rejected", "pending_approval", "failed"]
 GL, CC = ["5000", "6000", "6100", "UNASSIGNED", ""], ["", "CC10", "UNASSIGNED"]
+# The settings no two runs share: an id made anew, and the clock's time when the database was brought up to date.
+NEW_EACH_TIME = ("summary_id", "rule_use_since")
 
 
 def old_key(name: str) -> str:
@@ -117,7 +119,7 @@ def contents(path: Path) -> dict:
                 continue
             rows = [list(r) for r in conn.execute(f"SELECT * FROM {name}")]
             if name == "settings":
-                rows = [[k, "(new each time)" if k == "summary_id" else v] for k, v in rows]
+                rows = [[k, "(new each time)" if k in NEW_EACH_TIME else v] for k, v in rows]
             tables[name] = sorted(rows, key=lambda r: json.dumps(r, default=repr))
         return {"schema": made, "tables": tables}
     finally:
