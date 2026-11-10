@@ -95,7 +95,7 @@ def test_one_finding_a_line_says_why_not_one_more_for_each_code(reference, groun
                               (3, ERROR, "ACCOUNT_NOT_IN_CHART"), (4, ERROR, "ACCOUNT_NOT_IN_CHART"),
                               (5, ERROR, "BU_INACTIVE")]  # fmt: skip
     said = [i.message for i in report.issues]
-    assert said[2].endswith("it has no business unit 0731066100: pick one from the list")
+    assert said[2].endswith("the chart has no business unit 0731066100 (pick one from the list)")
     assert said[3].endswith("no business unit has an account 9999: pick one from the list")
     assert "its posting edit code is I" in said[1]
     only_closed = validate_coding(_coded(ground_truth, (HOME, "5460")), reference).issues[0].message

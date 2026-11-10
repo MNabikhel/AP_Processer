@@ -198,7 +198,7 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
         return None
     others = pairs.bus_of(gl)
     if not pairs.has_business_unit(cc):
-        why = f"it has no business unit {cc}: pick one from the list"
+        why = f"the chart has no business unit {cc} (pick one from the list)"
     elif others:
         why = f"business unit {cc} has no account {gl}; it is on {_named(others, pairs.settings.home_business_unit)}"
     elif pairs.has_code(gl):

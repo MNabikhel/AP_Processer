@@ -99,7 +99,7 @@ def test_each_row_gets_the_title_account_above_it_as_its_category():
     category = {(r.bu, r.code): r.category for r in _chart().rows}
     assert category[HOME, "5410"] == category[HOME, "5410.2210"] == "Office and General Costs"
     assert category[HOME, "5710"] == category["05504218", "5710.3120"] == "Computer Software"
-    assert category["07310", "2140"] == category["07310", "2140.QC"] == "Current Liabilities"  # not "Objects under…"
+    assert category["07310", "2140"] == category["07310", "2140.QC"] == "Amounts Owed"  # not "Objects under…"
     assert category["07310K", "5410"] == category[UNLISTED, "5470"] == ""  # no title account above it
     assert category[HOME, "5400"] == category["07310", ""] == ""  # a business unit's name is no category
 
@@ -120,16 +120,16 @@ def test_a_file_that_is_not_the_chart_says_which_columns_it_lacks():
     with pytest.raises(chart.ChartError) as refused:
         chart.chart_rows(_records(cf.BU_HEADERS, cf.bu_cells()))
     said = str(refused.value)
-    assert "“Business Unit” or “Object Account”" in said and "Job Number, Job Name" in said and "was not read" in said
+    assert "“Business Unit” and “Object Account”" in said and "Job Number, Job Name" in said and "was not read" in said
     with pytest.raises(chart.ChartError, match="“Job Number”"):
         chart.bu_rows([{"Account": "5410", "Name": "Office"}])
     assert chart.chart_rows([]).rows == []
 
 
 def test_the_columns_are_found_by_other_usual_names_and_can_be_given():
-    records = [{"BU": "  0731066120", "Object": "5410", "Sub": " ", "Description": "  Office Supplies", "LOD": 6,
+    records = [{"BU": "  0731066120", "Object": "5410", "Sub": " ", "Description": "  Stationery and Paper", "LOD": 6,
                 "Posting Edit": " "}]  # fmt: skip
-    assert chart.chart_rows(records).rows == [chart.ChartRow(HOME, "5410", "", "Office Supplies", 6, "")]
+    assert chart.chart_rows(records).rows == [chart.ChartRow(HOME, "5410", "", "Stationery and Paper", 6, "")]
     picked = {"business_unit": "Where", "object": "What"}
     assert chart.chart_rows([{"Where": HOME, "What": "5410"}], picked).rows == [chart.ChartRow(HOME, "5410")]
 
@@ -277,3 +277,97 @@ def test_the_two_lists_the_chart_gives():
     # With the title accounts of another kind postable too, and no master: every business unit, more accounts.
     accounts, centers = chart.account_lists(_chart().rows, settings=ChartSettings(postable_codes=("", "I")))
     assert "5430" in accounts and "5460" in accounts and CLOSED in centers and centers[NOT_USED] == "Old Annex"
+
+
+# --- What a review of the first version found (B-2123, B-2126, B-2127) ---------------------------------------------
+
+
+def test_codes_are_compared_in_capitals_as_jd_edwards_keeps_them():
+    assert _pairs().status("07310", "2140.qc") == OK and _pairs().status("07310k", "5410") == OK
+    assert _pairs().bus_of("2140.qc") == ("07310",) and _pairs().description("07310", "2190.7qxr3")
+    typed = [{"Business Unit": "07310k", "Object Account": "2140", "Subsidiary": "qc"}]
+    assert chart.chart_rows(typed).rows == [chart.ChartRow("07310K", "2140", "QC")]
+    assert chart.bu_rows([{"Job Number": "07310k", "Job Sts": "act"}]).rows == [chart.BuRow("07310K", status="ACT")]
+    reserved = AccountPairs(_chart().rows, settings=ChartSettings.read({"never_offered": "*.qc"}))
+    assert reserved.status("07310", "2140.qc") == reserved.status("07310", "2140.QC") == RESERVED
+    # A pair the chart does not have is not "reserved", whatever the patterns say.
+    assert reserved.status(HOME, "5410.qc") == NOT_IN_CHART and reserved.why_reserved(HOME, "5410.qc") == ""
+
+
+def test_a_title_account_is_never_carried_into_the_next_business_unit():
+    rows = [(HOME, "5400", "", "Office and General Costs", 5, "N"), (HOME, "5410", "", "Stationery", 6, ""),
+            (OTHER, "5450", "", "Training", 6, "")]  # fmt: skip
+    category = {(r.bu, r.code): r.category for r in _chart(rows).rows}
+    assert category == {(HOME, "5400"): "", (HOME, "5410"): "Office and General Costs", (OTHER, "5450"): ""}
+
+
+def test_a_business_unit_with_no_status_is_active_and_one_with_any_other_status_is_not():
+    units = [chart.BuRow(HOME, "A"), chart.BuRow(OTHER, "B", status="ACT"), chart.BuRow("07310K", "C", status="HLD")]
+    pairs = AccountPairs(_chart().rows, units)
+    assert pairs.status(HOME, "5410") == pairs.status(OTHER, "5410") == OK
+    assert pairs.status("07310K", "5410") == BU_INACTIVE and pairs.closed_units() == ["07310K"]
+    assert set(chart.account_lists(_chart().rows, units)[1]) == (set(cf.COST_CENTERS) | {CLOSED}) - {"07310K"}
+
+
+def test_a_code_stored_as_a_number_is_refused_since_its_zeros_may_be_lost():
+    records = [{"Business Unit": "0731066120", "Object Account": "5410", "L D": 6.0},
+               {"Business Unit": 731066120, "Object Account": 42, "Subsidiary": 7.0, "L D": 7},
+               {"Business Unit": "0731066120", "Object Account": 5410.25}]  # fmt: skip
+    with pytest.raises(chart.ChartError) as refused:
+        chart.chart_rows(records)
+    said = str(refused.value)
+    assert "2 rows" in said and "stored as a number" in said and "row 3 is the first" in said
+    assert "leading zeros may be lost" in said and "without opening and saving it" in said
+    with pytest.raises(chart.ChartError, match="1 row .*stored as a number"):
+        chart.bu_rows([{"Job Number": 731066120, "Job Name": "Head Office"}])
+    # A level of detail stored as a number is a number.
+    assert chart.chart_rows(records[:1]).rows == [chart.ChartRow(HOME, "5410", lod=6)]
+
+
+@pytest.mark.parametrize(
+    ("cells", "what"),
+    [({"Business Unit": "0731066120123", "Object Account": "5410"}, "business unit “0731066120123”"),
+     ({"Business Unit": "0731.066120", "Object Account": "5410"}, "business unit “0731.066120”"),
+     ({"Business Unit": "0731066120", "Object Account": "54 10"}, "object account “54 10”"),
+     ({"Business Unit": "0731066120", "Object Account": "5410123"}, "object account “5410123”"),
+     ({"Business Unit": "0731066120", "Object Account": "5410", "Subsidiary": "123456789"}, "subsidiary “123456789”")],
+)  # fmt: skip
+def test_a_code_jd_edwards_could_not_hold_is_refused_with_its_row(cells, what):
+    good = {"Business Unit": "0731066120", "Object Account": "5400", "Subsidiary": " "}
+    with pytest.raises(chart.ChartError) as refused:
+        chart.chart_rows([good, {"Subsidiary": " ", **cells}])
+    assert f"Row 3: the {what}" in str(refused.value) and "was not read" in str(refused.value)
+
+
+def test_a_business_unit_jd_edwards_could_not_hold_is_refused_in_the_master_too():
+    with pytest.raises(chart.ChartError, match="Row 2: the business unit “07310.66”"):
+        chart.bu_rows([{"Job Number": "07310.66", "Job Name": "Head Office"}])
+
+
+def test_a_long_text_is_cut_and_far_more_rows_than_a_chart_has_are_refused_before_they_are_held(monkeypatch):
+    long = [{"Business Unit": HOME, "Object Account": "5410", "Account Description": "x" * 40_000}]
+    assert chart.chart_rows(long).rows[0].description == "x" * chart.TEXT_MOST
+    assert chart.bu_rows([{"Job Number": HOME, "Job Name": "y" * 500}]).rows[0].name == "y" * chart.TEXT_MOST
+    assert chart.ROWS_MOST >= 10 * 14_740  # a real chart many times over
+    monkeypatch.setattr(chart, "ROWS_MOST", 5)
+    given = []
+
+    def records(make):
+        for n in range(1000):
+            given.append(n)
+            yield make(n)
+
+    with pytest.raises(chart.ChartError, match="more than 5 rows") as refused:
+        chart.chart_rows(records(lambda n: {"Business Unit": HOME, "Object Account": f"{5000 + n}"}))
+    assert len(given) == 6 and "was not read" in str(refused.value)  # stopped there: the rest never read
+    with pytest.raises(chart.ChartError, match="more than 5 rows"):
+        chart.bu_rows(records(lambda n: {"Job Number": f"07310{n:05d}"}))
+
+
+def test_the_columns_a_file_lacks_are_named_and_so_is_the_file():
+    with pytest.raises(chart.ChartError, match="This file has no columns named “Business Unit” and “Object Account”"):
+        chart.chart_rows([{"Account": "5410"}])
+    with pytest.raises(chart.ChartError, match="chart.xlsx has no column named “Object Account”"):
+        chart.chart_columns(["Business Unit", "Name"], "chart.xlsx")
+    with pytest.raises(chart.ChartError, match="bu.xlsx has an object account column"):
+        chart.bu_columns(["Business Unit", "Object Account"], "bu.xlsx")

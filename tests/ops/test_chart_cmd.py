@@ -62,7 +62,7 @@ def test_rows_left_out_and_never_offered_accounts_are_said_with_the_reason(tmp_p
 def test_a_wrong_file_changes_nothing_of_either(tmp_path, capsys):
     chart, units = cf.write_chart(tmp_path / "chart.xlsx"), cf.write_business_units(tmp_path / "bu.xlsx")
     code, out, err = _run(tmp_path, capsys, "--chart", str(units), "--business-units", str(units))
-    assert code == 1 and "Not imported: This file has no column named “Business Unit” or “Object Account”" in err
+    assert code == 1 and "Not imported: bu.xlsx has no columns named “Business Unit” and “Object Account”" in err
     code, _, err = _run(tmp_path, capsys, "--business-units", str(chart))
     assert code == 1 and "it is the chart of accounts, not the business unit master" in err
     code, _, err = _run(tmp_path, capsys, "--chart", str(tmp_path / "missing.xlsx"))

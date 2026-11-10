@@ -213,37 +213,50 @@ class Rows:
         self.skipped[why] = self.skipped.get(why, 0) + 1
 
 
-def columns_of(headers: Iterable[Any], aliases: dict[str, tuple[str, ...]], needs: Iterable[str]) -> dict[str, str]:
-    """{field: the file's column} of an export's ``headers``; ``ChartError`` when a column of ``needs`` is not
-    there, naming the headers looked for and the first of those found."""
+FILE = "This file"  # how a message names the file when its caller gives no name
+
+
+def columns_of(headers: Iterable[Any], aliases: dict[str, tuple[str, ...]], needs: Iterable[str],
+               name: str = FILE) -> dict[str, str]:  # fmt: skip
+    """{field: the file's column} of an export's ``headers`` (its first row); ``ChartError`` when a column of
+    ``needs`` is not there, naming the file (``name``), the headers looked for and the first of those found."""
     headers = [str(h) for h in headers if h is not None and str(h).strip()]
     found = match_columns(headers, aliases)
-    missing = [aliases[name][0] for name in needs if name not in found]
+    missing = [f"“{aliases[field][0]}”" for field in needs if field not in found]
     if missing:
         shown = ", ".join(headers[:8]) + (" …" if len(headers) > 8 else "")
         raise ChartError(
-            f"This file has no column named {' or '.join(f'“{m}”' for m in missing)}, so it was not read"
-            + (f" (its columns: {shown})." if headers else " (its first row has no column names).")
-            + " Export it from JD Edwards again and use the file as it comes."
+            f"{name} has no column{'s' if len(missing) > 1 else ''} named {' and '.join(missing)} in its first row, "
+            "so it was not read"
+            + (f" (the first row holds: {shown})." if headers else " (the first row is empty).")
+            + " The column names must be in row 1 of the first sheet: use the export as JD Edwards saves it."
         )
     return found
 
 
-def chart_columns(headers: Iterable[Any]) -> dict[str, str]:
+def chart_columns(headers: Iterable[Any], name: str = FILE) -> dict[str, str]:
     """{field: the file's column} of the account master's export (``CHART_ALIASES``)."""
-    return columns_of(headers, CHART_ALIASES, CHART_NEEDS)
+    return columns_of(headers, CHART_ALIASES, CHART_NEEDS, name)
 
 
-def bu_columns(headers: Iterable[Any]) -> dict[str, str]:
+def bu_columns(headers: Iterable[Any], name: str = FILE) -> dict[str, str]:
     """{field: the file's column} of the business unit master's export (``BU_ALIASES``). The chart itself, which
     has a business unit column too, is refused: read as the master it would call every business unit active."""
     headers = [str(h) for h in headers if h is not None]
     if "object" in match_columns(headers, CHART_ALIASES):
         raise ChartError(
-            "This file has an object account column: it is the chart of accounts, not the business unit master, so "
+            f"{name} has an object account column: it is the chart of accounts, not the business unit master, so "
             "it was not read as the business units."
         )
-    return columns_of(headers, BU_ALIASES, BU_NEEDS)
+    return columns_of(headers, BU_ALIASES, BU_NEEDS, name)
+
+
+# What JD Edwards itself can hold: a file with more is not one of its exports. A description or a name (30 there) is
+# cut at TEXT_MOST; a file of more rows than ROWS_MOST (a company's whole chart is about 15,000) is refused as soon as
+# that many are read, before any is kept (B-2123).
+BU_MOST, OBJECT_MOST, SUBSIDIARY_MOST = 12, 6, 8
+TEXT_MOST = 80
+ROWS_MOST = 200_000
 
 
 def _whole(value: Any) -> int:
@@ -255,8 +268,65 @@ def _whole(value: Any) -> int:
 
 
 def _words(value: Any) -> str:
-    """A description without its indentation, one space between its words."""
-    return " ".join(clean(value).split())
+    """A description without its indentation, one space between its words, cut at ``TEXT_MOST``."""
+    return " ".join(clean(value)[: 4 * TEXT_MOST].split())[:TEXT_MOST]
+
+
+def _code(value: Any) -> str:
+    """A business unit, object or subsidiary as JD Edwards keeps it: no padding, in capitals (B-2127)."""
+    return clean(value).upper()
+
+
+def _gl(code: Any) -> str:
+    """A GL code as the chart keeps it: ``object.subsidiary`` in capitals."""
+    return code_of(*split_code(code)).upper()
+
+
+def _held(row: int, what: str, value: str, most: int, plain: bool = True) -> None:
+    """``ChartError`` for a code JD Edwards could not hold: longer than ``most``, or (``plain``) with a dot or a
+    space inside, which would split the account string in the wrong place."""
+    if len(value) > most or (plain and (SEPARATOR in value or len(value.split()) > 1)):
+        raise ChartError(
+            f"Row {row}: the {what} “{value[:40]}” is not one JD Edwards holds ({most} characters at most"
+            + (", no dot or space inside" if plain else "")
+            + "), so the file was not read. Export it from JD Edwards again and use the file as it comes."
+        )
+
+
+class _Rows:
+    """What reading an export's rows keeps count of: the row each record is on (the column names are on row 1), the
+    rows whose codes are not text, and the bound on how many rows are read."""
+
+    def __init__(self) -> None:
+        self.row = 1
+        self.not_text: list[int] = []
+
+    def next(self) -> int:
+        self.row += 1
+        if self.row - 1 > ROWS_MOST:
+            raise ChartError(
+                f"This file has more than {ROWS_MOST:,} rows, many times what a chart of accounts holds, so it was "
+                "not read. Export the chart or the business units from JD Edwards again and use the file as it comes."
+            )
+        return self.row
+
+    def text(self, *cells: Any) -> bool:
+        """Whether these code cells are text (or empty); a row with one that is not is counted, to be refused."""
+        if all(cell is None or isinstance(cell, str) for cell in cells):
+            return True
+        self.not_text.append(self.row)
+        return False
+
+    def end(self) -> None:
+        """``ChartError`` when a code was stored as a number or a date: its leading zeros may be gone (B-2126)."""
+        if self.not_text:
+            n = len(self.not_text)
+            raise ChartError(
+                f"{n:,} row{'' if n == 1 else 's'} of this file hold{'s' if n == 1 else ''} a business unit, object "
+                f"account or subsidiary stored as a number or a date, not as text (row {self.not_text[0]} is the "
+                "first), so leading zeros may be lost and the file was not read. Export it from JD Edwards again and "
+                "import the file without opening and saving it in between."
+            )
 
 
 def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None) -> Rows:
@@ -266,15 +336,21 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
     its indentation. A row with no object is its business unit's header. Each row's ``category`` is the title
     account above it (posting edit code N, a lower level of detail), which says what the description, cut at 30
     characters, no longer does."""
-    out = Rows()
+    out, count = Rows(), _Rows()
     seen: set[tuple[str, str, str]] = set()
     titles: list[tuple[int, str]] = []  # the title accounts above this row in its business unit: (level, description)
     last_bu = None
     for record in records:
+        row = count.next()
         if columns is None:
             columns = chart_columns(record)
         cell = {name: record.get(column) for name, column in columns.items()}
-        bu, obj, subsidiary = clean(cell["business_unit"]), clean(cell["object"]), clean(cell.get("subsidiary"))
+        if not count.text(cell["business_unit"], cell["object"], cell.get("subsidiary")):
+            continue
+        bu, obj, subsidiary = _code(cell["business_unit"]), _code(cell["object"]), _code(cell.get("subsidiary"))
+        _held(row, "business unit", bu, BU_MOST)
+        _held(row, "object account", obj, OBJECT_MOST)
+        _held(row, "subsidiary", subsidiary, SUBSIDIARY_MOST, plain=False)
         if not bu:
             out.skip("blank rows" if not obj and not subsidiary else "rows with no business unit")
             continue
@@ -295,19 +371,24 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
         if lod and obj and edit == HEADER_EDIT:
             titles.append((lod, description))
         out.rows.append(ChartRow(bu, obj, subsidiary, description, lod, edit, category))
+    count.end()
     return out
 
 
 def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None) -> Rows:
     """The business unit master's export as clean rows (``BU_ALIASES``): the business unit without its padding, its
     name, company, type and status (upper case: ACT, INA)."""
-    out = Rows()
+    out, count = Rows(), _Rows()
     seen: set[str] = set()
     for record in records:
+        row = count.next()
         if columns is None:
             columns = bu_columns(record)
         cell = {name: record.get(column) for name, column in columns.items()}
-        code = clean(cell["code"])
+        if not count.text(cell["code"]):
+            continue
+        code = _code(cell["code"])
+        _held(row, "business unit", code, BU_MOST)
         if not code:
             out.skip("rows with no business unit" if _words(cell.get("name")) else "blank rows")
             continue
@@ -315,8 +396,9 @@ def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | N
             out.skip("rows repeating a business unit already read")
             continue
         seen.add(code)
-        out.rows.append(BuRow(code, _words(cell.get("name")), clean(cell.get("company")),
-                              clean(cell.get("type")).upper(), clean(cell.get("status")).upper()))  # fmt: skip
+        out.rows.append(BuRow(code, _words(cell.get("name")), _code(cell.get("company"))[:BU_MOST],
+                              _code(cell.get("type"))[:BU_MOST], _code(cell.get("status"))[:BU_MOST]))  # fmt: skip
+    count.end()
     return out
 
 
@@ -411,7 +493,7 @@ class AccountPairs:
         return dict(sorted(self._skipped.items()))
 
     def _found(self, business_unit: Any, code: Any) -> tuple[str, str, tuple[str, str] | None]:
-        bu, code = clean(business_unit), code_of(*split_code(code))
+        bu, code = _code(business_unit), _gl(code)
         return bu, code, self._accounts.get(bu, {}).get(code)
 
     def status(self, business_unit: Any, code: Any) -> str:
@@ -429,8 +511,11 @@ class AccountPairs:
         return RESERVED if self.why_reserved(bu, code) else OK
 
     def why_reserved(self, business_unit: Any, code: Any) -> str:
-        """Why the pair is never offered, in words for a finding ("" when nothing holds it back)."""
-        bu, code, _ = self._found(business_unit, code)
+        """Why the pair is never offered, in words for a finding ("" when nothing holds it back, or the chart has no
+        such pair)."""
+        bu, code, found = self._found(business_unit, code)
+        if found is None:
+            return ""
         pattern = _never_offered(self.settings.never_offered, bu, code)
         if pattern:
             return f"it is one of the accounts never offered ({pattern})"
@@ -443,12 +528,12 @@ class AccountPairs:
 
     def accounts_of(self, business_unit: Any) -> list[str]:
         """The GL codes offered on a business unit, in order."""
-        bu = clean(business_unit)
+        bu = _code(business_unit)
         return sorted(code for code in self._accounts.get(bu, ()) if bu in self._offered.get(code, ()))
 
     def bus_of(self, code: Any) -> tuple[str, ...]:
         """The business units a GL code is offered on, in order."""
-        return self._offered.get(code_of(*split_code(code)), ())
+        return self._offered.get(_gl(code), ())
 
     def offered_codes(self) -> frozenset[str]:
         """The GL codes offered on at least one business unit."""
@@ -460,12 +545,12 @@ class AccountPairs:
 
     def has_business_unit(self, business_unit: Any) -> bool:
         """Whether the chart or the business unit master knows the business unit."""
-        bu = clean(business_unit)
+        bu = _code(business_unit)
         return bu in self._accounts or bu in self._names or bu in self._closed
 
     def has_code(self, code: Any) -> bool:
         """Whether any business unit has the GL code, one that may be posted to or not."""
-        code = code_of(*split_code(code))
+        code = _gl(code)
         return any(code in codes for codes in self._accounts.values())
 
     def description(self, business_unit: Any, code: Any) -> str:
@@ -480,4 +565,4 @@ class AccountPairs:
 
     def name_of(self, business_unit: Any) -> str:
         """The business unit's name: the master's, else its header row's in the chart."""
-        return self._names.get(clean(business_unit), "")
+        return self._names.get(_code(business_unit), "")

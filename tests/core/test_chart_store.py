@@ -116,7 +116,7 @@ def test_a_category_that_came_from_the_chart_follows_the_chart_and_a_typed_one_s
     result = store.import_chart(_chart(renamed))
     assert result["gl_accounts"] == {"now": 13, "added": 0, "updated": 3, "removed": 0}
     assert _gl(store)["5410.2210"] == ("Coffee", "Office Costs") and _gl(store)["5450"][1] == "Office Costs"
-    assert _gl(store)["5410"] == ("Office Supplies", "Typed by AP")
+    assert _gl(store)["5410"] == ("Stationery and Paper", "Typed by AP")
     assert _gl(store)["5710"] == cf.GL_ACCOUNTS["5710"]
 
 

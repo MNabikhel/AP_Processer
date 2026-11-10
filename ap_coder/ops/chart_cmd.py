@@ -123,7 +123,7 @@ def main(args: argparse.Namespace) -> int:
             print(f"There is no file {path}. Nothing was changed.", file=sys.stderr)
             return 1
     if args.chart:
-        print("Reading the chart of accounts (a chart of 15,000 rows takes about 10 seconds)...", flush=True)
+        print("Reading the chart of accounts (a chart of 15,000 rows takes 10 to 20 seconds)...", flush=True)
     try:
         said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR)
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
