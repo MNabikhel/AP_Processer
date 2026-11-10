@@ -8,7 +8,7 @@
 </div></header>
 {% endblock %}
 {% block content %}
-<div class="narrow">
+<div class="col">
 {% if temporary %}
 <section class="card" id="temporary">
   <h4><span class="ms" aria-hidden="true">key</span> Temporary password for {{ temporary.username }}</h4>
@@ -22,13 +22,13 @@
 <section class="card">
   <h4>People</h4>
   <div class="table-wrap">
-    <table class="apc-table">
+    <table class="apc-table fit">
       <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Last login</th><th>Sign-in codes</th><th></th></tr></thead>
       <tbody>
         {% for u in users %}
         <tr data-user="{{ u.username }}">
           <td>{{ u.username }}{% if u.id == me %} <span class="muted">(you)</span>{% endif %}</td>
-          <td>{{ u.display_name }}</td>
+          <td class="w">{{ u.display_name }}</td>
           <td>
             <form method="post" action="/admin/users/{{ u.id }}/role" class="row">
               <select name="role" aria-label="Role of {{ u.username }}">
@@ -43,7 +43,7 @@
             </form>
             {% endif %}
           </td>
-          <td>{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
+          <td class="w">{% if not u.active %}{{ ui.pill("Turned off", "gray") }}{% elif u.must_change %}{{ ui.pill("Temporary password", "warn") }}{% else %}{{ (u.last_login or "never") | replace("T", " ") }}{% endif %}</td>
           <td>{% if u.totp_on %}{{ ui.pill("Codes set up", "ok") }}{% else %}{{ ui.pill("Not set up yet", "gray") }}{% endif %}</td>
           <td class="r">
             <div class="row end">
@@ -59,11 +59,11 @@
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">phonelink_erase</span>Reset authenticator</button>
               </form>
               {% endif %}
-              {% if u.active %}
+              {% if u.active and u.id != me %}
               <form method="post" action="/admin/users/{{ u.id }}/deactivate" data-confirm="Turn off {{ u.username }}? They can no longer log in. Their approvals and history stay.">
                 <button class="btn danger" type="submit"><span class="ms" aria-hidden="true">person_off</span>Turn off</button>
               </form>
-              {% else %}
+              {% elif not u.active %}
               <form method="post" action="/admin/users/{{ u.id }}/activate">
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">person</span>Turn back on</button>
               </form>
@@ -84,7 +84,7 @@
     people may share an address (an office's internet connection, a remote desktop server): lift it once you know
     why.</p>
   <div class="table-wrap">
-    <table class="table">
+    <table class="apc-table fit">
       <thead><tr><th>Address</th><th>Paused until</th><th></th></tr></thead>
       <tbody>
         {% for p in paused %}
@@ -107,7 +107,7 @@
     logged in from lately, for a few minutes at first. Someone may have forgotten their password: lift it once you know
     why.</p>
   <div class="table-wrap">
-    <table class="table">
+    <table class="apc-table fit">
       <thead><tr><th>Username</th><th>From</th><th>Paused until</th><th></th></tr></thead>
       <tbody>
         {% for p in paused_names %}
@@ -145,6 +145,7 @@
     <li><b>Clerk</b>: also imports invoices, reviews, checks and approves them (the first approval), parks, rejects and reopens them, approves in bulk and makes export batches.</li>
     <li><b>Approver</b>: also gives the second approval to invoices over the approval limit. It must be another person than the first approver.</li>
     <li><b>Admin</b>: everything, including Settings, users, the GL accounts and tax setup, imports, JD Edwards, backups and restore, and deleting.</li>
+    <li><b>Manager</b>: outside the others. Only confirms, or sends back, the coding of the invoices AP sends them (Manager confirmations), for the cost centers set in their row above; sees those invoices and nothing else.</li>
   </ul>
 </section>
 </div>

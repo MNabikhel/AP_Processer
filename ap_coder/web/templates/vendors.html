@@ -20,12 +20,12 @@
       <label class="field">{{ master.hold_codes_label }}
         <input type="text" name="hold_codes" value="{{ master.hold_codes }}" maxlength="60" title="JD Edwards' hold payment codes that put a supplier on hold, with commas between them. N and blank never hold."></label>
       <label class="field">Words that mark a retired supplier
-        <input type="text" name="skip_words" value="{{ master.skip_words }}" maxlength="200" title="A supplier with one of these in its name is found by its name without it, and put on hold. Commas between them; * is a star before or after the name. Left blank: the usual words."></label>
+        <input type="text" name="skip_words" value="{{ master.skip_words }}" maxlength="200" title="A supplier with one of these in its name is found by its name without it, and put on hold. Commas between them; * is a star before or after the name. Left blank: no word marks one."></label>
     </div>
     <p class="muted small">Hold payment codes: N and blank never hold; 2 holds the payments only (a warning, the invoice is still
       coded). A code added here reaches the suppliers of this file now, and the others when they are next imported or
-      synced; a code taken off stops holding every supplier at this import. The words (and * for a star before or after
-      a name) are also the ones a business unit of the chart is left out for.</p>
+      synced; a code taken off stops holding every supplier at this import. The words are also the ones a business
+      unit of the chart is left out for (the star, before or after a name, is for suppliers only).</p>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
       <a class="link" href="/vendors">Cancel</a>

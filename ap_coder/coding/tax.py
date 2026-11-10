@@ -731,16 +731,7 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         t = setup.treatment(tl.tax_type)
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
-            items = list(enumerate(coding.line_items))
-            # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of
-            # scope (never spread onto a line that says it carries no tax), else every line.
-            targets = (
-                [(i, li) for i, li in items if tl.tax_type in li.taxes_applied]
-                or [(i, li) for i, li in items if tax_state(li, tl.tax_type) != NOT_DUE]
-                or items
-            )
-            shares = split(tl.tax_amount, [li.amount for _, li in targets], places)
-            for (idx, _li), share in zip(targets, shares, strict=True):
+            for idx, share in tax_shares(coding.line_items, tl, places):  # a tip takes none of it (B-2169)
                 e = entries[idx]
                 e["non_recoverable_tax"] = half_up(e["non_recoverable_tax"] + share)
                 e["amount"] = half_up(e["amount"] + share)
@@ -809,11 +800,14 @@ def half_down(amount: float, places: int = 2) -> float:
 
 
 def tax_shares(lines: list[Any], tax_line: Any, places: int = 2) -> list[tuple[int, float]]:
-    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it (as PST is spread,
-    ``build_gl_distribution``), tip lines left out (a voluntary tip is not taxed), in cents. The JD Edwards pay items
-    take the same shares (B-867; a pay item per line, by the same rule, B-1889)."""
+    """(line position, its share of ``tax_line``'s tax): spread over the lines that carry it, tip lines left out (a
+    voluntary tip is not taxed), in cents. A tax kept in the expense is added to the lines by these shares
+    (``build_gl_distribution``, B-2169), and the JD Edwards pay items take the same (B-867; a pay item per line, by
+    the same rule, B-1889)."""
     items = list(enumerate(lines))
     tax_type = tax_line.tax_type
+    # The lines whose tax code carries it; none marked: the lines not marked exempt, zero-rated or out of scope
+    # (never spread onto a line that says it carries no tax), else every line.
     targets = (
         [(i, li) for i, li in items if tax_type in li.taxes_applied]
         or [(i, li) for i, li in items if tax_state(li, tax_type) != NOT_DUE]

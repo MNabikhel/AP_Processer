@@ -35,7 +35,7 @@ from ap_coder.coding.vendors import (
 from ap_coder.core import ui
 from ap_coder.core.store import PARKED, REVIEW, Store, reports
 from ap_coder.core.store.vendor_master import PAYMENTS_ONLY, stops_vouchers
-from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS, SKIP_WORDS_SETTING, listed
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
@@ -386,15 +386,13 @@ HOLD_CODES_LABEL = "Hold payment codes that put a supplier on hold"  # the impor
 def save_import_rules(store: Store, form: Any) -> None:
     """The import's own rules as typed on its form, kept for the next import and the JD Edwards sync: the hold payment
     codes that put a supplier on hold (left blank: as they were), and the words that mark a retired supplier (left
-    blank: the default words again, as the chart of accounts reads the same setting)."""
+    blank: none, for the chart of accounts too, which reads the same setting)."""
     codes = ", ".join(code.upper() for code in listed(form.get("hold_codes")))
     if codes and codes != ", ".join(store.hold_codes()):
         store.set_setting(HOLD_CODES_SETTING, codes, actor=reviewer())
     words = form.get("skip_words")
-    if words is not None:
-        typed = ", ".join(listed(str(words).replace(";", ",").replace("\n", ",")))
-        if (listed(typed) or listed(SKIP_WORDS)) != store.skip_words():
-            store.set_setting(SKIP_WORDS_SETTING, typed, actor=reviewer())
+    if words is not None and listed(words) != store.skip_words():
+        store.set_setting(SKIP_WORDS_SETTING, ", ".join(listed(words)), actor=reviewer())
 
 
 @one_connection

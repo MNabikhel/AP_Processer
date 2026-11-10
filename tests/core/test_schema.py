@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -94,5 +96,33 @@ def test_invalid_tax_values_rejected(ground_truth, path, value):
 
 def test_extra_fields_rejected(ground_truth):
     ground_truth["notes"] = "x"
+    with pytest.raises(ValidationError):
+        InvoiceCoding.model_validate(ground_truth)
+
+
+def test_a_tax_amount_read_on_a_line_is_kept_and_an_invoice_without_one_is_stored_as_before(ground_truth):
+    """``LineItem.taxes_read``: the tax printed on a line, tax by tax. None (most invoices print one total) is left
+    out of what is stored and exported, byte for byte, and the model is never asked for it."""
+    assert "taxes_read" not in build_json_schema()["properties"]["line_items"]["items"]["properties"]
+    coding = InvoiceCoding.model_validate(ground_truth)
+    assert coding.line_items[0].taxes_read is None
+    stored = json.dumps(coding.to_output())
+    assert all(list(line) == TARGET_LINE for line in json.loads(stored)["line_items"])
+    assert json.dumps(InvoiceCoding.model_validate(json.loads(stored)).to_output()) == stored
+    assert json.loads(coding.model_dump_json()) == {**json.loads(stored), "pay_from_account": ""}
+    assert "taxes_read" not in coding.line_items[0].model_dump()
+    assert "taxes_read" not in coding.model_dump_json()
+
+    ground_truth["line_items"][0]["taxes_read"] = {" hst ": 26, "GST": 0.0}
+    out = InvoiceCoding.model_validate(ground_truth).to_output()
+    assert out["line_items"][0]["taxes_read"] == {"GST": 0.0, "HST": 26.0}
+    assert list(out["line_items"][0]) == [*TARGET_LINE[:-1], "taxes_read", TARGET_LINE[-1]]
+    assert InvoiceCoding.model_validate(out).to_output() == out
+    assert all("taxes_read" not in line for line in out["line_items"][1:])
+
+
+@pytest.mark.parametrize("bad", [{"VAT": 1.0}, {"GST": "a lot"}, ["GST"]])
+def test_a_tax_amount_read_that_is_no_tax_or_no_amount_is_rejected(ground_truth, bad):
+    ground_truth["line_items"][0]["taxes_read"] = bad
     with pytest.raises(ValidationError):
         InvoiceCoding.model_validate(ground_truth)

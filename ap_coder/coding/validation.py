@@ -74,6 +74,9 @@ class ValidationReport:
     checks: dict[str, Any] = field(default_factory=dict)
     reading_confidence: float = 0.0  # how sure the header is (D-89)
     coding_confidence: float = 0.0  # how sure the lines' accounts, cost centers and tax codes are (D-89)
+    # Which reference data the checks were made with (``ReferenceData.stamp``; "" when it was read from files): the
+    # store reads it to stamp what the invoice was checked against, and does not keep it (B-2094).
+    reference_stamp: str = ""
 
     @property
     def errors(self) -> list[Issue]:
@@ -84,7 +87,10 @@ class ValidationReport:
         return [i for i in self.issues if i.severity == WARNING]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        if not out["reference_stamp"]:
+            del out["reference_stamp"]
+        return out
 
 
 _DUPLICATE_STANDS = {"review": "waiting for review", "parked": "set aside", "approved": "approved",
@@ -183,6 +189,7 @@ def validate_coding(
         coding_confidence=coded,
         issues=issues,
         checks=checks,
+        reference_stamp=getattr(reference, "stamp", ""),
     )
 
 
@@ -228,7 +235,7 @@ def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, s
         return None
     others = pairs.bus_of(gl)
     if not pairs.has_business_unit(cc):
-        why = f"it has no business unit {cc}: pick one from the list"
+        why = f"the chart has no business unit {cc} (pick one from the list)"
     elif others:
         why = f"business unit {cc} has no account {gl}; it is on {_named(others, pairs.settings.home_business_unit)}"
     elif pairs.has_code(gl):

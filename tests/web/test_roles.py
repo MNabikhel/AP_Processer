@@ -112,6 +112,24 @@ def test_every_route_for_every_role(setup, role):
     assert wrong == []
 
 
+@pytest.mark.parametrize("role", ROLES)
+def test_the_error_page_sends_each_role_to_a_page_it_may_open(setup, role):
+    """B-2111: a Manager's "Not allowed" page offered *Go to the review queue*, which a Manager can't open (another
+    refusal); the rail counted a Manager's approvals, who gives none; and the Users page's list of the roles left
+    the Manager out."""
+    app, tokens, _ = setup
+    client = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    headers = {"Accept": "text/html", "Cookie": f"{SESSION_COOKIE}={tokens[role]}"}
+    page = client.get("/no-such-page", headers=headers)
+    assert page.status_code == (404 if role == "admin" else 403)
+    offered = re.findall(r'<a class="btn" href="([^"]+)"', page.text.split('<div class="row center">', 1)[1])
+    assert offered and all(roles.can(app, role, "GET", href) for href in offered), offered
+    assert ("approved today" in page.text) == (role != "manager")
+    if role == "admin":
+        listed = client.get("/admin/users", headers=headers).text.split("<h4>The roles</h4>", 1)[1]
+        assert re.findall(r"<li><b>([^<]+)</b>", listed) == ["Read-only", "Clerk", "Approver", "Admin", "Manager"]
+
+
 def test_what_each_role_may_do(setup):
     """The table as the plan put it, independently of how RULES is written."""
     app, _, _ = setup

@@ -12,6 +12,7 @@ import json
 import re
 from typing import Any
 
+from ..chart import markers as _markers  # (how a skip word is found in a name: the chart's, for both, D-209)
 from ..keys import BUSINESS_NUMBER, norm_tax_number, same_tax_number
 from ..memory import _LEGAL_SUFFIXES, _normalise, vendor_key
 from ._base import _clean_code, _in_list, _now
@@ -74,18 +75,6 @@ STAR = "*"
 MARKED = "marked {} in the supplier master"  # the note of a vendor on hold for its marker (B-2083)
 MARKED_LIKE = MARKED.format("%")
 _WAS_MARKED = like("vendors.notes")  # (with MARKED_LIKE) a vendor whose note is a marker's: on hold for it
-
-
-def _markers(words: list[str]) -> list[tuple[str, re.Pattern[str]]]:
-    """Each skip word as it is said ("DO NOT USE") and as it is found: a word of its own, however it is spaced (``re``
-    keeps the few patterns compiled)."""
-    found = []
-    for word in words:
-        parts = [re.escape(p) for p in re.split(r"[^0-9A-Za-z]+", word) if p]
-        if parts:
-            pattern = r"(?<![0-9a-z])" + r"[^0-9a-z]*".join(parts) + r"(?![0-9a-z])"
-            found.append((" ".join(word.split()).upper(), re.compile(pattern, re.IGNORECASE)))
-    return found
 
 
 def name_marker(name: Any, words: list[str]) -> tuple[str, str]:

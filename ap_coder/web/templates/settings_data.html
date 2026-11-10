@@ -49,7 +49,7 @@
 
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)
-      <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
+      <input type="text" name="folder" value="{{ copy_dir }}" placeholder="{{ 'a folder IT allowed, e.g. \\\\fileserver\\Backups\\APCoder' if server_mode else 'e.g. C:\\Users\\you\\OneDrive - Company\\AP Coder backups' }}"
              title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer loses nothing. Only the backup copies go there; the database itself stays {{ "on the server" if server_mode else "on this computer" }}."></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
   </form>
@@ -66,11 +66,11 @@
   {{ ui.empty_note("No backups yet", " Press Back up now to make the first one.", "backup") }}
   {% else %}
   <div class="table-wrap">
-    <table class="apc-table">
+    <table class="apc-table fit">
       <thead><tr><th>Backup</th><th>Made</th><th>Holds</th><th>Second copy</th><th>Check</th><th></th></tr></thead>
       <tbody>
         {% for b in backups[:10] %}
-        <tr><td>{{ b.name }}</td><td>{{ b.made }}</td><td>{{ b.holds }}</td>
+        <tr><td class="w">{{ b.name }}</td><td>{{ b.made }}</td><td class="w">{{ b.holds }}</td>
           <td>{% if b.copied %}<span title="{{ b.copy_detail }}">{% if b.copied == "Copied" %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.copied }}</span>{% if b.copied != "Copied" %}<br><span class="muted">{{ b.copy_detail }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{% if b.complete %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.state }}</td>
           <td class="r"><a class="link" href="/settings/data?restore={{ b.name | urlencode }}#restore"><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore this state</a>
@@ -93,6 +93,10 @@
         so this can be undone.</p>
       {% if server_mode %}<p>The user accounts, their passwords and roles, and paused logins stay as they are now (not as
         in the backup). Everyone is logged out, you too: log in again after the restore.</p>{% endif %}
+      {% if copy_dir %}<p><span class="ms err-ico" aria-hidden="true">warning</span>
+        A restore clears the second backup folder ({{ copy_dir }}): from then on the backups are kept
+        {{ "on the server's own disk" if server_mode else "on this computer" }} only, until you save the folder again
+        in the box Also copy each backup to, above.</p>{% endif %}
       <label class="field">Type {{ restore_word }} to confirm
         <input type="text" name="confirm" autocomplete="off" required pattern="\s*[Rr][Ee][Ss][Tt][Oo][Rr][Ee]\s*" data-word="{{ restore_word }}"></label>
       <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore this state</button>

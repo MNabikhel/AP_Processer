@@ -425,7 +425,7 @@ def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are
                     "CEDAR RIDGE TOWING - CLOSED": "marked CLOSED in the supplier master"}  # fmt: skip
     assert store.find_vendor("Northern Paper Co")["erp_id"] == "410003"
     assert store.find_vendor("Cedar Ridge Towing")["erp_id"] == "410012"
-    # the star is a word of the list: taken off it, a star marks nothing (B-2160); left blank, the usual words again
+    # the star is a word of the list: taken off it, a star marks nothing (B-2160)
     starred = [supplier(410020, "*** MISC ONE-TIME VENDOR ***")]
     page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
     data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
@@ -433,9 +433,16 @@ def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are
     assert store.find_vendor("Misc One-Time Vendor")["status"] == "active"
     page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
     follow(client, client.post("/vendors/master/import", data={**data, "file": page.url.params["file"],
-                                                              "skip_words": " "}, headers=PAGE))  # fmt: skip
-    assert store.skip_words() == ["DO NOT USE", "DNU", "*"]
+                                                              "skip_words": "DNU, *"}, headers=PAGE))  # fmt: skip
+    assert store.skip_words() == ["DNU", "*"]
     assert store.find_vendor("Misc One-Time Vendor")["notes"] == "marked * in the supplier master"
+    assert store.chart_settings().skip_words == ("DNU", "*")  # one setting: the chart finds no word in the star
+    # left blank: no word at all, for the chart of accounts too, which reads the same setting
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(starred))
+    follow(client, client.post("/vendors/master/import", data={**data, "file": page.url.params["file"],
+                                                              "skip_words": " "}, headers=PAGE))  # fmt: skip
+    assert store.skip_words() == [] and store.find_vendor("Misc One-Time Vendor")["status"] == "active"
+    assert store.chart_settings().skip_words == ()
 
 
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
