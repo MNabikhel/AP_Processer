@@ -691,3 +691,30 @@ def test_the_process_button_says_when_the_invoices_folder_cannot_be_listed(clien
     answer = client.post("/process/folder", headers=PAGE)
     assert answer.status_code == 409 and "could not be listed just now (Access is denied)" in answer.json()["error"]
     assert store.imports_open()["waiting"] == 0
+
+
+def test_in_a_browser_a_running_imports_card_does_not_show_the_last_runs_time(chromium, app, store):
+    """B-2099: the card of the run before said when it ended ("2 minutes ago"); an import started from that page drew
+    "Processing 4 invoices…" beside that time, the last run's. While it runs the card says no time."""
+    from ap_coder.core.store.folder import read_file
+    from tests.browser import browser_on
+    from tests.web.test_server_browser import _job_running
+
+    before = store.path.parent / "before.pdf"
+    before.write_bytes(b"%PDF-1.4 the run before")
+    store.queue_imports([read_file(before)], source="upload", person=True)
+    row = store.claim_import("a reader", 600)
+    store.finish_import(row["id"], "a reader", "done")
+    with browser_on(chromium, app) as (browser, base):
+        page = browser.new_page()
+        page.goto(base + "/process")
+        assert page.locator("#job").get_attribute("data-state") == "done"
+        assert page.locator("#job-when").inner_text().strip()  # ("just now": when the run before ended)
+        release = _job_running(app)
+        try:
+            page.evaluate("document.dispatchEvent(new CustomEvent('apc:job', {detail: {status: '/process/status'}}))")
+            page.wait_for_selector("#job[data-state=running]", timeout=5000)
+            assert page.locator("#job-title").inner_text() == "Processing 1 invoice…"
+            assert page.locator("#job-when").inner_text().strip() == ""
+        finally:
+            release.set()
