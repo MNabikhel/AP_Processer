@@ -16,11 +16,11 @@ from tests.browser import browser_on
 from tests.webclient import PAGE, client_for, web_settings
 
 SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned",
-               "GL accounts & tax", "JD Edwards files", "Vendors", "Settings", "Help"]  # fmt: skip
+               "GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings", "Help"]  # fmt: skip
 SIMPLE_PATHS = ["/review", "/process", "/exports", "/search", "/learning", "/accounts", "/jde-files", "/vendors",
-                "/settings", "/help"]  # fmt: skip
+                "/activity", "/settings", "/help"]  # fmt: skip
 HIDDEN = ["/purchase-orders", "/statements", "/month-end", "/spend", "/insights", "/sales-tax", "/manager",
-          "/activity", "/settings/hub", "/settings/automation"]  # fmt: skip
+          "/settings/hub", "/settings/automation"]  # fmt: skip
 SAYS = "Hidden in Simple screens: Settings → About shows everything"
 
 

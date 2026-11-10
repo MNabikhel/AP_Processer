@@ -86,6 +86,10 @@ to stop AP Coder. Your data lives outside the code (`~/APCoder`), so an update n
 Next: real data step by step in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), or the one printable page in
 [docs/QUICK_START.md](docs/QUICK_START.md) (also under Help → Quick start).
 
+Trying it on one Windows laptop with your own JD Edwards exports (the chart of accounts, last year's journal)?
+[docs/PROTOTYPE.md](docs/PROTOTYPE.md) is the whole path on one page: install, load the five files, score it
+against last year, a day with it.
+
 ## What leaves the laptop
 
 Nothing, by default. The data stays in a local folder outside the code, the dashboard listens only on `127.0.0.1`,
@@ -107,7 +111,7 @@ Every place the network could be touched: [docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS
 
 | For | Read |
 |---|---|
-| The pilot tester | [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (Phase 0, then the pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
+| The pilot tester | [PROTOTYPE.md](docs/PROTOTYPE.md) (one person, one Windows laptop, JD Edwards exports), [QUICK_START.md](docs/QUICK_START.md) (one page), [GETTING_STARTED.md](docs/GETTING_STARTED.md) (step by step), [PILOT_PLAN.md](docs/PILOT_PLAN.md) (Phase 0, then the pilot), [DEMO_RUN_SHEET.md](docs/DEMO_RUN_SHEET.md) (a live demo, with `scripts\demo.bat`), [KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md) |
 | IT, a laptop | [PILOT.md](docs/PILOT.md) (install, the offline bundle), [LM_STUDIO.md](docs/LM_STUDIO.md), [UPGRADING.md](docs/UPGRADING.md), [MAILBOX_SETUP.md](docs/MAILBOX_SETUP.md) |
 | IT, the company server | [SERVER.md](docs/SERVER.md) |
 | The JD Edwards team | [JDE_E1.md](docs/JDE_E1.md), [JDE_ORCHESTRATIONS.md](docs/JDE_ORCHESTRATIONS.md) |
