@@ -5410,3 +5410,40 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ops/chart_cmd.py`; `_demo_card.html`, `settings_data.html`, `web/pages/process.py`; `_screens_card.html`,
     `web/core.py`, `web/pages/settings.py`, `review.py`; `tests/core/test_by_hand.py`,
     `tests/web/test_web_jde_loaded.py`, `test_web_process.py`, `test_simple_screens.py`)
+- **D-223** · **The review screen's two big modules are split by subject, one subject a module, nothing changed.**
+  `web/invoice_view.py` (2,486 lines) and `web/pages/invoice.py` (1,899) were read and edited by nearly every task
+  on the review screen: each task paid to read around them, and parallel work collided in them. A pure move: no
+  function renamed or changed, every top-level statement in exactly one new module with the same syntax tree,
+  `scripts/same_behaviour.py` the same as before, the same routes (their order within the screen's router differs,
+  and no request is answered by another route for it).
+  - *What the screen shows* (no web code): `web/invoice_form.py` (the form's fields, `Draft`, what the server fills
+    in, the words taught on the page), `invoice_grid.py` (the line and tax grids, the choices of their cells, the
+    actions on the lines), `invoice_reading.py` (what was read from the page, OvisOCR2 and the AI reviewer for this
+    invoice), `invoice_findings.py` (the checks as the screen says them, what keeps Approve closed),
+    `invoice_fields.py` (the note under each invoice detail, the dates and currency typed), `invoice_totals.py`
+    (the summary, the Tax check, the GL posting preview), `invoice_coding.py` (why these codes, suggestions, the PO
+    match, what approving teaches); `invoice_view.py` keeps `analyse`, which puts them together.
+  - *Its routes*, still on ONE router (`pages/invoice_router.py`, with what every handler starts with), registered
+    as before through `pages/invoice.py`, which opens and draws the screen and imports the others (`web/roles.py`
+    is unchanged): `invoice_drafts.py` (each person's edits not approved yet, who else has the invoice open, a
+    screen out of date), `invoice_navigation.py` (Previous / Next), `invoice_check.py` (check, start over),
+    `invoice_lines.py` (the actions on the lines), `invoice_approve.py` (approve, why, undo, park, the manager,
+    reject, note, bring back, reopen), `invoice_lookups.py` (the vendor and account lists as JSON, add a vendor),
+    `invoice_document.py` (the pages, the screen's poll, the approved copy, teaching a field, OvisOCR2).
+  - *The rule:* a new piece of the review screen goes in the module of its subject: what is worked out in
+    `web/invoice_<subject>.py`, its route in `web/pages/invoice_<subject>.py`, declared on the one router. A new
+    subject gets a module of its own (with routes: imported by `pages/invoice.py`), before one of these passes
+    about 900 lines. A name is imported from the module that defines it: none passes another's names on. The
+    imports only point one way: `invoice_form`, then `invoice_grid`, `invoice_reading`, `invoice_findings`, then
+    `invoice_fields`, `invoice_totals`, `invoice_coding`, then `invoice_view`; for the routes `invoice_router`,
+    `invoice_drafts`, `invoice_navigation`, the route modules, then `invoice`. (`invoice_grid.grid` names
+    `Analysis` for its type only, under `TYPE_CHECKING`.)
+  - *Tests* patch a name in the module whose code looks it up: the vendor list in `invoice_lookups`, the check in
+    `invoice_check`; who the reviewer is, in every module of the screen's routes (`tests/webclient.py`
+    `REVIEW_SCREEN`, read from the file names, so a new one is included).
+  - Rejected: a package `pages/invoice/` (the flat names sort together and say their subject in a file list, and
+    `MORE_MODULES` and each `pages/*.py` glob stay as they are); `invoice_view.py` passing every name on (two
+    homes for a name, and a test's patch that reaches the wrong one); declaring the routes in one table to keep
+    their old order (the handlers would lose their decorators: no longer a move).
+  - (`ap_coder/web/invoice_*.py`, `ap_coder/web/pages/invoice*.py`; their importers in `ap_coder/web/pages/`,
+    `web/server.py`, `bench/coding.py` and the tests)

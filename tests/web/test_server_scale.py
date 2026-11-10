@@ -186,7 +186,7 @@ def test_a_temporary_password_made_by_one_worker_is_shown_once_by_another(store)
 def test_a_draft_one_worker_kept_is_seen_and_dropped_by_another(store):
     import types
 
-    from ap_coder.web.pages import invoice
+    from ap_coder.web.pages import invoice_drafts
     from tests.webclient import add_clean
 
     iid = add_clean(store)
@@ -195,11 +195,11 @@ def test_a_draft_one_worker_kept_is_seen_and_dropped_by_another(store):
     def asking(app):  # a request to that worker
         return types.SimpleNamespace(app=app, state=types.SimpleNamespace())
 
-    assert invoice.unsaved_edits(asking(apps[0])) == set()
+    assert invoice_drafts.unsaved_edits(asking(apps[0])) == set()
     store.save_invoice_draft(iid, '["user", "7"]', {"header": {}, "lines": [], "taxes": []})  # kept by worker two
-    assert invoice.unsaved_edits(asking(apps[0])) == {iid}
-    invoice.forget_everyones_draft(asking(apps[1]), iid)  # approved on worker two
-    assert invoice.unsaved_edits(asking(apps[0])) == set()
+    assert invoice_drafts.unsaved_edits(asking(apps[0])) == {iid}
+    invoice_drafts.forget_everyones_draft(asking(apps[1]), iid)  # approved on worker two
+    assert invoice_drafts.unsaved_edits(asking(apps[0])) == set()
 
 
 def test_a_restore_in_one_process_pauses_the_background_work_of_another(store):

@@ -1,5 +1,5 @@
-{# The review screen's sections that follow the edits (pages/invoice.py draws them in the page, and again for each
-   POST /review/<id>/check). Each macro takes ``live`` (invoice_view.analyse(...).live) and the invoice id. #}
+{# The review screen's sections that follow the edits (pages/invoice.py draws them in the page, invoice_check.py
+   again for each POST /review/<id>/check). Each macro takes ``live`` (invoice_view.analyse(...).live) and the invoice id. #}
 
 {% macro conf(meters, threshold) -%}
 {# D-89: Reading (the header) and Coding (the lines), each its own small bar; the invoice's confidence is the lower. #}

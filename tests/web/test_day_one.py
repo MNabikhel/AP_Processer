@@ -19,7 +19,7 @@ from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 # Every page module imported now, before `me` patches web/core.py: a module imported while it is patched would keep
 # the patched `reviewer` it imports by name, for the tests of the files that run after this one.
@@ -36,7 +36,7 @@ def demo_db(cost_centers_demo_template):
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
     """A fixed reviewer and login (not this computer's)."""
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Jordan Lee", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "jlee", raising=False)
 

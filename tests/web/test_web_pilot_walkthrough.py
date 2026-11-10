@@ -22,7 +22,7 @@ from ap_coder.web.pages import review as _review_page  # noqa: F401
 from tests.browser import browser_on
 from tests.conftest import SAMPLES
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 LAPTOP = {"width": 1366, "height": 768}
 
@@ -41,7 +41,7 @@ def client(store):
 def me(monkeypatch):
     """A fixed reviewer. The page modules are imported at the top: patched before them, ``web.core.reviewer`` would be
     copied into them patched, and monkeypatch would keep the patched one as theirs for the rest of the run."""
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
 

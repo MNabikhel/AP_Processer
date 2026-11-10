@@ -222,7 +222,7 @@ def test_a_draft_keeps_the_time_it_was_edited_and_says_it_plainly(client, store)
 def test_after_the_last_one_in_the_list_the_first_opens_as_the_message_says(client, store):
     """B-998: "That was the last one in the list… back to the first of them" opened the one before it ("Reviewing 8
     of 8")."""
-    from ap_coder.web.pages.invoice import navigation
+    from ap_coder.web.pages.invoice_navigation import navigation
 
     ids = navigation(store, store.list_invoices(REVIEW)[0]["id"], {})["ids"]
     last = next(i for i in reversed(ids) if check(client, i)["allow"])

@@ -503,8 +503,9 @@ ap_coder/            the package; old flat imports (ap_coder.store...) still wor
   bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation,
                      GL coding without an AI model (bench coding)
   web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
-                     (`serve`), security.py (this computer only), pages/ (one module per page), templates/,
-                     static/
+                     (`serve`), security.py (this computer only), pages/ (one module per page; the review
+                     screen's routes, one module a subject: invoice.py and invoice_<subject>.py, as what it
+                     shows is: invoice_view.py and invoice_<subject>.py, D-223), templates/, static/
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds

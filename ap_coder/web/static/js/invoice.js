@@ -477,7 +477,7 @@ let lastCheckOk = false; // the last check answered (its edits are kept as a dra
 let lastDraft = false; // the last check kept the edits as a draft
 let edited = false; // an edit made on this page (a check without one keeps nothing new)
 
-/** The time now as the server says a draft's (invoice.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
+/** The time now as the server says a draft's (invoice_drafts.py ``_when``): "12:37 a.m.", never "0:37" (B-1596). */
 function clock() {
   const d = new Date();
   const h = d.getHours();

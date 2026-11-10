@@ -24,7 +24,7 @@ from ap_coder.web.invoice_form import Draft
 from tests.browser import browser_on, wait_until
 from tests.conftest import chromium_path
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +37,7 @@ def demo_db(cost_centers_demo_template):
 def me(monkeypatch):
     """A fixed reviewer and login (not this computer's)."""
     who = {"name": "Jordan Lee", "login": "jlee"}
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: who["name"], raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: who["login"], raising=False)
     return who
@@ -636,7 +636,7 @@ def test_the_vendor_list_comes_gzipped_from_an_address_of_its_version_which_a_la
     import gzip
     import json
 
-    from ap_coder.web.pages.invoice import vendor_list, vendor_options
+    from ap_coder.web.pages.invoice_lookups import vendor_list, vendor_options
 
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     page = client.get(f"/review/{invoice_id}").text
@@ -671,7 +671,7 @@ def test_the_page_names_the_vendors_it_shows_as_it_opens_and_what_it_looked_up(c
     import sqlite3
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.web.pages.invoice import business_number
+    from ap_coder.web.pages.invoice_lookups import business_number
 
     cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
     page = client.get(f"/review/{cascade['id']}").text
@@ -692,7 +692,7 @@ def test_the_page_names_the_vendors_it_shows_as_it_opens_and_what_it_looked_up(c
 
 def _two_with_numbers(listed: list[dict]) -> tuple[dict, dict]:
     """Two vendors of the list, the first of their key, with GST/HST business numbers of their own."""
-    from ap_coder.web.pages.invoice import business_number
+    from ap_coder.web.pages.invoice_lookups import business_number
 
     firsts = [v for i, v in enumerate(listed) if not any(o["key"] == v["key"] for o in listed[:i])]
     found = [v for v in firsts if business_number(v["gst"])]
@@ -707,30 +707,30 @@ def test_the_vendor_list_is_built_once_per_change_of_it_whichever_worker_changed
     import sqlite3
 
     from ap_coder.core.memory import vendor_key
-    from ap_coder.web.pages import invoice as invoice_page
+    from ap_coder.web.pages import invoice_lookups
     from tests.webclient import add_clean, gt
 
     built: list[int] = []
-    real = invoice_page.vendor_options
-    monkeypatch.setattr(invoice_page, "vendor_options", lambda s: built.append(1) or real(s))
+    real = invoice_lookups.vendor_options
+    monkeypatch.setattr(invoice_lookups, "vendor_options", lambda s: built.append(1) or real(s))
     one, two = Store(tmp_path / "ap.db"), Store(tmp_path / "ap.db")  # two workers' stores on one database
     invoice_id = add_clean(one)
-    empty = invoice_page.vendor_list(one)
-    assert empty.count == 0 and invoice_page.vendor_list(one) is empty and len(built) == 1
+    empty = invoice_lookups.vendor_list(one)
+    assert empty.count == 0 and invoice_lookups.vendor_list(one) is empty and len(built) == 1
     one.approve_invoice(invoice_id, gt(), "Ann")  # no vendor master: the vendors approved before
-    approved = invoice_page.vendor_list(one)
+    approved = invoice_lookups.vendor_list(one)
     assert approved.count == 1 and not approved.enforced and len(built) == 2
     assert approved.by_key[vendor_key(gt()["vendor_name"])]["name"] == gt()["vendor_name"]
     two.import_vendor_master([{"vendor_name": "Acme Supply Ltd", "erp_id": "V1", "gst": "123456789RT0001"}])
-    master = invoice_page.vendor_list(one)
+    master = invoice_lookups.vendor_list(one)
     assert master.enforced and [v["name"] for v in master.by_key.values()] == ["Acme Supply Ltd"]
     assert master.by_number["123456789"]["id"] == "V1" and master.version != approved.version
-    assert invoice_page.vendor_list(two) is master and len(built) == 3  # (one process: one answer for both)
+    assert invoice_lookups.vendor_list(two) is master and len(built) == 3  # (one process: one answer for both)
     one.approve_invoice(add_clean(one, invoice_number="N-2"), {**gt(), "invoice_number": "N-2"}, "Ann")
-    assert invoice_page.vendor_list(one) is master and len(built) == 3  # with a vendor master: not the list
+    assert invoice_lookups.vendor_list(one) is master and len(built) == 3  # with a vendor master: not the list
     with sqlite3.connect(one.path) as conn:
         conn.execute("UPDATE vendors SET expected_gst = '987654321RT0001'")
-    assert "987654321" in invoice_page.vendor_list(one).by_number and len(built) == 4
+    assert "987654321" in invoice_lookups.vendor_list(one).by_number and len(built) == 4
 
 
 # --- Words picked on the page by dragging a box --------------------------------------------------------------------

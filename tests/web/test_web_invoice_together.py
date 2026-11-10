@@ -306,7 +306,7 @@ def test_on_the_server_the_screen_and_its_queue_row_say_who_else_has_it_open_nev
 def test_on_the_server_who_has_it_open_is_renewed_by_the_poll_and_only_by_who_may_edit(store, monkeypatch):
     """The page writes it once; its poll renews it at most every 45 s, nothing in between; a Read-only person
     looking at it is not working on it."""
-    from ap_coder.web.pages import invoice
+    from ap_coder.web.pages import invoice_drafts
 
     ann, reader = _person(store, "ann", "Ann Lee"), _person(store, "rita", "Rita Read", role="readonly")
     inv_id = store.list_invoices(REVIEW)[0]["id"]
@@ -320,7 +320,7 @@ def test_on_the_server_who_has_it_open_is_renewed_by_the_poll_and_only_by_who_ma
     assert writes == [False]  # opened a moment ago
     with store._conn() as conn:
         conn.execute("UPDATE ephemeral SET expires_at = expires_at - ? WHERE kind = ?",
-                     (invoice.OPEN_RENEW_SECONDS + 1, f"open:{inv_id}"))  # fmt: skip
+                     (invoice_drafts.OPEN_RENEW_SECONDS + 1, f"open:{inv_id}"))  # fmt: skip
     _poll(ann, inv_id, screen)
     assert writes == [False, True]
     reader.get(f"/review/{inv_id}/reader")
@@ -452,16 +452,16 @@ def test_in_a_browser_an_approval_clicked_while_a_check_runs_waits_for_its_answe
     before that check: refused when the check dropped the draft. It waits for the check's answer, then goes."""
     import time
 
-    from ap_coder.web.pages import invoice
+    from ap_coder.web.pages import invoice_check
 
-    real = invoice._check
+    real = invoice_check._check
 
     def slow(*args: Any) -> Any:
         answer = real(*args)
         time.sleep(1.5)  # its answer comes late: the approval is clicked meanwhile
         return answer
 
-    monkeypatch.setattr(invoice, "_check", slow)
+    monkeypatch.setattr(invoice_check, "_check", slow)
     chromium, base = browser
     inv_id = clean_invoice(client_for(store), store)
     context = chromium.new_context(viewport={"width": 1400, "height": 1000})

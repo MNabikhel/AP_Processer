@@ -57,7 +57,7 @@
 
 {# ---- With a chart of accounts (D-214): one row a line, # · Account · Amount · Description · Tax, and under the
    boxes what the line says about itself. ``row.acct``: account_lines.row_views. The cells marked data-live-line are
-   drawn again by each check (pages/invoice.py ``_line_views``); they hold no box, so the focus is never lost. #}
+   drawn again by each check (pages/invoice_check.py ``_line_views``); they hold no box, so the focus is never lost. #}
 
 {# Under the Account box: the account's name · its business unit · why the line was coded so. #}
 {% macro acct_cap(a) -%}

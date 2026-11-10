@@ -20,7 +20,7 @@ from ap_coder.web.invoice_form import Draft
 from tests.browser import browser_on
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
 from tests.web.test_web_invoice import check, form_of
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 LAPTOP = {"width": 1366, "height": 768}
 SHOTS = None  # set by the screenshot test: where the pictures of each menu go
@@ -43,7 +43,7 @@ def client(store):
 
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
 

@@ -20,7 +20,7 @@ from ap_coder.web import invoice_grid
 from ap_coder.web.app import create_app
 from tests.browser import browser_on, wait_until
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
-from tests.webclient import PAGE
+from tests.webclient import PAGE, REVIEW_SCREEN
 
 LAPTOP = {"width": 1366, "height": 768}
 
@@ -43,7 +43,7 @@ def client(store):
 
 @pytest.fixture(autouse=True)
 def me(monkeypatch):
-    for module in ("ap_coder.web.core", "ap_coder.web.pages.invoice", "ap_coder.web.pages.review"):
+    for module in ("ap_coder.web.core", *REVIEW_SCREEN, "ap_coder.web.pages.review"):
         monkeypatch.setattr(f"{module}.reviewer", lambda: "Pat Tester", raising=False)
         monkeypatch.setattr(f"{module}.login", lambda: "ptester", raising=False)
 
@@ -766,7 +766,7 @@ SAID = "[data-vendor-match] > span:not(.ms)"  # what the line under the vendor f
 def _agence(store):
     """The Agence invoice (its vendor in the vendor master), and a vendor of the list the page doesn't name."""
     from ap_coder.core.memory import vendor_key
-    from ap_coder.web.pages.invoice import business_number, vendor_options
+    from ap_coder.web.pages.invoice_lookups import business_number, vendor_options
 
     inv = store.get_invoice(next(i["id"] for i in store.list_invoices(REVIEW) if "Agence" in (i["vendor_name"] or "")))
     number = business_number((inv["ai_output"] or {}).get("gst_hst_registration_number"))

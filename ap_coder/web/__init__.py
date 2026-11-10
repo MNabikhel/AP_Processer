@@ -26,8 +26,8 @@ Layout
   the lines), ``invoice_reading.py`` (what was read, OvisOCR2 and the AI reviewer), ``invoice_findings.py`` (the
   checks as the screen says them, what keeps Approve closed), ``invoice_fields.py`` (the notes under the invoice
   details, dates and currency typed), ``invoice_totals.py`` (the summary, the Tax check, the GL posting) and
-  ``invoice_coding.py`` (why these codes, suggestions, the PO, what approving teaches); ``pages/invoice.py`` has
-  its routes.
+  ``invoice_coding.py`` (why these codes, suggestions, the PO, what approving teaches). Its routes:
+  ``pages/invoice.py`` (the screen) and ``pages/invoice_<subject>.py``, on one router (listed in ``pages/invoice.py``).
 * ``pages/__init__.py``: ``PAGES``, the one list of pages, in rail order. ``pages/<name>.py``: one module per page.
 * ``templates/``: ``base.html`` (rail, header, messages), one template per page, ``_*.html`` partials.
 * ``static/``: ``app.css`` (the Ledger look of ap_coder/core/ui.py), ``js/app.js`` (POSTs, messages, jobs), page

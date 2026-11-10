@@ -15,9 +15,14 @@ from ap_coder.core.store import Store
 from ap_coder.web import identity
 from ap_coder.web.app import create_app
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 
 PAGE = {"X-AP-Coder": "1"}  # what AP Coder's own page sends with every action
+# The modules of the review screen's routes (ap_coder/web/pages/invoice*.py, D-223): a test that says who the
+# reviewer is sets ``reviewer`` and ``login`` in each, where their handlers look them up.
+REVIEW_SCREEN = tuple(
+    f"ap_coder.web.pages.{p.stem}" for p in sorted((ROOT / "ap_coder" / "web" / "pages").glob("invoice*.py"))
+)
 
 
 def web_settings() -> Settings:

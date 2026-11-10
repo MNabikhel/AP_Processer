@@ -885,7 +885,7 @@ def test_the_queues_lists_follow_a_change_made_elsewhere_and_are_the_callers_own
 def test_previous_and_next_step_through_the_kept_queue_as_another_store_or_plain_sql_changes_it(tmp_path, ground_truth):
     """The invoice page's Previous and Next (``navigation``) read the queue's kept list: an invoice parked through
     another Store, a confidence changed by plain SQL, move them at once."""
-    from ap_coder.web.pages.invoice import navigation
+    from ap_coder.web.pages.invoice_navigation import navigation
 
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
@@ -904,7 +904,7 @@ def test_previous_and_next_in_the_queues_own_order_read_its_ids_alone(tmp_path, 
     or new invoice (its rows kept until the list changes: at once under 100 people, 5.1% of the busy web workers' CPU
     at 300,000 invoices), only to step through its ids. In the queue's own order (no search, no other sort or view)
     they are read alone, off the queue's index: the same ids, the same steps."""
-    from ap_coder.web.pages.invoice import navigation
+    from ap_coder.web.pages.invoice_navigation import navigation
 
     store = Store(tmp_path / "ap.db")
     other = Store(store.path)
