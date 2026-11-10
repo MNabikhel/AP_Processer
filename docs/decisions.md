@@ -4984,7 +4984,47 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ap_coder/ai/pipeline.py`, `ap_coder/coding/review.py`, `ap_coder/coding/validation.py`,
     `ap_coder/web/invoice_view.py`, `ap_coder/erp/jde.py`, `ap_coder/core/store/`, `ap_coder/ops/help.py`,
     `ap_coder/bench/coding_journal.py`; `tests/coding/test_remark.py`, `tests/web/test_web_remark.py`)
-- **D-214** · **A line's amount is read from one column of the line table, and lines that do not add up are left
+- **D-214** · **The review screen's first version for an install with a chart of accounts: one row a line (the
+  whole account string in one box, amount, remark, tax with its amount), the reason under it, in a frame that fits
+  the window it is given** (the same department's prototype; stage 1 of the screens plan; 10 Nov 2026).
+  - **Why:** With a chart loaded a line was two pickers (GL account, cost center) three rows tall under the whole
+    invoice header, the first line some 1,700 px down; nothing said which tax a line carried or how much, why a line
+    was coded so, or what was offered for a line left for a person. The department keys a JD Edwards account string
+    (`business unit.object.subsidiary`) and a remark for each line and wants to confirm each line's tax.
+  - **What:** Only where a chart is imported (`account_lines.in_use`); an install without one keeps its screen,
+    row and tests. A line's Account box is a text box (the picker's free kind) holding the whole string: the server
+    splits what is posted (`account_lines.posted`) and the chart's four checks say what is wrong on the line; a
+    string the chart does not have stays in the box and keeps Approve closed, never replaced by the account before.
+    Under the boxes: the account's name, its business unit and why (`decided_by` in plain words), or "To fix" with
+    the line's reason and its `candidates` as buttons. Each line's taxes come from `taxmath.invoice_taxes`, once a
+    draw: each tax its own amount, "read" when printed on the line, a mark when it is not the invoice's usual tax,
+    the amount keyed under Amount when a tax stays in the line, one sentence a tax under the lines. The Remark box
+    (D-213) shows the suggestion with a dashed edge until visited and posts it blank, so it follows the account;
+    its count is under it and past 30 nothing is cut. The account list is fetched once
+    (`GET /review/accounts.json`, kept by the browser as the vendor list is) and searched in the page
+    (`account_search.js`): by any part of the number with or without dots, words, a business unit's name; 50 rows
+    drawn. The frame: two panes from 1200 px (400 and 690 px at the least), stacked under it, the menu behind a
+    button below 1820 px, a compact header with the rest under More details, "Keyed on the pay item" in one line
+    from `jde.voucher_view`. Keys: Ctrl+Enter approves (twice when something is to check), F8 the next thing to fix.
+  - **Measured:** the sweep (`tests/web/test_screens_fluid.py`: 12 widths from 1000 to 2560 px x 3 heights, a 17 px
+    scrollbar, three invoices) finds no sideways scroll and nothing outside its card; the four-line invoice's first
+    line is at 433 px in a 1280 x 700 window (about 1,690 before). Page weight with the made-up chart (146 accounts
+    offered, a 10 KB list): one line 97 → 85 KB, four lines 117 → 108 KB, fifteen lines 182 → 182 KB (its rows now
+    carry each line's candidates and remark); the page no longer grows with the chart.
+  - **Not chosen:** rows as `<div>` blocks, container queries, a drag handle between the panes (the plan's second
+    version: the table row is already a grid, and media queries pass the sweep); a hidden select behind the Account
+    box (it puts the earlier choice back when what is typed names nothing).
+  - **Left (stage 2):** the no-chart row in the new columns; compact rows and a filter for long invoices (a long
+    invoice shows the accounts offered for the line in hand only); one pane at a time under 1200 px; the supplier
+    change; pay items as groups for two tax areas (held with its sentence today); editing what is keyed on the pay
+    item; Ctrl+D copying the remark; the first press on the Approve button (not Ctrl+Enter) approves at once;
+    "Supplier" for "Vendor" everywhere; the findings strip rebuilt (it is the checks card, compacted).
+  - (`ap_coder/web/account_lines.py`, `ap_coder/web/invoice_view.py`, `ap_coder/web/pages/invoice.py`,
+    `ap_coder/web/roles.py`, `ap_coder/web/templates/invoice.html`, `_invoice_lines.html`, `_invoice_live.html`,
+    `ap_coder/web/static/invoice.css`, `picker.css`, `js/invoice.js`, `js/picker.js`, `js/account_search.js`;
+    `tests/web/test_account_lines.py`, `tests/web/test_account_picker.py`, `tests/web/test_screens_fluid.py`,
+    `tests/review_page.py`)
+- **D-215** · **A line's amount is read from one column of the line table, and lines that do not add up are left
   for a person, never balanced.** After B-2106 a row's own arithmetic could pick any figure of the row as its
   amount, and a line "Charges not in the line table" of whatever was missing hid a wrong reading (B-2197 to B-2203).
   - **Decision:** The amount's column is chosen once for the table: by its heading (`_amount_heading`: after a

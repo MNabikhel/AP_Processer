@@ -154,7 +154,10 @@ class DocLayout:
     pages: list[PageLayout]
     source: str  # "text" | "ocr" | "di" | "mixed"
     pages_left_out: int = 0  # the file's pages past the pages read (``build_layout`` reads at most ``max_pages``)
-    pages_unread_locally: int = 0  # of the pages here, the ones OCR failed on: kept empty, never read
+    # Of the pages here, the ones kept empty, never read: OCR failed on them, or they are a long file's pages between
+    # its first and last pages read (``layout.pages_read``). ``not_read``: their numbers.
+    pages_unread_locally: int = 0
+    not_read: list[int] = field(default_factory=list)
 
     def words(self) -> Iterator[Word]:
         for page in self.pages:
@@ -260,8 +263,12 @@ class CaptureResult:
     checks: list[dict[str, Any]] = field(default_factory=list)
     layout_source: str = ""
     page_count: int = 0  # the file's pages, read or not
-    pages_left_out: int = 0  # of them, the pages the local readers did not read (past the first 20, or OCR failed)
+    # Of them, the pages the local readers did not read: OCR failed on them, or the file is longer than the pages
+    # read (``layout.read_pages``). ``pages_not_read``: their numbers, when the reading named them.
+    pages_left_out: int = 0
     credit_note: bool = False  # titled as a credit note: a person applies it, whatever the sign of its total
+    pages_not_read: list[int] = field(default_factory=list)
+    not_invoice: str = ""  # why this may not be an invoice, in words (``not_invoice.not_an_invoice``); "": it is one
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -272,6 +279,8 @@ class CaptureResult:
             "page_count": self.page_count,
             "pages_left_out": self.pages_left_out,
             "credit_note": self.credit_note,
+            **({"pages_not_read": list(self.pages_not_read)} if self.pages_not_read else {}),
+            **({"not_invoice": self.not_invoice} if self.not_invoice else {}),
         }
 
     @classmethod
@@ -281,7 +290,8 @@ class CaptureResult:
             line_items=[LineReading.from_dict(x) for x in d.get("line_items") or []],
             checks=list(d.get("checks") or []), layout_source=d.get("layout_source") or "",
             page_count=int(d.get("page_count") or 0), pages_left_out=int(d.get("pages_left_out") or 0),
-            credit_note=bool(d.get("credit_note")),
+            credit_note=bool(d.get("credit_note")), pages_not_read=[int(n) for n in d.get("pages_not_read") or []],
+            not_invoice=str(d.get("not_invoice") or ""),
         )  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:

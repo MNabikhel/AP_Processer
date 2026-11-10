@@ -210,6 +210,6 @@ PINNED = {"settings", "help"}  # at the rail's foot, always on screen
 # under "Setup", then Help. Every other page is left out of the menu, not removed: its address still opens.
 SIMPLE_MAIN: dict[str, str] = {"review": "To review", "process": "Add invoices", "exports": "To key into JDE",
                                "search": "Find an invoice", "learning": "What was learned"}  # fmt: skip
-SIMPLE_SETUP: tuple[str, ...] = ("accounts", "jde_files", "vendors", "settings")
+SIMPLE_SETUP: tuple[str, ...] = ("accounts", "jde_files", "vendors", "activity", "settings")
 SIMPLE_KEYS = {*SIMPLE_MAIN, *SIMPLE_SETUP, "help"}
 BANNER_PAGES = {"process", "review"}  # where OvisOCR2's one-line warning shows under the page header

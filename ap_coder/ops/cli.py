@@ -1152,6 +1152,9 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
         except ValueError as exc:
             print(f"Not loaded: {exc}", file=sys.stderr)
             return 1
+        from ..web.core import SCREENS, SIMPLE
+
+        store.set_setting(SCREENS, SIMPLE)  # as a new laptop installation starts: the short menu
         print(f"The made-up company is loaded: {made['truth'].company.name}, {len(made['invoices'])} invoices to "
               f"review. Its JD Edwards exports and its invoices are in {store.path.parent / COMPANY_FOLDER}. Start "
               "the dashboard on this data folder to look at it; delete the folder when you are done.",

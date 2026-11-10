@@ -47,7 +47,7 @@ from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, ON_HOLD, mask_account
-from ap_coder.core import audit, ui
+from ap_coder.core import audit, chart, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.schema import InvoiceCoding
@@ -55,7 +55,7 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
 from ap_coder.erp.jde_keying import keying_batches
-from ap_coder.web import document, identity
+from ap_coder.web import account_lines, document, identity
 from ap_coder.web import invoice_view as view
 from ap_coder.web.access import is_admin, key_of, may_lift_hold, person_key
 from ap_coder.web.core import (
@@ -675,7 +675,9 @@ def _sent_back(events: list[dict[str, Any]]) -> dict[str, str] | None:
 def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True, draft_rev: str = "") -> dict[str, Any]:
     """The sections' values with what the person's role may use (server mode, D-98): Read-only changes nothing, and
     the JD Edwards settings are an Admin's. ``draft_rev``: the draft revision the screen is at (D-184)."""
+    first = (live.get("bar") or {}).get("first") if live.get("account") else None
     return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
+            **({"bar_fix": account_lines.pick_words(first["text"])} if first and first["kind"] == "pick" else {}),
             "setup_contact": "an Admin" if server_mode(request) else "the pilot tester",
             "draft_rev": draft_rev}  # fmt: skip
 
@@ -684,6 +686,8 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     """Every section that follows the edits, drawn again (``_invoice_live.html``)."""
     mod = templates.env.get_template("_invoice_live.html").module
     names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar", "jde")
+    if live.get("account"):  # with a chart of accounts: the line of what is keyed on the pay item (D-214)
+        names += ("keyed", "taxline")
     if not live["ok"]:  # a field to fix: the coding can't be built, so the rest keeps its last state
         names = ("checks", "amounts", "taxcheck", "posting", "bar")
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
@@ -692,6 +696,21 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
 def _render_lines(reference: ReferenceData, draft: view.Draft, ai: dict[str, Any] | None = None) -> str:
     mod = templates.env.get_template("_invoice_lines.html").module
     return str(mod.line_rows(view.grid(reference, draft, ai)))
+
+
+def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
+    """With a chart of accounts (D-214): each row's live cells as a check answers them, in row order (its state,
+    and the cells marked ``data-live-line`` drawn again); None for the rows of an install without one."""
+    if not grid.get("account"):
+        return None
+    mod = templates.env.get_template("_invoice_lines.html").module
+    return [{"state": a["state"], "text": a["text"], "cap": str(mod.acct_cap(a)), "slot": str(mod.acct_slot(a)),
+             "candidates": a["listed"],
+             "tax": str(mod.acct_tax(a)), "keyed": str(mod.acct_keyed(a)),
+             "remark": str(mod.acct_remark(a["remark"])),
+             "remark_box": {k: a["remark"][k] for k in ("text", "typed", "why")},
+             "has_keyed": bool(a["taxes"] and a["taxes"]["keyed"])}
+            for a in (row["acct"] for row in grid["lines"])]  # fmt: skip
 
 
 def _reference(store: Store) -> ReferenceData:
@@ -781,7 +800,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         rev=store.coding_revision(invoice_id), screen=screen, watch_seconds=WATCH_SECONDS,
         others=working_here(open_elsewhere(request, store, invoice_id).get(invoice_id, [])),
         grid={**view.grid(reference, draft, inv.get("ai_output") or {},
-                          view.vendor_accounts(store, draft.header.get("vendor_name") or "")),
+                          view.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
               "tax_marks": analysis.live.get("tax_marks") or {}},
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
@@ -794,6 +813,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
+        account_seed=account_seed(store, reference, draft.header.get("vendor_name") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
     # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
@@ -895,6 +915,68 @@ def vendors_json(request: Request, v: str = "") -> Response:
     again otherwise (its ETag: 304 while it did not change). On the company server every answer behind the login is
     ``no-store`` (B-1070, ``identity._no_store``): nothing of the company's stays in a shared computer's browser."""
     kept = vendor_list(get_store(request))
+    tag = f'"{kept.version}"'
+    headers = {
+        "ETag": f"W/{tag}",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private, max-age=31536000, immutable" if v == kept.version else "private, no-cache",
+    }
+    asked = request.headers.get("if-none-match", "")
+    if any(t.strip().removeprefix("W/") in (tag, "*") for t in asked.split(",")):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        return Response(kept.gzipped, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(kept.body, media_type="application/json", headers=headers)
+
+
+class AccountList(NamedTuple):
+    """The accounts a line may be coded to, as the review screen fetches them (``GET /review/accounts.json``)."""
+
+    body: bytes  # the JSON: {"list": [[account string, the account's name, its business unit's name], ...]}
+    gzipped: bytes
+    version: str  # the JSON's hash: the address's ?v=
+    count: int
+
+
+def account_list(store: Store, reference: ReferenceData | None) -> AccountList | None:
+    """The chart's accounts offered for a line (``AccountPairs.offered``: what may be posted to and nothing holds
+    back), each with its name and its business unit's name, as JSON, gzipped, with its version: made once for a
+    chart and its settings (``summary_memo``, for the reference data's stamp). None without a chart. 9,900 accounts:
+    about 0.6 MB of JSON, 0.15 MB gzipped. Shared: read it, don't change it."""
+    if not account_lines.in_use(reference):
+        return None
+    return store.summary_memo("account_list", lambda: _account_list(reference), "", asked=reference.stamp)
+
+
+def _account_list(reference: ReferenceData) -> AccountList:
+    pairs = reference.pairs
+    rows = [[chart.join_account(unit, code), pairs.description(unit, code), pairs.name_of(unit)]
+            for unit in pairs.business_units() for code in pairs.accounts_of(unit)]  # fmt: skip
+    body = json.dumps({"list": rows}, ensure_ascii=False, separators=(",", ":")).encode()
+    return AccountList(body, gzip.compress(body, mtime=0), hashlib.sha256(body).hexdigest()[:16], len(rows))
+
+
+def account_seed(store: Store, reference: ReferenceData, vendor_name: str) -> dict[str, Any] | None:
+    """What the page holds of the account list (``#account-seed``; the list itself is fetched, as the vendor list
+    is): its address and count, the business unit a line goes to when nothing says otherwise, and the accounts this
+    supplier's lines went to last year, the most used first (the supplier's prior, which the suggestions keep: no
+    query of its own). None without a chart."""
+    kept = account_list(store, reference)
+    if kept is None:
+        return None
+    return {"url": f"/review/accounts.json?v={kept.version}", "count": kept.count,
+            "home": reference.pairs.settings.home_business_unit,
+            "supplier": account_lines.supplier_accounts(store, reference, vendor_name)}  # fmt: skip
+
+
+@router.get("/review/accounts.json")
+def accounts_json(request: Request, v: str = "") -> Response:
+    """The accounts the review screen's Account boxes pick from (``account_list``), fetched as the screen opens,
+    not printed in every page. Kept by the browser as the vendor list is (``vendors_json``, D-160): for good on a
+    laptop while ``v`` is its version, ``no-store`` behind the company server's login. 404 without a chart."""
+    kept = account_list(get_store(request), reference_or_none(get_store(request)))
+    if kept is None:
+        raise HTTPException(status_code=404, detail="No chart of accounts is imported.")
     tag = f'"{kept.version}"'
     headers = {
         "ETag": f"W/{tag}",
@@ -1107,7 +1189,8 @@ def approved_pdf_download(store: Store, inv: dict[str, Any]) -> Response:
 
 def _from_form(request: Request, inv: dict[str, Any], form: Any) -> view.Draft:
     base, _ = current_draft(request, inv)
-    return view.Draft.from_form(form, base)
+    reference = reference_or_none(get_store(request))
+    return view.Draft.from_form(form, base, reference.pairs if reference is not None else None)
 
 
 @router.post("/review/{invoice_id:int}/check")
@@ -1146,7 +1229,12 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         header["flag_errors"] = analysis.live.get("flag_errors") or []  # red, as an error (B-796)
         header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
         header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
+    # With a chart of accounts: what each line's row says under its boxes, for the account now in it (D-214)
+    rows = (_line_views(view.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
+            if account_lines.in_use(reference) else None)  # fmt: skip
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
+                         **({"lines": rows, "supplier_accounts": account_lines.supplier_accounts(
+                             store, reference, draft.header.get("vendor_name") or "")} if rows is not None else {}),
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},
@@ -1546,7 +1634,11 @@ def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         return refuse("Pick the line to split.")
     by = "amount" if str(form.get("split_by") or "") == "amount" else "percent"
     parts = []
-    for gl, cc, share in zip(form.getlist("part_gl"), form.getlist("part_cc") or [""] * len(form.getlist("part_gl")),
+    gls, ccs = form.getlist("part_gl"), form.getlist("part_cc")
+    if whole := form.getlist("part_account"):  # with a chart of accounts: one Account box a part (D-214)
+        gls, ccs = (list(codes) for codes in zip(*(account_lines.posted(a, reference.pairs) for a in whole),
+                                                 strict=True))  # fmt: skip
+    for gl, cc, share in zip(gls, ccs or [""] * len(gls),
                              form.getlist("part_amount" if by == "amount" else "part_pct"), strict=False):  # fmt: skip
         try:
             value = float(str(share).strip() or "nan")
@@ -1624,6 +1716,14 @@ async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _fill_lines(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     _, _, reference, draft = _posted_in_review(request, invoice_id, form)
+    if account := " ".join(str(form.get("fill_account") or "").split()):  # one Account box a line (D-214)
+        gl, cc = account_lines.posted(account, reference.pairs)
+        if reference.pairs is None or not reference.pairs.offered(cc, gl):
+            return refuse(f"{account} is not an account of the chart that invoices are coded to: pick one from the "
+                          "list.")  # fmt: skip
+        lines, n = account_lines.fill(draft.lines, gl, cc)
+        text = f"Account {account} set on {ui.plural(n, 'line')}. Lines that had an account kept theirs."
+        return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check", form)
     gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
     if not gl and not cc:
         return refuse("Pick a GL account or a cost center to apply to the lines without one.")

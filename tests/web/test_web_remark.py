@@ -53,7 +53,7 @@ def test_an_invoice_read_has_a_remark_a_line_and_the_suggestion_follows_the_acco
         for li in store.get_invoice(invoice_id)["ai_output"]["line_items"]:
             assert 0 < len(li["remark"]) <= 30 and li["remark_from"] in ("supplier", "invoice", "account")
     page, was, usual = _open(chart_company_client, chart_company)
-    assert LINE_REMARK not in page.form  # (the page has no box yet)
+    assert page.form[LINE_REMARK] == [""]  # the box shows the suggestion and posts none: it follows the account
     assert page.check()["allow"], page.findings
     assert page.approve()["ok"]
     assert _line(store, page.id) == (usual.text, "supplier")
@@ -74,7 +74,7 @@ def test_a_typed_remark_is_a_persons_kept_by_the_draft_learned_on_approval(chart
     typed = "KT parcels 3-1-204"
     assert typed not in (was["remark"], usual.text)
     assert _post(page, "check", [f"  {typed} "])["allow"], page.findings
-    assert page.approve()["ok"]  # (the page posts no box: the draft kept what was typed, on the account changed)
+    assert page.approve()["ok"]  # (the page posts what the draft kept: the remark typed, on the account changed)
     assert _line(store, page.id) == (typed, "person")
     # Learned with the line: the supplier's next invoice on that account is suggested it.
     vendor = store.get_invoice(page.id)["final_output"]["vendor_name"]

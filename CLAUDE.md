@@ -24,6 +24,14 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule,
   `tests/web/test_roles.py`), `web/access.py`, `web/pages/login.py`; service and updates `ops/service.py`,
   `ops/server_update.py`.
+- With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
+  account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
+  pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; last
+  year's journal `erp/journal.py` + `core/store/journal.py`, the suggestions from it `ai/supplier_prior.py`; the
+  30-character remark `coding/remark.py`; each line's taxes `coding/taxmath.py` (`invoice_taxes`); the keying sheet
+  `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads
+  `web/pages/jde_files.py`; scoring against last year `ops/journal_score.py`, `ops/proposed_score.py`; a made-up
+  company for tests `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every

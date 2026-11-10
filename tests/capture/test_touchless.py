@@ -419,7 +419,8 @@ def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
 
 
 def test_pages_past_the_local_readers_limit_need_a_person(touchless, path, tmp_path):
-    """The local readers read a file's first 20 pages. A 25-page invoice that the page reader read whole (its limit
+    """The local readers once read a file's first 20 pages (now 60, and a longer file's last pages). A 25-page
+    invoice that the page reader read whole (its limit
     raised to 30) was approved without a person, though pages 21-25 were read by one reader only: the capture counted
     20 pages, so no page looked unread."""
     import pymupdf
@@ -427,11 +428,11 @@ def test_pages_past_the_local_readers_limit_need_a_person(touchless, path, tmp_p
     from ap_coder.capture import analyze
 
     doc = pymupdf.open()
-    for n in range(1, 26):
-        doc.new_page().insert_text((60, 80), f"Acme Supply Ltd. - Invoice AC-1001 - page {n} of 25", fontsize=10)
+    for n in range(1, 66):
+        doc.new_page().insert_text((60, 80), f"Acme Supply Ltd. - Invoice AC-1001 - page {n} of 65", fontsize=10)
     doc.save(tmp_path / "long.pdf")
     read = analyze(tmp_path / "long.pdf", ocr=False, tables=False, second_read=False)
-    assert (read.page_count, read.pages_left_out) == (25, 5)
+    assert (read.page_count, read.pages_left_out) == (65, 5)
     capture = _capture()
     capture.page_count, capture.pages_left_out = 25, 5
     decision = _decide(touchless, path, capture=capture, pages_read=25)

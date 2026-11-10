@@ -396,8 +396,9 @@ def test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were
     assert result.ok, result.error
     issue = next(i for i in result.report.issues if i.code == "PAGES_NOT_READ")
     assert issue.severity == "warning"
-    assert issue.message == ("only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR "
-                             "can't read is left out): check the other pages yourself before approving")  # fmt: skip
+    assert issue.message == ("pages 56 to 295 of its 300 pages were not read (of a file longer than 60 pages the "
+                             "first 55 and the last 5 are read): nothing on them is in the lines or totals shown; "
+                             "check them yourself before approving")  # fmt: skip
     assert not any(i.code == "PAGES_NOT_READ" for i in pipe.process(SAMPLE).report.issues)
 
 

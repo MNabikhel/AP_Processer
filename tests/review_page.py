@@ -4,10 +4,11 @@ account, split a line, check, approve.
 
 The one place that knows the screen's markup, through as few hooks as it can: the controls of the form "inv" by their
 posted names (``invoice_view.LINE_INPUTS``, ``LINE_TAX_CODE``, the "Approve anyway" box), a finding by its
-``data-code`` and the closed Approve by its ``data-not-ready``. A line's account is two cells today (the business
-unit in "Cost center", ``object.subsidiary`` in "GL account"); when the row becomes one Account box, ``Row.account``,
-``set_account`` and ``split`` change here and the tests that use them stay. The tests written before this helper
-read the markup themselves and stay as they are.
+``data-code`` and the closed Approve by its ``data-not-ready``. A line's account is ONE box, the whole string
+(``account_lines.LINE_ACCOUNT``, D-214), which the server reads; the row's two hidden cells (the business unit in
+``line_cc``, ``object.subsidiary`` in ``line_gl``) follow it as the screen's script makes them. ``Row.account``,
+``set_account`` and ``split`` are the only places that know it. The tests written before this helper read the markup
+themselves and stay as they are.
 
     page = ReviewPage(client, invoice_id)        # GET /review/<id>
     page.lines[0].account                        # "0021061010.7620.6207", or "" while it needs one
@@ -21,6 +22,8 @@ read the markup themselves and stay as they are.
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
@@ -29,6 +32,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core import chart
 from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.web.account_lines import LINE_ACCOUNT
 from ap_coder.web.invoice_view import LINE_INPUTS, LINE_TAX_CODE
 
 from .webclient import PAGE
@@ -118,6 +122,20 @@ class _Screen(HTMLParser):
             self._select = None
 
 
+def queue_reasons(client: TestClient, address: str = "/review") -> dict[int, str]:
+    """What the review queue says of each invoice it lists, by id: why it needs attention ("": it is Ready). The one
+    place that knows the queue's markup: a row's link to its invoice, then its status cell's ``title``."""
+    answer = client.get(address)
+    assert answer.status_code == 200, answer.text
+    rows = re.split(r'href="/review/(\d+)["?]', answer.text)[1:]
+    said: dict[int, str] = {}
+    for number, row in zip(rows[::2], rows[1::2], strict=True):
+        cell = re.search(r'class="c-status"(?: title="([^"]*)")?', row)
+        if cell and int(number) not in said:
+            said[int(number)] = html.unescape(cell.group(1) or "")
+    return said
+
+
 class ReviewPage:
     """The review screen of invoice ``invoice_id`` on ``client``, opened."""
 
@@ -143,6 +161,9 @@ class ReviewPage:
         units, codes = (self._cells(name) for name in (BUSINESS_UNIT, ACCOUNT))
         accounts = ["" if UNASSIGNED in (unit[1], code[1]) else chart.join_account(unit[1], code[1])
                     for unit, code in zip(units, codes, strict=True)]  # fmt: skip
+        if boxes := self._cells(LINE_ACCOUNT):  # the row's one Account box: what it holds
+            assert len(boxes) == len(accounts), "every row posts its Account box once"
+            accounts = [box[1] for box in boxes]
         taxes = [cell[2] for cell in self._cells(LINE_TAX_CODE)]
         return [Row(shown["line_number"][n], shown["description"][n], accounts[n], shown["amount"][n], taxes[n],
                     shown["reasoning_justification"][n]) for n in range(len(accounts))]  # fmt: skip
@@ -153,6 +174,8 @@ class ReviewPage:
         unit, code = chart.split_account(account)
         self._cells(BUSINESS_UNIT)[line - 1][1:] = [unit, unit]
         self._cells(ACCOUNT)[line - 1][1:] = [code, code]
+        if boxes := self._cells(LINE_ACCOUNT):
+            boxes[line - 1][1:] = [account, account]
 
     @property
     def form(self) -> dict[str, list[str]]:
@@ -174,8 +197,10 @@ class ReviewPage:
         """Split line ``line`` (the first is 1) across the account strings of ``shares``, each its percentage, with
         the screen's "Split a line"; then the page again, with the lines it made."""
         units, codes = zip(*(chart.split_account(account) for account in shares), strict=True)
-        data = {**self.form, "split_line": self.lines[line - 1].number, "part_cc": list(units),
-                "part_gl": list(codes), "part_pct": [str(share) for share in shares.values()]}  # fmt: skip
+        parts = ({"part_account": list(shares)} if self._cells(LINE_ACCOUNT)
+                 else {"part_cc": list(units), "part_gl": list(codes)})  # fmt: skip
+        data = {**self.form, "split_line": self.lines[line - 1].number, **parts,
+                "part_pct": [str(share) for share in shares.values()]}  # fmt: skip
         answer = self.client.post(f"/review/{self.id}/split", data=data, headers=PAGE)
         assert answer.status_code == 200, answer.text
         self.open()
