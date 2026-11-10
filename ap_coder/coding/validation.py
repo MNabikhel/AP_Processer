@@ -83,10 +83,38 @@ class ValidationReport:
         return asdict(self)
 
 
-def duplicate_message(duplicate_of: list[int]) -> str:
-    """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number."""
-    ids = ", ".join(f"#{i}" for i in duplicate_of)
-    return f"same vendor and invoice number as invoice {ids}: possible duplicate payment"
+_DUPLICATE_STANDS = {"review": "waiting for review", "parked": "set aside", "approved": "approved"}
+
+
+def duplicate_message(duplicate_of: list[Any]) -> str:
+    """DUPLICATE_INVOICE's words: the other invoices with the same vendor and invoice number. Each is its number, or
+    what is known of it (``pipeline.duplicates_known``: {"id", "first": received before this one, "status",
+    "approved": when, "exported"}): the message then says which was received first and where the other stands, and
+    which of the two to reject, where both said "reject this one" (B-2101)."""
+    import datetime as dt
+
+    known = [d for d in duplicate_of if isinstance(d, dict)]
+    if len(known) != len(duplicate_of) or not known:
+        ids = ", ".join(f"#{d['id'] if isinstance(d, dict) else d}" for d in duplicate_of)
+        return f"same vendor and invoice number as invoice {ids}: possible duplicate payment"
+    said = []
+    for other in known:
+        stands = _DUPLICATE_STANDS.get(other.get("status") or "", "")
+        if other.get("status") == "approved" and other.get("approved"):
+            day = dt.datetime.fromisoformat(str(other["approved"]))
+            year = f", {day.year}" if day.year != dt.date.today().year else ""
+            stands = f"approved on {day:%b} {day.day}{year}"
+        stands += " and exported" if stands and other.get("exported") else ""
+        order = "received first" if other.get("first") else "received after this one"
+        said.append(f"#{other['id']} ({', '.join(filter(None, [order, stands]))})")
+    if any(o.get("first") for o in known):
+        advice = "If it is the same bill, reject this one"
+    elif any(o.get("status") == "approved" for o in known):
+        advice = "It is approved already: if it is the same bill, reject this one"
+    else:
+        others = "the other" if len(known) == 1 else "the others"
+        advice = f"This one came first: if it is the same bill, reject {others}"
+    return f"same vendor and invoice number as invoice {', '.join(said)}: possible duplicate payment. {advice}"
 
 
 def validate_coding(

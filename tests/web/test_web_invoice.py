@@ -1562,3 +1562,27 @@ def test_an_address_or_form_with_a_value_ap_coder_cant_read_gets_plain_words(cli
     assert page.status_code == 422 and "<html" in page.text.lower() and "int_parsing" not in page.text
     answer = client.post("/purchase-orders/status", data={}, headers=PAGE)
     assert answer.status_code == 422 and answer.json()["ok"] is False and "detail" not in answer.json()
+
+
+def test_a_duplicate_pair_says_which_to_reject_and_follows_the_other(client, store, tmp_path):
+    """B-2101: the first-received invoice and its second notice each said "reject this one", and after one of them
+    was approved the other did not say so. Each says where the other stands as the screen is drawn."""
+    first = clean_invoice(client, store)
+    inv = store.get_invoice(first)
+    copy = store.add_invoice(tmp_path / "second notice.pdf", inv["ai_output"], inv["validation"])
+
+    def said(invoice_id: int) -> str:
+        text = re.sub(r"<[^>]+>", " ", check(client, invoice_id)["sections"]["checks"])
+        return " ".join(text.split())
+
+    assert f"invoice #{first} (received first, waiting for review): possible duplicate payment. If it is the same " \
+           "bill, reject this one" in said(copy)  # fmt: skip
+    assert f"invoice #{copy} (received after this one, waiting for review): possible duplicate payment. This one " \
+           "came first: if it is the same bill, reject the other" in said(first)  # fmt: skip
+    assert check(client, first)["sections"]["checks"].count(f'href="/review/{copy}"') == 1
+    store.approve_invoice(first, inv["ai_output"], "Sam Reviewer")
+    today = dt.date.today()
+    assert f"invoice #{first} (received first, approved on {today:%b} {today.day}): possible duplicate payment. " \
+           "If it is the same bill, reject this one" in said(copy)  # fmt: skip
+    store.reject_invoice(copy, "Sam Reviewer", "sent twice")
+    assert "possible duplicate payment" not in client.get(f"/review/{first}").text

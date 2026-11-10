@@ -196,6 +196,22 @@ def discover_inputs(paths: list[str | Path]) -> list[Path]:
     return found
 
 
+def duplicates_known(store: Store, others: list[int], invoice_id: int | None) -> list[dict[str, Any]]:
+    """What DUPLICATE_INVOICE says of each other invoice with this vendor and invoice number
+    (``validation.duplicate_message``): whether it was received before this one (``invoice_id``; None: this one is
+    coming in now), where it stands, and when it was approved. Read as the checks run, so each of a pair says the
+    other's state as its screen is drawn (B-2101)."""
+    from ..core.store import APPROVED
+
+    known = []
+    for inv in store.get_invoices(others):
+        approved = inv["status"] == APPROVED
+        known.append({"id": inv["id"], "first": invoice_id is None or inv["id"] < invoice_id, "status": inv["status"],
+                      "approved": (inv.get("reviewed_at") or "") if approved else "",
+                      "exported": approved and inv.get("export_batch") is not None})  # fmt: skip
+    return known
+
+
 def finalise_coding(
     coding: InvoiceCoding,
     reference: ReferenceData,
@@ -219,12 +235,16 @@ def finalise_coding(
     else:
         history = compare_with_history(coding, feedback, key) if feedback else None
     duplicates = (
-        store.find_duplicates(
-            coding.vendor_name,
-            coding.invoice_number,
-            exclude_id=exclude_invoice_id,
-            grand_total=coding.grand_total,
-            key=key,
+        duplicates_known(
+            store,
+            store.find_duplicates(
+                coding.vendor_name,
+                coding.invoice_number,
+                exclude_id=exclude_invoice_id,
+                grand_total=coding.grand_total,
+                key=key,
+            ),
+            exclude_invoice_id,
         )
         if store is not None
         else None

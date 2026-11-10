@@ -199,7 +199,8 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Possible duplicate",
         "Another invoice from the same vendor has the same invoice number (ignoring dashes, leading zeros and "
         "prefixes such as INV).",
-        "Open the other invoice. If it is the same bill, reject this one so it is not paid twice.",
+        "Open the other invoice and compare the two. If it is the same bill, reject the one the message names, so it "
+        "is not paid twice: the one received later, or this one when the other is approved already.",
     ),
     "DUPLICATE_IN_ERP": CheckHelp(
         FRAUD, "Already in the ERP",
