@@ -140,6 +140,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
+        # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is an Admin's.
+        "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
         # The fixed coding rules: anyone who reviews invoices adds, changes, removes and undoes them; every change is
@@ -177,6 +179,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
         "POST /jde-files/meals", "POST /jde-files/company",
+        "POST /jde-files/loaded/{what}/edit",  # a row of the chart, the business units or the suppliers, by hand
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",

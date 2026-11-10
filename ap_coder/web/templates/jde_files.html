@@ -23,6 +23,7 @@
 {% macro loaded_now(card, count, what, last) %}
 <p id="{{ card }}-now">{% if count %}{{ ui.pill("Loaded", "ok", "check") }} <b>{{ count | plural(what) }}</b>{% if last %}
   <span class="muted">· last loaded {{ last.when }}{% if last.by %} by {{ last.by }}{% endif %}</span>{% endif %}
+  · <a href="/jde-files/loaded/{{ card }}">See what is loaded</a>
   {% else %}{{ ui.pill("Not yet", "gray") }} <span class="muted">Nothing is loaded.</span>{% endif %}</p>
 {% endmacro %}
 {% block content %}
@@ -32,7 +33,10 @@
   <dl class="apc-kv">
     {% for item in checklist %}
     <dt>{{ loop.index }}. <a href="#{{ item.card }}">{{ item.name }}</a></dt>
-    <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
+    <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}
+      <a href="/jde-files/loaded/{{ item.card }}" data-see="{{ item.card }}">See the {{ item.rows }}</a>{% if item.by_hand %}
+      <span class="muted">· {{ item.by_hand | num }} changed by hand, kept when a newer file is loaded</span>{% endif %}
+      {% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
     {% endfor %}
     {# The chart does not say which accounts are meals accounts: ticked here with one click, or one by one. #}
     {% if meals %}
