@@ -34,9 +34,10 @@ import pandas as pd
 
 from ap_coder.ai import verifier
 from ap_coder.ai.extraction import TEXT_EXTENSIONS, ExtractionResult
-from ap_coder.ai.offline_coder import renamed_from
+from ap_coder.ai.offline_coder import renamed_from, supplier_evidence
 from ap_coder.ai.pipeline import finalise_coding
-from ap_coder.ai.suggest import suggest_gl
+from ap_coder.ai.suggest import by_pairs, suggest_gl
+from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.capture.bridge import currency_read, review_issues
 from ap_coder.capture.normalize import find_amounts, parse_amount, parse_date, parse_dates
 from ap_coder.capture.types import DATE_FIELDS, MISSING, Box, CaptureResult
@@ -88,6 +89,7 @@ from ap_coder.coding.terms import describe as terms_describe
 from ap_coder.coding.terms import payment
 from ap_coder.coding.validation import COUNTED_IN_CODING, ERROR, INFO, Issue, off_text
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, expected_tax_numbers, moved_off_hold
+from ap_coder.core.chart import join_account
 from ap_coder.core.config import Settings
 from ap_coder.core.memory import pair_lines, vendor_key
 from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
@@ -1407,7 +1409,9 @@ def reasons(coding: InvoiceCoding, ai: dict[str, Any], report: Any, reference: R
 
 
 def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -> list[dict[str, Any]]:
-    """One-click GL accounts for lines without a usable one, from past decisions and the account list."""
+    """One-click GL accounts for lines without a usable one, from past decisions and the account list. With a chart
+    of accounts imported or a journal loaded each is a whole account string that may be posted to (``account``; the
+    GL code in ``gl``, its business unit in ``cc``), the supplier's coding last year among them (D-212)."""
     accounts = reference.chart_of_accounts
     lines = [(pos, li) for pos, li in enumerate(coding.line_items)
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
@@ -1415,18 +1419,37 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
         return []
     key = store.vendor_key_for(coding.vendor_name, coding.gst_hst_registration_number)  # its own of two (B-1021)
     feedback = store.learning_rows(coding.vendor_name, key)
-    default_gl = (store.get_vendor(key) or {}).get("default_gl") or ""
+    vendor = store.get_vendor(key)
+    default_gl = (vendor or {}).get("default_gl") or ""
+    prior, units = supplier_evidence(store, vendor or coding.vendor_name, key, reference)
+    whole = by_pairs(reference, prior)
     out = []
     for pos, li in lines:
-        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key)
+        found = suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl, key=key,
+                           prior=prior, units=units)  # fmt: skip
         if found:
             out.append({
                 "position": pos, "number": li.line_number, "description": li.description,
-                "options": [{"gl": s.gl_code, "label": f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}",
+                "options": [{"gl": s.gl_code, "label": f"{_shown(s, whole)} · {_name(reference, s) or s.gl_code}",
                              "cc": s.cost_center or "", "why": "; ".join(s.reasons).capitalize(),
-                             "first": s.reasons[0] if s.reasons else ""} for s in found],
+                             "first": s.reasons[0] if s.reasons else "",
+                             **({"account": join_account(s.cost_center, s.gl_code)} if whole else {})}
+                            for s in found],
             })  # fmt: skip
     return out
+
+
+def _shown(suggestion: Any, whole: bool) -> str:
+    """A suggestion's account as its button says it: the whole account string, or the GL code as before."""
+    return join_account(suggestion.cost_center, suggestion.gl_code) if whole else suggestion.gl_code
+
+
+def _name(reference: ReferenceData, suggestion: Any) -> str:
+    """A suggested account's name: its own on that business unit when a chart of accounts was imported."""
+    if reference.pairs is not None and suggestion.cost_center:
+        return reference.pairs.description(suggestion.cost_center, suggestion.gl_code) or gl_name(
+            reference, suggestion.gl_code)  # fmt: skip
+    return gl_name(reference, suggestion.gl_code)
 
 
 def _fmt_qty(value: float | None) -> str:
@@ -1731,10 +1754,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     dates = settle_dates(header, {**ai, **{k: v for k, v in start.items() if k in DATE_FIELDS}})
     header = dates.header
     filled.update(dates.filled)
-    coding = None
+    coding, coding_rules = None, store.coding_rules()
     if not problems:
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
-                                              UNASSIGNED if has_cc else "")  # fmt: skip
+                                              UNASSIGNED if has_cc else "", coding_rules)  # fmt: skip
     problems = [plain_problem(p) for p in problems]
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
@@ -1787,7 +1810,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     second = store.approval_reason(inv, output)[0] if coding.currency != (ai.get("currency") or "CAD") else ""
     changed = ai_changes(coding, ai, cc)
     lines_n = len(coding.line_items)
-    _, rule_changes = rules.apply(coding, store.coding_rules())
+    _, rule_changes = rules.apply(coding, coding_rules)
     doc = coding.model_dump()
     if PLACE_OF_SUPPLY in output:  # worked out, no ship-to printed: the vendor is told where it is delivered
         doc[PLACE_OF_SUPPLY] = output[PLACE_OF_SUPPLY]
@@ -2279,19 +2302,26 @@ def usual_cost_center(store: Store, reference: ReferenceData, vendor_name: str) 
     if not uses_cost_centers(reference) or not (vendor_name or "").strip():
         return ""
     used = store.vendor_lessons(vendor_name).cost_centers
+    if not used:  # nothing approved here yet: the one business unit the supplier's lines went to last year (D-212)
+        used = frozenset(u.business_unit for u in prior_for(store, vendor_name).accounts)
     only = next(iter(used)) if len(used) == 1 else ""
+    if reference.pairs is not None and only not in reference.pairs.business_units():
+        return ""  # a business unit since closed, or one no account is offered on
     return only if only != UNASSIGNED and reference.cost_centers.get(only) is not None else ""
 
 
 def use_suggestion(reference: ReferenceData, coding: InvoiceCoding, draft: Draft, position: int, gl: str,
                    cc: str) -> list[dict[str, Any]]:  # fmt: skip
-    """Code the ``position``-th line with a suggested GL account (and its cost center, when the line has none)."""
+    """Code the ``position``-th line with a suggested GL account (and its cost center, when the line has none).
+    With a chart of accounts imported a suggestion is a whole account string: the line takes its business unit too,
+    since the account may not exist on the one the line had (D-212)."""
     if not 0 <= position < len(coding.line_items):
         raise ValueError("that line is no longer on the invoice")
     li = coding.line_items[position]
     frame = numbered_lines(lines_frame(draft.lines))
     at = grid_row(frame, coding, position)
     frame.loc[at, "predicted_gl_code"] = gl
-    if cc and li.predicted_cost_center in ("", UNASSIGNED) and reference.cost_centers is not None:
+    takes_unit = reference.pairs is not None or li.predicted_cost_center in ("", UNASSIGNED)
+    if cc and takes_unit and reference.cost_centers is not None:
         frame.loc[at, "predicted_cost_center"] = cc
     return lines_records(frame)

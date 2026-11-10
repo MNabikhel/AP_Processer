@@ -20,7 +20,7 @@ import re
 import unicodedata
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
 from .tax_setup import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
@@ -351,6 +351,23 @@ class TaxLine(BaseModel):
         return province_code(value)
 
 
+# What may decide a line's account (``LineItem.decided_by``'s "source", D-212): a fixed coding rule; this vendor's own
+# approved lines; the supplier's coding (last year's journal and its approvals); other vendors' lines like it; the
+# words of an account's name; the chat model (a guess); a person on the review screen.
+DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
+CANDIDATES_KEPT = 5  # accounts kept with a line left for a person
+
+
+def decided(source: str, **evidence: Any) -> dict[str, Any]:
+    """What decided a line's account, as the line keeps it (``LineItem.decided_by``): the one place that makes it.
+    ``source``: one of ``DECIDED_SOURCES``; ``evidence``: what it went by, as plain values (a rule's ``rule_id``,
+    the counts ``lines``, ``of`` and ``share``, the source it replaced as ``was``...); one that is None or blank is
+    left out."""
+    if source not in DECIDED_SOURCES:
+        raise ValueError(f"a line's account is decided by one of {DECIDED_SOURCES}, not {source!r}")
+    return {"source": source, **{k: v for k, v in evidence.items() if v is not None and v != ""}}
+
+
 class LineItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -367,6 +384,37 @@ class LineItem(BaseModel):
     tax_exempt: list[str] | None = None
     tax_status: str = ""  # TAX_STATUSES: why a line with no taxes carries none (D-64)
     reasoning_justification: str = ""
+    # The accounts offered for a line left for a person, the likeliest first, ``CANDIDATES_KEPT`` at most (D-212):
+    # each {"account": the whole string, "business_unit", "code", "name", "reason": why, in plain words, "source":
+    # where it came from; with the supplier's counts also "lines", "of" and "share"; "guess": True when nothing said
+    # which business unit}. Left out of the stored coding when there are none.
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    # What decided the line's account (``decided``, D-212): {"source": one of ``DECIDED_SOURCES``, and what it went
+    # by: "rule_id" and "rule", "lines" / "of" / "share", "similarity", "was"...}. Left out of the stored coding when
+    # nothing is recorded (a line with no account, an invoice stored before).
+    decided_by: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("candidates")
+    @classmethod
+    def _few_candidates(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return value[:CANDIDATES_KEPT]
+
+    @field_validator("decided_by")
+    @classmethod
+    def _decided_source(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if value and value.get("source") not in DECIDED_SOURCES:
+            raise ValueError(f"decided_by's source must be one of {DECIDED_SOURCES}, got {value.get('source')!r}")
+        return value
+
+    @model_serializer(mode="wrap")
+    def _without_empty(self, handler: Any) -> dict[str, Any]:
+        # An invoice with no candidates and no decision recorded is stored as it always was: the two keys are there
+        # only when they say something.
+        data = handler(self)
+        for name in ("candidates", "decided_by"):
+            if not data.get(name):
+                data.pop(name, None)
+        return data
 
     @field_validator("taxes_applied")
     @classmethod

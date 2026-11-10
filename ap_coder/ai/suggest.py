@@ -35,10 +35,12 @@ import re
 import sys
 import threading
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from itertools import chain, repeat
 from typing import Any
 
+from ..core import chart
 from ..core.caches import MB
 from ..core.memory import (
     PAST_BYTES_KEPT,
@@ -57,6 +59,8 @@ from ..core.memory import (
 )
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from .line_match import Index, keys
+from .supplier_prior import SURE_LINES, SURE_SHARE, Candidate, Prior, account_name
+from .supplier_prior import rank as rank_prior
 
 VENDOR_MIN_SIMILARITY = 0.34  # a line of this vendor this alike is suggested
 OTHERS_MIN_SIMILARITY = 0.5  # a line of another vendor this alike is suggested
@@ -90,6 +94,11 @@ class Suggestion:
     source: str = ""  # where the best evidence came from: "vendor", "others", "usual", "master" or "words"
     auto: bool = False  # strong enough to code the line without a person picking it
     check: str = ""  # why a person must check it, said plainly (a recode not confirmed yet), "" otherwise
+    strong: int = -1  # the highest ``PRIORITY`` of a source strong enough to code with it on its own (-1: none)
+    # The cost centers AP approved this vendor's lines like this one with, for this account, each with how many
+    # decisions ("" for none), the most used first: more than one, and the words of the line do not say which
+    # (``candidates``).
+    units: tuple[tuple[str, int], ...] = field(default=(), compare=False)
 
 
 @dataclass
@@ -143,6 +152,8 @@ class _Memory:
 
 
 SAID_KEPT = 1024  # lines whose suggestions each memory keeps
+ALL_KEPT = 24  # accounts of a line kept when every one with evidence is asked for (``candidates``), the best
+UNIT_SURE_LINES = 3  # approvals of lines like one on one business unit that settle it, for an account used on several
 _SAID_LOCK = threading.Lock()
 
 
@@ -452,6 +463,21 @@ def _account_stems(chart: Any) -> list[tuple[str, frozenset[str]]]:
     return found
 
 
+def _units_of(memory: _Memory, gl: str, hits: list[tuple[float, _Pattern]]) -> tuple[tuple[str, int], ...]:
+    """The cost centers AP approved a vendor's lines like one with, for the account ``gl``, each with its decisions,
+    the most used first: every decision of the lines found (``hits``) that went to it, not only each line's
+    latest."""
+    units: Counter[str] = Counter()
+    for _, p in hits:
+        decided = [row for _, row in memory.lines.get((p.vendor_key, _normalise(p.description)), ())
+                   if row.get("final_gl") == gl]  # fmt: skip
+        for row in decided:
+            units[row.get("final_cc") or ""] += 1
+        if not decided:  # (a memory extended for one vendor keeps no decisions: the line's latest)
+            units[p.cost_center] += p.decisions
+    return tuple(units.most_common())
+
+
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
@@ -481,17 +507,34 @@ def suggest_gl(
     limit: int = 3,
     default_gl: str = "",
     key: str | None = None,
+    prior: Prior | None = None,
+    units: Iterable[str] = (),
 ) -> list[Suggestion]:
     """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()`` (newest
     first); ``default_gl`` is the vendor master's default account for this vendor, if any. Never a tax account or
     an account that is not in the chart of accounts. Worked out once for the same line, vendor and default, kept with
     the memory and the reference data they came from (``_Memory.said``, ``SAID_KEPT`` lines, D-159): every check of
-    the review screen asks it again of each line. Each caller gets copies."""
+    the review screen asks it again of each line. Each caller gets copies.
+
+    With a chart of accounts imported, or a journal loaded (``prior``: the supplier's, ``supplier_prior.prior_for``;
+    ``units``: the cost centers the vendor's approved lines used), these are the first of ``candidates``: whole
+    account strings, each a pair that may be posted to (D-212)."""
+    if by_pairs(reference, prior):
+        found = candidates(description, vendor_name, feedback, reference, limit, default_gl, key, prior, units)
+        return [Suggestion(c.code, c.business_unit, c.score, list(c.reasons), c.source, c.auto, c.check)
+                for c in found]  # fmt: skip
+    return _from_memory(description, vendor_name, feedback, reference, limit, default_gl, key)
+
+
+def _from_memory(description: str, vendor_name: str, feedback: list[dict[str, Any]], reference: ReferenceData,
+                 limit: int, default_gl: str, key: str | None) -> list[Suggestion]:  # fmt: skip
+    """``suggest_gl`` from the approval memory and the accounts' names, as it was before a line had a whole account
+    string: the GL code, and the cost center of the past line it came from. ``limit`` 0: every account with any
+    evidence, the weak ones too (what ``candidates`` completes and orders)."""
     line = keys(description)
     if not line and not tokens(description) and not default_gl:
         return []
-    tax_gls = reference.tax.tax_gl_codes()
-    valid = frozenset(c for c in reference.chart_of_accounts.codes if c not in tax_gls and c != UNASSIGNED)
+    valid = frozenset(c for c in reference.line_accounts() if c != UNASSIGNED)
     key = key or vendor_key(vendor_name)  # the vendor's own key, when two vendors' names read alike (B-1021)
     memory = _memory(feedback, valid)
     asked = (description, key, limit, default_gl)
@@ -563,6 +606,7 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
         add(gl, 0.6 + 0.3 * best_sim + 0.02 * min(decisions, 5),
             f"coded this way {_plural(decisions, 'time')} for similar lines from this vendor", "vendor", auto,
             best.cost_center)  # fmt: skip
+        found[gl].units = _units_of(memory, gl, hits) if gl in found else ()
 
     # The line AP changed: this one, or a similar line of this vendor (then named, B-607).
     held_line = "this line" if held is None or _normalise(held.description) == _normalise(description) else (
@@ -617,6 +661,8 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
     top = ranked[0]
     level = strong.get(top.gl_code)
     top.auto = held is None and level is not None and not any(strong.get(s.gl_code, -1) >= level for s in ranked[1:])
+    for s in ranked:
+        s.strong = strong.get(s.gl_code, -1)
     ranked = _meals_first(description, ranked, reference, valid)
     top = ranked[0]
     if held is not None:
@@ -624,4 +670,208 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
             f"AP changed {held_line} from {held.was} (approved {_plural(held.reversed, 'time')}) to {held.gl_code} "
             "once: check which is right"
         )  # fmt: skip
-    return [s for s in ranked if s.score >= 0.4 * top.score][:limit]
+    kept = [s for s in ranked if s.score >= 0.4 * top.score] if limit > 0 else ranked  # (0: the weak ones too)
+    return kept[: limit if limit > 0 else ALL_KEPT]
+
+
+# --- Whole account strings: every source, each a pair that may be posted to (D-212) --------------------------------
+
+# Where a candidate's evidence comes from, the strongest first: this vendor's own approved lines, the supplier's
+# coding (last year's journal and its approvals), then other vendors' lines and the vendor master's default, then
+# the words of the accounts' names.
+TIER = {"vendor": 3, "supplier": 2, "others": 1, "usual": 1, "master": 1, "words": 0}
+
+
+def by_pairs(reference: ReferenceData, prior: Prior | None = None) -> bool:
+    """Whether a line is suggested whole account strings (``candidates``): a chart of accounts was imported, or a
+    journal is loaded. An install with neither suggests GL codes as before (``_from_memory``)."""
+    return reference.pairs is not None or (prior is not None and prior.journal)
+
+
+def status_said(reference: ReferenceData, business_unit: str, code: str) -> str:
+    """Why an account string may not be offered, in plain words ("" when it may, or no chart was imported)."""
+    pairs = reference.pairs
+    if pairs is None:
+        return ""
+    status = pairs.status(business_unit, code)
+    if status == chart.OK:
+        return ""
+    if status == chart.BU_INACTIVE:
+        return f"business unit {business_unit} is no longer active"
+    if status == chart.NOT_IN_CHART:
+        if not pairs.has_code(code):
+            return f"the chart has no account {code}"
+        return f"business unit {business_unit} has no account {code}"
+    if status == chart.NOT_POSTABLE:
+        return f"{chart.join_account(business_unit, code)} may not be posted to"
+    return pairs.why_reserved(business_unit, code)
+
+
+def complete_pair(reference: ReferenceData, code: str, unit: str = "",
+                  units: Iterable[str] = ()) -> tuple[str, bool] | None:  # fmt: skip
+    """(the business unit a GL code is offered with, whether it is only a guess), or None when no pair of it may be
+    offered. In this order: ``unit`` (the business unit of the past line the code came from) when the pair may be
+    posted to; the only one of ``units`` (the business units the supplier's lines used, the most used first) that
+    has the account; the only business unit of the chart that has it; then a guess, for a person to confirm: the
+    supplier's most used business unit that has it, else the home business unit (``ChartSettings``). A past line on
+    a business unit since closed so gives its account on another one, or nothing. With no chart imported the code
+    goes with ``unit`` as it is."""
+    pairs = reference.pairs
+    if pairs is None:
+        return unit, False
+    if unit and pairs.offered(unit, code):
+        return unit, False
+    known = [u for u in dict.fromkeys(units) if u and pairs.offered(u, code)]
+    if len(known) == 1:
+        return known[0], False
+    on = pairs.bus_of(code)
+    if len(on) == 1:
+        return on[0], False
+    if known:
+        return known[0], True
+    home = pairs.settings.home_business_unit
+    return (home, True) if home and pairs.offered(home, code) else None
+
+
+def _placed(reference: ReferenceData, code: str, unit: str, units: list[str], source: str, score: float,
+            reasons: list[str], **more: Any) -> Candidate | None:  # fmt: skip
+    """A candidate for ``code``, completed as a pair that may be offered (None when there is none). When the
+    business unit is not the one the evidence had, the reason says so."""
+    found = complete_pair(reference, code, unit, units)
+    if found is None:
+        return None
+    placed, guess = found
+    reasons = list(reasons)
+    if unit and placed != unit:
+        reasons.append(f"{status_said(reference, unit, code)}: offered on {placed}")
+    elif guess:
+        reasons.append(f"nothing says which business unit: {placed} is a guess")
+    return Candidate(account=chart.join_account(placed, code), business_unit=placed, code=code, score=score,
+                     reason="; ".join(reasons), source=source, guess=guess, reasons=reasons,
+                     name=account_name(reference, placed, code), **more)  # fmt: skip
+
+
+def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]], reference: ReferenceData,
+               limit: int = 20, default_gl: str = "", key: str | None = None, prior: Prior | None = None,
+               units: Iterable[str] = ()) -> list[Candidate]:  # fmt: skip
+    """Up to ``limit`` account strings for one invoice line, the likeliest first, from every source: this vendor's
+    approved lines like it, the supplier's coding (``prior``: ``supplier_prior.prior_for``), other vendors' lines
+    like it, the vendor master's default (``default_gl``) and the words of the accounts' names. Each is a pair
+    completed by ``complete_pair`` (``units``: the cost centers the vendor's approved lines used) and may be posted
+    to: never a reserved subsidiary, a business unit that is closed or marked DO NOT USE, or an account that takes
+    no postings. The first says whether it may code the line with no one picking (``Candidate.auto``): this vendor's
+    own approved lines as before, or the supplier's one account (``Prior.sure``) when no approved line of the vendor
+    like this one went elsewhere; never a guess of the business unit.
+
+    With no chart imported and no journal loaded these are ``suggest_gl``'s own, uncut: the GL code and the past
+    line's cost center."""
+    found = _from_memory(description, vendor_name, feedback, reference, 0, default_gl, key)
+    if not by_pairs(reference, prior):
+        return [Candidate(account=chart.join_account(_unit(s.cost_center), s.gl_code),
+                          business_unit=_unit(s.cost_center), code=s.gl_code, score=s.score,
+                          reason="; ".join(s.reasons), source=s.source, auto=s.auto, check=s.check,
+                          reasons=list(s.reasons)) for s in found][:limit]  # fmt: skip
+    valid = frozenset(reference.line_accounts())
+    ranked = [c for c in rank_prior(prior, description, reference) if c.code in valid] if prior else []
+    used = [u.business_unit for u in prior.accounts] if prior else []
+    used = list(dict.fromkeys(u for u in [*used, *units] if u and u != UNASSIGNED))
+    offered: dict[str, tuple[int, Candidate]] = {}
+
+    def offer(tier: int, c: Candidate | None) -> None:
+        if c is None:
+            return
+        there = offered.get(c.account)
+        if there is None:
+            offered[c.account] = (tier, c)
+            return
+        best, kept = (tier, c) if tier > there[0] else there
+        other = there[1] if kept is c else c
+        kept.reasons += [r for r in other.reasons if r not in kept.reasons]
+        kept.reason = "; ".join(kept.reasons)
+        kept.check = kept.check or other.check
+        if not kept.of and other.of:
+            kept.lines, kept.of, kept.share, kept.example = other.lines, other.of, other.share, other.example
+        offered[c.account] = (best, kept)
+
+    for c in ranked:
+        offer(TIER["supplier"], _placed(reference, c.code, c.business_unit, [*prior.units_of.get(c.code, ()), *used],
+                                        "supplier", c.score, c.reasons, lines=c.lines, of=c.of, share=c.share,
+                                        example=c.example))  # fmt: skip
+    for s in found:
+        offer(TIER.get(s.source, 0), _placed(reference, s.gl_code, _unit(s.cost_center), used, s.source, s.score,
+                                             s.reasons, check=s.check))  # fmt: skip
+    ordered = [c for _, c in sorted(offered.values(), key=lambda found: (-found[0], -found[1].score))]
+    if ordered:
+        ordered[0].auto = _sure(ordered[0], offered, found, prior)
+    return ordered[:limit]
+
+
+def _unit(cost_center: str) -> str:
+    return "" if cost_center in ("", UNASSIGNED) else cost_center
+
+
+def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list[Suggestion],
+          prior: Prior | None) -> bool:  # fmt: skip
+    """Whether the first candidate may code the line with no one picking (``candidates``)."""
+    if top.guess or any(s.check for s in found):
+        return False
+    first = found[0] if found else None
+    if first is not None and first.auto and first.strong >= PRIORITY["vendor"]:
+        # The same words on several business units: who ordered decides, not the words. So does a supplier whose
+        # lines to this account went to several, until lines like this one were approved here on one of them
+        # ``UNIT_SURE_LINES`` times.
+        units = [(u, n) for u, n in first.units if _unit(u)]
+        used = prior.units_of.get(first.gl_code, ()) if prior else ()
+        if len(units) > 1 or (len(used) > 1 and (not units or units[0][1] < UNIT_SURE_LINES)):
+            several = units if len(units) > 1 else used
+            top.reasons.append(
+                f"{'lines like this one' if len(units) > 1 else 'this supplier’s lines to ' + first.gl_code} "
+                f"went to {len(several)} business units: the words do not say which"
+            )
+            top.reason = "; ".join(top.reasons)
+            return False
+        return offered[top.account][0] == TIER["vendor"] and top.code == first.gl_code
+    sure = prior.sure() if prior else None
+    if sure is None or top.account != sure.account:
+        return False
+    return not any(tier == TIER["vendor"] and c.account != sure.account for tier, c in offered.values())
+
+
+def why_left(prior: Prior | None, ranked: list[Candidate], reference: ReferenceData) -> str:
+    """Why a line was left for a person to code, said specifically (with a journal loaded: D-212): the supplier is
+    new, its lines went to several accounts (with their shares), its usual account is no longer in the chart, too
+    few lines, or AP's own approvals went elsewhere. ``ranked``: the line's ``candidates``."""
+    top = ranked[0] if ranked else None
+    if top is not None and top.check:
+        return f"{top.check}."
+    if prior is None or (not prior.journal and not prior):
+        if top is None:
+            return "No earlier approval to learn from: pick the account."
+        return f"Not sure enough to code it (maybe {top.account}: {'; '.join(top.reasons[:2])}): pick the account."
+    if top is not None and top.source == "vendor" and not top.guess:  # this vendor's own lines like it
+        said = f"Not sure enough to code it (maybe {top.account}: {'; '.join(top.reasons[:3])})"
+    elif not prior:
+        said = "A new supplier: not in last year's journal" + (f" ({prior.note})" if prior.note else "")
+    else:
+        use = prior.accounts[0]
+        went = f"{use.lines} of this supplier's {prior.total_said()} went to {use.account}"
+        gone = status_said(reference, use.business_unit, use.code) if use.business_unit else ""
+        elsewhere = next((c for c in ranked if c.source == "vendor" and c.account != use.account), None)
+        if gone and use.share >= SURE_SHARE:
+            said = f"The supplier's usual account {use.account} is no longer in the chart ({gone})"
+        elif len(prior.accounts) > 1 and use.share < SURE_SHARE:
+            more = " / ..." if len(prior.accounts) > 4 else ""
+            said = (f"This supplier's {prior.total_said()} went to {len(prior.accounts)} accounts: "
+                    f"{prior.shares()}{more}")  # fmt: skip
+        elif prior.lines < SURE_LINES:
+            said = f"Only {went}: too few to code it alone"
+        elif prior.latest_approved and prior.latest_approved != use.account:
+            said = (f"{went}, but the last line AP approved here ({prior.latest_approved_on}) went to "
+                    f"{prior.latest_approved}")  # fmt: skip
+        elif elsewhere is not None:
+            said = f"{went}, but AP approved a line like this one to {elsewhere.account}"
+        elif top is not None and top.guess:
+            said = f"{went}; which business unit is not known ({top.business_unit} is a guess)"
+        else:
+            said = went
+    return f"{said}: pick the account."

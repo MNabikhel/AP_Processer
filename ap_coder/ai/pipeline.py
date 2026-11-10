@@ -40,7 +40,7 @@ from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
 from ..core.reference_data import ReferenceData
-from ..core.schema import InvoiceCoding
+from ..core.schema import InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
@@ -278,6 +278,15 @@ def finalise_coding(
     return output, report
 
 
+def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:
+    """Why the chat model gave a line no account, added to what the line says of itself (``said``: for all of
+    ``lines``, or by line number): asked and silent, not asked, or an answer that was not an account offered."""
+    for n, li in lines.items():
+        note = said if isinstance(said, str) else said.get(n, "")
+        if note:
+            li.reasoning_justification = f"{str(li.reasoning_justification or '').strip()} {note.rstrip('.')}.".strip()
+
+
 def _mark_chat_accounts(coding: InvoiceCoding) -> None:
     """Each line's account the chat model chose, coding the whole invoice (Azure OpenAI), marked a guess
     (``CHAT_SUGGESTED``), as the local model's are: its ``confidence_score`` is about the header (D-89), so without
@@ -290,6 +299,7 @@ def _mark_chat_accounts(coding: InvoiceCoding) -> None:
             continue
         reason = str(li.reasoning_justification or "").strip()
         li.reasoning_justification = f"{CHAT_SUGGESTED}: {reason}" if reason else CHAT_SUGGESTED
+        li.decided_by = decided("model")
 
 
 def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
@@ -440,6 +450,7 @@ class InvoicePipeline:
         if within is not None and not ARRIVAL_BREAKER.asks(server):
             log.info("the chat model gave no answer in time to the last arriving invoices: not asked now (D-168); the "
                      "page reader's pass asks again")  # fmt: skip
+            _say_on(todo, "The chat model was not asked yet: it gave no answer in time to the last invoices")
             return True
         from .lessons import prompt_lines
 
@@ -453,28 +464,36 @@ class InvoicePipeline:
             from ..core.paths import private_dir
 
             kept = private_dir() / ".cache" / "model_accounts"
+        # With whole account strings the model chooses among the accounts offered for each line, never the whole
+        # chart (D-212); what it says of a line it gives no account is kept on the line.
+        offered = getattr(result, "offered", None) or None
+        notes: dict[int, str] = {}
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
-                kept=kept, within=within,
+                kept=kept, within=within, offered=offered, notes=notes,
             )  # fmt: skip
         except ChatTimeout as exc:  # slow or hung: on arrival, the page reader's pass asks again
             log.info("local model could not suggest accounts in time (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer in time ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(False, server)
             return within is not None
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         if within is not None:
             ARRIVAL_BREAKER.answered(True, server)
+        model = getattr(self.coder, "_local_model", "") or "local model"
         for n, (gl, cc, reason) in picks.items():
             li = todo.get(n)
             if li is None:
@@ -489,7 +508,8 @@ class InvoicePipeline:
             elif hint:
                 why += f" (the account's name pointed to {hint} instead)"
             li.reasoning_justification = why
-        model = getattr(self.coder, "_local_model", "") or "local model"
+            li.decided_by = decided("model", model=model)  # a guess: a person checks it
+        _say_on({n: li for n, li in todo.items() if n not in picks}, notes)
         result.model = f"local reader + {model}"
         return False
 

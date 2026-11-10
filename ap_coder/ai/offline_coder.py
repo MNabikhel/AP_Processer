@@ -15,6 +15,7 @@ import datetime as dt
 import functools
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,15 +36,17 @@ from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
+from ..core.schema import CANDIDATES_KEPT, PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
-from .suggest import suggest_gl
+from .suggest import by_pairs, candidates, why_left
+from .supplier_prior import Candidate, Prior, account_name, prior_for
 
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
+OFFERED = 20  # accounts worked out for a line (``suggest.candidates``): the chat model chooses among them
 # A line an older version coded from a weak match (an account's name, the vendor's default): never approved without a
 # person. This version leaves such a line blank (B-463); invoices already in the queue may still carry it.
 WEAK_MATCH = "A weak match, for a person to confirm"
@@ -397,7 +400,8 @@ def not_sure(top: Any) -> str:
     """Why a line with a suggestion was left without an account."""
     if getattr(top, "check", ""):
         return f"{top.check}."
-    return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
+    code = getattr(top, "gl_code", None) or top.code  # (a ``Suggestion``, or a ``Candidate``)
+    return f"Not sure enough to code it (maybe {code}: {'; '.join(top.reasons[:2])}): pick the account."
 
 
 # The invoice a credit note credits, as printed: "Original Invoice: NW-2026-0912", "Credit for invoice #INV-4471",
@@ -419,6 +423,78 @@ def credited_invoice(text: str) -> str:
         if any(c.isdigit() for c in number):
             return number
     return ""
+
+
+@dataclass(frozen=True)
+class _Evidence:
+    """What an invoice's lines are coded from: the vendor, AP's approvals and the accounts; with a journal loaded
+    the supplier's coding (``prior``); with a chart of accounts the cost centers the vendor's approved lines used
+    (``units``)."""
+
+    vendor: str
+    feedback: list[dict[str, Any]]
+    reference: ReferenceData
+    default_gl: str
+    key: str
+    prior: Prior | None = None
+    units: tuple[str, ...] = ()
+
+
+def supplier_evidence(store: Any, vendor: Any, key: str,
+                      reference: ReferenceData) -> tuple[Prior | None, tuple[str, ...]]:  # fmt: skip
+    """(the supplier's prior, the cost centers the vendor's approved lines used) for an invoice's vendor: the vendor
+    list's row, or the name printed. (None, ()) without a store that keeps them; no cost centers when lines are
+    suggested GL codes as before (``suggest.by_pairs``)."""
+    if store is None or not vendor or not hasattr(store, "prior_stamp"):
+        return None, ()
+    prior = prior_for(store, vendor, always=reference.pairs is not None)
+    if not by_pairs(reference, prior):
+        return prior, ()
+    name = vendor if isinstance(vendor, str) else str(vendor.get("display_name") or "")
+    return prior, tuple(sorted(store.vendor_lessons(name, key).cost_centers))
+
+
+def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evidence, printed: str,
+                hints: dict[int, str], offered: dict[int, list[Candidate]]) -> LineItem:  # fmt: skip
+    """One line of the invoice: coded when the evidence is strong enough (``Candidate.auto``), else left for a
+    person with why, and the accounts offered kept with it (D-212). ``printed``: the text printed, when the line is
+    described as AP approved it before. The weak match of a line left goes in ``hints``; with whole account strings
+    (``suggest.by_pairs``) every account offered goes in ``offered``, for the chat model to choose among."""
+    description, quantity, unit_price, amount = reading
+    reference = ev.reference
+    found = candidates(description, ev.vendor, ev.feedback, reference, OFFERED, ev.default_gl, ev.key, ev.prior,
+                       ev.units)  # fmt: skip
+    top = found[0] if found else None
+    # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
+    best = top if top is not None and top.auto else None
+    if top is not None and best is None:
+        hints[number] = top.code
+    if best is not None:
+        why = "; ".join(best.reasons)
+    elif by_pairs(reference, ev.prior):
+        why = why_left(ev.prior, found, reference)
+        offered[number] = found
+    else:
+        why = not_sure(top) if top is not None else NO_HISTORY
+    if printed:
+        why = f"{why}; {RENAMED} (read “{printed}”)"
+    kept = [] if best is not None else [
+        {**c.kept(), "name": c.name or account_name(reference, c.business_unit, c.code)}
+        for c in found[:CANDIDATES_KEPT]
+    ]  # fmt: skip
+    return LineItem(
+        line_number=number,
+        description=description.strip() or f"Line {number}",
+        quantity=quantity,
+        unit_price=round(unit_price, 4),
+        amount=round(amount, 2),
+        predicted_gl_code=best.code if best else UNASSIGNED,
+        predicted_cost_center=(best.business_unit if best else "")
+        or (UNASSIGNED if reference.cost_centers is not None else ""),
+        reasoning_justification=why,
+        candidates=kept,
+        decided_by=best.decided() if best else {},
+    )
 
 
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
@@ -448,7 +524,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         values, round(subtotal + freight, 2), ship_to_province or ours or supplier_province,
         dt.date.fromisoformat(invoice_on) if invoice_on else None,
     )  # fmt: skip
-    default_gl, key = "", vendor_key(vendor)
+    default_gl, key, found = "", vendor_key(vendor), None
     if store is not None and vendor:
         try:  # the vendor of two whose names read alike by its GST/HST number (B-1021)
             found = store.find_vendor(vendor, values.get("gst_hst_registration_number"))
@@ -488,31 +564,13 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data.append((tip[0], 1.0, tip[1], tip[1]))
         flags.append("")
         subtotal = round(subtotal + tip[1], 2)
-    lines = []
+    prior, units = supplier_evidence(store, found or vendor, key, reference)
+    evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units)
     hints: dict[int, str] = {}
-    for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        ranked = suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl, key=key)
-        top = next(iter(ranked), None)
-        # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
-        best = top if top is not None and top.auto else None
-        if top is not None and best is None:
-            hints[number] = top.gl_code
-        why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
-        if number <= len(printed_as) and printed_as[number - 1]:
-            why = f"{why}; {RENAMED} (read “{printed_as[number - 1]}”)"
-        lines.append(
-            LineItem(
-                line_number=number,
-                description=description.strip() or f"Line {number}",
-                quantity=quantity,
-                unit_price=round(unit_price, 4),
-                amount=round(amount, 2),
-                predicted_gl_code=best.gl_code if best else UNASSIGNED,
-                predicted_cost_center=(best.cost_center if best else "")
-                or (UNASSIGNED if reference.cost_centers is not None else ""),
-                reasoning_justification=why,
-            )
-        )
+    offered: dict[int, list[Candidate]] = {}
+    lines = [_coded_line(number, reading, evidence, printed_as[number - 1] if number <= len(printed_as) else "",
+                         hints, offered)
+             for number, reading in enumerate(readings_data, 1)]  # fmt: skip
     # Which taxes each line carries: the codes printed beside the lines, else the lines that make each tax charged
     # add up (not every tax on every line: a delivery or a service is often exempt from the provincial tax).
     lines = tax_codes(lines, tax_lines, flags, text, ship_to_province or ours or supplier_province, invoice_on,
@@ -558,7 +616,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         confidence_score=confidence,
         line_items=lines,
     )
-    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints)
+    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints,
+                        offered=offered)  # fmt: skip
 
 
 _TIP_LABEL = re.compile(

@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from ..core.memory import pair_lines
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import InvoiceCoding
+from ..core.schema import InvoiceCoding, decided
 from .money import half_up, times
+from .rules import Rule, decided_by_rule, rule_for
 
 if TYPE_CHECKING:  # imported where a grid is split: the queue's summary reads ``codes_to_pick`` without pandas
     import pandas as pd
@@ -30,17 +32,51 @@ def to_number(value: Any, default: float = 0.0) -> float:
     return float(str(value).replace(",", "").replace("$", "").strip())
 
 
+def _blank(code: Any) -> str:
+    return "" if code in (None, "", UNASSIGNED) else str(code)
+
+
+def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str, Any]], vendor: str = "",
+                      rules: list[Rule] | None = None) -> None:  # fmt: skip
+    """What decided each line's account once a person had the invoice on the review screen (``decided_by``, D-212):
+    the one place a person's pick is recorded. A line still coded as proposed keeps what the proposal said; one
+    with another account or cost center was coded by a person (``source`` "person": with ``was``, the source of
+    what was proposed, and ``candidate``, the place from 1 of the pick among the accounts offered, when it was one of
+    them), or by a fixed coding rule a person applied (the rule that codes it so). The accounts offered stay with
+    the line: what the person chose among. A line without an account has no decision."""
+    for before, li in pair_lines(proposed, line_items):
+        before = before or {}
+        li["candidates"] = list(before.get("candidates") or [])
+        gl, cc = _blank(li.get("predicted_gl_code")), _blank(li.get("predicted_cost_center"))
+        if not gl:
+            li["decided_by"] = {}
+        elif gl == _blank(before.get("predicted_gl_code")) and cc == _blank(before.get("predicted_cost_center")):
+            li["decided_by"] = dict(before.get("decided_by") or {})
+        else:
+            rule = rule_for(rules, vendor, str(li.get("description") or "")) if rules else None
+            if rule is not None and rule.gl_code.strip() == gl and rule.cost_center.strip() in ("", cc):
+                li["decided_by"] = decided_by_rule(rule, before.get("decided_by"))
+                continue
+            picked = [n for n, c in enumerate(li["candidates"], 1)
+                      if c.get("code") == gl and _blank(c.get("business_unit")) in ("", cc)]  # fmt: skip
+            li["decided_by"] = decided("person", was=(before.get("decided_by") or {}).get("source"),
+                                       candidate=picked[0] if picked else None)  # fmt: skip
+
+
 def coding_from_inputs(
     header: dict[str, Any],
     lines: pd.DataFrame,
     taxes: pd.DataFrame,
     ai: dict[str, Any],
     default_cost_center: str = "",
+    rules: list[Rule] | None = None,
 ) -> tuple[InvoiceCoding | None, list[str]]:
     """Rebuild the coding from the dashboard's form and grids.
 
     Blank GL cells become ``UNASSIGNED``; blank cost centers become ``default_cost_center``
-    (``UNASSIGNED`` when cost centers are configured, so the check says what is missing).
+    (``UNASSIGNED`` when cost centers are configured, so the check says what is missing). ``ai``: the coding
+    proposed, which says what decided each line still coded as proposed (``decided_on_screen``); ``rules``: the
+    fixed coding rules, for the lines a person had a rule code.
     """
     problems: list[str] = []
     line_items = []
@@ -90,6 +126,7 @@ def coding_from_inputs(
                 "tax_amount": to_number(row.get("tax_amount")),
             }
         )
+    decided_on_screen(line_items, ai.get("line_items") or [], str(header.get("vendor_name") or ""), rules)
     data = {**header, "tax_lines": tax_lines, "line_items": line_items,
             "confidence_score": ai.get("confidence_score", 0.0)}  # fmt: skip
     try:
