@@ -5357,3 +5357,52 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the same approve and pipeline answers. (`ap_coder/coding/banks.py`, `web/roles.py`, `web/pages/accounts.py`,
     `accounts.html`, `invoice.html`, `erp/jde_keying.py`, `web/pages/exports.py`, `core/store/accounts.py`;
     `tests/web/test_voucher_bank_account.py`, `tests/coding/test_bank_accounts.py`, `tests/erp/test_jde_keying.py`)
+- **D-221** · **What JD Edwards' files loaded is seen row by row and changed by hand; the demo invoices live in
+  Settings; an older data folder is asked once which screens to show.** Three things the prototype's tester asked
+  for.
+  - *Seeing what is loaded.* "What is loaded" on JD Edwards files only said loaded or not yet. Each of the five
+    (chart of accounts, business units, suppliers, last year's coding, vouchers already in JD Edwards) now opens
+    `/jde-files/loaded/<list>`: a table with a search (each word somewhere in the row), exact filters on the
+    columns with few values, a count, pages, and a CSV of everything the search keeps. A chart is 15,000 rows and
+    a register up to 600,000, so no list is read whole: the count and the page are SQLite's (`LIMIT`, `OFFSET`),
+    the CSV reads on from the last row it gave, 2,000 at a time, in the order of the list's own key
+    (`core/store/loaded.py`). Codes are given as the text the table keeps (leading zeros). The suppliers show
+    whichever columns their table has, under a known label or the column's name in words, so a version that keeps
+    more of the master row shows it; a bank account is never among them (D-160).
+  - *Who:* whoever opens JD Edwards files sees the lists and downloads them (server mode: a Clerk and above, as
+    the page itself). Changing a row is an Admin's (a laptop: the one person).
+  - *What is changed by hand:* a chart row's description, whether it may be posted to (its posting edit code made
+    blank, or the file's own code again, `I` when the file's let it be posted to) and its GL account's meals tick;
+    a business unit's name and status; a supplier's own fields (name, AP's own hold, note, tax numbers, terms and
+    the rest), not its number nor JD Edwards' hold payment code, which are JD Edwards' to give. Last year's coding
+    and the vouchers are a record of what happened: looked at, and forgotten whole by the buttons there were.
+  - *Kept across the next load* (`core/store/by_hand.py`, the setting `hand_edits`, as B-2090's `chart_set_aside`
+    keeps what was typed on a code that left the lists): each change is kept beside what the file said. The
+    chart's and the business units' imports put it back on the rows they read before they compare and write, so
+    the same file loaded again changes nothing and says which rows keep a change; a row the file no longer has
+    keeps its change set aside. The supplier importer replaces what its file gives, and another piece of work was
+    rewriting it, so it is not touched: `Store.import_vendor_master` (the one method written on `Store` itself)
+    calls it and then puts back each field the import replaced, in one transaction, whoever imports. A field
+    changed elsewhere since (the Vendors page) is no longer that change and is let go; so is one the file now
+    agrees with, or one the person types back to the file's value. Rejected: an overlay applied at every read (the
+    vendor list is read in dozens of places), triggers (a save on the Vendors page would be undone by one).
+    One limit, said on the screen: a supplier renamed in JD Edwards arrives as a new row, and what was changed on
+    the old name stays with the old name.
+  - *Recorded:* each change is one event, `changed_by_hand` (Activity → Setup): who, the row, each field before →
+    after; what a load put back is in the load's own event (chart, business units) or one of its own (suppliers).
+  - *The demo invoices* were offered on the welcome page and on Import invoices, where a person setting up their
+    own company met ten made-up invoices first. They are loaded and removed in Settings → Data & backups only,
+    which says how many are loaded; the routes and their roles are unchanged (an Admin's in server mode), and so
+    is `python -m ap_coder demo`. Import invoices still warns while the demo is loaded and none of your own
+    invoices are (B-468), and points to Settings.
+  - *An older data folder* keeps showing every page (`first_run` leaves an existing database as it is), so after an
+    update the person saw the old menu and wondered whether it had worked. A laptop's database on which the
+    Screens choice was never saved shows a card on the queue page, once: what is new, "Use the simple screens" or
+    "Keep every page" (`POST /settings/about/screens`), and where to change it later. Either answer is saved, as
+    is Everything saved on Settings → About. A new data folder starts Simple and the company server's screens are
+    an Admin's: neither is asked.
+  - (`ap_coder/core/store/loaded.py`, `by_hand.py`, `chart.py`, `__init__.py`, `dialect.py`;
+    `ap_coder/web/pages/jde_loaded.py`, `jde_loaded.html`, `jde_files.html`, `web/roles.py`, `core/audit.py`,
+    `ops/chart_cmd.py`; `_demo_card.html`, `settings_data.html`, `web/pages/process.py`; `_screens_card.html`,
+    `web/core.py`, `web/pages/settings.py`, `review.py`; `tests/core/test_by_hand.py`,
+    `tests/web/test_web_jde_loaded.py`, `test_web_process.py`, `test_simple_screens.py`)

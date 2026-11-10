@@ -473,7 +473,7 @@ def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypa
     load_sample_setup(fresh)
     page = client.get("/process").text
     assert _next_step(page) == ""  # the next step is this page's own: choose files
-    assert "Start here" in page and "Load demo invoices" in page
+    assert "Start here" in page and "demo invoices" not in page.lower()  # (offered in Settings only: D-221)
 
 
 def test_the_review_queue_asks_for_a_name_while_approvals_carry_the_computer_login(demo_db, tmp_path, monkeypatch):

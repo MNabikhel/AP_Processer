@@ -64,17 +64,14 @@
       {% if first_invoices %}
       <div class="flash info" role="status"><span class="ms" aria-hidden="true">flag</span>
         <div><b>Start here:</b> choose one invoice or a few, then click <b>Process</b>. They wait for you in the review
-          queue.{% if can("/demo/load") %} No invoices at hand? <b>Load demo invoices</b> (on this page) gives you ten to practise on.{% endif %}</div></div>
+          queue.</div></div>
       {% endif %}
       {% if demo_first %}
       <div class="flash warn" role="status" id="demo-first"><span class="ms" aria-hidden="true">science</span>
         <div><div><b>Remove the demo invoices before you import your own.</b> Otherwise the demo's approvals, lessons and
           vendors are counted with yours: in coding accuracy, Activity and the vendor list.</div>
-          {% if can("/demo/remove") %}
-          <form method="post" action="/demo/remove" class="row" data-busy="Removing the demo…">
-            <input type="hidden" name="back" value="/process"><input type="hidden" name="sure" value="1">
-            <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Remove the demo invoices</button>
-          </form>
+          {% if can("/demo/remove") and can("/settings/data", "GET") %}
+          <div>Remove them in <a href="/settings/data#demo">Settings → Data &amp; backups</a>.</div>
           {% else %}<div>Ask an Admin to remove them.</div>{% endif %}</div></div>
       {% endif %}
       <p class="muted">Each file is saved to the invoices folder {{ "on the server" if server_mode else "on this computer" }}, then read, coded and checked. A photo or
@@ -189,8 +186,6 @@
       {% if recent_waiting %}<a class="link" href="/review">Go to the review queue <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
     </section>
     {% endif %}
-
-    {% include "_demo_card.html" %}
   </div>
 </div>
 {% endblock %}

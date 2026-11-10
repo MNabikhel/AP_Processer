@@ -35,8 +35,10 @@ accounts and the business units as JD Edwards exports them, and the GL accounts 
 them, D-209), ``journal`` (last year's coding as JD Edwards' Transaction Journal has it: its vouchers and lines, kept
 apart from the feedback memory), ``prior`` (what the supplier prior reads of the journal's names, the vendor list and
 a vendor's approved lines, counted, D-212), ``rules`` (the fixed coding rules, the history of their changes and the
-lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216). A test that patches a
-module-level name (``_now``, ``json``...) patches it in the part that uses it.
+lines each coded, D-217), ``joined`` (the files a person joined into one voucher, D-216), ``loaded`` (what is loaded
+of JD Edwards' files, read a page at a time) and ``by_hand`` (what a person changed by hand in it, kept across the
+next load, D-221). A test that patches a module-level name (``_now``, ``json``...) patches it in the part that uses
+it.
 
 Every SQL statement AP Coder runs is in this folder (D-189: ``tests/meta/test_sql_in_store.py``; the benchmark's
 tools excepted), so moving to another database changes this folder only.
@@ -120,6 +122,7 @@ from ._base import (  # noqa: F401  (what other modules import from here, and ev
 from .accounts import EVENT_ACTOR, AccountsMixin  # noqa: F401  (EVENT_ACTOR: for web/identity.py)
 from .backups import BackupsMixin
 from .bulk_jobs import BulkJobsMixin
+from .by_hand import ByHandMixin
 from .capture import CaptureMixin
 from .chart import ChartMixin
 from .ephemeral import EphemeralMixin
@@ -131,6 +134,7 @@ from .joined import JoinedMixin
 from .journal import JournalMixin
 from .learning import LearningMixin
 from .lessons import LessonsMixin
+from .loaded import LoadedMixin
 from .managers import ManagersMixin
 from .page_queue import PageQueueMixin
 from .postings import PostingsMixin
@@ -179,8 +183,24 @@ class Store(
     PriorMixin,
     JoinedMixin,
     RulesMixin,
+    LoadedMixin,
+    ByHandMixin,
 ):
     """The local SQLite database: one class, its parts in this folder by subject (see the module list above)."""
+
+    def import_vendor_master(self, rows, *how, **named):  # type: ignore[no-untyped-def]
+        """The vendor master's import (``VendorMasterMixin.import_vendor_master``, whose arguments and result these
+        are), then what a person changed by hand on a supplier put back where the import replaced it (``by_hand``,
+        D-221), in one transaction: whoever imports (a file on either page, the JD Edwards sync). The result's
+        ``by_hand`` names the suppliers put back. The one method written here: the two parts meet in it, and
+        neither is changed for the other."""
+        before = self._supplier_edits_held()
+        if not before:  # nobody changed a supplier by hand: the import as it is
+            return super().import_vendor_master(rows, *how, **named)
+        with self.transaction():
+            result = super().import_vendor_master(rows, *how, **named)
+            result["by_hand"] = self._supplier_edits_put_back(before, named.get("actor", how[0] if how else None))
+        return result
 
 
 from .samples import (  # noqa: E402,F401

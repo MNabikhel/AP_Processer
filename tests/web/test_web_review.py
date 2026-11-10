@@ -30,7 +30,8 @@ def demo(store, demo_template):
 
 def test_an_empty_queue_shows_getting_started(client, store):
     text = client.get("/review").text
-    assert "Getting started" in text and "Load demo invoices" in text and "Process your first invoices" in text
+    assert "Getting started" in text and "Process your first invoices" in text
+    assert "demo invoices" not in text.lower()  # a first start says nothing of them: Settings offers them (D-221)
 
 
 def test_invoices_waiting_for_gl_accounts_offer_the_sample_accounts(client, store, tmp_path):
@@ -156,13 +157,13 @@ def test_queue_helpers():
 # --- The first session: the quickest start first, no dead end, the self-test said calmly --------------------------
 
 
-def test_an_empty_queue_puts_the_demo_invoices_first(client, store, tmp_path):
+def test_invoices_waiting_for_gl_accounts_come_before_getting_started(client, store, tmp_path):
     text = client.get("/review").text
-    assert text.index("Load demo invoices") < text.index("Getting started")  # nothing yet: the quickest start
+    assert "Getting started" in text and "read and waiting" not in text  # nothing yet: the steps (no demo: D-221)
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
-    text = client.get("/review").text  # invoices waiting for GL accounts: that comes first; no demo beside them (D-137)
+    text = client.get("/review").text  # invoices waiting for GL accounts: that comes first
     assert text.index("read and waiting") < text.index("Getting started") and "Load demo invoices" not in text
 
 

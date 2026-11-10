@@ -125,6 +125,67 @@ def test_an_existing_database_and_the_company_server_start_as_they_are(tmp_path)
         assert not core.simple_screens(store) and store.get_setting(core.SHOW_JDE, "unset") == "unset", db
 
 
+# --- A data folder an earlier AP Coder made: asked once, on the queue page (D-221) ------------------------------------
+
+CARD = 'id="choose-screens"'
+
+
+def _old_folder(tmp_path) -> Store:
+    """A laptop's database made by an earlier AP Coder: it exists, and its Screens choice was never saved."""
+    old = tmp_path / "old" / "ap_coder.db"
+    Store(old).set_setting("something", "kept")
+    return core.first_run(old, server=False)
+
+
+def test_an_older_data_folder_is_asked_once_which_screens_to_show(tmp_path):
+    store = _old_folder(tmp_path)
+    client = client_for(store)
+    page = client.get("/review").text
+    card = page.split(CARD, 1)[1].split("</section>", 1)[0]
+    assert "A shorter menu" in card and "One Account box a line" in card and "JD Edwards chart of accounts" in card
+    assert "Use the simple screens" in card and "Keep every page" in card and "Settings → About → Screens" in card
+    assert re.findall(r'action="([^"]+)"', card) == ["/settings/about/screens"] * 2
+    assert re.findall(r'name="screens" value="(\w+)"', card) == [core.SIMPLE, core.EVERYTHING]
+    for path in ("/process", "/exports", "/settings/about"):  # the queue page only
+        assert CARD not in client.get(path).text, path
+    answer = client.post("/settings/about/screens", data={"screens": core.SIMPLE}, headers=PAGE).json()
+    assert answer["ok"] and answer["redirect"].startswith("/review?flash=") and core.simple_screens(store)
+    page = client.get(answer["redirect"]).text
+    assert CARD not in page and "Settings → About → Screens" in page and _labels(_rail(page)) == SIMPLE_MENU
+    assert store.events(actions=["settings_changed"])[0]["detail"]["keys"] == [core.SCREENS]
+    assert CARD not in client.get("/review").text
+
+
+def test_keeping_every_page_is_saved_too_so_the_card_never_returns(tmp_path, demo_db):
+    old = _old_folder(tmp_path)
+    client = client_for(old)
+    refused = client.post("/settings/about/screens", data={"screens": "neither"}, headers=PAGE)
+    assert refused.status_code == 400 and old.get_setting(core.SCREENS) == "" and CARD in client.get("/review").text
+    assert client.post("/settings/about/screens", data={"screens": core.EVERYTHING}, headers=PAGE).json()["ok"]
+    assert old.get_setting(core.SCREENS) == core.EVERYTHING and not core.simple_screens(old)
+    page = client.get("/review").text
+    assert CARD not in page and 'id="nav-more"' in _rail(page)
+    # the queue with invoices in it shows the card too; Everything saved on Settings → About answers it as well
+    target = tmp_path / "demo" / "ap_coder.db"
+    target.parent.mkdir(parents=True)
+    shutil.copy(demo_db, target)
+    full = Store(target)
+    client = client_for(full)
+    assert CARD in client.get("/review").text and "rq-kpis" in client.get("/review").text
+    client.post("/settings/about/show", data={"screens": core.EVERYTHING, "show_jde": "1"}, headers=PAGE)
+    assert full.get_setting(core.SCREENS) == core.EVERYTHING and CARD not in client.get("/review").text
+
+
+def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):
+    new = core.first_run(tmp_path / "new" / "ap_coder.db", server=False)
+    assert CARD not in client_for(new).get("/review").text
+    old = _old_folder(tmp_path)
+    assert CARD in client_for(old).get("/review").text  # (the same database on a laptop: asked)
+    app = create_app(web_settings(), old, start_reader=False, server=True)
+    request = type("Request", (), {"app": app})()
+    assert not core.screens_to_choose(request, old) and old.get_setting(core.SCREENS) == ""
+
+
 def test_serve_does_the_first_run_of_a_new_laptop_folder(monkeypatch, tmp_path):
     from ap_coder.ops import cli
     from ap_coder.web import server

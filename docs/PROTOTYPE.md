@@ -38,6 +38,10 @@ A new installation shows the short menu ("Simple screens"): **To review**, **Add
 **Find an invoice**, **What was learned**, and under **Setup**: GL accounts & tax, JD Edwards files, Vendors,
 Activity, Settings. **Settings → About → Screens** shows every page again.
 
+A laptop that ran an earlier AP Coder keeps its data folder, and with it the long menu. The first time you open
+**To review** after the update, a card says what is new and asks once: **Use the simple screens** or **Keep every
+page**. Either way it does not come back.
+
 ## 2. Look around with a made-up company first (optional, 5 minutes)
 
 To see the whole path before loading anything of your own, make a second data folder with a made-up company in it:
@@ -73,6 +77,14 @@ number, so loading one never removes what only the other gives. The vendor infor
 every company (about 20,000): it is read in a few seconds, its last row of totals is left out, and the summary says
 how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVERNMENT) or another kind of number
 (a US EIN) is kept as written and compared with nothing.
+
+**See what is loaded.** Once a file is loaded, *What is loaded* at the top links to its rows: a table with a search
+box, filters, a count and *Download as CSV* (codes keep their leading zeros). In the chart, the business units and
+the suppliers, **Change** beside a row lets you correct it: an account's description, whether it can be posted to
+and its meals tick; a business unit's name and status; a supplier's name, hold, note, tax numbers and terms. What
+you change is kept when you load a newer file (the page shows what the file says beside it), and every change is in
+**Activity** with who made it. Last year's coding and the vouchers are a record of what happened: you can look and
+download, not change; forget the file to take them out.
 
 Under the chart, **The chart's settings** has three boxes worth a look:
 

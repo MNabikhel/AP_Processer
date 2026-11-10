@@ -187,9 +187,18 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
     }
     names = {"chart": "Chart of accounts", "units": "Business units", "suppliers": "Suppliers",
              "journal": "Last year's coding", "vouchers": "Vouchers already in JD Edwards"}  # fmt: skip
+    # Each opens its rows (pages/jde_loaded.py, D-221); the three a person may change say how many rows were.
+    rows_of = {"chart": "accounts", "units": "business units", "suppliers": "suppliers", "journal": "lines",
+               "vouchers": "vouchers"}  # fmt: skip
+    edits = store.hand_edits()
+    by_hand = {"chart": len(edits["chart_accounts"]), "units": len(edits["business_units"]),
+               "suppliers": len(edits["vendors"])}  # fmt: skip
     return {
         "order": ORDER,
-        "checklist": [{"card": card, "name": name, "loaded": loaded[card]} for card, name in names.items()],
+        "checklist": [
+            {"card": card, "name": name, "loaded": loaded[card], "rows": rows_of[card], "by_hand": by_hand.get(card, 0)}
+            for card, name in names.items()
+        ],  # fmt: skip
         "loaded": loaded,
         "last": {
             "chart": _last(store, "accounts_imported", "chart_accounts"),

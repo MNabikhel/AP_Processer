@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import threading
 import time
@@ -56,7 +57,7 @@ def test_process_page_shows_setup_upload_and_folder(client):
     assert "Upload invoices" in text and "Invoices folder" in text and "Setup" in text
     assert "GL accounts" in text and "26 imported" in text
     assert "Ready to read invoices" in text
-    assert "Load demo invoices" in text
+    assert "demo invoices" not in text.lower()  # offered in Settings → Data & backups only (D-221)
     assert 'accept=".bmp,' in text  # the file picker offers what AP Coder reads
 
 
@@ -421,16 +422,37 @@ def test_safe_upload_names(tmp_path):
     assert a.name == "a.pdf" and b.name == "a_1.pdf" and save_upload(tmp_path, "a.pdf", b"one") == a
 
 
+def _demo_section(client) -> str:
+    """Settings → Data & backups' Demo invoices section ("" when the page has none)."""
+    page = client.get("/settings/data").text
+    return page.split('<section class="card" id="demo">', 1)[1].split("</section>", 1)[0] if 'id="demo"' in page else ""
+
+
 def test_demo_invoices_load_and_remove(client, store):
-    response = client.post("/demo/load", data={"back": "/process"}, headers=PAGE)
-    assert response.json()["redirect"].startswith("/process?flash=")
+    """D-221: the demo invoices are loaded and removed in Settings → Data & backups, which says how many are loaded;
+    a first start, the queue and Import invoices say nothing of them."""
+    for page in ("/review", "/process"):
+        assert "demo invoices" not in client.get(page).text.lower(), page
+    section = _demo_section(client)
+    assert "None is loaded" in section and 'action="/demo/load"' in section and "/demo/remove" not in section
+    back = re.search(r'name="back" value="([^"]+)"', section).group(1)
+    response = client.post("/demo/load", data={"back": back}, headers=PAGE)
+    assert response.json()["redirect"].startswith("/review?flash=")
     assert store.demo_count() == 10
-    assert "Remove demo invoices" in client.get("/process").text
-    assert client.post("/demo/remove", data={"back": "/process"}, headers=PAGE).status_code == 400  # not ticked
+    section = _demo_section(client)
+    assert "<b>10 demo invoices loaded.</b>" in section and "Yes, remove the demo invoices" in section
+    assert 'action="/demo/remove"' in section and "/demo/load" not in section
+    for page in ("/review", "/process"):  # the pages keep to their work: no card to load or remove them
+        text = client.get(page).text
+        assert "/demo/remove" not in text and "/demo/load" not in text, page
+    assert 'href="/settings/data#demo"' in client.get("/process").text  # (B-468's warning says where to remove them)
+    back = re.search(r'name="back" value="([^"]+)"', section).group(1)
+    assert client.post("/demo/remove", data={"back": back}, headers=PAGE).status_code == 400  # not ticked
     assert store.demo_count() == 10
-    response = client.post("/demo/remove", data={"back": "/process", "sure": "1"}, headers=PAGE)
+    response = client.post("/demo/remove", data={"back": back, "sure": "1"}, headers=PAGE)
+    assert response.json()["redirect"].startswith("/settings/data?flash=")
     assert "Removed 10 demo invoices" in client.get(response.json()["redirect"]).text
-    assert store.demo_count() == 0
+    assert store.demo_count() == 0 and "None is loaded" in _demo_section(client)
 
 
 def test_the_reading_banner_shows_on_process_and_review_only(client):
@@ -481,13 +503,13 @@ def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(st
 def test_the_demo_is_not_offered_once_there_are_invoices_of_your_own(client, store, tmp_path):
     """B-1504, D-137: after your own invoices are in, 'Load demo invoices' would add the ten samples again (a second
     Pacific PO-77120 shows as a duplicate payment) and mix made-up invoices into your numbers. Not offered then; a
-    demo already loaded can still be removed."""
-    assert "Load demo invoices" in client.get("/process").text
+    demo already loaded can still be removed. (In Settings → Data & backups, the one place they are offered: D-221.)"""
+    assert "Load demo invoices" in _demo_section(client)
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
-    assert "Load demo invoices" not in client.get("/process").text
-    assert "Load demo invoices" not in client.get("/review").text
+    section = _demo_section(client)
+    assert "Load demo invoices" not in section and "no invoices of your own" in section
 
 
 def test_a_stale_page_cannot_load_the_demo_beside_your_own_invoices(client, store, tmp_path):

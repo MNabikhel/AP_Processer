@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{# What is loaded of one of JD Edwards' files (pages/jde_loaded.py, D-221): its rows a page at a time, with a search,
+   filters, a count and a CSV; an Admin changes a row of the chart, the business units or the suppliers by hand. #}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}"><link rel="stylesheet" href="{{ static_url('/static/analytics.css') }}">{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="What is loaded">
+  {% for key, label in lists %}
+  <a href="/jde-files/loaded/{{ key }}" class="{{ 'on' if key == what else '' }}"{% if key == what %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<section class="card stack" id="loaded">
+  <div class="card-head">
+    <div><h4>{{ name }}</h4>
+      <p class="muted">{{ about }}</p></div>
+    <a class="btn" href="/jde-files#{{ card }}"><span class="ms" aria-hidden="true">arrow_back</span>JD Edwards files</a>
+  </div>
+  {% if not total %}
+  {{ ui.empty_note("Nothing is loaded yet.", " Load the file on the JD Edwards files page.", "inbox") }}
+  {% else %}
+  <form class="an-filters" method="get" action="/jde-files/loaded/{{ what }}" role="search">
+    <label class="field an-grow">Search
+      <span class="an-search"><span class="ms" aria-hidden="true">search</span>
+        <input type="search" name="q" value="{{ q }}" placeholder="{{ hint }}"></span></label>
+    {% for f in filters %}
+    <label class="field">{{ f.label }}
+      {% if f.choices is none %}
+      <input type="text" name="{{ f.key }}" value="{{ f.value }}" autocomplete="off" placeholder="all" size="12">
+      {% else %}
+      <select name="{{ f.key }}" data-autosubmit>
+        <option value="">All</option>
+        {% for value, words in f.choices %}<option value="{{ value }}"{% if value == f.value %} selected{% endif %}>{{ words }}</option>{% endfor %}
+      </select>
+      {% endif %}</label>
+    {% endfor %}
+    {% if by_hand is not none %}
+    <label class="check"><input type="checkbox" name="by_hand" value="1"{% if only_by_hand %} checked{% endif %}> Changed by hand ({{ by_hand | num }})</label>
+    {% endif %}
+    <button class="btn sm" type="submit">Search</button>
+    {% if filtered %}<a class="btn sm" href="/jde-files/loaded/{{ what }}">Show all</a>{% endif %}
+  </form>
+  <div class="card-head an-count">
+    <span class="muted" id="loaded-count">{% if filtered %}{{ count | num }} of {{ total | plural(noun) }}{% else %}{{ total | plural(noun) }}{% endif %}{% if rows %} · {{ shown[0] | num }} to {{ shown[1] | num }} shown{% endif %}</span>
+    {% if count %}<a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download {{ "the" if filtered else "all" }} {{ count | plural(noun) }} as CSV</a>{% endif %}
+  </div>
+
+  {% if edit_gone %}{{ ui.empty_note("That row is not in the list any more.", " Nothing was changed.", "warning") }}{% endif %}
+  {% if editing %}
+  <form method="post" action="/jde-files/loaded/{{ what }}/edit" class="card stack" id="edit" data-busy="Saving…">
+    <h4><span class="ms" aria-hidden="true">edit_note</span> Change {{ editing.title }}</h4>
+    <input type="hidden" name="key" value="{{ editing.key }}">
+    <input type="hidden" name="back" value="{{ url() }}">
+    {% for f in editing.fields %}
+    {% set said %}{% if f.file is not none %}<span class="muted">Changed by hand{% if f.by %} by {{ f.by }}{% endif %}; the file says: {{ f.file or "(blank)" }}</span>{% endif %}{% endset %}
+    {% if f.kind == "tick" %}
+    <label class="check"><input type="checkbox" name="{{ f.name }}" value="1"{% if f.value %} checked{% endif %}{% if f.disabled %} disabled{% endif %}>
+      {{ f.label }}{% if f.note %} <span class="muted">({{ f.note }})</span>{% endif %} {{ said }}</label>
+    {% elif f.kind == "fixed" %}
+    <div class="field">{{ f.label }}<div><b>{{ f.value or "—" }}</b> <span class="muted">({{ f.note }})</span></div></div>
+    {% else %}
+    <label class="field">{{ f.label }}{% if f.note %} ({{ f.note }}){% endif %}
+      <input type="text" name="{{ f.name }}" value="{{ f.value or '' }}" autocomplete="off">{{ said }}</label>
+    {% endif %}
+    {% endfor %}
+    <p class="muted">{{ kept }}</p>
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the change</button>
+      <a class="btn" href="{{ url() }}">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
+
+  {% if not rows %}
+  {{ ui.empty_note("No row matches.", " Try another search or filter.", "search_off") }}
+  {% else %}
+  <div class="table-wrap"><table class="apc-table" aria-label="{{ name }}">
+    <thead><tr>
+      {% for c in columns %}<th{% if c.kind in ("amount", "whole") %} class="r"{% endif %}>{{ c.label }}</th>{% if what == "chart" and c.key == "posting_edit" %}<th>Can be posted to</th>{% endif %}{% endfor %}
+      {% if may_edit %}<th></th>{% endif %}
+    </tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr{% if row.by_hand %} data-by-hand{% endif %}>
+        {% for c in columns %}
+        {% set value = row[c.key] %}
+        {% set edit = row.by_hand.get(c.key) if row.by_hand else none %}
+        <td{% if c.kind in ("amount", "whole") %} class="r"{% elif c.kind == "text" %} class="w"{% endif %}>{% if c.kind == "flag" %}{% if value %}<span class="ms ok-ico" aria-label="yes">check</span>{% endif %}{% elif c.kind == "amount" %}{{ "{:,.2f}".format(value or 0) }}{% elif c.key == "status" and what == "suppliers" %}{% if value == "on_hold" %}{{ ui.pill("On hold", "warn") }}{% endif %}{% else %}{{ value if value is not none else "" }}{% endif %}{% if edit %} <span title="The file says: {{ edit.file or '(blank)' }}">{{ ui.pill("By hand", "violet", "edit") }}</span>{% endif %}</td>
+        {% if what == "chart" and c.key == "posting_edit" %}<td>{% if row.object %}{{ "yes" if row.postable else "no" }}{% endif %}</td>{% endif %}
+        {% endfor %}
+        {% if may_edit %}<td class="r"><a class="link" href="{{ url(edit=row.row_key) }}#edit"><span class="ms" aria-hidden="true">edit</span>Change</a></td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% if pages > 1 %}
+  <div class="row" id="pager">
+    {% if page_no > 1 %}<a class="btn sm" href="{{ url(page='') }}"><span class="ms" aria-hidden="true">first_page</span>First</a>
+    <a class="btn sm" href="{{ url(page=page_no - 1 if page_no > 2 else '') }}"><span class="ms" aria-hidden="true">chevron_left</span>Previous</a>{% endif %}
+    <span class="muted">Page {{ page_no | num }} of {{ pages | num }}</span>
+    {% if page_no < pages %}<a class="btn sm" href="{{ url(page=page_no + 1) }}">Next<span class="ms" aria-hidden="true">chevron_right</span></a>
+    <a class="btn sm" href="{{ url(page=pages) }}">Last<span class="ms" aria-hidden="true">last_page</span></a>{% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+  {% if what in ("chart", "units", "suppliers") %}
+  <p class="muted">{% if may_edit %}{{ kept }}{% else %}An Admin changes a row here; a change made by hand is kept when a newer file is loaded.{% endif %}</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if what == "journal" and journals %}
+<section class="card stack" id="files">
+  <h4>The files these lines came from</h4>
+  <div class="table-wrap"><table class="apc-table" aria-label="JD Edwards journals loaded">
+    <thead><tr><th>File</th><th>G/L dates</th><th class="r">Vouchers</th><th>Loaded</th><th></th></tr></thead>
+    <tbody>{% for f in journals %}
+      <tr><td>{{ f.name }}</td><td>{{ f.first_date }} to {{ f.last_date }}</td><td class="r">{{ f.vouchers | num }}</td>
+        <td>{{ f.loaded_at | replace("T", " ") }}{% if f.loaded_by %} · {{ f.loaded_by }}{% endif %}</td>
+        <td class="r">{% if can("/jde-files/journal/forget") %}
+          <form method="post" action="/jde-files/journal/forget" data-confirm="Forget {{ f.name }}? Its {{ f.vouchers | num }} vouchers are no longer learned from.">
+            <input type="hidden" name="file_id" value="{{ f.id }}">
+            <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete</span>Forget this file</button>
+          </form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% if what == "vouchers" and total and can("/exports/register/clear") %}
+<section class="card stack" id="forget">
+  <h4>Forget this list</h4>
+  <p class="muted">Invoices are then no longer checked against it, until a list is loaded again.</p>
+  <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ total | num }} bills? Invoices are then no longer checked against it.">
+    <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Clear the list</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
