@@ -3,6 +3,7 @@
 (the account's name, its business unit, why it was coded so; or why it is left for a person, with the accounts
 offered), and what the server does with what is typed. An install without a chart keeps its own row."""
 
+import json
 import re
 
 import pytest
@@ -205,3 +206,84 @@ def test_an_install_without_a_chart_keeps_its_screen(demo_template, tmp_path):
     assert '<section class="card inv-details">' in page.text and "data-more-details" not in page.text
     answer = page.check()
     assert "keyed" not in answer["sections"] and "lines" not in answer
+
+
+# --- tax on every line (W4) -----------------------------------------------------------------------------------------
+
+
+def test_every_line_says_which_tax_was_charged_and_how_much_each_tax_its_own_amount(
+    chart_company, chart_company_client
+):
+    """The Quebec invoice: the GST is recovered, the QST stays in the lines. Each line shows the two amounts apart,
+    the amount keyed for it under its Amount box, and under the lines one sentence a tax."""
+    page = _page(chart_company, chart_company_client, "quebec")
+    answer = page.check()
+    first, second = answer["lines"]
+    assert "GST <b>50.00</b>" in first["tax"] and "QST <b>99.75</b> · in the line" in first["tax"]
+    assert "GST <b>12.00</b>" in second["tax"] and "QST <b>23.94</b> · in the line" in second["tax"]
+    assert first["has_keyed"] and "keyed <b>1,099.75</b>" in first["keyed"]
+    assert second["has_keyed"] and "keyed <b>263.94</b>" in second["keyed"]
+    assert "≠" not in first["tax"] and ">read<" not in first["tax"]  # the usual tax, worked out from the total
+    said = answer["sections"]["taxline"]
+    assert "GST: lines taxed 1,240.00 × 5% = 62.00 · printed 62.00" in said and "(recovered: on the pay item)" in said
+    assert "QST: lines taxed 1,240.00 × 9.975% = 123.69" in said and "(not recovered: inside the lines)" in said
+    rows = _rows(page.text)  # the page as drawn says the same as the check's answer
+    assert "GST <b>50.00</b>" in rows[0] and "keyed <b>263.94</b>" in rows[1] and "has-keyed" in rows[0]
+    assert "Show the tax table" in page.text
+
+
+def test_a_line_with_no_tax_kept_in_it_shows_no_keyed_amount(chart_company, chart_company_client):
+    (row,) = _page(chart_company, chart_company_client, "one_line").check()["lines"]
+    assert "GST <b>240.00</b>" in row["tax"] and not row["has_keyed"] and not row["keyed"]
+
+
+def test_a_line_whose_tax_is_not_the_invoices_usual_one_is_marked(chart_company, chart_company_client):
+    page = _page(chart_company, chart_company_client, "four_lines")
+    codes = page.form["line_tax_code"]
+    form = {**page.form, "line_tax_code": [*codes[:3], "EXEMPT"]}
+    answer = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()
+    *usual, odd = [row["tax"] for row in answer["lines"]]
+    assert all("≠" not in tax and "odd" not in tax for tax in usual)
+    assert "≠" in odd and 'class="tx-list odd"' in odd and "no tax" in odd
+
+
+def _with_a_tax_printed_on_its_line(store, invoice_id: int, read: dict[str, float]) -> None:
+    proposed = store.get_invoice(invoice_id)["ai_output"]
+    proposed["line_items"][0]["taxes_read"] = read
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(proposed), invoice_id))
+
+
+def test_a_tax_amount_printed_on_a_line_is_marked_read_and_survives_the_save(chart_company, chart_company_client):
+    """B-2207: the form posts no tax amount for a line, and the coding rebuilt from it dropped the one the invoice
+    prints on the line."""
+    store = chart_company.store
+    invoice_id = chart_company.invoices["one_line"][1]
+    _with_a_tax_printed_on_its_line(store, invoice_id, {"GST": 240.0})
+    page = ReviewPage(chart_company_client, invoice_id)
+    (row,) = page.check()["lines"]
+    assert 'GST <b>240.00</b> <i class="rd"' in row["tax"] and ">read</i>" in row["tax"]
+    assert page.approve()["ok"]
+    assert store.get_invoice(invoice_id)["final_output"]["line_items"][0]["taxes_read"] == {"GST": 240.0}
+
+
+def test_a_tax_printed_for_another_amount_is_not_the_lines(chart_company, chart_company_client):
+    store = chart_company.store
+    invoice_id = chart_company.invoices["one_line"][1]
+    _with_a_tax_printed_on_its_line(store, invoice_id, {"GST": 240.0})
+    page = ReviewPage(chart_company_client, invoice_id)
+    form = {**page.form, "line_amount": ["4000.00"]}
+    (row,) = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()["lines"]
+    assert ">read</i>" not in row["tax"]  # worked out again for the amount typed
+
+
+def test_two_tax_areas_on_one_invoice_say_why_the_voucher_is_held():
+    from types import SimpleNamespace
+
+    from ap_coder.coding.validation import Issue
+
+    taxes = SimpleNamespace(two_tax_areas=True, check=[], notes=())
+    held = Issue("error", "JDE_TAX_AREA", "the lines are in two tax areas: key two pay items")
+    assert account_lines.tax_said(taxes, [held])["hold"] == "The lines are in two tax areas: key two pay items"
+    assert account_lines.tax_said(taxes, [])["hold"] == account_lines.TWO_AREAS
+    assert account_lines.tax_said(SimpleNamespace(two_tax_areas=False, check=[], notes=()), [held])["hold"] == ""

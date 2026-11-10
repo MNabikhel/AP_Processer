@@ -718,17 +718,12 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .acct-row.is-check input[data-account] {border-color: var(--lg-warning); background-color: var(--lg-warning-weak);}
 .inv-lines-grid.acct td.c-del {justify-content: center;}
 .icon-btn.acct-menu:hover {background: var(--lg-nav-hover); color: var(--lg-text);}
-.inv-lines-grid.acct .c-cap {display: flex; gap: 0 6px; min-width: 0; padding: 0 2px 1px; font-size: 11.5px;
-  line-height: 15px; color: var(--lg-muted); white-space: nowrap; overflow: hidden;}
-.c-cap .acct-name {flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
-  color: var(--lg-text);}
-.c-cap .acct-unit {flex: 0 2 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;}
-.c-cap .acct-unit::before, .c-cap .acct-why::before {content: "· ";}
-.c-cap .acct-why {flex: 0 0 auto; max-width: 72%; overflow: hidden; text-overflow: ellipsis;}
+/* The caption reads as one sentence and wraps: the name, the business unit and the reason are never cut. */
+.inv-lines-grid.acct .c-cap {min-width: 0; padding: 0 2px 1px; font-size: 11.5px; line-height: 15px;
+  color: var(--lg-muted); overflow-wrap: anywhere;}
+.c-cap .acct-name {font-weight: 600; color: var(--lg-text);}
+.c-cap .acct-unit::before, .c-cap .acct-why::before {content: " · ";}
 .c-cap .acct-why .ms {font-size: 13px; vertical-align: -2px; margin-right: 2px;}
-/* the line in hand shows its caption whole */
-.inv-lines-grid.acct tr[data-row]:focus-within .c-cap {white-space: normal; flex-wrap: wrap;}
-.inv-lines-grid.acct tr[data-row]:focus-within .c-cap .acct-why {max-width: 100%;}
 .acct-note {margin: 2px 0 3px; padding: 5px 8px; border-radius: 6px; font-size: 12px; line-height: 17px;
   color: var(--lg-text); overflow-wrap: anywhere;}
 .acct-note p {margin: 0;}
@@ -854,3 +849,36 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 /* A long invoice (more than 8 lines): the accounts offered show for the line in hand; every line still says why. */
 .inv-lines-grid.acct.many tr[data-row]:not(:focus-within) .acct-cands {display: none;}
 .rvw-status li[hidden] {display: none;}
+/* ---- Tax on every line (D-214): under the Tax box each tax with its own amount; under the Amount box the amount
+   keyed when a tax stays in the line; under the lines one sentence a tax. ---- */
+.inv-lines-grid.acct {--areas: "no acct amt del" ". cap cap cap" ". keyed keyed keyed" ". desc tax tax" ". . taxcap taxcap"
+  ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct .c-keyed {grid-area: keyed;} .inv-lines-grid.acct .c-taxcap {grid-area: taxcap;}
+.inv-lines-grid.acct .c-keyed:empty, .inv-lines-grid.acct .c-taxcap:empty {display: none;}
+.inv-lines-grid.acct .c-keyed, .inv-lines-grid.acct .c-taxcap {font-size: 11.5px; line-height: 15px;
+  color: var(--lg-muted); text-align: right; font-variant-numeric: tabular-nums; padding: 0 2px 1px; min-width: 0;}
+.inv-lines-grid.acct .c-keyed b, .tx-list b {color: var(--lg-text); font-weight: 500;}
+.tx-list {display: flex; flex-direction: column; align-items: flex-end;}
+.tx-list .tx {white-space: nowrap;}
+.tx-list .tx.note {white-space: normal; color: var(--lg-warning);}
+.tx-list .rd {font-style: normal; font-size: 10.5px; padding: 0 3px; border: 1px solid var(--lg-border);
+  border-radius: 3px;}
+/* a line whose tax is not the invoice's usual one: the mark, bold amounts, an amber edge (not colour alone) */
+.tx-list.odd {padding-right: 4px; border-right: 2px solid var(--lg-warning);}
+.tx-list.odd b {font-weight: 700;}
+.tx-list .ne {font-weight: 700; color: var(--lg-warning);}
+.inv-taxline {list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px;
+  line-height: 18px; font-variant-numeric: tabular-nums;}
+.inv-taxline li {display: flex; gap: 6px; align-items: flex-start; margin: 0; min-width: 0; overflow-wrap: anywhere;}
+.inv-taxline .ms {font-size: 16px; flex: none; margin-top: 1px; color: var(--lg-subtle);}
+.inv-taxline li.ok .ms {color: var(--lg-success);} .inv-taxline li.bad .ms {color: var(--lg-danger);}
+.inv-taxline li.hold {padding: 4px 8px; border-radius: 6px; background: var(--lg-danger-weak);}
+.inv-taxtable {margin-top: 4px;}
+.inv-taxtable > summary {cursor: pointer; display: inline-block;}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--areas: "no acct amt desc tax del" ". cap cap . taxcap ." ". slot slot slot slot slot"
+    ". more more more more more";}
+  .inv-lines-grid.acct tr.has-keyed {grid-template-areas: "no acct amt desc tax del" ". cap keyed . taxcap ."
+    ". slot slot slot slot slot" ". more more more more more";}
+  .inv-lines-grid.acct tr:not(.has-keyed) .c-keyed {display: none;}
+}

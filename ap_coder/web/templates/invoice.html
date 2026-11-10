@@ -378,7 +378,14 @@
       {% endif %}
       {# The Tax check (D-64): each tax charged or marked, worked out again from the lines' tax codes at the official
          rate, against what the invoice charges; then the subtotal and the total. Drawn again after each edit. #}
+      {% if grid.account %}{# one sentence a tax under the lines; the whole table a click away (D-214) #}
+      <div class="inv-taxline-wrap" data-live="taxline" aria-live="polite">{{ live_ui.taxline(live, inv.id) }}</div>
+      <details class="inv-taxtable"><summary class="link small">Show the tax table</summary>
       <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
+      </details>
+      {% else %}
+      <div class="inv-taxcheck-wrap" data-live="taxcheck" aria-live="polite">{{ live_ui.taxcheck(live, inv.id) }}</div>
+      {% endif %}
       <script type="application/json" id="tax-code-labels">{{ grid.tax_code_labels | tojson }}</script>
       <script type="application/json" id="tax-marks">{{ grid.tax_marks | tojson }}</script>
       <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>

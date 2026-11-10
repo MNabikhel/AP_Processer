@@ -685,7 +685,7 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     mod = templates.env.get_template("_invoice_live.html").module
     names = ("summary", "checks", "amounts", "reasons", "suggest", "po", "taxcheck", "posting", "bar", "jde")
     if live.get("account"):  # with a chart of accounts: the line of what is keyed on the pay item (D-214)
-        names += ("keyed",)
+        names += ("keyed", "taxline")
     if not live["ok"]:  # a field to fix: the coding can't be built, so the rest keeps its last state
         names = ("checks", "amounts", "taxcheck", "posting", "bar")
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
@@ -702,8 +702,10 @@ def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
     if not grid.get("account"):
         return None
     mod = templates.env.get_template("_invoice_lines.html").module
-    return [{"state": row["acct"]["state"], "text": row["acct"]["text"], "cap": str(mod.acct_cap(row["acct"])),
-             "slot": str(mod.acct_slot(row["acct"]))} for row in grid["lines"]]  # fmt: skip
+    return [{"state": a["state"], "text": a["text"], "cap": str(mod.acct_cap(a)), "slot": str(mod.acct_slot(a)),
+             "tax": str(mod.acct_tax(a)), "keyed": str(mod.acct_keyed(a)),
+             "has_keyed": bool(a["taxes"] and a["taxes"]["keyed"])}
+            for a in (row["acct"] for row in grid["lines"])]  # fmt: skip
 
 
 def _reference(store: Store) -> ReferenceData:

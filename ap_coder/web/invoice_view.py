@@ -1712,6 +1712,17 @@ class Analysis:
     taxes: Any = None  # each line's taxes (``taxmath.invoice_taxes``), worked out once, with a chart of accounts
 
 
+def keep_taxes_read(coding: InvoiceCoding, stored: list[dict[str, Any]]) -> None:
+    """A line's tax amounts as the invoice prints them on it (``LineItem.taxes_read``) stay with the line through
+    the review screen, whose form posts no such field: each line takes those of the stored line it pairs with, while
+    its amount is the one printed (a part of a split line, or a line whose amount was corrected, has no printed tax
+    of its own: its tax is worked out)."""
+    for before, li in pair_lines(stored, list(coding.line_items)):
+        read = (before or {}).get("taxes_read")
+        if read and li.taxes_read is None and abs(_number(before.get("amount")) - li.amount) < 0.005:
+            li.taxes_read = dict(read)
+
+
 def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     """Whether the reviewer changed the amounts as read and they now add up (subtotal + tax = total, the tax lines
     = the tax): capture's "as printed, … ≠ total" no longer says anything about the invoice on screen (B-662)."""
@@ -1809,6 +1820,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
                                               UNASSIGNED if has_cc else "", coding_rules)  # fmt: skip
     problems = [plain_problem(p) for p in problems]
+    if coding is not None:
+        keep_taxes_read(coding, start.get("line_items") or [])
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
@@ -1875,6 +1888,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     live = {
         "ok": True,
         "account": taxes is not None,  # a chart of accounts: the review screen of D-214
+        "tax_said": account_lines.tax_said(taxes, report.issues) if taxes is not None else None,
         "problems": [],
         "amount_line": _amount_line(header),
         "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax),

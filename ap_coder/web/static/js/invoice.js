@@ -176,6 +176,7 @@ function applyLineViews(views, posted) {
     const view = views[i];
     row.classList.toggle("is-fix", view.state === "fix");
     row.classList.toggle("is-check", view.state === "check");
+    row.classList.toggle("has-keyed", Boolean(view.has_keyed));
     row.querySelectorAll("[data-live-line]").forEach((cell) => {
       const html = view[cell.dataset.liveLine];
       if (typeof html === "string" && cell.innerHTML !== html) cell.innerHTML = html; // the server's, escaped

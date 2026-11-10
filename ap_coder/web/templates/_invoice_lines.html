@@ -75,9 +75,26 @@
 {%- endif %}
 {%- endmacro %}
 
+{# Under the Tax box: each tax charged on the line with its own amount ("read" when the invoice prints it on the
+   line, else worked out), "≠" and bold when the line's tax is not the invoice's usual one. ``t``: tax_view. #}
+{% macro acct_tax(a) -%}
+{%- set t = a.taxes -%}
+{%- if t %}<span class="tx-list{% if t.unusual %} odd{% endif %}" title="{{ t.label }}{% if t.unusual %}: not the tax of most of this invoice{% endif %}">
+  {%- if t.unusual %}<span class="ne" aria-label="Not the invoice's usual tax">≠</span>{% endif %}
+  {%- for r in t.rows %}<span class="tx">{{ r.name }} <b>{{ r.amount }}</b>{% if r.read %} <i class="rd" title="Printed on this line of the invoice">read</i>{% endif %}{% if r.where %} · {{ r.where }}{% endif %}</span>{% endfor %}
+  {%- if not t.rows %}<span class="tx">no tax</span>{% endif %}
+  {%- for n in t.notes %}<span class="tx note">{{ n }}</span>{% endfor %}</span>
+{%- endif %}
+{%- endmacro %}
+
+{# Under the Amount box, when a tax stays in the line: the amount keyed for it. #}
+{% macro acct_keyed(a) -%}
+{%- if a.taxes and a.taxes.keyed %}<span title="The line with the tax that is not recovered: the amount keyed into the ledger for it">keyed <b>{{ a.taxes.keyed }}</b></span>{% endif %}
+{%- endmacro %}
+
 {% macro account_row(row, g, key) -%}
 {%- set a = row.acct or g.acct_empty %}
-<tr data-row="{{ key }}" class="acct-row{% if a.state %} is-{{ a.state }}{% endif %}"{% if row.tax_inferred %} data-tax-inferred="{{ row.tax_inferred }}"{% endif %}>
+<tr data-row="{{ key }}" class="acct-row{% if a.state %} is-{{ a.state }}{% endif %}{% if a.taxes and a.taxes.keyed %} has-keyed{% endif %}"{% if row.tax_inferred %} data-tax-inferred="{{ row.tax_inferred }}"{% endif %}>
   <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
     <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
     <input type="hidden" name="line_number" value="{{ num(row.line_number) }}" form="inv"><span class="acct-no" data-line-no>{{ num(row.line_number) }}</span></td>
@@ -95,6 +112,8 @@
     <span class="inv-taxnote" data-tax-note{% if not mark %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-tax-note-text>{{ mark }}</span></span></td>
   <td class="c-del"><button type="button" class="icon-btn acct-menu" data-row-menu tabindex="-1" title="More for this line: split, copy the account above, insert, delete (or right-click, or Shift+F10)" aria-label="More for this line" aria-haspopup="menu"><span class="ms" aria-hidden="true">more_vert</span></button></td>
   <td class="c-cap" id="cap-{{ key }}" data-live-line="cap">{{ acct_cap(a) }}</td>
+  <td class="c-keyed" data-live-line="keyed">{{ acct_keyed(a) }}</td>
+  <td class="c-taxcap" data-live-line="tax">{{ acct_tax(a) }}</td>
   <td class="c-slot" data-live-line="slot">{{ acct_slot(a) }}</td>
   <td class="c-more" data-row-more hidden>
     <label class="field">Quantity<input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv"></label>

@@ -170,6 +170,20 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
     return views
 
 
+TWO_AREAS = ("This invoice charges two federal taxes or rates: its lines are in two tax areas, and one voucher's pay "
+             "item takes one. Check which lines carry each tax")  # fmt: skip
+
+
+def tax_said(taxes: InvoiceTaxes, issues: Any = ()) -> dict[str, Any]:
+    """The tax check for under the lines, one sentence a tax (``TaxCheckLine.text``, with where the tax goes), and,
+    when the invoice's lines are in two tax areas, why the voucher is held (the JD Edwards check's own words)."""
+    hold = ""
+    if taxes.two_tax_areas:
+        hold = next((_sentence(i.message) for i in issues or () if i.code == "JDE_TAX_AREA"), TWO_AREAS)
+    return {"lines": [{"ok": c.ok, "text": c.text, "goes": c.goes} for c in taxes.check], "hold": hold,
+            "notes": list(taxes.notes)}  # fmt: skip
+
+
 def money(value: float) -> str:
     return f"{value:,.2f}"
 

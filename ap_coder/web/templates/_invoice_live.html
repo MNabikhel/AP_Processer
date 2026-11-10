@@ -334,3 +334,15 @@
 <div class="inv-keyed-line{% if j.not_ready %} not-ready{% endif %}" title="{{ j.keyed }}"><span class="k">{{ said[0] }}</span> <span class="v">{{ said[2] }}</span></div>
 {% endif %}
 {%- endmacro %}
+
+{# With a chart of accounts (D-214): the tax check under the lines, one sentence a tax (the lines taxed x the rate
+   against what is printed, and where the tax goes), and why the voucher is held when its lines are in two tax areas.
+   ``live.tax_said``: account_lines.tax_said. The whole Tax check table is under "Show the tax table". #}
+{% macro taxline(live, invoice_id) -%}
+{% set said = live.tax_said %}
+{% if said and (said.lines or said.hold or said.notes) %}<ul class="inv-taxline" aria-label="Tax check, one line for each tax">
+  {% for c in said.lines %}<li class="{{ 'ok' if c.ok else 'bad' }}"><span class="ms" aria-hidden="true">{{ 'check_circle' if c.ok else 'error' }}</span><span>{{ c.text }}{% if c.goes %} <span class="muted">({{ c.goes }})</span>{% endif %}</span></li>{% endfor %}
+  {% for n in said.notes %}<li class="note"><span class="ms" aria-hidden="true">info</span><span>{{ n }}</span></li>{% endfor %}
+  {% if said.hold %}<li class="bad hold" data-tax-hold><span class="ms" aria-hidden="true">block</span><span>{{ said.hold }}</span></li>{% endif %}
+</ul>{% endif %}
+{%- endmacro %}
