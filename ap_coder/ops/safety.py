@@ -12,14 +12,23 @@
   (its backups, server-update's record in server.json, its write-ahead log, the sign-in codes' key, the access log,
   invoice files) is never replaced by a new, empty one: the server refuses to start and says to restore a backup,
   or ``serve --new-database`` to begin again on purpose. A laptop's first start makes its database, as always.
+* **Never opened without sign-in by accident** (D-211). A data folder a server-mode AP Coder serves, or was set up to
+  serve (``team_server``: one answers on it now; its database has sign-in accounts; the sign-in codes' key or its
+  server.json is there), is not started in laptop mode, by the launcher's double-click or ``serve`` by hand: stopped
+  for the night or not. Laptop mode again on the same data is ``serve --without-sign-in``, on purpose, and only while
+  the server is stopped.
 
-Standard library only; nothing is asked of the network.
+Standard library only (the store is asked for the accounts where its packages are installed); nothing is asked of the
+network (the dashboard of this computer is asked whether it runs).
 """
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import re
+import socket
 import subprocess
 import sys
 from collections.abc import Callable
@@ -248,3 +257,101 @@ def doctor_checks(data: Path, db: Path, server: bool) -> list[tuple[str, str, st
         else:
             out.append(("server database", "PASS", f"{db}" if db.exists() else "none yet: the first start makes it"))
     return out
+
+
+# --- A data folder that serves a team: never opened without sign-in by accident (D-211) -------------------------------
+
+WITHOUT_SIGN_IN = "--without-sign-in"  # serve's option (the launcher passes it on): laptop mode again, on purpose
+
+
+def sign_in_accounts(db: Path) -> int:
+    """How many sign-in accounts (server mode's, D-97) the database ``db`` holds (``core/store/users.py``: only read,
+    no Store opened on it). 0 also where the store can't be loaded: the launcher's first phase in a new AP Coder
+    folder runs before the packages are installed, and is told by the sign-in codes' key instead."""
+    try:
+        from ..core.store.users import sign_in_accounts as count
+    except ImportError:
+        return 0
+    return count(db)
+
+
+@dataclasses.dataclass(frozen=True)
+class TeamServer:
+    """A data folder a server-mode AP Coder serves, or was set up to serve (:func:`team_server`)."""
+
+    running: bool  # a server-mode AP Coder answers on it now, on this computer
+    address: str  # where the team signs in ("": it is stopped, and no server.json says)
+    accounts: int  # the sign-in accounts in its database
+    settings: str  # its server.json ("": none)
+    key: bool = False  # the sign-in codes' key is in the data folder: someone set up their authenticator app
+
+    @property
+    def signs(self) -> str:
+        """What shows it, in words."""
+        found = []
+        if self.accounts:
+            found.append(f"{self.accounts} sign-in account{'s' if self.accounts != 1 else ''} in its database")
+        elif self.key:
+            found.append("the sign-in codes' key, authenticator.key")
+        if self.settings:
+            found.append(f"its server settings, {self.settings}")
+        return " and ".join(found)
+
+    def refusal(self, on_purpose: bool = False) -> tuple[str, str]:
+        """(why AP Coder must not start in laptop mode on this data, what to do: no full stop, it may end with a
+        command); ("", "") when it may: only ``on_purpose`` (``--without-sign-in``), and only while the server is
+        stopped."""
+        if self.running:
+            return (f"AP Coder is serving your team from this computer (sign in at {self.address}): it was not "
+                    "started a second time.",
+                    f"Use it in your browser, at {self.address}. Two AP Coders never use the same data at once"
+                    + (f": {WITHOUT_SIGN_IN} works only once the server is stopped" if on_purpose else ""))  # fmt: skip
+        if on_purpose:
+            return "", ""
+        at = f", then sign in at {self.address}" if self.address else ""
+        return (f"AP Coder on this computer is set up to serve your team, with sign-in ({self.signs}), and its server "
+                "is stopped now: it was not started without sign-in.",
+                f"Start the server again (python -m ap_coder service start, or the way it is started here){at}. To "
+                "open this data in laptop mode again on purpose, with no sign-in for whoever uses this computer: "
+                f"python -m ap_coder serve {WITHOUT_SIGN_IN}")  # fmt: skip
+
+    def on_purpose(self) -> str:
+        """What a laptop-mode start says once ``--without-sign-in`` let it open this data."""
+        return (f"WARNING: opened in laptop mode on purpose ({WITHOUT_SIGN_IN}): this data folder is set up to serve "
+                f"a team ({self.signs}), and there is no sign-in on this computer now. The accounts stay in the "
+                "database, unused, until AP Coder runs as the server again.")  # fmt: skip
+
+
+def team_server(data: Path, db: Path) -> TeamServer | None:
+    """The server-mode AP Coder the data folder ``data`` (its database ``db``) belongs to; None for a laptop's own.
+    Any of these tells: a server-mode AP Coder answers for it now (its server file's port, or server.json's, asked on
+    this computer over HTTPS, the certificate not checked, and over HTTP: ``/healthz`` says ``server_mode``); its
+    database holds sign-in accounts; the sign-in codes' key (authenticator.key) or its server.json is in the folder.
+    All but the first hold while the server is stopped."""
+    from . import service
+    from .offline import listening
+
+    marker = service.config_path(data)
+    try:
+        settings = service.settings(data) if marker.is_file() else None
+    except service.SettingsError:  # (damaged: still a server's)
+        settings = None
+    try:
+        record = json.loads((data / service.SERVER_FILE).read_text(encoding="utf-8"))
+        port = int(record.get("port") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        port = 0
+    port = port or (settings.port if settings else 0)
+    answer = None
+    if port and listening(port):  # (a closed port is told in 0.3 s; nothing names one on a laptop that is not running)
+        answer = service.dashboard_answer(data, settings or service.ServerSettings(port=port))
+    scheme = answer[0] if answer and answer[1].get("server_mode") else ""
+    accounts, key = sign_in_accounts(db), (data / "authenticator.key").is_file()
+    if not (scheme or accounts or key or marker.is_file()):
+        return None
+    running = bool(scheme)
+    if settings and not running:  # (stopped: the server runs only over HTTPS, but for a first test)
+        scheme = "http" if settings.insecure_http else "https"
+    name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
+    address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
+    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key)

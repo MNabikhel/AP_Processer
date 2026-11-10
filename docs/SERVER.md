@@ -449,8 +449,12 @@ up to 200 files and 250 MB per upload, each file up to 50 MB (a saved email 100 
 120 uploads an hour; more is refused with a plain message. A larger batch: an Admin puts the files in the invoices
 folder.
 
-Don't double-click `APProcessor.bat` on the server once the service runs: it would start a second AP Coder on the same
-data. Use `service stop` / `service start`.
+A double-click on `APProcessor.bat` on the server (or on a desktop shortcut left from before it was the server) starts
+no second AP Coder on the server's data: while the server runs it opens the server's address in the browser, and
+while it is stopped it says so and starts nothing, since the data has sign-in accounts (or the sign-in codes' key, or
+its `server.json`). The same holds for `python -m ap_coder serve` without `--server`. Stop and start the server with
+`service stop` / `service start`. To open that data on this computer alone again, with no sign-in, takes a step made
+on purpose: `python -m ap_coder serve --without-sign-in`, only while the server is stopped (D-211).
 
 ## 7. The first admin
 
@@ -1134,8 +1138,8 @@ LaunchDaemon itself never changes. `apc server-update --back` points the link ba
 next start as section 11 says, except what only root can do (the link): then the service stays stopped and its log
 says to run `apc server-update` again.
 
-Don't double-click `APProcessor.command` on the Mac mini once the service runs: it would start a second AP Coder on
-the same data. Use `service stop` and `service start`.
+A double-click on `APProcessor.command` on the Mac mini starts no second AP Coder on the server's data (step 6 of the
+Windows steps says what it does instead). Use `service stop` and `service start`.
 
 ### A network share (the backups' second copy, the AP inbox)
 
@@ -1470,8 +1474,8 @@ never change it while the service runs. An update cut short (a power cut) is dea
 11 says, except what only root can do (the link): then the service stays stopped and its log says to run `apc
 server-update` again.
 
-Don't run `APProcessor.command` on the machine once the service runs: it would start a second AP Coder on the same
-data. Use `service stop` and `service start`.
+`APProcessor.command` run on the machine starts no second AP Coder on the server's data (step 6 of the Windows steps
+says what it does instead). Use `service stop` and `service start`.
 
 ### The firewall and remote access
 
