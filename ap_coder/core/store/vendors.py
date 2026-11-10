@@ -255,12 +255,17 @@ def _master_rows_as_kept(rows: list[dict[str, Any]], holding: list[str], words: 
     return kept
 
 
+def _stopped(row: dict[str, Any]) -> bool:
+    """Whether the ERP itself stops this supplier of an import: marked as retired, or its hold payment code holds."""
+    return bool(row.get("marked") or row.get("hold"))
+
+
 def _retired_twin(first: dict[str, Any], row: dict[str, Any]) -> bool:
-    """Whether ``row`` is a retired supplier (marked) by the name of one in use (``first``), under an ERP ID of its
-    own: two vendors, the retired one the second, never merged into the one in use (B-2083)."""
+    """Whether ``row`` is a supplier the ERP stops (``_stopped``) by the name of one in use (``first``), under an ERP
+    ID of its own: two vendors, the stopped one the second, never merged into the one in use, which would be held for
+    it (B-2083)."""
     ident = str(row.get("erp_id") or "").strip()
-    return bool(row.get("marked") and not first.get("marked") and ident
-                and ident != str(first.get("erp_id") or "").strip())  # fmt: skip
+    return bool(_stopped(row) and not _stopped(first) and ident and ident != str(first.get("erp_id") or "").strip())
 
 
 def alike_names(printed: str, name: str) -> bool:
@@ -576,8 +581,9 @@ class VendorsMixin:
         merged: dict[str, dict[str, Any]] = {}
         names: dict[str, list[str]] = {}
         words = self.skip_words()
-        # the suppliers in use first: of two by one name, the one not marked is the vendor of the name (B-2083)
-        rows = sorted(_master_rows_as_kept(rows, self.hold_codes(), words), key=lambda row: bool(row["marked"]))
+        # the suppliers in use first: of two by one name, the one the ERP does not stop is the vendor of the name
+        # (B-2083)
+        rows = sorted(_master_rows_as_kept(rows, self.hold_codes(), words), key=_stopped)
         known = self._master_rows_named(rows, words) if by_erp_id else {}
         for row in rows:
             key = row["key"]

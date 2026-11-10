@@ -430,6 +430,27 @@ def test_of_a_marked_and_an_unmarked_supplier_of_one_name_the_unmarked_is_the_ma
     assert store.find_vendor("Northern Paper Co")["erp_id"] == "410020" and len(store.master_vendors()) == 2
 
 
+def test_a_supplier_on_payment_hold_does_not_hold_the_one_in_use_of_the_same_name(tmp_path):
+    """B-2083: the retired one of two suppliers by one name is as often held by its hold payment code as marked in
+    its name. Merged, the one in use was on hold for it and the held one's number was lost: they are two vendors."""
+    from ap_coder.coding.vendors import voucher_hold
+
+    rows = [{"vendor_name": "Summit Pest Control Inc.", "erp_id": "410011", "hold": "Y"},
+            {"vendor_name": "SUMMIT PEST CONTROL", "erp_id": "410031", "hold": "N"}]  # fmt: skip
+    for n, listed in enumerate((rows, rows[::-1])):
+        store = Store(tmp_path / f"{n}.db")
+        assert store.import_vendor_master([dict(r) for r in listed])["added"] == 2
+        found = store.find_vendor("Summit Pest Control")
+        assert (found["erp_id"], found["erp_hold"], found["status"]) == ("410031", "", "active")
+        assert _said(store, "VENDOR_ON_HOLD", vendor_name="Summit Pest Control") == []
+        assert store.get_vendor("summit pest control #410011")["erp_hold"] == "Y"
+        assert "hold code Y" in voucher_hold(store, "", "410011") and voucher_hold(store, "", "410031") == ""
+    # the same supplier number listed twice, or no number to tell them by: one vendor, on hold if either row is
+    store = Store(tmp_path / "same.db")
+    store.import_vendor_master([{**rows[1], "erp_id": "410011"}, dict(rows[0])])
+    assert store.find_vendor("Summit Pest Control")["erp_hold"] == "Y" and len(store.master_vendors()) == 1
+
+
 # --- People as suppliers: "LAST, FIRST M." ------------------------------------------------------------------------
 
 
