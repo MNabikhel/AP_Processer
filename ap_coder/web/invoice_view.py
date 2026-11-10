@@ -54,7 +54,7 @@ from ap_coder.coding.line_tax import (
     tax_learned,
 )
 from ap_coder.coding.line_tax import options as tax_code_options
-from ap_coder.coding.money import tax_right
+from ap_coder.coding.money import LARGEST, tax_right
 from ap_coder.coding.po import LineLeft, match_invoice, po_label
 from ap_coder.coding.review import (
     codes_to_pick,
@@ -226,19 +226,20 @@ NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount"
 
 
 def _number_cell(value: Any) -> str:
-    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity),
-    which the checks and the page could not use."""
+    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity) or
+    is longer than any amount (27 digits, B-2096), which the checks and the page could not use."""
     text = str(value or "").strip()
     return text if _finite(text) is not None else ""
 
 
 def _finite(value: Any) -> float | None:
-    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number."""
+    """A number as typed or read ("1,234.50", "$12"), None when it is no finite number, or one beyond the largest
+    amount (``money.LARGEST``)."""
     try:
         number = float(str(value or 0).replace(",", "").replace("$", ""))
     except ValueError:
         return None
-    return number if math.isfinite(number) else None
+    return number if abs(number) < LARGEST else None  # (a NaN is under nothing)
 
 
 def _line_number(value: Any) -> int | None:
@@ -600,8 +601,9 @@ def header_values(header: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
                 number = to_number(text)
             except ValueError:
                 number = math.nan
-            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit).
-            if math.isfinite(number):
+            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit); nor
+            # 27 digits, longer than any amount (B-2096).
+            if abs(number) < LARGEST:
                 out[name] = number
             else:
                 problems.append(f"{FIELD_LABELS[name]}: “{text}” is not an amount")

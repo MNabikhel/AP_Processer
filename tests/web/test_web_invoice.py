@@ -222,6 +222,20 @@ def test_a_header_amount_that_is_not_a_finite_number_is_refused(client, store, t
     assert store.get_invoice(inv_id)["status"] == REVIEW
 
 
+@pytest.mark.parametrize("typed", ["9" * 27, "-" + "9" * 40, "1e30", "10000000000000"])
+@pytest.mark.parametrize("field", ["grand_total", "subtotal", "tax_total"])
+def test_a_header_amount_too_long_to_be_one_is_refused_like_a_word(client, store, field, typed):
+    """27 digits typed in Total answered "Something went wrong" (500, decimal.InvalidOperation in the rounding,
+    B-2096): it is not an amount, said under the field as for "abc"."""
+    inv_id = clean_invoice(client, store)
+    data = form_of(store, inv_id, **{field: typed})
+    answer = check(client, inv_id, data)
+    assert not answer["valid"] and not answer["allow"]
+    assert f"“{typed}” is not an amount" in answer["sections"]["checks"]
+    assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).status_code == 400
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+
+
 def test_errors_need_approve_anyway_with_a_reason_but_not_what_makes_the_voucher_invalid(client, store):
     """D-75: a total that doesn't add up can never be approved anyway; another error (a vendor not in the vendor list)
     can, ticked with a reason, which is kept with the approval."""
