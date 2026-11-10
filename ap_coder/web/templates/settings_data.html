@@ -66,11 +66,11 @@
   {{ ui.empty_note("No backups yet", " Press Back up now to make the first one.", "backup") }}
   {% else %}
   <div class="table-wrap">
-    <table class="apc-table">
+    <table class="apc-table fit">
       <thead><tr><th>Backup</th><th>Made</th><th>Holds</th><th>Second copy</th><th>Check</th><th></th></tr></thead>
       <tbody>
         {% for b in backups[:10] %}
-        <tr><td>{{ b.name }}</td><td>{{ b.made }}</td><td>{{ b.holds }}</td>
+        <tr><td class="w">{{ b.name }}</td><td>{{ b.made }}</td><td class="w">{{ b.holds }}</td>
           <td>{% if b.copied %}<span title="{{ b.copy_detail }}">{% if b.copied == "Copied" %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.copied }}</span>{% if b.copied != "Copied" %}<br><span class="muted">{{ b.copy_detail }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{% if b.complete %}<span class="ms ok-ico" aria-hidden="true">check_circle</span>{% else %}<span class="ms err-ico" aria-hidden="true">error</span>{% endif %} {{ b.state }}</td>
           <td class="r"><a class="link" href="/settings/data?restore={{ b.name | urlencode }}#restore"><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore this state</a>

@@ -511,7 +511,7 @@ def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, sto
     store.set_setting("backup_copy_dir", str(share))
     backup = store.backup_now()
     text = client.get("/settings/data").text
-    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    row = text.split(f'<td class="w">{backup.name}', 1)[1].split("</tr>", 1)[0]
     assert "1 invoice" in row and "1 file" in row and "Copied" in row and "Complete" in row
     assert f'href="/settings/data?restore={backup.name}#restore"' in row and "Restore this state" in row
     assert "every invoice file" in text  # the page says what a backup holds and what restoring does
@@ -531,7 +531,7 @@ def test_data_tab_says_what_each_backup_holds_and_restores_its_files(client, sto
     (store.backup_dir() / "files" / sha[:2] / sha).unlink()
     store.set_setting("backup_status", "failed 2026-11-03 09:00: No space left on device")
     text = client.get("/settings/data").text
-    row = text.split(f"<td>{backup.name}", 1)[1].split("</tr>", 1)[0]
+    row = text.split(f'<td class="w">{backup.name}', 1)[1].split("</tr>", 1)[0]
     assert "1 file missing" in row
     assert "The last backup failed 2026-11-03 09:00: No space left on device" in text
 
