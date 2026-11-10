@@ -306,10 +306,15 @@
         </table>
       </div>
       {{ grids.line_template(grid) }}
+      {% if grid.account %}
+      {# The Account boxes' list is fetched, not printed (GET /review/accounts.json): the page holds its seed (D-214). #}
+      <script type="application/json" id="account-seed">{{ account_seed | tojson }}</script>
+      {% else %}
       {# The account picker's lists (static/js/picker.js), printed once for every line's cell (D-56). #}
       <script type="application/json" id="gl-options">{{ grid.gl_options | tojson }}</script>
       {% if grid.has_cc %}<script type="application/json" id="cc-options">{{ grid.cc_options | tojson }}</script>{% endif %}
       <script type="application/json" id="gl-vendor">{{ grid.vendor_accounts | tojson }}</script>
+      {% endif %}
       {% if edit %}
       <div class="row">
         <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
@@ -325,7 +330,7 @@
             <table class="apc-table inv-parts"><thead><tr><th>Account</th><th class="r" data-split-unit>%</th><th></th></tr></thead>
               <tbody data-parts></tbody></table>
             <template id="part-template"><tr>
-              <td><input type="text" name="part_account" aria-label="Account" data-account data-picker="free" data-picker-noun="account" autocomplete="off" spellcheck="false" placeholder="Number or words…"></td>
+              <td><input type="text" name="part_account" aria-label="Account" data-account data-picker="free" data-picker-noun="account" data-picker-sections="account" data-picker-width="680" autocomplete="off" spellcheck="false" placeholder="Number or words…"></td>
               <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent">
                 <input type="number" name="part_amount" step="0.01" aria-label="Amount" hidden></td>
               <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
@@ -352,7 +357,7 @@
           <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Same account for all…</summary>
           <div class="pop-body inv-split-pop">
             <p class="muted">Code every line that has no account yet in one go. Lines that have one keep theirs.</p>
-            <label class="field">Account<input type="text" data-fill-account data-account data-picker="free" data-picker-noun="account" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="Account for the lines without one"></label>
+            <label class="field">Account<input type="text" data-fill-account data-account data-picker="free" data-picker-noun="account" data-picker-sections="account" data-picker-width="680" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="Account for the lines without one"></label>
             <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Use it on the lines without one</button>
           </div>
         </details>
@@ -388,7 +393,7 @@
       {% endif %}
       <script type="application/json" id="tax-code-labels">{{ grid.tax_code_labels | tojson }}</script>
       <script type="application/json" id="tax-marks">{{ grid.tax_marks | tojson }}</script>
-      <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
+      {% if not grid.account %}<div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>{% endif %}{# (with a chart each line says why under its Account box) #}
     </section>
 
 {% if grid.account %}<details class="card inv-fold" data-fold="tax"><summary><span class="ms" aria-hidden="true">chevron_right</span><b>Tax as printed</b> <span class="muted">the invoice's own tax lines</span></summary>{% endif %}

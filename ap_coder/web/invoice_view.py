@@ -1802,6 +1802,20 @@ def _vendor_mail(doc: dict[str, Any], issues: list[Any], lang: str, signature: s
     return {"chosen": chosen, "drafts": drafts}
 
 
+def _rebuilt(header: dict[str, Any], problems: list[str], draft: Draft, ai: dict[str, Any], start: dict[str, Any],
+             has_cc: bool, coding_rules: Any) -> tuple[InvoiceCoding | None, list[str]]:  # fmt: skip
+    """The coding rebuilt from the screen's header (with ``problems``, what its fields already have wrong) and its
+    grids, each line keeping the tax amounts the invoice prints on it; None with what keeps it from being built, in
+    plain words."""
+    coding = None
+    if not problems:
+        coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
+                                              UNASSIGNED if has_cc else "", coding_rules)  # fmt: skip
+    if coding is not None:
+        keep_taxes_read(coding, start.get("line_items") or [])
+    return coding, [plain_problem(p) for p in problems]
+
+
 def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dict[str, Any], draft: Draft,
             signature: str = "", capture: CaptureResult | None = _UNREAD) -> Analysis:  # fmt: skip
     """The screen's coding, checked as approval checks it. ``signature``: the reviewer's name, for the email to the
@@ -1815,13 +1829,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     dates = settle_dates(header, {**ai, **{k: v for k, v in start.items() if k in DATE_FIELDS}})
     header = dates.header
     filled.update(dates.filled)
-    coding, coding_rules = None, store.coding_rules()
-    if not problems:
-        coding, problems = coding_from_inputs(header, lines_frame(draft.lines), tax_frame(draft.taxes), ai,
-                                              UNASSIGNED if has_cc else "", coding_rules)  # fmt: skip
-    problems = [plain_problem(p) for p in problems]
-    if coding is not None:
-        keep_taxes_read(coding, start.get("line_items") or [])
+    coding_rules = store.coding_rules()
+    coding, problems = _rebuilt(header, problems, draft, ai, start, has_cc, coding_rules)
     if coding is None:
         live = {"ok": False, "problems": problems, "amount_line": _amount_line(header),
                 "fallback": stored_summary(inv, start)}  # fmt: skip
@@ -1882,8 +1891,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     from ap_coder.erp import jde
 
     js = jde.load(store) if jde.in_use(store) else None  # JD Edwards is the export in use (D-75)
-    # Each line's taxes, for the rows of an install with a chart of accounts: worked out once a draw (D-214)
-    taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None
+    taxes = invoice_taxes(coding, reference.tax) if account_lines.in_use(reference) else None  # once a draw (D-214)
     an8 = jde.resolve_an8(output, store.vendor_ids(), js) if js is not None else ""
     live = {
         "ok": True,

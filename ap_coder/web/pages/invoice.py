@@ -47,7 +47,7 @@ from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.coding.vendors import MOVED_OFF_HOLD, ON_HOLD, mask_account
-from ap_coder.core import audit, ui
+from ap_coder.core import audit, chart, ui
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.schema import InvoiceCoding
@@ -703,6 +703,7 @@ def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
         return None
     mod = templates.env.get_template("_invoice_lines.html").module
     return [{"state": a["state"], "text": a["text"], "cap": str(mod.acct_cap(a)), "slot": str(mod.acct_slot(a)),
+             "candidates": a["listed"],
              "tax": str(mod.acct_tax(a)), "keyed": str(mod.acct_keyed(a)),
              "has_keyed": bool(a["taxes"] and a["taxes"]["keyed"])}
             for a in (row["acct"] for row in grid["lines"])]  # fmt: skip
@@ -808,6 +809,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
         usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
+        account_seed=account_seed(store, reference, draft.header.get("vendor_name") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
     # What the screen's check did once it opened, a second request (the screen's own checks again, whose answer the
@@ -909,6 +911,68 @@ def vendors_json(request: Request, v: str = "") -> Response:
     again otherwise (its ETag: 304 while it did not change). On the company server every answer behind the login is
     ``no-store`` (B-1070, ``identity._no_store``): nothing of the company's stays in a shared computer's browser."""
     kept = vendor_list(get_store(request))
+    tag = f'"{kept.version}"'
+    headers = {
+        "ETag": f"W/{tag}",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private, max-age=31536000, immutable" if v == kept.version else "private, no-cache",
+    }
+    asked = request.headers.get("if-none-match", "")
+    if any(t.strip().removeprefix("W/") in (tag, "*") for t in asked.split(",")):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        return Response(kept.gzipped, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(kept.body, media_type="application/json", headers=headers)
+
+
+class AccountList(NamedTuple):
+    """The accounts a line may be coded to, as the review screen fetches them (``GET /review/accounts.json``)."""
+
+    body: bytes  # the JSON: {"list": [[account string, the account's name, its business unit's name], ...]}
+    gzipped: bytes
+    version: str  # the JSON's hash: the address's ?v=
+    count: int
+
+
+def account_list(store: Store, reference: ReferenceData | None) -> AccountList | None:
+    """The chart's accounts offered for a line (``AccountPairs.offered``: what may be posted to and nothing holds
+    back), each with its name and its business unit's name, as JSON, gzipped, with its version: made once for a
+    chart and its settings (``summary_memo``, for the reference data's stamp). None without a chart. 9,900 accounts:
+    about 0.6 MB of JSON, 0.15 MB gzipped. Shared: read it, don't change it."""
+    if not account_lines.in_use(reference):
+        return None
+    return store.summary_memo("account_list", lambda: _account_list(reference), "", asked=reference.stamp)
+
+
+def _account_list(reference: ReferenceData) -> AccountList:
+    pairs = reference.pairs
+    rows = [[chart.join_account(unit, code), pairs.description(unit, code), pairs.name_of(unit)]
+            for unit in pairs.business_units() for code in pairs.accounts_of(unit)]  # fmt: skip
+    body = json.dumps({"list": rows}, ensure_ascii=False, separators=(",", ":")).encode()
+    return AccountList(body, gzip.compress(body, mtime=0), hashlib.sha256(body).hexdigest()[:16], len(rows))
+
+
+def account_seed(store: Store, reference: ReferenceData, vendor_name: str) -> dict[str, Any] | None:
+    """What the page holds of the account list (``#account-seed``; the list itself is fetched, as the vendor list
+    is): its address and count, the business unit a line goes to when nothing says otherwise, and the accounts this
+    supplier's lines went to last year, the most used first (the supplier's prior, which the suggestions keep: no
+    query of its own). None without a chart."""
+    kept = account_list(store, reference)
+    if kept is None:
+        return None
+    return {"url": f"/review/accounts.json?v={kept.version}", "count": kept.count,
+            "home": reference.pairs.settings.home_business_unit,
+            "supplier": account_lines.supplier_accounts(store, reference, vendor_name)}  # fmt: skip
+
+
+@router.get("/review/accounts.json")
+def accounts_json(request: Request, v: str = "") -> Response:
+    """The accounts the review screen's Account boxes pick from (``account_list``), fetched as the screen opens,
+    not printed in every page. Kept by the browser as the vendor list is (``vendors_json``, D-160): for good on a
+    laptop while ``v`` is its version, ``no-store`` behind the company server's login. 404 without a chart."""
+    kept = account_list(get_store(request), reference_or_none(get_store(request)))
+    if kept is None:
+        raise HTTPException(status_code=404, detail="No chart of accounts is imported.")
     tag = f'"{kept.version}"'
     headers = {
         "ETag": f"W/{tag}",
@@ -1165,7 +1229,8 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     rows = (_line_views(view.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
             if account_lines.in_use(reference) else None)  # fmt: skip
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
-                         **({"lines": rows} if rows is not None else {}),
+                         **({"lines": rows, "supplier_accounts": account_lines.supplier_accounts(
+                             store, reference, draft.header.get("vendor_name") or "")} if rows is not None else {}),
                          "problems": analysis.problems, "vendor_accounts": used, "header": header,
                          "tax_codes": codes["options"], "tax_code_labels": codes["labels"],
                          "tax_marks": {str(k): v for k, v in (analysis.live.get("tax_marks") or {}).items()},

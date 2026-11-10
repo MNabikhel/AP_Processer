@@ -23,7 +23,8 @@
 import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
-import { enhance, fold, refresh, registerGroups, setAction, setSource, setValue } from "./picker.js";
+import { joined as joinedAccount, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
+import { enhance, fold, follow as followList, refresh, registerGroups, registerSections, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -95,6 +96,8 @@ function applySections(answer, posted = null) {
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
   if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
+  if (Array.isArray(answer.supplier_accounts)) accounts.supplier = answer.supplier_accounts;
+  followList(); // a list open on a box the sections drawn again have moved
   openFlaggedDetails();
   showMailLanguage();
 }
@@ -177,6 +180,7 @@ function applyLineViews(views, posted) {
     row.classList.toggle("is-fix", view.state === "fix");
     row.classList.toggle("is-check", view.state === "check");
     row.classList.toggle("has-keyed", Boolean(view.has_keyed));
+    if (Array.isArray(view.candidates)) box.dataset.candidates = JSON.stringify(view.candidates);
     row.querySelectorAll("[data-live-line]").forEach((cell) => {
       const html = view[cell.dataset.liveLine];
       if (typeof html === "string" && cell.innerHTML !== html) cell.innerHTML = html; // the server's, escaped
@@ -185,7 +189,79 @@ function applyLineViews(views, posted) {
 }
 
 document.addEventListener("input", (e) => {
-  if (e.isTrusted && e.target.matches?.('[data-grid="lines"] input[data-account]')) syncAccount(rowOf(e.target));
+  if (e.target.matches?.('[data-grid="lines"] input[data-account]')) syncAccount(rowOf(e.target));
+});
+
+/* ---------- The account list an Account box picks from (D-214) ----------
+   The page holds only its seed (#account-seed: its address and count, the home business unit, the accounts this
+   supplier's lines went to last year); the list itself is fetched once as an editable screen opens and kept by the
+   browser, as the vendor list is. Until it is here the boxes offer the line's candidates and the supplier's
+   accounts, and say that the chart is loading. */
+let accountSeed = null;
+try {
+  accountSeed = JSON.parse(document.getElementById("account-seed")?.textContent || "null");
+} catch {
+  accountSeed = null;
+}
+const accounts = { entries: null, byValue: new Map(), total: accountSeed?.count || 0, supplier: accountSeed?.supplier || [],
+  home: accountSeed?.home || "", failed: false, loading: null };
+
+function loadAccounts() {
+  if (!accountSeed?.url || accounts.entries || accounts.loading) return accounts.loading;
+  accounts.loading = (async () => {
+    try {
+      const response = await fetchWithin(accountSeed.url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${response.status}`);
+      accounts.entries = prepareAccounts((await response.json()).list);
+      accounts.byValue = new Map(accounts.entries.map((e) => [e.value, e]));
+      accounts.total = accounts.entries.length;
+      accounts.failed = false;
+    } catch {
+      accounts.failed = true; // asked for again when a list next opens
+    }
+    accounts.loading = null;
+    if (document.activeElement?.matches?.("input[data-account]")) refresh(document.activeElement);
+  })();
+  return accounts.loading;
+}
+
+registerSections("account", (box, typed) => {
+  if (!accounts.entries) loadAccounts();
+  let candidates = [];
+  try {
+    candidates = JSON.parse(box.dataset.candidates || "[]");
+  } catch {
+    candidates = [];
+  }
+  return searchAccounts(accounts, { candidates, was: box.dataset.was ?? box.value }, typed);
+});
+if (accountSeed && !readOnly) loadAccounts();
+
+// The account a box held before it is typed in: a business unit typed then offers that account there first.
+document.addEventListener("focusin", (e) => {
+  if (e.target.matches?.("input[data-account]")) e.target.dataset.was = e.target.value;
+});
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.("input[data-account]")) e.target.dataset.was = e.target.value;
+});
+// An account's parts pasted with spaces or tabs between them (three cells of a sheet, JD Edwards' padding) are one
+// string: taken as it is, the list stays closed, and the check says whether the chart has it.
+document.addEventListener("paste", (e) => {
+  const box = e.target;
+  if (!box.matches?.("input[data-account]")) return;
+  const text = (e.clipboardData?.getData("text") || "").trim();
+  const whole = joinedAccount(text) || (/^[\d.]+$/.test(text) && text.includes(".") ? text : "");
+  if (!whole) return; // words: typed as usual, the list finds them
+  e.preventDefault();
+  box.value = whole;
+  box.dataset.was = whole;
+  box.dispatchEvent(new Event("blur")); // the list closes
+  box.focus({ preventScroll: true });
+  const row = rowOf(box);
+  if (row?.closest('[data-grid="lines"]')) {
+    syncAccount(row);
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 });
 document.addEventListener("click", (e) => {
   const use = e.target.closest?.("[data-use-account]"); // an account offered under a line: it fills the box

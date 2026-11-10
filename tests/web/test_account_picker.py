@@ -1,0 +1,134 @@
+"""The Account box's list and the review screen's keys in a real browser (D-214), on the made-up company (the
+``chart_company`` fixture): the groups a box opens on, the search (digits without dots, a business unit's name with an
+account chosen, 50 rows drawn at most), a string the chart does not have, and approving with Ctrl+Enter."""
+
+import pytest
+
+from ap_coder.core import chart
+from ap_coder.core.store import APPROVED, REVIEW
+from ap_coder.web.app import create_app
+from tests.browser import browser_on, wait_until
+from tests.webclient import web_settings
+
+pytestmark = pytest.mark.slow
+
+FIRST = '[data-grid="lines"] [data-row]:nth-child(1) input[data-account]'
+LIST = "[data-picker-layer]:not([hidden])"
+
+
+@pytest.fixture
+def browser(chromium, chart_company):
+    with browser_on(chromium, create_app(web_settings(), chart_company.store, start_reader=False)) as opened:
+        yield opened
+
+
+def _review(browser, chart_company, name: str):
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1366, "height": 768})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    with page.expect_response(lambda r: "/review/accounts.json" in r.url):  # the list, fetched as the screen opens
+        page.goto(f"{base}/review/{chart_company.invoices[name][1]}")
+    page.wait_for_load_state("networkidle")  # the opening check has answered
+    return page, errors
+
+
+def _options(page) -> list[str]:
+    return page.eval_on_selector_all(f"{LIST} .pk-option .pk-code", "els => els.map((e) => e.textContent)")
+
+
+def _groups(page) -> list[str]:
+    return page.eval_on_selector_all(f"{LIST} .pk-group", "els => els.map((e) => e.textContent)")
+
+
+def test_an_empty_box_opens_on_the_lines_candidates_and_typing_digits_without_dots_finds_the_account(
+    browser, chart_company
+):
+    invoice, invoice_id = chart_company.invoices["four_lines"]
+    page, errors = _review(browser, chart_company, "four_lines")
+    proposed = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"][0]
+    page.click(FIRST)
+    page.wait_for_selector(LIST)
+    assert _groups(page)[0] == "Suggested for this line"
+    assert _options(page)[: len(proposed["candidates"])] == [c["account"] for c in proposed["candidates"]]
+    assert "accounts are searched" in page.inner_text(f"{LIST} .pk-note")
+    wanted = invoice.parts[0].account
+    unit, code = chart.split_account(wanted)
+    page.keyboard.type(code.replace(".", ""))  # "14509309": the object and subsidiary, no dot
+    wait_until(page, lambda: bool(_options(page)) and all(o.endswith(code) for o in _options(page)[:1]))
+    assert all(option.endswith(f".{code}") for option in _options(page)), _options(page)
+    page.keyboard.type(" " + unit[-4:])  # and part of the business unit's number
+    wait_until(page, lambda: _options(page)[:1] == [wanted])
+    page.keyboard.press("Enter")  # the first match is the one Enter takes
+    assert page.input_value(FIRST) == wanted and not page.query_selector(LIST)
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1):not(.is-fix)')  # checked: no longer to fix
+    assert "picked by a person" in page.inner_text('[data-grid="lines"] [data-row]:nth-child(1) .c-cap')
+    assert not errors
+
+
+def test_a_business_units_name_typed_over_an_account_offers_the_same_account_there_first(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    pairs = chart_company.store.reference_data().pairs
+    # an account that two business units of different names have: the line is on one, the other's name is typed
+    code, unit, other = next(
+        (code, units[0], u) for code in sorted(pairs.offered_codes()) for units in [pairs.bus_of(code)]
+        for u in units[1:] if pairs.name_of(u) and pairs.name_of(u) != pairs.name_of(units[0]))  # fmt: skip
+    before = chart.join_account(unit, code)
+    page.fill(FIRST, before)
+    page.keyboard.press("Tab")
+    page.click(FIRST)
+    page.wait_for_selector(LIST)
+    assert page.inner_text(f"{LIST} .pk-option.is-active .pk-code") == before  # open on the box's own value
+    page.keyboard.press("Control+a")
+    page.keyboard.type(pairs.name_of(other))
+    wait_until(page, lambda: _groups(page)[:1] == [f"{code} on the business unit typed"])
+    first = _options(page)[0]  # the same account, on a business unit of the name typed
+    assert first.endswith(f".{code}") and first != before
+    assert pairs.name_of(chart.split_account(first)[0]) == pairs.name_of(other)
+    page.keyboard.press("Escape")  # the box is left as typed: never back to the account before without a word
+    assert page.input_value(FIRST) == pairs.name_of(other) and not page.query_selector(LIST)
+    assert not errors
+
+
+def test_enter_on_an_untouched_filled_box_changes_nothing_and_at_most_fifty_rows_are_drawn(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    before = page.input_value(FIRST)
+    page.focus(FIRST)
+    page.keyboard.press("Enter")  # opens the list on the box's own value
+    page.wait_for_selector(f"{LIST} .pk-option.is-active")
+    page.keyboard.press("Enter")  # takes it: the same account
+    assert page.input_value(FIRST) == before and not page.query_selector(LIST)
+    page.keyboard.press("Control+a")
+    page.keyboard.type("0")
+    page.wait_for_selector(f"{LIST} .pk-option")
+    assert len(_options(page)) == 50 and "the first 50 are listed" in page.inner_text(f"{LIST} .pk-note")
+    assert not errors
+
+
+def test_a_whole_string_the_chart_does_not_have_stays_in_the_box_and_is_refused(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    typed = f"{chart_company.truth.company.main_business_unit}.9999.9999"
+    page.click(FIRST)
+    page.keyboard.press("Control+a")
+    page.keyboard.type(typed)
+    page.keyboard.press("Tab")  # nothing reached with the arrows: what was typed stays
+    page.wait_for_selector('[data-grid="lines"] [data-row]:nth-child(1).is-fix')
+    assert page.input_value(FIRST) == typed
+    assert "is not in the chart of accounts" in page.inner_text('[data-grid="lines"] [data-row]:nth-child(1) .c-slot')
+    assert page.is_disabled("[data-approve]")
+    assert not errors
+
+
+def test_ctrl_enter_with_a_list_open_only_closes_it_then_approves(browser, chart_company):
+    page, errors = _review(browser, chart_company, "one_line")
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    page.focus(FIRST)
+    page.keyboard.press("Enter")
+    page.wait_for_selector(LIST)
+    page.keyboard.press("Control+Enter")
+    page.wait_for_timeout(400)
+    assert not page.query_selector(LIST) and store.get_invoice(invoice_id)["status"] == REVIEW  # only closed
+    page.keyboard.press("Control+Enter")  # nothing to fix or to check: approves
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+    assert not errors

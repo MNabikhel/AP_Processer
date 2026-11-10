@@ -47,3 +47,7 @@ td > .pk, .field > .pk, .inv-parts .pk {width: 100%;}
   .pk-option.is-active {outline: 2px solid Highlight; outline-offset: -2px;}
   .pk-option mark {background: Mark; color: MarkText;}
 }
+/* The Account box's list (data-picker-sections="account", D-214): the whole string, the account's name, then its
+   business unit and why it is offered. */
+.pk-option .pk-code {min-width: 21ch;}
+.pk-layer .pk-extra {max-width: 55%;}

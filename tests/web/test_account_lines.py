@@ -5,6 +5,7 @@ offered), and what the server does with what is typed. An install without a char
 
 import json
 import re
+from html import unescape as html_unescape
 
 import pytest
 
@@ -287,3 +288,57 @@ def test_two_tax_areas_on_one_invoice_say_why_the_voucher_is_held():
     assert account_lines.tax_said(taxes, [held])["hold"] == "The lines are in two tax areas: key two pay items"
     assert account_lines.tax_said(taxes, [])["hold"] == account_lines.TWO_AREAS
     assert account_lines.tax_said(SimpleNamespace(two_tax_areas=False, check=[], notes=()), [held])["hold"] == ""
+
+
+# --- the account list (W5) ------------------------------------------------------------------------------------------
+
+
+def _seed(text: str) -> dict:
+    return json.loads(text.split('<script type="application/json" id="account-seed">', 1)[1].split("</script>", 1)[0])
+
+
+def test_the_account_list_is_fetched_once_not_printed_in_the_page(chart_company, chart_company_client):
+    client, store = chart_company_client, chart_company.store
+    page = _page(chart_company, client, "fifteen_lines")
+    seed, pairs = _seed(page.text), store.reference_data().pairs
+    offered = [(unit, code) for unit in pairs.business_units() for code in pairs.accounts_of(unit)]
+    assert seed["count"] == len(offered) > 100 and seed["home"] == pairs.settings.home_business_unit
+    assert 'id="gl-options"' not in page.text and 'id="cc-options"' not in page.text  # no chart in the page
+    answer = client.get(seed["url"])
+    rows = answer.json()["list"]
+    assert [row[0] for row in rows] == [chart.join_account(unit, code) for unit, code in offered]
+    unit, code = offered[0]
+    assert rows[0] == [chart.join_account(unit, code), pairs.description(unit, code), pairs.name_of(unit)]
+    assert all(pairs.offered(*chart.split_account(row[0])) for row in rows)  # nothing reserved, closed or a title
+    assert answer.headers["content-encoding"] == "gzip" and answer.headers["vary"] == "Accept-Encoding"
+    assert answer.headers["cache-control"] == "private, max-age=31536000, immutable"
+    tag = answer.headers["etag"]
+    other = client.get("/review/accounts.json?v=0123", headers={"If-None-Match": 'W/"0123"'})
+    assert other.status_code == 200 and other.headers["cache-control"] == "private, no-cache"
+    unchanged = client.get("/review/accounts.json?v=0123", headers={"If-None-Match": tag})
+    assert unchanged.status_code == 304 and not unchanged.content
+    # the fifteen-line page with the made-up chart: lighter than the same page with the chart printed in it twice
+    assert len(page.text.encode()) < 181_955, len(page.text.encode())
+
+
+def test_the_page_offers_the_suppliers_accounts_and_each_lines_candidates(chart_company, chart_company_client):
+    invoice, _ = chart_company.invoices["four_lines"]
+    page = _page(chart_company, chart_company_client, "four_lines")
+    seed = _seed(page.text)
+    assert {row[0] for row in seed["supplier"]} == set(invoice.supplier.accounts)  # its three accounts last year
+    assert all(lines == 1 and name and unit for _, lines, name, unit in seed["supplier"])
+    proposed = chart_company.store.get_invoice(page.id)["ai_output"]["line_items"]
+    listed = [json.loads(html_unescape(found)) for found in re.findall(r'data-candidates="([^"]*)"', page.text)]
+    assert [[row[0] for row in line] for line in listed[:4]] == [
+        [c["account"] for c in line["candidates"]] for line in proposed]  # fmt: skip
+    answer = page.check()
+    assert answer["supplier_accounts"] == seed["supplier"]
+    assert [row["candidates"] for row in answer["lines"]] == listed[:4]
+
+
+def test_an_install_without_a_chart_has_no_account_list(demo_template, tmp_path):
+    store = copy_database(demo_template, tmp_path / "private" / "ap_coder.db")
+    client = client_for(store)
+    assert client.get("/review/accounts.json").status_code == 404
+    text = client.get(f"/review/{store.list_invoices()[0]['id']}").text
+    assert 'id="account-seed"' not in text and 'id="gl-options"' in text

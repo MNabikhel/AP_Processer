@@ -70,7 +70,7 @@
 {% macro acct_slot(a) -%}
 {%- if a.state == "fix" %}<div class="acct-note fix"><p><span class="ms" aria-hidden="true">error</span><b>To fix:</b> <span data-acct-why>{{ a.note }}</span></p>
   {%- if a.candidates %}<ol class="acct-cands" aria-label="Accounts offered for this line (the list of the Account box has them all)">{% for c in a.candidates[:3] %}
-    <li><button type="button" data-use-account="{{ c.account }}" title="Put {{ c.account }} in the Account box"><span class="s">{{ c.account }}</span><span class="d">{{ c.name }}{% if c.unit %} · {{ c.unit }}{% endif %}</span><span class="e">{{ c.reason }}</span></button></li>{% endfor %}</ol>{% endif %}</div>
+    <li><button type="button" data-use-account="{{ c.account }}"><span class="s">{{ c.account }}</span><span class="d">{{ c.name }}{% if c.unit %} · {{ c.unit }}{% endif %}</span><span class="e">{{ c.reason }}</span></button></li>{% endfor %}</ol>{% endif %}</div>
 {%- elif a.state == "check" %}<div class="acct-note check"><p><span class="ms" aria-hidden="true">visibility</span><b>To check:</b> <span data-acct-why>{{ a.note }}</span></p></div>
 {%- endif %}
 {%- endmacro %}
@@ -100,7 +100,7 @@
     <input type="hidden" name="line_number" value="{{ num(row.line_number) }}" form="inv"><span class="acct-no" data-line-no>{{ num(row.line_number) }}</span></td>
   {# The whole account string in one box (the picker's free kind): what is in it is what is posted, split and
      checked against the chart on the server. The two hidden cells follow it (invoice.js setAccount). #}
-  <td class="c-acct"><input type="text" name="line_account" value="{{ a.text }}" form="inv" data-account data-picker="free" data-picker-noun="account" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="{{ line_label(row, 'Account') }}" aria-describedby="cap-{{ key }}">
+  <td class="c-acct"><input type="text" name="line_account" value="{{ a.text }}" form="inv" data-account data-picker="free" data-picker-noun="account" data-picker-sections="account" data-picker-width="680" data-candidates="{{ a.listed | tojson | forceescape }}" autocomplete="off" spellcheck="false" placeholder="Number or words…" aria-label="{{ line_label(row, 'Account') }}" aria-describedby="cap-{{ key }}">
     <input type="hidden" name="line_gl" value="{{ row.predicted_gl_code or 'UNASSIGNED' }}" form="inv"><input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or 'UNASSIGNED' }}" form="inv"></td>
   <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="{{ line_label(row, 'Amount') }}"></td>
   <td class="c-desc"><textarea name="line_description" rows="1" form="inv" aria-label="{{ line_label(row, 'Description') }}" data-one-line>{{ (row.description or '') | replace('\r', ' ') | replace('\n', ' ') }}</textarea>

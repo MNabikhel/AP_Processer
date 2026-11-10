@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding.review import is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
@@ -29,7 +30,7 @@ GUESS = "The account is AP Coder's guess, not learned yet: check it"
 OFFERED_MOST = 3  # business units offered for an account its line's business unit does not have
 _PARTS = re.compile(r"[\d.\s]+")  # an account's parts pasted with spaces or tabs between them
 EMPTY: dict[str, Any] = {"text": "", "state": "", "name": "", "unit": "", "why": "", "note": "", "candidates": [],
-                         "taxes": None}  # fmt: skip
+                         "listed": [], "taxes": None}  # fmt: skip
 
 
 def in_use(reference: ReferenceData | None) -> bool:
@@ -58,6 +59,26 @@ def posted(text: Any, pairs: chart.AccountPairs | None = None) -> tuple[str, str
     if pairs is not None and unit and not pairs.has_business_unit(unit) and pairs.has_code(text):
         unit, code = "", chart.code_of(*chart.split_code(text))
     return code, unit
+
+
+SUPPLIER_MOST = 8  # of a supplier's accounts last year, offered first in an Account box's list
+
+
+def supplier_accounts(store: Any, reference: ReferenceData, vendor_name: str) -> list[list[Any]]:
+    """The accounts this supplier's lines went to last year and since, the most used first, each [the account
+    string, its lines, its name, its business unit's name]: only those the chart still offers, ``SUPPLIER_MOST`` at
+    most. From the supplier's prior
+    (``supplier_prior.prior_for``, kept in this process): asked once a page or a check, never per key typed."""
+    if not in_use(reference) or not (vendor_name or "").strip():
+        return []
+    pairs = reference.pairs
+    assert pairs is not None
+    used = prior_for(store, vendor_name, always=True).accounts
+    return [
+        [use.account, use.lines, pairs.description(use.business_unit, use.code), pairs.name_of(use.business_unit)]
+        for use in used
+        if use.business_unit and pairs.offered(use.business_unit, use.code)
+    ][:SUPPLIER_MOST]
 
 
 def fill(lines: list[dict[str, Any]], gl: str, cc: str) -> tuple[list[dict[str, Any]], int]:
@@ -137,6 +158,7 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
                 "candidates": _candidates(pairs, before.get("candidates"))}  # fmt: skip
     status = chart.OK if gl in reference.tax.tax_gl_codes() else pairs.status(cc, gl)
     view["name"], view["unit"] = pairs.description(cc, gl), pairs.name_of(cc)
+    view["candidates"] = _candidates(pairs, before.get("candidates"))  # still in the box's list
     same = gl == _code(before.get("predicted_gl_code")) and cc == _code(before.get("predicted_cost_center"))
     view["why"] = why_words(before.get("decided_by") if same else {"source": "person"})
     if status in (chart.NOT_IN_CHART, chart.NOT_POSTABLE, chart.BU_INACTIVE):
@@ -166,6 +188,8 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
         if not all(is_blank(row.get(k)) for k in ("description", "amount")):
             view["taxes"] = tax_view(by_position[position]) if position in by_position else None
             position += 1
+        # what the Account box's list offers first: [account, its name, its business unit's name, why]
+        view["listed"] = [[c["account"], c["name"], c["unit"], c["reason"]] for c in view["candidates"]]
         views.append(view)
     return views
 
