@@ -25,6 +25,7 @@ from ._base import (
     _now,
 )
 from .capture import capture_lookup
+from .dialect import ROWID, like
 from .learning import one_snapshot
 from .reports import OWN_WORK
 from .summary import fetch_rows
@@ -74,6 +75,7 @@ SKIP_WORDS_SETTING = "skip_words"
 SKIP_WORDS = "DO NOT USE, DNU"
 MARKED = "marked {} in the supplier master"  # the note of a vendor on hold for its marker (B-2083)
 MARKED_LIKE = MARKED.format("%")
+_WAS_MARKED = like("vendors.notes")  # (with MARKED_LIKE) a vendor whose note is a marker's: on hold for it
 
 
 def _markers(words: list[str]) -> list[tuple[str, re.Pattern[str]]]:
@@ -412,8 +414,8 @@ class VendorsMixin:
         as a word. A seek in the vendor key's index (B-1582), in the order they were kept."""
         with self._conn() as conn:
             return fetch_rows(conn, "SELECT * FROM vendors WHERE vendor_key = ? OR (vendor_key >= ? AND vendor_key "
-                              "< ?) ORDER BY rowid", (key, f"{key} " if more else f"{key} #",
-                                                      f"{key}!" if more else f"{key} $"))  # fmt: skip
+                              f"< ?) ORDER BY {ROWID}", (key, f"{key} " if more else f"{key} #",
+                                                         f"{key}!" if more else f"{key} $"))  # fmt: skip
 
     def _vendor_named_otherwise(self, name: str) -> dict[str, Any] | None:
         """The vendor of a name no vendor is kept under as it is written. A name with a retired supplier's marker
@@ -525,14 +527,14 @@ class VendorsMixin:
                 # A marked supplier shows the master's name, on hold with its note (AP's own note is kept); one no
                 # longer marked there (its note is still the marker's) is active again under the master's name.
                 conn.execute(
-                    """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
+                    f"""INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
                        terms, default_gl, in_master, qst_number, pst_number, province, erp_hold)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                        ON CONFLICT(vendor_key) DO UPDATE SET
-                       display_name = CASE WHEN excluded.notes != '' OR vendors.notes LIKE ?
+                       display_name = CASE WHEN excluded.notes != '' OR {_WAS_MARKED}
                                       THEN excluded.display_name ELSE vendors.display_name END,
                        notes = CASE WHEN excluded.notes != '' AND vendors.notes = '' THEN excluded.notes
-                               WHEN excluded.notes = '' AND vendors.notes LIKE ? THEN '' ELSE vendors.notes END,
+                               WHEN excluded.notes = '' AND {_WAS_MARKED} THEN '' ELSE vendors.notes END,
                        erp_hold = CASE WHEN ? THEN excluded.erp_hold ELSE vendors.erp_hold END,
                        qst_number = CASE WHEN excluded.qst_number != '' THEN excluded.qst_number
                                     ELSE vendors.qst_number END,
@@ -545,7 +547,7 @@ class VendorsMixin:
                        in_master = 1, updated_at = excluded.updated_at,
                        expected_gst = CASE WHEN excluded.expected_gst != '' THEN excluded.expected_gst
                                       ELSE vendors.expected_gst END,
-                       status = CASE WHEN ? THEN excluded.status WHEN vendors.notes LIKE ? THEN 'active'
+                       status = CASE WHEN ? THEN excluded.status WHEN {_WAS_MARKED} THEN 'active'
                                 ELSE vendors.status END""",
                     (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", marked, now,
                      row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
@@ -779,8 +781,8 @@ class VendorsMixin:
                 if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
                     ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
         with self._conn() as conn:  # the people ("LAST, FIRST M."), by their names as a claim prints them
-            people = conn.execute("SELECT display_name, erp_id FROM vendors WHERE erp_id != '' AND display_name "
-                                  "LIKE '%,%'").fetchall()  # fmt: skip
+            people = conn.execute("SELECT display_name, erp_id FROM vendors WHERE erp_id != '' AND "
+                                  f"{like('display_name')}", ("%,%",)).fetchall()  # fmt: skip
         for key, ident in _people_keys([tuple(r) for r in people], self.skip_words()).items():
             ids.setdefault(key, ident)
         return ids
