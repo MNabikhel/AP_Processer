@@ -11,6 +11,25 @@ def _codes(report):
     return {i.code for i in report.issues}
 
 
+def test_an_invoice_whose_every_account_is_a_guess_is_not_approved_in_one_click(reference, ground_truth):
+    """B-2218: the chat model's pick, an account's name or other vendors' lines decided every account."""
+    gt = copy.deepcopy(ground_truth)
+    for n, li in enumerate(gt["line_items"]):
+        li["decided_by"] = {"source": ("model", "words", "others")[n % 3]}
+    count = len(gt["line_items"])
+    assert count > 1
+    found = [i for i in validate_coding(InvoiceCoding.model_validate(gt), reference).issues
+             if i.code == "ACCOUNTS_ALL_GUESSED"]  # fmt: skip
+    assert [(i.severity, i.message) for i in found] == [("error", (
+        f"{count} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+        "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them"))]  # fmt: skip
+    # One a person, a rule, the vendor's approvals or last year's journal decided: no longer every account.
+    for source in ("person", "rule", "vendor", "supplier"):
+        gt["line_items"][0]["decided_by"] = {"source": source}
+        assert "ACCOUNTS_ALL_GUESSED" not in _codes(validate_coding(InvoiceCoding.model_validate(gt), reference))
+    assert "ACCOUNTS_ALL_GUESSED" not in _codes(validate_coding(InvoiceCoding.model_validate(ground_truth), reference))
+
+
 def test_clean_invoice_passes(reference, ground_truth):
     report = validate_coding(InvoiceCoding.model_validate(ground_truth), reference)
     assert report.issues == []

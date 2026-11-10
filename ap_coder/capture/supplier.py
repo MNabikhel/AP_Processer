@@ -1525,6 +1525,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "VENDOR_ON_HOLD": "the vendor is on hold",
     "FUTURE_INVOICE_DATE": "it is dated in the future",  # B-811
     "FILE_CUT_OFF": "the file looks cut off",  # its end is missing: part of the invoice may be (B-266)
+    "NOT_AN_INVOICE": "it may not be an invoice",  # a statement, a remittance advice, a quote ... (B-2217)
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
     "VENDOR_NEW": "no invoice under this vendor name was approved before",

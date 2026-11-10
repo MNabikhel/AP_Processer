@@ -16,6 +16,7 @@ from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
+from .not_invoice import not_an_invoice
 from .locate import locate
 from .normalize import find_amounts
 from .reader import (
@@ -555,7 +556,9 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                 fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
                 fr.reasons.append(f"scanned at about {coarse:.0f} dpi, coarser than the scans its reading was measured "
                                   "on (150 dpi and up): a person checks it")  # fmt: skip
+    credit = credit_titled(layout)
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages) + layout.pages_left_out,
                          pages_left_out=layout.pages_left_out + layout.pages_unread_locally,
-                         credit_note=credit_titled(layout), pages_not_read=list(layout.not_read))  # fmt: skip
+                         credit_note=credit, pages_not_read=list(layout.not_read),
+                         not_invoice="" if credit else not_an_invoice(layout, fields, items))  # fmt: skip

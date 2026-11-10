@@ -88,7 +88,7 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
     (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address), an invoice date
     no reader found (the coding's ``assumed_date``, the day it was read, is then put in: B-459; None once a person
     gave another), and pages the local readers did not read (a file longer than ``layout.read_pages``, or OCR failed
-    on them), by their numbers (B-2215)."""
+    on them), by their numbers (B-2215), and a document that may not be an invoice (B-2217)."""
     from ..coding.validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
     from .layout import last_pages, read_pages
@@ -134,6 +134,9 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
                     f"({why}): nothing on {'it' if one else 'them'} is in the lines or totals shown; check "
                     f"{'it' if one else 'them'} yourself before approving")  # fmt: skip
         out.append((WARNING, "PAGES_NOT_READ", said))
+    if capture.not_invoice:  # a person rejects it, or checks it as an invoice: never rejected without one (B-2217)
+        out.append((WARNING, "NOT_AN_INVOICE", f"this may not be an invoice: {capture.not_invoice}. If it is not one, "
+                    "reject it (Reject, with the reason); if it is, check it as any other"))  # fmt: skip
     return out
 
 

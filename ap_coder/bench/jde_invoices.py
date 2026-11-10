@@ -358,3 +358,72 @@ def write(folder: str | Path, truth: Truth, invoices: list[Invoice], seed: int =
     out = Path(folder)
     out.mkdir(parents=True, exist_ok=True)
     return [_write_case(out, invoice.name, *render(invoice, truth, seed), False, "") for invoice in invoices]
+
+
+# --- documents that are not invoices -------------------------------------------------------------
+
+OTHER_DOCUMENTS = ("statement", "remittance_advice", "staff_notice", "quote", "packing_slip", "order_confirmation")
+
+
+def _page(*rows: tuple[float, float, str], title: tuple[float, float, str] | None = None) -> bytes:
+    """A letter page with each text at (x, y) points from the top left, the ``title`` larger."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    if title:
+        page.insert_text(title[:2], title[2], fontsize=16)
+    for x, y, text in rows:
+        page.insert_text((x, y), text, fontsize=10)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def other_documents(truth: Truth, on: dt.date | None = None) -> dict[str, bytes]:
+    """What arrives in an invoices folder and is not an invoice, as PDFs by the names of ``OTHER_DOCUMENTS``: a
+    supplier's statement of account (four invoices with their balances), a remittance advice, a notice to staff, a
+    quote, a packing slip and an order confirmation. The supplier is the books' first in use."""
+    on = on or dt.date(truth.company.year + 1, 1, 20)
+    supplier = next(s for s in truth.suppliers if _in_use(s) and s.currency == "CAD")
+    vendor, us = printed_name(supplier.name), printed_name(truth.company.name)
+    head = [(50, 60, vendor), (50, 76, "2210 Meridian Road NE, Calgary, AB T2A 2N6")]
+    to = [(50, 130, f"To: {us}"), (50, 146, "Accounts Payable")]
+    owed = [(f"{71200 + 7 * n}", on - dt.timedelta(days=20 * n + 12), Decimal(412 + 368 * n) + Decimal("0.35"))
+            for n in range(4)]  # fmt: skip
+    table = [row for n, (number, date, amount) in enumerate(owed) for row in (
+        (50, 216 + 16 * n, number), (170, 216 + 16 * n, date.isoformat()), (300, 216 + 16 * n, f"{amount:,.2f}"),
+        (450, 216 + 16 * n, f"{amount:,.2f}"))]  # fmt: skip
+    total = f"{sum(amount for _, _, amount in owed):,.2f}"
+    parts = [row for n, text in enumerate(("Filter cartridge 10 in.", "Gasket kit, nitrile", "Hose clamp 2 in."))
+             for row in ((50, 200 + 16 * n, f"{2 + n}"), (120, 200 + 16 * n, text))]  # fmt: skip
+    prices = [(450, 200 + 16 * n, f"{48 + 31 * n}.50") for n in range(3)]
+    return {
+        "statement": _page(
+            *head, *to, (400, 92, f"Statement date: {on.isoformat()}"), (400, 108, f"Account: {supplier.number}"),
+            (50, 196, "Invoice"), (170, 196, "Date"), (300, 196, "Amount"), (450, 196, "Balance"), *table,
+            (300, 296, "Total outstanding"), (450, 296, total), title=(380, 62, "STATEMENT OF ACCOUNT")),
+        "remittance_advice": _page(
+            (50, 60, us), (50, 76, "Accounts Payable"), (50, 130, f"Paid to: {vendor}"),
+            (400, 92, f"Payment date: {on.isoformat()}"), (400, 108, "Payment no: EFT-004417"),
+            (50, 196, "Invoice number"), (170, 196, "Invoice date"), (300, 196, "Discount"), (450, 196, "Amount paid"),
+            *[(x, y, "0.00" if x == 300 else text) for x, y, text in table], (300, 296, "Total paid"),
+            (450, 296, total), title=(400, 62, "REMITTANCE ADVICE")),
+        "staff_notice": _page(
+            (50, 60, f"{us} - Staff notice"), (50, 110, "The head office will be closed on Monday for the holiday."),
+            (50, 126, "Timesheets are due on Friday at noon. Parking passes are renewed at the front desk."),
+            (50, 158, "Thank you,"), (50, 174, "Office Services")),
+        "quote": _page(
+            *head, *to, (400, 92, "Quote no: Q-20931"), (400, 108, f"Valid until: {on + dt.timedelta(days=30)}"),
+            (50, 180, "Qty"), (120, 180, "Description"), (450, 180, "Price"), *parts, *prices,
+            (380, 270, "Total quoted"), (450, 270, "238.50"), title=(400, 62, "QUOTATION")),
+        "packing_slip": _page(
+            *head, (50, 130, f"Ship to: {us}"), (400, 92, "Order no: SO-118204"),
+            (400, 108, f"Shipped: {on.isoformat()}"), (50, 180, "Qty shipped"), (120, 180, "Description"), *parts,
+            (50, 270, "Received by: ____________________"), title=(400, 62, "PACKING SLIP")),
+        "order_confirmation": _page(
+            *head, *to, (400, 92, "Order no: SO-118204"), (400, 108, f"Order date: {on.isoformat()}"),
+            (50, 180, "Qty"), (120, 180, "Description"), (450, 180, "Price"), *parts, *prices,
+            (380, 270, "Order total"), (450, 270, "238.50"), (50, 310, "An invoice will follow when the order ships."),
+            title=(380, 62, "ORDER CONFIRMATION")),
+    }  # fmt: skip
