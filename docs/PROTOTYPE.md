@@ -61,12 +61,18 @@ delete. The top of the page ticks off what is loaded.
 |---|---|---|---|
 | 1 | Chart of accounts (Excel) | every account string a line may be coded to, and which can be posted to | account master |
 | 2 | Business units (Excel) | their names, and which are closed | business unit master |
-| 3 | Suppliers (Excel) | supplier numbers, names, payment holds | address book and supplier master |
+| 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
 | 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
 | 5 | Vouchers already in JD Edwards (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
 Each upload shows what it found (how many rows, which columns it read as what) before anything is kept. Loading a
 newer file later replaces the older one; what you typed in AP Coder is set aside, not lost.
+
+Box 3 takes both supplier exports and tells them apart by their column names. Each row goes to the supplier of its
+number, so loading one never removes what only the other gives. The vendor information list lists the suppliers of
+every company (about 20,000): it is read in a few seconds, its last row of totals is left out, and the summary says
+how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVERNMENT) or another kind of number
+(a US EIN) is kept as written and compared with nothing.
 
 Under the chart, **The chart's settings** has three boxes worth a look:
 
@@ -115,6 +121,13 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice
      is marked under the lines and in the findings; it does not stop the approval by itself, so look before
      approving.
+   - **Supplier and tax ID** (with the vendor information list loaded): picking a supplier fills its GST/HST
+     number under *More details* when the invoice shows none; a number that was read or typed is never replaced.
+     A number that belongs to one supplier of the list picks that supplier when the box is empty, and offers it
+     with one click (*Use ...*) when another supplier is chosen. A number that differs from the chosen supplier's
+     is an error: *Approve anyway* with a reason approves it, and the keying sheet then says on that voucher
+     "Tax ID differs from the supplier list: confirm before paying". Where people sign in, such a voucher waits
+     for a second approval by an Approver or an Admin before it can be exported.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
 3. **To key into JDE:** **Export** puts the approved invoices on a **keying sheet**: one block a voucher, the
    header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax

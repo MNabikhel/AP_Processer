@@ -691,3 +691,11 @@ def test_with_the_prototype_set_up_and_the_made_up_chart_a_one_line_gst_invoice_
     ]
     jde.show(store, False)
     assert not jde.in_use(store)
+
+
+def test_a_warning_given_for_a_voucher_is_said_first_under_it_and_under_no_other():
+    """A tax ID that differs from the supplier list's, approved by one person alone (D-219): said on that voucher."""
+    note = "Tax ID differs from the supplier list: confirm before paying."
+    ws = workbook([one_line(), split()], warned={1: [note]})[jde_keying.SHEET]
+    first, second = blocks(ws)
+    assert said(first, "Warning")[0] == note and note not in said(second, "Warning")

@@ -601,6 +601,26 @@ class VendorMasterMixin:
             )]  # fmt: skip
         return [r for r in rows if same_tax_number(r["expected_gst"], number)]
 
+    def supplier_of_tax_number(self, number: Any) -> dict[str, Any] | None:
+        """The ONE supplier in use of the vendor master whose GST/HST number ``number`` is (a business number with
+        or without its program account, ``same_tax_number``); None when it is no number, no supplier's, or several
+        suppliers': a number like that picks none (D-219)."""
+        if sum(c.isdigit() for c in norm_tax_number(number)) < 9:
+            return None
+        found = [v for v in self.master_by_tax_number(number) if not erp_stopped(v)]
+        return found[0] if len(found) == 1 else None
+
+    def tax_id_differs(self, coding: dict[str, Any]) -> str:
+        """The vendor master's GST/HST number of the supplier an invoice is coded to, when the invoice shows another
+        one ("" when they are the same, or either has none): what ``VENDOR_TAX_NUMBER_CHANGED`` says of the vendor
+        list, asked of the stored coding (the approval, the keying sheet: D-219)."""
+        printed = coding.get("gst_hst_registration_number")
+        vendor = self.find_vendor(coding.get("vendor_name"), printed)  # (a method of ``vendors``' part)
+        listed = str((vendor or {}).get("expected_gst") or "").strip()
+        if not vendor or not vendor.get("in_master") or not norm_tax_number(listed) or not norm_tax_number(printed):
+            return ""
+        return "" if same_tax_number(printed, listed) else listed
+
     def _master_numbers(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
         """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:
         the rowids of those whose number is it, with or without its RT suffix}): every vendor ``same_tax_number``

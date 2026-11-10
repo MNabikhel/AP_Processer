@@ -331,6 +331,8 @@ def _review_text(action: str, d: dict[str, Any]) -> str | None:
                                                 for o in over) + ". ") if over else ""  # fmt: skip
         if d.get("needs_second"):
             prefix += f"Second approval needed: {second_reason(d)}. "
+        elif d.get("tax_id_differs"):  # one person on a laptop: nobody else to confirm it (D-219)
+            prefix += f"Tax ID differs from the supplier list's ({d['tax_id_differs']}): confirm before paying. "
         return prefix + _approved_text(d)
     if action == "rejected":
         return f"reason: {d.get('reason') or 'none given'}" + (

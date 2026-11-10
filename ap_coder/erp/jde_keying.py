@@ -124,11 +124,13 @@ def vouchers(
     invoices: list[dict[str, Any]], settings: jde.JdeSettings, vendor_lookup: jde.VendorLookup = None, *,
     gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
+    warned: Mapping[int, list[str]] | None = None,
 ) -> tuple[list[Voucher], list[Held]]:  # fmt: skip
     """(the vouchers to type, the invoices not ready) of approved ``invoices``, in their order. ``gl_names``: each GL
     code's description; ``on``: the batch's day (the G/L date, when it is the export day); ``left_out``: {invoice:
     why} from the batch's own checks (a duplicate, a voucher JD Edwards has through the API), beside what each
-    voucher's own check says here; ``fx_rates``: AP Coder's exchange rates, said on a foreign voucher."""
+    voucher's own check says here; ``fx_rates``: AP Coder's exchange rates, said on a foreign voucher; ``warned``:
+    {invoice: warnings} said first under its voucher (a tax ID that differs from the supplier list's, D-219)."""
     ready: list[Voucher] = []
     held: list[Held] = []
     for inv, (an8, v) in zip(invoices, jde._vouchers(invoices, settings, vendor_lookup), strict=True):
@@ -141,6 +143,7 @@ def vouchers(
             continue
         tax, taxable = jde.pay_item_tax(v, settings)
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
+        warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
         ready.append(Voucher(
             invoice_id=v.inv_id, supplier_number=an8, supplier_name=str(final.get("vendor_name") or ""),
             company=settings.company_code, invoice_number=str(final.get("invoice_number") or "").strip(),
@@ -326,9 +329,10 @@ def build(
     invoices: list[dict[str, Any]], settings: jde.JdeSettings, vendor_lookup: jde.VendorLookup = None, *,
     batch: int | str = "", gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
+    warned: Mapping[int, list[str]] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type) of a batch's keying sheet."""
     ready, held = vouchers(invoices, settings, vendor_lookup, gl_names=gl_names, on=on, left_out=left_out,
-                           fx_rates=fx_rates)  # fmt: skip
+                           fx_rates=fx_rates, warned=warned)  # fmt: skip
     name = f"ap_coder_jde_keying_{batch}.xlsx" if batch != "" else "ap_coder_jde_keying.xlsx"
     return build_xlsx(ready, held), name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

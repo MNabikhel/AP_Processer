@@ -284,7 +284,10 @@ CHECKS: dict[str, CheckHelp] = {
         "The vendor's GST/HST number differs from the number in the vendor list or, when it has none, from its "
         "earlier approved invoices. Fake invoices often imitate a real supplier with different details.",
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying."
-        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail.",
+        " If it checks out, tick “Approve anyway” and say how you confirmed it: the reason is kept in the audit trail."
+        " When the number differs from the vendor list's, someone else then confirms it: where people sign in, the"
+        " voucher waits for a second approval by an Approver or an Admin; on one person's laptop the keying sheet"
+        " says on the voucher to confirm before paying.",
     ),
     "VENDOR_ADDED_HERE": CheckHelp(
         FRAUD, "New vendor added here",

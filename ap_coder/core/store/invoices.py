@@ -622,6 +622,12 @@ class InvoicesMixin:
         # The limit and rate in force since the invoice came in, the strictest of them (B-970), kept in the event; a
         # currency changed from the one read is held to the limit in both (D-132).
         second_reason, limit, rate = self.approval_reason(inv, final_output)
+        # A tax ID that differs from the supplier list's, approved anyway: someone else confirms it before it is
+        # paid, whatever the approval limit (D-219). One person on a laptop has nobody else: it is recorded, and the
+        # keying sheet says it on the voucher.
+        differs = self.tax_id_differs(final_output)
+        if differs and account_of(login) is not None:
+            second_reason = "; ".join(r for r in (second_reason, TAX_ID_DIFFERS) if r)
         needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
         key = self.vendor_key_for(vendor_name, final_output.get("gst_hst_registration_number"))  # B-1021
@@ -668,6 +674,7 @@ class InvoicesMixin:
                 **({"bulk": True} if bulk else {}),
                 **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"limit": limit, "rate": rate} if limit else {}),
+                **({"tax_id_differs": differs} if differs else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
                 **({"user_id": account_of(login)} if account_of(login) is not None else {}),
             })  # fmt: skip
@@ -936,6 +943,12 @@ class InvoicesMixin:
             layout = self._forget_learning(conn, invoice_id)
             rejected = {"rejected": was["error"] or ""} if was["status"] == REJECTED else {}  # the rejection undone
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason, **rejected, **layout})
+
+
+# Why a first approval waits for a second one whatever the approval limit (``approve_invoice``, D-219), and what a
+# voucher approved by one person alone says on the keying sheet.
+TAX_ID_DIFFERS = "the tax ID differs from the supplier list's"
+TAX_ID_NOTE = "Tax ID differs from the supplier list: confirm before paying"
 
 
 @dataclass

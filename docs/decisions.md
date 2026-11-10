@@ -5276,3 +5276,49 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `settings_data.html`; `ap_coder/ops/share.py`, `ap_coder/ops/cli.py`; `ap_coder/ai/lessons.py`,
     `ap_coder/web/pages/invoice.py`, `ap_coder/core/store/learning.py`, `lessons.py`, `base.html`, `js/app.js`;
     `tests/core/test_backup_time.py`, `tests/ops/test_share.py`, `tests/ai/test_why_question.py`)
+- **D-219** · **The supplier list takes a second JD Edwards export, the vendor information list, for its tax IDs;
+  the review screen fills, finds and compares by them; a tax ID that differs is confirmed by a second person**
+  (10 Nov 2026). Asked by the person testing the prototype path (D-209 to D-218).
+  - **The file.** One row per supplier paid by any company of the group (about 20,000), 22 columns, two of them
+    both named "Business Unit" (read by where they are), a totals row last. It is loaded in the same box as the
+    supplier master's grid (JD Edwards files, box 3), told apart by its column names (`coding/vendor_info.py`:
+    the list's own supplier number, name and tax ID columns). Its sheet unzips to more than the 20 MB any other
+    spreadsheet may, so it is read by the reader of JD Edwards' long exports (`core/chart_file.read_rows`, the
+    chart's bounds), once, at its upload (about 4 s for 20,000 suppliers); what was read is kept for the summary
+    and the load (about 1 s), so the page says what it found before anything is kept.
+  - **The two files meet on the supplier number.** The list's suppliers go through the vendor master's import
+    (`Store.import_vendor_master`, `by_erp_id`: a row goes to the vendor of its name holding its number), which
+    keeps the hold code, the status and everything AP set; what only the list gives is kept by supplier number in
+    a table of its own (`vendor_info`: tax ID as written and as compared, currency, terms, address lines, city,
+    province or state, country, postal code, e-mail, business unit). The supplier master's grid is loaded
+    `by_erp_id` too (B-2298), so neither file moves a number to another vendor or removes what the other gave.
+    - *Not chosen:* eleven more columns on `vendors`, which is read whole in many places (20,000 rows); a match
+      of the two files by name, which two suppliers of one name break.
+  - **The tax ID is free text.** Kept as written. Compared form (`tax_id_norm`): letters and digits, empty for a
+    word (CHARITABLE, GOVERNMENT, N/A), which is never matched as a number. Only a tax ID that reads as a Canadian
+    business number becomes the vendor's GST/HST number (`vendors.expected_gst`, which every existing piece reads:
+    the fill of D-65, `master_by_tax_number`, VENDOR_MATCHED_BY_TAX_NUMBER, VENDOR_TAX_NUMBER_CHANGED): with its RT
+    account as written; the nine digits alone for another program account of the same business (RC, RP), an older
+    "R" number, or nine digits without a dash of a supplier in Canada. `same_tax_number` then matches it with or
+    without the program account.
+    - *Not chosen:* an EIN, a personal number or a foreign number in the invoice's GST/HST box. The box is what
+      the GST/HST checks, the exports' "Vendor GST/HST #" and the input tax credit read; nine digits of a US
+      supplier would be compared with a GST/HST number it is not. They are kept, and compared with nothing.
+  - **The review screen, both ways.** Picking a supplier fills the invoice's GST/HST number when the box is empty
+    or still holds what was filled (D-65, unchanged: never over a number read or typed). A number read or typed
+    that is ONE supplier's in use (`Store.supplier_of_tax_number`; none when several share it) selects that
+    supplier when the vendor box is empty (`invoice_view.settle_header`, at every check, the screen's opening
+    included, and says so) and is offered with one click under the vendor box when another supplier is chosen
+    (`field_help`). `/review/vendors.json` is unchanged: it carried the GST/HST number already, and no bank
+    details (D-160).
+  - **A tax ID that differs from the chosen supplier's** is VENDOR_TAX_NUMBER_CHANGED, as before: an error,
+    approved only with "Approve anyway" and a reason. New: where people sign in, that approval is a first
+    approval whatever the approval limit (`Store.approve_invoice`, `tax_id_differs`): the voucher waits in Second
+    approval, is in no keying sheet or batch file until someone else with the Approver role (or an Admin) gives
+    it, and the bar says so before approving. On one person's laptop there is nobody else: the approval asks for
+    the reason, Activity records it, and the keying sheet says on that voucher "Tax ID differs from the supplier
+    list: confirm before paying" (`pages/exports.tax_id_warnings`, asked of the stored coding and today's list).
+  - Scoring and learning are not touched. (`ap_coder/coding/vendor_info.py`, `core/chart_file.py`,
+    `core/store/vendor_master.py`, `core/store/invoices.py`, `web/pages/jde_files.py`, `web/invoice_view.py`,
+    `web/pages/exports.py`, `erp/jde_keying.py`, `bench/jde_exports.py`; `tests/coding/test_vendor_info.py`,
+    `tests/web/test_supplier_tax_id.py`, `tests/web/test_web_jde_files.py`)
