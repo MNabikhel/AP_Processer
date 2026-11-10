@@ -138,14 +138,18 @@ def test_b_past_60_pages_the_pages_not_read_are_named(chart_company, drop, tmp_p
         "5 are read): nothing on them is in the lines or totals shown; check them yourself before approving"
     )
     assert (got.severity["PAGES_NOT_READ"], got.found["PAGES_NOT_READ"]) == ("warning", said)
-    assert got.queue == _sentence(said)
-    # The totals are the last page's, as printed; what pages 56 and 57 bill is not among the lines read, and is not
-    # spread over them: it is a line of its own that says so.
+    # The totals are the last page's, as printed. What pages 56 and 57 bill is not among the lines read, and no line
+    # is made up for it (B-2202): the invoice is held until a person adds those pages' lines, and is told why.
     assert (got.output["subtotal"], got.output["grand_total"]) == (subtotal, total)
     unread = sum(1025 + (n * 7) % 90 * 100 for n in range(111, 115)) / 100  # lines 111 to 114, as ``long_invoice``
-    assert len(got.lines) == 121
-    assert (got.lines[-1]["description"], got.lines[-1]["amount"]) == ("Charges not in the line table", unread)
-    assert got.accounts[:120] == [account] * 120
+    assert len(got.lines) == 120 and round(subtotal - sum(li["amount"] for li in got.lines), 2) == unread
+    assert got.accounts == [account] * 120
+    assert got.severity["SUBTOTAL_MISMATCH"] == "error"
+    assert got.found["LINE_AMOUNTS_TO_CHECK"] == (
+        f"the lines add up to {subtotal - unread:,.2f}, the invoice says {subtotal:,.2f}: pages 56 and 57 were not "
+        f"read, so what they bill ({unread:,.2f}) is not among the lines. Add their lines from those pages"
+    )
+    assert got.queue.startswith(f"The lines add up to {subtotal - unread:.2f} but the subtotal is {subtotal:.2f}")
 
 
 def test_c_a_60_line_invoice(chart_company, drop, hard):

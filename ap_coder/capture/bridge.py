@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .types import CHECK, MISSING, CaptureResult, FieldResult
+from .types import CHECK, MISSING, CaptureResult, FieldResult, LineReading
 
 TAX_FIELD = {"GST": "gst_amount", "HST": "hst_amount", "PST": "pst_amount", "QST": "qst_amount"}
 
@@ -103,6 +103,8 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
             out.append((WARNING, "TEXT_LAYER_MATCHES_PAGE", str(c.get("detail") or "")))
         if c.get("code") == "LINE_ITEMS_AGREE" and not c.get("ok", True):  # OvisOCR2 and the table read differently
             out.append((WARNING, "LINE_ITEMS_AGREE", f"line items read differently: {c.get('detail') or ''}"))
+        if c.get("code") == "LINE_AMOUNTS" and not c.get("ok", True):  # the lines read were left not adding up
+            out.append((WARNING, "LINE_AMOUNTS_TO_CHECK", str(c.get("detail") or "")))
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
         out.append((INFO, "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
@@ -149,3 +151,43 @@ def currency_read(field: FieldResult) -> bool:
         return False  # US dollars implied by the supplier's US address (reader ``_us_supplier``): not printed
     readers = {s for s in field.sources if not s.startswith("other:")} - {"ai"}
     return bool(readers) or bool(field.boxes)
+
+
+def printed_taxes(lines: list[LineReading], charged: dict[str, float]) -> list[tuple[str, dict[str, float] | None]]:
+    """For each line read, (its tax code as its own tax cells print it, its ``LineItem.taxes_read``): what the line
+    table's tax columns say (``LineReading.taxes_read``), read with the taxes the invoice charges (``charged``: {tax:
+    its amount}).
+
+    A column says only about the tax it names. "GST" on an invoice whose tax is the HST is that HST (and "HST" the
+    GST); "Tax" (or "GST/HST") is the one tax charged that no other column names, and on an invoice that charges two
+    of them it names neither: its amounts say a line is taxed, not with which, and are not kept. A cell not read
+    (None) exempts nothing: it is zero only when the amounts read in its column add up to the invoice's own amount of
+    that tax. The code is given only where every tax charged has its column and its cell on the line: the taxes whose
+    cell prints an amount ("GST/PST"), "Exempt" when none does. "" otherwise: which lines carry a tax no column names
+    is worked out from the amounts (``line_tax.prefill``), as on an invoice with no tax column."""
+    names = list(dict.fromkeys(name for li in lines for name in li.taxes_read or {}))
+    taxes = {name: name for name in names if name != "TAX"}  # {column: the tax it prints}
+    for name, other in (("GST", "HST"), ("HST", "GST")):
+        if name in taxes and name not in charged and other in charged and other not in taxes:
+            taxes[name] = other
+    unnamed = [tax for tax in charged if tax not in taxes.values()]
+    if "TAX" in names and len(unnamed) == 1:
+        taxes["TAX"] = unnamed[0]
+    whole = set()  # the columns whose amounts read add up to the invoice's amount of their tax
+    for name, tax in taxes.items():
+        read = [li.taxes_read[name] for li in lines if li.taxes_read and li.taxes_read.get(name) is not None]
+        if tax in charged and abs(round(sum(read), 2) - charged[tax]) <= 0.011:
+            whole.add(name)
+    out: list[tuple[str, dict[str, float] | None]] = []
+    for li in lines:
+        mine = li.taxes_read or {}
+        kept: dict[str, float] = {}
+        for name, tax in taxes.items():
+            value = 0.0 if mine.get(name) is None and name in mine and name in whole else mine.get(name)
+            if value is not None:
+                kept[tax] = round(value, 2)
+        said = ""
+        if charged and all(tax in kept for tax in charged):
+            said = "/".join(tax for tax in charged if abs(kept[tax]) >= 0.005) or "Exempt"
+        out.append((said, kept or None))
+    return out

@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from ap_coder.bench.generator import GENERATOR_VERSION, Case, load_cases, make_case, plan
+from ap_coder.bench.generator import EXTRA_COLUMNS, GENERATOR_VERSION, Case, load_cases, make_case, plan
 from ap_coder.bench.scoring import line_item_metrics, score_case, summarize
 from ap_coder.capture.types import FIELDS, LIKELY, MISSING, Box, CaptureResult, FieldResult
 
@@ -162,7 +162,9 @@ def _map(fn: Callable[[Any], Any], jobs: list[Any], workers: int, label: str) ->
 
 
 def prepare_cases(cases_dir: Path, n: int, seed: int, scanned: float, workers: int, regen: bool) -> list[Case]:
-    manifest = {"n": n, "seed": seed, "scanned": scanned, "generator_version": GENERATOR_VERSION}
+    # (``extra_columns``: cases made before the line tables' extra columns, or at another share, are made again)
+    manifest = {"n": n, "seed": seed, "scanned": scanned, "generator_version": GENERATOR_VERSION,
+                "extra_columns": EXTRA_COLUMNS}  # fmt: skip
     mpath = cases_dir / "manifest.json"
     if not regen and mpath.is_file():
         try:

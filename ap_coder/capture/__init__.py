@@ -226,7 +226,8 @@ def _choose_lines(layout: DocLayout, fields: dict[str, FieldResult], own: list[L
     )
     if same and layout.source in ("ocr", "mixed"):
         return [LineReading(b.description, b.quantity, b.unit_price, b.amount, list(a.boxes), max(a.score, b.score),
-                            "vlm", sorted({a.source, *a.agreed} - {"", "vlm"}), b.tax_flags or a.tax_flags)
+                            "vlm", sorted({a.source, *a.agreed} - {"", "vlm"}), b.tax_flags or a.tax_flags,
+                            taxes_read=a.taxes_read)
                 for a, b in zip(own, vlm, strict=True)]  # fmt: skip
     return own
 

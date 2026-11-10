@@ -838,6 +838,15 @@ CHECKS: dict[str, CheckHelp] = {
         "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
         "on a number you already have before paying.",
     ),
+    "LINE_AMOUNTS_TO_CHECK": CheckHelp(
+        READING, "Line amounts to check against the page",
+        "The lines were left as they were read from the invoice's table and they do not add up to the invoice: the "
+        "column read as each line's amount holds its total with the tax in it, or another column of the table is "
+        "the amount (before a discount, after it), or a line is missing. AP Coder adds no line of its own to make "
+        "them add up.",
+        "Compare each line's amount with the page and enter the amount before tax. A charge printed outside the "
+        "table (freight, a fee) is a line of its own.",
+    ),
     "LINE_ITEMS_AGREE": CheckHelp(
         READING, "Line items read differently",
         "Two independent readers read the invoice's line table differently: OvisOCR2, which reads the page image, "

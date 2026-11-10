@@ -186,6 +186,18 @@ LABELS: dict[str, dict[str, list[str]]] = {
     "fax": {"en": ["Fax", "F"], "fr": ["Téléc.", "Fax"]},
 }
 
+# The headings of the columns a share of line tables print beside the usual ones (``generator.EXTRA_COLUMNS``): the
+# rows' numbers, the amount before a discount and the discount, each line's tax as an amount (a column that names
+# its tax is headed by the tax: ``generator.TAX_COLUMN_HEADS``), the line's total with tax, and a tax code.
+TABLE_HEADS = {
+    "number": {"en": ["#", "No.", "Pos."], "fr": ["N°", "#"]},
+    "before": {"en": ["Subtotal", "List"], "fr": ["Sous-total", "Brut"]},
+    "discount": {"en": ["Discount", "Disc."], "fr": ["Rabais", "Remise"]},
+    "tax": {"en": ["Tax", "Tax amt", "Taxes"], "fr": ["Taxes", "Taxe"]},
+    "line_total": {"en": ["Total", "Line Total", "Gross", "Total incl. tax"], "fr": ["Montant TTC", "Total TTC"]},
+    "tax_code": {"en": ["Tax", "Tx", "Tax code"], "fr": ["Taxe", "Code taxe"]},
+}
+
 TITLES = {
     "invoice": {
         "en": ["INVOICE", "Invoice", "TAX INVOICE", "SALES INVOICE"],

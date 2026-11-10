@@ -1745,6 +1745,21 @@ def totals_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
     return changed and adds_up and (taxes or not coding.tax_lines)
 
 
+def lines_settled(coding: InvoiceCoding, ai: dict[str, Any]) -> bool:
+    """Whether a person changed the lines' amounts as read and they now add up to the subtotal: the reading's "the
+    lines add up to …, the invoice says …" no longer says anything about the lines on screen (B-2210)."""
+
+    def cents(value: Any) -> int:
+        try:
+            return round(float(value or 0) * 100)
+        except (TypeError, ValueError):
+            return 0
+
+    now = [cents(li.amount) for li in coding.line_items]
+    changed = now != [cents(li.get("amount")) for li in ai.get("line_items") or []]
+    return changed and abs(sum(now) - cents(coding.subtotal)) <= 1
+
+
 _UNREAD: Any = object()  # analyse without a capture given: it reads the invoice's own
 
 
@@ -1771,6 +1786,8 @@ def _findings(store: Store, inv: dict[str, Any], draft: Draft, coding: InvoiceCo
             if code == "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
                 continue
             if code == "CAPTURE_TOTALS" and settled:  # the reviewer fixed the amounts and they add up now (B-662)
+                continue
+            if code == "LINE_AMOUNTS_TO_CHECK" and lines_settled(coding, ai):  # the lines were made to add up
                 continue
             report.issues.append(Issue(severity, code, message))
     if draft.absent:  # fields the reviewer said are not on this invoice: nothing asks for them (D-60)
