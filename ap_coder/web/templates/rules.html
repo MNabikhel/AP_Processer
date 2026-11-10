@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
+{% block content %}
+{# server mode: anyone who reviews invoices (a Clerk and above) changes the rules; every change is in the history (D-217) #}
+{% set edit = can("/rules") %}
+<section class="card">
+  <h4>Rules</h4>
+  <p class="muted">Lines that always go to the same account, whatever AP Coder would suggest: a vendor (e.g. <i>Purolator</i>), words
+    a line contains (e.g. <i>freight</i>), or both. Applied to invoices processed from now on (for one already in the
+    queue, open it and use <i>Apply the coding rules</i>); the review screen says which lines a rule coded. The most
+    specific rule wins. Clear a row to remove the rule. Every change is kept in the history below and can be undone.</p>
+  {% if not has_gl %}
+  <div class="flash info"><span class="ms" aria-hidden="true">account_tree</span><div>Import your GL accounts first.</div></div>
+  {% else %}
+  {% if unknown %}
+  <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
+  {% endif %}
+  <form{% if edit %} method="post" action="/rules"{% endif %} class="stack" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
+    <input type="hidden" name="version" value="{{ rules_version }}">
+    <div class="table-wrap">
+      <table class="apc-table edit" id="rules">
+        <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th>
+          {% if whole %}<th>Account (business unit.object.subsidiary)</th>{% else %}<th>GL account</th><th>Cost center</th>{% endif %}
+          <th>Lines it coded</th></tr></thead>
+        <tbody>
+          {% for row in rows %}{{ rule_row(row) }}{% endfor %}
+          {% for n in range(blank_rows if edit else 0) %}{{ rule_row(none) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">A rule needs an account and a vendor or words, or both; an incomplete row is left out when you save.
+      Lines are counted since {{ counted_since }}: an invoice coded before that did not keep which rule coded its lines, so it is not counted.</p>
+    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save rules</button>{% endif %}
+  </fieldset></form>
+  {% endif %}
+</section>
+{% if suggestions %}
+<section class="card">
+  <h4>Suggested from past coding</h4>
+  <p class="muted">These vendors were always coded to one account. Add a rule to make it certain.</p>
+  {% for s in suggestions %}
+  <div class="suggestion">
+    <div><b>{{ s.rule.vendor }}</b> → {{ s.target }}<div class="muted small">{{ s.lines | plural("line") }}, all coded the same</div></div>
+    {% if can("/rules/add") %}<form method="post" action="/rules/add">
+      <input type="hidden" name="vendor" value="{{ s.rule.vendor }}"><input type="hidden" name="contains" value="{{ s.rule.contains }}">
+      <input type="hidden" name="gl_code" value="{{ s.rule.gl_code }}"><input type="hidden" name="cost_center" value="{{ s.rule.cost_center }}">
+      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">add</span>Add rule</button>
+    </form>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+<section class="card" id="history">
+  <h4>History{% if history_of %} of ‘{{ history_of.label }}’{% endif %}</h4>
+  {% if history_rule %}<p class="muted"><a class="link" href="/rules#history">Show the history of every rule</a></p>{% endif %}
+  {% if not history %}
+  <p class="muted">No change yet. Every rule added, changed or removed from now on is listed here, with who did it and when, and can be undone.</p>
+  {% else %}
+  <p class="muted">Newest first. Undo puts the rule back as it was before that change; the undo is listed too, so it can be undone.</p>
+  {% for h in history %}
+  <div class="suggestion" data-change="{{ h.id }}">
+    <div>{{ h.words }}<div class="muted small">{{ h.when }}{% if h.undo == "ask" %} · changed again since{% elif not h.undo %} · the rule is as it was before this: nothing to undo{% endif %}</div></div>
+    {% if h.undo and can("/rules/undo") %}
+    <form method="post" action="/rules/undo"{% if h.undo == "ask" %} data-confirm="This rule changed again since: {{ h.newer }}. Undo this older change anyway? The rule goes back to what it was before it, and the newer change is overwritten (it stays in the history)."{% endif %}>
+      <input type="hidden" name="change" value="{{ h.id }}">{% if h.undo == "ask" %}<input type="hidden" name="overwrite" value="1">{% endif %}
+      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">undo</span>Undo</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>
+{% endblock %}
+{% macro rule_row(row) %}{% set r = row.rule if row else none %}
+<tr{% if not r %} class="new"{% endif %}>
+  <td><input type="hidden" name="id" value="{{ r.id if r else '' }}"><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>
+  <td><input type="text" name="contains" value="{{ r.contains if r else '' }}" aria-label="Line contains" title="Not case-sensitive"></td>
+  {% if whole %}
+  <td class="w"><input type="text" class="wide" name="account" value="{{ r.target if r else '' }}" aria-label="Account" spellcheck="false" autocomplete="off" placeholder="business unit.object.subsidiary">
+    {% if row and row.problem %}<div class="small" role="note"><span class="ms" aria-hidden="true">warning</span> {{ row.problem }} Change it, or clear the row.</div>
+    {% elif row and row.name %}<div class="muted small">{{ row.name }}</div>{% endif %}</td>
+  {% else %}
+  <td><select name="gl_code" aria-label="GL account" data-picker data-picker-noun="account">
+    <option value="">(choose)</option>
+    {% if r and r.gl_code and r.gl_code not in gl_names %}<option value="{{ r.gl_code }}" selected>{{ r.gl_code }} (not in the GL list)</option>{% endif %}
+    {% for code, label in gl_names.items() %}<option value="{{ code }}"{% if r and code == r.gl_code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></td>
+  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center" data-picker data-picker-noun="cost center">
+    <option value=""></option>
+    {% for code in cc_codes %}<option value="{{ code }}"{% if r and code == r.cost_center %} selected{% endif %}>{{ code }}</option>{% endfor %}
+  </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>
+  {% endif %}
+  <td>{% if r %}{% if row.lines %}<a class="link" href="/search?rule={{ r.id }}#directory" title="The invoices with a line this rule coded">{{ row.lines | plural("line") }} on {{ row.invoices | plural("invoice") }}</a>{% else %}<span class="muted">None yet</span>{% endif %}
+    <span class="muted"> · </span><a class="link" href="/rules?rule={{ r.id }}#history">History</a>{% endif %}</td>
+</tr>
+{% endmacro %}

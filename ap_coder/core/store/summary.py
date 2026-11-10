@@ -51,6 +51,7 @@ from ._base import (
     _in_list,
 )
 from .reports import settle_for
+from .rules import RULES_SCHEMA, rule_rows
 
 # What the summary works out, by version: a change to it (a new column, a report's facts read differently, the
 # vendor-matching or invoice-number rules) changes this, and every database builds its summary again once.
@@ -171,6 +172,7 @@ SUMMARY_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS summary_codes (id INTEGER NOT NULL, code, n INTEGER NOT NULL, pos INTEGER NOT NULL, "
     "PRIMARY KEY (id, pos))",
     "CREATE INDEX IF NOT EXISTS summary_codes_code ON summary_codes (code, n, id, pos)",
+    *RULES_SCHEMA,  # the lines of each invoice a fixed coding rule coded (rules.py, D-217)
     "CREATE INDEX IF NOT EXISTS summary_status_reviewed ON invoice_summary (status, reviewed_at)",
     "CREATE INDEX IF NOT EXISTS summary_status_second ON invoice_summary (status, second_reviewed_at)",
     "CREATE INDEX IF NOT EXISTS summary_vendor ON invoice_summary (vendor_key)",
@@ -466,7 +468,7 @@ def fts_available() -> bool:
 _SELECT = (
     f"WITH coded AS (SELECT *, {_DOC} AS doc FROM invoices WHERE {_in_list('id')}) SELECT id, "
     + ", ".join(MIRROR)
-    + ", ai_output, final_output, validation, meta, "
+    + ", ai_output, final_output, validation, meta, doc, "
     + ", ".join(f"{sql} AS {name}" for name, _, sql in DERIVED)
     + " FROM coded"
 )
@@ -537,7 +539,7 @@ class SummaryMixin:
         rules = f"{SUMMARY_RULES}/{VENDOR_KEY_RULES}"
         again = (row[0] if row else "") != rules
         if again:  # made again, as this version makes it (its columns)
-            for table in ("invoice_summary", *SIDE_TABLES, "summary_codes", "summary_spend",
+            for table in ("invoice_summary", *SIDE_TABLES, "summary_codes", "summary_rules", "summary_spend",
                           *(("invoice_search",) if fts_available() else ())):  # fmt: skip
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.execute("DELETE FROM settings WHERE key = 'search_behind'")
@@ -609,7 +611,7 @@ class SummaryMixin:
                                                 f"{_in_list('id')}", (listed,))}  # fmt: skip
         conn.execute(f"DELETE FROM invoice_summary WHERE {_in_list('id')}", (listed,))
         conn.execute(f"DELETE FROM summary_spend WHERE {_in_list('invoice_id')}", (listed,))
-        for table in (*SIDE_TABLES, "summary_codes"):
+        for table in (*SIDE_TABLES, "summary_codes", "summary_rules"):
             conn.execute(f"DELETE FROM {table} WHERE {_in_list('id')}", (listed,))
         fts = fts_available()
         if fts:
@@ -637,6 +639,8 @@ class SummaryMixin:
         codes = _COLUMNS.index("i_codes")
         conn.executemany("INSERT INTO summary_codes (id, code, n, pos) VALUES (?, ?, ?, ?)",
                          [row for v in summary for row in _code_rows(v[0], v[codes])])  # fmt: skip
+        conn.executemany("INSERT INTO summary_rules (id, rule_id, n) VALUES (?, ?, ?)",
+                         [row for r in rows for row in rule_rows(r["id"], r["doc"])])  # fmt: skip
         conn.executemany(
             "INSERT INTO summary_spend (invoice_id, part, gl_code, cost_center, amount, sizes, cents, amounts) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

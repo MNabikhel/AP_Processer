@@ -15,10 +15,10 @@ from ap_coder.web.pages import settings as settings_page
 from tests.browser import browser_on
 from tests.webclient import PAGE, client_for, web_settings
 
-SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned",
+SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules",
                "GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings", "Help"]  # fmt: skip
-SIMPLE_PATHS = ["/review", "/process", "/exports", "/search", "/learning", "/accounts", "/jde-files", "/vendors",
-                "/activity", "/settings", "/help"]  # fmt: skip
+SIMPLE_PATHS = ["/review", "/process", "/exports", "/search", "/learning", "/rules", "/accounts", "/jde-files",
+                "/vendors", "/activity", "/settings", "/help"]  # fmt: skip
 HIDDEN = ["/purchase-orders", "/statements", "/month-end", "/spend", "/insights", "/sales-tax", "/manager",
           "/settings/hub", "/settings/automation"]  # fmt: skip
 SAYS = "Hidden in Simple screens: Settings → About shows everything"
@@ -56,7 +56,7 @@ def test_simple_screens_show_the_short_menu_in_its_order_with_no_more(client, st
     assert re.findall(r'<a href="([^"]+)" class="nav-link', rail) == SIMPLE_PATHS
     assert 'id="nav-more"' not in rail and "nav_more.js" not in rail
     main, setup = rail.split('id="nav-setup">Setup<', 1)
-    assert _labels(main) == SIMPLE_MENU[:5] and _labels(setup) == SIMPLE_MENU[5:]
+    assert _labels(main) == SIMPLE_MENU[:6] and _labels(setup) == SIMPLE_MENU[6:]
     assert "To key into JDE" in page.split("<title>", 1)[1].split("</title>", 1)[0]  # the page under that name too
     assert 'aria-current="page"' in rail
 

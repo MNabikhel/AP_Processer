@@ -79,8 +79,9 @@ THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 # the computer running AP Coder when it is shared on the office network (B-972); on the server, by an Admin's role.
 THIS_COMPUTER_ONLY = ("/settings",)
 # The setup and its imports, changed only from this computer too (B-1030): the account lists, the tax setup, the
-# policy notes and coding rules (all under /accounts), and the vendor master's import. Looking at them stays open.
-SETUP_CHANGES_HERE_ONLY = ("/accounts", "/vendors/master")
+# policy notes (under /accounts), the coding rules (/rules) and the vendor master's import. Looking at them stays
+# open. (On the company server the rules are changed by anyone who reviews invoices: web/roles.py, D-217.)
+SETUP_CHANGES_HERE_ONLY = ("/accounts", "/rules", "/vendors/master")
 SETUP_HERE_ONLY = (
     "The account lists, the tax setup, the coding rules and the vendor master are changed only on the computer "
     "running AP Coder. Ask the person at that computer, or the pilot tester."

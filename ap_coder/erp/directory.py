@@ -18,6 +18,9 @@ D-110).
 The chosen columns, filters and sort are a URL query (``query_string``), so a layout can be bookmarked, and saved
 by name as a preset (Settings: ``directory_presets``, one of them the default).
 
+``rule=<number>`` keeps the invoices with a line a fixed coding rule coded (the rules page links here, D-217): the
+summary's ``summary_rules``, off its index.
+
 Entry points: ``Query.from_params`` (the page's address), ``run`` (a page of rows, or all for an export),
 ``export_rows`` (all of them, a part at a time), ``cell``, and the presets (``presets``, ``save_preset``,
 ``set_default``...).
@@ -35,6 +38,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, fold_text
+from ..core.store.rules import RULE_FILTER
 
 TEXT, MONEY, DATE, NUMBER, STATUS, WHERE = "text", "money", "date", "number", "status", "where"
 STATUSES = (REVIEW, PARKED, PENDING, APPROVED, REJECTED, FAILED)
@@ -115,6 +119,7 @@ class Query:
     page: int = 1
     q: str = ""  # the quick search (search.condition), on top of the filters
     erp_shown: int = ERP_SHOWN  # how many of its hits in the ERP register are shown
+    rule: int = 0  # a fixed coding rule's number: only the invoices with a line it coded (D-217)
 
     @classmethod
     def from_params(cls, params: Any) -> Query:
@@ -141,6 +146,7 @@ class Query:
             page=page,
             q=str(values.get("q") or "").strip()[:200],
             erp_shown=_shown(values.get("erp")),
+            rule=_rule(values.get("rule")),
         )
 
     def params(self, **change: Any) -> list[tuple[str, str]]:
@@ -153,6 +159,8 @@ class Query:
             pairs.append(("q", q.q))
             if q.erp_shown != ERP_SHOWN:
                 pairs.append(("erp", str(q.erp_shown)))
+        if q.rule:
+            pairs.append(("rule", str(q.rule)))
         if q.page > 1:
             pairs.append(("page", str(q.page)))
         return pairs
@@ -303,6 +311,9 @@ def where(query: Query) -> tuple[str, list[Any], dict[str, str]]:
         sql, values = search.condition(*search.parts(query.q), fts_available())
         parts.append(f"({sql})")
         params += values
+    if query.rule:
+        parts.append(f"({RULE_FILTER})")
+        params.append(query.rule)
     return " AND ".join(parts) or "1", params, problems
 
 
@@ -375,6 +386,12 @@ def export_rows(store: Any, query: Query, step: Any = None) -> Iterator[dict[str
         if step is not None:
             step(start, len(ids))
         yield from store.directory_rows_of(ROWS_SQL, ROW_FIELDS, ids[start : start + EXPORT_CHUNK])
+
+
+def _rule(value: Any) -> int:
+    """A rule's number from the address (0: none, or not a number)."""
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() and len(text) <= 12 else 0
 
 
 def _shown(value: Any) -> int:

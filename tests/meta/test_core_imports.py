@@ -62,8 +62,8 @@ KEPT = {
         "confidence and review flag scored again (D-89)",
     ("ap_coder/core/store/purchasing.py", "ap_coder.coding.po"): "month-end's billed lines kept for every process "
         "are read as the PO matching reads them (po.positive_lines)",
-    ("ap_coder/core/store/purchasing.py", "ap_coder.coding.rules"): "the fixed coding rules are read back as the "
-        "rules that apply them (rules.Rule)",
+    ("ap_coder/core/store/rules.py", "ap_coder.coding.rules"): "the fixed coding rules are read back as the "
+        "rules that apply them (rules.Rule; moved here with them from purchasing.py, D-217)",
     ("ap_coder/core/store/samples.py", "ap_coder.coding.po"): "the demo's purchase orders are read with the PO "
         "import's own parser",
     ("ap_coder/core/store/samples.py", "ap_coder.coding.vendors"): "the demo's vendor master is read with the "

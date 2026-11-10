@@ -295,16 +295,16 @@ def test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile(tmp_path,
     assert "7777" in {a["code"] for a in store.list_accounts("gl_accounts")}
 
 
-def test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile(tmp_path, monkeypatch):
+def test_a_stale_rules_page_does_not_drop_a_rule_added_meanwhile(tmp_path, monkeypatch):
     from tests.webclient import post
 
     store, client = _web(tmp_path, monkeypatch)
-    post(client, "/accounts/rules", {"vendor": ["Purolator"], "contains": [""], "gl_code": ["6000"],
+    post(client, "/rules", {"vendor": ["Purolator"], "contains": [""], "gl_code": ["6000"],
                                      "cost_center": [""]})  # fmt: skip
-    stale = _form(client.get("/accounts?tab=rules").text, "/accounts/rules")
-    assert post(client, "/accounts/rules/add", {"vendor": "Bell Canada", "gl_code": "6420"}).json()["ok"]
+    stale = _form(client.get("/rules").text, "/rules")
+    assert post(client, "/rules/add", {"vendor": "Bell Canada", "gl_code": "6420"}).json()["ok"]
     stale["gl_code"] = ["6010" if v == "6000" else v for v in stale["gl_code"]]
-    answer = post(client, "/accounts/rules", stale)
+    answer = post(client, "/rules", stale)
     assert answer.status_code == 409 and answer.json()["error"] == STALE
     assert sorted(r.vendor for r in store.coding_rules()) == ["Bell Canada", "Purolator"]
 

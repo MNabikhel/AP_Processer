@@ -7,7 +7,8 @@ The roles, each able to do everything the one before it can (``core/store/users.
   exports, Help, Insights, Spend, the Activity log and their own account. Changes nothing.
 * **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
   reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts vendors on hold
-  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``).
+  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``), and adds,
+  changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
   gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
   a vendor off hold.
@@ -138,6 +139,9 @@ RULES: dict[tuple[str, str], str] = {
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
+        # The fixed coding rules: anyone who reviews invoices adds, changes, removes and undoes them; every change is
+        # kept with who made it (D-217).
+        "GET /rules", "POST /rules", "POST /rules/add", "POST /rules/undo",
     ),
     **_rules(
         APPROVER,
@@ -155,7 +159,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
         "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import", "POST /accounts/bank/save",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
-        "POST /accounts/tax", "POST /accounts/policy", "POST /accounts/rules", "POST /accounts/rules/add",
+        "POST /accounts/tax", "POST /accounts/policy",
         "POST /vendors/master/upload", "POST /vendors/master/import",
         "POST /purchase-orders/upload", "POST /purchase-orders/import", "POST /purchase-orders/sample",
         "POST /purchase-orders/status", "POST /purchase-orders/delete",

@@ -62,8 +62,18 @@ PAGES: list[Page] = [
         "/accounts",
         "account_tree",
         M,
-        "The codes the AI may use, how each sales tax posts, and your rules.",
+        "The codes the AI may use, how each sales tax posts, and your coding policy.",
         module="accounts",
+    ),
+    Page(
+        "rules",
+        "Coding rules",
+        "/rules",
+        "rule_settings",
+        M,
+        "Lines that always go to the same account: the rules, every change made to them, and what each one coded.",
+        module="rules",
+        more=True,
     ),
     Page(
         "manager",
@@ -206,10 +216,12 @@ BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
 
 # Simple screens (Settings → About → "What is shown", ``core.simple_screens``): the menu of one person coding invoices
-# to JD Edwards account strings. Its everyday pages in the menu's order, each with its name there, then the pages
+# to JD Edwards account strings. Its everyday pages in the menu's order, each with its name there (the coding rules
+# among them: anyone changes them, D-217), then the pages
 # under "Setup", then Help. Every other page is left out of the menu, not removed: its address still opens.
 SIMPLE_MAIN: dict[str, str] = {"review": "To review", "process": "Add invoices", "exports": "To key into JDE",
-                               "search": "Find an invoice", "learning": "What was learned"}  # fmt: skip
+                               "search": "Find an invoice", "learning": "What was learned",
+                               "rules": "Rules"}  # fmt: skip
 SIMPLE_SETUP: tuple[str, ...] = ("accounts", "jde_files", "vendors", "activity", "settings")
 SIMPLE_KEYS = {*SIMPLE_MAIN, *SIMPLE_SETUP, "help"}
 BANNER_PAGES = {"process", "review"}  # where OvisOCR2's one-line warning shows under the page header

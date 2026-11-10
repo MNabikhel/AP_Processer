@@ -24,10 +24,11 @@ from ..keys import po_key
 from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
 from ..reference_data import UNASSIGNED
 from . import dialect
-from ._base import SCHEMA_VERSION, _due, _forget_learning
+from ._base import SCHEMA_VERSION, _due, _forget_learning, _now
 from .folder import add_register_keys, fill_seen_files
 from .old_readings import reading_as_d89
 from .register import add_jde_register, build_register_search
+from .rules import USE_SINCE
 from .users import add_columns
 
 Step = Callable[[Any, sqlite3.Connection], None]  # (the store, its connection)
@@ -320,6 +321,12 @@ def _answer_work(store: Any, conn: sqlite3.Connection) -> None:
         dialect.add_column(conn, "report_answers", "lasted", "REAL")
 
 
+def _rule_use_since(store: Any, conn: sqlite3.Connection) -> None:
+    """The day this database began to keep which lines each fixed coding rule coded (``summary_rules``, D-217),
+    written once: the rules page says its counts start then, and guesses nothing of the invoices before."""
+    conn.execute(dialect.insert_or_ignore("INSERT INTO settings (key, value) VALUES (?, ?)"), (USE_SINCE, _now()))
+
+
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
     """A PO line keeps what the ERP had left open on it when the POs were imported (the import's optional open
     amount), for what is left to expense on the review screen."""
@@ -458,6 +465,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _billing_by_vendor),
     (EVERY_TIME, _register_search),
     (EVERY_TIME, _answer_work),
+    (EVERY_TIME, _rule_use_since),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 

@@ -943,10 +943,11 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "Some lines always go to the same account. Can I make that certain?",
-        "Yes: GL accounts & tax → Fixed rules. A rule names a vendor, words a line contains, or both, and the GL "
-        "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
+        "Yes: Coding rules (under More; Rules in Simple screens). A rule names a vendor, words a line contains, or "
+        "both, and the account to use. Rules are applied after the AI when an invoice is processed, and the "
         "review screen says which lines a rule changed. Vendors your team always coded to one account are "
-        "suggested as rules. The AI's accuracy is still measured on its own answer, not on the rule's.",
+        "suggested as rules. Every change to a rule is listed there with who made it and Undo, and each rule says "
+        "how many lines it coded. The AI's accuracy is still measured on its own answer, not on the rule's.",
     ),
     (
         "How is an invoice read? Is there anything to set up?",
