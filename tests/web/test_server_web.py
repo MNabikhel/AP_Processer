@@ -383,6 +383,19 @@ def test_the_last_admin_cannot_be_demoted_or_turned_off_from_the_page(store):
     assert store.user(uid)["role"] == "admin" and store.user(uid)["active"]
 
 
+def test_an_admin_is_not_offered_to_turn_their_own_account_off(store):
+    """B-2115: an Admin's own row offered *Turn off*: with a second Admin (who may never have logged in) one click and
+    a confirmation locked the Admin out of their own server, undone only from its console. The page offers it for
+    the other accounts only (the last Admin was refused already, and still is)."""
+    uid = account(store, "boss", "admin")
+    other = account(store, "second", "admin")
+    client = server_client(store)
+    log_in(client, "boss")
+    page = client.get("/admin/users").text
+    assert f'action="/admin/users/{other}/deactivate"' in page and f'action="/admin/users/{uid}/deactivate"' not in page
+    assert f'action="/admin/users/{uid}/activate"' not in page  # (nor the button of an account turned off)
+
+
 def test_an_admin_resets_a_password_and_turns_an_account_off(store):
     account(store, "boss", "admin")
     ann = account(store, "ann", "clerk")

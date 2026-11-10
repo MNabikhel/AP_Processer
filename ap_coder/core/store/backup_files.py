@@ -314,7 +314,7 @@ def _copy_hashed(source: Path, out: Path) -> tuple[str, int]:
 
 def _private(path: Path) -> None:
     """The sign-in codes' key put back by a restore, and its copy among a backup's files: readable by this account
-    only, as the key is made (``authenticator.load_key``; B-2114). Not on Windows, where the folder's permissions say."""
+    only, as the key is made (``authenticator.load_key``; B-2114). Not on Windows: the folder's permissions say."""
     if os.name != "nt":
         with contextlib.suppress(OSError):
             os.chmod(path, 0o600)

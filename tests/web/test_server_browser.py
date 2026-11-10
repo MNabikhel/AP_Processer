@@ -187,7 +187,7 @@ def test_in_a_browser_the_users_and_backups_tables_fit_a_laptop_screen(browser, 
     store.backup_now(label="before-restore")
     page, errors = _log_in(browser, store, "boss", path="/admin/users")
     page.set_viewport_size({"width": width, "height": 768})
-    assert page.evaluate(FITS) == {"page": True, "table": True, "buttons": 3 * 4 + 2, "reachable": True}
+    assert page.evaluate(FITS) == {"page": True, "table": True, "buttons": 3 * 4 + 1, "reachable": True}
     page.goto(base + "/settings/data")
     page.wait_for_selector(".table-wrap")
     links = 2 * len(store.list_backups())  # Restore this state, Download

@@ -59,11 +59,11 @@
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">phonelink_erase</span>Reset authenticator</button>
               </form>
               {% endif %}
-              {% if u.active %}
+              {% if u.active and u.id != me %}
               <form method="post" action="/admin/users/{{ u.id }}/deactivate" data-confirm="Turn off {{ u.username }}? They can no longer log in. Their approvals and history stay.">
                 <button class="btn danger" type="submit"><span class="ms" aria-hidden="true">person_off</span>Turn off</button>
               </form>
-              {% else %}
+              {% elif not u.active %}
               <form method="post" action="/admin/users/{{ u.id }}/activate">
                 <button class="btn" type="submit"><span class="ms" aria-hidden="true">person</span>Turn back on</button>
               </form>
