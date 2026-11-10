@@ -1044,7 +1044,7 @@ function setVendor(name) {
    A vendor of the vendor list fills each blank GST/HST, QST and PST number with its own, and says so under the field
    ("From the vendor list — not printed on the invoice"); a number filled from the vendor follows it when the vendor
    changes. A number read from the invoice or typed is never touched. The server applies the same rule on every check
-   (invoice_view.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
+   (invoice_form.fill_from_vendor), so a vendor typed in is filled too; here it is at once, with Undo. */
 
 const TAX_FIELDS = { gst_hst_registration_number: "gst", qst_registration_number: "qst", pst_registration_number: "pst" };
 const fromVendorBox = document.querySelector("input[data-from-vendor]");

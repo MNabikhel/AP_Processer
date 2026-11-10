@@ -59,7 +59,7 @@ from ap_coder.web.core import (
     shown_count,
 )
 from ap_coder.web.files import TOO_BIG, SheetError, read_capped, read_csv, read_excel
-from ap_coder.web.invoice_view import gl_name
+from ap_coder.web.invoice_grid import gl_name
 
 router = page_router()  # each plain handler: one connection a request
 

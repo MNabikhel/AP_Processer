@@ -11,7 +11,7 @@ import pytest
 
 from ap_coder.core.store import APPROVED, PENDING, REVIEW
 from ap_coder.erp import jde
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_fields, invoice_findings, invoice_form, invoice_reading
 from tests.web import test_web_invoice as screen
 from tests.web.test_web_invoice import PAGE, check, clean_invoice, form_of
 
@@ -138,7 +138,7 @@ def test_what_makes_a_voucher_invalid_is_never_approved_anyway(client, store, ch
 def test_the_hard_codes_are_errors_raised_somewhere():
     from ap_coder.ops.help import CHECKS
 
-    assert invoice_view.HARD_CODES <= set(CHECKS)
+    assert invoice_findings.HARD_CODES <= set(CHECKS)
 
 
 def test_a_vendor_on_hold_is_never_approved_anyway(client, store):
@@ -441,10 +441,10 @@ def test_a_check_about_one_field_is_shown_under_it(client, store):
 
 
 def test_a_problem_that_stops_the_coding_is_said_in_plain_words():
-    assert invoice_view.plain_problem("line_items.1.amount: Value error, must be a number") == (
+    assert invoice_fields.plain_problem("line_items.1.amount: Value error, must be a number") == (
         "Line 2 amount: must be a number"
     )
-    assert invoice_view.plain_problem("due_date: Value error, x") == "Due date: x"
+    assert invoice_fields.plain_problem("due_date: Value error, x") == "Due date: x"
 
 
 def test_the_readings_badge_is_left_out_beside_an_empty_or_changed_field(client, store):
@@ -452,8 +452,8 @@ def test_the_readings_badge_is_left_out_beside_an_empty_or_changed_field(client,
     invoice_id = _id(store, "Prairie")
     inv = store.get_invoice(invoice_id)
     sure = {"invoice_number": {"text": "Verified"}, "po_number": {"text": "Likely"}, "currency": {"text": "Check"}}
-    header = {**invoice_view.Draft.stored(inv["ai_output"]).header, "invoice_number": "", "po_number": "X1"}
-    shown = invoice_view.shown_sure(sure, header, inv["ai_output"], None)
+    header = {**invoice_form.Draft.stored(inv["ai_output"]).header, "invoice_number": "", "po_number": "X1"}
+    shown = invoice_reading.shown_sure(sure, header, inv["ai_output"], None)
     assert "invoice_number" not in shown and "po_number" not in shown and "currency" in shown
 
 

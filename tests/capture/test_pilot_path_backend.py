@@ -61,17 +61,17 @@ def test_a_part_backup_left_by_a_crash_is_removed_when_backups_run(tmp_path):
 
 def _form(store: Store, invoice_id: int) -> dict:
     """The review form as the page posts it (tests/web/test_web_invoice.py ``form_of``)."""
-    from ap_coder.web import invoice_view
-    from ap_coder.web.invoice_view import Draft
+    from ap_coder.web import invoice_form
+    from ap_coder.web.invoice_form import Draft
 
     inv = store.get_invoice(invoice_id)
     draft = Draft.stored(inv["final_output"] or inv["ai_output"])
     rows = [dict(r) for r in draft.lines]
     data = {**draft.header, "grids": "1", "line_key": [f"r{i}" for i in range(len(rows))]}
-    for column, name in invoice_view.LINE_INPUTS.items():
+    for column, name in invoice_form.LINE_INPUTS.items():
         data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
-    data[invoice_view.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
-    for column, name in invoice_view.TAX_INPUTS.items():
+    data[invoice_form.LINE_TAX_CODE] = [tax_code_of(r) for r in rows]  # one tax code a line (D-64)
+    for column, name in invoice_form.TAX_INPUTS.items():
         data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in draft.taxes]
     return data
 

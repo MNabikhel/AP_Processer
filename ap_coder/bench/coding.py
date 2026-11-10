@@ -9,7 +9,7 @@ code the app runs when there is no AI model (no LM Studio chat model, no Azure):
 1. the lines are coded by ``offline_coder.code_from_capture`` from ``Store.feedback_rows()`` (what AP approved so
    far), the chart of accounts in ``data/`` and the vendor master's default account, then the fixed coding rules
    are applied (``rules.apply``), as ``pipeline.process`` does. For the lines left without an account, the review
-   screen's suggestions (``invoice_view.suggestions``) are recorded too;
+   screen's suggestions (``invoice_coding.suggestions``) are recorded too;
 2. AP approves the true account of every line (``Store.approve_invoice``), which records the feedback rows the
    next invoice learns from.
 
@@ -484,7 +484,7 @@ def simulate(
     from ap_coder.core.memory import _normalise, compare_with_history, format_examples, select_examples
     from ap_coder.core.reference_data import UNASSIGNED
     from ap_coder.core.store import Store
-    from ap_coder.web.invoice_view import suggestions
+    from ap_coder.web.invoice_coding import suggestions
 
     realism = realism or Realism()
     reference = sample_reference()

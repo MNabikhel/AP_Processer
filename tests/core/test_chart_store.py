@@ -12,7 +12,7 @@ from ap_coder.core import chart, schema
 from ap_coder.core.chart import BU_INACTIVE, OK, RESERVED, ChartSettings
 from ap_coder.core.store import load_sample_setup
 from ap_coder.core.store.chart import NO_ACCOUNT
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_grid
 from tests import chart_files as cf
 from tests.chart_files import CLOSED, HOME, NOT_USED, OTHER, UNLISTED
 
@@ -191,7 +191,7 @@ def test_the_accounts_a_line_may_be_offered_are_said_in_one_place(store, referen
     assert tax_gls and reference.pairs is None
     assert reference.line_accounts() == [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
     assert schema.line_gl_codes(reference) == reference.line_accounts()
-    assert [c for c, _ in invoice_view.gl_options(reference, [])][1:] == reference.line_accounts()
+    assert [c for c, _ in invoice_grid.gl_options(reference, [])][1:] == reference.line_accounts()
     # With one: nor the accounts never offered, on any business unit.
     _loaded(store)
     store.set_tax_treatment("GST", "recoverable", "2310")
@@ -200,7 +200,7 @@ def test_the_accounts_a_line_may_be_offered_are_said_in_one_place(store, referen
     offered = sorted(set(cf.GL_ACCOUNTS) - {"2310", "5410.7701", "2140", "2140.QC"})
     assert with_chart.line_accounts() == schema.line_gl_codes(with_chart) == offered
     assert "5410.7701" in with_chart.chart_of_accounts.codes  # still an account: a line coded to it by hand is checked
-    options = invoice_view.gl_options(with_chart, [{"predicted_gl_code": "5410.7701"}])
+    options = invoice_grid.gl_options(with_chart, [{"predicted_gl_code": "5410.7701"}])
     assert [c for c, _ in options][1:] == [*offered, "5410.7701"]  # a line that has it still shows it, by its name
     assert dict(options)["5410.7701"] == "5410.7701 · Recoveries"
     assert "5410.7701" not in with_chart.to_prompt_context() and "5410.2210" in with_chart.to_prompt_context()
@@ -218,8 +218,8 @@ def test_a_business_unit_named_do_not_use_is_not_in_the_lists_offered(store, ref
     assert with_chart.line_cost_centers() == with_chart.pairs.business_units()
     line = schema.build_json_schema(with_chart)["properties"]["line_items"]["items"]["properties"]
     assert line["predicted_cost_center"]["enum"] == [*offered, "UNASSIGNED"]
-    assert [c for c, _ in invoice_view.cc_options(with_chart, [])][1:] == offered
-    kept = invoice_view.cc_options(with_chart, [{"predicted_cost_center": NOT_USED}])
+    assert [c for c, _ in invoice_grid.cc_options(with_chart, [])][1:] == offered
+    kept = invoice_grid.cc_options(with_chart, [{"predicted_cost_center": NOT_USED}])
     assert kept[-1] == (NOT_USED, f"{NOT_USED} · ****DO NOT USE**** Old Annex")  # a line that has it still shows it
     assert NOT_USED not in with_chart.to_prompt_context() and HOME in with_chart.to_prompt_context()
     # A business unit all of whose accounts are never offered is not offered either.

@@ -8,8 +8,8 @@ sending it back, bringing a parked one back, reopening an approved (for correcti
 
 Every edit is checked as the reviewer types (``POST /review/<id>/check`` answers the sections again) and kept as a
 draft, per person and in the store too (D-86), so moving to another invoice and back keeps it, a restart too.
-What is worked out lives in ``ap_coder/web/invoice_view.py``; the page script is ``static/js/invoice.js`` with the
-page viewer ``static/js/invoice_viewer.js``.
+What is worked out lives in ``ap_coder/web/invoice_view.py`` and its siblings (``invoice_<subject>.py``); the page
+script is ``static/js/invoice.js`` with the page viewer ``static/js/invoice_viewer.js``.
 
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (the screen's poll: OvisOCR2's progress on it, who else has it open and
@@ -55,7 +55,17 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.core.store.users import same_approver
 from ap_coder.erp import jde, stamp
 from ap_coder.erp.jde_keying import keying_batches
-from ap_coder.web import account_lines, document, identity
+from ap_coder.web import (
+    account_lines,
+    document,
+    identity,
+    invoice_coding,
+    invoice_fields,
+    invoice_form,
+    invoice_grid,
+    invoice_reading,
+    invoice_totals,
+)
 from ap_coder.web import invoice_view as view
 from ap_coder.web.access import is_admin, key_of, may_lift_hold, person_key
 from ap_coder.web.core import (
@@ -199,13 +209,13 @@ def _start(inv: dict[str, Any]) -> dict[str, Any]:
     return inv.get("final_output") or inv.get("ai_output") or {}
 
 
-def current_draft(request: Request, inv: dict[str, Any]) -> tuple[view.Draft, bool]:
+def current_draft(request: Request, inv: dict[str, Any]) -> tuple[invoice_form.Draft, bool]:
     """The screen's state: the draft kept for it, else the stored coding; and whether OvisOCR2's reading came in
     after the draft was started (its edits are kept: the screen offers to start over from the reading)."""
     saved = _drafts(request).get(inv["id"])
     if saved is None:
-        return view.Draft.stored(_start(inv), _reader_at(inv), approved=bool(inv.get("final_output"))), False
-    draft = view.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
+        return invoice_form.Draft.stored(_start(inv), _reader_at(inv), approved=bool(inv.get("final_output"))), False
+    draft = invoice_form.Draft(header=dict(saved["header"]), lines=list(saved["lines"]), taxes=list(saved["taxes"]),
                        taught=dict(saved.get("taught") or {}), reader_at=saved.get("reader_at", ""),
                        absent=list(saved.get("absent") or []), from_vendor=dict(saved.get("from_vendor") or {}),
                        pay_from_for=str(saved.get("pay_from_for") or ""))  # fmt: skip
@@ -221,7 +231,7 @@ def my_drafts(request: Request) -> dict[int, dict[str, Any]]:
     return _drafts(request)
 
 
-def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool, why: str | None = None,
+def _keep_draft(request: Request, invoice_id: int, draft: invoice_form.Draft, keep: bool, why: str | None = None,
                 screen: str = "", form: Any = None) -> None:  # fmt: skip
     """Keep the edits (``keep``) or drop them. ``saved_at`` is when they were last edited: the same edits checked again
     (the invoice opened again) keep their time (B-997). ``why``: the draft's own blocker, for the queue (B-996).
@@ -255,7 +265,7 @@ def _keep_draft(request: Request, invoice_id: int, draft: view.Draft, keep: bool
         _drafts(request).pop(invoice_id, None)
 
 
-def _keeps(draft: view.Draft, analysis: view.Analysis) -> bool:
+def _keeps(draft: invoice_form.Draft, analysis: view.Analysis) -> bool:
     """Whether a check keeps the screen's edits as a draft: a field to fix, an edit of the coding, words taught."""
     return analysis.coding is None or analysis.changed or bool(draft.taught)
 
@@ -620,7 +630,7 @@ def folded_reviewer(state: dict[str, Any]) -> dict[str, Any]:
 def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, editable: bool,
               capture: Any) -> dict[str, Any]:  # fmt: skip
     """The document card: the pages (or the extracted text), what OvisOCR2 made of it, how the lines were read.
-    ``capture``: the invoice's (``view.capture_of``)."""
+    ``capture``: the invoice's (``invoice_reading.capture_of``)."""
     from ap_coder.capture.line_items import sources_line
 
     path = Path(inv.get("source_path") or "")
@@ -635,13 +645,14 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
             problem = "This file could not be shown (it may be damaged)."
     original = (inv.get("meta") or {}).get("original") or {}
     folded = editable and lm_studio_off(status)  # the banner says LM Studio is off: the lines don't say it again
-    reader, checker = view.reader_state(store, settings, inv, status), view.reviewer_state(store, inv)
+    reader, checker = (invoice_reading.reader_state(store, settings, inv, status),
+                       invoice_reading.reviewer_state(store, inv))  # fmt: skip
     return {
         "file_name": inv.get("file_name") or path.name,
-        "kind": view.document_kind(capture.layout_source) if capture is not None else None,
+        "kind": invoice_reading.document_kind(capture.layout_source) if capture is not None else None,
         "viewer": viewer_data(inv, capture, sizes) if sizes else None,
         "teachable": editable and bool(sizes) and capture is not None,
-        "teach_fields": [(f, LABELS.get(f, f)) for f in view.TEACHABLE],
+        "teach_fields": [(f, LABELS.get(f, f)) for f in invoice_form.TEACHABLE],
         "problem": problem,
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
         "reader": folded_reader(reader) if folded else reader,
@@ -707,9 +718,9 @@ def _render_live(live: dict[str, Any], invoice_id: int) -> dict[str, str]:
     return {name: str(getattr(mod, name)(live, invoice_id)) for name in names}
 
 
-def _render_lines(reference: ReferenceData, draft: view.Draft, ai: dict[str, Any] | None = None) -> str:
+def _render_lines(reference: ReferenceData, draft: invoice_form.Draft, ai: dict[str, Any] | None = None) -> str:
     mod = templates.env.get_template("_invoice_lines.html").module
-    return str(mod.line_rows(view.grid(reference, draft, ai)))
+    return str(mod.line_rows(invoice_grid.grid(reference, draft, ai)))
 
 
 def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
@@ -773,7 +784,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     }
     editable = inv["status"] == REVIEW and reference is not None
     may_edit = can(request, f"/review/{invoice_id}/check")  # server mode: Read-only looks and changes nothing (D-98)
-    capture = view.capture_of(store, invoice_id)  # read once: the document card and the checks use it
+    capture = invoice_reading.capture_of(store, invoice_id)  # read once: the document card and the checks use it
     context["doc"] = _document(store, settings, inv, status, editable and may_edit, capture)
     may_read = can(request, f"/review/{invoice_id}/read-pages")
     context["doc"]["reader_tag"] = reader_tag(context["doc"]["reader"], may_read)  # what its poll sends back (D-160)
@@ -793,7 +804,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     draft_rev = will if will == drawn else f"{will} {drawn}"
     screen = secrets.token_hex(4)  # this screen's own, its drafts say they are from it
     context["manager"] = _manager_context(request, store, inv, list(analysis.output.get("line_items") or []))
-    sure = view.shown_sure(view.capture_confidence(capture), draft.header, inv.get("ai_output") or {}, capture)
+    sure = invoice_reading.shown_sure(invoice_reading.capture_confidence(capture), draft.header,
+                                      inv.get("ai_output") or {}, capture)  # fmt: skip
     start = _start(inv)
     computed = None
     try:
@@ -813,20 +825,20 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         kept=kept, live=_shown_live(request, analysis.live, may_edit, draft_rev), sure=sure,
         rev=store.coding_revision(invoice_id), screen=screen, watch_seconds=WATCH_SECONDS,
         others=working_here(open_elsewhere(request, store, invoice_id).get(invoice_id, [])),
-        grid={**view.grid(reference, draft, inv.get("ai_output") or {},
-                          view.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
+        grid={**invoice_grid.grid(reference, draft, inv.get("ai_output") or {},
+                          invoice_grid.vendor_accounts(store, draft.header.get("vendor_name") or ""), analysis),
               "tax_marks": analysis.live.get("tax_marks") or {}},
-        labels=view.FIELD_LABELS, provinces=view.province_options(),
+        labels=invoice_form.FIELD_LABELS, provinces=invoice_grid.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else
         "None: a credit is not paid" if float(start.get("grand_total") or 0) < 0 else "YYYY-MM-DD",
         sent_back=_sent_back(events), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendor_seed=vendor_seed(store, header),
-        absent_ok=list(view.ABSENT_FIELDS), from_vendor_note=view.FROM_VENDOR_NOTE,
-        tax_fields=list(view.TAX_NUMBER_FIELDS), pay_from=view.pay_from_choices(store, draft.header),
-        unread_numbers=sorted(view.unread_numbers(inv.get("ai_output") or {}) or []),
+        absent_ok=list(invoice_form.ABSENT_FIELDS), from_vendor_note=invoice_fields.FROM_VENDOR_NOTE,
+        tax_fields=list(invoice_form.TAX_NUMBER_FIELDS), pay_from=invoice_fields.pay_from_choices(store, draft.header),
+        unread_numbers=sorted(invoice_form.unread_numbers(inv.get("ai_output") or {}) or []),
         bank_shown=mask_account(bank) if (bank := draft.header.get("remit_bank_account")) else "",
-        supply=view.supply_line(draft.header, draft.lines, reference.tax),
-        usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
+        supply=invoice_grid.supply_line(draft.header, draft.lines, reference.tax),
+        usual_cc=invoice_grid.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
         account_seed=account_seed(store, reference, draft.header.get("vendor_name") or ""),
         draft_from=_when(saved_at),
     )  # fmt: skip
@@ -1054,15 +1066,17 @@ def _mode(inv: dict[str, Any]) -> str:
 def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) -> dict[str, Any]:
     """What the read-only screen shows for an invoice that is not being reviewed."""
     doc = inv.get("final_output") or inv.get("ai_output") or {}
-    out: dict[str, Any] = {"stored": view.stored_summary(inv, doc), "posting": None, "edits": "", "same": False}
+    out: dict[str, Any] = {"stored": invoice_totals.stored_summary(inv, doc), "posting": None, "edits": "",
+                           "same": False}  # fmt: skip
     if doc.get("gl_distribution"):
-        out["posting"] = view.distribution(doc, reference)
+        out["posting"] = invoice_totals.distribution(doc, reference)
     if inv["status"] in (APPROVED, PENDING):
         edits = inv.get("edits") or []
         changed = [e for e in edits if e != "line_coded"]
-        labels = {**view.EDIT_LABELS, "line_coding": view.coding_changed(inv.get("ai_output") or {}, doc)}
+        labels = {**invoice_coding.EDIT_LABELS,
+                  "line_coding": invoice_coding.coding_changed(inv.get("ai_output") or {}, doc)}  # fmt: skip
         said = [("changed: " + ", ".join(labels.get(e, e) for e in changed)) if changed else "",
-                view.remarks_changed(inv.get("ai_output") or {}, doc)]  # fmt: skip
+                invoice_coding.remarks_changed(inv.get("ai_output") or {}, doc)]  # fmt: skip
         out["edits"] = "; ".join(filter(None, said)) or "no changes to the suggested coding"
         if "line_coded" in edits:  # the reviewer's own coding where the AI proposed none (B-670)
             n = coded_blanks(inv.get("ai_output"), inv.get("final_output"))
@@ -1141,7 +1155,7 @@ def reader_progress(request: Request, invoice_id: int, seen: str = "", rev: str 
         return JSONResponse({"poll": False, "stale": stale}, headers={"Cache-Control": "no-store"})
     inv = inv if inv is not None else _invoice(store, invoice_id)
     status = reading_status_or_none(settings, store)
-    state = view.reader_state(store, settings, inv, status)
+    state = invoice_reading.reader_state(store, settings, inv, status)
     if inv["status"] == REVIEW and lm_studio_off(status):
         state = folded_reader(state)  # as the screen drew it (B-444)
     may = can(request, f"/review/{invoice_id}/read-pages")
@@ -1203,10 +1217,10 @@ def approved_pdf_download(store: Store, inv: dict[str, Any]) -> Response:
 # --- Checking the edits ---------------------------------------------------------------------------------------------
 
 
-def _from_form(request: Request, inv: dict[str, Any], form: Any) -> view.Draft:
+def _from_form(request: Request, inv: dict[str, Any], form: Any) -> invoice_form.Draft:
     base, _ = current_draft(request, inv)
     reference = reference_or_none(get_store(request))
-    return view.Draft.from_form(form, base, reference.pairs if reference is not None else None)
+    return invoice_form.Draft.from_form(form, base, reference.pairs if reference is not None else None)
 
 
 @router.post("/review/{invoice_id:int}/check")
@@ -1232,11 +1246,11 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     draft = _from_form(request, inv, form)
     analysis = view.analyse(store, settings, reference, inv, draft, reviewer())
     # the account lists' "Used for this vendor", for the vendor now in the vendor field (B-596)
-    listed = {code for code, _ in view.gl_options(reference, draft.lines)}
-    used = [c for c in view.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
+    listed = {code for code, _ in invoice_grid.gl_options(reference, draft.lines)}
+    used = [c for c in invoice_grid.vendor_accounts(store, draft.header.get("vendor_name") or "") if c in listed]
     kept = _keep_checked(request, store, invoice_id, draft, analysis, form=form)  # written last: read nothing after
     # the lines' tax codes where the invoice is supplied now, and the lines the Tax check points at (D-64)
-    codes = view.tax_choices(draft, reference.tax)
+    codes = invoice_grid.tax_choices(draft, reference.tax)
     # What the server filled in the invoice details (the vendor list's tax numbers, the default Pay from account) and
     # the details to highlight: the screen shows them (invoice.js applyHeader).
     header = {"values": analysis.filled, "from_vendor": draft.from_vendor, "pay_from_for": draft.pay_from_for}
@@ -1246,7 +1260,7 @@ def _check(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         header["help"] = analysis.live.get("help") or {}  # a note with a one-click fix under a field (D-75)
         header["an8"] = analysis.live.get("an8")  # the supplier's JD Edwards number, when it is the export in use
     # With a chart of accounts: what each line's row says under its boxes, for the account now in it (D-214)
-    rows = (_line_views(view.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
+    rows = (_line_views(invoice_grid.grid(reference, draft, inv.get("ai_output") or {}, checked=analysis))
             if account_lines.in_use(reference) else None)  # fmt: skip
     return JSONResponse({"ok": True, "valid": analysis.coding is not None, "allow": analysis.allow, "draft": kept,
                          **({"lines": rows, "supplier_accounts": account_lines.supplier_accounts(
@@ -1266,7 +1280,7 @@ def _screen(form: Any) -> str:
     return str(form.get("screen") or "")
 
 
-def _keep_checked(request: Request, store: Store, invoice_id: int, draft: view.Draft, analysis: view.Analysis,
+def _keep_checked(request: Request, store: Store, invoice_id: int, draft: invoice_form.Draft, analysis: view.Analysis,
                   screen: str = "", form: Any = None) -> bool:  # fmt: skip
     """What a check of the screen keeps: the edits as a draft, or none when there are none, and the confidence it
     worked out (the queue shows the one the screen shows, edits and today's checks included). Whether they are kept.
@@ -1344,7 +1358,7 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
     except (KeyError, ValueError):  # KeyError: deleted meanwhile, after it was read above
         return changed_meanwhile(request, invoice_id)
-    learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=view.taught_boxes(draft))
+    learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=invoice_form.taught_boxes(draft))
     explained = 0
     for item in asked:  # the reasons AP gave on the "why" screen (none when it was skipped), after this correction
         answer = str(form.get(f"why::{item['key']}") or "").strip()  # was counted: the count starts again from 0
@@ -1634,19 +1648,20 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
     """The words the reviewer clicked on the page, as the value of a field of the form. On approval, the supplier's
     template learns where that field is printed (the boxes are sent with the approval)."""
     _invoice(get_store(request), invoice_id)
-    if field in view.LINE_TEACHABLE or field == view.NEW_LINE:
-        found = view.line_value(field, text)
+    if field in invoice_form.LINE_TEACHABLE or field == invoice_form.NEW_LINE:
+        found = invoice_form.line_value(field, text)
         if found in (None, ""):
-            what = "a line (it needs an amount)" if field == view.NEW_LINE else f"a line's {view.LINE_TEACHABLE[field]}"
+            what = ("a line (it needs an amount)" if field == invoice_form.NEW_LINE
+                    else f"a line's {invoice_form.LINE_TEACHABLE[field]}")  # fmt: skip
             return refuse(f"Those words don't read as {what}: try again.")
-        if field == view.NEW_LINE:
+        if field == invoice_form.NEW_LINE:
             return message(f"New line: {found['description'] or '(no description)'}, {found['amount']:.2f}. Code it "
                            "to a GL account.", "ok", field=field, value=found)  # fmt: skip
         shown = f"{found:.2f}" if field in ("line_amount", "line_unit_price") else str(found)
-        return message(f"Line {view.LINE_TEACHABLE[field]} set to {shown}.", "ok", field=field, value=shown)
-    if field not in view.TEACHABLE:
+        return message(f"Line {invoice_form.LINE_TEACHABLE[field]} set to {shown}.", "ok", field=field, value=shown)
+    if field not in invoice_form.TEACHABLE:
         return refuse("That field can't be taught.")
-    value = view.form_value(field, text)
+    value = invoice_form.form_value(field, text)
     if value in (None, ""):
         return refuse("Those words don't read as a value for that field: try again.")
     shown = f"{value:.2f}" if isinstance(value, float) else str(value)
@@ -1660,7 +1675,7 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
 
 
 def _posted_in_review(request: Request, invoice_id: int,
-                      form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft]:  # fmt: skip
+                      form: Any) -> tuple[Store, dict[str, Any], ReferenceData, invoice_form.Draft]:  # fmt: skip
     """A grid action's invoice (still in the review queue), the GL accounts and the draft the form posted."""
     store = get_store(request)
     if stale := _out_of_date(request, store, invoice_id, store.get_invoice(invoice_id), form):  # first, as a check
@@ -1671,14 +1686,14 @@ def _posted_in_review(request: Request, invoice_id: int,
 
 
 def _coded(request: Request, invoice_id: int,
-           form: Any) -> tuple[Store, dict[str, Any], ReferenceData, view.Draft, InvoiceCoding]:  # fmt: skip
+           form: Any) -> tuple[Store, dict[str, Any], ReferenceData, invoice_form.Draft, InvoiceCoding]:  # fmt: skip
     """As ``_posted_in_review``, with the coding on screen (refused while a field keeps it from being built)."""
     store, inv, reference, draft = _posted_in_review(request, invoice_id, form)
     coding = _fix_first(view.analyse(store, get_settings(request), reference, inv, draft))
     return store, inv, reference, draft, coding
 
 
-def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draft: view.Draft,
+def _new_lines(request: Request, invoice_id: int, reference: ReferenceData, draft: invoice_form.Draft,
                lines: list[dict[str, Any]], text: str, icon: str, form: Any) -> JSONResponse:  # fmt: skip
     """The grid with its new rows, kept as the draft; the page draws them and checks again (at the draft's revision
     now, ``draft_rev``)."""
@@ -1709,7 +1724,7 @@ async def split(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     _, _, reference, draft = _posted_in_review(request, invoice_id, form)  # (approved meanwhile: B-1402)
-    number = view._line_number(form.get("split_line"))
+    number = invoice_form._line_number(form.get("split_line"))
     if number is None:
         return refuse("Pick the line to split.")
     by = "amount" if str(form.get("split_by") or "") == "amount" else "percent"
@@ -1726,7 +1741,7 @@ def _split(request: Request, invoice_id: int, form: Any) -> JSONResponse:
             value = float("nan")
         parts.append((str(gl or ""), str(cc or ""), value))
     try:
-        lines = view.split(draft, number, parts, reference.cost_centers is not None, by=by)
+        lines = invoice_grid.split(draft, number, parts, reference.cost_centers is not None, by=by)
     except ValueError as exc:
         return refuse(f"Not split: {exc}.")
     shown = sum(1 for p in parts if (p[2] != 0 if by == "amount" else p[2] > 0))
@@ -1744,7 +1759,7 @@ async def apply_rules(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _apply_rules(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, inv, reference, draft, coding = _coded(request, invoice_id, form)
-    lines, n = view.apply_rules(store, coding, draft, invoice_id, inv["ai_output"] or {})
+    lines, n = invoice_grid.apply_rules(store, coding, draft, invoice_id, inv["ai_output"] or {})
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Coding rules applied to {ui.plural(n, 'line')}.", "rule_settings", form)  # fmt: skip
 
@@ -1758,7 +1773,7 @@ async def use_po_coding(request: Request, invoice_id: int) -> JSONResponse:
 @one_connection
 def _use_po_coding(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     store, _, reference, draft, coding = _coded(request, invoice_id, form)
-    lines, n = view.po_coding(store, coding, draft, invoice_id)
+    lines, n = invoice_grid.po_coding(store, coding, draft, invoice_id)
     return _new_lines(request, invoice_id, reference, draft, lines,
                       f"Applied the PO's coding to {ui.plural(n, 'line')}.", "auto_fix_high", form)  # fmt: skip
 
@@ -1777,7 +1792,7 @@ def _use_suggestion(request: Request, invoice_id: int, form: Any) -> JSONRespons
         return refuse("That GL account is not in your chart of accounts.")
     try:
         position = int(str(form.get("position") or ""))
-        lines = view.use_suggestion(reference, coding, draft, position, gl, str(form.get("cc") or ""))
+        lines = invoice_grid.use_suggestion(reference, coding, draft, position, gl, str(form.get("cc") or ""))
     except ValueError as exc:
         return refuse(f"Not changed: {exc}.")
     number = coding.line_items[position].line_number
@@ -1811,7 +1826,7 @@ def _fill_lines(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         return refuse(f"GL {gl} is not in your GL accounts (or it is a sales-tax account).")
     if cc and (reference.cost_centers is None or reference.cost_centers.get(cc) is None):
         return refuse(f"Cost center {cc} is not in your cost center list.")
-    lines, n_gl, n_cc = view.fill_lines(draft, gl, cc)
+    lines, n_gl, n_cc = invoice_grid.fill_lines(draft, gl, cc)
     done_text = [f"GL {gl} set on {ui.plural(n_gl, 'line')}" if gl else "",
                  f"Cost center {cc} set on {ui.plural(n_cc, 'line')}" if cc else ""]  # fmt: skip
     text = "; ".join(t for t in done_text if t) + ". Lines already coded kept theirs."

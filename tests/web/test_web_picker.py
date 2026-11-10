@@ -16,7 +16,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.memory import ACCEPTED, CODED, CORRECTED
 from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import REVIEW, Store
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_grid
 from ap_coder.web.app import create_app
 from tests.browser import browser_on, wait_until
 from tests.stores import demo_store  # noqa: F401  (the tests' store)
@@ -56,7 +56,7 @@ def _set_output(store: Store, invoice_id: int, output: dict) -> None:
 
 def _accounts(store: Store) -> list[str]:
     reference = store.reference_data()
-    return [c for c, _ in invoice_view.gl_options(reference, []) if c != UNASSIGNED]
+    return [c for c, _ in invoice_grid.gl_options(reference, []) if c != UNASSIGNED]
 
 
 # --- Without a browser ---------------------------------------------------------------------------------------------
@@ -78,9 +78,9 @@ def test_vendor_accounts_are_the_ones_its_approved_lines_went_to_most_used_first
             )
     # 6200 three times, 6100 twice, then 6300 (the ERP's history); never what the AI proposed (6000, 6900), nor a
     # line left without one, nor another vendor's
-    assert invoice_view.vendor_accounts(store, "Acme Inc.") == ["6200", "6100", "6300"]
-    assert invoice_view.vendor_accounts(store, "Acme", limit=2) == ["6200", "6100"]
-    assert invoice_view.vendor_accounts(store, "Nobody") == [] and invoice_view.vendor_accounts(store, " ") == []
+    assert invoice_grid.vendor_accounts(store, "Acme Inc.") == ["6200", "6100", "6300"]
+    assert invoice_grid.vendor_accounts(store, "Acme", limit=2) == ["6200", "6100"]
+    assert invoice_grid.vendor_accounts(store, "Nobody") == [] and invoice_grid.vendor_accounts(store, " ") == []
 
 
 def test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line(client, store):
@@ -91,7 +91,7 @@ def test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line(cli
     _set_output(store, inv["id"], output)
     page = client.get(f"/review/{inv['id']}").text
     reference = store.reference_data()
-    full = len(invoice_view.gl_options(reference, [])) + len(reference.cost_centers.codes) + 1
+    full = len(invoice_grid.gl_options(reference, [])) + len(reference.cost_centers.codes) + 1
     rows = page.split('<tbody data-grid="lines">', 1)[1].split("</tbody>", 1)[0]
     selects = re.findall(r'<select name="line_(?:gl|cc)".*?</select>', rows, re.S)
     assert len(selects) == 40 and all(s.count("<option") <= 2 for s in selects)
@@ -100,7 +100,7 @@ def test_the_review_screen_prints_the_chart_of_accounts_once_not_once_a_line(cli
     codes = sum(s.count("<option") for s in re.findall(r'<select name="line_tax_code".*?</select>', page, re.S))
     assert page.count("<option") - codes < 20 * full / 2, (page.count("<option"), codes, full)
     listed = json.loads(re.search(r'id="gl-options">(.*?)</script>', page, re.S).group(1))
-    expected = invoice_view.gl_options(reference, output["line_items"])
+    expected = invoice_grid.gl_options(reference, output["line_items"])
     assert [code for code, _ in listed] == [code for code, _ in expected]
     assert 'id="cc-options"' in page and 'aria-label="Line 3 GL account"' in page
     # each line's own choice is still the select's (what is posted, and what the tests and the server read)
@@ -150,7 +150,7 @@ def _posted_gls(request) -> list[str]:
 def _a_word_inside(store) -> tuple[str, str]:
     """An account and a word from the middle of its name (not its first word)."""
     reference = store.reference_data()
-    for code, label in invoice_view.gl_options(reference, []):
+    for code, label in invoice_grid.gl_options(reference, []):
         words = label.split(" · ", 1)[-1].split()
         if code != UNASSIGNED and len(words) >= 3 and len(words[1]) >= 4:
             return code, words[1]
@@ -195,7 +195,7 @@ def test_in_a_browser_a_code_or_a_name_typed_then_clicking_away_picks_its_accoun
     and its name together; text that names no single account leaves the account as it was, never half typed
     (B-1445)."""
     invoice_id = store.list_invoices(REVIEW)[-1]["id"]  # not the first: the test before edits that one
-    options = invoice_view.gl_options(store.reference_data(), [])
+    options = invoice_grid.gl_options(store.reference_data(), [])
     accounts = {code: label for code, label in options if code != UNASSIGNED}
     page, errors = _review(browser, invoice_id)
     field = page.locator(GL).first
@@ -225,7 +225,7 @@ def test_in_a_browser_a_code_typed_then_the_page_scrolled_away_picks_its_account
     would leave it (B-1445). Out of view now picks as leaving the box does: the account typed when it names one,
     else the account as it was (B-1713)."""
     invoice_id = store.list_invoices(REVIEW)[-1]["id"]
-    options = invoice_view.gl_options(store.reference_data(), [])
+    options = invoice_grid.gl_options(store.reference_data(), [])
     accounts = {code: label for code, label in options if code != UNASSIGNED}
     page, errors = _review(browser, invoice_id)
     field = page.locator(GL).first
@@ -278,7 +278,7 @@ def test_in_a_browser_the_accounts_used_for_this_vendor_come_first(browser, stor
     output = copy.deepcopy(second["ai_output"])  # another invoice of the same vendor
     output["vendor_name"] = first["ai_output"]["vendor_name"]
     _set_output(store, second["id"], output)
-    used = invoice_view.vendor_accounts(store, output["vendor_name"])
+    used = invoice_grid.vendor_accounts(store, output["vendor_name"])
     assert set(used) == {accounts[-1], accounts[-2]} or used == [accounts[-2]]
 
     page, errors = _review(browser, second["id"])
@@ -710,8 +710,8 @@ def test_in_a_browser_the_accounts_used_for_this_vendor_follow_the_vendor_field(
     for li in approved["line_items"]:
         li["predicted_gl_code"] = accounts[-1]
     store.approve_invoice(first["id"], approved, "Pat Tester")
-    assert invoice_view.vendor_accounts(store, first["vendor_name"]) == [accounts[-1]]
-    assert accounts[-1] not in invoice_view.vendor_accounts(store, second["vendor_name"])
+    assert invoice_grid.vendor_accounts(store, first["vendor_name"]) == [accounts[-1]]
+    assert accounts[-1] not in invoice_grid.vendor_accounts(store, second["vendor_name"])
 
     page, errors = _review(browser, second["id"])
     vendor = page.locator("#vendor-name")

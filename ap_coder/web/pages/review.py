@@ -71,7 +71,8 @@ from ap_coder.web.core import (
     server_mode,
 )
 from ap_coder.web.identity import shown_path
-from ap_coder.web.invoice_view import confidence_pct, document_kind
+from ap_coder.web.invoice_findings import confidence_pct
+from ap_coder.web.invoice_reading import document_kind
 
 router = page_router()  # each plain handler: one connection a request
 

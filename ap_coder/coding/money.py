@@ -30,7 +30,7 @@ _NEAR_A_TIE = 0.4999
 # (decimal.InvalidOperation, B-2096). This holds any float, and a product or a share of two.
 _ALL_DIGITS = Context(prec=1000)
 # The largest amount a field takes (ten trillion): beyond it a float no longer holds the cents, and no invoice, tax or
-# quantity is that large. What is typed past it is not an amount (``web.invoice_view``).
+# quantity is that large. What is typed past it is not an amount (``web.invoice_form``).
 LARGEST = 1e13
 
 

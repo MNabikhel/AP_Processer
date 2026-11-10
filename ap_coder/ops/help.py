@@ -192,7 +192,7 @@ CHECKS: dict[str, CheckHelp] = {
         "Something JD Edwards needs on the voucher is missing or not valid.",
         "Read the message, fix it on the invoice, or ask the pilot tester.",
     ),
-    # --- Dates and currency typed on the review screen (web/invoice_view.py) ---------------------------------------
+    # --- Dates and currency typed on the review screen (web/invoice_fields.py) -------------------------------------
     "INVOICE_DATE_INVALID": CheckHelp(
         TOTALS, "Invoice date to fix",
         "The invoice date is missing or is not a date AP Coder can read.",

@@ -7,7 +7,7 @@ from ap_coder.coding.vendors import master_columns, master_rows, master_vendor_i
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store
 from ap_coder.erp import jde
-from ap_coder.web.invoice_view import is_hard
+from ap_coder.web.invoice_findings import is_hard
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
 
 

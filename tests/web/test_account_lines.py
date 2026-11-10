@@ -12,7 +12,7 @@ import pytest
 from ap_coder.core import chart
 from ap_coder.web import account_lines
 from ap_coder.web.account_lines import LINE_ACCOUNT
-from ap_coder.web.invoice_view import LINE_REMARK
+from ap_coder.web.invoice_form import LINE_REMARK
 from tests.conftest import copy_database
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE, client_for

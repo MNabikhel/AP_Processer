@@ -174,7 +174,7 @@ class ReferenceData:
         """The GL codes a line may be offered, in the list's order: every account but those mapped to a tax type and,
         with a chart imported, those offered on no business unit (never-offered accounts, ``chart.ChartSettings``).
         The one place that says so. Asked by the coding's schema (``schema.line_gl_codes``), the review screen's
-        picker (``invoice_view.gl_options``), the doctor and ``to_prompt_context``; the suggestions
+        picker (``invoice_grid.gl_options``), the doctor and ``to_prompt_context``; the suggestions
         (``ai/suggest.suggest_gl``) and the model's account pass (``ai/inference._account_schema``) still work their
         own list out, tax accounts aside only, until they are rebuilt on this and the pairs (B-2093)."""
         tax_gls = self.tax.tax_gl_codes()
@@ -185,7 +185,7 @@ class ReferenceData:
         """The cost centers a line may be offered, in the list's order (None: the organisation has none): all of
         them, or with a chart imported those with an account the pairs offer, so not a business unit named DO NOT USE
         or one all of whose accounts are never offered (B-2093). Such a one stays a cost center: a line coded to it by
-        hand is checked. Asked by the coding's schema, the review screen's picker (``invoice_view.cc_options``, which
+        hand is checked. Asked by the coding's schema, the review screen's picker (``invoice_grid.cc_options``, which
         keeps a line's own), ``to_prompt_context`` and the chat model's list (``ai/inference._account_schema``)."""
         if self.cost_centers is None:
             return None

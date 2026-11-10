@@ -114,7 +114,7 @@ def test_the_posting_preview_shows_the_tax_account_in_the_gl_tax_mode():
     """B-1022: with the tax coded to G/L accounts the preview said "posted by JD Edwards" on the tax line that goes to
     the tax account, and a tax line with no account never said "not mapped"."""
     from ap_coder.erp import jde
-    from ap_coder.web.invoice_view import distribution
+    from ap_coder.web.invoice_totals import distribution
     from tests.erp.test_jde_gl_mode import coded, doc, line, tl
 
     inv = coded(doc([line(1, 1000.0, taxes=["HST"])], [tl("HST", "ON", 0.13, 1000.0, 130.0)]))

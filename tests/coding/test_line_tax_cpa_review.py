@@ -348,7 +348,7 @@ def test_a_tax_no_set_of_lines_makes_is_the_vendors_and_pst_is_never_said_claima
 
 
 def test_the_posting_preview_says_pst_is_spread_over_lines_still_to_check_b714(reference):
-    from ap_coder.web.invoice_view import posting_note
+    from ap_coder.web.invoice_totals import posting_note
 
     assert "still to check" in posting_note(_bc22(), reference)
     taxes = [("GST", "", 0.05, 1000.0, 50.0), ("PST", "BC", 0.07, 1000.0, 70.0)]

@@ -11,7 +11,7 @@ from ap_coder.coding.remark import suggest_remark, suggested
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import APPROVED
 from ap_coder.erp import jde
-from ap_coder.web.invoice_view import LINE_REMARK
+from ap_coder.web.invoice_form import LINE_REMARK
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE
 

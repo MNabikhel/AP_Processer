@@ -22,7 +22,7 @@ def _blank_invoice():
 
 def test_filling_in_a_blank_gl_account_is_coded_not_corrected(tmp_path):
     from ap_coder.ai import lessons
-    from ap_coder.web.invoice_view import ai_changes, learn_text
+    from ap_coder.web.invoice_coding import ai_changes, learn_text
 
     store = Store(tmp_path / "ap.db")
     read = _blank_invoice()
@@ -99,7 +99,7 @@ def test_the_vendors_province_is_never_the_ship_to():
 def test_the_screen_never_calls_a_bill_to_the_ship_to():
     from types import SimpleNamespace
 
-    from ap_coder.web.invoice_view import supply_line
+    from ap_coder.web.invoice_grid import supply_line
 
     setup = SimpleNamespace(site_provinces={}, our_province="ON")
     why = supply_line({"ship_to_province": "NS", "supplier_province": "ON"}, [], setup)["why"]
@@ -114,7 +114,7 @@ def test_a_ship_to_printed_outside_canada_is_never_called_no_ship_to_on_the_scre
     printed is outside Canada'. The screen now says what the tax check says."""
     from types import SimpleNamespace
 
-    from ap_coder.web.invoice_view import supply_line
+    from ap_coder.web.invoice_grid import supply_line
 
     ours = SimpleNamespace(site_provinces={}, our_province="ON")
     line = supply_line({"ship_to_province": "OUTSIDE_CANADA", "supplier_province": ""}, [], ours)
@@ -430,7 +430,8 @@ def test_lines_a_person_made_add_up_drop_the_lines_to_check_warning(tmp_path, mo
     from ap_coder.core.config import Settings
     from ap_coder.core.store import load_sample_setup
     from ap_coder.web import invoice_view
-    from ap_coder.web.invoice_view import Draft, analyse
+    from ap_coder.web.invoice_form import Draft
+    from ap_coder.web.invoice_view import analyse
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -464,7 +465,8 @@ def test_fixed_values_drop_the_as_printed_warning_and_the_unit_price_follows(tmp
     from ap_coder.core.config import Settings
     from ap_coder.core.store import load_sample_setup
     from ap_coder.web import invoice_view
-    from ap_coder.web.invoice_view import Draft, analyse
+    from ap_coder.web.invoice_form import Draft
+    from ap_coder.web.invoice_view import analyse
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -526,7 +528,7 @@ def test_an_old_date_is_a_check_not_a_failed_check(tmp_path):
     import datetime as dt
 
     from ap_coder.capture import analyze
-    from ap_coder.web.invoice_view import capture_confidence
+    from ap_coder.web.invoice_reading import capture_confidence
 
     text = PRAIRIE.replace("October 1, 2026", "March 3, 2021")
     path = tmp_path / "old.txt"
@@ -667,7 +669,8 @@ def test_a_unit_price_read_right_is_never_replaced_behind_the_screen(tmp_path, m
     90.00. The stored price became 90.00 while the screen still showed 100.00."""
     from ap_coder.core.config import Settings
     from ap_coder.core.store import load_sample_setup
-    from ap_coder.web.invoice_view import Draft, analyse
+    from ap_coder.web.invoice_form import Draft
+    from ap_coder.web.invoice_view import analyse
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)

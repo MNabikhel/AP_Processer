@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from ap_coder.core.store import REVIEW
-from ap_coder.web import invoice_view
+from ap_coder.web import invoice_form, invoice_grid
 from tests.browser import wait_until
 from tests.web import test_web_ctxmenu as ctxmenu
 from tests.web.test_web_ctxmenu import _item, _menu, _review, _taxable
@@ -40,7 +40,7 @@ def test_the_dropdown_offers_the_codes_of_the_place_of_supply(client, store):
 def test_a_code_posted_is_read_as_taxes_and_a_status(client, store):
     invoice_id = _invoice(store, RED_RIVER)
     data = form_of(store, invoice_id)
-    data[invoice_view.LINE_TAX_CODE] = ["GST+PST", "GST+PST", "EXEMPT", "GST+PST"]
+    data[invoice_form.LINE_TAX_CODE] = ["GST+PST", "GST+PST", "EXEMPT", "GST+PST"]
     answer = check(client, invoice_id, data)
     lines = client.app.state.invoice_drafts[invoice_id]["lines"]
     assert [(r["taxes_applied"], r["tax_status"]) for r in lines] == [
@@ -55,26 +55,26 @@ def test_the_old_tax_boxes_are_still_read():
     """A page of before (or a helper) posts each line's ticked taxes as line_tax_<key> and no tax code."""
     from starlette.datastructures import FormData
 
-    base = invoice_view.Draft(header={}, lines=[], taxes=[])
+    base = invoice_form.Draft(header={}, lines=[], taxes=[])
     form = FormData([("grids", "1"), ("line_key", "r0"), ("line_key", "n1"), ("line_description", "Chairs"),
                      ("line_description", "Delivery"), ("line_amount", "100"), ("line_amount", "20"),
                      ("line_tax_r0", "GST"), ("line_tax_r0", "PST"), ("line_tax_n1", "GST")])  # fmt: skip
-    draft = invoice_view.Draft.from_form(form, base)
+    draft = invoice_form.Draft.from_form(form, base)
     assert [(r["taxes_applied"], r["tax_status"]) for r in draft.lines] == [(["GST", "PST"], ""), (["GST"], "")]
     # The new page: one code a row, in order; an unknown code falls back to the boxes (none here: no tax).
     form = FormData([("grids", "1"), ("line_key", "r0"), ("line_key", "r1"), ("line_amount", "100"),
                      ("line_amount", "20"), ("line_tax_code", "ZERO"), ("line_tax_code", "FOO")])  # fmt: skip
-    draft = invoice_view.Draft.from_form(form, base)
+    draft = invoice_form.Draft.from_form(form, base)
     assert [(r["taxes_applied"], r["tax_status"]) for r in draft.lines] == [([], "zero_rated"), ([], "")]
 
 
 def test_a_split_and_a_line_from_the_draft_keep_their_tax_code(client, store):
     invoice_id = _invoice(store, RED_RIVER)
     data = form_of(store, invoice_id)
-    data[invoice_view.LINE_TAX_CODE][2] = "EXEMPT"
+    data[invoice_form.LINE_TAX_CODE][2] = "EXEMPT"
     check(client, invoice_id, data)
-    draft = invoice_view.Draft(header={}, lines=client.app.state.invoice_drafts[invoice_id]["lines"], taxes=[])
-    rows = invoice_view.split(draft, 3, [("6110", "", 50.0), ("6120", "", 50.0)], has_cc=False)
+    draft = invoice_form.Draft(header={}, lines=client.app.state.invoice_drafts[invoice_id]["lines"], taxes=[])
+    rows = invoice_grid.split(draft, 3, [("6110", "", 50.0), ("6120", "", 50.0)], has_cc=False)
     parts = [r for r in rows if str(r["description"]).startswith("Space planning")]
     assert len(parts) == 2 and all(r["tax_status"] == "exempt" and r["taxes_applied"] == [] for r in parts)
 
@@ -169,10 +169,10 @@ def test_a_worked_out_code_is_marked_until_its_note_goes_b713(client, store):
     ai = inv["ai_output"]
     ai["line_items"][2]["reasoning_justification"] = f"Design. {GUESS_NOTE}"
     reference = store.reference_data()
-    draft = invoice_view.Draft.stored(ai)
-    assert [r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"]] == [False, False, True, False]
+    draft = invoice_form.Draft.stored(ai)
+    assert [r["tax_guess"] for r in invoice_grid.grid(reference, draft, ai)["lines"]] == [False, False, True, False]
     draft.lines[2]["reasoning_justification"] = "Design."  # confirmed: the note is gone from what is posted
-    assert not any(r["tax_guess"] for r in invoice_view.grid(reference, draft, ai)["lines"])
+    assert not any(r["tax_guess"] for r in invoice_grid.grid(reference, draft, ai)["lines"])
 
 
 def test_approval_waits_until_an_inferred_pst_exemption_is_confirmed_b715(client, store):
@@ -191,8 +191,8 @@ def test_approval_waits_until_an_inferred_pst_exemption_is_confirmed_b715(client
     )
     assert "RST exemption inferred" in answer["sections"]["checks"]
     # confirmed on the page (the line's reasoning posted without the note): approval opens, the confirmation kept
-    data[invoice_view.LINE_INPUTS["reasoning_justification"]][2] = confirm_line(
-        data[invoice_view.LINE_INPUTS["reasoning_justification"]][2], "GST~PST"
+    data[invoice_form.LINE_INPUTS["reasoning_justification"]][2] = confirm_line(
+        data[invoice_form.LINE_INPUTS["reasoning_justification"]][2], "GST~PST"
     )
     answer = check(client, invoice_id, data)
     assert "Confirm the RST" not in answer["sections"]["bar"]

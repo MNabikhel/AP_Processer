@@ -237,7 +237,7 @@ def _capture(vendor: str, *descriptions: str) -> CaptureResult:
 
 
 def test_the_offline_coder_leaves_weak_matches_for_ap_with_a_suggestion(tmp_path, reference):
-    from ap_coder.web.invoice_view import suggestions
+    from ap_coder.web.invoice_coding import suggestions
 
     store = Store(tmp_path / "ap.db")
     feedback = _history(("Acme", "5000", "Nitrile gloves"))
