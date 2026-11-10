@@ -137,7 +137,7 @@ and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one. While AP Coder imports or reads invoices, a Windows laptop does not
 go to sleep by itself (the screen may still turn off); closing the lid still puts it to sleep.
 
-**Fastest: the demo.** On the welcome screen click **Load demo invoices**. Ten
+**Fastest: the demo.** In **Settings** → **Data & backups**, click **Load demo invoices**. Ten
 sample invoices from across Canada arrive as if the AI had read them (eight to review, two already
 approved), with a few realistic mistakes to correct, plus sample purchase orders and a vendor list.
 Things to try:
@@ -164,8 +164,8 @@ Things to try:
   *Ask the vendor for the missing invoices*.
 - **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
   the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
-- *Remove demo invoices* on the **Import invoices** page (tick *Yes, remove the demo invoices* first: the button
-  stays greyed out until then) removes the demo invoices (and any batch
+- *Remove demo invoices* in **Settings** → **Data & backups**, which says how many are loaded (tick *Yes, remove the
+  demo invoices* first: the button stays greyed out until then), removes the demo invoices (and any batch
   exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
   setup stay (replace them when you import yours: tick *Replace my current list*).
 
@@ -177,7 +177,8 @@ supplier list, last year's Transaction Journal and voucher list as JD Edwards ex
 the folder's `demo_company`, with the seven invoices it puts in the review queue), and sets JD Edwards up for
 vouchers typed by hand. It only loads into a new database; delete the folder when you are done.
 
-**Reading the samples for real:** first tick *Yes, remove the demo invoices* and click *Remove demo invoices* if you loaded the demo (the same
+**Reading the samples for real:** first tick *Yes, remove the demo invoices* and click *Remove demo invoices* (in
+**Settings** → **Data & backups**) if you loaded the demo (the same
 sample files would otherwise be recognised as already processed).
 
 1. **GL accounts & tax** → *Use the sample GL accounts* (skip this if you tried the demo: the sample setup is

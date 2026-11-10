@@ -1,7 +1,7 @@
 # What's new
 
 Everything below was added after the first version (pull request #1). The fastest way to see it all is
-the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
+the demo: start AP Coder and, in **Settings** → **Data & backups**, click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour, and the [pilot plan](PILOT_PLAN.md) connects AP Coder to the company first (Phase 0), then
 runs a parallel week and four measured live weeks to a decision.

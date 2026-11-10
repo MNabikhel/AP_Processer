@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{# The review queue before there is anything to review: getting started, and the demo invoices. #}
+{# The review queue before there is anything to review: getting started. #}
 {% block header %}
 <header class="apc-head apc-anim"><div>
   <div class="apc-eyebrow">Welcome</div>
@@ -23,8 +23,6 @@
   </section>
   {% endif %}
   {% if not (waiting and next and next.sample) %}{% include "_next_step.html" %}{% endif %}{# (waiting: said above) #}
-  {% set demo_first = not waiting and not demo_count %}{# a first look: the demo invoices are the quickest start #}
-  {% if demo_first %}{% include "_demo_card.html" %}{% endif %}
   <section class="card">
     <div class="card-head">
       <div><h4><span class="ms" aria-hidden="true">flag</span> Getting started</h4>
@@ -34,6 +32,5 @@
     </div>
     {% include "_setup_steps.html" %}
   </section>
-  {% if not demo_first %}{% include "_demo_card.html" %}{% endif %}
 </div>
 {% endblock %}

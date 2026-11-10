@@ -559,7 +559,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 
 def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> HTMLResponse:
-    from ap_coder.web.pages.process import demo_offered, first_steps, next_step, shown_setup, step_state
+    from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(counts))  # as Import invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
@@ -573,9 +573,6 @@ def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> 
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
         waiting=counts.get(REVIEW, 0) if reference_or_none(store) is None else 0,
-        demo_available=demo_offered(store.demo_count(), sum(counts.values())),
-        demo_count=store.demo_count(),
-        where="/review",
     )  # fmt: skip
 
 
