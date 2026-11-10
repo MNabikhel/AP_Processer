@@ -199,10 +199,12 @@ class _TaxCheck:
         self.findings.append(TaxFinding(severity, code, message, line))
 
 
-def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None) -> list[TaxFinding]:
+def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = None,
+                erp_posts: frozenset[str] = frozenset()) -> list[TaxFinding]:  # fmt: skip
     """The tax findings of an invoice as coded, in the order the review screen lists them: the tax lines' sums,
     each tax line's amount, rate and province, which lines carry each tax, the regime of the place of supply, a
-    non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to."""
+    non-Canadian tax, exemptions to confirm, the registration numbers and the GL accounts the taxes post to.
+    ``erp_posts``: the taxes JD Edwards posts itself from the voucher's pay item (``jde.taxes_e1_posts``)."""
     check = _start_tax_check(coding, setup)
     _tax_lines_add_up(check)
     _lines_for_two_provinces(check)
@@ -214,7 +216,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     _foreign_tax(check)
     _exemptions_to_confirm(check)
     _registration_numbers(check)
-    _tax_accounts(check, known_gl_codes)
+    _tax_accounts(check, known_gl_codes, erp_posts)
     return check.findings
 
 
@@ -620,14 +622,17 @@ def _registration_numbers(check: _TaxCheck) -> None:
             check.add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
 
-def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None) -> None:
+def _tax_accounts(check: _TaxCheck, known_gl_codes: set[str] | None, erp_posts: frozenset[str]) -> None:
     """Every tax charged must have a GL treatment the user has set up. Non-Canadian tax (OTHER) too: set up to post
     to its own account, it would otherwise post to a blank GL. Meals (D-90): half the tax on a meals line is
-    expensed, so which lines carry the tax decides how much (B-868)."""
+    expensed, so which lines carry the tax decides how much (B-868). A recovered tax JD Edwards posts itself from
+    the pay item (``erp_posts``) posts to no account of ours: a missing one is not asked for (B-2259)."""
     setup = check.setup
     for tax_type in sorted(check.posted):
         t = setup.treatment(tax_type)
         if t.needs_gl and not t.gl_code:
+            if tax_type in erp_posts:
+                continue
             check.add(ERROR, "TAX_GL_UNMAPPED", f"no GL account is set for {tax_type}: set it in GL accounts & tax")
         elif t.needs_gl and known_gl_codes is not None and t.gl_code not in known_gl_codes:
             check.add(

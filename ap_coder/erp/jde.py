@@ -1726,6 +1726,16 @@ def pay_item_tax(v: _Voucher, settings: JdeSettings) -> tuple[int | None, int | 
     return v.stam, v.atxa
 
 
+def taxes_e1_posts(final: dict[str, Any], settings: JdeSettings) -> frozenset[str]:
+    """The taxes of this invoice JD Edwards posts itself from the pay item's tax area (the recovered tax under codes
+    V, C and B), so no sales-tax GL account of AP Coder's is posted to for them (``_distribution_entries``); none with
+    the tax coded to G/L lines, or under a code that recovers nothing."""
+    v = _Voucher(0, final, [])
+    charged = _check_tax_area(v, final, settings)
+    _tax_amounts(v, final, {}, settings, charged, _distribution(final))
+    return v.recoverable_types
+
+
 def account_text(gl_code: str, cost_center: str, settings: JdeSettings) -> str:
     """The E1 account a GL line posts to, BU.Object.Subsidiary ("CC400.6010.01"), or "" when none is mapped."""
     account = account_for(gl_code, cost_center, settings)
