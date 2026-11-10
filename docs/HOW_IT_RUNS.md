@@ -326,7 +326,8 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **App** (`ap_coder/web/app.py:create_app`): `LocalOnly` middleware (`ap_coder/web/security.py`: a Host header
   that is not this computer is refused, against DNS rebinding; a POST must carry `X-AP-Coder: 1` and come from the
   same origin). `GET /healthz` (no secrets), `POST /shutdown` (loopback client and the token). At start-up
-  (`lifespan`): `Store.auto_backup` (once a day), the page reader's background thread, the Azure check's thread (does
+  (`lifespan`): `Store.auto_backup` (once a day, then at its set time: `app.DailyBackup`, D-218),
+  the page reader's background thread, the Azure check's thread (does
   nothing while it is off) and the JD Edwards worker (`ap_coder/erp/jde_sync.py:Background`: every 5 minutes, the
   nightly sync when it is due, then the vouchers waiting in the queue, retried after 5, 15 and 60 minutes, then
   hourly; nothing while both are off). The finance hub feed runs on its schedule (`ap_coder/erp/hub/run.py:HubSchedule`:
@@ -576,7 +577,7 @@ can corrupt an open SQLite database).
 | (deleted) | files an older version left (`prune_stale`); `private/` and `.env` (moved to the data folder) | `upgrade` |
 | **Data folder** `ap_coder.db` (`-wal`, `-shm`) | the database (`AP_DB_PATH` overrides) | `Store` |
 | `invoices/`, `invoices/deleted/`, `invoices/from-<folder>/` | invoice files; deleted ones; files copied out of an older folder | dashboard, `upgrade.repoint_files` |
-| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept (on the server also one a week for 8 weeks and one a month for 12: `backup_files.kept_dailies`, D-187); `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
+| `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup at its set time (Settings → Data & backups; at the next start when AP Coder was not running then), newest 14 kept (on the server also one a week for 8 weeks and one a month for 12: `backup_files.kept_dailies`, D-187); `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
 | `backups/ap_coder-<stamp>.files.json` | each backup's list of files: each one's place in the data folder, size, time and SHA-256, and the database's size and SHA-256 | `backup_files.snapshot` |
 | `backups/files/<2>/<sha256>` | the files of every backup, each content kept once, named by its SHA-256; one no backup kept lists is removed | `backup_files.snapshot`, `backup_files.prune` |
 | `backups/set-aside-<stamp>/` | the files a restore found that were not there at that backup (moved here, never deleted) | `backup_files.restore_files` |

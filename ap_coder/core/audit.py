@@ -58,6 +58,7 @@ ACTIONS = {
     "azure_checked": ("fact_check", "info", "Azure check done"),
     "azure_check_disagrees": ("gpp_maybe", "warn", "Azure check disagrees"),
     "lesson_explained": ("lightbulb", "info", "Lesson explained"),
+    "lesson_one_off": ("event_busy", "info", "One-off: not learned from"),
     "lesson_retired": ("archive", "warn", "Lesson retired"),
     "lesson_restored": ("unarchive", "info", "Lesson restored"),
     "directory_preset_saved": ("bookmark_add", "info", "Directory view saved"),
@@ -239,8 +240,10 @@ SETTING_LABELS = {
     "show_developer_tools": "Show developer tools", "our_province": "Our province",
     "site_provinces": "Our sites' provinces", "approval_limit": "Second approval limit", "fx_rates": "Exchange rates",
     "default_terms_days": "Days to pay when no terms are printed", "why_after": "When to ask why",
+    "why_surprise": "Ask why after a surprising correction",
     "touchless_limit": "Touchless limit", "touchless_processing": "Touchless processing",
     "export_layout": "Export layout", "verifier": "AI reviewer", "backup_copy_dir": "Backup copy folder",
+    "backup_at": "When the daily backup is made",
     "policy_notes": "Policy notes", "reviewer": "Your name", "azure_check": "Azure check",
     "AP_REVIEWER": "Your name", "AP_REVIEW_THRESHOLD": "Review threshold",
     "AP_CONSTRAIN_CODES": "Only accounts from the list",
@@ -422,6 +425,9 @@ def _check_text(action: str, d: dict[str, Any]) -> str | None:
         return "differ: " + (", ".join(d.get("fields") or []) or "(none)")
     if action == "lesson_explained":
         return f"why: {d.get('reason') or ''}"
+    if action == "lesson_one_off":
+        said = f"line {d.get('line', '?')}: {d.get('now') or '?'}, not {d.get('was') or '?'}"
+        return said + (f" ({d['reason']})" if d.get("reason") else "")
     if action in ("lesson_retired", "lesson_restored"):
         return f"lesson {d.get('lesson', '?')}" + (" no longer used" if action == "lesson_retired" else " used again")
     if action in ("directory_preset_saved", "directory_preset_deleted"):

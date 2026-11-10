@@ -112,6 +112,7 @@ RULES: dict[tuple[str, str], str] = {
         # The review screen: edits, checks, the first approval, park, reject, reopen, undo (their own approval).
         "POST /review/{invoice_id:int}/vendor", "POST /review/{invoice_id:int}/check",
         "POST /review/{invoice_id:int}/approve", "POST /review/{invoice_id:int}/undo-approve",
+        "POST /review/{invoice_id:int}/why",
         "POST /review/{invoice_id:int}/park", "POST /review/{invoice_id:int}/reject",
         "POST /review/{invoice_id:int}/note", "POST /review/{invoice_id:int}/teach",
         "POST /review/{invoice_id:int}/split", "POST /review/{invoice_id:int}/apply-rules",
@@ -181,6 +182,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/azure-check/test", "POST /settings/review",
         "POST /settings/data/open-folder", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
+        "POST /settings/data/backup-time",
         "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",

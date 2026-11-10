@@ -1350,6 +1350,10 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         answer = str(form.get(f"why::{item['key']}") or "").strip()  # was counted: the count starts again from 0
         if answer and store.explain_lesson(item["key"], answer, actor=me, invoice_id=invoice_id):
             explained += 1
+    # An account AP Coder was sure of, changed: asked why on the next page, once, the approval made (D-218). Never
+    # after the question before saving: one question an invoice.
+    surprise = None if asked or not lessons.asks_why(store) else lessons.surprise(
+        store, ai, as_read(analysis.output, ai), reference)  # fmt: skip
     forget_everyones_draft(request, invoice_id)
     vendor = analysis.coding.vendor_name.rstrip(".")
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
@@ -1391,6 +1395,8 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     approved["more_label"] = "What it learned"
     approved["undo"] = f"/review/{invoice_id}/undo-approve"  # the banner's Undo: back in the queue as it was
     messages.append(approved)
+    if surprise:
+        messages.append(_why_message(invoice_id, surprise))
     if explained:
         messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
                                       f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
@@ -1402,6 +1408,47 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
         messages.append(flash_message(f"That was the last one in the list. {ui.plural(left, 'invoice')} still "
                                       "to review: back to the first of them.", "info", icon="replay"))  # fmt: skip
     return done(request, after, *messages)
+
+
+def _why_message(invoice_id: int, surprise: dict[str, Any]) -> dict[str, Any]:
+    """The question after a surprising correction (``lessons.surprise``), as a message of the next page: a short
+    text box, the one-click reasons and Skip (base.html)."""
+    asked = flash_message(surprise["question"], "info", icon="help")
+    asked["why"] = {"url": f"/review/{invoice_id}/why", "key": surprise["key"], "reasons": surprise["reasons"]}
+    return asked
+
+
+@router.post("/review/{invoice_id:int}/why")
+def why(request: Request, invoice_id: int, situation: str = Form(""), reason: str = Form(""),
+        answer: str = Form("")) -> JSONResponse:  # fmt: skip
+    """The answer to the question asked after an approval (D-218): kept as that lesson's reason (Learning shows it,
+    the AI reads it), or, a one-off, the line is forgotten from the coding memory as Learning's Forget does. The
+    question is worked out again from the approved invoice: only its own is answered."""
+    from ap_coder.ai import lessons
+    from ap_coder.core.schema import as_read
+
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    ai = inv.get("ai_output") or {}
+    found = None
+    if inv["status"] in (APPROVED, PENDING):
+        found = lessons.surprise(store, ai, as_read(inv.get("final_output") or {}, ai), _reference(store))
+    if found is None or found["key"] != situation:
+        return refuse("That question is no longer open: the invoice was changed since.", 409)
+    typed = " ".join(answer.split())[:300]
+    if reason == lessons.ONE_OFF:
+        store.forget_one_off(invoice_id, found["pattern"], actor=reviewer(),
+                             detail={"line": found["line"], "now": found["now"], "was": found["was"],
+                                     "reason": typed})  # fmt: skip
+        return JSONResponse({"ok": True, "toast": {"text": "Kept as a one-off: AP Coder does not learn from that "
+                                                   "line.", "tone": "ok"}})  # fmt: skip
+    kept = lessons.reason_kept(found, reason, typed)
+    if not kept:
+        return refuse("Write a few words or pick a reason; Skip leaves it.")
+    if not store.explain_lesson(found["key"], kept, actor=reviewer(), invoice_id=invoice_id):
+        return refuse("That lesson is no longer there: nothing was kept.", 404)
+    return JSONResponse({"ok": True, "toast": {"text": "Thanks: the reason is kept with that lesson (What was "
+                                               "learned, Lessons).", "tone": "ok"}})  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/undo-approve")

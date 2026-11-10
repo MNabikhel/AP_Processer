@@ -33,7 +33,15 @@ from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import APPROVAL_CONTROLS, Store, backup_files, tiny_fx_rates, unread_fx_text
-from ap_coder.core.store.backups import BACKUP_STATUS
+from ap_coder.core.store.backups import (
+    BACKUP_AT,
+    BACKUP_AT_DEFAULT,
+    BACKUP_AT_OFF,
+    BACKUP_HOURS_ENV,
+    BACKUP_STATUS,
+    backup_time,
+    backup_window,
+)
 from ap_coder.web import identity
 from ap_coder.web.core import (
     DEVELOPER_TOOLS,
@@ -185,6 +193,7 @@ def review_context(request: Request, stamped: bool = True) -> dict[str, Any]:
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
         "why_after": lessons.why_after(store),
+        "why_surprise": lessons.asks_why(store),
         "site_provinces": store.get_setting("site_provinces"),
         "uses_cost_centers": bool(store.list_accounts("cost_centers")),
         "provinces": PROVINCE_NAMES,
@@ -223,7 +232,7 @@ def _save_review(request: Request, form: Any) -> JSONResponse:
     supply_part = _supply_part(request, our_province, site_provinces)
     if isinstance(supply_part, JSONResponse):
         return supply_part
-    saved = name_part() + approval_part() + supply_part() + _duties_part(request, form)
+    saved = name_part() + approval_part() + supply_part() + _duties_part(request, form) + _why_part(request, form)
     if saved:
         from ap_coder.web.pages.help import forget_setup_report
 
@@ -241,6 +250,7 @@ SAVED_WORDS = {
     "default_terms_days": ("the days to pay", False),
     "fx_rates": ("the exchange rates", False),
     lessons.SETTING: ("when to ask why", False),
+    lessons.ASK: ("whether to ask why", False),
     "our_province": ("your province", True),
     "site_provinces": ("the sites in other provinces", True),
 }
@@ -333,6 +343,20 @@ def _duties_part(request: Request, form: Any) -> list[str]:
     store.set_setting("poster_not_approver", "1" if on else "0", actor=reviewer())
     store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["poster_not_approver"]})
     return ["poster_not_approver"]
+
+
+def _why_part(request: Request, form: Any) -> list[str]:
+    """ "Ask why after a surprising correction" (D-218), saved when the form shows it (a checkbox not ticked posts
+    nothing)."""
+    store = get_store(request)
+    if form.get("why_shown") is None:
+        return []
+    on = str(form.get(lessons.ASK) or "") == "1"
+    if on == lessons.asks_why(store):
+        return []
+    store.set_setting(lessons.ASK, "1" if on else "0", actor=reviewer())
+    store.log_event("settings_changed", actor=reviewer(), detail={"keys": [lessons.ASK]})
+    return [lessons.ASK]
 
 
 def _approval_part(
@@ -497,11 +521,23 @@ def data_context(store: Store, chosen: str = "", server: bool = False) -> dict[s
         "backup_failed": backup_failure(store),
         "backup_running": store.backup_in_progress(),
         "chosen": chosen if any(b.name == chosen for b in backups) else "",
+        **backup_time_context(store),
         "copy_dir": store.get_setting("backup_copy_dir"),
         "copy_status": copy_status(store),
         "copy_same_disk": server and same_disk_warning(store),
         "restore_word": RESTORE_WORD,
     }
+
+
+def backup_time_context(store: Store) -> dict[str, Any]:
+    """The daily backup's set time as the page shows it (D-218): ``backup_at`` "HH:MM" ("" with none set),
+    ``backup_hours`` IT's own hours when the server has them (AP_BACKUP_HOURS: they decide, the time is not used),
+    ``backup_last`` the last one made at its time: {"at", "file", "why"}."""
+    at = store.backup_at()
+    hours = backup_window(os.environ.get(BACKUP_HOURS_ENV))
+    return {"backup_at": f"{at[0]:02d}:{at[1]:02d}" if at else "", "backup_at_default": BACKUP_AT_DEFAULT,
+            "backup_hours": f"{hours[0]}:00 to {hours[1] % 24}:00" if hours else "",
+            "backup_last": store.last_timed_backup()}  # fmt: skip
 
 
 def same_disk_warning(store: Store) -> str:
@@ -552,6 +588,25 @@ def backup_now(request: Request) -> JSONResponse:
         return refuse(f"The backup could not be made: {exc}")
     made = request.app.state.daily_backup.outcome
     return done(request, tab_url("data"), later or f"Backed up to {made.name}.")
+
+
+@router.post("/settings/data/backup-time")
+def save_backup_time(request: Request, at: str = Form("")) -> JSONResponse:
+    """The time of day the daily backup is made; empty: no set time, once a day when AP Coder starts."""
+    store = get_store(request)
+    at = at.strip()
+    time = backup_time(at)
+    if at and time is None:
+        return refuse("Write the time as hours and minutes on the 24-hour clock, like 17:30 (or leave it empty).")
+    value = f"{time[0]:02d}:{time[1]:02d}" if time else BACKUP_AT_OFF
+    if time == store.backup_at():
+        return done(request, tab_url("data"), "Nothing changed.")
+    store.set_setting(BACKUP_AT, value, actor=reviewer())
+    store.log_event("settings_changed", actor=reviewer(), detail={"keys": [BACKUP_AT]})
+    if time is None:
+        return done(request, tab_url("data"), "No set time: a backup is made once a day when AP Coder starts.")
+    return done(request, tab_url("data"), f"A backup is made every day at {value} while AP Coder is running; when it "
+                "is not, at its next start.")  # fmt: skip
 
 
 @router.post("/settings/data/backup-copy")

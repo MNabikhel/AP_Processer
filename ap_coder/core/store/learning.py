@@ -552,6 +552,19 @@ class LearningMixin:
                 self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids), "lessons": withdrawn})
             return cur.rowcount
 
+    def forget_one_off(self, invoice_id: int, pattern: str, actor: str | None = None,
+                       detail: dict[str, Any] | None = None) -> int:  # fmt: skip
+        """A correction AP called a one-off (the question after a surprising correction, D-218): the invoice's lines
+        of that kind (``line_pattern``) leave the coding memory as Learning's Forget takes them out
+        (``delete_feedback``: what they taught the lessons is withdrawn with them), and the invoice's history says
+        so (``detail``: the line and its accounts). How many lines were forgotten."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT id, description FROM feedback WHERE invoice_id = ?", (invoice_id,)).fetchall()
+        ids = [r["id"] for r in rows if line_pattern(r["description"]) == pattern]
+        forgotten = self.delete_feedback(ids, actor=actor) if ids else 0
+        self.log_event("lesson_one_off", invoice_id, actor, {**(detail or {}), "lines": forgotten})
+        return forgotten
+
     def metrics(self) -> dict[str, Any]:
         """The learning memory's counts (kept until a lesson is added or removed, like ``feedback_rows``: four scans
         of the whole memory) and the invoices' (counted each time)."""
