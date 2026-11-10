@@ -1,11 +1,13 @@
 """``python -m ap_coder chart import|settings|show|rebuild``: the chart of accounts and the business unit master
 loaded from JD Edwards' exports as they come (D-209), from the console.
 
-* ``import --chart <file> --business-units <file>``: either file alone or both (the business units first, so the
-  chart knows which are active). Each replaces what was imported before; the GL accounts and the cost centers are
-  worked out again from the two, even when the file is the one already imported. What was read, what may be posted
-  to, what was left out, what left the lists and what a person had typed that was set aside is said in plain words
-  (``import_files``, which a page can call with an upload's bytes).
+* ``import --chart <file> --business-units <file> [--anyway]``: either file alone or both (the business units
+  first, so the chart knows which are active). A chart exported without its posting edit or subsidiary column is
+  imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported before; the
+  GL accounts and the cost centers are worked out again from the two, even when the file is the one already
+  imported. What was read, what may be posted to, what was left out, what left the lists and what a person had
+  typed that was set aside is said in plain words (``import_files``, which a page can call with an upload's
+  bytes).
 * ``settings [--postable …] [--never-offered …] [--skip-words …] [--home-business-unit …] [--labels …]``: the chart's
   settings, shown, and changed for the ones named (an empty value clears one).
 * ``show``: the chart imported, its settings, and how many accounts a line may be coded to.
@@ -52,6 +54,9 @@ def add_parser(sub: Any) -> None:
     )  # fmt: skip
     for option, value, about in options:
         p.add_argument(option, default=None, metavar=value, help=about)
+    p.add_argument("--anyway", action="store_true",
+                   help="import: import a chart exported without its posting edit or subsidiary column (without "
+                        "the posting edit column every account is offered)")  # fmt: skip
 
 
 def _left_out(skipped: dict[str, int]) -> list[str]:
@@ -142,7 +147,7 @@ def tally_lines(store: Store) -> list[str]:
         said.append(f"  In all, {plural(tally[chart.RESERVED], 'account')} may be posted to but "
                     f"{'is' if tally[chart.RESERVED] == 1 else 'are'} never offered: a line coded to one by hand is "
                     "flagged for a person to confirm.")  # fmt: skip
-    return said
+    return said + chart.without_lines(store.chart_without())  # a column the export did not have: said every time
 
 
 def settings_lines(store: Store) -> list[str]:
@@ -161,12 +166,14 @@ def settings_lines(store: Store) -> list[str]:
 
 
 def import_files(store: Store, chart_source: str | Path | bytes | None = None,
-                 units_source: str | Path | bytes | None = None, actor: str | None = None) -> list[str]:  # fmt: skip
+                 units_source: str | Path | bytes | None = None, actor: str | None = None,
+                 anyway: bool = False) -> list[str]:  # fmt: skip
     """Import the business unit master and the chart of accounts (either or both; a path, or a file's bytes) and say
-    what was done, a line each. ``chart.ChartError`` for a file that cannot be read and ``ValueError`` for one that
-    would leave no account to code to: nothing is changed then, of either file."""
+    what was done, a line each. ``chart.ChartError`` for a file that cannot be read (``chart.ColumnsMissing`` for a
+    chart without its posting edit or subsidiary column, unless ``anyway``) and ``ValueError`` for one that would
+    leave no account to code to: nothing is changed then, of either file."""
     units = chart_file.read_business_units(units_source) if units_source is not None else None
-    rows = chart_file.read_chart(chart_source) if chart_source is not None else None
+    rows = chart_file.read_chart(chart_source, anyway) if chart_source is not None else None
     said: list[str] = []
     results: list[dict[str, Any]] = []
     with store.transaction():
@@ -174,7 +181,7 @@ def import_files(store: Store, chart_source: str | Path | bytes | None = None,
             results.append(store.import_business_units(units.rows, actor=actor))
             said += [*_units_read(units), _changed("Business units", results[-1])]
         if rows is not None:
-            results.append(store.import_chart(rows.rows, actor=actor))
+            results.append(store.import_chart(rows.rows, actor=actor, without=rows.without))
             said += [*_chart_read(rows, store.chart_settings()), _changed("Chart of accounts", results[-1])]
     return said + lists_lines(results) + tally_lines(store)
 
@@ -191,7 +198,11 @@ def _import(args: argparse.Namespace) -> int:
     if args.chart:
         print("Reading the chart of accounts (a chart of 15,000 rows takes 10 to 20 seconds)...", flush=True)
     try:
-        said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR)
+        said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway)
+    except chart.ColumnsMissing as exc:
+        offered = ": every account will be offered" if "posting_edit" in exc.fields else ""
+        print(f"Not imported: {exc} To import it anyway, add --anyway{offered}.", file=sys.stderr)
+        return 1
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         print(f"Not imported: {exc}", file=sys.stderr)
         return 1

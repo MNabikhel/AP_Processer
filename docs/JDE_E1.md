@@ -594,7 +594,10 @@ how many may be posted to (posting edit code blank; the others are counted by th
 how many GL accounts and cost centers there are now, what left the two lists, and how many accounts a line may be
 coded to. The GL accounts and cost centers are worked out from the chart: an account is listed when it may be posted
 to on an active business unit, with the title account above it as its category. Importing again replaces the chart;
-the same file again changes nothing (and puts right a list changed by hand).
+the same file again changes nothing (and puts right a list changed by hand). JD Edwards exports only the columns
+the grid shows: a chart without its posting edit column ("P E") or its Subsidiary column is not imported, and the
+message names the column to add to the grid; `--anyway` imports it as it is (without "P E" every account is offered),
+and the summary says so each time until a whole export is imported.
 
 - A GL account's meals tick, a category typed for it and a cost center's manager stay. When an import no longer has
   the account or the business unit, they are **set aside**, said in the summary, and put back when a later import has

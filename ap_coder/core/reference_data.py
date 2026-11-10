@@ -72,6 +72,24 @@ def marks_meals(value: object) -> bool:
     return str(value).strip().lower() not in _NOT_MEALS
 
 
+# The words in an account's name that read like a meals and entertainment account ("Meals - Travel", "Working
+# Lunches", "Client Hospitality", "Catering - Meetings", "M&E"): such an account is offered for the meals tick, never
+# ticked by itself (B-2277). Not "food" or "beverages": a kitchen's purchases are no meals account.
+_MEALS_NAME = re.compile(
+    r"(?i)\b(?:meals?|lunch(?:es|eons?)?|dinners?|breakfasts?|brunch|catering|caterers?|hospitality|entertainment"
+    r"|restaurants?|banquets?|repas|traiteurs?|divertissements?)\b|\bm\s*&\s*e\b"
+)
+# ... unless it says the meals are charged on ("Recovery-Meals & Hospi", "Meals billed to clients"): the tax on those
+# is claimed in full, so such an account is left for a person to tick.
+_CHARGED_ON = re.compile(r"(?i)\b(?:recover(?:y|ies|ed|able)|re-?bill(?:ed|able)?|billed|billable|recharged?)\b")
+
+
+def reads_like_meals(name: object) -> bool:
+    """Whether an account's name reads like a meals and entertainment account (50% tax credit, D-90)."""
+    text = str(name or "")
+    return bool(_MEALS_NAME.search(text)) and not _CHARGED_ON.search(text)
+
+
 def meals_column(headers: list[str]) -> str:
     """The header of a meals and entertainment column ("Meals", "M&E", "Meals & entertainment"), or ""."""
     return next((h for h in headers if _norm_header(h) in MEALS_HEADERS), "")

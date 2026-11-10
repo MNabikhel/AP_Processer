@@ -5060,6 +5060,10 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     LINE_AMOUNTS_TO_CHECK says whether the amounts include the tax or which column to check. A tax cell not found
     is "not read"; a column says only about the tax it names; the tax amounts read are kept on the line
     (`taxes_read`), a "Tax" column on an invoice that charges two taxes excepted (it names neither).
+    A row's discount that explains its amount makes the line's unit price the price after it, so quantity × unit
+    price is the amount (B-2269). A row of the supplier's account ("Previous balance", "Payment received", "Balance
+    forward" above the first line) is no line: every reading leaves it out and ACCOUNT_ROWS_LEFT_OUT names it
+    (B-2270).
   - **Not chosen:** Working out the amount before tax as total less tax on a "Tax | Total" table (nothing on the
     page proves it line by line: a person enters it); pairing a heading with the nearest numbers (the column before
     ends nearer a left-aligned heading than its own); a partial tax code for a line when only one of two taxes has

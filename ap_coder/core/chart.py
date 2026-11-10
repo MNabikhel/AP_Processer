@@ -179,11 +179,47 @@ BU_ALIASES: dict[str, tuple[str, ...]] = {
 }
 CHART_NEEDS = ("business_unit", "object")  # the columns a chart cannot be read without
 BU_NEEDS = ("code",)
+# The columns a chart is read without only when a person says so (JD Edwards exports the grid's visible columns
+# only, B-2271): how each is named, what its absence means, and what the chart loaded without it says.
+CHART_WANTS: dict[str, tuple[str, str, str]] = {
+    "posting_edit": (
+        "posting edit column (“P E”)",
+        "without it AP Coder cannot tell a title from an account that can be posted to",
+        "every account is offered, titles and accounts closed to posting too",
+    ),
+    "subsidiary": (
+        "“Subsidiary” column",
+        "without it the accounts of one object that differ only by their subsidiary are read as one account and "
+        "the others are left out",
+        "the accounts of one object that differ only by their subsidiary were read as one",
+    ),
+}
+WITHOUT_KEY = "chart_without"  # the setting that keeps which of ``CHART_WANTS`` the chart loaded did not have
+# A grid's total row: this word alone where the business unit is.
+TOTAL_ROW = re.compile(r"(?i)^(?:grand\s*)?totals?\s*:?$")
 
 
 class ChartError(ValueError):
     """An export that cannot be read as the chart or the business unit master; the message says why, in plain
     words."""
+
+
+class ColumnsMissing(ChartError):
+    """A chart without a column of ``CHART_WANTS`` (``fields``): read only when a person asks for it anyway."""
+
+    def __init__(self, name: str, fields: tuple[str, ...]) -> None:
+        self.fields = fields
+        missing = [f"{name if n == 0 else 'It'} has no {CHART_WANTS[field][0]}{' either' if n else ''}: "
+                   f"{CHART_WANTS[field][1]}." for n, field in enumerate(fields)]  # fmt: skip
+        super().__init__(f"{' '.join(missing)} Add the column{'s' if len(fields) > 1 else ''} to the grid in "
+                         "JD Edwards and export again.")  # fmt: skip
+
+
+def without_lines(fields: Iterable[str]) -> list[str]:
+    """What a chart loaded without these columns says, each time it is shown: a line for each."""
+    return [f"Loaded without the {CHART_WANTS[field][0]}: {CHART_WANTS[field][2]}. To set this right, add the column "
+            "to the grid in JD Edwards, export again and load the file." for field in fields
+            if field in CHART_WANTS]  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -221,10 +257,12 @@ class BuRow:
 
 @dataclass
 class Rows:
-    """An export's rows as cleaned (``ChartRow`` or ``BuRow``), and the rows left out: {why: how many}."""
+    """An export's rows as cleaned (``ChartRow`` or ``BuRow``), the rows left out: {why: how many}, and the columns
+    of ``CHART_WANTS`` the export did not have (``without``: read anyway, because a person asked)."""
 
     rows: list[Any] = field(default_factory=list)
     skipped: dict[str, int] = field(default_factory=dict)
+    without: tuple[str, ...] = ()
 
     def skip(self, why: str) -> None:
         self.skipped[why] = self.skipped.get(why, 0) + 1
@@ -311,16 +349,17 @@ def _held(row: int, what: str, value: str, most: int, plain: bool = True) -> Non
 
 
 class _Rows:
-    """What reading an export's rows keeps count of: the row each record is on (the column names are on row 1), the
-    rows whose codes are not text, and the bound on how many rows are read."""
+    """What reading an export's rows keeps count of: the row each record is on (the column names are on
+    ``header_row``: row 1, or lower under a grid's title rows), the rows whose codes are not text, and the bound on
+    how many rows are read."""
 
-    def __init__(self) -> None:
-        self.row = 1
+    def __init__(self, header_row: int = 1) -> None:
+        self.header_row = self.row = header_row
         self.not_text: list[int] = []
 
     def next(self) -> int:
         self.row += 1
-        if self.row - 1 > ROWS_MOST:
+        if self.row - self.header_row > ROWS_MOST:
             raise ChartError(
                 f"This file has more than {ROWS_MOST:,} rows, many times what a chart of accounts holds, so it was "
                 "not read. Export the chart or the business units from JD Edwards again and use the file as it comes."
@@ -346,14 +385,16 @@ class _Rows:
             )
 
 
-def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None) -> Rows:
+def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None,
+               header_row: int = 1) -> Rows:  # fmt: skip
     """The account master's export as clean rows, in the file's order. ``records``: each row as {header: cell};
     ``columns``: {field: header} (found from the first row's headers when not given, ``CHART_ALIASES``). A business
     unit loses its padding, a lone space is a blank, codes stay text (leading zeros, letters), a description loses
     its indentation. A row with no object is its business unit's header. Each row's ``category`` is the title
     account above it (posting edit code N, a lower level of detail), which says what the description, cut at 30
-    characters, no longer does."""
-    out, count = Rows(), _Rows()
+    characters, no longer does. ``header_row``: the row the column names are on. The grid's total row ("Total"
+    where the business unit is) is no row of the chart."""
+    out, count = Rows(), _Rows(header_row)
     seen: set[tuple[str, str, str]] = set()
     titles: list[tuple[int, str]] = []  # the title accounts above this row in its business unit: (level, description)
     last_bu = None
@@ -362,6 +403,9 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
         if columns is None:
             columns = chart_columns(record)
         cell = {name: record.get(column) for name, column in columns.items()}
+        if TOTAL_ROW.match(clean(cell["business_unit"])):
+            out.skip("total rows")
+            continue
         if not count.text(cell["business_unit"], cell["object"], cell.get("subsidiary")):
             continue
         bu, obj, subsidiary = _code(cell["business_unit"]), _code(cell["object"]), _code(cell.get("subsidiary"))
@@ -392,10 +436,12 @@ def chart_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] 
     return out
 
 
-def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None) -> Rows:
+def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | None = None,
+            header_row: int = 1) -> Rows:  # fmt: skip
     """The business unit master's export as clean rows (``BU_ALIASES``): the business unit without its padding, its
-    name, company, type and status (upper case: ACT, INA)."""
-    out, count = Rows(), _Rows()
+    name, company, type and status (upper case: ACT, INA). The grid's total row ("Total" where the business unit
+    is, and no company, type or status) is no business unit (B-2274)."""
+    out, count = Rows(), _Rows(header_row)
     seen: set[str] = set()
     for record in records:
         row = count.next()
@@ -405,6 +451,9 @@ def bu_rows(records: Iterable[Mapping[str, Any]], columns: Mapping[str, str] | N
         if not count.text(cell["code"]):
             continue
         code = _code(cell["code"])
+        if TOTAL_ROW.match(code) and not any(_code(cell.get(part)) for part in ("company", "type", "status")):
+            out.skip("total rows")
+            continue
         _held(row, "business unit", code, BU_MOST)
         if not code:
             out.skip("rows with no business unit" if _words(cell.get("name")) else "blank rows")

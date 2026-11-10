@@ -23,7 +23,16 @@ import sqlite3
 from collections.abc import Iterable
 from typing import Any
 
-from ..chart import SETTING_KEYS, VERSION_KEY, AccountPairs, BuRow, ChartRow, ChartSettings, account_lists
+from ..chart import (
+    SETTING_KEYS,
+    VERSION_KEY,
+    WITHOUT_KEY,
+    AccountPairs,
+    BuRow,
+    ChartRow,
+    ChartSettings,
+    account_lists,
+)
 from . import dialect
 from ._base import _in_list, _now
 
@@ -227,11 +236,20 @@ class ChartMixin:
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (VERSION_KEY,)).fetchone()
         return int(row["value"]) if row else 0
 
-    def import_chart(self, rows: Iterable[ChartRow], actor: str | None = None) -> dict[str, Any]:
+    def chart_without(self) -> tuple[str, ...]:
+        """The columns the chart loaded came without (``chart.CHART_WANTS``: a person asked for it anyway), for
+        ``chart.without_lines`` to say each time the chart is shown; none for a whole export."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (WITHOUT_KEY,)).fetchone()
+        return tuple(part for part in (row["value"] if row else "").split(",") if part)
+
+    def import_chart(self, rows: Iterable[ChartRow], actor: str | None = None,
+                     without: Iterable[str] = ()) -> dict[str, Any]:  # fmt: skip
         """Replace the chart with ``rows`` (``core/chart.chart_rows``) and work the GL accounts and cost centers out
         again, even when the rows are those already imported. Returns {"rows", "added", "updated", "removed"} of the
         chart and what the lists' rebuild did (``_rebuild_account_lists``). With nothing to change, nothing is
-        written or recorded. ``ValueError``, nothing changed, for rows with no account at all (the wrong file) or
+        written or recorded. ``without``: the columns the export did not have (``Rows.without``), kept for
+        ``chart_without``. ``ValueError``, nothing changed, for rows with no account at all (the wrong file) or
         none that may be posted to."""
         after = {(r.bu, r.object, r.subsidiary): r for r in rows}
         if not any(r.object for r in after.values()):
@@ -251,6 +269,10 @@ class ChartMixin:
                      for r in after.values()],
                 )  # fmt: skip
             result.update(self._rebuild_account_lists(conn, was))
+            missing = list(without)
+            if missing:
+                result["without"] = missing
+            _put(conn, WITHOUT_KEY, ",".join(missing))
             self._chart_changed(conn, "chart_accounts", result, actor)
         return result
 

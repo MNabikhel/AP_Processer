@@ -3,21 +3,28 @@ each summary shown and the data really kept; a wrong file in a box answers with 
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 
+import openpyxl
 import pytest
 from markupsafe import escape
 
 from ap_coder.bench import jde_exports as made
+from ap_coder.core.reference_data import reads_like_meals
+from ap_coder.erp import jde
 from ap_coder.ops import journal_cmd
 from ap_coder.web import files, roles
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import jde_files
+from tests import chart_files as cf
 from tests.webclient import PAGE, follow, web_settings
 
 ROUTES = ["/jde-files/chart", "/jde-files/units", "/jde-files/chart/settings", "/jde-files/suppliers/upload",
           "/jde-files/suppliers/load", "/jde-files/journal/upload", "/jde-files/journal/load",
-          "/jde-files/journal/forget", "/jde-files/vouchers/upload", "/jde-files/vouchers/load"]  # fmt: skip
+          "/jde-files/journal/forget", "/jde-files/vouchers/upload", "/jde-files/vouchers/load",
+          "/jde-files/meals", "/jde-files/company"]  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -78,6 +85,82 @@ def test_the_charts_settings_are_saved_from_the_page(client, store, exports):
     assert store.chart_settings().home_business_unit == home
 
 
+@pytest.mark.parametrize("column, said", [
+    ("P E", "Loaded without the posting edit column (“P E”): every account is offered"),
+    ("Subsidiary", "Loaded without the “Subsidiary” column: the accounts of one object that differ only by"),
+])  # fmt: skip
+def test_a_chart_without_a_column_it_needs_is_loaded_only_when_ticked_and_the_page_keeps_saying_so(
+        column, said, client, store, tmp_path):  # fmt: skip
+    """A grid exported without its posting edit column loaded with every account postable, one without its
+    Subsidiary column with most accounts left out, and neither with a word about the column (B-2271, B-2272)."""
+    grid = cf.write_chart(tmp_path / "grid.xlsx", without=(column,)).read_bytes()
+    page = client.get("/jde-files").text
+    assert 'name="anyway"' in page and "Load it anyway: every account will be offered" in page
+    refused = client.post("/jde-files/chart", files={"file": ("grid.xlsx", grid)}, headers=PAGE)
+    assert refused.status_code == 400 and store.chart_accounts() == []
+    why = refused.json()["error"]
+    assert why.startswith("Not loaded: This file has no ") and column in why and "export again" in why
+    assert why.endswith("Or tick “Load it anyway” under the file and load it again.")
+    ticked = client.post("/jde-files/chart", files={"file": ("grid.xlsx", grid)}, data={"anyway": "1"}, headers=PAGE)
+    assert said in follow(client, ticked).split('id="chart-said"', 1)[1].split("</div></div>", 1)[0]
+    assert _accounts(store) > 0
+    assert said in client.get("/jde-files").text.split('id="chart-tally"', 1)[1].split("</ul>", 1)[0]  # every time
+    whole = cf.write_chart(tmp_path / "chart.xlsx").read_bytes()
+    page = follow(client, client.post("/jde-files/chart", files={"file": ("chart.xlsx", whole)}, headers=PAGE))
+    assert "Loaded without" not in page and store.chart_without() == ()
+
+
+def _meals(store) -> set[str]:
+    return {row["code"] for row in store.list_accounts("gl_accounts") if row["meals"]}
+
+
+def test_the_meals_accounts_are_named_and_ticked_with_one_click_and_a_newer_chart_keeps_them(client, store, exports):
+    """With a chart loaded no account was a meals account and nothing said to tick one, so a lunch coded to "Meals -
+    Travel" put the whole GST on the pay item (B-2277)."""
+    assert 'id="meals-accounts"' not in client.get("/jde-files").text  # (no chart: no row)
+    _load_chart(client, exports)
+    names = {row["code"]: row["description"] for row in store.list_accounts("gl_accounts")}
+    like = sorted(code for code, name in names.items() if reads_like_meals(name))
+    assert {names[code] for code in like} >= {"Meals - Travel", "Working Lunches", "Client Hospitality",
+                                              "Catering - Meetings"}  # fmt: skip
+    others = ("Airfare", "Hotels & Lodging", "Meeting Room Rental", "Recovery-Meals & Hospi", "Meals billed to clients")
+    assert not any(reads_like_meals(name) for name in others)
+    row = client.get("/jde-files").text.split('id="meals-accounts"', 1)[1].split("</dd>", 1)[0]
+    assert "None is ticked" in row and all(f"{code} {escape(names[code])}" in row for code in like)
+    assert f"Mark these {len(like)} as meals accounts (half their GST/HST is claimable)" in row
+    assert 'href="/accounts?tab=gl"' in row and _meals(store) == set()  # nothing is ticked without the click
+    page = follow(client, client.post("/jde-files/meals", data={"code": like}, headers=PAGE))
+    assert _meals(store) == set(like) and store.reference_data().tax.meals_gl_codes == frozenset(like)
+    assert store.events(actions=["accounts_edited"])[0]["detail"]["codes"] == like
+    row = page.split('id="meals-accounts"', 1)[1].split("</dd>", 1)[0]
+    assert f"{len(like)} accounts ticked" in row and "Mark these" not in row and 'href="/accounts?tab=gl"' in row
+    _load_chart(client, exports)  # a newer export of the chart keeps the ticks (B-2090)
+    assert _meals(store) == set(like)
+    refused = client.post("/jde-files/meals", data={"code": ["NOPE"]}, headers=PAGE)
+    assert refused.status_code == 400 and _meals(store) == set(like)
+
+
+def test_the_one_company_of_the_business_units_is_offered_as_jd_edwards_company(client, store, exports, tmp_path):
+    """JD Edwards' company number stayed 00001 until set by hand in Settings, and the keying sheet printed it
+    (B-2278): offered with one click when every business unit loaded belongs to one company, never to several."""
+    assert jde.load(store).company == "00001" and "/jde-files/company" not in client.get("/jde-files").text
+    several = [(code, name, "00002" if n else company, kind, status)
+               for n, (code, name, company, kind, status) in enumerate(cf.UNITS)]  # fmt: skip
+    units = cf.write_business_units(tmp_path / "bu.xlsx", several).read_bytes()
+    page = follow(client, client.post("/jde-files/units", files={"file": ("bu.xlsx", units)}, headers=PAGE))
+    assert "/jde-files/company" not in page
+    refused = client.post("/jde-files/company", headers=PAGE)
+    assert refused.status_code == 400 and jde.load(store).company == "00001"
+    _load_chart(client, exports)
+    (company,) = {unit.company for unit in store.business_units()}
+    page = client.get("/jde-files").text
+    assert company != "00001" and f"Use company {company} (the one your business units belong to)" in page
+    assert jde.load(store).company == "00001"  # not without the click
+    page = follow(client, client.post("/jde-files/company", headers=PAGE))
+    assert jde.load(store).company == company and "/jde-files/company" not in page
+    assert f"company number is now {company}" in page.split('id="units-said"', 1)[1].split("</div></div>", 1)[0]
+
+
 def test_the_suppliers_are_shown_before_they_are_loaded(client, store, exports):
     token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE))
     page = client.get(f"/jde-files?suppliers={token}").text
@@ -89,6 +172,42 @@ def test_the_suppliers_are_shown_before_they_are_loaded(client, store, exports):
     count = len(store.master_vendors())
     assert count > 0 and f"Suppliers: {count:,} added, 0 updated." in page
     assert f"{count:,} suppliers</b>" in page and 'href="/vendors"' in page
+
+
+def test_suppliers_without_their_number_column_are_refused_with_the_columns_name(client, store, exports):
+    """A supplier master exported without "Address Number" said "40 added" with no supplier number read: the number
+    is the supplier's identity, so the list is not loaded without it (B-2275)."""
+    sheet = openpyxl.load_workbook(exports / made.SUPPLIERS_FILE).active
+    sheet.delete_cols(made.SUPPLIERS_HEADER.index("Address Number") + 1)
+    grid = io.BytesIO()
+    sheet.parent.save(grid)
+    answer = client.post("/jde-files/suppliers/upload", files={"file": ("grid.xlsx", grid.getvalue())}, headers=PAGE)
+    token = _token(answer)
+    summary = client.get(f"/jde-files?suppliers={token}").text.split('id="suppliers-summary"', 1)[1]
+    summary = summary.split("</section>", 1)[0]
+    assert "no supplier number column (“Address Number”" in summary and "Load these suppliers" not in summary
+    assert "Add the column to the grid in JD Edwards and export again" in summary
+    refused = client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE)
+    assert refused.status_code == 400 and refused.json()["error"] == jde_files.NO_NUMBER_COLUMN
+    assert store.master_vendors() == []
+
+
+def test_a_journal_saved_as_unicode_text_is_read_as_the_csv_is(client, store, exports):
+    """Excel's "Unicode Text" (UTF-16 with its mark, tabs between the cells) said "No voucher could be read from this
+    file" with no reason (B-2276)."""
+    _load_chart(client, exports)
+    saved = (exports / made.JOURNAL_FILE).read_bytes()
+    text = io.StringIO()
+    csv.writer(text, delimiter="\t", lineterminator="\r\n").writerows(csv.reader(io.StringIO(saved.decode("utf-8"))))
+    for name, data in (("tabs.txt", text.getvalue().encode("utf-16")), ("commas.csv", saved.decode().encode("utf-16"))):
+        seen = journal_cmd.look(store, data, name)
+        assert seen.state == journal_cmd.READY, (name, seen.problem)
+        assert seen.journal.vouchers == journal_cmd.look(store, saved, "saved.csv").journal.vouchers, name
+    assert 'accept=".csv,.txt"' in client.get("/jde-files").text
+    upload = client.post("/jde-files/journal/upload", files={"file": ("tabs.txt", data)}, headers=PAGE)
+    page = follow(client, client.post("/jde-files/journal/load", data={"token": _token(upload)}, headers=PAGE))
+    (loaded,) = store.journal_files()
+    assert loaded["vouchers"] == len(seen.journal.vouchers) > 0 and "Loaded commas.csv" not in page
 
 
 def test_the_journal_is_shown_then_loaded_and_can_be_forgotten(client, store, exports):

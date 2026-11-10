@@ -105,6 +105,8 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
             out.append((WARNING, "LINE_ITEMS_AGREE", f"line items read differently: {c.get('detail') or ''}"))
         if c.get("code") == "LINE_AMOUNTS" and not c.get("ok", True):  # the lines read were left not adding up
             out.append((WARNING, "LINE_AMOUNTS_TO_CHECK", str(c.get("detail") or "")))
+        if c.get("code") == "ACCOUNT_ROWS" and c.get("detail"):  # rows of the supplier's account are no lines
+            out.append((INFO, "ACCOUNT_ROWS_LEFT_OUT", str(c["detail"])))
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
         out.append((INFO, "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
