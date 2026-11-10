@@ -299,7 +299,7 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES), nor by the local readers (past its first 20 pages), a text file the page reader
+    AP_PAGE_READER_MAX_PAGES), nor by the local readers (a file longer than 60 pages), a text file the page reader
     cannot look at (``no_page``), or a line of ``output`` whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
     (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]

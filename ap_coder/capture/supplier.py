@@ -1567,7 +1567,7 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Dated in the future", "an invoice date after today: misread, or a bill sent ahead"),
     ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
-     "past its first 20 pages), or it is a text file"),
+     "in a file longer than 60 pages), or it is a text file"),
     ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "
                          "not verified"),
 ]  # fmt: skip
@@ -1586,7 +1586,7 @@ def touchless_gates(
     exchange rate is set for it (the limit is in CAD, so it can't be checked); ``over_approval_limit``: it needs a
     second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
     page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``pages_left_out``: pages of it the
-    local readers did not read (``CaptureResult.pages_left_out``: past the first 20, or OCR failed on it);
+    local readers did not read (``CaptureResult.pages_left_out``: a long file's middle, or OCR failed on it);
     ``no_page``: a text file (.md, .txt), which the page reader cannot look at, so only one reader has read it;
     ``model_coded_lines``: lines whose account only the local chat model chose, or a weak match (neither AP's
     approvals nor a coding rule)."""

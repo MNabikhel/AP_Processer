@@ -64,16 +64,34 @@ def vendor_record(store: Any, vendor_name: str | None, gst_number: Any = None) -
             **({"aliases": aliases} if aliases else {})}  # fmt: skip
 
 
+def said_numbers(numbers: list[int], one: str = "page", many: str = "pages") -> str:
+    """Numbers in words: "page 3", "pages 1, 2 and 10", "pages 56 to 65", "lines 2, 7 and 56 to 65"."""
+    runs: list[list[int]] = []
+    for n in sorted(numbers):
+        if runs and n == runs[-1][1] + 1:
+            runs[-1][1] = n
+        else:
+            runs.append([n, n])
+    parts = [part for a, b in runs for part in ([str(a)] if a == b else [str(a), str(b)] if b == a + 1 else
+                                                [f"{a} to {b}"])]  # fmt: skip
+    listed = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return f"{one if len(numbers) == 1 else many} {listed}"
+
+
+said_pages = said_numbers
+
+
 def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *,
                   assumed_date: str | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
     """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
     don't add up as printed, a PDF whose hidden text is not what its page shows, a currency the page does not show
     (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address), an invoice date
     no reader found (the coding's ``assumed_date``, the day it was read, is then put in: B-459; None once a person
-    gave another), and pages the local readers did not read (past ``layout.READ_PAGES``, or OCR failed on them)."""
+    gave another), and pages the local readers did not read (a file longer than ``layout.read_pages``, or OCR failed
+    on them), by their numbers (B-2215)."""
     from ..coding.validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
-    from .layout import READ_PAGES
+    from .layout import last_pages, read_pages
 
     out: list[tuple[str, str, str]] = []
     unsure = [f for f in capture.fields.values() if f.status == CHECK]
@@ -103,10 +121,19 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *
             )
         )
     if capture.pages_left_out > 0:  # nothing on those pages is in what the screen shows as read
-        read, total = max(0, capture.page_count - capture.pages_left_out), capture.page_count
-        out.append((WARNING, "PAGES_NOT_READ", f"only {read} of its {total} pages were read (a file's first "
-                    f"{READ_PAGES} pages are read, and a page OCR can't read is left out): check the other pages "
-                    "yourself before approving"))  # fmt: skip
+        read, total, most = max(0, capture.page_count - capture.pages_left_out), capture.page_count, read_pages()
+        one = len(capture.pages_not_read) == 1
+        last = last_pages(most)
+        long = f"of a file longer than {most} pages the first {most - last} and the last {last} are read"
+        if not capture.pages_not_read:  # a reading that did not name them
+            said = (f"only {read} of its {total} pages were read ({long}, and a page OCR can't read is left out): "
+                    "check the other pages yourself before approving")  # fmt: skip
+        else:
+            why = long if total > most else f"OCR could not read {'it' if one else 'them'}"
+            said = (f"{said_pages(capture.pages_not_read)} of its {total} pages {'was' if one else 'were'} not read "
+                    f"({why}): nothing on {'it' if one else 'them'} is in the lines or totals shown; check "
+                    f"{'it' if one else 'them'} yourself before approving")  # fmt: skip
+        out.append((WARNING, "PAGES_NOT_READ", said))
     return out
 
 

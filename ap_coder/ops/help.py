@@ -801,9 +801,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PAGES_NOT_READ": CheckHelp(
         READING, "Pages not read",
-        "The file has more pages than were read on this computer: its first 20 pages are read (a statement, a "
-        "catalogue or several invoices scanned as one file can be longer), and a scanned page OCR couldn't read is "
-        "left out. Nothing on those pages is in the fields, lines or totals shown.",
+        "Some of the file's pages were not read on this computer; the finding names them. Up to 60 pages of a file "
+        "are read; of a longer one (a statement, a catalogue or several invoices scanned as one file) the first 55 "
+        "and the last 5, where the totals are. A scanned page OCR couldn't read is left out too. Nothing on those "
+        "pages is in the fields, lines or totals shown.",
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),

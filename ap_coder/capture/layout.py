@@ -43,13 +43,41 @@ MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 # scanner's header, a mailroom's "received" line (B-1512). It is read by OCR.
 STAMP_WORDS = 25
 OCR_DPI = 200
-READ_PAGES = 20  # a file's pages read on this computer (``build_layout``): the rest are said not read (B-267)
+# A file's pages read on this computer (``build_layout``; AP_READ_PAGES sets another number, ``read_pages``): of a
+# longer file the first pages and its last ``LAST_PAGES`` are read (the totals are at the end) and the pages between
+# are said not read (B-267, B-2215).
+READ_PAGES = 60
+LAST_PAGES = 5
 OCR_MAX_SIDE = 2400
 NO_OCR = "OCR isn't installed on this computer, so a scan or a photo can't be read: run APProcessor.bat"
 # The OCR model also reads Chinese, and now and then prints a percent sign as 号 ("GST@5号", "(9,975号)").
 _OCR_PERCENT = re.compile(r"(?<=\d)号%?")
 NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-heif) isn't installed; run "
            "APProcessor.bat, or save the photo as a JPEG")  # fmt: skip
+
+
+def read_pages() -> int:
+    """How many pages of a file are read on this computer: AP_READ_PAGES, else ``READ_PAGES``. A value that isn't a
+    positive number keeps the default, so a typo never stops the reading."""
+    try:
+        asked = int(os.environ.get("AP_READ_PAGES") or 0)
+    except ValueError:
+        asked = 0
+    return asked if asked > 0 else READ_PAGES
+
+
+def last_pages(max_pages: int) -> int:
+    """Of the ``max_pages`` read of a longer file, how many are its last ones: ``LAST_PAGES``, at most half."""
+    return min(LAST_PAGES, max_pages // 2)
+
+
+def pages_read(count: int, max_pages: int) -> list[int]:
+    """The pages (from 0) read of a file of ``count`` pages: all of them up to ``max_pages``; of a longer file the
+    first pages and the last ones (``last_pages``), ``max_pages`` in all."""
+    if count <= max_pages:
+        return list(range(count))
+    last = last_pages(max_pages)
+    return [*range(max_pages - last), *range(count - last, count)]
 
 
 class CannotRead(RuntimeError):
@@ -1221,8 +1249,12 @@ def text_is_the_page(page: Any, text_page: PageLayout) -> bool:
 
 
 def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr: str | bool = "auto",
-                 max_pages: int = READ_PAGES) -> DocLayout:  # fmt: skip
+                 max_pages: int | None = None) -> DocLayout:  # fmt: skip
     """The words of ``path``. ``ocr``: "auto" (scanned pages only), True (force OCR on every page), False (never).
+
+    A PDF longer than the pages read (``read_pages``) is read at its first and its last pages (``pages_read``); the
+    pages between are kept empty, each in its place, and named in ``DocLayout.not_read``. ``max_pages``: only the
+    file's first pages, that many (the page reader's), the rest counted in ``pages_left_out``.
 
     With "auto", a photo or a scanned page on a computer without OCR raises ``CannotRead`` ("OCR isn't installed"),
     and so does an iPhone photo (HEIC) without pillow-heif: nothing read is never passed off as a blank invoice."""
@@ -1240,21 +1272,29 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
             if ocr == "auto":
                 raise CannotRead(NO_OCR)
             return DocLayout([], "none")
-        return DocLayout([ocr_image(page, i) for i, page in enumerate(_image_pages(path, max_pages), 1)], "ocr")
+        frames = _image_pages(path, max_pages or read_pages())
+        return DocLayout([ocr_image(page, i) for i, page in enumerate(frames, 1)], "ocr")
 
     pages: list[PageLayout] = []
     sources: set[str] = set()
-    failed = 0  # pages OCR could not read: kept empty, and counted as not read (``DocLayout.pages_unread_locally``)
+    # Pages not read, each kept empty in its place and counted (``DocLayout.pages_unread_locally``): those OCR could
+    # not read, and a long file's pages between the first and the last ones read.
+    not_read: list[int] = []
     di = layout_from_di(di_raw) if di_raw else None
     sha = file_sha256(path) if use_ocr else None  # (before it is opened: what is read is what the name says)
     with opened_pdf(path) as doc:  # PyMuPDF's calls holding its lock; OCR outside it
         with PDF_LOCK:
             count = doc.page_count
-        left_out = max(0, count - max_pages)  # never read: said so (``DocLayout.pages_left_out``)
-        for i in range(min(count, max_pages)):
+        left_out = max(0, count - max_pages) if max_pages else 0  # past the pages asked for: only counted
+        reading = set(range(max_pages) if max_pages else pages_read(count, read_pages()))
+        for i in range(count - left_out):
             number = i + 1
             with PDF_LOCK:
                 page = doc[i]
+                if i not in reading:
+                    pages.append(PageLayout(number, page.rect.width or 1.0, page.rect.height or 1.0, [], []))
+                    not_read.append(number)
+                    continue
                 text_page = _text_layer_page(page, number)
                 # Its text, unless it is a scan with text on it and OCR can read the scan (B-1511, B-1512).
                 texted = len(text_page.words) >= MIN_TEXT_WORDS
@@ -1280,7 +1320,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                     if texted:  # a scan with a text layer: that text, the best there is
                         sources.add("text")
                     else:
-                        failed += 1
+                        not_read.append(number)
             else:
                 with PDF_LOCK:
                     scanned_page = ocr == "auto" and _looks_scanned(page)
@@ -1289,7 +1329,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 pages.append(text_page)
                 sources.add("text")
     source = sources.pop() if len(sources) == 1 else ("mixed" if sources else "none")
-    return DocLayout(pages, source, pages_left_out=left_out, pages_unread_locally=failed)
+    return DocLayout(pages, source, pages_left_out=left_out, pages_unread_locally=len(not_read), not_read=not_read)
 
 
 # ---------------------------------------------------------------- second read of a scan
@@ -1337,25 +1377,30 @@ def _second_page(first: PageToRead) -> PageToRead:
     return PageToRead(asked, lambda: (_prepared(first.picture()[0]), 0.0), shared=False)
 
 
-def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayout | None:
+def second_read_layout(path: str | Path) -> DocLayout | None:
     """An independent second OCR of a scanned invoice, from a straightened, enlarged copy of each page.
     Its boxes are fractions of the page like the first read's (the straightening moves them by at most
-    a few thousandths). None for a text PDF or when OCR is not installed."""
+    a few thousandths). None for a text PDF or when OCR is not installed. Of a long PDF, the pages the first read
+    reads (``pages_read``), the others kept empty in their place."""
     path = Path(path)
     if not ocr_available():
         return None
     pages: list[PageLayout] = []
     if path.suffix.lower() in IMAGE_EXTENSIONS:
-        for i, page in enumerate(_image_pages(path, max_pages), 1):
+        for i, page in enumerate(_image_pages(path, read_pages()), 1):
             pages.append(ocr_image(_second_page(page), i, second_engine_name()))
     else:
         sha = file_sha256(path)  # (before it is opened: what is read is what the name says)
         with opened_pdf(path) as doc:
             with PDF_LOCK:
                 count = doc.page_count
-            for i in range(min(count, max_pages)):
+            reading = set(pages_read(count, read_pages()))
+            for i in range(count):
                 with PDF_LOCK:
                     page = doc[i]
+                    if i not in reading:
+                        pages.append(PageLayout(i + 1, page.rect.width or 1.0, page.rect.height or 1.0, [], []))
+                        continue
                     text = text_is_the_page(page, _text_layer_page(page, i + 1))
                 if text:
                     return None  # a text PDF: the text layer is exact
