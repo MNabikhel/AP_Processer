@@ -5322,3 +5322,38 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `core/store/vendor_master.py`, `core/store/invoices.py`, `web/pages/jde_files.py`, `web/invoice_view.py`,
     `web/pages/exports.py`, `erp/jde_keying.py`, `bench/jde_exports.py`; `tests/coding/test_vendor_info.py`,
     `tests/web/test_supplier_tax_id.py`, `tests/web/test_web_jde_files.py`)
+- **D-220** · **The bank account on the voucher is part of the prototype path: bank accounts typed in and
+  removed by hand by the AP manager, shown in the review header and on the keying sheet; a currency with no
+  account warns and holds nothing** (10 Nov 2026). JD Edwards' standard voucher entry takes a G/L bank account. AP
+  Coder had the pieces (D-66: `bank_accounts`, Pay from, `last_pay_froms`, VLGLBA in the batch file), folded away
+  where a chart of accounts is loaded.
+  - **Who enters them.** `POST /accounts/bank/save` and the new `/accounts/bank/remove` need an Approver
+    (`web/roles.py`): the Approver is the role nearest the AP manager (it gives the second approval and takes a
+    vendor off hold, D-142), and there is no role between it and Admin. An Admin can too; a Clerk sees the list
+    and picks an account on an invoice. Importing a file of them stays an Admin's (no import is needed). On a
+    laptop the one person does everything, as for every page.
+  - **The page** is the existing tab (GL accounts & tax → Bank accounts, under Setup in Simple screens). In
+    Simple screens its grid is what voucher entry asks: the bank account as keyed in JD Edwards (the account's
+    code, which the invoice keeps), a description, the currency, the default of each currency, and Remove; the
+    other columns (institution, transit, account number, cash GL account, In use) are kept as they are and shown
+    again when every screen is shown. Remove deletes the account (`Store.remove_bank_account`, in Activity): a
+    voucher approved with it keeps its code, an invoice still to review asks for another, as an account no longer
+    in use did.
+  - **The review screen.** With a chart of accounts and at least one bank account, the header has a "Bank account"
+    row (the same field as Pay from; before, under More details): this supplier's last account, else the default
+    of the invoice's currency (`banks.choose`, unchanged).
+  - **A currency no account is in** (a USD voucher, only CAD accounts): a warning, PAY_FROM_NO_ACCOUNT, and
+    nothing is held; the voucher goes without a bank account and the keying sheet says so. Before, such an
+    invoice was held until an account of another currency was picked (B-683, B-685). Still held, never approved
+    anyway: no account chosen where the currency has one (two accounts and no default), an account that is not
+    in the list or not in use.
+  - **The keying sheet** has a row "G/L bank account" (and the account's name) in each voucher's header block
+    once a bank account is entered (`jde_keying`, `banks.keyed`): the value JD Edwards' settings map to the
+    account (VLGLBA) when there is one, else its cash GL account, else its code.
+  - **The batch file** already has the field: VLGLBA is sent when Settings → JD Edwards E1 maps a value per bank
+    account (D-66), and stays blank otherwise (E1 takes its AAI PB bank). Not changed: a code is not sent as
+    VLGLBA unmapped, since E1 expects the short account ID there, which only the JDE team can give.
+  - With no bank account entered nothing changes and nothing is asked: `python scripts/same_behaviour.py` gives
+    the same approve and pipeline answers. (`ap_coder/coding/banks.py`, `web/roles.py`, `web/pages/accounts.py`,
+    `accounts.html`, `invoice.html`, `erp/jde_keying.py`, `web/pages/exports.py`, `core/store/accounts.py`;
+    `tests/web/test_voucher_bank_account.py`, `tests/coding/test_bank_accounts.py`, `tests/erp/test_jde_keying.py`)

@@ -185,7 +185,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             if asked not in blocks:
                 choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
                                               asked[3])  # fmt: skip
-                blocks[asked] = banks.blocking(choice, accounts)
+                blocks[asked] = banks.blocking(choice, accounts, currency)
             bank = blocks[asked]
         why = [
             to_pick,

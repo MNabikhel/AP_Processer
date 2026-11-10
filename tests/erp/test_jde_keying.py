@@ -699,3 +699,22 @@ def test_a_warning_given_for_a_voucher_is_said_first_under_it_and_under_no_other
     ws = workbook([one_line(), split()], warned={1: [note]})[jde_keying.SHEET]
     first, second = blocks(ws)
     assert said(first, "Warning")[0] == note and note not in said(second, "Warning")
+
+
+def test_the_header_block_carries_the_bank_account_once_bank_accounts_are_entered():
+    """D-220: no bank account entered, the block is as it was; with one, each voucher says its G/L bank account as
+    typed (the account's cash GL account, else its code), and a voucher with none says so."""
+    plain = blocks(workbook([one_line()])[jde_keying.SHEET])[0]
+    assert len(lines_and_check(plain)) and "G/L bank account" not in [row[0] for row in values(plain)]
+    paid, other = one_line(), split()
+    paid["final_output"]["pay_from_account"] = "CAD-OP"
+    accounts = {"CAD-OP": {"code": "CAD-OP", "name": "Operating", "gl_account": "100.1110"},
+                "100.1112.PAY": {"code": "100.1112.PAY", "name": "Payroll", "gl_account": ""}}  # fmt: skip
+    first, second = blocks(workbook([paid, other], bank_accounts=accounts)[jde_keying.SHEET])
+    assert (field(first, "G/L bank account").value, field(first, "Bank account").value) == ("100.1110", "Operating")
+    assert field(first, "G/L bank account").number_format == "@"  # a text cell: typed as it is
+    assert field(second, "G/L bank account").value is None
+    assert any("No bank account is entered for CAD" in text for text in said(second, "Warning"))
+    other["final_output"]["pay_from_account"] = "100.1112.PAY"
+    _, second = blocks(workbook([paid, other], bank_accounts=accounts)[jde_keying.SHEET])
+    assert field(second, "G/L bank account").value == "100.1112.PAY"  # no cash GL account: the code as keyed

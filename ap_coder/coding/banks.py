@@ -9,7 +9,10 @@ for its currency and whether it is in use.
 * ``clean_rows``: rows from a spreadsheet or the grid, checked (code, currency, GL account, one default per currency).
 * ``choose``: the account an invoice is paid from by default (the vendor's last one, else its currency's default,
   else the only account in that currency).
-* ``findings``: the checks on the account chosen (PAY_FROM_MISSING, PAY_FROM_UNKNOWN, PAY_FROM_CURRENCY).
+* ``findings``: the checks on the account chosen (PAY_FROM_MISSING, PAY_FROM_UNKNOWN, PAY_FROM_CURRENCY; and
+  PAY_FROM_NO_ACCOUNT, a warning, for an invoice in a currency none of the accounts is in: nothing to pick, so
+  nothing is held, D-220).
+* ``keyed``: the account as it is typed in JD Edwards' G/L bank account field (the keying sheet's).
 """
 
 from __future__ import annotations
@@ -172,16 +175,23 @@ def opening_choice(doc: dict[str, Any], approved: bool, accounts: list[dict[str,
     return choose(accounts, str(doc.get("currency") or "CAD"), last) if accounts else ""
 
 
-def blocking(code: str, accounts: list[dict[str, Any]]) -> str:
+def in_currency(accounts: list[dict[str, Any]], currency: str) -> list[dict[str, Any]]:
+    """The accounts in use that are in ``currency`` (none printed: CAD)."""
+    currency = (currency or "CAD").strip().upper()
+    return [a for a in accounts if a.get("active") and str(a.get("currency") or "").upper() == currency]
+
+
+def blocking(code: str, accounts: list[dict[str, Any]], currency: str = "") -> str:
     """What stops approval about the Pay from account, "" when nothing: once an account is in use, the invoice needs
     one of the accounts in use (``accounts``: ``Store.bank_accounts()``). Never overridable ("Approve anyway" is for
     a check a person can judge, not for paying from no account, a made-up one or a closed one, B-683). The review
-    screen's approve bar, the approval itself and the queue's Ready all ask this (B-685)."""
+    screen's approve bar, the approval itself and the queue's Ready all ask this (B-685). An invoice in a
+    ``currency`` no account in use is in has none to pick: it is not stopped (``findings`` warns, D-220)."""
     active = [a for a in accounts if a.get("active")]
     if not active:
         return ""
     if not code:
-        return PICK
+        return PICK if not currency or in_currency(accounts, currency) else ""
     if not any(a["code"] == code for a in active):
         return f"Pick another bank account to pay from: {code} is not one of your bank accounts in use"
     return ""
@@ -194,6 +204,11 @@ def findings(code: str, currency: str, accounts: list[dict[str, Any]]) -> list[t
     if not active:
         return []
     if not code:
+        if not in_currency(accounts, currency):
+            currency = (currency or "CAD").strip().upper()
+            return [(WARNING, "PAY_FROM_NO_ACCOUNT", f"no bank account is entered for {currency}: the voucher goes "
+                     f"without one. Add a {currency} bank account (GL accounts & tax, Bank accounts), or pick one of "
+                     "the others")]  # fmt: skip
         return [(ERROR, "PAY_FROM_MISSING", PICK)]
     account = next((a for a in active if a["code"] == code), None)
     if account is None:
@@ -205,3 +220,14 @@ def findings(code: str, currency: str, accounts: list[dict[str, Any]]) -> list[t
                  f"{account['currency']} account: pick a {currency} account, or confirm the conversion with the "
                  "bank")]  # fmt: skip
     return []
+
+
+def keyed(code: str, accounts: dict[str, dict[str, Any]], mapped: str = "") -> tuple[str, str]:
+    """(what is typed in JD Edwards' G/L bank account field, the account's name) for the account ``code`` an invoice
+    is paid from: ``mapped``, the value JD Edwards' settings give it (VLGLBA), else the account's cash GL account,
+    else its code, which on a laptop that types its vouchers is the account as keyed in JD Edwards. ("", "") with no
+    account chosen. ``accounts``: our bank accounts by code."""
+    if not code:
+        return "", ""
+    account = accounts.get(code) or {}
+    return mapped or str(account.get("gl_account") or "") or code, str(account.get("name") or "")

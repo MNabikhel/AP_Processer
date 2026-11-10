@@ -195,11 +195,12 @@
           <span class="inv-flag small" data-flag{% if 'remit_bank_account' not in flags %} hidden{% endif %}><span class="ms" aria-hidden="true">error</span><span data-flag-text>{{ flags.get("remit_bank_account", "") }}</span></span>
         </div>
       {%- endmacro %}
-      {% macro pay_from_field() -%}
+      {% macro pay_from_field(label="") -%}
         {% set flags = live.flags or {} %}
-        {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. #}
+        {# Our bank account it is paid from (D-66): a list only, of the accounts set up on GL accounts & tax. With a
+           chart of accounts it is the voucher's "Bank account", in the header once one is entered (D-220). #}
         <label class="field wide inv-pay-from{% if 'pay_from_account' in flags %} is-flagged{% endif %}{% if 'pay_from_account' in (live.flag_errors or []) %} is-error{% endif %}" data-field="pay_from_account">
-          <span class="lbl">{{ labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
+          <span class="lbl">{{ label or labels["pay_from_account"] }} <span class="rvw-hint" title="Your company's bank account that pays this invoice. It follows the invoice's currency (the default account of that currency, or the one this vendor was last paid from)."><span class="ms" aria-hidden="true">info</span></span></span>
           {% if pay_from.any %}
           <select name="pay_from_account" form="inv" data-pay-from>
             <option value=""{% if not pay_from.value %} selected{% endif %}>Pick the account that pays</option>
@@ -226,7 +227,7 @@
       {% if grid.account %}
       {# With a chart of accounts (D-214): what is checked on every invoice first, the rest under More details (it
          opens itself when one of its fields has a finding); then what is keyed on the pay item, in one line. #}
-      {% set folded = ["gst_hst_registration_number", "qst_registration_number", "pst_registration_number", "supplier_province", "remit_bank_account", "po_number", "payment_terms", "pay_from_account", "ship_to_province", "original_invoice_number", "subtotal"] %}
+      {% set folded = ["gst_hst_registration_number", "qst_registration_number", "pst_registration_number", "supplier_province", "remit_bank_account", "po_number", "payment_terms", "ship_to_province", "original_invoice_number", "subtotal"] + ([] if pay_from.any else ["pay_from_account"]) %}
       {% set found = namespace(any=supply.open) %}
       {% for name in folded %}{% if name in (live.flags or {}) %}{% set found.any = true %}{% endif %}{% endfor %}
       <div class="inv-head-row one">
@@ -241,9 +242,10 @@
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         <div class="inv-head-sum" data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
       </div>
+      {% if pay_from.any %}<div class="inv-head-row bank">{{ pay_from_field("Bank account") }}</div>{% endif %}
       <div class="inv-keyed" data-live="keyed">{{ live_ui.keyed(live, inv.id) }}</div>
       <details class="inv-more-details" data-more-details{% if found.any %} open{% endif %}>
-        <summary><span class="ms" aria-hidden="true">chevron_right</span><b>More details</b> <span class="muted">PO, terms, tax numbers, province, pay from</span></summary>
+        <summary><span class="ms" aria-hidden="true">chevron_right</span><b>More details</b> <span class="muted">PO, terms, tax numbers, province{% if not pay_from.any %}, pay from{% endif %}</span></summary>
         <div class="inv-grid">
           {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
           {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
@@ -252,7 +254,7 @@
           {{ field("subtotal", type="number", step="0.01") }}
           {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
           {{ supply_field() }}
-          {{ pay_from_field() }}
+          {% if not pay_from.any %}{{ pay_from_field() }}{% endif %}
         </div>
         {{ pay_note() }}
         <div data-live="jde">{{ live_ui.jde(live, inv.id) }}</div>

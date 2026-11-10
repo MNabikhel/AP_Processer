@@ -194,6 +194,7 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
                             "before paying"),
     "PAY_FROM_CURRENCY": ("pay_from_account", "Not an account in the invoice's currency"),
     "PAY_FROM_MISSING": ("pay_from_account", "Pick the account that pays this invoice"),
+    "PAY_FROM_NO_ACCOUNT": ("pay_from_account", "No bank account in the invoice's currency"),
     "PAY_FROM_UNKNOWN": ("pay_from_account", "Not one of your bank accounts in use"),
 }  # fmt: skip
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
@@ -1928,7 +1929,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     cc = uses_cost_centers(reference)
     line_pick = pick = codes_to_pick(coding.line_items, cc)
     # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
-    bank = banks.blocking(coding.pay_from_account, store.bank_accounts())
+    bank = banks.blocking(coding.pay_from_account, store.bank_accounts(), coding.currency)
     if bank:
         pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
     # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).

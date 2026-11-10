@@ -179,7 +179,8 @@ def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     created = (store.export_batch(batch) or {}).get("created_at") or ""
     return jde_keying.build(invoices, jde.load(store), store.vendor_ids(), batch=batch, gl_names=gl_names(store),
                             on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
-                            fx_rates=store.fx_rates(), warned=tax_id_warnings(store, invoices))  # fmt: skip
+                            fx_rates=store.fx_rates(), warned=tax_id_warnings(store, invoices),
+                            bank_accounts={a["code"]: a for a in store.bank_accounts(active_only=True)})  # fmt: skip
 
 
 def tax_id_warnings(store: Store, invoices: list[dict[str, Any]]) -> dict[int, list[str]]:

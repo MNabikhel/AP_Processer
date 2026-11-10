@@ -87,6 +87,12 @@ not say which accounts are meals accounts, so the top of the JD Edwards files pa
 names the accounts that read like meals and ticks them with one click: until one is ticked, the GST/HST of a meal is
 claimed in full, not by half.
 
+**Bank accounts (optional).** JD Edwards' voucher entry takes a G/L bank account. To have each voucher carry
+one, type your bank accounts on **Setup → GL accounts & tax → Bank accounts**: the account as you key it in
+JD Edwards, a description, its currency, and a tick on the default of each currency. *Remove* takes one off the
+list. Where people sign in, an Approver or an Admin does this; a Clerk sees the list and picks from it. With no
+bank account entered, nothing changes and nothing asks for one.
+
 ## 4. See how it would have coded last year (5 minutes)
 
 Before relying on it, score it against what was really keyed. Both commands run on this laptop only and change
@@ -128,10 +134,14 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      is an error: *Approve anyway* with a reason approves it, and the keying sheet then says on that voucher
      "Tax ID differs from the supplier list: confirm before paying". Where people sign in, such a voucher waits
      for a second approval by an Approver or an Admin before it can be exported.
+   - **Bank account** (once a bank account is entered): shown in the header, set to the one this supplier was
+     last paid from, else the default of the invoice's currency; pick another from the list. An invoice in a
+     currency no bank account is in gets a warning and is not held.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
 3. **To key into JDE:** **Export** puts the approved invoices on a **keying sheet**: one block a voucher, the
    header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax
-   explanation code, tax rate/area, tax amount, taxable amount), then one row a line (account, amount, remark). Print
+   explanation code, tax rate/area, tax amount, taxable amount, and the G/L bank account once bank accounts are
+   entered), then one row a line (account, amount, remark). Print
    it or keep it
    beside JD Edwards and key from it. An invoice that is not ready is listed with why and is not put on the sheet.
    The same page makes the JD Edwards batch files, for when the JDE team can load one.

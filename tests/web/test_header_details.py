@@ -271,16 +271,26 @@ def test_pay_from_defaults_to_the_currencys_account_and_is_stored(client, store)
     assert store.last_pay_from(store.get_invoice(invoice_id)["vendor_key"]) == "CAD-PAY"  # this vendor's next one
 
 
-def test_an_invoice_with_no_account_in_its_currency_is_not_approved_without_one(client, store):
+def test_an_invoice_with_no_account_in_its_currency_is_warned_about_and_not_held(client, store):
+    """D-220: with bank accounts entered, an invoice in a currency none of them is in has no account to pick. It was
+    held ("Pick the bank account to pay this invoice from") until an account of another currency was picked; it now
+    gets a plain warning and goes without one. Several accounts in its currency and no default: still picked."""
     _banks(store)
     invoice_id = _red_river(store)
     data = form_of(store, invoice_id, currency="EUR")
     answer = check(client, invoice_id, data)
-    assert answer["header"]["values"].get("pay_from_account", "") == "" and not answer["allow"]
-    assert "Pick the bank account to pay this invoice from" in html.unescape(answer["sections"]["bar"])
-    refused = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, data), headers=PAGE)
-    assert refused.status_code == 400 and "Pick the bank account to pay this invoice from" in refused.json()["error"]
-    assert store.get_invoice(invoice_id)["status"] == REVIEW
+    assert answer["header"]["values"].get("pay_from_account", "") == ""
+    assert "Pick the bank account to pay this invoice from" not in html.unescape(answer["sections"]["bar"])
+    assert "No bank account is entered for EUR" in html.unescape(answer["sections"]["checks"])
+    assert answer["header"]["flags"]["pay_from_account"] and "pay_from_account" not in answer["header"]["flag_errors"]
+    approved = client.post(f"/review/{invoice_id}/approve", data=_approvable(client, invoice_id, data), headers=PAGE)
+    assert approved.json()["ok"] and store.get_invoice(invoice_id)["status"] == "approved"
+    assert not store.get_invoice(invoice_id)["final_output"].get("pay_from_account")
+    assert banks.blocking("", store.bank_accounts(), "EUR") == ""
+    rows, _ = banks.clean_rows([{"code": "EUR-A", "name": "A", "currency": "EUR"},
+                                {"code": "EUR-B", "name": "B", "currency": "EUR"}])  # fmt: skip
+    store.save_bank_accounts(rows)
+    assert banks.blocking("", store.bank_accounts(), "EUR") == banks.PICK
 
 
 def test_the_vendors_printed_bank_details_are_shown_masked_and_not_edited(client, store):
@@ -455,14 +465,17 @@ def test_pay_from_an_unknown_or_closed_account_is_never_approved(client, store):
 
 def test_the_queue_is_ready_only_when_the_pay_from_rule_lets_approve(client, store):
     """B-685: the queue's Ready ignored Pay from: with bank accounts set up after an invoice was read, Ready showed
-    for an invoice whose review screen would not open Approve (no account in its currency)."""
+    for an invoice whose review screen would not open Approve (two accounts in its currency, neither the default;
+    since D-220 no account in its currency is a warning, not a hold)."""
     from ap_coder.coding.bulk import bulk_approve
     from ap_coder.web.pages.review import attention
 
     pending = store.list_invoices(REVIEW)
     ready_before = {i["id"] for i in pending} - set(attention(store, None, pending))
     assert ready_before  # the demo has invoices Ready
-    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    rows, _ = banks.clean_rows(
+        [{"code": "CAD-A", "name": "First", "currency": "CAD"}, {"code": "CAD-B", "name": "Second", "currency": "CAD"}]
+    )  # two, neither the default
     store.save_bank_accounts(rows)
     pending = store.list_invoices(REVIEW)
     why = attention(store, None, pending)
@@ -551,7 +564,9 @@ def test_the_queue_does_not_decode_every_invoice_again_for_pay_from(store, monke
     summary when it changes (D-155): a load reads no invoice's coding, and follows the bank accounts."""
     from ap_coder.web.pages import review
 
-    rows, _ = banks.clean_rows([{"code": "USD-OP", "name": "US", "currency": "USD", "is_default": "yes"}])
+    rows, _ = banks.clean_rows(
+        [{"code": "CAD-A", "name": "First", "currency": "CAD"}, {"code": "CAD-B", "name": "Second", "currency": "CAD"}]
+    )  # two, neither the default
     store.save_bank_accounts(rows)
     pending = store.list_invoices(REVIEW)
     # The queue's checks, given: the bank accounts are in the checks stamp (B-958), so they are done again apart.

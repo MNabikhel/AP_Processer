@@ -807,6 +807,7 @@ html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
 .inv-head-row {display: grid; gap: 4px 8px; align-items: start;}
 .inv-head-row.one {grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) minmax(100px, 116px);}
 .inv-head-row.two {grid-template-columns: minmax(96px, 124px) minmax(88px, 108px) 68px minmax(100px, 116px) minmax(0, 1fr);}
+.inv-head-row.bank {grid-template-columns: minmax(0, 420px);}
 .inv-head-row .field {min-width: 0;}
 .inv-head-row .field input, .inv-head-row .field select {width: 100%; min-width: 0; height: 30px;}
 .inv-head-row .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}

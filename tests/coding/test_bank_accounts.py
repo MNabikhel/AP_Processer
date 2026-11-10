@@ -43,6 +43,24 @@ def test_the_checks_on_the_pay_from_account():
     assert banks.findings("CAD-PAY", "CAD", ACCOUNTS) == []
 
 
+def test_a_currency_none_of_the_accounts_is_in_is_a_warning_and_holds_nothing():
+    """D-220: nothing to pick, so nothing is held; accounts in the currency and none chosen: picked, as before."""
+    found = banks.findings("", "GBP", ACCOUNTS)
+    assert [(f[0], f[1]) for f in found] == [("warning", "PAY_FROM_NO_ACCOUNT")]
+    assert "no bank account is entered for GBP" in found[0][2]
+    assert banks.blocking("", ACCOUNTS, "GBP") == "" and banks.blocking("", ACCOUNTS, "CAD") == banks.PICK
+    assert banks.blocking("", ACCOUNTS) == banks.PICK  # asked without a currency: as before
+    assert banks.blocking("", [], "GBP") == "" and banks.findings("", "GBP", []) == []  # none entered: nothing
+
+
+def test_the_account_as_typed_in_jd_edwards():
+    accounts = {"CAD-OP": {"name": "Operating", "gl_account": "100.1110"}, "100.1112": {"name": "Payroll"}}
+    assert banks.keyed("CAD-OP", accounts) == ("100.1110", "Operating")  # its cash GL account
+    assert banks.keyed("100.1112", accounts) == ("100.1112", "Payroll")  # entered as keyed: the code itself
+    assert banks.keyed("CAD-OP", accounts, "00012345") == ("00012345", "Operating")  # what the JDE settings map
+    assert banks.keyed("", accounts) == ("", "") and banks.keyed("GONE", accounts) == ("GONE", "")
+
+
 def test_rows_from_a_spreadsheet_are_checked():
     rows = [
         {"code": "CAD-OP", "name": "Operating", "currency": "cad", "institution": 4.0, "transit": "123",

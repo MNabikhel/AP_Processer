@@ -10,8 +10,8 @@ The roles, each able to do everything the one before it can (``core/store/users.
   and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``), and adds,
   changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
-  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
-  a vendor off hold.
+  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), takes
+  a vendor off hold, and adds, changes and removes the company's bank accounts (D-220).
 * **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
   its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
   deleting, the Azure check, the learning memory's resets, the finance hub feed.
@@ -151,6 +151,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /review/{invoice_id}/final-approve", "POST /review/{invoice_id}/send-back",
         # The go-ahead to post vouchers to JD Edwards through the API, and its queue (D-104).
         "POST /exports/batches/{batch:int}/jde-api/post", "POST /exports/jde-api/retry",
+        # Our bank accounts typed in, changed and removed: the AP manager's, as an Admin's (D-220). A Clerk sees them
+        # and picks one on an invoice; importing a file of them stays an Admin's.
+        "POST /accounts/bank/save", "POST /accounts/bank/remove",
     ),
     **_rules(
         ADMIN,
@@ -160,7 +163,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /exports/batches/{batch:int}/undo", "POST /exports/layout", "POST /exports/layout/preview",
         "POST /exports/batches/{batch:int}/jde-api/release",  # a voucher checked in JD Edwards, released (D-107)
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
-        "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import", "POST /accounts/bank/save",
+        "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
         "POST /accounts/tax", "POST /accounts/policy",
         "POST /vendors/master/upload", "POST /vendors/master/import",

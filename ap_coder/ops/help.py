@@ -339,6 +339,13 @@ CHECKS: dict[str, CheckHelp] = {
         "Pick the account under Pay from in the invoice details. To have one chosen for you, make it the default "
         "of its currency on GL accounts & tax → Bank accounts.",
     ),
+    "PAY_FROM_NO_ACCOUNT": CheckHelp(
+        PAYMENT, "No bank account in this currency",
+        "Your bank accounts are entered, but none of them is in the invoice's currency, so the voucher has no bank "
+        "account. The invoice is not held for it: JD Edwards then pays it from its own default bank.",
+        "Add a bank account in that currency on GL accounts & tax → Bank accounts (an Approver or an Admin), or "
+        "pick one of the other accounts under Bank account (Pay from) if that is the one that pays.",
+    ),
     "PAY_FROM_UNKNOWN": CheckHelp(
         PAYMENT, "Bank account not in use",
         "The bank account chosen to pay this invoice from is no longer one of your bank accounts in use.",

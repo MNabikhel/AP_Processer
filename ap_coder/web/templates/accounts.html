@@ -154,13 +154,24 @@
 </section>
 
 {% elif tab == "bank" %}{% set b = bank %}
+{# Typed in, changed and removed by an Approver or an Admin (D-220); a file of them is imported by an Admin. In Simple
+   screens the grid is what JD Edwards' voucher entry asks: the account as keyed there, a description, the currency. #}
+{% set edit = can("/accounts/bank/save") %}{% set short = simple_screens %}
 <section class="card">
   <h4>Bank accounts</h4>
+  {% if short %}
+  <p class="muted">The G/L bank account of JD Edwards' voucher entry. Type each account as you key it in JD Edwards,
+    with a description and its currency, and tick the default of each currency. Each invoice then shows a
+    <i>Bank account</i> (this supplier's last one, else the default of the invoice's currency), and the keying sheet
+    carries it. Optional: with no bank account here, nothing changes and nothing asks for one.</p>
+  {% else %}
   <p class="muted">Your company's own bank accounts: the account each invoice is paid from (<i>Pay from</i> on the review
     screen). Each invoice takes the default account of its currency, or the one this vendor was last paid from. Only the
     last 4 digits of an account number are ever shown. Optional: without bank accounts, nothing asks for one.</p>
+  {% endif %}
+  {% if not edit %}<p class="muted">An Approver or an Admin adds, changes and removes bank accounts.</p>{% endif %}
 
-  {% if edit %}
+  {% if can("/accounts/bank/import") and not short %}
   <details class="expander" id="import"{% if not b.rows or b.imp or b.imp_error %} open{% endif %}>
     <summary><span class="ms" aria-hidden="true">upload</span>Import bank accounts from CSV or Excel</summary>
     {% if b.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ b.imp_error }}</div></div>{% endif %}
@@ -184,14 +195,43 @@
   {% endif %}
 
   {% if not b.rows %}
-  {{ ui.empty_note("No bank accounts yet", " Import them above, or type them in the grid below.", "account_balance") }}
+  {{ ui.empty_note("No bank accounts yet", " Type them in the grid below." if short else " Import them above, or type them in the grid below.", "account_balance") }}
   {% endif %}
   <form{% if edit %} method="post" action="/accounts/bank/save"{% endif %} class="stack" data-busy="Saving…" id="bank-form"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
     <input type="hidden" name="version" value="{{ b.version }}">
     <div class="table-wrap">
       <table class="apc-table edit bank-grid">
+        {% if short %}
+        <thead><tr><th>Bank account (as keyed in JD Edwards)</th><th>Description</th><th>Currency</th><th>Default</th><th></th></tr></thead>
+        <tbody>
+          {% for r in b.rows %}{% set n = loop.index0 %}
+          <tr{% if not r.active %} class="muted"{% endif %}>
+            <td><input type="text" name="code" value="{{ r.code }}" readonly aria-label="Bank account" title="The account can't change: remove it and add the new one">
+              {# what the full grid edits is kept as it is #}
+              <input type="hidden" name="institution" value="{{ r.institution }}"><input type="hidden" name="transit" value="{{ r.transit }}">
+              <input type="hidden" name="account_number" value=""><input type="hidden" name="gl_account" value="{{ r.gl_account }}">
+              {% if r.active %}<input type="hidden" name="active" value="{{ n }}">{% endif %}</td>
+            <td><input type="text" name="name" value="{{ r.name }}" aria-label="Description {{ r.code }}" class="wide"></td>
+            <td><input type="text" name="currency" value="{{ r.currency }}" aria-label="Currency {{ r.code }}" maxlength="3" size="4"></td>
+            <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}"{% if r.is_default %} checked{% endif %} aria-label="Default for {{ r.currency }}: {{ r.code }}"></label></td>
+            <td>{% if edit %}<button class="btn sm" type="submit" formaction="/accounts/bank/remove" name="remove" value="{{ r.code }}" formnovalidate title="Remove {{ r.code }}"><span class="ms" aria-hidden="true">delete</span>Remove</button>{% endif %}</td>
+          </tr>
+          {% endfor %}
+          {% for k in range(b.blank if edit else 0) %}{% set n = b.rows | length + k %}
+          <tr class="new">
+            <td><input type="text" name="code" value="" aria-label="New bank account" placeholder="e.g. 100.1110.BMO">
+              <input type="hidden" name="institution" value=""><input type="hidden" name="transit" value="">
+              <input type="hidden" name="account_number" value=""><input type="hidden" name="gl_account" value=""></td>
+            <td><input type="text" name="name" value="" aria-label="New description" class="wide"></td>
+            <td><input type="text" name="currency" value="" aria-label="New currency" placeholder="CAD" maxlength="3" size="4"></td>
+            <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}" aria-label="New: default for its currency"></label></td>
+            <td></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% else %}
         <thead><tr><th>Code</th><th>Name</th><th>Currency</th><th>Institution</th><th>Transit</th><th>Account number</th>
-          <th>Cash GL account</th><th>Default</th><th>In use</th></tr></thead>
+          <th>Cash GL account</th><th>Default</th><th>In use</th><th></th></tr></thead>
         <tbody>
           {% for r in b.rows %}{% set n = loop.index0 %}
           <tr{% if not r.active %} class="muted"{% endif %}>
@@ -205,6 +245,7 @@
             <td>{{ gl_pick(r.gl_account, b.gl_options, r.code) }}</td>
             <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}"{% if r.is_default %} checked{% endif %} aria-label="Default for {{ r.currency }}: {{ r.code }}"></label></td>
             <td><label class="check"><input type="checkbox" name="active" value="{{ n }}"{% if r.active %} checked{% endif %} aria-label="In use: {{ r.code }}"></label></td>
+            <td>{% if edit %}<button class="btn sm" type="submit" formaction="/accounts/bank/remove" name="remove" value="{{ r.code }}" formnovalidate title="Remove {{ r.code }}"><span class="ms" aria-hidden="true">delete</span>Remove</button>{% endif %}</td>
           </tr>
           {% endfor %}
           {% for k in range(b.blank if edit else 0) %}{% set n = b.rows | length + k %}
@@ -217,14 +258,15 @@
             <td><input type="text" name="account_number" value="" aria-label="New account number" inputmode="numeric" autocomplete="off"></td>
             <td>{{ gl_pick("", b.gl_options, "new") }}</td>
             <td><label class="check"><input type="checkbox" name="is_default" value="{{ n }}" aria-label="New: default for its currency"></label></td>
-            <td></td>
+            <td></td><td></td>
           </tr>
           {% endfor %}
         </tbody>
+        {% endif %}
       </table>
     </div>
-    <p class="muted small">One default per currency. An account no longer used: untick <i>In use</i> (it is kept for the
-      invoices already paid from it).</p>
+    <p class="muted small">One default per currency. {% if short %}<i>Remove</i> takes an account off the list: a voucher approved with it keeps it, an invoice still to review asks for another.{% else %}An account no longer used: untick <i>In use</i> (it is kept for the
+      invoices already paid from it), or remove it.{% endif %}</p>
     {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save bank accounts</button>{% endif %}
   </fieldset></form>
 </section>

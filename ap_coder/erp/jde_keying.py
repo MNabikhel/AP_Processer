@@ -2,7 +2,8 @@
 
 For the approved invoices of an export batch, one block per voucher, in the order the screen asks: the header
 (supplier, company, invoice number, dates, currency), the pay item (gross amount, payment terms, remark, due date,
-tax explanation code, tax rate/area, tax and taxable amounts), then its G/L distribution (the account string as it is
+tax explanation code, tax rate/area, tax and taxable amounts; the G/L bank account once bank accounts are entered,
+D-220), then its G/L distribution (the account string as it is
 typed, ``BU.Object.Subsidiary``; the account's description; the amount, net of the tax JD Edwards posts itself, a
 tax left in the expense inside it; the remark), a check line (G/L lines + recovered tax = gross) and, in words, what
 a person would otherwise work out: a tax that is not recovered, what the tax amount holds, the meals' half, a
@@ -32,6 +33,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
+from ..coding import banks
 from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde
 from .exports import _sheet
@@ -87,6 +89,7 @@ class Voucher:
     taxable: float | None
     recovered: float  # the tax JD Edwards posts itself: not in the lines
     po_matched: bool = False  # no G/L lines: JD Edwards distributes it from the receipts
+    bank: tuple[str, str] | None = None  # (the G/L bank account as typed, its name); None: no bank account entered
     lines: list[Line] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -124,13 +127,15 @@ def vouchers(
     invoices: list[dict[str, Any]], settings: jde.JdeSettings, vendor_lookup: jde.VendorLookup = None, *,
     gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
-    warned: Mapping[int, list[str]] | None = None,
+    warned: Mapping[int, list[str]] | None = None, bank_accounts: Mapping[str, dict[str, Any]] | None = None,
 ) -> tuple[list[Voucher], list[Held]]:  # fmt: skip
     """(the vouchers to type, the invoices not ready) of approved ``invoices``, in their order. ``gl_names``: each GL
     code's description; ``on``: the batch's day (the G/L date, when it is the export day); ``left_out``: {invoice:
     why} from the batch's own checks (a duplicate, a voucher JD Edwards has through the API), beside what each
     voucher's own check says here; ``fx_rates``: AP Coder's exchange rates, said on a foreign voucher; ``warned``:
-    {invoice: warnings} said first under its voucher (a tax ID that differs from the supplier list's, D-219)."""
+    {invoice: warnings} said first under its voucher (a tax ID that differs from the supplier list's, D-219);
+    ``bank_accounts``: our bank accounts by code, once one is entered: each voucher's header then carries its bank
+    account (D-220), and one in a currency none of them is in says so."""
     ready: list[Voucher] = []
     held: list[Held] = []
     for inv, (an8, v) in zip(invoices, jde._vouchers(invoices, settings, vendor_lookup), strict=True):
@@ -144,6 +149,13 @@ def vouchers(
         tax, taxable = jde.pay_item_tax(v, settings)
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
+        bank = None
+        if bank_accounts:
+            code = str(final.get("pay_from_account") or "")
+            bank = banks.keyed(code, dict(bank_accounts), jde.glba(final, settings))
+            if not code:
+                warnings.append(f"No bank account is entered for {v.currency}: this voucher has none. JD Edwards "
+                                "takes its own default bank unless one is typed.")  # fmt: skip
         ready.append(Voucher(
             invoice_id=v.inv_id, supplier_number=an8, supplier_name=str(final.get("vendor_name") or ""),
             company=settings.company_code, invoice_number=str(final.get("invoice_number") or "").strip(),
@@ -153,7 +165,7 @@ def vouchers(
             remark=jde.voucher_remark(inv), due=jde.sent_due(final, inv) if settings.send_due_date else None,
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,
             tax=None if tax is None else tax / 100, taxable=None if taxable is None else taxable / 100,
-            recovered=v.recoverable / 100, po_matched=v.po_matched,
+            recovered=v.recoverable / 100, po_matched=v.po_matched, bank=bank,
             lines=[Line(jde.ani(e["account"]), str((gl_names or {}).get(str(e.get("gl_code") or "").strip()) or ""),
                         e["cents"] / 100, jde.line_remark(e)) for e in v.entries],
             warnings=warnings, notes=notes,
@@ -221,6 +233,8 @@ Row = list[tuple[Any, str]]  # a sheet row: four (value, kind) cells
 def _head(v: Voucher, title: str) -> list[Row]:
     """A voucher's title and its fields, two a row, in the order Standard Voucher Entry asks for them: the header,
     the pay item, then the G/L distribution's own (the purchase order)."""
+    bank = [] if v.bank is None else [[("G/L bank account", LABEL), (v.bank[0], TEXT), ("Bank account", LABEL),
+                                       (v.bank[1], PLAIN)]]  # fmt: skip
     return [
         [(title, TITLE), (f"AP Coder invoice {v.invoice_id}", TITLE), ("", TITLE), ("", TITLE)],
         [("Supplier number", LABEL), (v.supplier_number, TEXT), ("Supplier name", LABEL), (v.supplier_name, PLAIN)],
@@ -231,6 +245,7 @@ def _head(v: Voucher, title: str) -> list[Row]:
         [("Due date", LABEL), (v.due, DATE), ("PO number", LABEL), (v.po_number, TEXT)],
         [("Tax explanation code", LABEL), (v.tax_code, TEXT), ("Tax rate/area", LABEL), (v.tax_area, TEXT)],
         [("Tax amount", LABEL), (v.tax, MONEY), ("Taxable amount", LABEL), (v.taxable, MONEY)],
+        *bank,
         [("G/L distribution", LABEL), ("", PLAIN), ("", PLAIN), ("", PLAIN)],
     ]  # fmt: skip
 
@@ -329,10 +344,10 @@ def build(
     invoices: list[dict[str, Any]], settings: jde.JdeSettings, vendor_lookup: jde.VendorLookup = None, *,
     batch: int | str = "", gl_names: Mapping[str, str] | None = None, on: dt.date | None = None,
     left_out: Mapping[int, list[str]] | None = None, fx_rates: Mapping[str, float] | None = None,
-    warned: Mapping[int, list[str]] | None = None,
+    warned: Mapping[int, list[str]] | None = None, bank_accounts: Mapping[str, dict[str, Any]] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type) of a batch's keying sheet."""
     ready, held = vouchers(invoices, settings, vendor_lookup, gl_names=gl_names, on=on, left_out=left_out,
-                           fx_rates=fx_rates, warned=warned)  # fmt: skip
+                           fx_rates=fx_rates, warned=warned, bank_accounts=bank_accounts)  # fmt: skip
     name = f"ap_coder_jde_keying_{batch}.xlsx" if batch != "" else "ap_coder_jde_keying.xlsx"
     return build_xlsx(ready, held), name, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
