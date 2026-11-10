@@ -665,6 +665,26 @@ def test_second_backup_folder(client, store, tmp_path):
     assert list(other.glob("ap_coder-*.db"))  # a first copy straight away
 
 
+def test_the_restore_panel_says_before_the_confirmation_that_the_second_backup_folder_is_cleared(client, store,
+                                                                                                 tmp_path):  # fmt: skip
+    """B-2108: a restore clears the second backup folder, and only the console's restore said so: on the page the
+    person confirmed without knowing, and (on the server, logged out by the restore) found the box empty, or did
+    not look, the backups from then on kept on the same disk only."""
+
+    def panel() -> str:
+        return client.get("/settings/data").text.split('id="restore"', 1)[1].split("</details>", 1)[0]
+
+    store.backup_now()
+    assert "second backup folder" not in panel()  # none set: nothing to say
+    share = tmp_path / "share"
+    share.mkdir()
+    store.set_setting("backup_copy_dir", str(share))
+    text = panel()
+    assert "A restore clears the second backup folder" in text and html.escape(str(share)) in text
+    assert "Also copy each backup to" in text  # where to set it again
+    assert text.index("A restore clears the second backup folder") < text.index("to confirm")
+
+
 # --- About --------------------------------------------------------------------------------------------------------
 
 
