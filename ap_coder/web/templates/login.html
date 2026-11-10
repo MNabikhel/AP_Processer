@@ -33,7 +33,7 @@
       </form>
       {% if first_admin %}
       <p class="muted">No one has an account yet. On the server, the first Admin is added in a command window:
-        <code>python -m ap_coder users add &lt;username&gt; --role admin</code></p>
+        <code>python -m ap_coder users add --admin &lt;username&gt;</code></p>
       {% else %}
       <p class="muted">Forgot your password? Ask an Admin to reset it.</p>
       {% endif %}

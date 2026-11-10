@@ -298,3 +298,31 @@ def test_the_sync_report_says_how_many_gl_descriptions_were_taken_from_jd_edward
     assert {r["code"]: r["description"] for r in store.list_accounts("gl_accounts")}["6100"] == "Office supplies"
     line = next(x for x in jde_sync.report_lines(report) if x.startswith("GL accounts"))
     assert "2 descriptions taken from JD Edwards" in line, line
+
+
+def test_with_a_chart_imported_the_sync_leaves_the_accounts_and_business_units_alone(store, ais):
+    """B-2092: the GL accounts and cost centers are then what the chart gives (D-209). The sync wrote them itself: a
+    code the chart lacks listed, a closed business unit a cost center again, until the next chart import took them
+    out, and so on, the whole queue checked again at each turn."""
+    from ap_coder.core import chart
+    from tests import chart_files as cf
+
+    def rows(read, headers, cells):
+        return read(dict(zip(headers, row, strict=True)) for row in cells).rows
+
+    store.import_business_units(rows(chart.bu_rows, cf.BU_HEADERS, cf.bu_cells()))
+    store.import_chart(rows(chart.chart_rows, cf.CHART_HEADERS, cf.chart_cells()))
+    lists = (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers"))
+    stamp, mapped = store.checks_stamp(), jde.load(store).gl_map
+    connect(store, ais)
+    report = jde_sync.sync(store, actor="jane")
+    assert report["ok"], report["errors"]
+    assert (store.list_accounts("gl_accounts"), store.list_accounts("cost_centers")) == lists
+    assert {r["code"] for r in lists[0]} == set(cf.GL_ACCOUNTS) and jde.load(store).gl_map == mapped
+    assert store.get_vendor("acme office supplies") and store.purchase_order("4512")  # the other parts as before
+    said = jde_sync.report_lines(report)
+    why = "not synced: the chart of accounts is imported from JD Edwards' export, which says which accounts exist"
+    assert f"GL accounts: {why}" in said[1] and f"Business units: {why}" in said[2] and "chart import" in said[1]
+    assert report["parts"]["gl_accounts"] == report["parts"]["business_units"] == {"chart": True}
+    assert jde_sync.sync(store, parts=("gl_accounts", "business_units"))["ok"]
+    assert store.account_pairs().status(cf.HOME, "5410") == chart.OK and stamp  # the pairs as they were

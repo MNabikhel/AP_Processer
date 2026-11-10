@@ -95,7 +95,7 @@ def test_one_finding_a_line_says_why_not_one_more_for_each_code(reference, groun
                               (3, ERROR, "ACCOUNT_NOT_IN_CHART"), (4, ERROR, "ACCOUNT_NOT_IN_CHART"),
                               (5, ERROR, "BU_INACTIVE")]  # fmt: skip
     said = [i.message for i in report.issues]
-    assert said[2].endswith("it has no business unit 0731066100: pick one from the list")
+    assert said[2].endswith("the chart has no business unit 0731066100 (pick one from the list)")
     assert said[3].endswith("no business unit has an account 9999: pick one from the list")
     assert "its posting edit code is I" in said[1]
     only_closed = validate_coding(_coded(ground_truth, (HOME, "5460")), reference).issues[0].message
@@ -135,6 +135,16 @@ def test_approve_anyway_never_covers_an_account_jd_edwards_would_refuse():
         assert is_hard(Issue(ERROR, code, "x")), code
     assert not is_hard(Issue(WARNING, "ACCOUNT_RESERVED", "x"))
     assert {"ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED"} <= COUNTED_IN_CODING
+
+
+def test_the_help_of_each_check_says_it_applies_once_a_chart_is_loaded_and_how_to_load_one():
+    """The Help page lists the four for every install, a chart loaded or not."""
+    from ap_coder.ops.help import CHECKS
+
+    for code in ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED"):
+        assert CHECKS[code].meaning.startswith("Once a chart of accounts is loaded from JD Edwards: "), code
+    for code in ("ACCOUNT_NOT_IN_CHART", "BU_INACTIVE"):
+        assert "python -m ap_coder chart import" in CHECKS[code].action, code
 
 
 def test_a_list_changed_by_hand_since_the_import_is_still_checked(reference, ground_truth, store):

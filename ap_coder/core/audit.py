@@ -337,8 +337,35 @@ def _review_text(action: str, d: dict[str, Any]) -> str | None:
     return None
 
 
+_SET_ASIDE = (("meals", "meals tick", "meals ticks"), ("categories", "category", "categories"),
+              ("managers", "manager", "managers"))  # fmt: skip
+
+
+def _chart_text(d: dict[str, Any]) -> str:
+    """An import of the chart of accounts or the business units (D-209), or the two lists worked out again: what
+    changed in the table, what joined and left each list, what a person had typed that was set aside or put back."""
+    moved = [d.get(what, 0) for what in ("added", "updated", "removed")]
+    said = [f"{_table(d)}: {d.get('rows', 0):,} rows ({moved[0]:,} added, {moved[1]:,} changed, {moved[2]:,} removed)"
+            if any(moved) else f"{_table(d)}: the GL accounts and cost centers worked out again"]  # fmt: skip
+    for table, name in (("gl_accounts", "GL accounts"), ("cost_centers", "cost centers")):
+        found = d.get(table) or {}
+        words = (("added", "added"), ("updated", "changed"), ("removed", "left the list"))
+        parts = [f"{found[what]:,} {word}" for what, word in words if found.get(what)]
+        if parts:
+            said.append(f"{name}: {', '.join(parts)}")
+    for key, verb in (("set_aside", "set aside"), ("brought_back", "put back")):
+        kinds = d.get(key) or {}
+        parts = [f"{len(kinds[kind])} {one if len(kinds[kind]) == 1 else many}" for kind, one, many in _SET_ASIDE
+                 if kinds.get(kind)]  # fmt: skip
+        if parts:
+            said.append(f"{verb}: {', '.join(parts)}")
+    return "; ".join(said)
+
+
 def _setup_text(action: str, d: dict[str, Any]) -> str | None:
     """The lists and settings changed: accounts, tax set-up, lessons, vendors. None for another action."""
+    if action == "accounts_imported" and d.get("table") in ("chart_accounts", "business_units"):
+        return _chart_text(d)
     if action == "accounts_imported":
         return f"{_table(d)}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
             " (replaced the list)" if d.get("replace_all") else ""

@@ -36,22 +36,114 @@ def test_the_business_units_are_read_from_the_export_as_it_comes(tmp_path):
     assert chart_file.read_business_units(path.read_bytes()).rows == read.rows  # an upload's bytes too
 
 
-def test_only_the_columns_the_import_needs_are_kept(tmp_path):
-    records = chart_file.read_export(cf.write_chart(tmp_path / "chart.xlsx"), chart.chart_columns)
+def test_only_the_columns_the_import_needs_are_kept_a_row_at_a_time(tmp_path):
+    reading = chart_file.read_export(cf.write_chart(tmp_path / "chart.xlsx"), chart.chart_columns)
+    assert iter(reading) is reading  # a row at a time: the sheet is never held whole
+    records = list(reading)
     assert len(records) == len(cf.CHART)
     assert list(records[0]) == ["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E"]
     assert records[3]["Business Unit"] == "       07310" and records[0]["Object Account"] == " "  # cleaned later
 
 
-def test_a_number_stored_as_a_number_and_a_short_row_are_read(tmp_path):
+def _workbook(path, *rows):
     workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.append(["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E"])
-    sheet.append(["  0731066120", 5410, 2210.0, "       Coffee", 7.0, None])
-    sheet.append(["  0731066120", "5430"])
-    workbook.save(tmp_path / "numbers.xlsx")
-    assert chart_file.read_chart(tmp_path / "numbers.xlsx").rows == [
+    for row in rows:
+        workbook.active.append(row)
+    workbook.save(path)
+    return path
+
+
+HEADERS = ["Business Unit", "Object Account", "Subsidiary", "Account Description", "L D", "P E"]
+
+
+def test_a_level_stored_as_a_number_and_a_short_row_are_read(tmp_path):
+    path = _workbook(tmp_path / "n.xlsx", HEADERS, ["  0731066120", "5410", "2210", "       Coffee", 7.0, None],
+                     ["  0731066120", "5430"])  # fmt: skip
+    assert chart_file.read_chart(path).rows == [
         chart.ChartRow(cf.HOME, "5410", "2210", "Coffee", 7, ""), chart.ChartRow(cf.HOME, "5430")]  # fmt: skip
+
+
+def test_a_code_stored_as_a_number_is_refused_and_the_file_named(tmp_path):
+    """A file opened and saved in between: 0731066120 became the number 731066120 (B-2126)."""
+    path = _workbook(tmp_path / "tidied.xlsx", HEADERS, [731066120, 5410, 2210.0, "Coffee", 7, None],
+                     ["  0731066120", "5430"])  # fmt: skip
+    with pytest.raises(chart.ChartError) as refused:
+        chart_file.read_chart(path)
+    said = str(refused.value)
+    assert said.startswith("tidied.xlsx: 1 row of this file holds") and "row 2 is the first" in said
+    path = _workbook(tmp_path / "units.xlsx", ["Job Number", "Job Name"], [731066120, "Head Office"])
+    with pytest.raises(chart.ChartError, match=r"^units\.xlsx: 1 row .*stored as a number"):
+        chart_file.read_business_units(path)
+
+
+def test_the_rows_are_read_whatever_size_the_sheet_says_it_has(tmp_path):
+    table = [cf.CHART_HEADERS, *cf.chart_cells()]
+    path = cf.write_inline(tmp_path / "chart.xlsx", table, dimension="A1")
+    assert len(chart_file.read_chart(path).rows) == len(cf.CHART)
+    assert chart_file.read_chart(path).rows == chart_file.read_chart(cf.write_chart(tmp_path / "same.xlsx")).rows
+
+
+def _word_file(path):
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+                   'content-types"><Default Extension="xml" ContentType="application/xml"/></Types>')  # fmt: skip
+        z.writestr("word/document.xml", "<document/>")
+    return path
+
+
+@pytest.mark.parametrize("kind", ["a Word file renamed", "a sheet cut short", "no sheet"])
+def test_a_workbook_that_cannot_be_read_is_refused_in_plain_words_not_with_a_traceback(kind, tmp_path):
+    table = [cf.CHART_HEADERS, *cf.chart_cells()]
+    path = tmp_path / "chart.xlsx"
+    if kind == "a Word file renamed":
+        _word_file(path)
+    else:
+        cf.write_inline(path, table, cut=40 if kind == "a sheet cut short" else 0, sheets=kind != "no sheet")
+    with pytest.raises(chart.ChartError) as refused:
+        chart_file.read_chart(path)
+    said = str(refused.value)
+    assert said.startswith("chart.xlsx could not be read as an Excel workbook") and "save it again as .xlsx" in said
+
+
+def test_a_protected_or_older_excel_file_says_what_to_do(tmp_path):
+    (tmp_path / "chart.xlsx").write_bytes(bytes.fromhex("D0CF11E0A1B11AE1") + b"\0" * 600)
+    with pytest.raises(chart.ChartError) as refused:
+        chart_file.read_chart(tmp_path / "chart.xlsx")
+    said = str(refused.value)
+    assert "protected with a password" in said and ".xls" in said and "save it as .xlsx" in said
+
+
+def test_column_names_not_in_row_1_or_an_empty_first_sheet_are_said(tmp_path):
+    path = _workbook(tmp_path / "titled.xlsx", ["Account master"], [None], HEADERS, ["  0731066120", "5410"])
+    with pytest.raises(chart.ChartError) as refused:
+        chart_file.read_chart(path)
+    assert str(refused.value).startswith("titled.xlsx: the column names are in row 3, not in row 1")
+    assert "Delete the rows above them" in str(refused.value)
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Notes"
+    workbook.create_sheet("Chart").append(HEADERS)
+    workbook.save(tmp_path / "second.xlsx")
+    with pytest.raises(chart.ChartError) as refused:
+        chart_file.read_chart(tmp_path / "second.xlsx")
+    assert str(refused.value).startswith("second.xlsx: its first sheet (“Notes”) is empty")
+    assert "must be the first sheet" in str(refused.value)
+    with pytest.raises(chart.ChartError, match=r"^bu\.xlsx has no column named “Job Number” in its first row"):
+        chart_file.read_business_units(_workbook(tmp_path / "bu.xlsx", ["Name", "Status"], ["Head Office", "ACT"]))
+
+
+def test_far_more_rows_columns_or_a_longer_cell_than_the_export_has_are_refused(tmp_path, monkeypatch):
+    table = [cf.CHART_HEADERS, *cf.chart_cells()]
+    long = [list(row) for row in table]
+    long[5][3] = "x" * (2 * chart_file.CELL_MOST)
+    with pytest.raises(chart.ChartError, match=r"^long\.xlsx holds a cell far longer than any of the export's"):
+        chart_file.read_chart(cf.write_inline(tmp_path / "long.xlsx", long))
+    wide = [[*cf.CHART_HEADERS, *(f"More {n}" for n in range(chart_file.COLUMNS_MOST))], *cf.chart_cells()]
+    with pytest.raises(chart.ChartError, match=r"^wide\.xlsx has .* columns"):
+        chart_file.read_chart(cf.write_inline(tmp_path / "wide.xlsx", wide))
+    monkeypatch.setattr(chart, "ROWS_MOST", 10)
+    with pytest.raises(chart.ChartError, match=r"^rows\.xlsx: This file has more than 10 rows"):
+        chart_file.read_chart(cf.write_inline(tmp_path / "rows.xlsx", table))
+    assert chart_file.SHEET_MOST == 250_000_000 and chart.ROWS_MOST == 10
 
 
 def test_a_file_that_is_not_the_export_is_refused_in_plain_words(tmp_path):
@@ -60,7 +152,7 @@ def test_a_file_that_is_not_the_export_is_refused_in_plain_words(tmp_path):
         chart_file.read_chart(tmp_path / "chart.csv")
     with pytest.raises(chart.ChartError, match="This file is not an Excel workbook"):
         chart_file.read_chart(b"not a workbook")
-    with pytest.raises(chart.ChartError, match="“Business Unit” or “Object Account”"):
+    with pytest.raises(chart.ChartError, match="“Business Unit” and “Object Account”"):
         chart_file.read_chart(cf.write_business_units(tmp_path / "bu.xlsx"))
     # The chart has a business unit column too: given as the business unit master, it is refused by name.
     with pytest.raises(chart.ChartError, match="it is the chart of accounts, not the business unit master"):
