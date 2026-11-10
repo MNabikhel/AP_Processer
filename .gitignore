@@ -18,9 +18,31 @@ private/*
 !private/README.md
 # Belt and braces: spreadsheets and documents outside samples/ are never committed either.
 *.xlsx
+*.xls
+*.xlsm
+/*.csv
 /*.pdf
 /*.tif
 /*.tiff
+/*.png
+/*.jpg
+/*.jpeg
+/*.zip
+# Databases and saved emails, in any folder.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+*.eml
+*.msg
+# The data folder's own folders, when they are made next to the code.
+/invoices/
+/exports/
+/backups/
+/pilot_score/
+/training/
+# The made-up samples under data/, samples/, tests/fixtures/ and docs/ are tracked on purpose: each one is named in
+# tests/meta/data_files.txt, and a new data file anywhere fails tests/meta/test_data_files.py until it is added there.
 
 # Claude Code agent worktrees
 .claude/worktrees/

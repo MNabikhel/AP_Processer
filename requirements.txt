@@ -10,4 +10,4 @@ python-dotenv>=1.0
 fastapi>=0.115,<1  # the dashboard (ap_coder/web), served on 127.0.0.1
 uvicorn>=0.52,<1
 jinja2>=3.1,<4
-python-multipart>=0.0.9,<1  # file uploads on Process invoices
+python-multipart>=0.0.9,<1  # file uploads on Import invoices

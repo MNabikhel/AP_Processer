@@ -1,0 +1,43 @@
+# The data-like files the repository tracks (tests/meta/test_data_files.py): reference files, sample invoices,
+# screenshots, fixtures and the app's own settings files, none with a company's data. The repository is public:
+# company files never go in. A new made-up sample is added to this list on purpose, one name a line.
+ap_coder/capture/calibration.json
+ap_coder/erp/jde_orchestrations.json
+data/bank_accounts.csv
+data/canada_tax_rates.csv
+data/chart_of_accounts.csv
+data/cost_centers.csv
+data/purchase_orders.csv
+data/sample_statement_northwind.csv
+data/tax_gl_mapping.csv
+data/vendor_master.csv
+docs/screenshots/invoice-directory.png
+docs/screenshots/invoice-review.png
+docs/screenshots/learning.png
+docs/screenshots/review-queue.png
+docs/screenshots/sales-tax.png
+samples/cascade_US_SalesTax_INV-30981.pdf
+samples/chinook_AB_GST_CCO-26-10418.pdf
+samples/demo_day/pacific_BC_GST_PST_PO-77120_second_notice.pdf
+samples/demo_day/pacific_BC_GST_PST_PO-77311.pdf
+samples/ground_truth/cascade_US_SalesTax_INV-30981.json
+samples/ground_truth/chinook_AB_GST_CCO-26-10418.json
+samples/ground_truth/harbourview_NS_HST_HPS-2026-0347.json
+samples/ground_truth/laurentides_QC_TPS_TVQ_SIL-4471.json
+samples/ground_truth/montroyal_QC_TPS_TVQ_ACMR-2026-1187.json
+samples/ground_truth/northwind_ON_HST_CN-2026-0047.json
+samples/ground_truth/northwind_ON_HST_NW-2026-0912.json
+samples/ground_truth/pacific_BC_GST_PST_PO-77120.json
+samples/ground_truth/prairie_SK_GST_PST_PNS-104882.json
+samples/ground_truth/redriver_MB_GST_RST_RRO-55821.json
+samples/harbourview_NS_HST_HPS-2026-0347.pdf
+samples/laurentides_QC_TPS_TVQ_SIL-4471.pdf
+samples/montroyal_QC_TPS_TVQ_ACMR-2026-1187.pdf
+samples/northwind_ON_HST_CN-2026-0047.pdf
+samples/northwind_ON_HST_NW-2026-0912.pdf
+samples/pacific_BC_GST_PST_PO-77120.pdf
+samples/prairie_SK_GST_PST_PNS-104882.pdf
+samples/redriver_MB_GST_RST_RRO-55821.pdf
+tests/fixtures/page_reader/s212-0000.pdf
+tests/fixtures/page_reader/s212-0000.truth.json
+tests/test_times.json

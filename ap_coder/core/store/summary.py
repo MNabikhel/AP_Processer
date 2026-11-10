@@ -809,22 +809,6 @@ class SummaryMixin:
             self._summary_fresh(conn)
             return {r[0]: r[1] for r in conn.execute("SELECT status, COUNT(*) FROM invoice_summary GROUP BY status")}
 
-    def summary_containing(self, column: str, text: str) -> set[int]:
-        """The invoices whose ``column`` of the summary (``plain_name`` or ``raw_number``) contains ``text``: by the
-        FTS5 trigram index when this SQLite has it and ``text`` is three characters or more, else by reading the
-        column (D-110)."""
-        if column not in ("plain_name", "raw_number"):
-            raise ValueError(column)
-        with self._conn() as conn:
-            self._summary_fresh(conn)
-            if len(text) >= 3 and fts_available():
-                phrase = '"' + text.replace('"', '""') + '"'
-                rows = conn.execute("SELECT rowid FROM invoice_search WHERE invoice_search MATCH ?",
-                                    (f"{column} : {phrase}",))  # fmt: skip
-            else:
-                rows = conn.execute(f"SELECT id FROM invoice_summary WHERE instr({column}, ?) > 0", (text,))
-            return {r[0] for r in rows}
-
     def summary_fetch(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[dict[str, Any]]:
         """Any query of the summary's tables (fresh), its rows as dicts read in one go (``fetch_rows``)."""
         with self._conn() as conn:

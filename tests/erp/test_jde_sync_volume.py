@@ -137,7 +137,7 @@ def volume(folder: Path, suppliers: int = 30_000, vouchers: int = 600_000) -> di
         jde_sync._now = lambda: night  # type: ignore[assignment]
         changed = (today + dt.timedelta(days=1)).isoformat()
         for i in range(0, 50 * 7, 7):
-            ais.data["suppliers"].change(i, changed, hold_code="H")
+            ais.data["suppliers"].change(i, changed, hold_code="Y")
         for n in range(vouchers, vouchers + 1_000):
             ais.data["vouchers"].add(changed, key=f"00001-PV-{n:08d}-001", document=str(n), invoice_number=f"NEW-{n}",
                                      invoice_date=changed)  # fmt: skip

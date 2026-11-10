@@ -10,7 +10,7 @@ Your existing data is safe. On first start the database upgrades itself (schema 
 backup of AP Coder (the database and the invoice files) is made automatically once a day (the newest 14 are
 kept).
 
-## Controls on held vendors, whole-state backups, stage 0 then a live pilot, sign-in codes (D-142 to D-146)
+## Controls on held vendors, whole-state backups, Phase 0 then a live pilot, sign-in codes (D-142 to D-146)
 
 - **Only an Approver lifts a hold** (D-142): on a company server a Clerk can put a vendor on hold but not take it
   off, and can't approve a held vendor's invoice moved to another vendor (or to a new one under a near-identical
@@ -22,7 +22,7 @@ kept).
   it replaces, and files added since are set aside, never deleted. IT has `python -m ap_coder backup
   now|list|check|restore`, also onto a new computer from the share alone. The day's backup runs in the background.
 - **Touchless stays off** until the company's AI team has reviewed it (D-144).
-- **The pilot plan** (D-145): stage 0 connects AP Coder to the company (its repository, the pilot computer, the AP
+- **The pilot plan** (D-145): Phase 0 connects AP Coder to the company (its repository, the pilot computer, the AP
   inbox, the pilot team's logins, JD Edwards read and write in the test environment, job costing, a security
   review), then a live pilot with a small AP team ([PILOT_PLAN.md](PILOT_PLAN.md)).
 - **A code from your phone at every login on the server** (D-146): after the password, AP Coder asks for the 6-digit

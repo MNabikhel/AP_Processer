@@ -140,12 +140,17 @@
 <details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">receipt_long</span>Invoices already in the ERP{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
   <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
-    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.</p>
+    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.
+    JD Edwards' voucher list (Supplier Ledger Inquiry, exported to Excel) is read as it comes.</p>
   {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
   {% if reg %}
   {{ preview(reg, "/exports", {"register": reg.token}) }}
   <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…" data-long>
-    {{ columns(reg) }}
+    {% if reg.vouchers %}{# JD Edwards' voucher list (one row per pay item): read as it comes, no column to pick #}
+    <input type="hidden" name="file" value="{{ reg.token }}">
+    <input type="hidden" name="sheet" value="{{ reg.sheet }}">
+    <div class="flash info"><span class="ms" aria-hidden="true">info</span><div>{{ reg.vouchers }} Nothing to pick: Import keeps these vouchers.</div></div>
+    {% else %}{{ columns(reg) }}{% endif %}
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>

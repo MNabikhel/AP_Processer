@@ -134,7 +134,7 @@ Then it checks itself and prints a short summary before the browser opens:
 ```
 AP Coder readiness:
   [OK] Python 3.12.4
-  [OK] Packages: all 16 in place
+  [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
@@ -163,7 +163,7 @@ server; then press Check again in AP Coder's Settings → Reading (no need to re
    OvisOCR2 reads a scan of a sample invoice whose answers are known, field by field. This takes 10 to 20
    minutes on a laptop the first time (once per model). *Settings → Reading* shows its progress and, after,
    what it read on the test invoice. Until it has passed, invoices are read by OCR and wait for a person; a
-   banner on the Process and Review pages says so.
+   banner on the Import invoices and Review pages says so.
 
 There is nothing to choose and nothing to link: every invoice is read the same way. A failed self-test is
 tried again a day later, or at once with *Run the self-test again* in *Settings → Reading*.

@@ -337,7 +337,7 @@ def vendor_findings(
     if held:
         notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
         note = f": {'; '.join(notes)}" if notes else ""
-        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else "in JD Edwards"
+        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else _held_in_jde(held)
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}"))
 
     # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174)
@@ -428,8 +428,12 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "province": ("province", "prov", "state", "region", "provincestate"),
     "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode"),
     "status": ("status", "active", "blocked", "hold", "statut"),
+    # JD Edwards' hold payment code (its supplier master's export): read as the sync reads it, kept apart from the
+    # status (B-2082). Its "Individual Tax ID" is free text and "Long Address" mostly an address: neither is guessed.
+    "hold": ("holdpaymentcode", "holdpayment", "paymentholdcode", "holdcode"),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
+_GST_HST_NUMBER = re.compile(r"\d{9}rt\d{4}")  # a Canadian GST/HST number, as ``norm_tax_number`` writes it
 _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "closed", "disabled", "i", "h", "b",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
 
@@ -504,6 +508,23 @@ def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None,
     return None
 
 
+# JD Edwards' own hold payment codes, in words (a code a company added is said by its code alone).
+_HOLD_MEANS = {"Y": "payments held, new vouchers stopped", "1": "payments held, new vouchers stopped",
+               "2": "payments held, new vouchers still allowed"}  # fmt: skip
+
+
+def hold_said(code: Any) -> str:
+    """A JD Edwards hold payment code as a check says it: "hold payment code 2: payments held, new vouchers still
+    allowed"."""
+    code = str(code or "").strip().upper()
+    return f"hold payment code {code}" + (f": {_HOLD_MEANS[code]}" if code in _HOLD_MEANS else "")
+
+
+def _held_in_jde(held: list[dict[str, Any]]) -> str:
+    """Where VENDOR_ON_HOLD says a vendor is held when the hold is JD Edwards' (``vendors.erp_hold``), and which."""
+    return f"in JD Edwards ({hold_said(next(v['erp_hold'] for v in held if v.get('erp_hold')))})"
+
+
 def _held_index(held: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
     """The vendors on hold by vendor key and by ERP ID (its digits, as an AN8 is compared)."""
     by_id = {str(v.get("erp_id") or "").strip().lstrip("0"): v for v in held if str(v.get("erp_id") or "").strip()}
@@ -523,7 +544,8 @@ def voucher_hold(store: Store, vendor_key: Any, an8: Any) -> str:
         if vendor.get("status") == ON_HOLD:
             return f"{name} is on hold in AP Coder's vendor list" + (f" ({vendor['notes']})" if vendor.get("notes")
                                                                       else "")  # fmt: skip
-        return f"{name} is on hold in JD Edwards (hold code {vendor['erp_hold']}, as the last supplier sync read it)"
+        return (f"{name} is on hold in JD Edwards (hold code {vendor['erp_hold']}, as the supplier list was last "
+                "synced or imported)")  # fmt: skip
     return ""
 
 
@@ -621,8 +643,20 @@ def master_columns(headers: list[str]) -> dict[str, str]:
     return match_columns(headers, MASTER_ALIASES)
 
 
+def _is_column_of(header: Any, field: str) -> bool:
+    """Whether a column with this header is one of ``field``'s as the guess knows them (MASTER_ALIASES): a "Hold"
+    column, yes or no, is a status, not JD Edwards' hold payment code."""
+    return _norm_header(header) in {_norm_header(name) for name in MASTER_ALIASES[field]}
+
+
 def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[dict[str, Any]]:
-    """Vendor master rows from a spreadsheet, using ``master_columns`` output (a vendor name is required)."""
+    """Vendor master rows from a spreadsheet, using ``master_columns`` output (a vendor name is required). ``hold``:
+    JD Edwards' hold payment code as written (None: no such column), also when its column was picked as the status.
+    A GST/HST column picked by hand (one the guess does not know: JD Edwards' free-text tax ID) gives only the values
+    shaped like a Canadian GST/HST number (B-2082)."""
+    if "hold" not in columns and "status" in columns and _is_column_of(columns["status"], "hold"):
+        columns = {**{k: v for k, v in columns.items() if k != "status"}, "hold": columns["status"]}
+    free_text_gst = "gst" in columns and not _is_column_of(columns["gst"], "gst")
     rows = []
     for rec in records:
 
@@ -642,10 +676,13 @@ def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[
             on_hold = status in ("yes", "y", "true", "1", "x", "all", "payment", "payments", "blocked", "oui")
         else:  # a status column with words or codes
             on_hold = status in _HOLD_WORDS
-        row = {"vendor_name": name, "gst": get("gst"), "status": ON_HOLD if on_hold else ACTIVE,
+        gst = get("gst")
+        if free_text_gst and not _GST_HST_NUMBER.fullmatch(norm_tax_number(gst)):
+            gst = ""
+        row = {"vendor_name": name, "gst": gst, "status": ON_HOLD if on_hold else ACTIVE,
                "status_given": bool(status), "qst": get("qst"), "pst": get("pst"),
                "province": _province_or_blank(get("province"))}  # fmt: skip
-        for field in ("erp_id", "terms", "default_gl"):  # None: not in this file, so the vendor keeps its value
+        for field in ("erp_id", "terms", "default_gl", "hold"):  # None: not in this file, the vendor keeps its value
             row[field] = get(field) if field in columns else None
         rows.append(row)
     return rows
