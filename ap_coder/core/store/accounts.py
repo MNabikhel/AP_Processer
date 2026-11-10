@@ -425,6 +425,24 @@ class AccountsMixin:
                 return [{**dict(r), "meals": bool(r["meals"])} for r in rows]
             return [dict(r) for r in conn.execute(f"SELECT code, description, category FROM {table} ORDER BY code")]
 
+    def mark_meals_accounts(self, codes: Iterable[str], actor: str | None = None) -> list[str]:
+        """Tick these GL accounts as meals and entertainment accounts (D-90: half the GST/HST on them is
+        claimable). Returns the codes newly ticked, recorded as an edit of the list. ``ValueError``, nothing ticked,
+        when one of them is not in the list."""
+        wanted = sorted({str(code).strip() for code in codes} - {""})
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT code, meals FROM gl_accounts WHERE {_in_list('code')}", (json.dumps(wanted),))
+            held = {r["code"]: r["meals"] for r in rows}
+            missing = [code for code in wanted if code not in held]
+            if missing or not wanted:
+                raise ValueError(f"No GL account {', '.join(missing[:5])} is in the list: nothing was ticked."
+                                 if missing else "No account was named: nothing was ticked.")  # fmt: skip
+            new = [code for code in wanted if not held[code]]
+            if new:
+                conn.execute(f"UPDATE gl_accounts SET meals = 1 WHERE {_in_list('code')}", (json.dumps(new),))
+                self._log(conn, "accounts_edited", actor=actor, detail={"table": "gl_accounts", "codes": new})
+        return new
+
     def save_accounts(self, table: str, rows: list[dict[str, Any]], actor: str | None = None) -> None:
         """Replace the table with ``rows`` (used by the dashboard's editable grid)."""
         before = {r["code"]: r for r in self.list_accounts(table)}

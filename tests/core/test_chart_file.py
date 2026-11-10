@@ -113,12 +113,76 @@ def test_a_protected_or_older_excel_file_says_what_to_do(tmp_path):
     assert "protected with a password" in said and ".xls" in said and "save it as .xlsx" in said
 
 
-def test_column_names_not_in_row_1_or_an_empty_first_sheet_are_said(tmp_path):
-    path = _workbook(tmp_path / "titled.xlsx", ["Account master"], [None], HEADERS, ["  0731066120", "5410"])
-    with pytest.raises(chart.ChartError) as refused:
+def test_title_rows_above_the_column_names_are_no_rows_to_delete(tmp_path):
+    """A grid exported with its title above the column names was refused ("Delete the rows above them"), though the
+    supplier and voucher lists load so: the column names are found within the first rows (B-2273), and a row is
+    still named by its number in the file."""
+    titles = (["Account master"], [None], ["Printed 2026-11-10"])
+    path = _workbook(tmp_path / "titled.xlsx", *titles, HEADERS, ["  0731066120", "5410", " ", "Coffee", "7", " "])
+    assert [(r.bu, r.object, r.description) for r in chart_file.read_chart(path).rows] == [
+        ("0731066120", "5410", "Coffee")
+    ]
+    units = _workbook(tmp_path / "bu.xlsx", ["Business units"], ["Job Number", "Job Name"], ["  0731066120", "Hull"])
+    assert [(u.code, u.name) for u in chart_file.read_business_units(units).rows] == [("0731066120", "Hull")]
+    numbers = _workbook(tmp_path / "numbers.xlsx", *titles, HEADERS, ["  0731066120", "5410"], ["  0731066120", 5420])
+    with pytest.raises(chart.ChartError, match=r"stored as a number or a date, not as text \(row 6 is the first\)"):
+        chart_file.read_chart(numbers)
+    low = _workbook(tmp_path / "low.xlsx", *([["Title"]] * chart_file.HEADER_ROWS), HEADERS, ["  0731066120", "5410"])
+    with pytest.raises(chart.ChartError, match=r"^low\.xlsx has no columns named “Business Unit” and “Object Account”"):
+        chart_file.read_chart(low)
+
+
+def _grid_without(path, *columns):
+    return cf.write_chart(path, without=columns)
+
+
+def test_a_chart_without_its_posting_edit_column_is_refused_unless_asked(tmp_path):
+    """It loaded with EVERY account postable and no word (B-2271)."""
+    path = _grid_without(tmp_path / "grid.xlsx", "P E")
+    with pytest.raises(chart.ColumnsMissing) as refused:
         chart_file.read_chart(path)
-    assert str(refused.value).startswith("titled.xlsx: the column names are in row 3, not in row 1")
-    assert "Delete the rows above them" in str(refused.value)
+    assert str(refused.value) == (
+        "grid.xlsx has no posting edit column (“P E”): without it AP Coder cannot tell a title from an account that "
+        "can be posted to. Add the column to the grid in JD Edwards and export again."
+    ) and refused.value.fields == ("posting_edit",)
+    read = chart_file.read_chart(path, anyway=True)
+    assert read.without == ("posting_edit",) and len(read.rows) == len(cf.CHART)
+    assert not any(r.posting_edit for r in read.rows)
+    assert chart_file.read_chart(cf.write_chart(tmp_path / "chart.xlsx")).without == ()
+
+
+def test_a_chart_without_its_subsidiary_column_is_refused_unless_asked(tmp_path):
+    """It loaded with "Left out (rows repeating an account already read)" and no word that the column was missing
+    (B-2272)."""
+    with pytest.raises(chart.ColumnsMissing) as refused:
+        chart_file.read_chart(_grid_without(tmp_path / "grid.xlsx", "Subsidiary"))
+    assert str(refused.value) == (
+        "grid.xlsx has no “Subsidiary” column: without it the accounts of one object that differ only by their "
+        "subsidiary are read as one account and the others are left out. Add the column to the grid in JD Edwards "
+        "and export again."
+    )
+    read = chart_file.read_chart(tmp_path / "grid.xlsx", anyway=True)
+    assert read.without == ("subsidiary",) and not any(r.subsidiary for r in read.rows)
+    with pytest.raises(chart.ColumnsMissing) as refused:
+        chart_file.read_chart(_grid_without(tmp_path / "both.xlsx", "Subsidiary", "P E"))
+    assert refused.value.fields == ("posting_edit", "subsidiary")
+    assert "It has no “Subsidiary” column either: " in str(refused.value) and "Add the columns to" in str(refused.value)
+
+
+def test_a_grids_total_row_is_no_business_unit_and_no_row_of_the_chart(tmp_path):
+    """ "Read 21 business units" of a file of 20 and its total row (B-2274)."""
+    table = [cf.BU_HEADERS, *cf.bu_cells()]
+    read = chart_file.read_business_units(_workbook(tmp_path / "bu.xlsx", *table, ["Total", len(cf.UNITS)]))
+    assert [u.code for u in read.rows] == [u[0] for u in cf.UNITS] and read.skipped == {"total rows": 1}
+    named = _workbook(tmp_path / "named.xlsx", ["Job Number", "Job Name", "Co", "Job Sts"],
+                      ["       TOTAL", "Total Energy site", "00001", "ACT"])  # fmt: skip
+    assert [u.code for u in chart_file.read_business_units(named).rows] == ["TOTAL"]  # (a business unit so named)
+    table = [cf.CHART_HEADERS, *cf.chart_cells()]
+    read = chart_file.read_chart(_workbook(tmp_path / "chart.xlsx", *table, ["Grand Total", len(cf.CHART)]))
+    assert len(read.rows) == len(cf.CHART) and read.skipped == {"total rows": 1}
+
+
+def test_an_empty_first_sheet_or_another_file_is_said(tmp_path):
     workbook = openpyxl.Workbook()
     workbook.active.title = "Notes"
     workbook.create_sheet("Chart").append(HEADERS)

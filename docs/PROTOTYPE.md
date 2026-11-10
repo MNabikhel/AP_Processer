@@ -76,7 +76,10 @@ Under the chart, **The chart's settings** has three boxes worth a look:
 
 Then **Setup → GL accounts & tax → Sales tax accounts**: check the province and the tax accounts. A new
 installation is already set the usual way for keying by hand: the GST/HST that is recovered goes on the voucher's
-pay item (tax explanation code V), and PST or QST that is not recovered stays in the line's expense.
+pay item (tax explanation code V), and PST or QST that is not recovered stays in the line's expense. A chart does
+not say which accounts are meals accounts, so the top of the JD Edwards files page has a **Meals accounts** line that
+names the accounts that read like meals and ticks them with one click: until one is ticked, the GST/HST of a meal is
+claimed in full, not by half.
 
 ## 4. See how it would have coded last year (5 minutes)
 

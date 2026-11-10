@@ -145,8 +145,10 @@ def _write(path: Path, headers: list[str], rows: list[list[str]]) -> Path:
     return path
 
 
-def write_chart(path: Path, rows: list[tuple] = CHART) -> Path:
-    return _write(path, CHART_HEADERS, chart_cells(rows))
+def write_chart(path: Path, rows: list[tuple] = CHART, without: tuple[str, ...] = ()) -> Path:
+    """``without``: the columns the grid does not show (JD Edwards exports the visible ones only)."""
+    shown = [n for n, header in enumerate(CHART_HEADERS) if header not in without]
+    return _write(path, [CHART_HEADERS[n] for n in shown], [[row[n] for n in shown] for row in chart_cells(rows)])
 
 
 def write_business_units(path: Path, rows: list[tuple] = UNITS) -> Path:

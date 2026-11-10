@@ -169,6 +169,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /jde-files/suppliers/upload", "POST /jde-files/suppliers/load",
         "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
+        "POST /jde-files/meals", "POST /jde-files/company",
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",

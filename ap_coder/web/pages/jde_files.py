@@ -12,11 +12,14 @@ one place, in the order they depend on each other.
 Nothing is read here: each card calls the importer the command line and the other pages call, and shows what it
 says. An importer that can look before it keeps (the suppliers, the journal, the voucher list) shows its summary
 first, then "Load"; the chart and the business units are replaced whole by their file, their summary shown after.
-In server mode loading is an Admin's (web/roles.py).
+Two things the files cannot say are offered with one click each, never set alone: the meals accounts (the accounts
+whose names read like meals: ``_meals``) and JD Edwards' company number (the one company of the business units:
+``_company_offer``). In server mode loading is an Admin's (web/roles.py).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -27,8 +30,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.coding.vendors import master_columns, master_rows
 from ap_coder.core import chart, ui
+from ap_coder.core.reference_data import reads_like_meals
 from ap_coder.core.store import Store
-from ap_coder.erp import registers
+from ap_coder.erp import jde, registers
 from ap_coder.erp.journal import looks_like_journal
 from ap_coder.ops import chart_cmd, journal_cmd
 from ap_coder.web.core import current_store, done, get_store, one_connection, page_router, refuse, render, reviewer
@@ -46,11 +50,15 @@ ORDER = ("Load them in this order: the chart of accounts and the business units 
          "year's coding and the vouchers are checked against them; then the suppliers; then last year's coding; "
          "then the vouchers already in JD Edwards.")  # fmt: skip
 NOT_XLSX = "Upload the export as JD Edwards saves it, an Excel workbook (.xlsx)."
+TICK_ANYWAY = "Or tick “Load it anyway” under the file and load it again."
 NOT_VOUCHERS = ("This file is not JD Edwards' voucher list (the supplier ledger inquiry's grid, a row for each pay "
                 "item): nothing was loaded. Another list of invoices is loaded on Exports, under Invoices already in "
                 "the ERP, where its columns are picked.")  # fmt: skip
 NO_NAME_COLUMN = ("No column of this file is a supplier name, so it was not loaded. Pick its columns on the "
                   "Vendors page.")  # fmt: skip
+NO_NUMBER_COLUMN = ("This file has no supplier number column (“Address Number” in JD Edwards' supplier master), so "
+                    "it was not loaded: the number is what tells one supplier from another, two of one name too. "
+                    "Add the column to the grid in JD Edwards and export again.")  # fmt: skip
 
 
 def _url(card: str, **query: str) -> str:
@@ -72,6 +80,14 @@ def _last(store: Store, action: str, table: str = "") -> dict[str, str] | None:
     return None
 
 
+def _suppliers_problem(empty: bool, columns: dict[str, str]) -> str:
+    """Why an uploaded supplier list is not loaded here ("" when it can be): no row, no name, or no supplier number,
+    which is the supplier's identity in JD Edwards (B-2275)."""
+    if empty or "vendor_name" not in columns:
+        return NO_ROWS if empty else NO_NAME_COLUMN
+    return "" if "erp_id" in columns else NO_NUMBER_COLUMN
+
+
 def _suppliers_look(token: str) -> dict[str, Any]:
     """The uploaded supplier list as it would be loaded, nothing written: its rows, the columns found by their
     names and the ones that were not."""
@@ -85,7 +101,7 @@ def _suppliers_look(token: str) -> dict[str, Any]:
         "token": token, "name": upload.name, "rows": len(df), "kept": len(rows), "left_out": len(df) - len(rows),
         "found": [(label, columns[field]) for field, label in MASTER_LABELS.items() if field in columns],
         "missing": [label for field, label in MASTER_LABELS.items() if field not in columns],
-        "problem": NO_ROWS if df.empty else "" if "vendor_name" in columns else NO_NAME_COLUMN,
+        "problem": _suppliers_problem(df.empty, columns),
     }  # fmt: skip
 
 
@@ -100,6 +116,28 @@ def _vouchers_look(store: Store, token: str) -> dict[str, Any]:
         return {"token": token, "name": upload.name, "problem": NO_ROWS if df.empty else NOT_VOUCHERS, "other": True}
     return {"token": token, "name": upload.name, "said": registers.vouchers_said(found[1]), "kept": len(found[0]),
             "problem": "" if found[0] else "No voucher of this list can be kept."}  # fmt: skip
+
+
+def _meals(store: Store) -> dict[str, Any]:
+    """The meals accounts of the GL accounts: how many are ticked and, when none is, the accounts whose names read
+    like meals (``reference_data.reads_like_meals``), offered for the tick: a chart of accounts does not say which
+    accounts are meals, and half the GST/HST of a line coded to one that is not ticked is claimed in full
+    (B-2277)."""
+    accounts = store.list_accounts("gl_accounts")
+    ticked = sum(1 for row in accounts if row["meals"])
+    return {"ticked": ticked,
+            "like": [] if ticked else [row for row in accounts if reads_like_meals(row["description"])]}  # fmt: skip
+
+
+def _company_offer(store: Store, units: list[chart.BuRow]) -> str:
+    """The one company every business unit loaded belongs to, when JD Edwards' company number is still the one a
+    new installation starts with and is another ("" otherwise: several companies, none, or a number set already)."""
+    companies = {unit.company for unit in units if unit.company}
+    settings = jde.load(store)
+    if len(companies) != 1 or settings.company != jde.JdeSettings().company:
+        return ""
+    (company,) = companies
+    return "" if company in (settings.company, settings.company_code) else company
 
 
 def page_context(store: Store, q: Any) -> dict[str, Any]:
@@ -127,6 +165,8 @@ def page_context(store: Store, q: Any) -> dict[str, Any]:
             "vouchers": _last(store, "erp_register_imported"),
         },
         "chart_units": len({r.bu for r in rows}),
+        "meals": _meals(store) if rows else None,
+        "company": _company_offer(store, units),
         "tally": [line.strip() for line in chart_cmd.tally_lines(store)] if rows else [],
         "chart_settings": settings.saved(),
         "home_name": pairs.name_of(settings.home_business_unit) if pairs and settings.home_business_unit else "",
@@ -155,11 +195,13 @@ async def _workbook(file: UploadFile) -> tuple[bytes | None, str]:
 
 
 @router.post(HERE + "/chart")
-async def chart_load(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+async def chart_load(request: Request, file: UploadFile = File(...), anyway: str = Form("")) -> JSONResponse:  # noqa: B008
+    """``anyway``: load a chart exported without its posting edit or subsidiary column (refused otherwise)."""
     content, problem = await _workbook(file)
     if content is None:
         return refuse(problem)
-    return await run_in_threadpool(_chart_import, request, "chart", content)  # a chart of 15,000 rows: 10 to 20 s
+    # (a chart of 15,000 rows: 10 to 20 s)
+    return await run_in_threadpool(_chart_import, request, "chart", content, bool(anyway))
 
 
 @router.post(HERE + "/units")
@@ -171,10 +213,12 @@ async def units_load(request: Request, file: UploadFile = File(...)) -> JSONResp
 
 
 @one_connection
-def _chart_import(request: Request, card: str, content: bytes) -> JSONResponse:
+def _chart_import(request: Request, card: str, content: bytes, anyway: bool = False) -> JSONResponse:
     given = {"chart_source": content} if card == "chart" else {"units_source": content}
     try:
-        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer())
+        said = chart_cmd.import_files(get_store(request), **given, actor=reviewer(), anyway=anyway)
+    except chart.ColumnsMissing as exc:
+        return refuse(f"Not loaded: {exc} {TICK_ANYWAY}")
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         return refuse(f"Not loaded: {exc}")
     return _said(request, card, said)
@@ -201,6 +245,32 @@ def chart_settings_save(request: Request, never_offered: str = Form(""), skip_wo
     return _said(request, "chart", ["The chart's settings were saved.", *chart_cmd.settings_lines(store)[1:4]])
 
 
+@router.post(HERE + "/meals")
+def meals_mark(request: Request, code: list[str] = Form([])) -> JSONResponse:  # noqa: B008
+    """Tick the accounts the page named as meals accounts (each can be unticked on GL accounts & tax)."""
+    try:
+        ticked = get_store(request).mark_meals_accounts(code, actor=reviewer())
+    except ValueError as exc:
+        return refuse(str(exc))
+    return done(request, _url("checklist"), f"{ui.plural(len(ticked), 'account')} ticked as meals accounts: half "
+                "the GST/HST of a line coded to one is claimable.")  # fmt: skip
+
+
+@router.post(HERE + "/company")
+def company_use(request: Request) -> JSONResponse:
+    """Make the one company of the business units JD Edwards' company number (Settings → JD Edwards E1)."""
+    store = get_store(request)
+    company = _company_offer(store, store.business_units())
+    wanted = dataclasses.replace(jde.load(store), company=company)
+    if not company or jde.settings_problems(wanted):
+        return refuse("The business units loaded do not give one company number to use. Set it in Settings, under "
+                      "JD Edwards E1.")  # fmt: skip
+    jde.save(store, wanted, actor=reviewer())
+    return _said(request, "units", [f"JD Edwards' company number is now {company}, the company of the business "
+                                    "units loaded: vouchers and the keying sheet carry it. It is changed in "
+                                    "Settings, under JD Edwards E1."])  # fmt: skip
+
+
 # --- 3: the suppliers -----------------------------------------------------------------------------------------------
 
 
@@ -224,8 +294,8 @@ def _suppliers_load(request: Request, token: str) -> JSONResponse:
     except SheetError as exc:
         return refuse(str(exc))
     columns = master_columns(list(df.columns))
-    if df.empty or "vendor_name" not in columns:
-        return refuse(NO_ROWS if df.empty else NO_NAME_COLUMN)
+    if problem := _suppliers_problem(df.empty, columns):
+        return refuse(problem)
     result = get_store(request).import_vendor_master(master_rows(df.to_dict("records"), columns), actor=reviewer())
     drop_upload(token)
     said = [f"Suppliers: {result['added']:,} added, {result['updated']:,} updated."]
