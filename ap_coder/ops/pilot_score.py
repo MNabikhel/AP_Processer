@@ -6,8 +6,9 @@ them: the score compares with what AP posted after review. ``python -m ap_coder 
 [--distribution F0911.xlsx]`` reads an export from E1 and compares, invoice by invoice:
 
 - the voucher header (F0411: supplier AN8, invoice number, invoice date, gross amount, tax, currency, due date);
-- the G/L distribution (F0911, optional: account BU.Obj.Sub, amount, explanation), line by line, for what AP Coder
-  approved and for what it proposed before a person looked at it (the learning curve);
+- the G/L distribution (F0911, optional: account BU.Obj.Sub, amount, explanation), by account (each line of AP
+  Coder's against the posted lines of its account, the amounts added up per account), for what AP Coder approved and
+  for what it proposed before a person looked at it (the learning curve);
 - the tax area and tax explanation code, when the export has them.
 
 Invoices are matched by supplier (the AN8, else the vendor name as ``vendor_key`` reads it), invoice number
@@ -28,6 +29,7 @@ import io
 import json
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,7 +51,8 @@ FOLDER = "pilot_score"  # in the data folder, beside the database: where Insight
 VOUCHER_COLUMNS: dict[str, tuple[str, ...]] = {
     "an8": ("rpan8", "an8", "addressnumber", "suppliernumber", "supplierno", "vendornumber", "vendorno", "vendorid",
             "erpid", "supplierid"),
-    "vendor_name": ("rpalph", "alph", "alphaname", "suppliername", "vendorname", "supplier", "vendor", "name"),
+    "vendor_name": ("rpalph", "alph", "alphaname", "suppliername", "vendorname", "supplier", "vendor", "name",
+                    "suppliernumberdesc"),
     "invoice_number": ("rpvinv", "vinv", "supplierinvoicenumber", "supplierinvoiceno", "supplierinvoice",
                        "vendorinvoicenumber", "vendorinvoice", "invoicenumber", "invoiceno", "invoice"),
     "invoice_date": ("rpdivj", "divj", "invoicedate", "dateinvoice"),
@@ -57,12 +60,13 @@ VOUCHER_COLUMNS: dict[str, tuple[str, ...]] = {
     "foreign_gross": ("rpacr", "acr", "foreigngrossamount", "foreignamount", "amountforeign"),
     "tax": ("rpstam", "stam", "taxamount", "tax", "amounttax"),
     "foreign_tax": ("rpctam", "ctam", "foreigntaxamount", "foreigntax"),
-    "currency": ("rpcrcd", "crcd", "currencycode", "currency"),
+    "currency": ("rpcrcd", "crcd", "currencycode", "currency", "currcode"),
     "due_date": ("rpddj", "ddj", "duedate", "netduedate"),
+    "gl_date": ("rpdgj", "dgj", "gldate", "dategl"),
     "document": ("rpdoc", "doc", "documentnumber", "voucher", "vouchernumber", "documentno"),
     "pay_item": ("rpsfx", "sfx", "payitem", "payitemnumber"),
     "doc_type": ("rpdct", "dct", "doctype", "documenttype"),
-    "company": ("rpkco", "kco", "documentcompany", "company"),
+    "company": ("rpkco", "kco", "documentcompany", "company", "docco"),
     "tax_area": ("rptxa1", "txa1", "taxarea", "taxratearea", "taxrate/area"),
     "tax_code": ("rpexr1", "exr1", "taxexplcode", "taxexplanationcode", "taxexplanation", "taxcode"),
 }  # fmt: skip
@@ -158,9 +162,11 @@ class Posted:
     tax: float | None = None
     currency: str = ""
     due_date: str = ""
+    gl_date: str = ""
     document: str = ""
     tax_area: str = ""
     tax_code: str = ""
+    domestic_gross: float | None = None  # in the company's currency, whatever the voucher's: what the ledger holds
     lines: list[dict[str, Any]] = field(default_factory=list)
     has_lines: bool = False
     not_compared: set[str] = field(default_factory=set)  # a foreign voucher's amounts the export has only in CAD
@@ -215,7 +221,7 @@ def posted_vouchers(
         )
     order_of = {
         c: day_first_order([str(r.get(columns[c]) or "") for r in vouchers])
-        for c in ("invoice_date", "due_date")
+        for c in ("invoice_date", "due_date", "gl_date")
         if c in columns
     }
     if "document" not in columns:
@@ -232,11 +238,14 @@ def posted_vouchers(
         if not get("invoice_number") and not get("gross"):
             continue
         who = _an8(get("an8")) or vendor_key(get("vendor_name"))
+        if not who and not get("invoice_number") and not get("document"):
+            continue  # the grid's totals row: only amounts (B-2191)
         currency = get("currency").upper()
         foreign = bool(currency) and currency != domestic.upper()
         gross = _amount(get("foreign_gross"), implied_decimals) if foreign and get("foreign_gross") else None
         in_domestic = {"grand_total"} if foreign and gross is None else set()
-        gross = gross if gross is not None else _amount(get("gross"), implied_decimals)
+        domestic_gross = _amount(get("gross"), implied_decimals)
+        gross = gross if gross is not None else domestic_gross
         tax = _amount(get("foreign_tax"), implied_decimals) if foreign and get("foreign_tax") else None
         in_domestic |= {"tax_total"} if foreign and tax is None and "tax" in columns else set()
         tax = tax if tax is not None else (_amount(get("tax"), implied_decimals) if "tax" in columns else None)
@@ -257,6 +266,7 @@ def posted_vouchers(
                 key=key, an8=_an8(get("an8")), vendor_name=get("vendor_name"), invoice_number=get("invoice_number"),
                 invoice_date=julian_or_date(get("invoice_date"), order_of.get("invoice_date")),
                 currency=currency, due_date=julian_or_date(get("due_date"), order_of.get("due_date")),
+                gl_date=julian_or_date(get("gl_date"), order_of.get("gl_date")),
                 document=get("document"), tax_area=get("tax_area"), tax_code=get("tax_code").upper(),
             )  # fmt: skip
         else:  # another pay item of the same voucher
@@ -266,6 +276,8 @@ def posted_vouchers(
         p.not_compared |= in_domestic
         if gross is not None:
             p.gross = round((p.gross or 0.0) + gross, 2)
+        if domestic_gross is not None:
+            p.domestic_gross = round((p.domestic_gross or 0.0) + domestic_gross, 2)
         if tax is not None:
             p.tax = round((p.tax or 0.0) + tax, 2)
     out = list(found.values())
@@ -550,30 +562,97 @@ def _posted_account(line: dict[str, Any]) -> Account:
     return line["bu"], line["obj"], line["sub"]
 
 
-def _pair_lines(o: Ours, p: Posted) -> list[tuple[dict[str, Any] | None, dict[str, Any] | None]]:
-    """AP Coder's distribution lines beside the posted ones: same amount and object first, then same amount, then the
-    last line left on each side together."""
-    ours = list(o.lines)
-    theirs = list(p.lines)
-    pairs: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+def by_account(lines: Iterable[tuple[Any, float]]) -> dict[Any, float]:
+    """The amounts added up per account (or per whatever each amount is given with): a distribution is compared by
+    account, not line by line. Paired by their amounts, three lines of an invoice rightly coded to the account AP
+    keyed one line to were none of them compared (B-2193)."""
+    sums: dict[Any, float] = {}
+    for account, amount in lines:
+        sums[account] = round(sums.get(account, 0.0) + amount, 2)
+    return sums
 
-    def obj(line: dict[str, Any]) -> str:
-        return (line["account"] or ("", line["gl"].upper(), ""))[1]
 
-    for strict in (True, False):
-        for line in list(ours):
-            found = next((t for t in theirs if _close(t["amount"], line["amount"])
-                          and (not strict or t["obj"] == obj(line))), None)  # fmt: skip
-            if found is not None:
-                ours.remove(line)
-                theirs.remove(found)
-                pairs.append((line, found))
+def _on_account(line: dict[str, Any], t: dict[str, Any]) -> bool:
+    """Whether a posted line is on the object and subsidiary AP Coder's line goes to (through the JDE mapping, else
+    its GL code against the object)."""
+    account = line["account"]
+    return (account[1], account[2]) == (t["obj"], t["sub"]) if account is not None else line["gl"].upper() == t["obj"]
+
+
+def _unit(line: dict[str, Any]) -> str:
+    return (line["account"] or (line["cc"].upper(),))[0]
+
+
+Pair = tuple[dict[str, Any] | None, dict[str, Any] | None, bool]
+
+
+def _pair_lines(o: Ours, p: Posted) -> tuple[list[Pair], list[tuple[str, Any, Any, str]]]:
+    """(AP Coder's distribution lines beside the posted ones, each with whether it is there by its account; the
+    amounts that differ). By account (``by_account``), in three steps:
+
+    1. a line beside the posted line of its account (object and subsidiary; the one on its business unit when there
+       is one) and its amount;
+    2. the lines left of an account beside the posted lines left of it, whatever their amounts, which are compared
+       added up: (what differs, AP Coder's, the posted, the account) when the sums differ, or when they agree but are
+       spread over the business units another way. When the sums differ, a line whose amount is that of a posted line
+       on an account AP Coder has no line on is taken to be that one, coded elsewhere, and waits for step 3;
+    3. among the lines left on each side (an account only one side has): same amount, then the last line left on
+       each side together."""
+    ours, theirs = list(o.lines), list(p.lines)
+    pairs: list[Pair] = []
+    amounts: list[tuple[str, Any, Any, str]] = []
+
+    def pair(line: dict[str, Any], same: list[dict[str, Any]], by_its_account: bool = True) -> None:
+        ours.remove(line)
+        pairs.append((line, next((t for t in same if t["bu"] == _unit(line)), same[0]), by_its_account))
+
+    def taken(found: list[dict[str, Any]]) -> None:
+        theirs[:] = [t for t in theirs if not any(t is f for f in found)]
+
+    for line in list(ours):
+        same = [t for t in theirs if _on_account(line, t) and _close(t["amount"], line["amount"])]
+        if same:
+            pair(line, same)
+            taken([pairs[-1][1]])
+    groups: dict[tuple[int, ...], tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
+    for line in ours:
+        same = [t for t in theirs if _on_account(line, t)]
+        if same:
+            groups.setdefault(tuple(id(t) for t in same), ([], same))[0].append(line)
+    elsewhere = [t for t in theirs if not any(_on_account(line, t) for line in o.lines)]
+    for mine, same in groups.values():
+        posted = round(sum(t["amount"] for t in same), 2)
+        for line in list(mine):  # a line AP keyed to an account AP Coder has none on
+            found = next((t for t in elsewhere if _close(t["amount"], line["amount"])), None)
+            if found is not None and len(mine) > 1 and not _close(sum(x["amount"] for x in mine), posted):
+                mine.remove(line)
+                elsewhere = [t for t in elsewhere if t is not found]
+        for line in mine:
+            pair(line, same)
+        taken(same)
+        if any(line["recoverable_tax"] for line in mine):
+            continue  # E1 posts recoverable tax from its own tax rules: not coding
+        units = {t["bu"] for t in same}
+        text = _account_text(_posted_account(same[0]) if len(units) == 1 else ("", same[0]["obj"], same[0]["sub"]))
+        coded = round(sum(x["amount"] for x in mine), 2)
+        if not _close(coded, posted):
+            amounts.append(("Amount on the account", coded, posted, text.strip(".")))
+        elif all(units) and {_unit(x) for x in mine} <= units:  # (a unit not posted is a difference of its own)
+            split = by_account((_unit(x), x["amount"]) for x in mine), by_account((t["bu"], t["amount"]) for t in same)
+            if any(not _close(split[0].get(unit, 0.0), amount) for unit, amount in split[1].items()):
+                said = [", ".join(f"{unit} {amount:.2f}" for unit, amount in side.items()) for side in split]
+                amounts.append(("Amount by business unit", said[0], said[1], text.strip(".")))
+    for line in list(ours):
+        same = [t for t in theirs if _close(t["amount"], line["amount"])]
+        if same:
+            pair(line, same[:1], False)
+            taken(same[:1])
     expense = [line for line in ours if not line["recoverable_tax"]]
     if len(expense) == 1 and len(theirs) == 1:
-        pairs.append((expense[0], theirs.pop()))
-        ours.remove(expense[0])
-    pairs += [(line, None) for line in ours] + [(None, t) for t in theirs]
-    return pairs
+        pair(expense[0], theirs, False)
+        taken(list(theirs))
+    pairs += [(line, None, False) for line in ours] + [(None, t, False) for t in theirs]
+    return pairs, amounts
 
 
 def _line_verdict(gl: str, account: Account | None, cc: str, t: dict[str, Any]) -> tuple[bool, bool | None]:
@@ -641,7 +720,10 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
                     diff(o, p, "tax treatment", label, mine, theirs)
         lines = {"n": 0, "right": 0, "proposed_right": 0}
         if p.has_lines:
-            for mine, theirs in _pair_lines(o, p):
+            paired, amounts = _pair_lines(o, p)
+            for what, mine, theirs, account in amounts:
+                diff(o, p, "line", what, mine, theirs, account)
+            for mine, theirs, same_account in paired:
                 if mine is not None and mine["recoverable_tax"]:
                     continue  # E1 posts recoverable tax from its own tax rules: not coding
                 if mine is None:
@@ -664,7 +746,7 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
                         o,
                         p,
                         "line",
-                        "Line not posted with this amount",
+                        "Line with neither its account nor its amount posted",
                         mine["amount"],
                         "",
                         f"{_account_text(mine['account'], mine['gl'])} {mine['description']}".strip(),
@@ -692,7 +774,7 @@ def score(ours: list[Ours], posted: list[Posted], notes: list[str] | None = None
                     if gl_ok and not cc_ok:
                         diff(o, p, "line", "Cost center (business unit)", (mine["account"] or ("",))[0] or mine["cc"],
                              theirs["bu"], mine["description"])  # fmt: skip
-                if not _close(mine["amount"], theirs["amount"]):
+                if not same_account and not _close(mine["amount"], theirs["amount"]):
                     diff(o, p, "line", "Line amount", mine["amount"], theirs["amount"], mine["description"])
                 if mine["proposed_gl"] in ("", UNASSIGNED):
                     coding["proposed_blank"] += 1
@@ -822,7 +904,7 @@ def render_markdown(report: dict[str, Any], *, title: str = "Pilot score: AP Cod
             f"{_pct(coding['proposed_right'], coding['compared'])} ({coding['proposed_blank']} left blank) |",
             f"| Cost center (business unit) | {_pct(coding['cc_right'], coding['cc_n'])} |",
             f"| Tax area and explanation code | {_pct(coding['tax_right'], coding['tax_n'])} |",
-            f"| Lines not posted with the same amount | {coding['not_posted']} |",
+            f"| Lines with neither their account nor their amount posted | {coding['not_posted']} |",
             f"| Posted lines AP Coder does not have | {coding['posted_only']} |",
         ]
     else:
