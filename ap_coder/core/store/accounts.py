@@ -38,11 +38,15 @@ CURRENCY_CHANGED = "the currency was changed from"
 # Our bank accounts' columns (``bank_accounts``, D-66), the import's rows keyed by them (``coding/banks.py``).
 BANK_COLUMNS = ("code", "name", "currency", "institution", "transit", "account_number", "gl_account", "is_default",
                 "active")  # fmt: skip
-# The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``).
+# The reference data as last built, per database: (what it was built from, it) (``Store.reference_data``). Of
+# REFERENCE_KEPT databases; of WITH_PAIRS_KEPT while one holds a chart of accounts' pairs (about 3 MB for 14,700
+# accounts: the bound declared in ``core/caches.py`` holds either way).
 _REFERENCE: dict[str, tuple[tuple[Any, ...], ReferenceData]] = {}
 _REFERENCE_LOCK = threading.Lock()
+REFERENCE_KEPT, WITH_PAIRS_KEPT = 8, 2
 # Everything ``reference_data`` is built from, in one query: compared, it says whether the one kept still holds. The
-# chart of accounts' pairs (D-209) by the count of its imports and its settings (``chart.SETTING_KEYS``), not its rows.
+# chart of accounts' pairs (D-209) by the count of its changes, what its tables hold (``chart_hash``, written with
+# them: B-2125) and its settings (``chart.SETTING_KEYS``), not by its rows.
 _REFERENCE_STAMP = """SELECT
     (SELECT group_concat(code || '|' || description || '|' || category || '|' || meals, char(10))
      FROM (SELECT * FROM gl_accounts ORDER BY code)),
@@ -621,8 +625,10 @@ class AccountsMixin:
                 return kept[1]
         built = dataclasses.replace(self._reference_data(TaxRateTable.load(path)), stamp=_short(stamp))
         with _REFERENCE_LOCK:
+            _REFERENCE.pop(key, None)  # (put last: the one used now)
             _REFERENCE[key] = (stamp, built)
-            while len(_REFERENCE) > 8:
+            with_pairs = any(kept.pairs is not None for _, kept in _REFERENCE.values())
+            while len(_REFERENCE) > (WITH_PAIRS_KEPT if with_pairs else REFERENCE_KEPT):
                 _REFERENCE.pop(next(iter(_REFERENCE)))
         return built
 

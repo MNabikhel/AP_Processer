@@ -206,3 +206,37 @@ def test_a_business_unit_and_a_supplier_are_retired_by_the_same_words_kept_in_on
     assert store.account_pairs().skipped_units() == {}  # "Old Annex" is not retired by these words
     store.set_setting(chart.SKIP_WORDS_SETTING, "")  # no word at all: no name retires a supplier or a business unit
     assert store.skip_words() == [] and store.chart_settings().skip_words == ()
+
+
+def test_a_backup_from_before_the_chart_has_its_two_tables_while_it_is_restored(tmp_path, store):
+    """The restore's copy of an older backup is the database for minutes before it is brought up to date: a process
+    reading the reference data meanwhile asks the chart's tables, so the copy gets them as it gets the others'."""
+    load_sample_setup(store)
+    older = tmp_path / "older.db"
+    with closing(sqlite3.connect(store.path)) as source, closing(sqlite3.connect(older)) as target:
+        source.backup(target)
+        target.execute("DROP TABLE chart_accounts")
+        target.execute("DROP TABLE business_units")
+        target.commit()
+    Store._own_triggers(older, "older.db")
+    with closing(sqlite3.connect(older)) as copy:
+        tables = {r[0] for r in copy.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert {"chart_accounts", "business_units"} <= tables
+        assert copy.execute("SELECT COUNT(*) FROM chart_accounts").fetchone()[0] == 0
+
+
+def test_the_reference_data_of_few_databases_is_kept_while_one_holds_a_charts_pairs(tmp_path):
+    """A chart's pairs are megabytes: the bound the caches declare for the kept reference data holds with them."""
+    from ap_coder.core.store import accounts
+
+    stores = [Store(tmp_path / str(n) / "ap_coder.db") for n in range(4)]
+    for store in stores:
+        load_sample_setup(store)
+        store.reference_data()
+    kept = {str(store.path.resolve()) for store in stores}
+    assert kept <= set(accounts._REFERENCE)  # with no chart: REFERENCE_KEPT databases, as before
+    stores[0].import_chart(_chart())
+    last = stores[0].reference_data()
+    held = [key for key in accounts._REFERENCE if key in kept]
+    assert len(accounts._REFERENCE) == accounts.WITH_PAIRS_KEPT == 2 and held[-1] == str(stores[0].path.resolve())
+    assert stores[0].reference_data() is last and stores[3].reference_data().pairs is None
