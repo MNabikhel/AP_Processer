@@ -424,16 +424,18 @@ def test_q_a_meals_line(chart_company, chart_company_client, drop, hard):
     assert [e["amount"] for e in posted if e["kind"] == "tax"] == [7.87]
 
 
-@pytest.mark.xfail(strict=True, reason="coded without a word: \"Working lunch for the project kickoff, 12 people\" "
-                   "on the courier's invoice arrives on the courier account (\"8 of this supplier's 8 lines last "
-                   "year\") and the invoice is Ready. A supplier whose lines all went to one account last year has "
-                   "every line coded there whatever its words. Where: ai/supplier_prior.py and ai/suggest.py; not "
-                   "this file's.")  # fmt: skip
 def test_q_a_lunch_on_a_couriers_invoice_is_not_coded_as_courier(chart_company, drop, hard):
+    """B-2228: the supplier's one account codes the waybill line alone, as before; the lunch is left for a person,
+    who is told why and offered the courier account and the accounts a meal goes to."""
     _, account = _one(chart_company)
     got = drop(hard["odd_line"][1])
-    assert got.accounts[0] == account and got.accounts[1] != account
-    assert got.queue != ""
+    assert got.accounts == [account, ""]
+    reason = f"This supplier's lines usually go to {account}, but this line reads like a meal: check it."
+    assert got.reasons == ["8 of this supplier's 8 lines last year", reason]
+    offered = [(c["account"], c["name"]) for c in got.lines[1]["candidates"]]
+    assert offered[0][0] == account and offered[1][1] == "Working Lunches"
+    assert "Meals - Travel" in [name for _, name in offered[:4]]
+    assert got.status == REVIEW and got.queue.startswith(_left_line(reason, 2))
 
 
 # --- (r) line tables ----------------------------------------------------------------------------------------------

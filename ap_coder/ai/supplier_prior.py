@@ -551,6 +551,17 @@ def _why(prior: Prior, use: AccountUse, line: frozenset[str], remark: float, own
     return said
 
 
+def alike(prior: Prior, use: AccountUse, line_text: str, reference: ReferenceData) -> float:
+    """How alike a line is to what is known of one of the supplier's accounts: the most of its likeness to a remark
+    AP wrote for it, to a line AP approved to it here and to the account's name (the three ``rank`` scores)."""
+    line = keys(line_text)
+    if not line:
+        return 0.0
+    return max(*(similarity(line, k, prior.word_weight) for k in use.remark_keys),
+               *(similarity(line, k) for k in use.line_keys),
+               similarity(line, name_words(reference, use.business_unit, use.code)))  # fmt: skip
+
+
 def rank(prior: Prior, line_text: str, reference: ReferenceData) -> list[Candidate]:
     """The supplier's accounts for one invoice line, the likeliest first: each scored by the log of its share plus
     ``W_REMARK`` times how alike the line is to a remark AP wrote for it, ``W_LINE`` times how alike it is to a line

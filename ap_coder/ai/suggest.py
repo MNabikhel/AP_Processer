@@ -59,8 +59,8 @@ from ..core.memory import (
     vendor_key,
 )
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from .line_match import Index, keys
-from .supplier_prior import SURE_LINES, SURE_SHARE, Candidate, Prior, account_name
+from .line_match import Index, keys, similarity
+from .supplier_prior import SAID_ALIKE, SURE_LINES, SURE_SHARE, Candidate, Prior, account_name, alike, name_words
 from .supplier_prior import rank as rank_prior
 
 VENDOR_MIN_SIMILARITY = 0.34  # a line of this vendor this alike is suggested
@@ -693,6 +693,10 @@ def _suggested(description: str, line: frozenset[str], key: str, memory: _Memory
 # coding (last year's journal and its approvals), then other vendors' lines and the vendor master's default, then
 # the words of the accounts' names.
 TIER = {"vendor": 3, "supplier": 2, "others": 1, "usual": 1, "master": 1, "words": 0}
+# A line of a supplier whose lines all go to one account, this alike to the NAME of another account offered (and not
+# alike to anything known of the supplier's own), reads like the other account: left for a person (B-2228).
+ANOTHER_ALIKE = 0.5
+MEALS_OFFERED = 3  # meals accounts offered for a line that reads as a meal on such a supplier's invoice
 
 
 def by_pairs(reference: ReferenceData, prior: Prior | None = None) -> bool:
@@ -816,6 +820,8 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
     ordered = [c for _, c in sorted(offered.values(), key=lambda found: (-found[0], -found[1].score))]
     if ordered:
         ordered[0].auto = _sure(ordered[0], offered, found, prior)
+        if ordered[0].auto and offered[ordered[0].account][0] == TIER["supplier"]:
+            ordered = _unless_another_kind(description, ordered, prior, reference, used)
     return ordered[:limit]
 
 
@@ -854,6 +860,55 @@ def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list
     if sure is None or top.account != sure.account:
         return False
     return not any(tier == TIER["vendor"] and c.account != sure.account for tier, c in offered.values())
+
+
+def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prior, reference: ReferenceData,
+                         units: list[str]) -> list[Candidate]:  # fmt: skip
+    """``ordered``, whose first is the supplier's one account about to code the line with no one picking: as it is,
+    unless the line plainly says another kind of thing (a lunch on a courier's invoice, B-2228). Then the first is
+    left for a person, its ``check`` saying why, and the accounts of that other kind come next.
+
+    Plainly: the line is not alike to anything known of the supplier's account (``supplier_prior.alike`` under
+    ``SAID_ALIKE``: AP's remarks for it, the lines approved to it here, its name), and either it reads as a meal
+    (``_MEAL_WORDS``) while the supplier's account is no meals account and neither its name nor AP's remarks for it
+    read as one, or it is ``ANOTHER_ALIKE`` to the name of another account offered. A supplier's own words that say
+    nothing of any account ("waybill 77812") are no other kind: the line is coded."""
+    top, usual = ordered[0], prior.accounts[0]
+    if alike(prior, usual, description, reference) >= SAID_ALIKE:
+        return ordered
+    line, rest = keys(description), ordered[1:]
+    said, others = "", []
+    meals = frozenset(getattr(getattr(reference, "tax", None), "meals_gl_codes", None) or ())
+    known = " ".join([top.name or account_name(reference, top.business_unit, top.code),
+                      *(r.example for r in usual.remarks)])  # fmt: skip
+    if _MEAL_WORDS.search(description) and top.code not in meals and not _MEAL_WORDS.search(known):
+        said, others = "a meal", _meal_accounts(line, reference, meals, rest, units)
+    elif rest:
+        other = max(rest, key=lambda c: similarity(line, name_words(reference, c.business_unit, c.code)))
+        if similarity(line, name_words(reference, other.business_unit, other.code)) >= ANOTHER_ALIKE:
+            said, others = f"{other.name or 'account'} ({other.account})", [other]
+    if not said:
+        return ordered
+    top.auto = False
+    top.check = f"This supplier's lines usually go to {top.account}, but this line reads like {said}: check it"
+    return [top, *others, *(c for c in rest if not any(c is o for o in others))]
+
+
+def _meal_accounts(line: frozenset[str], reference: ReferenceData, meals: frozenset[str],
+                   offered: list[Candidate], units: list[str]) -> list[Candidate]:  # fmt: skip
+    """The accounts a line that reads as a meal may go to, ``MEALS_OFFERED`` at most: the meals accounts (Settings),
+    else the accounts whose name reads as a meal, the name most alike to the line first; those already ``offered``
+    as they are."""
+    valid = reference.line_accounts()
+    codes = sorted(meals & set(valid)) or [c for c in valid if _MEAL_WORDS.search(account_name(reference, "", c))]
+    codes.sort(key=lambda code: -similarity(line, name_words(reference, "", code)))
+    out = []
+    for code in codes[:MEALS_OFFERED]:
+        there = next((c for c in offered if c.code == code), None)
+        there = there or _placed(reference, code, "", units, "words", 0.0, ["the line reads as a meal"])
+        if there is not None:
+            out.append(there)
+    return out
 
 
 def why_left(prior: Prior | None, ranked: list[Candidate], reference: ReferenceData) -> str:
