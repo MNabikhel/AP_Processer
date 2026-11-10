@@ -269,7 +269,7 @@ def vendors_page(
             master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
             master |= {
                 "hold_codes": ", ".join(store.hold_codes()),
-                "skip_words": ", ".join(store.skip_words()),
+                "skip_words": ", ".join(store.supplier_markers()),
                 "hold_codes_label": HOLD_CODES_LABEL,
             }
         except SheetError as exc:
@@ -391,7 +391,7 @@ def save_import_rules(store: Store, form: Any) -> None:
     if codes and codes != ", ".join(store.hold_codes()):
         store.set_setting(HOLD_CODES_SETTING, codes, actor=reviewer())
     words = form.get("skip_words")
-    if words is not None and listed(words) != store.skip_words():
+    if words is not None and listed(words) != store.supplier_markers():
         store.set_setting(SKIP_WORDS_SETTING, ", ".join(listed(words)), actor=reviewer())
 
 

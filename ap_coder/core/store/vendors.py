@@ -15,10 +15,9 @@ from types import MappingProxyType
 from typing import Any
 
 from ..caches import MB, Bounded, size_of
-from ..chart import (
-    SKIP_WORDS_SAVED,
-    SKIP_WORDS_SETTING,  # noqa: F401  (imported from here by the Vendors page)
-)
+from ..chart import SKIP_WORDS_SAVED as SKIP_WORDS  # noqa: F401  (the default as the setting holds it)
+from ..chart import SKIP_WORDS_SETTING  # noqa: F401  (imported from here by the Vendors page)
+from ..chart import markers as _markers  # noqa: F401  (how a word is found in a name: one way for both)
 from ..keys import ADDED_HERE, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
@@ -72,10 +71,9 @@ TOTALS_FORMAT = "vendor-totals-1"  # their format as kept for every process (``s
 
 # The words an ERP's names carry for "retired: do not use": the default, the setting's name and how a word is found
 # in a name are ``core/chart.py``'s, the one definition for a supplier and a business unit of the chart of accounts
-# alike (D-209): commas between the words, and saved blank they are none. For a supplier the default also has a star
-# before or after the name (``STAR``, a word of the list like the others: taken off it, a star marks nothing; the
-# chart finds no word in it).
-SKIP_WORDS = ", ".join((SKIP_WORDS_SAVED, STAR))
+# alike (D-209): commas between the words, and saved blank they are none. A supplier is also marked by a star before
+# or after its name (``STAR``): while the setting is as it comes, and once it is saved only if the list has the star,
+# a word of it like the others (``Store.supplier_markers``, B-2160; the chart finds no word in a star).
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -281,6 +279,13 @@ class VendorsMixin:
         """The words that mark a retired supplier in the ERP's names (SKIP_WORDS unless the setting lists others;
         saved blank they are none, as the chart reads the same setting)."""
         return listed(self.get_setting(SKIP_WORDS_SETTING, SKIP_WORDS))
+
+    def supplier_markers(self) -> list[str]:
+        """What marks a retired supplier in its name (``name_marker``): the skip words, and STAR for a star before or
+        after the name. The star marks while the setting is as it comes; once the list is saved (the vendor master's
+        import form), only if it has the star: taken off the list, a star marks nothing (B-2160)."""
+        saved = self.get_setting(SKIP_WORDS_SETTING, "\0")  # (a default no saved list can be)
+        return [*listed(SKIP_WORDS), STAR] if saved == "\0" else listed(saved)
 
     def vendor_key_for(self, name: str | None, gst_number: Any = None) -> str:
         """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of

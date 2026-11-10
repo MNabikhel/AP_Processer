@@ -393,7 +393,7 @@ class VendorMasterMixin:
         merged under it}): ``import_vendor_master``'s rules, before anything is written."""
         merged: dict[str, dict[str, Any]] = {}
         names: dict[str, list[str]] = {}
-        words = self.skip_words()
+        words = self.supplier_markers()
         # the suppliers in use first: of two by one name, the one the ERP does not stop is the vendor of the name
         # (B-2083)
         rows = sorted(_master_rows_as_kept(rows, self.hold_codes(), words), key=_stopped)
@@ -531,7 +531,7 @@ class VendorMasterMixin:
         for key, group in named.items():
             if len(group) > 1 and sharing(group):
                 ids.pop(key, None)
-        return VendorIds(ids, vendors, self.skip_words())
+        return VendorIds(ids, vendors, self.supplier_markers())
 
     def vendors_sharing(self, name: str | None) -> list[dict[str, Any]]:
         """The vendors in use that share the name an invoice prints, each under a supplier number of its own, by
@@ -586,4 +586,4 @@ class VendorMasterMixin:
     def _vendor_named_otherwise(self, name: str) -> dict[str, Any] | None:
         """The vendor of a name no vendor is kept under as it is written (``named_otherwise``: a name with its
         supplier number, a retired supplier's marker, a person written the other way round), read from the list."""
-        return named_otherwise(name, self.skip_words(), self._vendors_like)
+        return named_otherwise(name, self.supplier_markers(), self._vendors_like)
