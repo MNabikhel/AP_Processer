@@ -32,6 +32,11 @@ def _save(client, rows: list[dict[str, str]], **kwargs):
     return post(client, "/rules", {"vendor": [], **data, "version": _version(client)}, **kwargs)
 
 
+def _undo(client, change_id: int, **more: str):
+    """An entry's Undo pressed on the page as it is now."""
+    return post(client, "/rules/undo", {"change": str(change_id), "version": _version(client), **more})
+
+
 def _history(page: str) -> list[str]:
     """Each entry of the history as the page says it, newest first: its words, then what is under them."""
     section = page.split('id="history"', 1)[1].split("</section>", 1)[0]
@@ -62,16 +67,16 @@ def test_a_rule_changed_on_the_page_keeps_its_number_and_the_history_lists_it_wi
     change = store.coding_rule_history(courier.id)[0]
     drawn = _entry(page, change.id)
     assert f'name="change" value="{change.id}"' in drawn and "data-confirm" not in drawn
-    page = follow(client, post(client, "/rules/undo", {"change": str(change.id)}))
+    page = follow(client, _undo(client, change.id))
     assert store.coding_rules()[0] == courier
     assert f"Undone. {who} changed ‘Courier’: GL account {second} → {first}." in unescape(page)
     assert _history(page)[0] == f"{who} changed ‘Courier’: GL account {second} → {first} (an undo)"
     # the entry undone has nothing to undo any more; the undo itself can be undone
     assert "nothing to undo" in _entry(page, change.id) and 'action="/rules/undo"' not in _entry(page, change.id)
     undo = store.coding_rule_history(limit=1)[0]
-    follow(client, post(client, "/rules/undo", {"change": str(undo.id)}))
+    follow(client, _undo(client, undo.id))
     assert store.coding_rules()[0].gl_code == second
-    assert post(client, "/rules/undo", {"change": "999"}).status_code == 404
+    assert _undo(client, 999).status_code == 404
 
 
 def test_undo_says_the_rule_changed_again_since_and_asks_before_it_overwrites_the_newer_change(client, store):
@@ -85,10 +90,10 @@ def test_undo_says_the_rule_changed_again_since_and_asks_before_it_overwrites_th
     assert 'data-confirm="This rule changed again since: Sam changed ‘Courier’: GL account 7350 → 7360, today' in entry
     assert "Undo this older change anyway?" in entry and "the newer change is overwritten" in entry
     # a page that did not ask (the rule changed after it was drawn) is refused in plain words: nothing is undone
-    answer = post(client, "/rules/undo", {"change": str(older.id)})
+    answer = _undo(client, older.id)
     assert answer.status_code == 409 and "this rule changed again since that entry" in answer.json()["error"]
     assert store.coding_rules()[0].gl_code == "7360"
-    page = follow(client, post(client, "/rules/undo", {"change": str(older.id), "overwrite": "1"}))
+    page = follow(client, _undo(client, older.id, overwrite="1"))
     assert store.coding_rules() == [courier]
     assert _history(page)[0] == f"{core.reviewer()} changed ‘Courier’: GL account 7360 → 7340 (an undo)"
 
@@ -101,7 +106,7 @@ def test_an_undo_of_a_removal_brings_the_rule_back_with_its_number(client, store
     page = follow(client, _save(client, [{"id": str(bell.id), "vendor": "Bell", "gl_code": gl}, {}]))  # its row cleared
     assert store.coding_rules() == [bell] and _history(page)[0].endswith(f"removed ‘Courier’ (GL account {gl})")
     removal = store.coding_rule_history(limit=1)[0]
-    page = follow(client, post(client, "/rules/undo", {"change": str(removal.id)}))
+    page = follow(client, _undo(client, removal.id))
     assert store.coding_rules() == [courier, bell]
     assert _history(page)[0].endswith(f"added ‘Courier’: GL account {gl} (an undo)")
     own = _history(client.get(f"/rules?rule={bell.id}").text)  # one rule's own history
@@ -186,7 +191,7 @@ def test_a_rule_from_before_the_chart_is_said_on_its_row_and_does_not_stop_the_o
     # made whole, then the change undone: the rule as it was can no longer be saved, and the undo says why
     follow(client, _save(client, [{**rows[0], "account": good.string}, {**rows[1], "id": str(old.id + 1)}]))
     change = store.coding_rule_history(old.id)[0]
-    answer = post(client, "/rules/undo", {"change": str(change.id)})
+    answer = _undo(client, change.id)
     assert answer.status_code == 400 and "Not undone" in answer.json()["error"]
     assert "needs the whole account" in answer.json()["error"] and store.coding_rules()[0].target == good.string
 
@@ -212,7 +217,8 @@ def test_on_the_company_server_anyone_who_reviews_invoices_changes_the_rules_and
     (courier,) = store.coding_rules()
     assert courier.created_by == "Dana"
     added = store.coding_rule_history()[0]
-    assert client.post("/rules/undo", data={"change": str(added.id)}, headers=lee).json()["ok"]
+    undo = {"change": str(added.id), "version": str(store.rules_seen())}
+    assert client.post("/rules/undo", data=undo, headers=lee).json()["ok"]
     assert store.coding_rules() == []
     page = unescape(client.get("/rules", headers=lee).text)
     assert _history(page) == [
@@ -232,3 +238,182 @@ def test_the_rules_are_one_click_from_the_simple_menu(client, store):
     assert opened.status_code == 200 and "Hidden in Simple screens" not in opened.text
     assert "<h4>History</h4>" in opened.text and 'aria-current="page"' in opened.text.split('href="/rules"', 1)[1][:200]
     assert client.get("/accounts?tab=rules", follow_redirects=False).headers["location"] == "/rules"  # an older link
+
+
+# --- Two people at once, a rule changed into another, an undo that would double a rule (B-2292 to B-2294) ------------
+
+
+def _post_rows(client, rows: list[dict[str, str]], version: str):
+    names = ("id", "vendor", "contains", "gl_code")
+    return post(client, "/rules", {**{n: [str(r.get(n, "")) for r in rows] for n in names}, "version": version})
+
+
+def _form_rows(page: str) -> tuple[list[dict[str, str]], str]:
+    """(the rows of the page's form that say something: id, vendor, gl_code; the stamp it would post)."""
+    table = page.split('id="rules"', 1)[1].split("</table>", 1)[0]
+    rows = []
+    for row in table.split("<tr")[2:]:
+        found = {"id": re.search(r'name="id" value="(\d*)"', row).group(1),
+                 "vendor": re.search(r'name="vendor" value="([^"]*)"', row).group(1),
+                 "gl_code": (re.search(r'<option value="([^"]+)" selected>', row) or [None, ""])[1]}  # fmt: skip
+        if any(found.values()):
+            rows.append(found)
+    return rows, re.search(r'name="version" value="([^"]+)"', page).group(1)
+
+
+def test_two_people_saving_the_rules_at_the_same_moment_neither_removes_the_others_rule(client, store, monkeypatch):
+    """B-2292: both saves passed the page's check before either wrote; the second then removed the rule the first had
+    just added, and both were told "saved"."""
+    import threading
+
+    from ap_coder.web.pages import rules as page
+    from tests.webclient import client_for
+
+    load_sample_setup(store, cost_centers=False)
+    first, second = (a["code"] for a in store.list_accounts("gl_accounts")[:2])
+    store.save_coding_rules([Rule("Courier", "", first)], actor="Dana")
+    (courier,) = store.coding_rules()
+    version = _version(client)
+    both, real, answers = threading.Barrier(2, timeout=10), page.rules_from_form, {}
+
+    def read(form, reference=None):
+        both.wait()  # the other request is as far: neither has saved yet
+        return real(form, reference)
+
+    def send(vendor: str, browser) -> None:
+        rows = [{"id": courier.id, "vendor": "Courier", "gl_code": first}, {"vendor": vendor, "gl_code": second}]
+        answers[vendor] = _post_rows(browser, rows, version)
+
+    monkeypatch.setattr(page, "rules_from_form", read)
+    threads = [threading.Thread(target=send, args=(vendor, client_for(store))) for vendor in ("Freight", "Movers")]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    monkeypatch.setattr(page, "rules_from_form", real)
+    assert sorted(a.status_code for a in answers.values()) == [200, 409], {k: a.text for k, a in answers.items()}
+    (won,) = (v for v, a in answers.items() if a.status_code == 200)
+    (lost,) = (v for v, a in answers.items() if a.status_code == 409)
+    assert [r.vendor for r in store.coding_rules()] == ["Courier", won]
+    assert not any("removed" in words for words in (rules.change_words(c) for c in store.coding_rule_history()))
+    refused = answers[lost].json()
+    assert not refused["ok"]
+    assert "Nothing was saved: the rules were changed since you opened this page" in refused["error"]
+    # The page comes back: who changed what, the rules as they are now, and this person's own row still in the form.
+    again = unescape(client.get(refused["redirect"]).text)
+    assert f"{core.reviewer()} added ‘{won}’: GL account {second}" in again.split('id="rules"', 1)[0]
+    rows, stamp = _form_rows(again)
+    assert [(r["vendor"], r["gl_code"], bool(r["id"])) for r in rows] == [
+        ("Courier", first, True), (won, second, True), (lost, second, False)]  # fmt: skip
+    assert [r.vendor for r in store.coding_rules()] == ["Courier", won]  # shown, not saved
+    follow(client, _post_rows(client, rows, stamp))
+    assert [r.vendor for r in store.coding_rules()] == ["Courier", won, lost]
+
+
+def test_a_save_made_on_an_older_page_keeps_the_others_changes_and_the_persons_own_in_the_form(client, store):
+    load_sample_setup(store, cost_centers=False)
+    a, b, c = (x["code"] for x in store.list_accounts("gl_accounts")[:3])
+    store.save_coding_rules([Rule("Courier", "", a), Rule("Bell", "", a), Rule("Hydro", "", a)], actor="Dana")
+    courier, bell, hydro = store.coding_rules()
+    version = _version(client)  # this person's page
+    # Meanwhile Lee changes Bell, removes Hydro and adds Freight.
+    store.save_coding_rules([courier, Rule("Bell", "", b, id=bell.id), Rule("Freight", "", b)], actor="Lee")
+    as_lee_left_them = store.coding_rules()
+    # This person changed Courier's account and added Movers; Bell and Hydro are as their page showed them.
+    mine = [{"id": courier.id, "vendor": "Courier", "gl_code": c}, {"id": bell.id, "vendor": "Bell", "gl_code": a},
+            {"id": hydro.id, "vendor": "Hydro", "gl_code": a}, {"vendor": "Movers", "gl_code": c}]  # fmt: skip
+    answer = _post_rows(client, mine, version)
+    assert answer.status_code == 409 and store.coding_rules() == as_lee_left_them
+    page = unescape(client.get(answer.json()["redirect"]).text)
+    said = page.split('id="rules"', 1)[0]
+    assert "Nothing was saved: the rules were changed since you opened this page." in said
+    assert "Your own changes are still in the form" in said
+    for words in (f"Lee changed ‘Bell’: GL account {a} → {b}", f"Lee removed ‘Hydro’ (GL account {a})",
+                  f"Lee added ‘Freight’: GL account {b}"):  # fmt: skip
+        assert words in said, words
+    rows, stamp = _form_rows(page)
+    assert [(r["vendor"], r["gl_code"]) for r in rows] == [("Courier", c), ("Bell", b), ("Freight", b), ("Movers", c)]
+    follow(client, _post_rows(client, rows, stamp))
+    assert [(r.vendor, r.gl_code) for r in store.coding_rules()] == [("Courier", c), ("Bell", b), ("Freight", b),
+                                                                     ("Movers", c)]  # fmt: skip
+    assert store.coding_rules()[0].id == courier.id and store.coding_rules()[1].id == bell.id
+    # A row this person cleared stays cleared in the form; a save that names no page is not made at all.
+    rows, version = _form_rows(client.get("/rules").text)
+    store.save_coding_rules([*store.coding_rules(), Rule("Parcel", "", a)], actor="Lee")
+    cleared = [{"id": courier.id}, *rows[1:]]
+    back = unescape(client.get(_post_rows(client, cleared, version).json()["redirect"]).text)
+    assert [r["vendor"] for r in _form_rows(back)[0]] == ["", "Bell", "Freight", "Movers", "Parcel"]
+    assert _form_rows(back)[0][0]["id"] == str(courier.id) and len(store.coding_rules()) == 5
+    names = ("id", "vendor", "contains", "gl_code")
+    blind = post(client, "/rules", {n: [str(r.get(n, "")) for r in rows[:1]] for n in names})
+    assert blind.status_code == 409 and "Open the rules page again" in blind.json()["error"]
+    assert len(store.coding_rules()) == 5
+
+
+def test_an_undo_asked_on_an_older_page_is_not_done_and_says_who_changed_what(client, store):
+    load_sample_setup(store, cost_centers=False)
+    a, b = (x["code"] for x in store.list_accounts("gl_accounts")[:2])
+    store.save_coding_rules([Rule("Courier", "", a)], actor="Dana")
+    added = store.coding_rule_history()[0]
+    version = _version(client)
+    store.save_coding_rules([*store.coding_rules(), Rule("Freight", "", b)], actor="Lee")
+    answer = post(client, "/rules/undo", {"change": str(added.id), "version": version})
+    assert answer.status_code == 409 and len(store.coding_rules()) == 2
+    assert "Not undone: the rules were changed since you opened this page" in answer.json()["error"]
+    page = unescape(client.get(answer.json()["redirect"]).text)
+    assert f"Lee added ‘Freight’: GL account {b}" in page.split('id="rules"', 1)[0]
+    blind = post(client, "/rules/undo", {"change": str(added.id)})
+    assert blind.status_code == 409 and len(store.coding_rules()) == 2
+    follow(client, _undo(client, added.id))  # asked again on the page as it is now
+    assert [r.vendor for r in store.coding_rules()] == ["Freight"]
+
+
+def test_an_undo_that_would_make_a_rule_say_the_same_as_another_is_refused_in_plain_words(client, store):
+    """B-2294."""
+    load_sample_setup(store, cost_centers=False)
+    a, b = (x["code"] for x in store.list_accounts("gl_accounts")[:2])
+    follow(client, _save(client, [{"vendor": "Courier", "gl_code": a}]))
+    (courier,) = store.coding_rules()
+    follow(client, _save(client, [{"id": str(courier.id), "vendor": "Courier", "gl_code": b}]))
+    change = store.coding_rule_history()[0]
+    follow(client, _save(client, [{"id": str(courier.id), "vendor": "Courier", "gl_code": b},
+                                  {"vendor": "Courier", "gl_code": a}]))  # fmt: skip
+    before = store.coding_rules()
+    answer = _undo(client, change.id)
+    assert answer.status_code == 409 and store.coding_rules() == before
+    assert answer.json()["error"] == (f"Not undone: the rule would then say ‘Courier’: GL account {a}, which another "
+                                      "rule says already. Change or remove that rule first, then undo.")  # fmt: skip
+    assert "An undo that would make a rule say the same as another is not done" in client.get("/rules").text
+
+
+def test_a_rule_changed_into_another_says_what_it_coded_as_it_is_now_and_what_before(client, store):
+    """B-2293: rule 1, changed in place to another vendor and account, still said "2 lines on 2 invoices" and the
+    search named the new rule over the old rule's invoices."""
+    load_sample_setup(store, cost_centers=False)
+    store.save_coding_rules([Rule("", "delivery", "6900")], actor="Dana")
+    (rule,) = store.coding_rules()
+    folder = store.path.parent
+
+    def coded(name: str) -> int:
+        doc, _ = rules.apply(InvoiceCoding.model_validate(gt()), store.coding_rules())
+        return store.add_invoice(folder / f"{name}.pdf", doc.to_output(), {})
+
+    old = [coded(n) for n in "ab"]
+    store.save_coding_rules([Rule("Someone Else", "", "6010", id=rule.id)], actor="Lee")
+    cell = unescape(client.get("/rules").text).split(f'name="id" value="{rule.id}"', 1)[1].split("</tr>", 1)[0]
+    cell = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell))
+    assert "None yet as it is now" in cell and "2 lines on 2 invoices before it was changed (today at " in cell
+    assert "; it was ‘any vendor, line contains “delivery”’: GL account 6900)" in cell
+    page = client.get("/rules").text
+    assert f'href="/search?rule={rule.id}&amp;was=1#directory"' in page
+    assert f'href="/search?rule={rule.id}#directory"' not in page  # nothing as it is now: no link that finds nothing
+    now = unescape(client.get(f"/search?rule={rule.id}").text)
+    assert "Only the invoices with a line coded by the rule ‘Someone Else’ as it is now." in now
+    assert "The 2 lines it coded before it was changed" in now and not any(f'href="/review/{i}"' in now for i in old)
+    was = unescape(client.get(f"/search?rule={rule.id}&was=1").text)
+    assert ("Only the invoices with a line coded by the rule ‘Someone Else’ before it was changed, when it said "
+            "something else.") in was  # fmt: skip
+    assert all(f'href="/review/{i}"' in was for i in old) and '<input type="hidden" name="was" value="1">' in was
+    assert "The lines it coded as it is now" in was
+    # Changed back: the lines are what it codes now again, and nothing is "before".
+    store.save_coding_rules([Rule("", "delivery", "6900", id=rule.id)], actor="Lee")
+    page = client.get("/rules").text
+    assert "2 lines on 2 invoices</a>" in page and "before it was changed" not in page and "as it is now" not in page

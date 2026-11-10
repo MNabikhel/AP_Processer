@@ -189,7 +189,7 @@ def test_a_rule_not_saved_and_a_coding_without_the_rules_number_are_not_counted(
     doc = {"line_items": [line, line, {"decided_by": {"source": "rule", "rule_id": 0}}, {"decided_by": {}},
                           {"decided_by": {"source": "rule", "rule": "Courier"}},  # coded before lines kept the number
                           {"decided_by": {"source": "person", "rule_id": 3}}, "odd"]}  # fmt: skip
-    assert part.rule_rows(7, json.dumps(doc)) == [(7, 3, 2)]
+    assert part.rule_rows(7, json.dumps(doc)) == [(7, 3, 2, "Courier", "", "")]
     assert part.rule_rows(7, None) == part.rule_rows(7, '{"rule_id" broken') == part.rule_rows(7, '["rule_id"]') == []
 
 
@@ -197,14 +197,109 @@ def test_the_counts_and_the_directorys_filter_by_rule_are_read_off_the_index_not
     import sqlite3
 
     store = Store(tmp_path / "r.db")
+    rule = Rule("Courier", "", "7340", id=3)
     with sqlite3.connect(store.path) as conn:
 
         def plan(sql: str, *params) -> str:
             return " | ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
 
-        counted = plan("SELECT rule_id, SUM(n), COUNT(*) FROM summary_rules GROUP BY rule_id")
-        found = plan(f"SELECT id FROM invoice_summary WHERE {part.RULE_FILTER} ORDER BY id DESC LIMIT 100", 3)
+        counted = plan(part.USE_SQL, *part.as_now(rule), 3)
+        for before in (False, True):
+            sql, params = part.rule_filter(3, rule, before=before)
+            found = plan(f"SELECT id FROM invoice_summary WHERE {sql} ORDER BY id DESC LIMIT 100", *params)
+            assert "summary_rules_rule (rule_id=?)" in found and "SCAN invoice_summary" not in found, found
         one = plan("SELECT * FROM coding_rule_history WHERE rule_id = ? ORDER BY id DESC LIMIT ?", 3, 100)
-    assert "COVERING INDEX summary_rules_rule" in counted and "TEMP B-TREE" not in counted, counted
-    assert "summary_rules_rule (rule_id=?)" in found and "SCAN invoice_summary" not in found, found
+    assert "COVERING INDEX summary_rules_rule (rule_id=?)" in counted and "SCAN" not in counted, counted
     assert "coding_rule_history_rule (rule_id=?)" in one and "SCAN" not in one, one
+
+
+def _coded(store: Store, folder, ground_truth, name: str) -> int:
+    """The sample invoice as the saved rules code it now, in the queue."""
+    coded, _ = rules.apply(InvoiceCoding.model_validate(ground_truth), store.coding_rules())
+    return store.add_invoice(folder / f"{name}.pdf", coded.to_output(), {})
+
+
+def test_a_rule_changed_into_another_counts_what_it_coded_as_it_is_now_and_what_it_coded_before(tmp_path, ground_truth):
+    """B-2293: a rule changed in place kept the count and the invoices of what it said before."""
+    store = Store(tmp_path / "r.db")
+    store.save_coding_rules([Rule("", "delivery", "6900")], actor="Dana")
+    (rule,) = store.coding_rules()
+    first = [_coded(store, tmp_path, ground_truth, n) for n in "ab"]
+    assert store.rule_use() == {rule.id: (2, 2)} and store.rule_use(before=True) == {}
+    store.save_coding_rules([Rule("", "latitude", "6010", id=rule.id)], actor="Lee")  # its words and its account
+    assert store.rule_use() == {} and store.rule_use(before=True) == {rule.id: (2, 2)}
+    third = _coded(store, tmp_path, ground_truth, "c")
+    assert store.rule_use() == {rule.id: (1, 1)} and store.rule_use(before=True) == {rule.id: (2, 2)}
+
+    def found(before: bool) -> list[int]:
+        sql, params = part.rule_filter(rule.id, store.coding_rule(rule.id), before=before)
+        with store._conn() as conn:
+            return [r[0] for r in conn.execute(f"SELECT id FROM invoice_summary WHERE {sql} ORDER BY id", params)]
+
+    assert found(False) == [third] and found(True) == first
+    # Only its account changed: what it coded to the other account is from before too.
+    store.save_coding_rules([Rule("", "latitude", "6020", id=rule.id)], actor="Lee")
+    assert store.rule_use() == {} and store.rule_use(before=True) == {rule.id: (3, 3)}
+    # Back to what it said first (an undo, or typed again): those lines are what it codes now, again.
+    store.save_coding_rules([Rule("", "delivery", "6900", id=rule.id)], actor="Dana")
+    assert store.rule_use() == {rule.id: (2, 2)} and store.rule_use(before=True) == {rule.id: (1, 1)}
+    # A rule with no cost center leaves each line its own: lines it coded to two of them are its lines, on one invoice.
+    doc = json.loads(json.dumps(ground_truth))
+    by = {"source": "rule", "rule_id": rule.id, "rule": rule.label}
+    doc["line_items"][0].update(predicted_gl_code="6900", predicted_cost_center="CC100", decided_by=by)
+    doc["line_items"][1].update(predicted_gl_code="6900", predicted_cost_center="CC200", decided_by=by)
+    store.add_invoice(tmp_path / "d.pdf", doc, {})
+    assert store.rule_use() == {rule.id: (4, 3)}
+    store.save_coding_rules([Rule("", "delivery", "6900", "CC200", id=rule.id)], actor="Dana")  # now to one of them
+    assert store.rule_use() == {rule.id: (1, 1)} and store.rule_use(before=True) == {rule.id: (4, 4)}
+    store.save_coding_rules([], actor="Dana")  # removed: nothing is "as it is now"; the search still finds its lines
+    assert store.rule_use() == {} == store.rule_use(before=True) and len(found(False)) == 4
+
+
+def test_a_save_made_on_rules_that_changed_since_writes_nothing_and_says_who_changed_what(tmp_path):
+    """B-2292: the whole list is written, so the second of two saves made on the same rules removed the rule the
+    first had just added."""
+    store = Store(tmp_path / "r.db")
+    store.save_coding_rules([Rule("Courier", "", "7340")], actor="Dana")
+    (courier,) = store.coding_rules()
+    seen = store.rules_seen()
+    assert store.save_coding_rules([courier, Rule("Freight", "", "5200")], actor="Lee", seen=seen) == 2
+    try:
+        store.save_coding_rules([courier, Rule("Movers", "", "5300")], actor="Sam", seen=seen)
+    except part.RulesChanged as newer:
+        assert [rules.change_words(c) for c in newer.changes] == ["Lee added ‘Freight’: GL account 5200"]
+    else:
+        raise AssertionError("saved over a change it had not seen")
+    assert [r.vendor for r in store.coding_rules()] == ["Courier", "Freight"]
+    assert _history(store) == ["Lee added ‘Freight’: GL account 5200", "Dana added ‘Courier’: GL account 7340"]
+    # An undo made on rules that changed since is not done either.
+    try:
+        store.undo_rule_change(store.coding_rule_history()[-1].id, actor="Sam", seen=seen)
+    except part.RulesChanged as newer:
+        assert [c.actor for c in newer.changes] == ["Lee"]
+    else:
+        raise AssertionError("undone over a change it had not seen")
+    assert len(store.coding_rules()) == 2 and len(store.coding_rule_history()) == 2
+    # On the rules as they are, both are done.
+    assert store.save_coding_rules([*store.coding_rules(), Rule("Movers", "", "5300")], "Sam", store.rules_seen()) == 3
+    assert store.undo_rule_change(store.coding_rule_history()[0].id, "Sam", seen=store.rules_seen())[0] == part.UNDONE
+
+
+def test_an_undo_that_would_leave_two_rules_saying_the_same_is_refused(tmp_path):
+    """B-2294: rule 1 changed, a new rule added that says what rule 1 said, the change undone: two rules said the
+    same, and the next save removed one without being asked."""
+    store = Store(tmp_path / "r.db")
+    store.save_coding_rules([Rule("Courier", "", "7340")], actor="Dana")
+    (courier,) = store.coding_rules()
+    store.save_coding_rules([Rule("Courier", "", "7350", id=courier.id)], actor="Lee")
+    change = store.coding_rule_history()[0]
+    store.save_coding_rules([*store.coding_rules(), Rule("Courier", "", "7340")], actor="Sam")
+    before = store.coding_rules()
+    assert store.undo_rule_change(change.id, actor="Dana") == (part.TWICE, None)
+    assert store.coding_rules() == before and len(store.coding_rule_history()) == 3
+    # the same for a removed rule that another now says: its removal is not undone
+    store.save_coding_rules([before[0]], actor="Sam")
+    removal = store.coding_rule_history()[0]
+    store.save_coding_rules([Rule("Courier", "", "7340", id=courier.id)], actor="Sam")
+    assert store.undo_rule_change(removal.id, actor="Dana") == (part.TWICE, None)
+    assert store.coding_rules() == [courier]

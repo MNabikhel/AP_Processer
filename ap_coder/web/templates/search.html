@@ -14,7 +14,7 @@
     {% for c in columns %}<input type="hidden" name="col" value="{{ c.key }}">{% endfor %}
     <input type="hidden" name="sort" value="{{ query.sort }}">
     <input type="hidden" name="dir" value="{{ 'desc' if query.descending else 'asc' }}">
-    {% if query.rule %}<input type="hidden" name="rule" value="{{ query.rule }}">{% endif %}
+    {% if query.rule %}<input type="hidden" name="rule" value="{{ query.rule }}">{% if query.rule_was %}<input type="hidden" name="was" value="1">{% endif %}{% endif %}
     <label class="search"><span class="ms" aria-hidden="true">search</span>
       <input type="search" name="q" value="{{ query.q }}" placeholder="Quick search: northwind 0912 · 18,017.85 · PO-88213"
              aria-label="Quick search: vendor, invoice or PO number, or amount"></label>
@@ -93,7 +93,8 @@
     </details>
   </form>
   {% if by_rule %}{# from the rules page: the invoices with a line that rule coded (D-217) #}
-  <div class="pad muted" id="by-rule">Only the invoices with a line coded by the rule {{ by_rule }}.
+  <div class="pad muted" id="by-rule">Only the invoices with a line coded by the rule {{ by_rule.text }}.
+    {% if by_rule.other %}<a class="link" href="/search?{{ by_rule.other_url }}#directory">{{ by_rule.other }}</a> · {% endif %}
     <a class="link" href="/search?{{ query.query_string(rule=0, page=1) }}#directory">Show every invoice</a>{% if can("/rules", "GET") %}
     · <a class="link" href="/rules">Coding rules</a>{% endif %}</div>
   {% endif %}

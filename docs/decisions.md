@@ -5133,14 +5133,30 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     rule goes back to what it was before that entry, and the undo is an entry (so it can be undone). When the rule
     is not as the entry left it, the page says "changed again since", names the newer change in the question it
     asks, and only then overwrites (`overwrite=1`; without it the store refuses, `CHANGED_SINCE`). An entry whose
-    rule is already as it was before it has no Undo.
+    rule is already as it was before it has no Undo. An undo that would make a rule say the same as another is
+    refused (`TWICE`, B-2294; said on the page): two rules alike are one too many, and the next save dropped one
+    unasked. Not merged: which of the two numbers stays is a person's choice.
+  - **Several people, one list (B-2292):** a save writes the whole list, so a save made on older rules removed what
+    another person had just added. The page posts what it was drawn from (`version`: the history's last entry,
+    `Store.rules_seen`) with a save and with an undo; the store compares it inside its write (`_unseen`), so two
+    saves at the same moment cannot both pass. Changed since: nothing is written (`RulesChanged`), and the person
+    is sent back to the page (`?kept=`, kept an hour), told who changed what, with the rules as they are now and
+    their own changes still in the form (`rules.form_again`: a row left as their page showed it follows the newer
+    change, one they changed, cleared or added stays theirs). A request that names no page is refused (409).
+    *Add rule* reads and writes on one stamp.
   - **What a rule coded:** a line's `decided_by` already kept the rule's number and its words (D-212); nothing was
-    added to the line. `summary_rules` (invoice, rule, lines), filled with the invoices' summary from the coding as
-    approved, else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice
-    directory's `?rule=<number>` filter (`rules.RULE_FILTER`). `SUMMARY_RULES` is not raised (no rebuild of every
-    summary for a table that starts empty): an invoice is counted once it is coded or changed from the first start
-    of this version, the day kept as the setting `rule_use_since` and said on the page. Nothing is guessed for the
-    invoices before.
+    added to the line. `summary_rules` (invoice, rule, lines, and what the rule said: its words as the line kept
+    them, the line's own account and cost center), filled with the invoices' summary from the coding as approved,
+    else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice directory's
+    `?rule=<number>` filter (`rules.rule_filter`). A number outlives what its rule says (B-2293): the count is of
+    the lines that say what the rule says now (its words, its GL account, its cost center when it has one); the
+    lines it coded while it said something else are said apart, "K lines on J invoices before it was changed
+    (when; it was ...)", from the history's last change, with their own link (`?rule=<number>&was=1`), and the
+    search says which it shows. Nothing is dated: a line says what coded it. `SUMMARY_RULES` is not raised (no
+    rebuild of every summary for a table that starts empty): an invoice is counted once it is coded or changed
+    from the first start of this version, the day kept as the setting `rule_use_since` and said on the page.
+    Nothing is guessed for the invoices before. (The table as this stage first made it, without what the rule
+    said, is dropped and made again empty at the next start: `_summary_schema`.)
   - **With a chart of accounts** the rule's account is one box holding `business unit.object.subsidiary`, read as
     the review screen's Account box is (`account_lines.posted`; joined and split only by `core/chart.py`). A rule
     added or changed is refused, and nothing saved, when the pair is not in the chart, takes no postings or is on a

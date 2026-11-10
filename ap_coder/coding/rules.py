@@ -190,6 +190,11 @@ def _account(rule: Rule, whole: bool) -> str:
     return f"GL account {rule.gl_code}" + (f", cost center {rule.cost_center}" if rule.cost_center else "")
 
 
+def rule_words(rule: Rule, whole: bool = False) -> str:
+    """A rule in plain words, as the history says one: "‘Courier’: GL account 7340"."""
+    return f"‘{rule.label}’: {_account(rule, whole)}"
+
+
 def _parts_changed(before: Rule, after: Rule, whole: bool) -> list[str]:
     parts = []
     if before.label != after.label:
