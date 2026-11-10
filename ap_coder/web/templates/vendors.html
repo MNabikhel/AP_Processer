@@ -19,6 +19,8 @@
     <div class="map-grid">
       <label class="field">Hold payment codes that hold
         <input type="text" name="hold_codes" value="{{ master.hold_codes }}" maxlength="60" title="JD Edwards' hold payment codes that put a supplier on hold, with commas between them. N and blank never hold."></label>
+      <label class="field">Words that mark a retired supplier
+        <input type="text" name="skip_words" value="{{ master.skip_words }}" maxlength="200" title="A supplier with one of these in its name (or a star before or after it) is found by its name without it, and put on hold. Commas between them."></label>
     </div>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>

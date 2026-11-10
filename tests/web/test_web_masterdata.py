@@ -389,6 +389,26 @@ def test_jd_edwards_supplier_master_is_imported_as_the_page_offers_it(client, st
     )
 
 
+def test_a_supplier_marked_do_not_use_in_the_export_is_on_hold_and_the_words_are_on_the_form(client, store):
+    """B-2083: imported through the page, a supplier the master marks as retired is found by its real name and on
+    hold; the words that mark one are the import form's, kept as a setting."""
+    from tests.jde_exports import supplier, supplier_master
+
+    listed = [supplier(410003, "NORTHERN PAPER CO  DO NOT USE"), supplier(410012, "CEDAR RIDGE TOWING - CLOSED"),
+              supplier(410001, "MAPLE LEAF COFFEE SERVICES INC.")]  # fmt: skip
+    page = upload(client, "/vendors/master/upload", "suppliers.xlsx", supplier_master(listed))
+    assert 'name="skip_words" value="DO NOT USE, DNU"' in page.text
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in guessed(page.text).items()}}
+    follow(client, client.post("/vendors/master/import", data={**data, "skip_words": "DO NOT USE, DNU, closed"},
+                               headers=PAGE))  # fmt: skip
+    assert store.skip_words() == ["DO NOT USE", "DNU", "closed"]
+    held = {v["display_name"]: v["notes"] for v in store.held_vendors()}
+    assert held == {"NORTHERN PAPER CO  DO NOT USE": "marked DO NOT USE in the supplier master",
+                    "CEDAR RIDGE TOWING - CLOSED": "marked CLOSED in the supplier master"}  # fmt: skip
+    assert store.find_vendor("Northern Paper Co")["erp_id"] == "410003"
+    assert store.find_vendor("Cedar Ridge Towing")["erp_id"] == "410012"
+
+
 def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_does(client, store, tmp_path):
     """The repo's ``data/vendor_master.csv`` through the Vendors page, with the columns it offers: the same vendors,
     field for field, as ``load_sample_vendor_master`` makes, none on hold in JD Edwards."""
@@ -398,9 +418,9 @@ def test_the_sample_vendor_master_is_imported_by_the_page_as_the_sample_loader_d
     page = upload(client, "/vendors/master/upload", "vendor_master.csv",
                   (SAMPLE_DATA_DIR / "vendor_master.csv").read_bytes())  # fmt: skip
     offered = guessed(page.text)
-    assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number",
-                       "terms": "payment_terms", "status": "status", "hold": "", "default_gl": "default_gl"}  # fmt: skip
-    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}, "hold_codes": "Y, 1, 2"}
+    assert offered == {"vendor_name": "vendor_name", "erp_id": "vendor_id", "gst": "gst_hst_number", "hold": "",
+                       "terms": "payment_terms", "status": "status", "default_gl": "default_gl"}  # fmt: skip
+    data = {"file": page.url.params["file"], **{f"col_{f}": c for f, c in offered.items()}}
     follow(client, client.post("/vendors/master/import", data=data, headers=PAGE))
     loaded = Store(tmp_path / "loaded.db")
     load_sample_vendor_master(loaded)

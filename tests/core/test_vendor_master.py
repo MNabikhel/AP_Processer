@@ -6,9 +6,10 @@ from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
 from ap_coder.coding.vendors import ON_HOLD, master_columns, master_rows, vendor_findings
 from ap_coder.core.config import Settings
+from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master
-from ap_coder.core.store.vendors import HOLD_CODES_SETTING
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, name_marker
 from ap_coder.erp import exports
 from ap_coder.ops.demo import load_demo, remove_demo
 from tests.jde_exports import records, supplier, supplier_master
@@ -344,3 +345,85 @@ def test_the_sample_vendor_master_imports_as_it_did(tmp_path):
     assert len(vendors) == len(listed) and {v["erp_hold"] for v in vendors} == {""}
     assert {v["status"] for v in vendors} == {r["status"] for r in listed}
     assert {v["notes"] for v in vendors} == {""}
+
+
+def test_a_name_marked_as_retired_is_told_from_the_name_itself():
+    """B-2083: the words of the list (in any case, however spaced), or a star before or after the name."""
+    words = ["DO NOT USE", "DNU"]
+    marked = {
+        "NORTHERN PAPER CO  DO NOT USE": ("northern paper", "DO NOT USE"),
+        "Northern Paper Co - do  not   use": ("northern paper", "DO NOT USE"),
+        "*** DO-NOT-USE *** Northern Paper Co": ("northern paper", "DO NOT USE"),
+        "DNU - OLD PRINT SHOP": ("old print shop", "DNU"),
+        "Old Print Shop (dnu)": ("old print shop", "DNU"),
+        "*LAKESIDE CATERING": ("lakeside catering", "*"),
+        "Lakeside Catering *": ("lakeside catering", "*"),
+    }
+    for name, (key, marker) in marked.items():
+        plain, found = name_marker(name, words)
+        assert (vendor_key(plain), found) == (key, marker), name
+    for name in ("Northern Paper Co", "Dnuba Imports", "SIDNU Tools", "Star*Light Signs", "Do Not Disturb Signs"):
+        assert name_marker(name, words) == (name, ""), name
+    assert name_marker("ACME FASTENERS INACTIVE", ["INACTIVE"])[1] == "INACTIVE"
+
+
+def test_a_supplier_marked_do_not_use_is_found_by_its_real_name_and_stopped(tmp_path):
+    """B-2083: "NORTHERN PAPER CO  DO NOT USE" was kept under a key with the marker in it: an invoice printed
+    "Northern Paper Co" found no vendor (a new one, not in the master) and nothing stopped it being paid to a retired
+    supplier number. The marker is not part of the key, and the supplier is on hold with a note that says why."""
+    store = Store(tmp_path / "a.db")
+    _import_export(store)
+    for printed, number, note in (("Northern Paper Co", "410003", "marked DO NOT USE in the supplier master"),
+                                  ("Old Print Shop", "410004", "marked DNU in the supplier master"),
+                                  ("Lakeside Catering", "410007", "marked * in the supplier master")):  # fmt: skip
+        found = store.find_vendor(printed, None)
+        assert found and (found["erp_id"], found["status"], found["notes"]) == (number, ON_HOLD, note), printed
+        assert found["vendor_key"] == vendor_key(printed) == store.vendor_key_for(printed)
+        said = _said(store, "VENDOR_ON_HOLD", vendor_name=printed)
+        assert said == [f"this vendor is on hold in the vendor list: {note}"]
+        assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name=printed) == []
+    # picked from the vendor list by the name the master shows: the same vendor, and stopped as well
+    assert store.vendor_key_for("NORTHERN PAPER CO  DO NOT USE") == "northern paper"
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="NORTHERN PAPER CO  DO NOT USE")
+    assert _by_id(store)["410003"]["display_name"] == "NORTHERN PAPER CO  DO NOT USE"  # shown as the master has it
+    assert _by_id(store)["410001"]["status"] == "active" and _by_id(store)["410001"]["notes"] == ""
+    # the words are a setting (``skip_words``); a supplier no longer marked in the master is taken off the hold
+    store.set_setting(SKIP_WORDS_SETTING, "DO NOT USE, DNU, INACTIVE")
+    store.import_vendor_master([{"vendor_name": "Cedar Ridge Towing INACTIVE", "erp_id": "410010"},
+                                {"vendor_name": "OLD PRINT SHOP", "erp_id": "410004"}])  # fmt: skip
+    assert store.find_vendor("Cedar Ridge Towing")["status"] == ON_HOLD
+    again = store.find_vendor("Old Print Shop")
+    assert (again["status"], again["notes"], again["erp_id"]) == ("active", "", "410004")
+
+
+def test_of_a_marked_and_an_unmarked_supplier_of_one_name_the_unmarked_is_the_match(tmp_path):
+    """B-2083: a supplier retired and set up again under a new number. Whatever their order in the file, the one in
+    use is the vendor of the name; the retired one is kept under its number, on hold, and a voucher sent under that
+    number is stopped."""
+    from ap_coder.coding.vendors import voucher_hold
+
+    rows = [{"vendor_name": "NORTHERN PAPER CO  DO NOT USE", "erp_id": "410003"},
+            {"vendor_name": "Northern Paper Co.", "erp_id": "410020"}]  # fmt: skip
+    for n, listed in enumerate((rows, rows[::-1])):
+        store = Store(tmp_path / f"{n}.db")
+        result = store.import_vendor_master([dict(r) for r in listed])
+        assert result["added"] == 2 and result["duplicates"] == []
+        found = store.find_vendor("Northern Paper Co")
+        assert (found["erp_id"], found["status"], found["vendor_key"]) == ("410020", "active", "northern paper")
+        assert _said(store, "VENDOR_ON_HOLD", vendor_name="Northern Paper Co") == []
+        retired = store.get_vendor("northern paper #410003")
+        assert (retired["status"], retired["notes"]) == (ON_HOLD, "marked DO NOT USE in the supplier master")
+        assert store.find_vendor("NORTHERN PAPER CO  DO NOT USE")["erp_id"] == "410003"  # picked by its master name
+        assert _said(store, "VENDOR_ON_HOLD", vendor_name="NORTHERN PAPER CO  DO NOT USE")
+        assert "on hold" in voucher_hold(store, "", "410003") and voucher_hold(store, "northern paper", "410020") == ""
+        assert store.vendor_ids()["northern paper"] == "410020"
+    # The JD Edwards sync, a page at a time: the retired one came first, the one in use a night later.
+    store = Store(tmp_path / "sync.db")
+    store.import_vendor_master([dict(rows[0])], by_erp_id=True)
+    assert store.find_vendor("Northern Paper Co")["status"] == ON_HOLD
+    store.import_vendor_master([dict(rows[1])], by_erp_id=True)
+    found = store.find_vendor("Northern Paper Co")
+    assert (found["erp_id"], found["status"], found["notes"]) == ("410020", "active", "")
+    assert store.get_vendor("northern paper #410003")["status"] == ON_HOLD
+    store.import_vendor_master([dict(r) for r in rows], by_erp_id=True)  # the same again: nothing moves
+    assert store.find_vendor("Northern Paper Co")["erp_id"] == "410020" and len(store.master_vendors()) == 2
