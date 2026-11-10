@@ -139,3 +139,25 @@ def test_a_tax_amount_read_that_is_no_tax_or_no_amount_is_rejected(ground_truth,
     ground_truth["line_items"][0]["taxes_read"] = bad
     with pytest.raises(ValidationError):
         InvoiceCoding.model_validate(ground_truth)
+
+
+def test_a_line_keeps_its_remark_and_one_without_is_stored_byte_for_byte_as_before(ground_truth):
+    """``LineItem.remark`` and ``remark_from`` (D-213): the model is never asked for them, and a line with no remark
+    is stored as it always was. So is one with no candidates and no decision (B-2187: the line had two serializers,
+    of which pydantic keeps the last, so every line was stored with ``"candidates": [], "decided_by": {}``)."""
+    asked = build_json_schema()["properties"]["line_items"]["items"]["properties"]
+    assert not {"remark", "remark_from", "candidates", "decided_by"} & set(asked)
+    old = json.dumps(InvoiceCoding.model_validate(ground_truth).to_output())  # an invoice stored before
+    assert all(list(line) == TARGET_LINE for line in json.loads(old)["line_items"])
+    assert json.dumps(InvoiceCoding.model_validate(json.loads(old)).to_output()) == old
+
+    ground_truth["line_items"][0].update(remark="May janitorial 410 Elm", remark_from="supplier")
+    out = InvoiceCoding.model_validate(ground_truth).to_output()
+    first = out["line_items"][0]
+    assert list(first) == [*TARGET_LINE, "remark", "remark_from"]
+    assert (first["remark"], first["remark_from"]) == ("May janitorial 410 Elm", "supplier")
+    assert all(list(line) == TARGET_LINE for line in out["line_items"][1:])
+    assert InvoiceCoding.model_validate(out).to_output() == out
+    ground_truth["line_items"][0]["remark_from"] = "somebody"
+    with pytest.raises(ValidationError):
+        InvoiceCoding.model_validate(ground_truth)

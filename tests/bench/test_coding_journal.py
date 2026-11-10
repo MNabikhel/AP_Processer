@@ -43,4 +43,9 @@ def test_the_quick_run_scores_the_held_out_lines_by_kind_of_vendor(tmp_path):
     grid = {(g["share"], g["lines"]): g for g in summary["sure_grid"]}
     assert grid[(0.9, 3)]["wrong"] == 0 and grid[(0.8, 2)]["coded"] >= grid[(0.9, 3)]["coded"]
     assert "| one account |" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    # The remark suggested for each line on its true account (D-213): 11% the department's shape, 6% its very remark
+    # measured; the made-up department picks its wording and its office at random, so this is a floor, not a bar.
+    remarks = summary["remarks"]
+    assert remarks["lines"] > 150 and 0 < remarks["exact"] <= remarks["same_shape"] < 1
+    assert "exactly its remark" in (tmp_path / "report.md").read_text(encoding="utf-8")
     assert main(["coding", "--quick", "--out", str(tmp_path / "x")]) == 0  # the vendors' own wording, as before

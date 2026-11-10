@@ -195,6 +195,22 @@ def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_rema
     assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == ("V", "ON-HST")
 
 
+def test_a_line_with_a_remark_of_its_own_is_on_the_sheet_with_it():
+    """D-213: the "Explanation -Remark-" column and the pay item's Remark carry the line's remark, fitted to 30
+    characters at a word end; a line without one keeps its description cut at 30."""
+    invoice = split()
+    lines = invoice["final_output"]["line_items"]
+    lines[0].update(remark="KT Oct.parcels 3-1-204", remark_from="person")
+    lines[2].update(remark="same-day courier for the north office", remark_from="person")
+    (block,) = blocks(workbook([invoice])[jde_keying.SHEET])
+    assert [row[3] for row in lines_and_check(block)[:3]] == [
+        "KT Oct.parcels 3-1-204", "Toner", "same-day courier for the north"]  # fmt: skip
+    assert field(block, "Remark").value == "KT Oct.parcels 3-1-204"  # the first line's
+    files = jde.export_batch([invoice], settings(remarks=jde.REMARKS_TYPED), lookup, batch=7, on=ON_DAY)
+    dist = list(csv.DictReader(io.StringIO(files[jde.DIST_FILE].decode())))
+    assert [r["VNEXR"] for r in dist] == [row[3] for row in lines_and_check(block)[:3]]
+
+
 def test_quebec_with_the_qst_in_the_expense_shows_the_gst_on_the_pay_item_and_the_qst_in_the_line():
     (block,) = blocks(workbook([quebec()])[jde_keying.SHEET])
     assert (field(block, "Gross amount").value, field(block, "Taxable amount").value) == (1425.69, 1240)

@@ -356,6 +356,9 @@ class TaxLine(BaseModel):
 # words of an account's name; the chat model (a guess); a person on the review screen.
 DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
 CANDIDATES_KEPT = 5  # accounts kept with a line left for a person
+# Where a line's remark came from (``LineItem.remark_from``, D-213): the supplier's usual remark, the invoice's own
+# line, the account's name, or a person who typed it.
+REMARK_SOURCES = ("supplier", "invoice", "account", "person")
 
 
 def decided(source: str, **evidence: Any) -> dict[str, Any]:
@@ -397,8 +400,14 @@ class LineItem(BaseModel):
     # by: "rule_id" and "rule", "lines" / "of" / "share", "similarity", "was"...}. Left out of the stored coding when
     # nothing is recorded (a line with no account, an invoice stored before).
     decided_by: dict[str, Any] = Field(default_factory=dict)
+    # The remark AP keys with the line in JD Edwards, in its own short words ("May janitorial 410 Elm"; D-213), and
+    # where it came from (``REMARK_SOURCES``; "person": typed on the review screen, never replaced by a suggestion).
+    # JD Edwards keeps 30 characters (``coding/remark.py`` fits it). The model is never asked for either, and both
+    # are left out of the stored coding when empty.
+    remark: str = ""
+    remark_from: str = ""
     # The fields left out of the stored coding while they say nothing (``_without_empty``).
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by", "remark", "remark_from")
 
     @field_validator("candidates")
     @classmethod
@@ -410,6 +419,13 @@ class LineItem(BaseModel):
     def _decided_source(cls, value: dict[str, Any]) -> dict[str, Any]:
         if value and value.get("source") not in DECIDED_SOURCES:
             raise ValueError(f"decided_by's source must be one of {DECIDED_SOURCES}, got {value.get('source')!r}")
+        return value
+
+    @field_validator("remark_from")
+    @classmethod
+    def _remark_source(cls, value: str) -> str:
+        if value and value not in REMARK_SOURCES:
+            raise ValueError(f"remark_from must be one of {REMARK_SOURCES}, got {value!r}")
         return value
 
     @field_validator("taxes_read", mode="before")

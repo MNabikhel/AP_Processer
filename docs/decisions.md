@@ -4950,3 +4950,37 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ap_coder/core/schema.py`, `ap_coder/core/store/prior.py`, `ap_coder/web/invoice_view.py`,
     `ap_coder/bench/coding_journal.py`, `ap_coder/bench/jde_names.py`; `tests/ai/test_supplier_prior.py`,
     `tests/ai/test_candidates.py`, `tests/ai/test_closed_list.py`, `tests/bench/test_coding_journal.py`)
+- **D-213** · **Each G/L line has the remark AP keys with it in JD Edwards: suggested from the supplier's usual
+  one, edited by a person, learned on approval, and sent on the keying sheet and in the batch files** (the same
+  department's prototype; 10 Nov 2026).
+  - **Why:** AP types a remark of 30 characters at most with every G/L line, in its own short words ("KT
+    May.cellphone", "coffee supplies 3-1-204"). AP Coder stored none: the sheet and the batch carried the invoice
+    line's description cut at 30, mid-word.
+  - **What:** `LineItem.remark` and `remark_from` ("supplier", "invoice", "account", "person"), left out of the
+    stored coding when empty and never asked of the model. `coding/remark.py` `suggest_remark(line, invoice, prior,
+    account, reference)` gives the text and why: (a) the supplier's commonest remark shape for that account
+    (`supplier_prior`), in its latest wording, with the month, quarter, year and "INV" number of this invoice put
+    back and the office it ends with kept as written; (b) with no remark for the account, the supplier's one shape
+    when it is on more than half of its lines (three at least); (c) else the invoice line's own words shortened at
+    a word end, else the account's name. `fit` never returns more than 30 characters and says when it shortened.
+  - **Filled** in `finalise_coding` (`fill_remarks`), so on every read and every check of the review screen: a
+    line's suggestion follows its account; a remark a person typed (`remark_from` "person") is never replaced. The
+    form's field is `line_remark`, one a line (`invoice_view.LINE_REMARK`): posted, it is a person's once it is not
+    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again.
+  - **Only where remarks are used:** a chart of accounts is imported, or JD Edwards is in use with its remarks as
+    typed. Any other install stores its invoices as before (`same_behaviour.py`: the same).
+  - **Too long:** a typed remark is kept whole; over 30 characters is the check `REMARK_LONG`, which says what would
+    be keyed: an error where the remarks go to JD Edwards as typed, a warning elsewhere. The exports always fit it.
+  - **Learned:** `feedback.final_remark` and `feedback.remark_from` (added to an older database at its next start).
+    The supplier prior counts them with the journal's: a remark a person typed 5, one a person approved as
+    suggested 3, one nobody looked at 1. The accounts are ranked by the journal's remarks only, as before.
+  - **Measured** (`bench coding --journal --quick`, 198 held-out lines, each on its true account): the suggestion
+    has the department's shape for 11% and is its very remark for 6%. The made-up department picks its wording
+    among several and its office at random for every voucher, so this is a floor; nothing was tuned to it.
+  - **Left:** the review screen's box and its counter (another build). The period is the month a line names, else
+    the invoice date's: the schema has no service period of the header. An unlabelled long number in a remark is
+    taken out (it was that voucher's); "INV 123" with fewer than five digits is left as written.
+  - (`ap_coder/coding/remark.py`, `ap_coder/core/schema.py`, `ap_coder/ai/supplier_prior.py`,
+    `ap_coder/ai/pipeline.py`, `ap_coder/coding/review.py`, `ap_coder/coding/validation.py`,
+    `ap_coder/web/invoice_view.py`, `ap_coder/erp/jde.py`, `ap_coder/core/store/`, `ap_coder/ops/help.py`,
+    `ap_coder/bench/coding_journal.py`; `tests/coding/test_remark.py`, `tests/web/test_web_remark.py`)

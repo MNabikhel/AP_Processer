@@ -20,6 +20,7 @@ from ..core import chart
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
+from .remark import long_remarks
 from .tax import build_gl_distribution, check_taxes
 from .vendors import norm_tax_number  # letters and digits, lower case
 
@@ -138,9 +139,10 @@ def validate_coding(
     vendor_findings: list[tuple[str, str, str]] | None = None,
     po_findings: list[tuple[str, str, str, int | None]] | None = None,
     erp_findings: list[tuple[str, str, str, int | None]] | None = None,
+    remarks_typed: bool = False,
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
-    with the same vendor and invoice number."""
+    with the same vendor and invoice number; ``remarks_typed``: the lines' remarks go to JD Edwards as typed."""
     issues: list[Issue] = []
 
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
@@ -159,6 +161,8 @@ def validate_coding(
     _header_issues(coding, add)
     # --- Line items -------------------------------------------------------
     _line_issues(coding, reference, add)
+    for line, message in long_remarks(coding):  # held back only where the remark goes to JD Edwards (D-213)
+        add(ERROR if remarks_typed else WARNING, "REMARK_LONG", message, line)
     # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
     checks = _totals_checks(coding, reference, add)
     # --- Canadian sales tax ------------------------------------------------------

@@ -32,6 +32,7 @@ from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
 from ..coding.po import po_findings
+from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
 from ..coding.terms import payment_findings
@@ -261,6 +262,15 @@ def finalise_coding(
                 store.last_pay_from(key or vendor_key(coding.vendor_name)),  # B-1515
             )
         bank_findings = banks.findings(coding.pay_from_account, coding.currency, accounts)
+    # JD Edwards in use: its settings. Each line's remark for it (D-213), where remarks are used: a chart of accounts
+    # is imported, or the remarks go to JD Edwards as typed; any other install stores its invoices as before.
+    js = None
+    if store is not None:
+        from ..erp import jde
+
+        js = jde.load(store) if jde.in_use(store) else None
+    remarks_typed = js is not None and js.remarks == jde.REMARKS_TYPED
+    fill_remarks(coding, store, reference, wanted=reference.pairs is not None or remarks_typed)
     output = coding.to_output()
     if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
         place, source = supply_source(coding, reference.tax)
@@ -271,12 +281,8 @@ def finalise_coding(
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     # JD Edwards in use: what its batch would hold back, asked before approval (D-75).
     erp_findings: list[tuple[str, str, str, int | None]] = []
-    if store is not None:
-        from ..erp import jde
-
-        if jde.in_use(store):
-            js = jde.load(store)
-            erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
+    if js is not None:
+        erp_findings = jde.voucher_findings(output, js, jde.resolve_an8(output, store.vendor_ids(), js))
     report = validate_coding(
         coding,
         reference,
@@ -294,6 +300,7 @@ def finalise_coding(
         ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
         erp_findings=erp_findings,
+        remarks_typed=remarks_typed,
     )
     return output, report
 
