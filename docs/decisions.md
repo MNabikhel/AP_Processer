@@ -4790,6 +4790,11 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     the expense under code V is warned of (JDE_TAX_NOT_RECOVERED), and a voucher with no tax left on its pay item
     goes with the exempt code. Two federal rates on one invoice (lines supplied in two provinces) are two pay
     items: the voucher is held (JDE_TAX_AREA) with both spelled out, until AP Coder makes two pay items itself.
+  - **Its settings in one step:** `jde.prototype_settings()` is the department's way (tax amounts on the pay item,
+    code V and a placeholder tax rate/area for each province, the remarks as typed, the default account rule) and
+    `jde.use_prototype(store)` saves it, shows JD Edwards (`jde.show`) and sets the QST to "add to the expense
+    line". `JdeSettings()` keeps its defaults (the tax coded to G/L lines, JD Edwards hidden on a laptop): existing
+    installs do not move. The review screen reads what is keyed from `jde.voucher_view` (`keyed`, `not_ready`).
   - **Remarks:** `jde.line_remark` and `jde.voucher_remark` alone say a G/L line's remark (today its description cut
     at 30 characters) and the pay item's (the first line's): the keying sheet always shows them, and one setting
     (Remarks) chooses what the batch files carry: AP Coder's invoice number in VLRMK and the invoice number in VNEXR
