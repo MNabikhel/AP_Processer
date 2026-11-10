@@ -691,3 +691,231 @@ html:has(.inv-actionbar) {scroll-padding-bottom: 104px; scroll-padding-top: 12px
 .apc-table.po-match td.w {min-width: 0;}
 .apc-table.po-match th {white-space: normal;}
 .apc-table.po-match .po-pills {margin-top: 4px;}
+
+/* ==== With a chart of accounts (D-214): the review screen codes a line to ONE account string =====================
+   Every rule from here on is under .acct (the lines grid) or .inv-acct (the page): the grid and the page of an
+   install without a chart are the rules above, untouched. */
+/* ---- The row: # · Account · Amount · Description · Tax · its menu; under the boxes the caption (the account's name,
+   its business unit, why) and, for a line left for a person, why and the accounts offered. Narrow card: two rows of
+   boxes a line. */
+.inv-lines-grid.acct {--cols: 24px minmax(0, 1fr) 96px 28px;
+  --areas: "no acct amt del" ". desc tax tax" ". cap cap cap" ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct tr[data-row] {grid-template-columns: var(--cols); grid-template-areas: var(--areas);
+  gap: 2px 4px; padding: 5px 0; align-items: start;}
+.inv-lines-grid.acct .c-acct {grid-area: acct;} .inv-lines-grid.acct .c-cap {grid-area: cap;}
+.inv-lines-grid.acct .c-slot {grid-area: slot;} .inv-lines-grid.acct .c-more {grid-area: more;}
+.inv-lines-grid.acct td[hidden], .inv-lines-grid.acct .c-slot:empty, .inv-lines-grid.acct .c-cap:empty {display: none;}
+.inv-lines-grid.acct input, .inv-lines-grid.acct select {height: 28px; padding: 0 6px;}
+.inv-lines-grid.acct textarea {min-height: 28px; padding: 4px 6px;}
+.inv-lines-grid.acct input[data-account], .inv-parts input[data-account], input[data-fill-account] {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums;}
+.inv-parts input[data-account], input[data-fill-account] {width: 100%; min-width: 250px;}
+.acct-no {display: block; line-height: 28px; text-align: center; font-size: 12.5px; color: var(--lg-muted);
+  font-variant-numeric: tabular-nums;}
+/* The Account box's states, each with a mark that is not colour alone: to fix (a thick red edge, and the words
+   under the line), to check (amber, and the words under the line). */
+.acct-row.is-fix input[data-account] {border: 2px solid var(--lg-danger); padding: 0 5px;}
+.acct-row.is-check input[data-account] {border-color: var(--lg-warning); background-color: var(--lg-warning-weak);}
+.inv-lines-grid.acct td.c-del {justify-content: center;}
+.icon-btn.acct-menu:hover {background: var(--lg-nav-hover); color: var(--lg-text);}
+/* The caption reads as one sentence and wraps: the name, the business unit and the reason are never cut. */
+.inv-lines-grid.acct .c-cap {min-width: 0; padding: 0 2px 1px; font-size: 11.5px; line-height: 15px;
+  color: var(--lg-muted); overflow-wrap: anywhere;}
+.c-cap .acct-name {font-weight: 600; color: var(--lg-text);}
+.c-cap .acct-unit::before, .c-cap .acct-why::before {content: " · ";}
+.c-cap .acct-why .ms {font-size: 13px; vertical-align: -2px; margin-right: 2px;}
+.acct-note {margin: 2px 0 3px; padding: 5px 8px; border-radius: 6px; font-size: 12px; line-height: 17px;
+  color: var(--lg-text); overflow-wrap: anywhere;}
+.acct-note p {margin: 0;}
+.acct-note .ms {font-size: 15px; vertical-align: -3px; margin-right: 4px;}
+.acct-note.fix {background: var(--lg-danger-weak);} .acct-note.fix b, .acct-note.fix .ms {color: var(--lg-danger);}
+.acct-note.check {background: var(--lg-warning-weak);}
+.acct-note.check b, .acct-note.check .ms {color: var(--lg-warning);}
+.acct-cands {list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px;}
+.acct-cands li {margin: 0; min-width: 0;}
+.acct-cands button {display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0; min-height: 24px;
+  padding: 2px 8px; border: 1px solid var(--lg-border); border-radius: 6px; background: var(--lg-surface);
+  color: var(--lg-text); font: inherit; font-size: 12px; line-height: 18px; text-align: left; cursor: pointer;}
+.acct-cands button:hover, .acct-cands button:focus-visible {border-color: var(--lg-accent);
+  background: var(--lg-accent-weak); outline: none;}
+.acct-cands .s {flex: none; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 600;
+  font-variant-numeric: tabular-nums;}
+.acct-cands .d {flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.acct-cands .e {flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; color: var(--lg-muted);}
+.inv-lines-grid.acct td.c-more {display: flex; gap: 8px; padding: 2px 0 4px;}
+.inv-lines-grid.acct td.c-more[hidden] {display: none;}
+.inv-lines-grid.acct td.c-more .field {flex: 0 1 140px; font-size: 11.5px; color: var(--lg-muted);}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--cols: 28px minmax(200px, 1fr) 96px minmax(170px, 1.1fr) minmax(96px, 124px) 28px;
+    --areas: "no acct amt desc tax del" ". cap cap cap cap ." ". slot slot slot slot slot" ". more more more more more";}
+  .inv-lines-grid.acct thead th.c-acct {grid-area: acct;}
+  .inv-lines-grid.acct thead .c-del {visibility: hidden;}
+}
+
+/* ---- The frame (D-214), from the window itself: the page never scrolls sideways; from 1200 px two panes (the
+   invoice, the form: their minimums add up with a scrollbar), under it one above the other; the menu behind its
+   button below 1820 px; the strip and the bar give way under 720 px of height. ---- */
+html:has(.inv-acct) {scrollbar-gutter: stable; scroll-padding-top: 84px; scroll-padding-bottom: 72px;}
+html:has(.inv-acct) .main {max-width: none; padding: 0 12px 64px;}
+html:has(.inv-acct) .main > * + * {margin-top: 8px;}
+html:has(.inv-acct) .inv-top {position: sticky; top: 0; padding: 6px 0; background: var(--lg-bg);}
+.inv-top-name {min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px;
+  font-weight: 600; margin-left: 4px;}
+html:has(.inv-acct) .rvw-nav {flex-wrap: nowrap;}
+html:has(.inv-acct) .rvw-nav > * {flex: none;}
+html:has(.inv-acct) .rvw-nav > .inv-top-name, html:has(.inv-acct) .rvw-nav > .spacer {flex: 1 1 0;}
+html:has(.inv-acct) .rvw-nav > .spacer {flex-grow: 0;}
+.inv-menu-btn {display: none;}
+@media (max-width: 1819px) {
+  html:has(.inv-acct) .inv-menu-btn {display: inline-flex;}
+  html:has(.inv-acct) .main {margin-left: 0;}
+  html:has(.inv-acct) .rail {display: none;}
+  /* opened from the Menu button: over the page, which stays as it is */
+  html.menu-open:has(.inv-acct) .rail {display: flex; position: fixed; inset: 0 auto 0 0; width: 256px; z-index: 60;
+    overflow: hidden; border-right: 1px solid var(--lg-border); border-bottom: 0; box-shadow: var(--lg-shadow-pop);}
+  html.menu-open:has(.inv-acct) .rail > .nav:not(.nav-pinned) {overflow-y: auto;}
+}
+@media (max-width: 1100px) {html:has(.inv-acct) .rvw-pos-bar, html:has(.inv-acct) .rvw-nav .pop {display: none;}}
+.inv-split.inv-acct {grid-template-columns: minmax(0, 1fr); gap: 8px;}
+.inv-split.inv-acct > .inv-doc {position: static;}
+.inv-split.inv-acct > .col {min-width: 0;}
+.inv-split.inv-acct > .col > * + * {margin-top: 8px;}
+.inv-split.inv-acct .card {padding: 10px 12px;}
+@media (min-width: 1200px) {
+  .inv-split.inv-acct {grid-template-columns: minmax(400px, 1fr) clamp(690px, 60%, 900px);}
+  .inv-split.inv-acct > .inv-doc {position: sticky; top: 48px;}
+}
+html:has(.inv-acct) .inv-actionbar {margin: 8px -12px -64px; padding: 8px 12px;}
+@media (max-height: 719px) {
+  html:has(.inv-acct) .inv-top {padding: 3px 0;}
+  html:has(.inv-acct) .inv-actionbar {padding: 4px 12px;}
+  .inv-split.inv-acct .card {padding: 8px 10px;}
+  .inv-split.inv-acct > .inv-doc {top: 42px;}
+}
+/* The findings: a compact list above the header (the checks card's own markup). */
+.inv-split.inv-acct .card.inv-checks {padding: 0; border: 0; background: none; box-shadow: none;}
+.inv-acct .inv-checks > * + * {margin-top: 4px;}
+.inv-acct .inv-checks .rvw-status {padding: 6px 10px;}
+.inv-acct .inv-checks .rvw-status ul {margin-top: 2px; gap: 1px;}
+.inv-acct .inv-checks .rvw-status-group + .rvw-status-group {margin-top: 4px; padding-top: 4px;}
+.inv-acct .inv-checks > .inv-more > summary {padding: 2px 4px; font-size: 12px;}
+.inv-acct .inv-checks > .inv-more:not([open]) {display: inline-block; margin-right: 8px;}
+/* The header: supplier, invoice number and date; total, tax, currency and due date; what is keyed; the rest folded. */
+.inv-acct .inv-head > * + * {margin-top: 6px;}
+.inv-head-row {display: grid; gap: 4px 8px; align-items: start;}
+.inv-head-row.one {grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) minmax(100px, 116px);}
+.inv-head-row.two {grid-template-columns: minmax(96px, 124px) minmax(88px, 108px) 68px minmax(100px, 116px) minmax(0, 1fr);}
+.inv-head-row .field {min-width: 0;}
+.inv-head-row .field input, .inv-head-row .field select {width: 100%; min-width: 0; height: 30px;}
+.inv-head-row .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}
+.inv-head-row .field.wide {grid-column: auto;}
+.inv-head-row .lbl {flex-wrap: nowrap; white-space: nowrap; overflow: hidden;}
+/* how sure the reading is: its mark alone beside the label (its words are the mark's title), so no label is cut */
+.inv-head-row .inv-sure {font-size: 0; gap: 0;}
+.inv-head-row .inv-sure .ms {font-size: 14px;}
+.inv-head-row .inv-vendor-add {position: absolute; top: -4px; right: 0;}
+.inv-head-row .inv-vendor {position: relative;}
+.inv-head-row .inv-vendor .inv-vendor-match:empty {display: none;}
+.inv-head-sum {align-self: end; padding-bottom: 6px; min-width: 0;}
+.inv-keyed:empty, .inv-head-sum:empty {display: none;}
+/* one line: its title says it whole when the window cuts it */
+.inv-keyed-line {padding: 3px 8px; border: 1px dashed var(--lg-border); border-radius: 6px; font-size: 12.5px;
+  line-height: 18px; color: var(--lg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.inv-keyed-line .k {font-weight: 600;} .inv-keyed-line .k::after {content: ":";}
+.inv-keyed-line .v {color: var(--lg-text); font-variant-numeric: tabular-nums;}
+.inv-keyed-line.not-ready {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
+.inv-more-details > summary, .inv-fold > summary {list-style: none; cursor: pointer; display: flex; align-items: center;
+  gap: 6px; font-size: 13px; min-width: 0;}
+.inv-more-details > summary::-webkit-details-marker, .inv-fold > summary::-webkit-details-marker {display: none;}
+.inv-more-details > summary .ms, .inv-fold > summary .ms {font-size: 18px; color: var(--lg-subtle); transition: transform .12s ease;}
+.inv-more-details[open] > summary .ms, .inv-fold[open] > summary .ms {transform: rotate(90deg);}
+.inv-more-details > summary .muted, .inv-fold > summary .muted {overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; min-width: 0; font-size: 12.5px;}
+.inv-more-details[open] > * + * {margin-top: 8px;}
+.inv-reading {padding-top: 8px; border-top: 1px solid var(--lg-hairline);}
+/* Under the lines: the tax lines as printed and what the ERP gets, each folded. */
+.inv-acct details.inv-fold {padding: 6px 12px;}
+.inv-acct details.inv-fold > section.card {padding: 6px 0 4px; border: 0; box-shadow: none; background: none;
+  margin-top: 4px;}
+.inv-lines-grid.acct thead {position: sticky; top: 44px; z-index: 3; background: var(--lg-surface);}
+@media (max-height: 719px) {.inv-lines-grid.acct thead {top: 38px;}}
+/* the column names stay under the strip as the page scrolls: the lines' wrap is no scroller of its own here */
+.inv-acct .inv-lines > .table-wrap {overflow: visible;}
+/* The invoice pane at its narrowest (400 px): its head wraps, the file's name gives way first. */
+.inv-acct .inv-doc-head {flex-wrap: wrap; gap: 4px 8px; padding: 6px 10px 4px 12px;}
+.inv-acct .rvw-doc-head {flex: 1 1 140px; min-width: 0; overflow: hidden;}
+.inv-acct .inv-doc-tools {flex: none; flex-wrap: nowrap;}
+.inv-acct .inv-checks {display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px 8px;}
+.inv-acct .inv-checks > * {flex: 1 1 100%; margin-top: 0;}
+.inv-acct .inv-checks > .inv-more:not([open]) {flex: 0 0 auto; margin: 0;}
+.inv-acct .inv-checks > .inv-more > summary {min-height: 0; padding: 1px 4px;}
+/* A long invoice (more than 8 lines): the accounts offered show for the line in hand; every line still says why. */
+.inv-lines-grid.acct.many tr[data-row]:not(:focus-within) .acct-cands {display: none;}
+.rvw-status li[hidden] {display: none;}
+/* ---- Tax on every line (D-214): under the Tax box each tax with its own amount; under the Amount box the amount
+   keyed when a tax stays in the line; under the lines one sentence a tax. ---- */
+.inv-lines-grid.acct {--areas: "no acct amt del" ". cap cap cap" ". keyed keyed keyed" ". desc tax tax" ". . taxcap taxcap"
+  ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct .c-keyed {grid-area: keyed;} .inv-lines-grid.acct .c-taxcap {grid-area: taxcap;}
+.inv-lines-grid.acct .c-keyed:empty, .inv-lines-grid.acct .c-taxcap:empty {display: none;}
+.inv-lines-grid.acct .c-keyed, .inv-lines-grid.acct .c-taxcap {font-size: 11.5px; line-height: 15px;
+  color: var(--lg-muted); text-align: right; font-variant-numeric: tabular-nums; padding: 0 2px 1px; min-width: 0;}
+.inv-lines-grid.acct .c-keyed b, .tx-list b {color: var(--lg-text); font-weight: 500;}
+.tx-list {display: flex; flex-direction: column; align-items: flex-end;}
+.tx-list .tx {white-space: nowrap;}
+.tx-list .tx.note {white-space: normal; color: var(--lg-warning);}
+.tx-list .rd {font-style: normal; font-size: 10.5px; padding: 0 3px; border: 1px solid var(--lg-border);
+  border-radius: 3px;}
+/* a line whose tax is not the invoice's usual one: the mark, bold amounts, an amber edge (not colour alone) */
+.tx-list.odd {padding-right: 4px; border-right: 2px solid var(--lg-warning);}
+.tx-list.odd b {font-weight: 700;}
+.tx-list .ne {font-weight: 700; color: var(--lg-warning);}
+.inv-taxline {list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px;
+  line-height: 18px; font-variant-numeric: tabular-nums;}
+.inv-taxline li {display: flex; gap: 6px; align-items: flex-start; margin: 0; min-width: 0; overflow-wrap: anywhere;}
+.inv-taxline .ms {font-size: 16px; flex: none; margin-top: 1px; color: var(--lg-subtle);}
+.inv-taxline li.ok .ms {color: var(--lg-success);} .inv-taxline li.bad .ms {color: var(--lg-danger);}
+.inv-taxline li.hold {padding: 4px 8px; border-radius: 6px; background: var(--lg-danger-weak);}
+.inv-taxtable {margin-top: 4px;}
+.inv-taxtable > summary {cursor: pointer; display: inline-block;}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--areas: "no acct amt desc tax del" ". cap cap . taxcap ." ". slot slot slot slot slot"
+    ". more more more more more";}
+  .inv-lines-grid.acct tr.has-keyed {grid-template-areas: "no acct amt desc tax del" ". cap keyed . taxcap ."
+    ". slot slot slot slot slot" ". more more more more more";}
+  .inv-lines-grid.acct tr:not(.has-keyed) .c-keyed {display: none;}
+}
+/* ---- The approve bar with a chart of accounts (D-214): one sentence, what approving does and what is to fix. ---- */
+.rvw-post.acct-bar {display: flex; flex-direction: row; align-items: center; gap: 4px 10px; flex-wrap: wrap;
+  min-width: 0; font-size: 13px;}
+.acct-bar-say {color: var(--lg-muted); min-width: 0; overflow-wrap: anywhere;}
+.acct-bar .apc-pill {white-space: normal; max-width: 100%;}
+.acct-bar .acct-ready {flex: none;}
+.acct-bar-check[hidden] {display: none;}
+html:has(.inv-acct) .inv-actionbar-left {flex: 1 1 0; min-width: 0;}
+html:has(.inv-acct) .inv-actionbar-left .rvw-post {flex: 1 1 auto;}
+/* ---- The Remark box (D-213, D-214): suggested and marked so (a dashed edge) until someone has been in it; the
+   count under it; past 30 characters a red edge and the finding's words; then the line as the invoice prints it. ---- */
+.inv-lines-grid.acct {--areas: "no acct amt del" ". cap cap cap" ". keyed keyed keyed" ". desc tax tax" ". rcap taxcap taxcap"
+  ". slot slot slot" ". more more more";}
+.inv-lines-grid.acct .c-rcap {grid-area: rcap; display: flex; gap: 0 6px; min-width: 0; padding: 0 2px 1px;
+  font-size: 11.5px; line-height: 15px; color: var(--lg-muted);}
+.inv-lines-grid.acct input[data-remark-box].is-suggested {border-style: dashed; border-color: var(--lg-subtle);}
+.inv-lines-grid.acct input[data-remark-box].is-over {border: 2px solid var(--lg-danger); padding: 0 5px;}
+.rm-legend {margin-left: 4px; padding: 0 4px; border: 1px dashed var(--lg-subtle); border-radius: 4px; font-weight: 400;
+  font-size: 10.5px; color: var(--lg-muted);}
+.rm-count {flex: none; font-variant-numeric: tabular-nums;}
+.rm-count.over {color: var(--lg-danger); font-weight: 600;}
+.rm-said {flex: 1 1 0; min-width: 0; overflow-wrap: anywhere;}
+.rm-said .rm-note {display: block; color: var(--lg-danger);}
+.rm-said .rm-printed {display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.inv-lines-grid.acct tr[data-row]:focus-within .rm-printed {white-space: normal;}
+.inv-lines-grid.acct td.c-more {flex-wrap: wrap;}
+.inv-lines-grid.acct td.c-more .field.wide {flex: 1 1 100%;}
+@container lines (min-width: 640px) {
+  .inv-lines-grid.acct {--areas: "no acct amt desc tax del" ". cap cap rcap taxcap ." ". slot slot slot slot slot"
+    ". more more more more more";}
+  .inv-lines-grid.acct tr.has-keyed {grid-template-areas: "no acct amt desc tax del" ". cap keyed rcap taxcap ."
+    ". slot slot slot slot slot" ". more more more more more";}
+}

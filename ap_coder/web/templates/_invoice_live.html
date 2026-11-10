@@ -38,7 +38,7 @@
 {%- endmacro %}
 
 {% macro check_item(i) -%}
-<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
+<li class="{{ i.kind or ('err' if i.bad else 'warn') }}" title="{{ i.text }}"{% if i.code %} data-code="{{ i.code }}"{% endif %}{% if i.field %} data-field-of="{{ i.field }}"{% endif %}{% if i.folded %} hidden{% endif %}><span class="m" aria-hidden="true">{{ '!' if i.kind == 'warn' or not i.bad else '✕' }}</span>
     {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }} (G)"><span class="t">{{ i.text }}</span></button>
     {%- else %}<span class="t">{{ i.text }}</span>{% endif %}
     {%- for l in i.links or [] %} <a class="rvw-dup-link" href="{{ l.href }}" target="_blank" rel="noopener" title="Opens in a new tab: this one stays as it is">{{ l.text }}<span class="ms" aria-hidden="true">open_in_new</span></a>{% endfor %}</li>
@@ -277,6 +277,33 @@
 {% if live.draft_rev %}<input type="hidden" name="draft_rev" form="inv" value="{{ live.draft_rev }}">{% endif %}
 {% if not live.ok %}
 <div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
+{% elif live.account %}
+{# With a chart of accounts (D-214): one sentence, what approving does and what is still to fix. The first Ctrl+Enter
+   with something to check says so here (invoice.js fills data-bar-check); the second approves. #}
+{% set b = live.bar %}
+{% set does = ("Approving credits " if b.credit else "Approving posts ") ~ b.amount ~ " " ~ b.currency ~ " on " ~ (b.lines | plural("line")) ~ " and teaches AP Coder this coding" %}
+<div class="rvw-post acct-bar" data-not-ready="{{ b.first.text if b.first else '' }}" data-credit="{{ '1' if b.credit else '' }}" title="What approving teaches AP Coder: {{ b.learn }}.">
+  {% if live.read_only %}<span class="acct-bar-say">{{ b.amount }} {{ b.currency }} on {{ b.lines | plural("line") }}.</span>
+  {% elif b.first and b.first.kind == "pick" %}
+  <button type="button" class="apc-pill err inv-pick" data-goto-pick aria-keyshortcuts="F8" title="Go to it (F8)"><span class="ms" aria-hidden="true">arrow_downward</span>To fix: {{ live.bar_fix or b.first.text }}</button>
+  <span class="acct-bar-say">{{ does }} once that is fixed.</span>
+  {% elif b.first %}
+  <span class="apc-pill err inv-hard" role="note" title="{{ b.blockers | map(attribute='text') | join('; ') }}"><span class="ms" aria-hidden="true">block</span><span class="t">To fix: {{ b.first.text }}</span>{% if b.blockers | length > 1 %}<span class="more">+{{ b.blockers | length - 1 }}</span>{% endif %}</span>
+  <span class="acct-bar-say">{{ does }} once that is fixed.</span>
+  {% elif b.errors %}
+  <span class="acct-bar-say">{{ does }}: {{ b.errors | plural("error") }} to fix first, or</span>
+  {% else %}
+  <span class="apc-pill ok acct-ready"><span class="ms" aria-hidden="true">check</span>Ready</span>
+  <span class="acct-bar-say">{{ does }}, then opens the next one (Ctrl+Enter).</span>
+  {% endif %}
+  {% if b.second %}<span class="acct-bar-say" data-second-why>{{ b.second[:1] | upper }}{{ b.second[1:] }}: a second approver is needed.</span>{% endif %}
+  <span class="apc-pill warn acct-bar-check" data-bar-check role="status" hidden></span>
+  <span data-change-count="{{ b.changed }}" hidden>{{ b.learn }}</span>
+</div>
+{% if not live.read_only and not b.first and b.errors %}
+<label class="check inv-override" title="Errors only: what makes the voucher invalid can never be approved anyway"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
+  Approve anyway, despite {{ b.errors | plural("error") }}</label>
+{% endif %}
 {% else %}
 {% set b = live.bar %}
 {# Why Approve is closed: the first blocker in screen order (B-797); "Approve anyway" and its reason are the box's own,
@@ -324,4 +351,25 @@
   {% if live.jde_settings %}<a class="link small inv-jde-settings" href="{{ j.settings_url }}" title="The values marked “settings” come from Settings → JD Edwards E1 (for {{ live.setup_contact or 'the pilot tester' }})">Change the settings<span class="ms" aria-hidden="true">settings</span></a>{% endif %}
 </div>
 {% endif %}
+{%- endmacro %}
+
+{# With a chart of accounts (D-214): what is keyed on the voucher's pay item, in one read-only line
+   (jde.voucher_view's ``keyed``: "Keyed on the pay item: …", or "Not ready to key: …" with the first reason). #}
+{% macro keyed(live, invoice_id) -%}
+{% set j = live.jde %}
+{% if j and j.keyed %}{% set said = j.keyed.partition(": ") %}
+<div class="inv-keyed-line{% if j.not_ready %} not-ready{% endif %}" title="{{ j.keyed }}"><span class="k">{{ said[0] }}</span> <span class="v">{{ said[2] }}</span></div>
+{% endif %}
+{%- endmacro %}
+
+{# With a chart of accounts (D-214): the tax check under the lines, one sentence a tax (the lines taxed x the rate
+   against what is printed, and where the tax goes), and why the voucher is held when its lines are in two tax areas.
+   ``live.tax_said``: account_lines.tax_said. The whole Tax check table is under "Show the tax table". #}
+{% macro taxline(live, invoice_id) -%}
+{% set said = live.tax_said %}
+{% if said and (said.lines or said.hold or said.notes) %}<ul class="inv-taxline" aria-label="Tax check, one line for each tax">
+  {% for c in said.lines %}<li class="{{ 'ok' if c.ok else 'bad' }}"><span class="ms" aria-hidden="true">{{ 'check_circle' if c.ok else 'error' }}</span><span>{{ c.text }}{% if c.goes %} <span class="muted">({{ c.goes }})</span>{% endif %}</span></li>{% endfor %}
+  {% for n in said.notes %}<li class="note"><span class="ms" aria-hidden="true">info</span><span>{{ n }}</span></li>{% endfor %}
+  {% if said.hold %}<li class="bad hold" data-tax-hold><span class="ms" aria-hidden="true">block</span><span>{{ said.hold }}</span></li>{% endif %}
+</ul>{% endif %}
 {%- endmacro %}

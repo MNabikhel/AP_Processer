@@ -23,7 +23,8 @@
 import { ACTION_MS, HEADERS, fetchWithin, follow, noAnswer, poll, post, toast } from "./app.js";
 import { openFor, register } from "./ctxmenu.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
-import { enhance, fold, refresh, registerGroups, setAction, setSource, setValue } from "./picker.js";
+import { joined as joinedAccount, prepare as prepareAccounts, search as searchAccounts } from "./account_search.js";
+import { enhance, fold, follow as followList, refresh, registerGroups, registerSections, setAction, setSource, setValue } from "./picker.js";
 
 const form = document.getElementById("inv");
 const invoiceId = document.body.querySelector("[data-invoice]")?.dataset.invoice || location.pathname.split("/")[2];
@@ -94,8 +95,316 @@ function applySections(answer, posted = null) {
   if (Array.isArray(answer.vendor_accounts)) vendorAccounts = answer.vendor_accounts;
   if (answer.header) applyHeader(answer.header, posted);
   if (Array.isArray(answer.taxes)) applyTaxRows(answer.taxes, posted);
+  if (Array.isArray(answer.lines)) applyLineViews(answer.lines, posted);
+  if (Array.isArray(answer.supplier_accounts)) accounts.supplier = answer.supplier_accounts;
+  followList(); // a list open on a box the sections drawn again have moved
+  openFlaggedDetails();
   showMailLanguage();
 }
+
+/* ---------- With a chart of accounts: a line is one Account box (D-214) ---------- */
+
+const chartScreen = Boolean(document.querySelector(".inv-split.inv-acct"));
+
+/** The boxes of what must be fixed before approving, in screen order: an invoice detail in error, a line with no
+    account or one the chart refuses, a remark longer than JD Edwards keeps. */
+function toFix() {
+  const details = [...document.querySelectorAll(".inv-details [data-field].is-error")].map((f) => input(f.dataset.field));
+  const lines = gridRows().flatMap((row) => [
+    row.classList.contains("is-fix") ? accountBox(row) : null,
+    row.querySelector("input[data-remark-box].is-over"),
+  ]);
+  return [...details, ...lines].filter(Boolean);
+}
+
+/** The boxes of what a person looks at before approving: an account that is a guess (or not offered for invoices),
+    a tax code the Tax check points at, a suggested remark no one has been in yet. */
+function toCheck() {
+  return gridRows().flatMap((row) => [
+    row.classList.contains("is-check") ? accountBox(row) : null,
+    row.querySelector(".c-tax.is-taxcheck select"),
+    row.querySelector("input[data-remark-box].is-suggested"),
+  ]).filter(Boolean);
+}
+
+/** The focus to the next of ``boxes`` after the one that has it (``by`` -1: the one before), in view above the bar;
+    a box folded under More details is unfolded first. False when there is none. */
+function goToNext(boxes, by = 1) {
+  if (!boxes.length) return false;
+  const at = boxes.indexOf(document.activeElement);
+  const box = boxes[(at + by + boxes.length) % boxes.length] || boxes[0];
+  box.closest("details:not([open])")?.setAttribute("open", "");
+  const target = box.closest(".pk")?.querySelector(".pk-input") || box;
+  target.scrollIntoView({ block: "center" });
+  target.focus({ preventScroll: true });
+  return true;
+}
+
+/* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
+   (no dialog). Any edit between the two starts again. */
+let checkAsked = false;
+function checkSaid() {
+  const rows = gridRows();
+  const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
+  const taxes = rows.filter((row) => row.querySelector(".c-tax.is-taxcheck")).map(lineNo);
+  const remarks = rows.filter((row) => row.querySelector("input[data-remark-box].is-suggested")).length;
+  const of = (numbers) => (numbers.length === 1 ? `line ${numbers[0]}` : `lines ${numbers.join(", ")}`);
+  return [
+    guesses.length ? `the account of ${of(guesses)}` : "",
+    taxes.length ? `the tax of ${of(taxes)}` : "",
+    remarks ? `${remarks === 1 ? "1 suggested remark" : `${remarks} suggested remarks`} not looked at` : "",
+  ].filter(Boolean).join("; ");
+}
+function checkedOrAsked() {
+  const boxes = toCheck();
+  if (!boxes.length || checkAsked) return true;
+  checkAsked = true;
+  showBarState();
+  goToNext(boxes.includes(document.activeElement) ? [document.activeElement] : boxes);
+  return false;
+}
+for (const type of ["input", "change"]) {
+  document.addEventListener(type, (e) => {
+    if (!checkAsked || e.target.form !== form) return;
+    checkAsked = false;
+    showBarState();
+  });
+}
+
+/** More details opens itself when one of its fields has a finding. */
+function openFlaggedDetails() {
+  document.querySelectorAll("details[data-more-details]:not([open])").forEach((fold) => {
+    if (fold.querySelector(".field.is-flagged, .field.is-error")) fold.open = true;
+  });
+}
+
+/* The Menu button (the menu is off this screen below 1820 px): it opens AP Coder's menu over the page; Esc, a
+   click outside it or a second press closes it. */
+const menuButton = document.querySelector("[data-menu-toggle]");
+function showMenu(open) {
+  document.documentElement.classList.toggle("menu-open", open);
+  menuButton?.setAttribute("aria-expanded", String(open));
+  if (open) document.querySelector(".rail a")?.focus({ preventScroll: true });
+}
+document.addEventListener("click", (e) => {
+  const open = document.documentElement.classList.contains("menu-open");
+  if (e.target.closest?.("[data-menu-toggle]")) showMenu(!open);
+  else if (open && !e.target.closest?.(".rail")) showMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !document.documentElement.classList.contains("menu-open")) return;
+  e.preventDefault();
+  showMenu(false);
+  menuButton?.focus({ preventScroll: true });
+});
+
+/** The row a box, a button or a cell is in (a line or a tax line). */
+const rowOf = (el) => el?.closest?.("[data-row]") || null;
+
+/** A line's Account box (the whole account string), or null on a screen with GL account and cost center lists. */
+const accountBox = (row) => row?.querySelector?.("input[data-account]") || null;
+
+/** The row's two hidden cells follow its Account box (the text up to the first dot is the business unit), for
+    what reads a line's GL account by name; the server reads the box itself. */
+function syncAccount(row) {
+  const text = (accountBox(row)?.value || "").trim();
+  const dot = text.indexOf(".");
+  const gl = row.querySelector('[name="line_gl"]');
+  const cc = row.querySelector('[name="line_cc"]');
+  if (gl) gl.value = (dot > 0 && text.slice(dot + 1)) || "UNASSIGNED";
+  if (cc) cc.value = (dot > 0 ? text.slice(0, dot) : "") || "UNASSIGNED";
+}
+
+/** Put ``text`` (a whole account string, or "" to clear it) in a line's Account box, as typing it would. */
+function setAccount(row, text) {
+  const box = accountBox(row);
+  if (!box) return false;
+  box.value = text || "";
+  syncAccount(row);
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+/** A line's account as one string, from its two codes ("" when it has none). */
+function accountText(gl, cc) {
+  const code = gl && gl !== "UNASSIGNED" ? gl : "";
+  const unit = cc && cc !== "UNASSIGNED" ? cc : "";
+  return code && unit ? `${unit}.${code}` : code || unit;
+}
+
+/* ---------- The remark keyed with a line (D-213): 30 characters in JD Edwards, never cut without a word ----------
+   The box shows the remark; what is posted is the row's hidden line_remark: blank while the box holds AP Coder's
+   suggestion (the server then suggests again for the account the line has now), the text once a person typed one.
+   A suggestion is marked (a dashed edge) until someone has been in its box. */
+const REMARK_MOST = 30; // coding/remark.py REMARK_MOST
+
+function remarkBox(row) {
+  return row?.querySelector?.("input[data-remark-box]") || null;
+}
+
+/** The count under a line's Remark box ("21 / 30"), and past 30 how many too many: the box is then to fix. */
+function showRemarkCount(row) {
+  const box = remarkBox(row);
+  const count = row?.querySelector("[data-remark-count]");
+  if (!box || !count) return;
+  const n = box.value.trim().replace(/\s+/g, " ").length;
+  const over = n > REMARK_MOST;
+  box.classList.toggle("is-over", over);
+  count.classList.toggle("over", over);
+  count.textContent = over ? `${n} / ${REMARK_MOST}: ${n - REMARK_MOST} too many` : `${n} / ${REMARK_MOST}`;
+}
+
+/** A line's Remark box as the check answered it: a suggestion follows the line's account (the box takes it, marked
+    as suggested unless it is the one already seen there); a remark a person typed is left as it is. */
+function applyRemark(row, said) {
+  const box = remarkBox(row);
+  const posted = row.querySelector('[name="line_remark"]');
+  if (!box || !posted || !said) return;
+  if (said.typed) {
+    if (!posted.value) {  // a row drawn again (Undo): its box shows the remark it posts
+      posted.value = said.text;
+      box.value = said.text;
+    }
+    box.classList.remove("is-suggested");
+    box.removeAttribute("title");
+  } else {
+    posted.value = ""; // typed exactly as suggested: the suggestion
+    if (box.value !== said.text) box.value = said.text;
+    box.classList.toggle("is-suggested", Boolean(said.text) && box.dataset.seen !== said.text);
+    if (said.why) box.title = said.why;
+  }
+  showRemarkCount(row);
+}
+
+document.addEventListener("input", (e) => {
+  if (!e.target.matches?.("input[data-remark-box]")) return;
+  const row = rowOf(e.target);
+  const posted = row?.querySelector('[name="line_remark"]');
+  if (posted) posted.value = e.target.value; // a person's remark now: posted as typed
+  e.target.classList.remove("is-suggested");
+  e.target.removeAttribute("title");
+  showRemarkCount(row);
+});
+document.addEventListener("focusin", (e) => {
+  if (!e.target.matches?.("input[data-remark-box]")) return;
+  e.target.dataset.seen = e.target.value; // looked at: no longer marked as a suggestion no one has seen
+  e.target.classList.remove("is-suggested");
+});
+
+/** What each line's row says under its boxes, as the check answered it (in row order): the cells marked
+    data-live-line are drawn again, never a box, so the focus stays where it is. A row whose Account box changed
+    since the check was sent keeps what it shows until the next one. */
+function applyLineViews(views, posted) {
+  const rows = gridRows();
+  const sent = posted ? posted.getAll("line_account") : null;
+  const sentRemarks = posted ? posted.getAll("line_remark") : null;
+  if (rows.length !== views.length || (sent && sent.length !== rows.length)) return;
+  rows.forEach((row, i) => {
+    const box = accountBox(row);
+    if (!box || (sent && box.value !== sent[i])) return;
+    const view = views[i];
+    // (a remark typed in since the check was sent waits for the next one)
+    if (!sentRemarks || row.querySelector('[name="line_remark"]')?.value === sentRemarks[i]) applyRemark(row, view.remark_box);
+    row.classList.toggle("is-fix", view.state === "fix");
+    row.classList.toggle("is-check", view.state === "check");
+    row.classList.toggle("has-keyed", Boolean(view.has_keyed));
+    if (Array.isArray(view.candidates)) box.dataset.candidates = JSON.stringify(view.candidates);
+    row.querySelectorAll("[data-live-line]").forEach((cell) => {
+      const html = view[cell.dataset.liveLine];
+      if (typeof html === "string" && cell.innerHTML !== html) cell.innerHTML = html; // the server's, escaped
+    });
+  });
+}
+
+document.addEventListener("input", (e) => {
+  if (e.target.matches?.('[data-grid="lines"] input[data-account]')) syncAccount(rowOf(e.target));
+});
+
+/* ---------- The account list an Account box picks from (D-214) ----------
+   The page holds only its seed (#account-seed: its address and count, the home business unit, the accounts this
+   supplier's lines went to last year); the list itself is fetched once as an editable screen opens and kept by the
+   browser, as the vendor list is. Until it is here the boxes offer the line's candidates and the supplier's
+   accounts, and say that the chart is loading. */
+let accountSeed = null;
+try {
+  accountSeed = JSON.parse(document.getElementById("account-seed")?.textContent || "null");
+} catch {
+  accountSeed = null;
+}
+const accounts = { entries: null, byValue: new Map(), total: accountSeed?.count || 0, supplier: accountSeed?.supplier || [],
+  home: accountSeed?.home || "", failed: false, loading: null };
+
+function loadAccounts() {
+  if (!accountSeed?.url || accounts.entries || accounts.loading) return accounts.loading;
+  accounts.loading = (async () => {
+    try {
+      const response = await fetchWithin(accountSeed.url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${response.status}`);
+      accounts.entries = prepareAccounts((await response.json()).list);
+      accounts.byValue = new Map(accounts.entries.map((e) => [e.value, e]));
+      accounts.total = accounts.entries.length;
+      accounts.failed = false;
+    } catch {
+      accounts.failed = true; // asked for again when a list next opens
+    }
+    accounts.loading = null;
+    if (document.activeElement?.matches?.("input[data-account]")) refresh(document.activeElement);
+  })();
+  return accounts.loading;
+}
+
+registerSections("account", (box, typed) => {
+  if (!accounts.entries) loadAccounts();
+  let candidates = [];
+  try {
+    candidates = JSON.parse(box.dataset.candidates || "[]");
+  } catch {
+    candidates = [];
+  }
+  return searchAccounts(accounts, { candidates, was: box.dataset.was ?? box.value }, typed);
+});
+if (accountSeed && !readOnly) loadAccounts();
+
+// The account a box held before it is typed in: a business unit typed then offers that account there first.
+document.addEventListener("focusin", (e) => {
+  if (e.target.matches?.("input[data-account]")) e.target.dataset.was = e.target.value;
+});
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.("input[data-account]")) e.target.dataset.was = e.target.value;
+});
+// An account's parts pasted with spaces or tabs between them (three cells of a sheet, JD Edwards' padding) are one
+// string: taken as it is, the list stays closed, and the check says whether the chart has it.
+document.addEventListener("paste", (e) => {
+  const box = e.target;
+  if (!box.matches?.("input[data-account]")) return;
+  const text = (e.clipboardData?.getData("text") || "").trim();
+  const whole = joinedAccount(text) || (/^[\d.]+$/.test(text) && text.includes(".") ? text : "");
+  if (!whole) return; // words: typed as usual, the list finds them
+  e.preventDefault();
+  box.value = whole;
+  box.dataset.was = whole;
+  box.dispatchEvent(new Event("blur")); // the list closes
+  box.focus({ preventScroll: true });
+  const row = rowOf(box);
+  if (row?.closest('[data-grid="lines"]')) {
+    syncAccount(row);
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+});
+document.addEventListener("click", (e) => {
+  const use = e.target.closest?.("[data-use-account]"); // an account offered under a line: it fills the box
+  if (use) {
+    const row = rowOf(use);
+    undoable(`${lineName(row)}: account ${use.dataset.useAccount} put in its box.`, () => {
+      setAccount(row, use.dataset.useAccount);
+      accountBox(row)?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const more = e.target.closest?.("[data-row-menu]"); // the row's own menu button: as a right-click on the line
+  if (more) openFor(rowOf(more), more);
+});
 
 /** The tax rows' provinces as the server checked them: a row put in the old place of supply follows a new one
     (B-935, B-1020). Only a box that still holds what was sent is changed, and only when the rows are those sent. */
@@ -213,7 +522,7 @@ if (form) {
     if (e.target.name !== "mail_lang") dropUndo();
     headerEdited(e.target);
     if (e.target.name === "mail_lang") return showMailLanguage();
-    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(e.target.closest("tr")); // theirs now (B-713)
+    if (e.target.matches("select[data-tax-code]")) confirmTaxCode(rowOf(e.target)); // theirs now (B-713)
     if (e.target === vendorInput) vendorChanged(); // the vendor list's tax numbers, with Undo (D-65)
     if (e.target.name === "pay_from_account" && payFromFor) {  // picked: kept while the currency stays (D-66)
       payFromFor.value = (input("currency")?.value || "CAD").trim().toUpperCase() || "CAD";
@@ -283,20 +592,21 @@ document.addEventListener("click", (e) => {
     enhance(body.lastElementChild);
     // a new line: its description, where it starts (B-742); a tax line: its tax
     const fresh = body.lastElementChild;
-    (fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
+    if (which === "lines") fresh?.querySelector("[data-row-more]")?.removeAttribute("hidden"); // (no printed line: its details to type)
+    (accountBox(fresh) || fresh?.querySelector('[name="line_description"]') || fresh?.querySelector("input:not([type=hidden]), select"))?.focus();
     if (which === "lines") fillSplitLines();
     soon(0);
     return;
   }
   const del = e.target.closest("[data-del-row]");
   if (del) {
-    const tr = del.closest("tr");
+    const tr = rowOf(del);
     if (tr) deleteRow(tr);
     return;
   }
   const splitRow = e.target.closest("[data-split-row]");
   if (splitRow) {
-    const tr = splitRow.closest("tr");
+    const tr = rowOf(splitRow);
     if (tr && lineNo(tr)) openSplit(tr);
     else toast({ text: "Give the line a number first: then it can be split.", tone: "info" }, 3000);
     return;
@@ -378,7 +688,7 @@ try {
 registerGroups("gl", (select) => {
   const groups = [{ label: "Used for this vendor", values: vendorAccounts }];
   // the line's suggestions (the Suggested GL accounts card): a line's own, or the line being split
-  const number = select.closest("tr")?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
+  const number = rowOf(select)?.querySelector('[name="line_number"]')?.value || (select.closest("[data-split]") ? splitLine?.value : "");
   if (number) {
     const card = document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(number)}"]`);
     groups.push({ label: "Suggested", values: [...(card?.querySelectorAll("[data-gl]") || [])].map((b) => b.dataset.gl) });
@@ -393,7 +703,7 @@ document.addEventListener("click", (e) => {
   if (!go) return;
   const pop = go.closest("[data-fill]");
   const value = (name) => pop?.querySelector(`[data-fill-${name}]`)?.value || "";
-  gridAction(`${base}/fill-lines`, { fill_gl: value("gl"), fill_cc: value("cc") }, go).then(() =>
+  gridAction(`${base}/fill-lines`, { fill_gl: value("gl"), fill_cc: value("cc"), fill_account: pop?.querySelector("[data-fill-account]")?.value }, go).then(() =>
     pop?.removeAttribute("open"),
   );
 });
@@ -446,7 +756,9 @@ function addPart(gl, cc, pct) {
   const glSelect = tr.querySelector('[name="part_gl"]');
   const ccSelect = tr.querySelector('[name="part_cc"]');
   enhance(tr); // the account pickers (their choices: the page's #gl-options and #cc-options)
-  if (gl) setValue(glSelect, gl); // the line's accounts
+  const whole = tr.querySelector('[name="part_account"]'); // with a chart of accounts: one Account box a part
+  if (whole) whole.value = accountText(gl, cc);
+  if (gl && glSelect) setValue(glSelect, gl); // the line's accounts
   if (ccSelect && cc) setValue(ccSelect, cc);
   tr.querySelector('[name="part_pct"]').value = pct;
   tr.querySelector('[name="part_amount"]').value = cents((splitAmount() * pct) / 100).toFixed(2);
@@ -544,7 +856,8 @@ if (split) {
         {
           split_line: splitLine.value,
           split_by: splitBy(),
-          part_gl: rows.map((r) => r.querySelector('[name="part_gl"]').value),
+          part_account: rows.map((r) => r.querySelector('[name="part_account"]')?.value).filter((v) => v !== undefined),
+          part_gl: rows.map((r) => r.querySelector('[name="part_gl"]')?.value || ""),
           part_cc: rows.map((r) => r.querySelector('[name="part_cc"]')?.value || ""),
           part_pct: rows.map((r) => r.querySelector('[name="part_pct"]').value),
           part_amount: rows.map((r) => r.querySelector('[name="part_amount"]').value),
@@ -1119,13 +1432,13 @@ function markRow(index, on) {
 
 const linesGrid = document.querySelector('[data-grid="lines"]');
 linesGrid?.addEventListener("mouseover", (e) => {
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   if (!tr || !viewer) return;
   viewer.markLine(rowToLine()[gridRows().indexOf(tr)], true);
 });
 linesGrid?.addEventListener("mouseleave", () => viewer?.markLine(-1, false));
 linesGrid?.addEventListener("focusin", (e) => {
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   const i = tr ? rowToLine()[gridRows().indexOf(tr)] : -1;
   if (viewer && i >= 0) viewer.revealLine(i);
 });
@@ -1137,7 +1450,7 @@ linesGrid?.addEventListener("focusin", (e) => {
 });
 linesGrid?.addEventListener("change", (e) => {
   if (e.target.name !== "line_amount") return;
-  const tr = e.target.closest("tr");
+  const tr = rowOf(e.target);
   const qty = tr?.querySelector("[name=line_quantity]");
   const price = tr?.querySelector("[name=line_unit_price]");
   const before = e.target.dataset.before ?? "";
@@ -1490,7 +1803,9 @@ function typing(target) {
     where it was a label and the line far down the page (B-434). */
 function goToPick() {
   const boxes = [...document.querySelectorAll('select[form="inv"][name="line_gl"], select[form="inv"][name="line_cc"]')];
-  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED");
+  const whole = [...document.querySelectorAll('[data-grid="lines"] input[data-account]')]; // one Account box a line
+  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED") ||
+    whole.find((b) => !b.value.trim() || rowOf(b).classList.contains("is-fix"));
   if (!box) return false;
   box.scrollIntoView({ block: "center", behavior: "smooth" });
   box.focus({ preventScroll: true });
@@ -1500,8 +1815,8 @@ function goToPick() {
 /** The box of one line (a finding in the checks: "Line 2: no GL account yet"), by its line number (B-443). */
 function goToLine(name, number) {
   const rows = [...document.querySelectorAll('input[form="inv"][name="line_number"]')];
-  const row = rows.find((r) => r.value === number)?.closest("tr");
-  const box = row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
+  const row = rowOf(rows.find((r) => r.value === number));
+  const box = accountBox(row) || row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
   if (!box) return goToPick();
   box.scrollIntoView({ block: "center", behavior: "smooth" });
   box.focus({ preventScroll: true });
@@ -1526,12 +1841,21 @@ document.addEventListener("keydown", (e) => {
     if (elsewhere(e.target) || stale) return;
     e.preventDefault();
     flush().then(() => {
-      if (!approveButton.disabled) form.requestSubmit(approveButton);
-      else {
+      if (!approveButton.disabled) {
+        if (chartScreen && !checkedOrAsked()) return; // something to check: said in the bar, the next one approves
+        form.requestSubmit(approveButton);
+      } else {
         toast({ text: `Not ready to approve: ${notReady()}`, tone: "warn" }); // the reason, not "see the bar" (B-743)
-        focusNotReady();
+        if (!(chartScreen && goToNext(toFix()))) focusNotReady();
       }
     });
+    return;
+  }
+  // F8 (Shift+F8 back): the next thing to fix on a screen with a chart of accounts, then the next to check (D-214)
+  if (e.key === "F8" && chartScreen && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.("dialog, [role=dialog]")) {
+    e.preventDefault();
+    const fix = toFix();
+    goToNext(fix.length ? fix : toCheck(), e.shiftKey ? -1 : 1);
     return;
   }
   // From a text box too, where the page puts the focus on opening: on Windows Alt+arrows are no text-editing keys
@@ -1642,6 +1966,10 @@ function makeRow(which, state, after = null) {
     else el.value = value;
   }
   tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
+  if (remarkBox(tr)) {  // a person's remark shows at once; a suggestion comes with the next check
+    remarkBox(tr).value = tr.querySelector('[name="line_remark"]')?.value || "";
+    showRemarkCount(tr);
+  }
   const cell = tr.querySelector(".c-gl");
   if (cell && state.guess !== null && state.guess !== undefined) {
     cell.classList.add("is-guess");
@@ -1925,6 +2253,10 @@ function numberNew(tr) {
   const inOrder = numbers.every((n, i) => n === i + 1);
   if (inOrder) rows.forEach((r, i) => (r.querySelector('[name="line_number"]').value = String(i + 1)));
   else tr.querySelector('[name="line_number"]').value = String(Math.max(0, ...numbers.filter(Number.isFinite)) + 1);
+  rows.forEach((r) => {  // a row that shows its number as text (one Account box a line)
+    const shown = r.querySelector("[data-line-no]");
+    if (shown) shown.textContent = lineNo(r);
+  });
 }
 
 function deleteRow(tr) {
@@ -1935,7 +2267,7 @@ function deleteRow(tr) {
     tr.remove();
     if (which === "lines") fillSplitLines();
     // the focus to the line that took its place (its description), else the button that adds one (B-742)
-    const to = next?.querySelector('[name="line_description"]') || next?.querySelector("input:not([type=hidden]), textarea, select") ||
+    const to = accountBox(next) || next?.querySelector('[name="line_description"]') || next?.querySelector("input:not([type=hidden]), textarea, select") ||
       document.querySelector(`[data-add-row="${which}"]`);
     to?.focus({ preventScroll: true });
     to?.scrollIntoView({ block: "nearest" });
@@ -1944,6 +2276,7 @@ function deleteRow(tr) {
 }
 
 function setGl(tr, gl, cc) {
+  if (accountBox(tr)) return setAccount(tr, accountText(gl, cc)); // one Account box: the whole string
   const g = tr.querySelector('[name="line_gl"]');
   if (g && gl !== undefined) {
     setValue(g, gl);
@@ -1971,10 +2304,10 @@ function copyAbove(tr) {
   const rows = gridRows();
   const above = rows[rows.indexOf(tr) - 1];
   if (!above || blank(above.querySelector('[name="line_gl"]'))) {
-    toast({ text: above ? "The line above has no GL account yet." : "It is the first line: there is none above.", tone: "info" }, 3000);
+    toast({ text: above ? `The line above has no ${accountBox(tr) ? "account" : "GL account"} yet.` : "It is the first line: there is none above.", tone: "info" }, 3000);
     return;
   }
-  const what = tr.querySelector('[name="line_cc"]') ? "GL account and cost center" : "GL account";
+  const what = accountBox(tr) ? "account" : tr.querySelector('[name="line_cc"]') ? "GL account and cost center" : "GL account";
   undoable(`${lineName(tr)}: ${what} copied from the line above.`, () => {
     setGl(tr, above.querySelector('[name="line_gl"]').value, above.querySelector('[name="line_cc"]')?.value);
     soon(0);
@@ -1986,7 +2319,8 @@ function insertBelow(tr) {
     const row = makeRow("lines", { key: newKey(), values: {}, taxes: [] }, tr);
     numberNew(row);
     fillSplitLines();
-    row.querySelector('[name="line_description"]')?.focus();
+    row.querySelector("[data-row-more]")?.removeAttribute("hidden");
+    (accountBox(row) || row.querySelector('[name="line_description"]'))?.focus();
     soon(0);
   });
 }
@@ -2003,20 +2337,23 @@ function lineMenu(tr) {
   const without = others.filter((r) => blank(r.querySelector('[name="line_gl"]')));
   const n = lineNo(tr);
   const suggested = n ? document.querySelector(`[data-live="suggest"] .inv-sugg[data-line="${CSS.escape(n)}"] [data-gl]`) : null;
-  const what = cc ? "coding" : "GL account";
+  const whole = accountBox(tr); // one Account box a line (a chart of accounts): its whole string
+  const what = whole ? "account" : cc ? "coding" : "GL account";
+  const named = whole ? whole.value.trim() : `GL ${gl?.value}`;
+  const more = tr.querySelector("[data-row-more]");
   const taxItems = taxCodeItems(tr, above, others).filter((it) => it && !it.disabled);
   const confirm = taxItems.find((it) => it.id === "tax-confirm");
   const moreTax = taxItems.filter((it) => it !== confirm);
   return [
     suggested ? { icon: "add_task", label: `Use the suggested account (${suggested.dataset.gl})`, id: "suggested", run: () => suggested.click() } : null,
     above && !blank(above.querySelector('[name="line_gl"]')) ? { icon: "vertical_align_top", label: `Copy the ${what} from above`, hint: "Ctrl+D", id: "above", run: () => copyAbove(tr) } : null,
-    !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use GL ${gl.value} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
-      run: () => undoable(`GL ${gl.value} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
-        without.forEach((r) => setGl(r, gl.value));
+    !blank(gl) && without.length ? { icon: "playlist_add_check", label: `Use ${named} on the ${without.length === 1 ? "line" : `${without.length} lines`} without one`, id: "fill",
+      run: () => undoable(`${named} put on ${without.length === 1 ? "1 line" : `${without.length} lines`}.`, () => {
+        without.forEach((r) => setGl(r, gl.value, accountBox(r) ? cc?.value : undefined));
         soon(0);
       }) } : null,
-    !blank(gl) ? { icon: "backspace", label: "Clear GL account", id: "clear-gl",
-      run: () => undoable(`${lineName(tr)}: GL account cleared.`, () => {
+    !blank(gl) ? { icon: "backspace", label: whole ? "Clear the account" : "Clear GL account", id: "clear-gl",
+      run: () => undoable(`${lineName(tr)}: ${whole ? "account" : "GL account"} cleared.`, () => {
         setGl(tr, "UNASSIGNED");
         soon(0);
       }) } : null,
@@ -2029,10 +2366,15 @@ function lineMenu(tr) {
       const copy = makeRow("lines", { ...rowState(tr), key: newKey() }, tr);
       numberNew(copy);
       fillSplitLines();
-      copy.querySelector('[name="line_description"]')?.focus();
+      (accountBox(copy) || copy.querySelector('[name="line_description"]'))?.focus();
       soon(0);
     }) },
     n ? { icon: "call_split", label: "Split this line…", id: "split", run: () => openSplit(tr) } : null,
+    more ? { icon: "tune", label: more.hidden ? "Show its details (quantity, unit price)" : "Hide its details", id: "details",
+      run: () => {
+        more.hidden = !more.hidden;
+        if (!more.hidden) more.querySelector("input, textarea")?.focus();
+      } } : null,
     "-",
     { icon: "delete", label: "Delete line", hint: "Alt+Del", id: "delete", danger: true, run: () => deleteRow(tr) },
   ];
@@ -2368,6 +2710,7 @@ function lineRowByNumber(number) {
 /** An invoice detail's box, focused in view. */
 function goToField(name) {
   const box = input(name);
+  box?.closest("details[data-more-details]:not([open])")?.setAttribute("open", ""); // folded under More details
   if (!box || !box.getClientRects().length) return false;
   const target = box.closest(".pk")?.querySelector(".pk-input") || box;
   target.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -2591,6 +2934,12 @@ function showBarState() {
   const credit = document.querySelector("[data-live=bar] [data-credit]")?.dataset.credit === "1";
   const label = approveButton?.querySelector("[data-approve-label]");
   if (label) label.textContent = credit ? "Approve credit note" : "Approve & teach";
+  const ask = document.querySelector("[data-live=bar] [data-bar-check]"); // with a chart: what is to check, once asked
+  if (ask) {
+    const said = checkAsked ? checkSaid() : "";
+    ask.textContent = said ? `To check: ${said}. Ctrl+Enter again approves.` : "";
+    ask.hidden = !said;
+  }
 }
 
 document.addEventListener("change", (e) => {
@@ -2702,6 +3051,8 @@ function focusFirstToCheck(always = false) {
       .find((b) => blank(b));
     box = pick ? pick.closest(".pk")?.querySelector(".pk-input") || pick : null;
   }
+  // With a chart of accounts (D-214): the first thing to fix, else Approve when it is open.
+  if (chartScreen) box = toFix().find((b) => b.getClientRects().length) || (approveButton && !approveButton.disabled ? approveButton : box);
   box = box || vendorInput;
   if (!box || !box.getClientRects().length) return false;
   // Focused for the clerk, not by them: Space with the pointer on the page still holds the Hand (B-591) until they

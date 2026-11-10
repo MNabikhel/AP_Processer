@@ -15,6 +15,14 @@
        data-choices="CAD|Canadian dollar,USD|US dollar"   the choices, else setSource(input, () => items)
                                                           (refresh(input): an open list drawn again with them)
        setAction(input, (typed) => ({label, run}) or null)  a last row that does something (Add as a new vendor)
+       data-picker-sections="account"  a long list searched its own way (the review screen's Account box, D-214):
+                                       registerSections(name, (input, typed) => ({sections: [{label, items}], note}))
+                                       gives what is drawn, in groups, with the items made by makeItem. Enter opens
+                                       the list; while typing the first match is the one Enter takes (Tab takes only
+                                       a row reached with the arrows); open on a filled box, the box's own value is
+                                       the row highlighted, so Enter changes nothing; Esc leaves the box as typed;
+                                       Ctrl/⌘+Enter only closes the list (nothing is picked or approved by it).
+       data-picker-width="680"         the list as wide as this at least (never wider than the window)
    * Keys: ↑/↓, PageUp/PageDown, Home/End move; Enter picks (the row under the mouse too); Esc closes (a select's
      choice as it was); Tab picks the choice highlighted from the keyboard when something was typed (in a free box: a
      choice reached with the arrows; never the one the mouse rests on), then moves on; Ctrl/⌘+Enter picks as Tab does,
@@ -46,6 +54,7 @@ const pickers = new WeakMap(); // select or input -> its Picker
 const sources = new WeakMap(); // free input -> () => items
 const actions = new WeakMap(); // free input -> (typed) => {label, run} or null: the list's last row
 const groupMakers = new Map(); // data-groups name -> (select) => [{label, values}]
+const sectionMakers = new Map(); // data-picker-sections name -> (input, typed) => {sections, note}
 const jsonLists = new Map(); // script id -> items
 let layer = null;
 let listbox = null;
@@ -108,6 +117,11 @@ function item(value, label, extra = "") {
   const text = String(label ?? value ?? "");
   const cut = text.indexOf(" · ");
   return made(value, text, cut > 0 ? text.slice(0, cut) : "", cut > 0 ? text.slice(cut + 3) : text, extra);
+}
+
+/** A choice for a list drawn by registerSections: its value, the code and name shown, and what is said after. */
+export function makeItem(value, code, name, extra = "") {
+  return made(value, name ? `${code} · ${name}` : code, code, name, extra);
 }
 
 function made(value, label, code, name, extra) {
@@ -262,6 +276,11 @@ class Picker {
     return (this.free ? this.input : this.select).dataset.pickerNoun || "choice";
   }
 
+  /** What draws this box's list its own way (data-picker-sections), or undefined: the choices are filtered here. */
+  maker() {
+    return this.free ? sectionMakers.get(this.input.dataset.pickerSections || "") : undefined;
+  }
+
   items() {
     const el = this.free ? this.input : this.select;
     if (el.dataset.options) return fromJson(el.dataset.options);
@@ -340,7 +359,10 @@ class Picker {
     const ws = words(typed);
     const sections = [];
     let groups = [];
-    if (ws.length) sections.push({ label: "", items: matching(this.all, ws) });
+    const maker = this.maker();
+    const own = maker ? maker(this.input, typed) : null; // its own groups, already searched and ranked
+    if (own) sections.push(...own.sections);
+    else if (ws.length) sections.push({ label: "", items: matching(this.all, ws) });
     else {
       groups = this.groups();
       const noun = this.noun();
@@ -394,7 +416,7 @@ class Picker {
           extra.append(marked(it.extra, ws));
           opt.append(extra);
         }
-        if (it.value === current && !this.free) {
+        if (it.value === current && (!this.free || own)) {
           opt.classList.add("is-current");
           const tick = document.createElement("span");
           tick.className = "ms pk-tick";
@@ -424,7 +446,10 @@ class Picker {
       listbox.append(opt);
     }
     note.hidden = true;
-    if (!this.view.length && ws.length) {
+    if (own) {
+      note.textContent = own.note || "";
+      note.hidden = !own.note;
+    } else if (!this.view.length && ws.length) {
       note.textContent = `No ${this.noun()} matches “${typed}”`;
       note.hidden = false;
     } else if (hidden) {
@@ -432,16 +457,18 @@ class Picker {
       note.hidden = false;
     }
     // A free box offers nothing when nothing matches: what is typed is the value.
-    layer.hidden = this.free && !this.view.length;
+    layer.hidden = this.free && !this.view.length && !own?.note; // (its own list says why nothing is offered)
     let active = -1;
-    if (ws.length && !this.free) active = this.view.length ? 0 : -1;
+    // its own list: the first match while typing; untouched, the box's own value (Enter then changes nothing)
+    if (own) active = ws.length ? (this.view.length ? 0 : -1) : this.view.findIndex((it) => it.value === current);
+    else if (ws.length && !this.free) active = this.view.length ? 0 : -1;
     else if (!ws.length && !this.free && !groups.length) {  // with groups, they show from the top, none highlighted
       const at = this.view.findIndex((it) => it.value === current);
       active = current && current !== "UNASSIGNED" && at >= 0 ? at : this.view.length ? 0 : -1;
     }
     this.place();
     this.setActive(active, true);
-    this.keyActive = active;
+    this.keyActive = own && ws.length ? -1 : active; // (Tab takes a typed box's match only once the arrows reached it)
     if (active <= 0) listbox.scrollTop = 0;
   }
 
@@ -520,6 +547,12 @@ class Picker {
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/⌘+Enter approves on the review screen: the choice typed is picked first, as Tab picks it, and the list
       // closes; the key then goes on to the page, which reads the form with the new choice (B-590).
+      if (k === "Enter" && open && this.maker()) {  // a list of accounts: the chord only closes it (D-214)
+        e.preventDefault();
+        e.stopPropagation();
+        this.close();
+        return;
+      }
       if (k === "Enter" && open) {
         const i = this.tabChoice();
         if (i >= 0) this.pick(i);
@@ -535,7 +568,7 @@ class Picker {
       return;
     }
     if (!open) {
-      if ((k === "Enter" && !this.free) || k === "F4" || (k === " " && !e.altKey && !e.shiftKey && this.empty())) {
+      if ((k === "Enter" && (!this.free || this.maker())) || k === "F4" || (k === " " && !e.altKey && !e.shiftKey && this.empty())) {
         e.preventDefault(); // Enter never sends the form the box is in; Space types no space in an empty box
         this.open();
       }
@@ -561,8 +594,8 @@ class Picker {
       const typedNow = this.input.value.trim().toLowerCase();
       const offered = this.view.filter((it) => !it.run);
       const listed = offered.some((it) => String(it.value).trim().toLowerCase() === typedNow);
-      const revert = this.free && this.typed && offered.length > 0 && !listed && this.before !== undefined &&
-        this.input.value !== this.before;
+      const revert = this.free && !this.maker() && this.typed && offered.length > 0 && !listed &&
+        this.before !== undefined && this.input.value !== this.before;
       this.close();
       if (revert) {
         this.input.value = this.before;
@@ -611,7 +644,7 @@ class Picker {
     const up = below < Math.min(want, 180) && above > below;
     const room = Math.max(ROW * 3, up ? above : below);
     listbox.style.maxHeight = `${Math.max(ROW * 2, Math.min(ROWS * ROW + 8, room - noteH - 2))}px`; // 2: its border
-    const width = Math.min(Math.max(r.width, 360), innerWidth - 2 * edge);
+    const width = Math.min(Math.max(r.width, Number(this.input.dataset.pickerWidth) || 360), innerWidth - 2 * edge);
     layer.style.width = `${width}px`;
     layer.style.left = `${Math.max(edge, Math.min(r.left, innerWidth - width - edge))}px`;
     const tall = layer.offsetHeight;
@@ -664,10 +697,21 @@ export function refresh(input) {
   p.render();
 }
 
+/** The page moved under an open list (a section drawn again above its box): the list goes back under its box. */
+export function follow() {
+  shown?.follow();
+}
+
 /** A free box's last row while its list shows: ``make(typed)`` gives {label, run} (run(typed) when it is chosen), or
     null for none. Tab never picks it. */
 export function setAction(input, make) {
   actions.set(input, make);
+}
+
+/** A free box's list drawn its own way, for inputs with data-picker-sections="name": ``make(input, typed)`` gives
+    {sections: [{label, items: [makeItem(...)]}], note}, searched and ranked by the page (a long list). */
+export function registerSections(name, make) {
+  sectionMakers.set(name, make);
 }
 
 /** Groups shown above the whole list while nothing is typed, for selects with data-groups="name". */
