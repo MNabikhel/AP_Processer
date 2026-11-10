@@ -223,6 +223,18 @@ def _without_row_number(seg: Line, column: tuple[float, float] | None) -> str:
     return seg.text
 
 
+def _row_description(segs: list[Line], flags: list[Line], amt_seg: Line | None, cols: dict[str, Box],
+                     number_column: tuple[float, float] | None) -> str:  # fmt: skip
+    """A row's description: its cells but the tax code's (``flags``). A number cell (qty, price, amount, row number)
+    is not part of it; a description with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is, and
+    so is a number under the description's heading. The row's number under the "#" heading never is: in a cell of
+    its own beside the description's, or set close before it (B-2095)."""
+    return " ".join(_without_row_number(s, number_column) for s in segs
+                    if s not in flags and not _row_number(s.text, s.box, number_column)
+                    and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
+                         or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
+
+
 def _heading_name(text: str) -> str | None:
     """The column a heading names, by the longest heading it starts with ("Unit Cost" is the unit price, not a
     quantity in "Unit"; "Prix total" the amount, not a price); a heading printed in two languages ("Product /
@@ -661,13 +673,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             # The tax-code column's cell ("G R") is the line's tax code, not part of its description (D-64).
             flags = [s for s in segs if s is not amt_seg and _under_tax_column(s, tax_column)
                      and not ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)]  # fmt: skip
-            # A number cell (qty, price, amount, row number) is not part of the description; a description
-            # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is. The row's number under the
-            # "#" heading is never part of it: in a cell of its own beside the description's, or set close before it.
-            desc = " ".join(_without_row_number(s, number_column) for s in segs
-                            if s not in flags and not _row_number(s.text, s.box, number_column)
-                            and (s is not amt_seg and not _NUMBER_CELL.match(s.text)
-                                 or ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05)))  # fmt: skip
+            desc = _row_description(segs, flags, amt_seg, cols, number_column)
             qty = price = None
             if "quantity" in cols:
                 q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
