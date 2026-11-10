@@ -8,10 +8,78 @@ from ap_coder.ops import chart_cmd, cli
 from tests import chart_files as cf
 
 
-def _run(tmp_path, capsys, *args):
-    code = cli.main(["--db", str(tmp_path / "ap_coder.db"), "chart", "import", *args])
+def _run(tmp_path, capsys, *args, action="import"):
+    code = cli.main(["--db", str(tmp_path / "ap_coder.db"), "chart", action, *args])
     said = capsys.readouterr()
     return code, said.out, said.err
+
+
+def test_an_import_says_what_left_the_lists_and_what_was_set_aside(tmp_path, capsys):
+    """A smaller export: the manager and the meals tick of what left are kept aside, and the summary says so."""
+    full = cf.write_chart(tmp_path / "chart.xlsx")
+    assert _run(tmp_path, capsys, "--chart", str(full), "--business-units", str(cf.write_business_units(
+        tmp_path / "bu.xlsx")))[0] == 0  # fmt: skip
+    store = Store(tmp_path / "ap_coder.db")
+    store.import_accounts("gl_accounts", [{"code": "5450", "meals": "yes"}], "code", None, meals_column="meals")
+    store.set_cost_center_manager([cf.OTHER], "Dana Reyes", "dana@example.test", "pat")
+    store.set_tax_treatment("QST", "recoverable", "5450")
+    smaller = cf.write_chart(tmp_path / "smaller.xlsx", [r for r in cf.CHART if r[0] != cf.OTHER])
+    code, out, _ = _run(tmp_path, capsys, "--chart", str(smaller))
+    assert code == 0
+    assert "GL accounts: 12 now (0 added, 0 changed, 1 removed)." in out
+    assert "  Left the GL accounts: 5450." in out and f"  Left the cost centers: {cf.OTHER}." in out
+    assert ("  Set aside, and put back when the chart has them again: the meals tick of 5450; the manager of "
+            f"{cf.OTHER}.") in out  # fmt: skip
+    assert "  To set right: the tax set-up posts QST to GL account 5450, which is no longer in the list." in out
+    code, out, _ = _run(tmp_path, capsys, "--chart", str(full))
+    assert f"  Put back: the meals tick of 5450; the manager of {cf.OTHER}." in out and "To set right" not in out
+    assert store.cost_center_managers() == {cf.OTHER: {"name": "Dana Reyes", "email": "dana@example.test"}}
+
+
+def test_the_lists_are_worked_out_again_on_demand(tmp_path, capsys):
+    code, _, err = _run(tmp_path, capsys, action="rebuild")
+    assert code == 1 and "No chart of accounts is imported yet" in err
+    assert _run(tmp_path, capsys, "--chart", str(cf.write_chart(tmp_path / "chart.xlsx")))[0] == 0
+    store = Store(tmp_path / "ap_coder.db")
+    store.save_accounts("gl_accounts", [r for r in store.list_accounts("gl_accounts") if r["code"] != "5450"])
+    code, out, _ = _run(tmp_path, capsys, action="rebuild")
+    assert code == 0 and "GL accounts: 14 now (1 added, 0 changed, 0 removed)." in out
+    code, out, _ = _run(tmp_path, capsys, action="rebuild")
+    assert "The GL accounts and cost centers already are what the chart gives: nothing changed." in out
+
+
+def test_the_charts_settings_are_set_and_shown_from_the_console(tmp_path, capsys):
+    code, out, _ = _run(tmp_path, capsys, action="settings")
+    assert code == 0 and "Posting edit codes AP may post to: blank only." in out
+    assert (
+        "Never offered: none." in out
+        and "Skip words: DO NOT USE, DNU." in out
+        and "Home business unit: not set." in out
+    )
+    files = ("--chart", str(cf.write_chart(tmp_path / "chart.xlsx")), "--business-units",
+             str(cf.write_business_units(tmp_path / "bu.xlsx")))  # fmt: skip
+    assert _run(tmp_path, capsys, *files)[0] == 0
+    code, out, _ = _run(tmp_path, capsys, "--never-offered", "*.7701, 2140", "--home-business-unit", cf.HOME,
+                        "--postable", "m", action="settings")  # fmt: skip
+    assert code == 0
+    assert "Posting edit codes AP may post to: blank and M." in out and "Never offered: *.7701, 2140." in out
+    assert f"Home business unit: {cf.HOME} (Head Office General)." in out
+    assert "GL accounts: 14 now (1 added, 0 changed, 0 removed)." in out  # the account with code M is listed at once
+    store = Store(tmp_path / "ap_coder.db")
+    assert (
+        store.chart_settings().never_offered == ("*.7701", "2140") and "5620" in store.reference_data().line_accounts()
+    )
+    assert store.events(actions=["settings_changed"])[0]["actor"] == chart_cmd.ACTOR
+    code, out, _ = _run(tmp_path, capsys, action="show")
+    assert code == 0 and "Chart of accounts: 32 accounts on 9 business units; 9 business units in the master." in out
+    assert "Never offered: *.7701, 2140." in out and "Accounts a line may be coded to: 14" in out
+    assert "In all, 4 accounts may be posted to but are never offered" in out
+    # A setting is cleared with an empty value; a home business unit the chart does not have is refused.
+    code, out, _ = _run(tmp_path, capsys, "--never-offered", "", "--skip-words", "closed", action="settings")
+    assert "Never offered: none." in out and "Skip words: closed." in out
+    code, _, err = _run(tmp_path, capsys, "--home-business-unit", "0999999999", action="settings")
+    assert code == 1 and "There is no business unit 0999999999" in err and "Nothing was changed." in err
+    assert store.chart_settings().home_business_unit == cf.HOME
 
 
 def test_both_files_are_imported_and_what_was_read_is_said(tmp_path, capsys):
@@ -41,8 +109,8 @@ def test_the_same_files_again_change_nothing_and_say_so(tmp_path, capsys):
     before = (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts"))
     code, out, _ = _run(tmp_path, capsys, "--chart", str(chart), "--business-units", str(units))
     assert code == 0
-    assert "Business units: the same as already imported, nothing changed." in out
-    assert "Chart of accounts: the same as already imported, nothing changed." in out
+    assert "Business units: the same as already imported." in out
+    assert "Chart of accounts: the same as already imported." in out
     assert "GL accounts: 13 now (0 added, 0 changed, 0 removed)." in out
     assert (store.chart_version(), store.events_stamp(), store.list_accounts("gl_accounts")) == before
 

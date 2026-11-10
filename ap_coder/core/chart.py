@@ -548,6 +548,10 @@ class AccountPairs:
         bu = _code(business_unit)
         return bu in self._accounts or bu in self._names or bu in self._closed
 
+    def has_accounts(self, business_unit: Any) -> bool:
+        """Whether the chart holds an account of the business unit, one that may be posted to or not."""
+        return _code(business_unit) in self._accounts
+
     def has_code(self, code: Any) -> bool:
         """Whether any business unit has the GL code, one that may be posted to or not."""
         code = _gl(code)

@@ -49,7 +49,8 @@ _REFERENCE_STAMP = """SELECT
      FROM (SELECT * FROM tax_treatments ORDER BY tax_type)),
     (SELECT group_concat(key || '=' || value, char(10))
      FROM (SELECT * FROM settings WHERE key IN ('our_province', 'site_provinces', 'policy_notes', 'chart_version',
-           'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels') ORDER BY key))"""
+           'chart_hash', 'postable_codes', 'never_offered', 'skip_words', 'home_business_unit', 'account_labels')
+           ORDER BY key))"""
 
 # What the checks read besides the reference data, as the queue's re-check compares them (``Store.checks_stamp``,
 # B-815): JD Edwards' settings, whether it is in use (its switch, or a batch made: whether there is one, not how many,
@@ -550,10 +551,14 @@ class AccountsMixin:
                 # ``approval_controls`` (the strictest in force since an invoice came in counts, B-970).
                 self._log(conn, "settings_changed", actor=actor,
                           detail={"keys": [key], "changes": {key: {"from": before, "to": value}}})  # fmt: skip
+            # One of the chart of accounts' settings: the GL accounts and cost centers follow it (chart.py, B-2091).
+            chart_gave = self._chart_setting_changing(conn, key)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+            if chart_gave is not None:
+                self._chart_setting_changed(conn, chart_gave, actor)
 
     def approval_controls(self, currency: str, since: str) -> tuple[float, float | None]:
         """The approval limit and the CAD rate of ``currency`` that decide an invoice that came in at ``since``: the

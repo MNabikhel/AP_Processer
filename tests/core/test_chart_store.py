@@ -48,12 +48,15 @@ def test_a_database_with_no_chart_has_the_tables_empty_and_no_pairs(store):
 
 def test_the_import_keeps_the_exact_rows_and_works_out_the_two_lists(store):
     units = store.import_business_units(_units(), actor="pat")
-    assert units == {"added": 9, "updated": 0, "removed": 0, "rows": 9,
+    nothing = {"left": {"gl_accounts": [], "cost_centers": []}, "unmapped": [],
+               "set_aside": {"meals": [], "categories": [], "managers": []},
+               "brought_back": {"meals": [], "categories": [], "managers": []}}  # fmt: skip
+    assert units == {"added": 9, "updated": 0, "removed": 0, "rows": 9, **nothing,
                      "gl_accounts": {"now": 0, "added": 0, "updated": 0, "removed": 0},
                      "cost_centers": {"now": 0, "added": 0, "updated": 0, "removed": 0}}  # fmt: skip
     assert store.account_pairs() is None  # the business units alone are no chart
     result = store.import_chart(_chart(), actor="pat")
-    assert result == {"added": 41, "updated": 0, "removed": 0, "rows": 41,
+    assert result == {"added": 41, "updated": 0, "removed": 0, "rows": 41, **nothing,
                       "gl_accounts": {"now": 13, "added": 13, "updated": 0, "removed": 0},
                       "cost_centers": {"now": 8, "added": 8, "updated": 0, "removed": 0}}  # fmt: skip
     # Both tables hold every row as exported: the headers, the titles and the accounts not for posting too.
