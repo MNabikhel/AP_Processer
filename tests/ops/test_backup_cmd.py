@@ -63,6 +63,17 @@ def test_restore_asks_first_and_refuses_while_ap_coder_runs(tmp_path, ground_tru
     assert "No backup" in capsys.readouterr().err
 
 
+def test_the_guides_new_server_steps_restore_while_the_service_is_stopped():
+    """B-2112: docs/SERVER.md's "A new server" said to install the service, then restore. ``service install`` starts
+    the service, and the console's restore refuses while AP Coder runs ("stop it first"): the step failed as written."""
+    from tests.conftest import ROOT
+
+    guide = (ROOT / "docs" / "SERVER.md").read_text(encoding="utf-8")
+    steps = guide.split("- **A new server**", 1)[1].split("\n- **", 1)[0]
+    assert "--no-start" in steps and "`service stop` first" in steps
+    assert steps.index("--no-start") < steps.index("backup restore <name>") < steps.index("`service start`")
+
+
 def test_check_reads_every_file_and_says_what_is_missing_or_damaged(tmp_path, ground_truth, capsys):
     store, data = _data(tmp_path, ground_truth)
     made = store.backup_now("manual")
