@@ -99,6 +99,30 @@ def test_ci_runs_the_browser_tests_and_never_lets_them_skip():
     assert any((step.get("env") or {}).get("AP_REQUIRE_BROWSER") == "1" for step in job["steps"])
 
 
+@needs_ci
+def test_ci_runs_the_pilot_laptops_python_on_windows_with_ocr_and_the_launcher():
+    """B-2105: the pilot laptop is Windows with Python 3.14 alone. CI ran 3.14 on Windows without the OCR packages (the
+    tests that read scans skipped) and every Windows launcher job on 3.12: the laptop's own combination ran nowhere.
+    The Windows 3.14 test shards install the OCR extra as the 3.12 ones do, and the pilot launcher job runs
+    APProcessor.bat on 3.12 and on 3.14, where 3.14 is the only Python the launcher finds."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    cells = [c for c in jobs["tests"]["strategy"]["matrix"]["include"] if c["os"] == "windows-latest"]
+    whole = {c["python"] for c in cells if c.get("shard")}
+    assert whole == {"3.12", "3.14"}
+    assert {(c["python"], c.get("extras")) for c in cells if c.get("shard")} == {("3.12", "ocr,dev"),
+                                                                                  ("3.14", "ocr,dev")}  # fmt: skip
+    job = jobs["windows-pilot-launcher"]
+    assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"] and job["strategy"]["fail-fast"] is False
+    assert "Python ${{ matrix.python }}" in job["name"]  # each cell says which Python it is
+    setup = next(step for step in job["steps"] if "setup-python" in step.get("uses", ""))
+    assert setup["with"]["python-version"] == "${{ matrix.python }}"
+    text = yaml.safe_dump(job)
+    assert "Python 3\\.12" not in text  # what the window must print follows the cell's Python
+    alone = next(step for step in job["steps"] if "the only Python" in step.get("name", ""))
+    assert alone["if"] == "matrix.python != '3.12'" and "PythonCore" in alone["run"]
+    assert "fetch_models.py --check" in text and "pilot_check.py" in text  # OCR models there, the samples read
+
+
 def test_the_browser_is_looked_up_once_not_inside_a_running_playwright(monkeypatch, tmp_path):
     """B-127: CI has no browser under /opt/pw-browsers, so chromium_path() asks Playwright for its own Chromium. The
     browser tests call it again inside ``with sync_playwright()``, where a second Playwright can't start ("Sync API
