@@ -1201,6 +1201,20 @@ def checks_details(report: Any) -> list[dict[str, str]]:
     return items
 
 
+def coding_changed(ai: dict[str, Any], final: dict[str, Any]) -> str:
+    """What an approval changed of the lines' coding proposed, as the approved invoice says it ("changed: …"): the
+    GL accounts, the cost centers, or both, where it said "GL coding" of a cost center alone (B-2104). "GL coding"
+    still when neither differs from what was proposed (a line changed after a reopen)."""
+    gl = cc = False
+    for before, li in pair_lines(ai.get("line_items") or [], final.get("line_items") or []):
+        s_gl, s_cc = ((before.get("predicted_gl_code"), before.get("predicted_cost_center") or "") if before
+                      else (None, ""))  # fmt: skip
+        gl = gl or (s_gl not in (None, "", UNASSIGNED) and li.get("predicted_gl_code") != s_gl)
+        cc = cc or (bool(s_cc) and (li.get("predicted_cost_center") or "") != s_cc)
+    return {(True, True): "GL accounts and cost centers", (True, False): "GL accounts",
+            (False, True): "cost centers"}.get((gl, cc), EDIT_LABELS["line_coding"])  # fmt: skip
+
+
 def ai_changes(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = True) -> int:
     """The lines whose suggested coding the reviewer changed, counted as the approval counts them: a GL account or
     cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught.

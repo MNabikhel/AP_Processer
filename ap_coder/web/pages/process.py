@@ -291,7 +291,9 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         name_step(),
         province_step(store),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "none yet: import them"),
-        ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set"),
+        # (before any GL account none is set: the taxes that need no account are not "2 of 5 set", B-2103)
+        ("ok" if mapped == len(TAX_TYPES) else "todo", TAX_STEP, f"{mapped} of {len(TAX_TYPES)} set")
+        if gl_count else ("todo", TAX_STEP, "after the GL accounts: each tax is posted to one of them"),
         bank_step(store),
         *pilot_steps(store),
     ]

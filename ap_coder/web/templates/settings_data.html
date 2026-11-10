@@ -9,7 +9,7 @@
       {% else %}
       <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on this
         computer: <code>{{ data_path }}</code>. Your name and the logs are kept per Windows user, in
-        <code>~/.ap_coder</code>.</p>
+        <code>{{ user_path }}</code>.</p>
       {% endif %}
     </div>
     {% if not server_mode or is_admin %}

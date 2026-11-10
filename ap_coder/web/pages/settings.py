@@ -479,6 +479,7 @@ def data_context(store: Store, chosen: str = "", server: bool = False) -> dict[s
     kept = backup_files.kept_size(store.backup_dir()) + sum(b.stat().st_size for b in backups)
     return {
         "data_path": str(data_dir(store)),
+        "user_path": str(paths.user_settings_path().parent),  # this user's own folder, as it is here (B-2102)
         "db_size": size_text(store.path),
         "invoice_count": sum(store.status_counts().values()),
         "file_count": file_count(folder) if folder.exists() else 0,
