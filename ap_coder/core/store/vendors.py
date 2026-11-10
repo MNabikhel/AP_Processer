@@ -47,6 +47,25 @@ _VENDOR_ROWS_HELD = 0
 _VENDOR_ROWS_LOCK = threading.Lock()
 VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a change by ten times their work (B-2044)
 TOTALS_FORMAT = "vendor-totals-1"  # their format as kept for every process (``shared_answer``, D-198)
+# JD Edwards' hold payment codes that put a supplier on hold (a setting; the Vendors page's import shows it). "N", its
+# usual value, and blank never do (B-2081). "Y" and "1" hold payments and stop new vouchers, "2" holds payments only;
+# another code a company uses ("0") holds once it is listed.
+HOLD_CODES_SETTING = "jde_hold_codes"
+HOLD_CODES = "Y, 1, 2"
+NEVER_HOLD = ("", "N")
+
+
+def listed(text: Any) -> list[str]:
+    """A setting's list as its items, in the order written: "Y, 1, 2" is ["Y", "1", "2"]."""
+    return [item.strip() for item in str(text or "").split(",") if item.strip()]
+
+
+def hold_code(code: Any, holding: list[str]) -> str:
+    """JD Edwards' hold payment code as a vendor keeps it (``vendors.erp_hold``): the code when it is one of
+    ``holding`` (``Store.hold_codes``), "" when it is not a hold ("N", blank, a code not listed). The one place that
+    says what a code means: whatever reads ``erp_hold`` reads a hold (B-2081)."""
+    code = str(code or "").strip().upper()
+    return code if code not in NEVER_HOLD and code in {c.upper() for c in holding} else ""
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -521,13 +540,19 @@ class VendorsMixin:
                     found[r["vendor_key"]] = dict(r)
         return found
 
+    def hold_codes(self) -> list[str]:
+        """JD Edwards' hold payment codes that put a supplier on hold (HOLD_CODES unless the setting lists others)."""
+        return listed(self.get_setting(HOLD_CODES_SETTING)) or listed(HOLD_CODES)
+
     def set_erp_bank_and_hold(self, values: dict[str, tuple[str, str]]) -> None:
         """{ERP ID: (the bank account JDE pays on, JDE's hold code)} on the vendor master's vendors of those IDs (kept
-        apart from AP's own hold, D-105): only where either changed."""
+        apart from AP's own hold, D-105): only where either changed. The hold code is kept when it is one that holds
+        (``hold_code``), blank otherwise."""
+        holding = self.hold_codes()
+        kept = [(bank, hold_code(hold, holding), erp_id) for erp_id, (bank, hold) in values.items()]
         with self._conn() as conn:
             conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
-                             "(erp_bank != ?1 OR erp_hold != ?2)",
-                             [(bank, hold, erp_id) for erp_id, (bank, hold) in values.items()])  # fmt: skip
+                             "(erp_bank != ?1 OR erp_hold != ?2)", kept)  # fmt: skip
 
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an

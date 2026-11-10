@@ -91,7 +91,7 @@ def sample_data() -> dict[str, list[dict[str, Any]]]:
                 "tax_id_2": "1234567890TQ0001",
                 "terms_code": "N15",
                 "terms": "Net 15",
-                "hold_code": "H",
+                "hold_code": "Y",  # JD Edwards' own code: payments held, new vouchers stopped
                 "bank_transit": "",
                 "bank_last4": "",
                 "province": "QC",

@@ -167,7 +167,8 @@ def _suppliers(store: Any, found: list[dict[str, Any]], run: _Run, read: dict[st
     records = []
     banks: dict[str, str] = {}
     # JDE's hold is kept apart (``vendors.erp_hold``): a hold AP put on a vendor here is never lifted by the sync; the
-    # vendor is on hold if either is (D-105).
+    # vendor is on hold if either is (D-105). The store says which hold payment codes hold: "N", JDE's usual value,
+    # never does (``Store.set_erp_bank_and_hold``, B-2081).
     holds: dict[str, str] = {}
     for r in found:
         name, an8 = _text(r.get("name")), _text(r.get("an8"))

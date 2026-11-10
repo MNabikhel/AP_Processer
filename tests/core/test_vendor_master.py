@@ -4,10 +4,11 @@ import sqlite3
 
 from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
-from ap_coder.coding.vendors import ON_HOLD, master_columns, master_rows
+from ap_coder.coding.vendors import ON_HOLD, master_columns, master_rows, vendor_findings
 from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING
 from ap_coder.erp import exports
 from ap_coder.ops.demo import load_demo, remove_demo
 from tests.webclient import gt as _gt
@@ -199,3 +200,42 @@ def test_the_vendor_choices(tmp_path):
     names = [v["display_name"] for v in store.vendor_choices()]
     assert names == sorted(names, key=str.lower) and "Zeta New Co" in names and "On Hold Only Ltd" not in names
     assert len(names) == len(store.master_vendors()) + 1
+
+
+# --- JD Edwards' supplier master as it is exported ---------------------------------------------------------------
+
+
+def _held(store):
+    return sorted(v["display_name"] for v in store.held_vendors())
+
+
+def _said(store, code, **header):
+    doc = _gt(gst_hst_registration_number="", **header)
+    return [text for _, found, text in vendor_findings(InvoiceCoding.model_validate(doc), store) if found == code]
+
+
+def test_only_the_hold_codes_listed_put_a_supplier_on_hold_in_jd_edwards(tmp_path):
+    """B-2081: any hold payment code that was not blank read as "on hold", and JD Edwards' usual value is ``N``: every
+    supplier was on hold and every invoice got VENDOR_ON_HOLD. ``N`` and blank never hold; ``Y``, ``1`` and ``2`` do;
+    another code (``0``) holds once it is listed in the setting."""
+    store = Store(tmp_path / "a.db")
+    codes = {"N": "Maple Leaf Coffee", "": "Quickship Courier", "Y": "Northern Paper", "1": "Old Print Shop",
+             "2": "Harbour Telecom", "0": "Prairie Office Furniture"}  # fmt: skip
+    store.import_vendor_master([{"vendor_name": name, "erp_id": f"41000{i}"} for i, name in enumerate(codes.values())])
+    by_id = {f"41000{i}": ("", code) for i, code in enumerate(codes)}
+    store.set_erp_bank_and_hold(by_id)
+    assert _held(store) == ["Harbour Telecom", "Northern Paper", "Old Print Shop"]
+    assert store.get_vendor("harbour telecom")["erp_hold"] == "2"  # the code is kept: the check says which
+    assert store.get_vendor("maple leaf coffee")["erp_hold"] == ""
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="Maple Leaf Coffee") == []
+    said = _said(store, "VENDOR_ON_HOLD", vendor_name="Harbour Telecom")[0]
+    assert "on hold in JD Edwards" in said and "hold payment code 2" in said and "new vouchers still allowed" in said
+    assert "new vouchers stopped" in _said(store, "VENDOR_ON_HOLD", vendor_name="Northern Paper")[0]
+    # One setting away: the codes that hold, as the JDE team confirms them. A code is read as the list says when the
+    # suppliers are next imported or synced.
+    store.set_setting(HOLD_CODES_SETTING, "Y, 1, 2, 0")
+    store.set_erp_bank_and_hold(by_id)
+    assert _held(store) == ["Harbour Telecom", "Northern Paper", "Old Print Shop", "Prairie Office Furniture"]
+    assert "hold payment code 0" in _said(store, "VENDOR_ON_HOLD", vendor_name="Prairie Office Furniture")[0]
+    store.set_erp_bank_and_hold({"410002": ("", "n")})  # released in JD Edwards
+    assert "Northern Paper" not in _held(store)

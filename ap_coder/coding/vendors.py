@@ -337,7 +337,7 @@ def vendor_findings(
     if held:
         notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
         note = f": {'; '.join(notes)}" if notes else ""
-        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else "in JD Edwards"
+        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else _held_in_jde(held)
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}"))
 
     # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174)
@@ -502,6 +502,23 @@ def held_vendor(store: Store, name: Any, gst: Any = None, bank: Any = None,
         ):
             return v, "bank"
     return None
+
+
+# JD Edwards' own hold payment codes, in words (a code a company added is said by its code alone).
+_HOLD_MEANS = {"Y": "payments held, new vouchers stopped", "1": "payments held, new vouchers stopped",
+               "2": "payments held, new vouchers still allowed"}  # fmt: skip
+
+
+def hold_said(code: Any) -> str:
+    """A JD Edwards hold payment code as a check says it: "hold payment code 2: payments held, new vouchers still
+    allowed"."""
+    code = str(code or "").strip().upper()
+    return f"hold payment code {code}" + (f": {_HOLD_MEANS[code]}" if code in _HOLD_MEANS else "")
+
+
+def _held_in_jde(held: list[dict[str, Any]]) -> str:
+    """Where VENDOR_ON_HOLD says a vendor is held when the hold is JD Edwards' (``vendors.erp_hold``), and which."""
+    return f"in JD Edwards ({hold_said(next(v['erp_hold'] for v in held if v.get('erp_hold')))})"
 
 
 def _held_index(held: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
