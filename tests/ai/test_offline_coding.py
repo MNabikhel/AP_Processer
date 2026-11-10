@@ -161,3 +161,19 @@ def test_the_rate_table_is_read_again_once_the_rate_file_changes(tmp_path, monke
     stamp = rates.stat().st_mtime_ns + 5_000_000_000
     os.utime(rates, ns=(stamp, stamp))
     assert offline_coder._rate_table().rate_for("HST", "ON", on) == 0.14
+
+
+def test_an_hst_where_none_is_levied_is_the_hst_of_the_lines_that_make_it():
+    """B-2226: GST on the Calgary lines and Ontario's HST on the Toronto line, read as "HST 3.824% of the subtotal,
+    Alberta". The HST's rate is the one HST rate some of the lines make it at, in the province that rate names; an
+    HST no lines make at any rate stays what the amounts show."""
+    import datetime as dt
+
+    from ap_coder.ai.offline_coder import _tax_lines
+
+    on, amounts = dt.date(2026, 4, 3), [1000.0, 200.0, 500.0]
+    gst, hst = _tax_lines({"gst_amount": 60.0, "hst_amount": 65.0}, 1700.0, "AB", on, amounts)
+    assert (gst.rate, gst.taxable_amount) == (0.03529, 1700.0)  # on its lines once their codes are settled
+    assert (hst.rate, hst.province, hst.taxable_amount, hst.tax_amount) == (0.13, "ON", 500.0, 65.0)
+    (odd,) = _tax_lines({"hst_amount": 64.0}, 1700.0, "AB", on, amounts)
+    assert (odd.rate, odd.province, odd.taxable_amount) == (0.03765, "AB", 1700.0)

@@ -564,3 +564,78 @@ def test_a_taxable_that_followed_the_lines_names_the_line_instead_of_an_arithmet
     assert "line 3 (Design, 1,200.00) may be exempt from RST" in found[0].message
     wrong = _coding(lines, [_tax("GST", 0.05, 14645), _tax("PST", 0.07, 14645, 900.00, "MB")], "MB")
     assert [f.severity for f in check_taxes(wrong, reference.tax) if f.code == "TAX_CALC_MISMATCH"] == ["error"]
+
+
+# --- What each tax was charged on, once the lines' codes are settled (B-2225) -----------------------------------------
+
+
+def _rates_in(province: str):
+    official = {"GST": 0.05, ("HST", "ON"): 0.13, ("PST", "BC"): 0.07}
+    return lambda tax_type, where: official.get(tax_type) or official.get((tax_type, where or province))
+
+
+def test_a_tax_charged_on_some_lines_is_charged_on_those_lines_at_the_rate_in_force(reference):
+    """B-2225: a reading gives a tax's amount, not what it was charged on. With one line exempt the GST stayed
+    "4.286% of the subtotal": TAX_RATE_NONSTANDARD and EXEMPT_LINE_TAXED on an invoice that is right. Once the
+    lines' codes are settled, the tax is 5% of the lines that carry it."""
+    lines = [_line(1, 1200.0), _line(2, 300.0), _line(3, 250.0, description="Government filing fee (exempt)")]
+    read = [_tax("GST", 0.04286, 1750.0, 75.0)]
+    coded = prefill(lines, read, rate_for=_rates_in("AB")).lines
+    assert [tax_code_of(li) for li in coded] == ["GST", "GST", "EXEMPT"]
+    before = _codes(check_taxes(_coding(coded, read, "AB"), reference.tax))
+    assert {"TAX_RATE_NONSTANDARD", "EXEMPT_LINE_TAXED"} <= before  # what a person was told
+    (gst,) = line_tax.settled_tax_lines(coded, read, _rates_in("AB"))
+    assert (gst.rate, gst.taxable_amount, gst.tax_amount) == (0.05, 1500.0, 75.0)
+    after = _codes(check_taxes(_coding(coded, [gst], "AB"), reference.tax))
+    assert not {"TAX_RATE_NONSTANDARD", "EXEMPT_LINE_TAXED", "TAX_BASE_MISMATCH", "TAX_CALC_MISMATCH"} & after
+    # dicts as well as the schema's objects, and the lines marked on the page as those worked out
+    marked = [{"amount": 100.0, "taxes_applied": ["GST", "PST"]}, {"amount": 50.0, "taxes_applied": ["GST"]}]
+    taxes = [{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 150.0, "tax_amount": 7.5},
+             {"tax_type": "PST", "province": "BC", "rate": 0.04667, "taxable_amount": 150.0,
+              "tax_amount": 7.0}]  # fmt: skip
+    gst, pst = line_tax.settled_tax_lines(marked, taxes, _rates_in("BC"))
+    assert gst == taxes[0] and (pst["rate"], pst["taxable_amount"]) == (0.07, 100.0)
+
+
+def test_a_tax_at_a_wrong_rate_is_still_said_once_the_lines_codes_are_settled(reference):
+    """Not loosened: a tax no set of lines makes at the rate in force keeps the rate the amounts show, and the
+    finding. So does one whose marked lines do not make it (the vendor's flags and its tax disagree)."""
+    lines = [_line(1, 1200.0), _line(2, 300.0), _line(3, 250.0)]
+    read = [_tax("GST", 0.04, 1750.0, 70.0)]  # 4% on everything
+    coded = prefill(lines, read, rate_for=_rates_in("AB")).lines
+    assert line_tax.settled_tax_lines(coded, read, _rates_in("AB")) == read
+    found = {f.code: f.message for f in check_taxes(_coding(coded, read, "AB"), reference.tax)}
+    assert found["TAX_RATE_NONSTANDARD"] == "GST rate 4% differs from the official 5% on 2026-08-21"
+    marked = [_line(1, 100.0, ["GST"]), _line(2, 200.0, status="exempt")]
+    whole = [_tax("GST", 0.05, 300.0, 15.0)]  # the GST is on both lines, whatever the line says
+    assert line_tax.settled_tax_lines(marked, whole, _rates_in("AB")) == whole
+    assert "EXEMPT_LINE_TAXED" in _codes(check_taxes(_coding(marked, whole, "AB"), reference.tax))
+
+
+def test_gst_lines_beside_hst_lines_are_not_exempt_from_the_other(reference):
+    """B-2226: lines for two provinces. A line that carries the GST is not "HST exempt", nor an HST line "GST
+    exempt"; and the tax check says the two provinces once, in place of what the one place of supply would make of
+    each tax line."""
+    lines = [_line(1, 1000.0), _line(2, 200.0), _line(3, 500.0)]
+    read = [_tax("GST", 0.03529, 1700.0, 60.0), _tax("HST", 0.13, 500.0, 65.0, "ON")]
+    coded = prefill(lines, read, rate_for=_rates_in("AB")).lines
+    assert [tax_code_of(li) for li in coded] == ["GST", "GST", "HST"]
+    taxes = line_tax.settled_tax_lines(coded, read, _rates_in("AB"))
+    assert [(t.rate, t.taxable_amount) for t in taxes] == [(0.05, 1200.0), (0.13, 500.0)]
+    found = [f for f in check_taxes(_coding(coded, taxes, "AB"), reference.tax) if f.code.startswith(("TAX_", "ITC_"))]
+    assert [(f.code, f.severity, f.message) for f in found] == [(
+        "TAX_TWO_PROVINCES", "warning",
+        "this invoice has lines for two provinces: GST 5% on lines 1, 2 (1,200.00) and Ontario HST 13% on line 3 "
+        "(500.00). Check that each line's tax code is the tax of where it was supplied",
+    )]  # fmt: skip
+    # Not two provinces: HST on every line of a supply in Alberta (what it always said), GST and HST on one line,
+    # an HST that is no province's rate.
+    everywhere = _coding([_line(1, 1000.0, ["HST"])], [_tax("HST", 0.13, 1000.0, province="ON")], "AB")
+    assert {"TAX_PROVINCE_DIFFERS", "ITC_AT_RISK"} <= _codes(check_taxes(everywhere, reference.tax))
+    both = [_line(1, 1000.0, ["GST", "HST"]), _line(2, 500.0, ["HST"])]
+    stacked = _coding(both, [_tax("GST", 0.05, 1000.0), _tax("HST", 0.13, 1500.0, province="ON")], "AB")
+    assert "TAX_TWO_PROVINCES" not in _codes(check_taxes(stacked, reference.tax))
+    odd = [_line(1, 1000.0, ["GST"]), _line(2, 500.0, ["HST"])]
+    wrong = _coding(odd, [_tax("GST", 0.05, 1000.0), _tax("HST", 0.12, 500.0, province="ON")], "AB")
+    assert "TAX_TWO_PROVINCES" not in (said := _codes(check_taxes(wrong, reference.tax)))
+    assert {"TAX_RATE_NONSTANDARD", "ITC_AT_RISK"} <= said

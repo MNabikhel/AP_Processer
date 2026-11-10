@@ -366,17 +366,20 @@ def test_o_lines_for_two_provinces_are_held(chart_company_client, drop, printed)
     assert not ReviewPage(chart_company_client, got.id).approve()["ok"]  # no "Approve anyway" for it
 
 
-@pytest.mark.xfail(strict=True, reason="the two pay items are spelled out with the wrong figures: each tax line's "
-                   "taxable amount is the whole subtotal (1,700.00), though the page prints \"GST 5% on 1,200.00\" "
-                   "and \"HST 13% on 500.00\", so the HST's rate reads 3.824%, its lines 1, 2, 3 and its tax area "
-                   "Alberta's, and \"HST is not levied in Alberta\" is raised. Where: the tax lines' taxable amounts "
-                   "(the reading and coding/tax.py) and erp/jde.py's _two_tax_areas; not this file's.")  # fmt: skip
 def test_o_the_two_pay_items_are_spelled_out_as_printed(drop, printed):
+    """Each tax on its own lines, as the page prints it ("GST 5% on 1,200.00", "HST 13% on 500.00"), and the tax
+    check says once that the lines are for two provinces, not what Alberta alone would make of the HST (B-2226,
+    B-2227)."""
     got = drop(printed["two_provinces"])
     held = got.found["JDE_TAX_AREA"]
     assert "taxable amount 1,200.00, tax amount 60.00 (GST 5%: lines 1, 2)" in held
     assert "taxable amount 500.00, tax amount 65.00 (HST 13%: line 3)" in held
-    assert "TAX_TYPE_NOT_LEVIED" not in got.found
+    assert got.found["TAX_TWO_PROVINCES"] == (
+        "this invoice has lines for two provinces: GST 5% on lines 1, 2 (1,200.00) and Ontario HST 13% on line 3 "
+        "(500.00). Check that each line's tax code is the tax of where it was supplied"
+    )
+    assert not {"TAX_TYPE_NOT_LEVIED", "TAX_PROVINCE_DIFFERS", "TAX_REGIME_MISMATCH", "ITC_AT_RISK",
+                "TAX_RATE_NONSTANDARD"} & set(got.found)  # fmt: skip
 
 
 def test_p_some_lines_exempt(drop, printed):
@@ -390,14 +393,13 @@ def test_p_some_lines_exempt(drop, printed):
     assert got.queue.startswith(_left_line(reason))
 
 
-@pytest.mark.xfail(strict=True, reason="two findings that are not so: \"GST rate 4.286% differs from the official "
-                   "5%\" and, on the exempt line, \"the GST charged adds up only with this line\". The page prints "
-                   "\"GST 5% on 1,500.00\"; the tax line's taxable amount is taken as the whole subtotal (1,750.00). "
-                   "Where: the tax lines' taxable amounts (the reading and coding/tax.py, coding/line_tax.py); not "
-                   "this file's.")  # fmt: skip
 def test_p_an_exempt_line_raises_no_finding_that_is_not_so(drop, printed):
+    """The GST is 5% of the two lines that carry it, as the page prints it ("GST 5% on 1,500.00"): not 4.286% of all
+    three, and the exempt line is not said to be taxed (B-2225)."""
     got = drop(printed["exempt_line"])
     assert "TAX_RATE_NONSTANDARD" not in got.found and "EXEMPT_LINE_TAXED" not in got.found
+    (gst,) = got.output["tax_lines"]
+    assert (gst["rate"], gst["taxable_amount"], gst["tax_amount"]) == (0.05, 1500.0, 75.0)
 
 
 def test_q_a_meals_line(chart_company, chart_company_client, drop, hard):
