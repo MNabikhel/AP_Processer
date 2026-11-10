@@ -816,6 +816,13 @@ CHECKS: dict[str, CheckHelp] = {
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),
+    "CLAIM_RECEIPT_NOT_ADDED": CheckHelp(
+        READING, "Receipt not in the claim's total",
+        "One of the receipts joined into this expense claim adds nothing to it: its total could not be read, or it "
+        "is in another currency than the claim. The finding names the file and its page; its line is there at 0.00.",
+        "Look at the receipt's page and type its amount on its line (in the claim's currency), or leave it at 0.00 "
+        "when it is not part of the claim.",
+    ),
     "FILE_CUT_OFF": CheckHelp(
         READING, "File cut off",
         "The PDF's end is missing: it was still downloading or being saved when it came in, or an email cut it "

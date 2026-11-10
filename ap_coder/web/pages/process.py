@@ -42,7 +42,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import EVENT_ACTOR, EVENT_ORIGIN, REVIEW, Store
 from ap_coder.core.store.folder import read_file
-from ap_coder.intake import inbox
+from ap_coder.intake import inbox, joined
 from ap_coder.intake.imports import NO_ROOM, RESTORING, Reader, has_room, list_folder, noted, owner_id, pick_up
 from ap_coder.intake.mailbox import (
     EMAIL_EXTENSIONS,
@@ -852,6 +852,7 @@ def process_page(request: Request) -> HTMLResponse:
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)) if is_admin(request) else "",
         accept=",".join(ACCEPT),
+        voucher_kinds=joined.KINDS,
         job=import_status(store, settings),
         demo_available=demo_offered(demo_count, total),
         demo_count=demo_count,
@@ -999,17 +1000,19 @@ def _read_saved(mails: list[Unpacked], unreadable: list[Path]) -> list[Any]:
 
 
 @router.post("/process/upload")
-def process_upload(request: Request, files: list[UploadFile] = File(...)) -> JSONResponse:  # noqa: B008
+def process_upload(request: Request, files: list[UploadFile] = File(...),  # noqa: B008
+                   voucher: str = Form("")) -> JSONResponse:  # fmt: skip
     """Save the uploaded files to the invoices folder, then read and code the new ones in the background. Each file
     is read from its spool file (on disk past 1 MB) only when it is saved, one at a time: never all in memory. (A
-    plain function: FastAPI takes the upload in, then runs it on a threadpool thread, D-158.)"""
+    plain function: FastAPI takes the upload in, then runs it on a threadpool thread, D-158.) ``voucher``: the files
+    are one voucher of that kind (``joined.KINDS``, D-216), joined in the order sent and read as one."""
     if server_mode(request):
         who = person()
         refused, status = upload_refusal(who.user_id if who else None, len(files), sum(u.size or 0 for u in files),
                                          store=get_store(request))  # fmt: skip
         if refused:
             return refuse(refused, status=status)
-    return _save_and_start(request, files)
+    return _save_and_start(request, files, voucher)
 
 
 def _read_upload(upload: UploadFile) -> tuple[str, bytes | None]:
@@ -1027,7 +1030,7 @@ def _left_out(name: str, why: str, text: str, tone: str = "warn") -> tuple[dict[
     return {**flash_message(text, tone), "left_out": True}, line
 
 
-def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
+def _save_and_start(request: Request, files: list[UploadFile], voucher: str = "") -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
@@ -1064,6 +1067,14 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
                                   f"({exc.strerror or type(exc).__name__}). Rename it or save it there yourself.",
                                   "err"))  # fmt: skip
             continue
+    if voucher:  # these files are one voucher (D-216): joined in the order chosen, then read as one
+        try:
+            if mails or left:
+                raise joined.CannotJoin(left[0][0]["text"] if left else "A saved email can't be one of a voucher's "
+                                        "files: choose its attachments, as PDFs or pictures.")  # fmt: skip
+            saved = [join_files(store, folder, [Path(place) for place, *_ in saved], voucher)]
+        except joined.CannotJoin as exc:
+            return refuse(f"{exc} The files you chose are in the invoices folder now, listed on this page.")
     unreadable: list[Path] = []
     attached = _read_saved(mails, unreadable)
     saved += attached
@@ -1075,6 +1086,19 @@ def _save_and_start(request: Request, files: list[UploadFile]) -> JSONResponse:
     queued = queue_files(request, saved, source="upload", notes=notes, lines=lines, emails=len(mails),
                          to_person=_to_person(mails))  # fmt: skip
     return _started(queued)
+
+
+def join_files(store: Store, folder: Path, paths: list[Path], kind: str) -> Any:
+    """``read_file`` of the one document made of the files at ``paths`` (``joined.join``, D-216), made while no
+    pick-up of the folder runs: a scheduled watch would put the same files in line one by one. Raises
+    ``joined.CannotJoin``."""
+    lock = wait_for_pickup(data_dir(store), lambda: None, most=PICKUP_PATIENCE)
+    if lock is None:
+        raise joined.CannotJoin(BUSY_PICKUP)
+    try:
+        return read_file(joined.join(store, folder, paths, kind))
+    finally:
+        lock.close()
 
 
 def _to_person(mails: list[Unpacked]) -> int:
@@ -1124,6 +1148,29 @@ def process_folder(request: Request) -> JSONResponse:
                              emails=len(mails), to_person=_to_person(mails))  # fmt: skip
     finally:
         lock.close()
+    return _started(queued)
+
+
+@router.post("/process/voucher")
+def process_voucher(request: Request, names: list[str] = Form([]), kind: str = Form("")) -> JSONResponse:  # noqa: B008
+    """The files ticked in the invoices folder's list are one voucher (D-216): joined in the order shown
+    (``intake.joined.join``: the pages of one invoice, or the receipts of one claim) and put in line as one file."""
+    store, settings = get_store(request), get_settings(request)
+    if not ready_to_read(setup_steps(store, settings)):
+        return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
+    folder = invoice_dir(store)
+    paths = [folder / name for name in names]
+    gone = [name for name, path in zip(names, paths, strict=True) if path.parent != folder or not path.is_file()]
+    if gone:
+        return refuse(f"{', '.join(gone)} is no longer in the invoices folder: reload the page.", 409)
+    try:
+        made = join_files(store, folder, paths, kind)
+    except joined.CannotJoin as exc:
+        return refuse(str(exc))
+    queued = queue_files(request, [made], source="folder", include_failed=True)
+    if server_mode(request):  # the list kept for every process no longer has the files joined (D-176)
+        with contextlib.suppress(OSError):
+            list_folder(store, folder).keep(store)
     return _started(queued)
 
 

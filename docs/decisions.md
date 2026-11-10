@@ -5024,3 +5024,45 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ap_coder/web/static/invoice.css`, `picker.css`, `js/invoice.js`, `js/picker.js`, `js/account_search.js`;
     `tests/web/test_account_lines.py`, `tests/web/test_account_picker.py`, `tests/web/test_screens_fluid.py`,
     `tests/review_page.py`)
+- **D-216** · **Several files can be ONE voucher: a person ticks them on the Add invoices page and says whether they
+  are the pages of one invoice or the receipts of one expense claim; they are joined into one document, and can be
+  made separate invoices again while in review** (stage 2; 10 Nov 2026).
+  - **Why:** every file became its own invoice. An expense claim comes as several phone pictures of receipts, and a
+    scanner or a phone saves an invoice's pages one by one: each was read as an invoice of its own, with its own
+    supplier and total.
+  - **What:** on the Add invoices page, the files chosen for upload (two or more: "These files are" one voucher) or
+    ticked in the invoices folder's list are joined in the order shown, which arrows change (`intake/joined.py`
+    `join`): a picture becomes its pages as one coming in alone does, a PDF gives its pages. The one PDF
+    ("IMG_0412 and 2 more.pdf") goes in the import queue like any file; the files move to `originals/` as they came,
+    and `joined_files` (by `_SCHEMA`, no schema version) keeps which pages are whose, by the document's SHA-256.
+    **Pages of one invoice:** nothing else changes: the document is read by the normal path, the 60-page limit and
+    its finding included. **Receipts of one claim:** `InvoicePipeline._read_claim` reads each receipt's pages on
+    their own as an invoice is, and `coding/claim.py` makes one voucher of them: the receipts' lines in order, named
+    with their merchant and coded as each receipt was; a receipt whose lines do not add up to its total gives one
+    line (merchant and date, its amount before tax); each line carries the tax its own receipt charged
+    (`LineItem.taxes_read`, from that receipt's own `invoice_taxes`, so a tip takes none); the totals and the tax
+    lines are the receipts' added up. A receipt in another currency than most, or whose total could not be read,
+    adds nothing: a 0.00 line and the finding CLAIM_RECEIPT_NOT_ADDED naming the file and its page. The supplier
+    and the invoice number are left empty, and MISSING_VENDOR and MISSING_INVOICE_NUMBER say why in a claim's words
+    (the employee being repaid; a reference of your own), on the first reading and on every check after it
+    (`finalise_coding`). The review screen lists the files ("page 3 is from IMG_0412.jpg") over the one document,
+    and "Make these separate invoices again" (`POST /review/{id}/separate`, a Clerk's) removes the voucher, puts
+    the files back in the invoices folder and reads each on its own. A file that is one of a voucher's files counts
+    as in AP Coder wherever a file's content is asked (the upload's and the folder's skip, the folder's list), and
+    joining it into another voucher is refused with where it is ("page 2 of invoice #14").
+  - **Measured:** three made-up phone pictures (fuel with GST, a lunch with GST and a tip, a room with HST) as one
+    claim: 5 lines, 273.00 + 27.80 = 300.80, GST 3.00 / 1.20 / 0.20 / none on the tip, HST 23.40 on the room, no
+    tax or total finding, read in 7 to 10 s (4 cores, OCR on the processor). Two scanned pages joined give the same
+    header, lines, totals and findings as the same two pages scanned as one PDF.
+  - **Not chosen:** a group in the import queue read file by file and merged afterwards (a second kind of queue
+    row, and nothing to show as one document); the link kept on the invoice's own row (it is found by the
+    document's SHA-256, so a failed read, a retry or pages set upright need nothing more); a supplier guessed from
+    the first merchant; a capture of the whole claim (each receipt has its own: a claim is never approved without
+    a person, and its fields are not boxed on the page).
+  - **Left:** a claim cover sheet; per-employee settings; adding a file to a voucher already read; a claim's
+    receipt photographed sideways is read but shown as it was taken; a tip whose amount OCR reads before its
+    label is not split out (the receipt is then one line for its amount before tax).
+  - (`ap_coder/intake/joined.py`, `ap_coder/coding/claim.py`, `ap_coder/core/store/joined.py`,
+    `ap_coder/ai/pipeline.py`, `ap_coder/web/pages/process.py`, `review.py`, `invoice.py`,
+    `ap_coder/web/templates/process.html`, `_invoice_document.html`, `ap_coder/web/static/js/process.js`;
+    `tests/intake/test_joined.py`, `tests/coding/test_claim.py`, `tests/web/test_web_joined.py`)

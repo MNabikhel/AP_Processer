@@ -87,6 +87,15 @@
           <small>PDFs, scans or photos (TIFF, PNG, JPG), saved emails (.eml, or .msg from Outlook: each email is sorted, its invoices read), or an invoice saved as text (.txt)</small>
         </label>
         <ul class="picked" id="picked" hidden></ul>
+        {# Several files that are one voucher (D-216): offered once two files are chosen (process.js). #}
+        <div class="row" id="voucher-row" hidden>
+          <label for="upload-voucher">These files are</label>
+          <select name="voucher" id="upload-voucher">
+            <option value="">separate invoices, one each</option>
+            {% for value, label in voucher_kinds.items() %}<option value="{{ value }}">one voucher: {{ label | lower }}</option>{% endfor %}
+          </select>
+          <span class="muted" id="voucher-hint" hidden>Joined in the order shown (the arrows change it) and read as one. Each file is kept as it came.</span>
+        </div>
         <div class="row">
           <button class="btn primary" type="submit" id="upload-go" disabled data-ready="{{ 'yes' if ready else 'no' }}">
             <span class="ms" aria-hidden="true">play_arrow</span><span id="upload-label">Process uploaded invoices</span>
@@ -133,10 +142,14 @@
       {% else %}
       <div class="table-wrap">
         <table class="apc-table">
-          <thead><tr><th>File</th><th class="r">Size</th></tr></thead>
-          <tbody>
+          {# Two files or more: each can be ticked as one of a voucher's files, and moved into its order (D-216). #}
+          {% set joinable = can("/process/voucher") and (files | rejectattr("email") | list | length) > 1 %}
+          <thead><tr>{% if joinable %}<th aria-label="One voucher"></th>{% endif %}<th>File</th><th class="r">Size</th></tr></thead>
+          <tbody id="folder-files">
             {% for f in files %}
-            <tr><td><span class="ms file-ico{% if f.email %} mail{% endif %}" aria-hidden="true">{{ f.icon }}</span> {{ f.name }}
+            <tr>{% if joinable %}<td class="join-cell">{% if not f.email %}<input type="checkbox" name="names" value="{{ f.name }}" form="voucher-form" aria-label="{{ f.name }} is one of the files of one voucher">
+              <button type="button" class="btn sm ghost" data-move="-1" aria-label="Move {{ f.name }} up"><span class="ms" aria-hidden="true">arrow_upward</span></button><button type="button" class="btn sm ghost" data-move="1" aria-label="Move {{ f.name }} down"><span class="ms" aria-hidden="true">arrow_downward</span></button>{% endif %}</td>{% endif %}
+              <td><span class="ms file-ico{% if f.email %} mail{% endif %}" aria-hidden="true">{{ f.icon }}</span> {{ f.name }}
               {% if f.email %}<span class="muted">· its attachments are read</span>{% endif %}</td><td class="r">{{ f.kb }}</td></tr>
             {% endfor %}
           </tbody>
@@ -146,6 +159,16 @@
         <button class="btn primary" type="submit"{% if not ready %} disabled{% endif %}>
           <span class="ms" aria-hidden="true">play_arrow</span>Process {{ files | length | plural("file") }}</button>
       </form>
+      {% if joinable %}
+      <form method="post" action="/process/voucher" id="voucher-form" data-job="/process/status" class="row">
+        <span class="muted">Several files that are one voucher? Tick them, put them in order with the arrows, then say what they are:</span>
+        <select name="kind" aria-label="What the ticked files are">
+          {% for value, label in voucher_kinds.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+        <button class="btn" type="submit" id="voucher-go" disabled data-ready="{{ 'yes' if ready else 'no' }}">
+          <span class="ms" aria-hidden="true">file_copy</span>Process the ticked files as one</button>
+      </form>
+      {% endif %}
       {% endif %}
     </section>
   </div>

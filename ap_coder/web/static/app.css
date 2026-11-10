@@ -632,6 +632,7 @@ select {max-width: 100%; text-overflow: ellipsis;} /* a long vendor name in its 
   max-height: min(55vh, 440px); border-bottom: 1px solid var(--lg-border);}  /* a dozen names at once, then it scrolls */
 .picked li {display: flex; justify-content: space-between; gap: 12px; padding: 6px 2px; border-bottom: 1px solid var(--lg-hairline);}
 .picked li span:last-child {color: var(--lg-muted); white-space: nowrap;}
+.picked li .btn, .join-cell .btn {padding: 0 4px; vertical-align: middle;} .join-cell {white-space: nowrap; width: 1%;}
 .file-ico {color: #c53030;}
 .file-ico.mail {color: var(--lg-accent);}
 .job .bar {height: 4px; background: var(--lg-hairline); border-radius: 2px; overflow: hidden;}
