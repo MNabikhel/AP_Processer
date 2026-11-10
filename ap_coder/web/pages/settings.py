@@ -726,7 +726,7 @@ def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form
         keys.append(SCREENS)
     elif screens == EVERYTHING and not store.get_setting(SCREENS):
         store.set_setting(SCREENS, screens, actor=reviewer())  # chosen here: the queue's card asks no more (D-221)
-    switches =[(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
+    switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
     if not developer_env_on():  # set by AP_DEVELOPER_TOOLS: shown as on, never stored (B-527)
         switches.append((DEVELOPER_TOOLS, developer, "developer tools", developer_tools(store)))
     for key, value, words, was in switches:
