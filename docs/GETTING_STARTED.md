@@ -134,7 +134,8 @@ dashboard won't open, `python -m ap_coder doctor --online` in `scripts\terminal.
 Start AP Coder from the **AP Coder** desktop shortcut (or `APProcessor.bat`). The dashboard opens in your
 browser (it is served by AP Coder itself, on this computer only); keep the black window open while you use it
 and close it to stop. If another program already uses
-port 8501, AP Coder picks the next free one.
+port 8501, AP Coder picks the next free one. While AP Coder imports or reads invoices, a Windows laptop does not
+go to sleep by itself (the screen may still turn off); closing the lid still puts it to sleep.
 
 **Fastest: the demo.** On the welcome screen click **Load demo invoices**. Ten
 sample invoices from across Canada arrive as if the AI had read them (eight to review, two already

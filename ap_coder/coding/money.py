@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 
 _UNITS = {places: Decimal(1).scaleb(-places) for places in range(7)}
 _SCALE = {places: 10.0**places for places in range(7)}
@@ -26,10 +26,20 @@ _SCALE = {places: 10.0**places for places in range(7)}
 # check); a tie, or what could be one, is worked out in decimals (tests/coding/test_money.py holds them equal).
 _FAST = 1e11
 _NEAR_A_TIE = 0.4999
+# Rounding to the cent needs every digit of the number: the decimals' own 28 ran out at 27 digits typed in a field
+# (decimal.InvalidOperation, B-2096). This holds any float, and a product or a share of two.
+_ALL_DIGITS = Context(prec=1000)
+# The largest amount a field takes (ten trillion): beyond it a float no longer holds the cents, and no invoice, tax or
+# quantity is that large. What is typed past it is not an amount (``web.invoice_view``).
+LARGEST = 1e13
 
 
 def _dec(amount: float) -> Decimal:
     return Decimal(str(amount))
+
+
+def _rounded(exact: Decimal, places: int) -> Decimal:
+    return exact.quantize(_UNITS[places], ROUND_HALF_UP, context=_ALL_DIGITS)
 
 
 def _nearest(scaled: float) -> int | None:
@@ -46,7 +56,7 @@ def half_up(amount: float, places: int = 2) -> float:
     nearest = _nearest(amount * _SCALE[places])
     if nearest is not None:
         return nearest / _SCALE[places] if nearest else math.copysign(0.0, amount)
-    return float(_dec(amount).quantize(_UNITS[places], ROUND_HALF_UP))
+    return float(_rounded(_dec(amount), places))
 
 
 def times(amount: float, factor: float, places: int = 2) -> float:
@@ -56,7 +66,7 @@ def times(amount: float, factor: float, places: int = 2) -> float:
     nearest = _nearest(product * _SCALE[places])
     if nearest is not None:
         return nearest / _SCALE[places] if nearest else math.copysign(0.0, product)
-    return float((_dec(amount) * _dec(factor)).quantize(_UNITS[places], ROUND_HALF_UP))
+    return float(_rounded(_dec(amount) * _dec(factor), places))
 
 
 def add_up(amounts: Iterable[float], places: int = 2) -> float:
@@ -68,7 +78,7 @@ def add_up(amounts: Iterable[float], places: int = 2) -> float:
         nearest = round(total * scale)
         if abs(total * scale - nearest) < _NEAR_A_TIE:
             return nearest / scale if nearest else math.copysign(0.0, total) if total else 0.0
-    return float(sum(map(_dec, amounts), Decimal(0)).quantize(_UNITS[places], ROUND_HALF_UP))
+    return float(_rounded(sum(map(_dec, amounts), Decimal(0)), places))
 
 
 def split(total: float, weights: list[float], places: int = 2) -> list[float]:
@@ -81,17 +91,17 @@ def split(total: float, weights: list[float], places: int = 2) -> list[float]:
     base = sum(exact, Decimal(0))
     if not base:
         return [half_up(total), *[0.0] * (len(weights) - 1)]
-    whole, unit = _dec(total), _UNITS[places]
-    shares = [(whole * w / base).quantize(unit, ROUND_HALF_UP) for w in exact]
+    whole = _dec(total)
+    shares = [_rounded(whole * w / base, places) for w in exact]
     biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
-    shares[biggest] += (whole - sum(shares, Decimal(0))).quantize(_UNITS[2], ROUND_HALF_UP)
+    shares[biggest] += _rounded(whole - sum(shares, Decimal(0)), 2)
     return [float(s) for s in shares]
 
 
 def in_cents(amount: float) -> int:
     """``amount`` in whole cents, half up: 10.005 is 1001."""
     nearest = _nearest(amount * 100)
-    return nearest if nearest is not None else int(_dec(amount).scaleb(2).quantize(_UNITS[0], ROUND_HALF_UP))
+    return nearest if nearest is not None else int(_rounded(_dec(amount).scaleb(2), 0))
 
 
 # --- What counts as equal ------------------------------------------------------------------------------------------
