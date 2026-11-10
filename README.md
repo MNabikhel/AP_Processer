@@ -1,8 +1,8 @@
 # AP Coder
 
-**An offline AI assistant for Accounts Payable.** It reads Canadian supplier invoices, codes them to your GL
-accounts and cost centers, checks GST/HST/PST/QST and the math, learns from every approval, and exports approved
-invoices to JD Edwards E1 or Excel.
+**An offline AI assistant for Accounts Payable.** It reads Canadian supplier invoices, codes each line to your
+accounts (with a JD Edwards chart loaded: one account string, `business unit.object.subsidiary`), checks
+GST/HST/PST/QST and the math, learns from every approval, and hands approved invoices to JD Edwards E1 or Excel.
 
 [![CI](https://github.com/MNabikhel/AP_Processer/actions/workflows/ci.yml/badge.svg)](https://github.com/MNabikhel/AP_Processer/actions/workflows/ci.yml)
 
@@ -10,31 +10,37 @@ It runs on one laptop, or on one company server for the whole AP team. Every inv
 OCR and by small models in [LM Studio](https://lmstudio.ai/), and nothing leaves it unless an Admin switches on one
 of the [exceptions](#what-leaves-the-laptop).
 
-![The review queue: today's work, the invoices waiting, and the ones clean enough to approve together](docs/screenshots/review-queue.png)
+![The review queue: the invoices waiting, why each one needs a person, and the ones clean enough to approve together](docs/screenshots/review-queue.png)
 
 ## Where it stands
 
 | | |
 |---|---|
+| **One department, one laptop** | Built: a prototype for one department on a Windows laptop, working from JD Edwards' own exports (the chart of accounts, the business units, the suppliers, last year's coding), with a keying sheet to type vouchers from. It scores itself against last year before anyone relies on it: [docs/PROTOTYPE.md](docs/PROTOTYPE.md). The same laptop can then serve a few colleagues, with logins (`python -m ap_coder share`). Not yet run on a company's real invoices. |
 | **Laptop release** | Ready: checked end to end, the way a pilot tester uses it. Next: Phase 0 connects AP Coder to the company's inbox, sign-in and JD Edwards, then Phase 1, a live pilot with up to 10 people ([docs/PILOT_PLAN.md](docs/PILOT_PLAN.md)). |
-| **Company server** | Built, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for 300 to 400 people, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
-| **JD Edwards E1** | Approved invoices go out as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
+| **Company server** | Built for Windows, Linux and macOS, with HTTPS, logins with a code from an authenticator app, and four roles; reviewed for security within the project and sized for 300 to 400 people, not yet reviewed by a company's IT security team. Not installed yet: [docs/SERVER.md](docs/SERVER.md). |
+| **JD Edwards E1** | Approved invoices go out as a keying sheet (one block a voucher, to type from) or as JDE's standard batch files (F0411Z1/F0911Z1). The direct API connection is built and waits for the JDE team: [docs/JDE_E1.md](docs/JDE_E1.md). In the pilot they go in as pending batches that AP approves and posts in E1, so E1's batch approval keeps a person's final check. |
 | **Finance AI Hub** | AP Coder's feed to Microsoft Fabric is built (off until an Admin turns it on): [docs/FINANCE_HUB.md](docs/FINANCE_HUB.md). |
-| **Quality** | About 6,000 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
+| **Quality** | About 7,200 automated tests run on every change, on Windows and Linux; the install and the update are checked on clean Windows and Mac machines. Every bug fixed gets its own test ([docs/BUGS.md](docs/BUGS.md)). |
 
 ## What it does
 
 1. **Reads every invoice on the machine:** PDFs, scans, phone photos and emails (`.eml`, `.msg`). Each value gets a
    confidence (*verified*, *likely*, *check*, *missing*) and is boxed on the page.
 2. **Codes each line** to your GL accounts and cost centers: from what AP approved before, then fixed rules, then a
-   local model for what is left. It can only pick codes from your chart.
-3. **Checks everything in code, not by AI:** totals, the tax rate for the province and date, registration numbers,
-   duplicates (under another vendor name too, or already in the ERP), vendor fraud signals, the PO match and
-   payment terms.
-4. **A person reviews and approves.** Every correction is remembered for that vendor's next invoice. A vendor whose
+   local model for what is left. It can only pick codes from your chart. With a JD Edwards chart loaded, a line gets
+   one account string that exists and can be posted to, the supplier's usual accounts are offered first (learned
+   from last year's journal on day one), and the 30-character remark is suggested. A line it is not sure of is left
+   to a person, with the reason and its best candidates.
+3. **Checks everything in code, not by AI:** totals, each line's tax and the rate for the province and date, the
+   GST/HST number against the supplier list, duplicates (under another vendor name too, or already in the ERP),
+   vendor fraud signals, the PO match and payment terms.
+4. **A person reviews and approves.** Every correction is remembered for that vendor's next invoice; coding rules
+   keep their history and can be undone; several files (the receipts of one claim) can be joined into one voucher. A vendor whose
    record proves it can go touchless, once an AP lead switches that on (off by default, and off for the pilot until
    the company's AI team has reviewed it).
-5. **Exports** approved invoices to JD Edwards or Excel/CSV, and covers the rest of the AP cycle: month-end
+5. **Exports** approved invoices to JD Edwards (batch files, or a keying sheet) or Excel/CSV, and covers the rest
+   of the AP cycle: month-end
    accruals, the sales-tax claim, vendor statements, a duplicate payment audit and the audit trail.
 
 ```
@@ -52,12 +58,17 @@ invoice (PDF, scan, photo, email) ─► read on the machine: text layer or OCR,
 
 | | |
 |---|---|
-| ![An invoice in review: the page with every value boxed, the checks, and the approve bar](docs/screenshots/invoice-review.png) | ![The invoice directory: every invoice in one table, filtered by any column](docs/screenshots/invoice-directory.png) |
-| ![Sales tax: the GST/HST and QST to claim back for a period](docs/screenshots/sales-tax.png) | ![Learning & accuracy: how often the coding is right, and what was learned](docs/screenshots/learning.png) |
+| ![An invoice in review: the page with every value boxed, one account string a line, each line's tax, and the approve bar](docs/screenshots/invoice-review.png) | ![JD Edwards files: the chart of accounts, business units, suppliers, last year's coding and vouchers, each loaded from JD Edwards' own export](docs/screenshots/jde-files.png) |
+| ![To key into JDE: the approved invoices ready for a keying sheet or a batch file](docs/screenshots/keying-sheet.png) | ![What was learned: how often the coding is right, and what each approval taught](docs/screenshots/learning.png) |
+| ![The invoice directory: every invoice in one table, filtered by any column](docs/screenshots/invoice-directory.png) | ![Sales tax: the GST/HST and QST to claim back for a period](docs/screenshots/sales-tax.png) |
 
-**Want to look around?** Start AP Coder and, in **Settings** → **Data & backups**, click **Load demo invoices**: ten
-sample invoices from across Canada, with sample purchase orders and a vendor list. (The screenshots are of these
-samples.)
+The first five pictures are of a made-up company with the short menu a new laptop starts with (*Simple screens*);
+the last two are of the demo invoices with every screen switched on (*Settings → About → Screens*).
+
+**Want to look around?** Two ways, neither needs your own data:
+- `python -m ap_coder demo --company` loads the made-up company: its JD Edwards exports and seven invoices to review.
+- In **Settings** → **Data & backups**, **Load demo invoices** adds ten sample invoices from across Canada, with
+  sample purchase orders and a vendor list. They are removed on the same page.
 
 ## Get started on a laptop
 
