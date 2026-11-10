@@ -220,6 +220,22 @@ def _distinct(first: dict[str, Any], row: dict[str, Any]) -> bool:
     return bool(gst_a and gst_b) and not same_tax_number(gst_a, gst_b)
 
 
+def _people_keys(rows: list[tuple[str, str]], words: list[str]) -> dict[str, str]:
+    """{a person's name in the usual order, as a vendor key: the ERP ID} for the vendors (name, ERP ID) listed "LAST,
+    FIRST M.": "jane q doe", and "jane doe" too when only one vendor can be meant, as ``find_vendor`` matches a
+    person. So an invoice printed "Jane Q. Doe" gets the supplier number of "DOE, JANE Q."."""
+    full: dict[str, set[str]] = {}
+    short: dict[str, set[str]] = {}
+    for name, ident in rows:
+        person = person_name(name_marker(name, words)[0])
+        if person:
+            last, first, middles = person
+            full.setdefault(" ".join((first, *middles, *last)), set()).add(ident)
+            short.setdefault(" ".join((first, *last)), set()).add(ident)
+    keys = {key: next(iter(found)) for key, found in short.items() if len(found) == 1 and key not in full}
+    return keys | {key: next(iter(found)) for key, found in full.items() if len(found) == 1}
+
+
 def _master_rows_as_kept(rows: list[dict[str, Any]], holding: list[str], words: list[str]) -> list[dict[str, Any]]:
     """Each row of a vendor master import (a copy) as it is kept: ``key``, its name's key without a retired supplier's
     marker; ``marked``, the note of a marked one, which is on hold (B-2083); ``hold``, JD Edwards' hold payment code
@@ -762,6 +778,11 @@ class VendorsMixin:
                 ids.setdefault(f"gst:{number}", r[1])
                 if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
                     ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
+        with self._conn() as conn:  # the people ("LAST, FIRST M."), by their names as a claim prints them
+            people = conn.execute("SELECT display_name, erp_id FROM vendors WHERE erp_id != '' AND display_name "
+                                  "LIKE '%,%'").fetchall()  # fmt: skip
+        for key, ident in _people_keys([tuple(r) for r in people], self.skip_words()).items():
+            ids.setdefault(key, ident)
         return ids
 
     def master_by_tax_number(self, number: Any) -> list[dict[str, Any]]:

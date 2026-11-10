@@ -6,10 +6,11 @@ from ap_coder.ai.pipeline import finalise_coding
 from ap_coder.ai.suggest import suggest_gl
 from ap_coder.coding.vendors import ON_HOLD, master_columns, master_rows, vendor_findings
 from ap_coder.core.config import Settings
+from ap_coder.core.keys import master_vendor_id
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master
-from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, name_marker
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, name_marker, person_name
 from ap_coder.erp import exports
 from ap_coder.ops.demo import load_demo, remove_demo
 from tests.jde_exports import records, supplier, supplier_master
@@ -427,3 +428,81 @@ def test_of_a_marked_and_an_unmarked_supplier_of_one_name_the_unmarked_is_the_ma
     assert store.get_vendor("northern paper #410003")["status"] == ON_HOLD
     store.import_vendor_master([dict(r) for r in rows], by_erp_id=True)  # the same again: nothing moves
     assert store.find_vendor("Northern Paper Co")["erp_id"] == "410020" and len(store.master_vendors()) == 2
+
+
+# --- People as suppliers: "LAST, FIRST M." ------------------------------------------------------------------------
+
+
+def _people(tmp_path, *names):
+    store = Store(tmp_path / f"people{len(names)}.db")
+    store.import_vendor_master([{"vendor_name": n, "erp_id": str(520001 + i)} for i, n in enumerate(names)])
+    return store
+
+
+def _number(store, printed):
+    found = store.find_vendor(printed, None)
+    return found["erp_id"] if found else None
+
+
+def test_which_names_read_as_a_person():
+    """Only a name with exactly one comma, no digit and no company word is a person's "LAST, FIRST M."."""
+    assert person_name("DOE, JANE Q.") == (("doe",), "jane", ("q",))
+    assert person_name("Van Der Berg, Pieter J") == (("van", "der", "berg"), "pieter", ("j",))
+    assert person_name("O'Brien-Côté, Marie-Ève") == (("o", "brien", "cote"), "marie", ("eve",))
+    for company in ("Smith, Brown & Co", "Smith, Brown and Partners", "Granite Ridge, Town of", "Hart, Lowe Inc.",
+                    "Acme Fasteners Ltd", "Doe, Jane, Q", "Unit 4, 12 Main Street", "Jane Q. Doe", ""):  # fmt: skip
+        assert person_name(company) is None, company
+
+
+def test_a_person_in_the_master_is_found_by_the_name_as_a_claim_prints_it(tmp_path):
+    """An employee is listed "DOE, JANE Q." and a claim prints "Jane Q. Doe" or "Jane Doe": the same vendor, its
+    history and its supplier number; a different person who shares the surname is not."""
+    store = _people(tmp_path, "DOE, JANE Q.", "DOE, JOHN", "VAN DER BERG, PIETER J", "ROE, SAM - DO NOT USE")
+    for printed in ("Jane Q. Doe", "Jane Doe", "JANE Q DOE", "jane quinn doe", "Doe, Jane", "DOE, JANE Q",
+                    "Doe, Jane Quinn"):  # fmt: skip
+        assert _number(store, printed) == "520001", printed
+        assert store.vendor_key_for(printed) == "doe jane q"
+        assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name=printed) == []
+    assert _number(store, "John Doe") == "520002" and _number(store, "John A. Doe") == "520002"
+    assert _number(store, "Pieter van der Berg") == "520003" and _number(store, "Pieter J. Van Der Berg") == "520003"
+    # another person of the same surname, another middle initial, an initial for the first name, the surname first
+    # without its comma: no vendor
+    for other in ("Janet Doe", "Jane R. Doe", "J. Doe", "Jane Roe", "Jane Doe Smith", "Doe Jane", "Doe, Janet",
+                  "DOE, JANE R.", "Pieter Berg", "Jane Q. Doe Consulting Inc."):  # fmt: skip
+        assert _number(store, other) is None, other
+        assert _said(store, "VENDOR_NOT_IN_MASTER", vendor_name=other), other
+    # a person the master marks as retired is found the same way, and stopped
+    assert _number(store, "Sam Roe") == "520004" and _said(store, "VENDOR_ON_HOLD", vendor_name="Sam Roe")
+    # the supplier number goes with the name as printed (the exports and the JD Edwards voucher look it up so)
+    ids = store.vendor_ids()
+    assert (ids["jane q doe"], ids["jane doe"], ids["pieter van der berg"]) == ("520001", "520001", "520003")
+    assert master_vendor_id(ids, "Jane Q. Doe") == "520001" and master_vendor_id(ids, "Janet Doe") == ""
+
+
+def test_two_people_one_name_could_be_are_never_guessed_between(tmp_path):
+    store = _people(tmp_path, "DOE, JANE Q.", "DOE, JANE R.")
+    assert _number(store, "Jane Doe") is None and "jane doe" not in store.vendor_ids()
+    assert (_number(store, "Jane Q. Doe"), _number(store, "Jane R Doe")) == ("520001", "520002")
+    # one listed without a middle initial is the one a name printed without it means
+    store = _people(tmp_path, "DOE, JANE Q.", "DOE, JANE R.", "DOE, JANE")
+    assert _number(store, "Jane Doe") == "520003" and store.vendor_ids()["jane doe"] == "520003"
+    assert _number(store, "Jane Q. Doe") == "520001"
+
+
+def test_a_person_listed_in_the_usual_order_is_found_by_the_name_printed_surname_first(tmp_path):
+    """The reverse: the master has "Alex P. Stone", the claim prints "STONE, ALEX P." (or with no initial)."""
+    store = _people(tmp_path, "Alex P. Stone", "Mira Stone", "Stone Alex Paving Ltd.")
+    assert _number(store, "STONE, ALEX P.") == "520001" and _number(store, "Stone, Alex") == "520001"
+    assert _number(store, "Stone, Mira K.") == "520002"
+    for other in ("STONE, ALEX R.", "Stone, Alexa", "Stone, Paul"):
+        assert _number(store, other) is None, other
+
+
+def test_a_company_with_a_comma_in_its_name_is_never_matched_as_a_person(tmp_path):
+    """ "Smith, Brown & Co" is a company (a company word): found by its own name as before, never by "Brown Smith"."""
+    store = _people(tmp_path, "Smith, Brown & Co", "Granite Ridge, Town of", "Harbour Telecom, Western Division Inc.")
+    assert _number(store, "Smith Brown & Co.") == "520001" and _number(store, "Smith, Brown and Co") == "520001"
+    assert _number(store, "Harbour Telecom Western Division") == "520003"
+    for other in ("Brown Smith", "Brown Smith & Co", "Town of Granite Ridge", "Western Division Harbour Telecom"):
+        assert _number(store, other) is None, other
+    assert set(store.vendor_ids()) == {"smith brown", "granite ridge town of", "harbour telecom western division"}
