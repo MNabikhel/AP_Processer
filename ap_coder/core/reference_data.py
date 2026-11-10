@@ -79,11 +79,15 @@ _MEALS_NAME = re.compile(
     r"(?i)\b(?:meals?|lunch(?:es|eons?)?|dinners?|breakfasts?|brunch|catering|caterers?|hospitality|entertainment"
     r"|restaurants?|banquets?|repas|traiteurs?|divertissements?)\b|\bm\s*&\s*e\b"
 )
+# ... unless it says the meals are charged on ("Recovery-Meals & Hospi", "Meals billed to clients"): the tax on those
+# is claimed in full, so such an account is left for a person to tick.
+_CHARGED_ON = re.compile(r"(?i)\b(?:recover(?:y|ies|ed|able)|re-?bill(?:ed|able)?|billed|billable|recharged?)\b")
 
 
 def reads_like_meals(name: object) -> bool:
     """Whether an account's name reads like a meals and entertainment account (50% tax credit, D-90)."""
-    return bool(_MEALS_NAME.search(str(name or "")))
+    text = str(name or "")
+    return bool(_MEALS_NAME.search(text)) and not _CHARGED_ON.search(text)
 
 
 def meals_column(headers: list[str]) -> str:

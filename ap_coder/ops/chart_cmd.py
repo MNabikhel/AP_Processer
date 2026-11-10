@@ -4,10 +4,10 @@ loaded from JD Edwards' exports as they come (D-209), from the console.
 * ``import --chart <file> --business-units <file> [--anyway]``: either file alone or both (the business units
   first, so the chart knows which are active). A chart exported without its posting edit or subsidiary column is
   imported only with ``--anyway``, and says so each time it is shown. Each replaces what was imported before; the
-  GL accounts and the cost centers are
-  worked out again from the two, even when the file is the one already imported. What was read, what may be posted
-  to, what was left out, what left the lists and what a person had typed that was set aside is said in plain words
-  (``import_files``, which a page can call with an upload's bytes).
+  GL accounts and the cost centers are worked out again from the two, even when the file is the one already
+  imported. What was read, what may be posted to, what was left out, what left the lists and what a person had
+  typed that was set aside is said in plain words (``import_files``, which a page can call with an upload's
+  bytes).
 * ``settings [--postable …] [--never-offered …] [--skip-words …] [--home-business-unit …] [--labels …]``: the chart's
   settings, shown, and changed for the ones named (an empty value clears one).
 * ``show``: the chart imported, its settings, and how many accounts a line may be coded to.
@@ -200,8 +200,8 @@ def _import(args: argparse.Namespace) -> int:
     try:
         said = import_files(Store(args.db), args.chart, args.business_units, actor=ACTOR, anyway=args.anyway)
     except chart.ColumnsMissing as exc:
-        print(f"Not imported: {exc} To import it anyway, add --anyway: every account will be offered.",
-              file=sys.stderr)  # fmt: skip
+        offered = ": every account will be offered" if "posting_edit" in exc.fields else ""
+        print(f"Not imported: {exc} To import it anyway, add --anyway{offered}.", file=sys.stderr)
         return 1
     except ValueError as exc:  # (a ChartError too: the file cannot be read as what it should be)
         print(f"Not imported: {exc}", file=sys.stderr)

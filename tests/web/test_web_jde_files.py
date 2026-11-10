@@ -123,7 +123,8 @@ def test_the_meals_accounts_are_named_and_ticked_with_one_click_and_a_newer_char
     like = sorted(code for code, name in names.items() if reads_like_meals(name))
     assert {names[code] for code in like} >= {"Meals - Travel", "Working Lunches", "Client Hospitality",
                                               "Catering - Meetings"}  # fmt: skip
-    assert not any(reads_like_meals(name) for name in ("Airfare", "Hotels & Lodging", "Meeting Room Rental"))
+    others = ("Airfare", "Hotels & Lodging", "Meeting Room Rental", "Recovery-Meals & Hospi", "Meals billed to clients")
+    assert not any(reads_like_meals(name) for name in others)
     row = client.get("/jde-files").text.split('id="meals-accounts"', 1)[1].split("</dd>", 1)[0]
     assert "None is ticked" in row and all(f"{code} {escape(names[code])}" in row for code in like)
     assert f"Mark these {len(like)} as meals accounts (half their GST/HST is claimable)" in row
