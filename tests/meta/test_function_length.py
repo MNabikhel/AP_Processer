@@ -17,7 +17,6 @@ LONG_FUNCTIONS = {
     "ap_coder/bench/__main__.py::main": 269,
     "ap_coder/bench/coding.py::simulate": 203,
     "ap_coder/bench/learning.py::_simulate": 167,
-    "ap_coder/capture/reader/line_items.py::_read_line_items": 155,
     "ap_coder/capture/reader/entry.py::_read_fields": 151,
     "ap_coder/erp/jde.py::voucher_rows": 148,
     "ap_coder/bench/learning.py::render_markdown": 146,

@@ -4950,3 +4950,25 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `ap_coder/core/schema.py`, `ap_coder/core/store/prior.py`, `ap_coder/web/invoice_view.py`,
     `ap_coder/bench/coding_journal.py`, `ap_coder/bench/jde_names.py`; `tests/ai/test_supplier_prior.py`,
     `tests/ai/test_candidates.py`, `tests/ai/test_closed_list.py`, `tests/bench/test_coding_journal.py`)
+- **D-213** · **A line's amount is read from one column of the line table, and lines that do not add up are left
+  for a person, never balanced.** After B-2106 a row's own arithmetic could pick any figure of the row as its
+  amount, and a line "Charges not in the line table" of whatever was missing hid a wrong reading (B-2197 to B-2203).
+  - **Decision:** The amount's column is chosen once for the table: by its heading (`_amount_heading`: after a
+    discount column only the headings right of it; never one that says the tax is in it; one that says before tax
+    over a plain one only beside a tax column or a total with tax, else the plain one; of equals the first), then by
+    where the numbers are printed (`_columns_under`: a heading has the column of numbers printed under it, else
+    headings and columns are paired in the order they come across the page). The numbers may change the COLUMN, not
+    a row's figure: a column of money that makes the amount read with the tax on every row that prints one is the
+    amount before tax; another column headed as an amount that adds up to the invoice's subtotal is the amount.
+    A charge outside the table is a line only when it is read from the page (the freight beside the subtotal, an
+    amount under its own label). Lines left not adding up stay as read: SUBTOTAL_MISMATCH closes Approve, and
+    LINE_AMOUNTS_TO_CHECK says whether the amounts include the tax or which column to check. A tax cell not found
+    is "not read"; a column says only about the tax it names; the tax amounts read are kept on the line
+    (`taxes_read`), a "Tax" column on an invoice that charges two taxes excepted (it names neither).
+  - **Not chosen:** Working out the amount before tax as total less tax on a "Tax | Total" table (nothing on the
+    page proves it line by line: a person enters it); pairing a heading with the nearest numbers (the column before
+    ends nearer a left-aligned heading than its own); a partial tax code for a line when only one of two taxes has
+    a column (`line_tax.prefill` takes whole codes: the amounts decide, as before the tax columns were read).
+  - **Where:** `ap_coder/capture/reader/line_items.py` (`_amount_heading`, `_Columns`, `_columns_under`),
+    `ap_coder/capture/bridge.py` (`printed_taxes`), `ap_coder/ai/offline_coder.py` (`_charges_outside`,
+    `_lines_to_check`), `ap_coder/ops/help.py`; `tests/capture/test_line_table_columns.py`.

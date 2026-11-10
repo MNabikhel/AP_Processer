@@ -231,10 +231,17 @@ class LineReading:
     # The description as printed, when the one shown is how AP named this line on an earlier invoice of the supplier
     # (``capture.line_memory``, D-120); "" when it is shown as read.
     read_as: str = ""
+    # The tax amounts printed on this row under the line table's tax columns, by the tax each heading names ("GST",
+    # "HST", "PST", "QST"; "TAX" under one that names none, or two): 0.0 where the cell prints none, or the row's own
+    # total proves there is none; None where no cell was read (blank, or not found: never "exempt" by itself). None
+    # for the whole when the table has no tax column. ``bridge.printed_taxes`` reads them with the invoice's taxes.
+    taxes_read: dict[str, float | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["boxes"] = [b.to_list() for b in self.boxes]
+        if self.taxes_read is None:  # (most invoices: stored as before)
+            del d["taxes_read"]
         return d
 
     @classmethod
@@ -242,7 +249,8 @@ class LineReading:
         return cls(d.get("description") or "", d.get("quantity"), d.get("unit_price"), d.get("amount"),
                    [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0),
                    str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []],
-                   str(d.get("tax_flags") or ""), str(d.get("read_as") or ""))  # fmt: skip
+                   str(d.get("tax_flags") or ""), str(d.get("read_as") or ""),
+                   dict(d["taxes_read"]) if isinstance(d.get("taxes_read"), dict) else None)  # fmt: skip
 
 
 @dataclass

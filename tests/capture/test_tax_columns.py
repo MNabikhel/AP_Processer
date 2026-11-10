@@ -62,21 +62,34 @@ def test_the_tax_column_before_the_amount_is_not_the_amount_and_one_row_reads_th
 
 
 def test_a_lines_own_tax_cells_say_which_taxes_it_carries():
-    """A tax printed line by line is that line's: a column that names its tax ("GST", "PST") gives the line that
-    tax where its cell holds an amount; a blank or 0.00 cell is a line not taxed, among lines that are; a discount
-    carries its (negative) tax. A column that names no tax ("Tax") leaves which tax to the invoice's own taxes."""
+    """A tax printed line by line is that line's: the reader keeps each cell's amount under the tax its column names
+    ("TAX" under one that names none), and with the taxes the invoice charges they are the line's code
+    (``bridge.printed_taxes``): the tax where its cell holds an amount, exempt where it prints 0.00; a discount
+    carries its (negative) tax. A blank cell is "not read": no tax only where the row's own total, or the invoice's
+    amount of that tax, proves it (B-2201)."""
+    from ap_coder.capture.bridge import printed_taxes
+
     heads = [("Description", 0.08), ("Qty", 0.36), ("Unit Price", 0.44), ("Amount", 0.56), ("GST", 0.66),
              ("PST", 0.74), ("Total", 0.84)]  # fmt: skip
     rows = [["Copy paper", "4", "50.00", "200.00", "10.00", "14.00", "224.00"],
             ["Courier service", "1", "100.00", "100.00", "5.00", "0.00", "105.00"],
             ["Gift card", "1", "50.00", "50.00", "", "", "50.00"],
             ["Loyalty discount", "1", "-20.00", "-20.00", "-1.00", "-1.40", "-22.40"]]  # fmt: skip
-    assert _read(heads, rows) == [("Copy paper", 200.0, "GST/PST"), ("Courier service", 100.0, "GST"),
-                                  ("Gift card", 50.0, "Exempt"), ("Loyalty discount", -20.0, "GST/PST")]  # fmt: skip
+    read = read_line_items(_table(heads, rows))
+    assert [(li.description, li.amount, li.taxes_read) for li in read] == [
+        ("Copy paper", 200.0, {"GST": 10.0, "PST": 14.0}), ("Courier service", 100.0, {"GST": 5.0, "PST": 0.0}),
+        ("Gift card", 50.0, {"GST": 0.0, "PST": 0.0}),
+        ("Loyalty discount", -20.0, {"GST": -1.0, "PST": -1.4})]  # fmt: skip
+    assert [said for said, _ in printed_taxes(read, {"GST": 14.0, "PST": 12.6})] == ["GST/PST", "GST", "Exempt",
+                                                                                      "GST/PST"]  # fmt: skip
     one = [("Description", 0.10), ("Tax", 0.60), ("Amount", 0.78)]
     rows = [["Network cabling", "13.00", "100.00"], ["Training day", "", "100.00"], ["Postage", "0.00", "100.00"]]
-    assert _read(one, rows) == [("Network cabling", 100.0, ""), ("Training day", 100.0, "Exempt"),
-                                ("Postage", 100.0, "Exempt")]  # fmt: skip
+    read = read_line_items(_table(one, rows))
+    assert [(li.amount, li.taxes_read) for li in read] == [(100.0, {"TAX": 13.0}), (100.0, {"TAX": None}),
+                                                           (100.0, {"TAX": 0.0})]  # fmt: skip
+    assert [li.tax_flags for li in read] == ["", "", ""]
+    assert [said for said, _ in printed_taxes(read, {"HST": 13.0})] == ["HST", "Exempt", "Exempt"]
+    assert [said for said, _ in printed_taxes(read, {"HST": 26.0})] == ["HST", "", "Exempt"]  # (a cell not found)
 
 
 def test_a_column_of_tax_codes_or_of_no_tax_at_all_is_read_as_before():
