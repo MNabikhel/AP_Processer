@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import unicodedata
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
@@ -406,6 +406,8 @@ class LineItem(BaseModel):
     # are left out of the stored coding when empty.
     remark: str = ""
     remark_from: str = ""
+    # The fields left out of the stored coding while they say nothing (``_without_empty``).
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("taxes_read", "candidates", "decided_by", "remark", "remark_from")
 
     @field_validator("candidates")
     @classmethod
@@ -426,19 +428,6 @@ class LineItem(BaseModel):
             raise ValueError(f"remark_from must be one of {REMARK_SOURCES}, got {value!r}")
         return value
 
-    @model_serializer(mode="wrap")
-    def _without_empty(self, handler: Any) -> dict[str, Any]:
-        # An invoice with no candidates, no decision recorded, no remark and no tax read on its lines is stored as it
-        # always was: the keys are there only when they say something. The line's one serializer: pydantic keeps
-        # only the last one a model defines (B-2187).
-        data = handler(self)
-        for name in ("candidates", "decided_by", "remark", "remark_from"):
-            if not data.get(name):
-                data.pop(name, None)
-        if data.get("taxes_read") is None:
-            data.pop("taxes_read", None)
-        return data
-
     @field_validator("taxes_read", mode="before")
     @classmethod
     def _taxes_read(cls, value: Any) -> Any:
@@ -448,6 +437,17 @@ class LineItem(BaseModel):
         if unknown := [k for k in out if k not in TAX_TYPES]:
             raise ValueError(f"taxes_read entries must be one of {TAX_TYPES}, got {unknown[0]!r}")
         return {t: out[t] for t in TAX_TYPES if t in out}
+
+    @model_serializer(mode="wrap")
+    def _without_empty(self, handler: Any) -> dict[str, Any]:
+        # A line stored before these fields existed, or one they say nothing about, is stored as it always was: each
+        # of these keys is there only when it says something. ONE serializer for the class: a second one would
+        # replace the first, not join it (``OPTIONAL``: add a later field there).
+        data = handler(self)
+        for name in self.OPTIONAL:
+            if data.get(name) is None or (name != "taxes_read" and not data[name]):
+                data.pop(name, None)
+        return data
 
     @field_validator("taxes_applied")
     @classmethod

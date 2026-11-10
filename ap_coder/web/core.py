@@ -58,7 +58,7 @@ from ap_coder.ops import offline
 from ap_coder.web import identity
 from ap_coder.web.access import is_admin
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, PINNED
+from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, PINNED, SIMPLE_KEYS, SIMPLE_MAIN, SIMPLE_SETUP
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -687,6 +687,45 @@ def jde_shown(store: Store) -> bool:
         return False
 
 
+SCREENS = "screens"  # "simple": the short menu (pages.SIMPLE_MAIN, SIMPLE_SETUP); "everything" or not set: every page
+SIMPLE, EVERYTHING = "simple", "everything"
+SIMPLE_HIDDEN_TABS = ("automation", "hub")  # the Settings tabs the Simple screens leave out
+
+
+def simple_screens(store: Store) -> bool:
+    """Whether the Simple screens are chosen (Settings → About → "What is shown"): the short menu of one person
+    coding invoices to JD Edwards, the other pages and the Automation and Finance hub tabs left out, nothing
+    removed. A database that never chose shows everything, as it always did; a laptop's new data folder starts
+    Simple (``first_run``)."""
+    try:
+        return store.get_setting(SCREENS) == SIMPLE
+    except Exception:  # noqa: BLE001 - a setting that can't be read is off: the page still opens
+        return False
+
+
+def hidden_in_simple(store: Store, page: str, tab: Any = None) -> bool:
+    """Whether ``page`` (or Settings' ``tab``) is one the Simple screens leave out: opened by its address, it says
+    so in one line."""
+    if not simple_screens(store):
+        return False
+    return (page in BY_KEY and page not in SIMPLE_KEYS) or (page == "settings" and tab in SIMPLE_HIDDEN_TABS)
+
+
+def first_run(db: Path, *, server: bool) -> Store:
+    """The database the dashboard starts on. A laptop's new data folder (no database file there before this start)
+    begins the department's way: the Simple screens, and its JD Edwards settings (``erp.jde.use_prototype``: the
+    settings saved, JD Edwards shown, the QST added to the expense line). A database that exists already, and the
+    company server's, are opened as they are."""
+    new = not db.exists()
+    store = Store(db)
+    if new and not server:
+        from ap_coder.erp import jde
+
+        store.set_setting(SCREENS, SIMPLE)
+        jde.use_prototype(store)
+    return store
+
+
 def developer_env_on() -> bool:
     """AP_DEVELOPER_TOOLS read one way everywhere: 1, true or yes is on; 0, false, no or nothing is off (B-527)."""
     return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes")
@@ -708,16 +747,22 @@ def nav_counts(store: Store) -> dict[str, int]:
 
 
 def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
-    """The rail's three groups, each page with its count: the everyday pages (``main``), the pages folded under More
-    (``more``) and Settings and Help, pinned at its foot (``pinned``)."""
+    """The rail's groups, each page with its count: the everyday pages (``main``), the pages folded under More
+    (``more``) and Settings and Help, pinned at its foot (``pinned``). In Simple screens (``simple_screens``): the
+    five everyday pages under their names there, the pages under "Setup" (``setup``) and Help, with no More."""
     counts = nav_counts(store)
 
     def items(pages: list[Any]) -> list[dict[str, Any]]:
         return [{"page": p, "count": counts.get(p.key, 0)} for p in pages]
 
+    if simple_screens(store):
+        named = [dataclasses.replace(BY_KEY[key], title=title) for key, title in SIMPLE_MAIN.items()]
+        return {"main": items(named), "more": [], "setup": items([BY_KEY[key] for key in SIMPLE_SETUP]),
+                "pinned": items([BY_KEY["help"]])}  # fmt: skip
     return {
         "main": items([p for p in PAGES if not p.more and p.key not in PINNED]),
         "more": items([p for p in PAGES if p.more]),
+        "setup": [],
         "pinned": items([p for p in PAGES if p.key in PINNED]),
     }
 
@@ -785,9 +830,14 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
 
             banner = f"{banner} {SERVER_LM_STUDIO}."
     me = reviewer()
+    simple = simple_screens(store)
+    if simple and meta and page in SIMPLE_MAIN:  # the page under the name the Simple menu gives it
+        meta = dataclasses.replace(meta, title=SIMPLE_MAIN[page])
     base = {
         "page": page,
         "meta": meta,
+        "simple_screens": simple,
+        "hidden_in_simple": simple and hidden_in_simple(store, page, context.get("tab")),  # opened by its address
         "title": meta.title if meta else context.get("title", "AP Coder"),
         "section": meta.section if meta else "",
         "rail": _shown_rail(request, store),

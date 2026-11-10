@@ -391,7 +391,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     assert "5 ERP invoices known." in page.text and read in page.text and store.erp_register_count() == 5
     found = store.erp_vouchers_of("Quickship Courier Canada Ltd.", "7-100-20001", 700.00)
     assert [(v["document"], v["batch"]) for v in found] == [("700102", "5550002")]
-    assert store.in_erp("Harbour Telecom", "00812", 438.90)
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90)
     # a list with no voucher to keep changes nothing, Replace ticked or not
     empty = ("vouchers.xlsx", voucher_headers(sample_pay_items()[7:10]), "application/zip")
     page = follow(client, client.post("/exports/register/upload", files={"file": empty}, headers=PAGE))
@@ -400,6 +400,34 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     assert refused.status_code == 400 and "nothing was imported" in refused.json()["error"]
     assert "Left out: the totals row; 1 voucher with no invoice number" in refused.json()["error"]
     assert store.erp_register_count() == 5
+    # B-2164: a later list that shows a voucher at 0.00 (voided in JD Edwards since) takes it off the list; what a
+    # whole list no longer shows goes only when the person says the grid was not filtered
+    from tests.jde_exports import pay_item
+
+    void = pay_item(700101, "001", 0.00, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "INV-0042")
+    later = ("vouchers.xlsx", voucher_headers([void, *sample_pay_items()[1:4], *sample_pay_items()[5:7]]),
+             "application/zip")  # fmt: skip
+    page = follow(client, client.post("/exports/register/upload", files={"file": later}, headers=PAGE))
+    assert 'name="whole"' in page.text and "takes off the list any voucher it shows at 0.00" in page.text
+    token = page.url.params["register"]
+    page = follow(client, client.post("/exports/register/import", data={"file": token}, headers=PAGE))
+    assert (
+        "4 ERP invoices known." in page.text
+        and store.in_erp("Maple Leaf Coffee Services Inc.", "INV-0042", 214.2) == []
+    )
+    assert (
+        "1 voucher an earlier list gave is voided or no longer in JD Edwards by this one: taken off the list."
+        in page.text
+    )
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90)  # not shown by this list: still there
+    page = follow(client, client.post("/exports/register/upload", files={"file": later}, headers=PAGE))
+    ticked = {"file": page.url.params["register"], "whole": "1"}
+    page = follow(client, client.post("/exports/register/import", data=ticked, headers=PAGE))
+    assert (
+        "3 ERP invoices known." in page.text
+        and store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90) == []
+    )
+    assert store.in_erp("Quickship Courier Canada Ltd.", "Q-9", 61.00)  # another company's: not this list's period
 
 
 def test_the_duplicate_audit_and_its_csv(client, busy):

@@ -76,7 +76,7 @@ def sample_pay_items() -> list[dict[str, Any]]:
         pay_item(700102, "001", 300.00, *courier, "7-100-20001", batch=5550002),
         pay_item(700102, "002", 494.25, *courier, "7-100-20001", batch=5550002),
         pay_item(700102, "003", -94.25, *courier, "7-100-20001", batch=5550002),
-        pay_item(700103, "001", 438.90, 410005, "HARBOUR TELECOM", "00812"),
+        pay_item(700103, "001", 642.90, 410001, "MAPLE LEAF COFFEE SERVICES INC.", "ML-3318"),
         pay_item(700104, "001", 1370.00, 410009, LONG_NAME, "US-5001", foreign=1000.00, **usd),
         pay_item(700104, "002", 137.00, 410009, LONG_NAME, "US-5001", foreign=100.00, **usd),
         pay_item(700105, "001", 50.00, 410001, "MAPLE LEAF COFFEE SERVICES INC.", BLANK),

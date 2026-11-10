@@ -4,7 +4,8 @@ Each vendor is identified by its normalised name (``memory.vendor_key``). Its hi
 invoices already in the database; a small ``vendors`` table holds what AP sets by hand (on hold,
 expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a new invoice:
 
-* VENDOR_ON_HOLD (error, never approved anyway: B-1544): AP put this vendor on hold, or JD Edwards did
+* VENDOR_ON_HOLD (error, never approved anyway: B-1544): AP put this vendor on hold, or JD Edwards did; and
+  VENDOR_PAYMENTS_HELD (warning): JD Edwards holds its payments only (hold payment code 2), vouchers still entered
 * VENDOR_CHANGED_FROM_HELD (error, an Approver's to approve: D-142; the server's review screen, ``moved_off_hold``): a
   held vendor's invoice (by the vendor read, its GST/HST number or bank account) coded to another vendor
 * VENDOR_TAX_NUMBER_CHANGED (error, approved only with a reason: D-141): GST/HST number differs from earlier invoices /
@@ -288,7 +289,7 @@ def vendor_findings(
     findings: list[tuple[str, str, str]] = []
     # The vendor's own row (a hold AP put on the name) and the master vendor it is matched to (by name, or by its
     # GST/HST number below): each carries its own controls, so both are checked for a hold.
-    own = master = store.get_vendor(key)
+    own = master = store.find_vendor(coding.vendor_name, getattr(coding, "gst_hst_registration_number", None))
     if master and master.get("in_master") == ADDED_HERE:
         findings.append(
             (ERROR, "VENDOR_ADDED_HERE",
@@ -307,11 +308,7 @@ def vendor_findings(
                  f"{master['display_name']} ({master['erp_id'] or 'no ID'})")
             )  # fmt: skip
         else:
-            findings.append(
-                (ERROR, "VENDOR_NOT_IN_MASTER",
-                 "this vendor is not in the vendor list imported from the ERP: pick it from the list, or add it as a "
-                 "new vendor")
-            )  # fmt: skip
+            findings.append(_not_in_master(store, coding))
     in_master = bool(master and master.get("in_master") == IN_ERP)
     live = _jde_live_findings(coding, store, exclude_invoice_id)
     # JD Edwards' own answer says more (the voucher, paid or not) than the register the sync filled: said instead
@@ -333,12 +330,7 @@ def vendor_findings(
              f"invoice #{other['id']} from {other['vendor_name']} has the same number and total: the same bill "
              "under two vendor names?")
         )  # fmt: skip
-    held = [v for v in (own, master) if v and (v.get("status") == ON_HOLD or v.get("erp_hold"))]
-    if held:
-        notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
-        note = f": {'; '.join(notes)}" if notes else ""
-        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else _held_in_jde(held)
-        findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}"))
+    findings += _hold_findings(own, master)
 
     # the rows kept for every check, read-only: not a copy of each of a big vendor's 23,000 (D-174)
     history = [h for h in store.vendor_invoices(key, shared=True) if h["id"] != exclude_invoice_id]
@@ -523,6 +515,53 @@ def hold_said(code: Any) -> str:
 def _held_in_jde(held: list[dict[str, Any]]) -> str:
     """Where VENDOR_ON_HOLD says a vendor is held when the hold is JD Edwards' (``vendors.erp_hold``), and which."""
     return f"in JD Edwards ({hold_said(next(v['erp_hold'] for v in held if v.get('erp_hold')))})"
+
+
+def _hold_findings(own: dict[str, Any] | None, master: dict[str, Any] | None) -> list[tuple[str, str, str]]:
+    """VENDOR_ON_HOLD (error): the vendor's own row or the master vendor it is matched to is on hold, in the vendor
+    list or by a JD Edwards hold payment code that stops vouchers. VENDOR_PAYMENTS_HELD (warning) when JD Edwards
+    holds its payments only (code 2): the invoice is coded and keyed, and paid once the hold is lifted there
+    (B-2157)."""
+    from ..core.store.vendor_master import stops_vouchers
+
+    rows = [v for v in (own, master) if v]
+    held = [v for v in rows if v.get("status") == ON_HOLD or stops_vouchers(v.get("erp_hold"))]
+    if held:
+        notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
+        note = f": {'; '.join(notes)}" if notes else ""
+        where = "in the vendor list" if any(v.get("status") == ON_HOLD for v in held) else _held_in_jde(held)
+        return [(ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold {where}{note}")]
+    code = next((v["erp_hold"] for v in rows if v.get("erp_hold")), "")
+    if code:
+        return [(WARNING, "VENDOR_PAYMENTS_HELD",
+                 f"JD Edwards holds this supplier's payments ({hold_said(code)}): the voucher can be entered, and "
+                 "is paid once the hold is lifted in JD Edwards")]  # fmt: skip
+    return []
+
+
+def _not_in_master(store: Store, coding: InvoiceCoding) -> tuple[str, str, str]:
+    """VENDOR_NOT_IN_MASTER. In its own words when several suppliers in use go by the name printed, each under a
+    supplier number of its own: which they are and, when last year's journal is loaded, how many vouchers each had
+    (the most used said). The name alone is none of them: the one picked from the list carries its number (B-2161)."""
+    several = store.vendors_sharing(coding.vendor_name)
+    if not several:
+        return (ERROR, "VENDOR_NOT_IN_MASTER",
+                "this vendor is not in the vendor list imported from the ERP: pick it from the list, or add it as a "
+                "new vendor")  # fmt: skip
+    used: dict[str, int] = {}
+    for row in store.journal_suppliers():
+        number = str(row.get("supplier_number") or "").strip().lstrip("0")
+        used[number] = used.get(number, 0) + int(row.get("vouchers") or 0)
+    counts = [used.get(str(v["erp_id"]).strip().lstrip("0"), 0) for v in several]
+    most = max(counts) if counts.count(max(counts)) == 1 else 0
+    said = []
+    for vendor, count in zip(several, counts, strict=True):
+        journal = f" ({count:,} voucher{'' if count == 1 else 's'} in last year's journal" if count else ""
+        said.append(f"{str(vendor['erp_id']).strip()} {vendor['display_name']}{journal}"
+                    + ((", the most)" if count == most else ")") if count else ""))  # fmt: skip
+    return (ERROR, "VENDOR_NOT_IN_MASTER",
+            f"{len(several)} suppliers in the vendor list read “{coding.vendor_name}”: pick one from the list, each "
+            f"has its own supplier number: {'; '.join(said)}")  # fmt: skip
 
 
 def _held_index(held: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:

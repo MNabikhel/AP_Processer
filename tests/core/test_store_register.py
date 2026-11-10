@@ -83,7 +83,7 @@ def test_a_register_made_before_the_document_and_batch_were_kept_gets_them(tmp_p
     path = tmp_path / "ap.db"
     Store(path).import_jde_vouchers([_voucher("1-PV-1-001")], seen=1)
     with sqlite3.connect(path) as conn:  # as the version before left it
-        for column in ("document", "batch", "currency"):
+        for column in ("document", "batch", "currency", "gl_date"):
             conn.execute(f"ALTER TABLE erp_vouchers DROP COLUMN {column}")
     store = Store(path)
     listed = {**_voucher("08801-PV-700101", number="B-1"), "document": "700101", "batch": "5550001", "currency": "CAD"}
