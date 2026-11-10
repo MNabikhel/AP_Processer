@@ -209,6 +209,13 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-table td {padding: 8px 12px; height: 40px; box-sizing: border-box; border-bottom: 1px solid var(--lg-hairline);
   color: var(--lg-text); vertical-align: middle; white-space: nowrap;}
 .apc-table td.w {white-space: normal; min-width: 12rem;}
+/* A table that fits its card on a laptop, where scrolling it sideways hid its last column's buttons (Users, the
+   backups): its "w" cells wrap with no width of their own, the links of its last column stack, and a box in a cell
+   is no wider than it need be */
+.apc-table.fit td.w {min-width: 0;}
+.apc-table.fit td.r {white-space: normal;}
+.apc-table.fit td.r .link {white-space: nowrap;}
+.apc-table.fit td .row input[type="text"] {flex: 1 1 9rem; width: 9rem; min-width: 0;}
 .apc-table tbody tr:hover td {background: var(--lg-hover);}
 .apc-table .r {text-align: right; font-variant-numeric: tabular-nums; font-feature-settings: var(--lg-num); white-space: nowrap;}
 .apc-table .gl {font-weight: 600;} .apc-table .gl small {display: block; font-weight: 400; color: var(--lg-muted); font-size: 12px;}
@@ -546,8 +553,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .btn:disabled, .btn[aria-disabled="true"] {background: var(--lg-hover); border-color: var(--lg-hairline); color: var(--lg-subtle);
   cursor: not-allowed;}
 .btn.busy, a.busy {opacity: .7; cursor: progress;}
-input[type="text"], input[type="email"], input[type="search"], input[type="number"], input[type="date"], select,
-textarea {
+input[type="text"], input[type="password"], input[type="email"], input[type="search"], input[type="number"],
+input[type="date"], select, textarea {
   height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
   color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}
 textarea {height: auto; padding: 8px 10px; line-height: 1.45;}

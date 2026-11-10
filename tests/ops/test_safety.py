@@ -3,13 +3,16 @@ there), and never a new, empty database where there was one."""
 
 from __future__ import annotations
 
+import http.server
 import json
+import ssl
+import threading
 from pathlib import Path
 
 import pytest
 
 from ap_coder.core.store import Store
-from ap_coder.ops import cli, safety, service
+from ap_coder.ops import cli, offline, safety, service
 
 REMOTE = {"Z:\\": safety.DRIVE_REMOTE, "D:\\": 3}  # GetDriveTypeW: a mapped share, a fixed disk
 
@@ -158,3 +161,189 @@ def test_a_fresh_server_starts_with_its_first_database(tmp_path):
     (tmp_path / "logs" / "service.log").write_text("Service host started\n")  # (written before the dashboard starts)
     assert safety.serve_refusal(tmp_path / "ap_coder.db", server=True) == ""
     assert json.loads((tmp_path / "server.json").read_text())["folder"]
+
+
+# --- A data folder that serves a team is never opened without sign-in by accident (D-211) -----------------------------
+
+FIXTURES = Path(__file__).parents[1] / "fixtures"
+CERT = FIXTURES / "TEST_ONLY_self_signed_localhost.cert.pem"  # a test-only certificate for localhost, never used else
+KEY = FIXTURES / "TEST_ONLY_self_signed_localhost.key.pem"
+GOOD = "correct horse battery staple 42"
+
+
+@pytest.fixture
+def laptop(tmp_path, monkeypatch):
+    """A laptop's data folder (laptop mode: ``AP_SERVER_MODE`` off) and its database."""
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path))
+    monkeypatch.setenv(offline.SERVER_ENV, "0")  # (restored afterwards: serve --server sets it)
+    monkeypatch.setenv("BROWSER", "none")
+    for name in ("AP_TLS_CERT", "AP_TLS_KEY", "AP_ALLOWED_HOSTS", "AP_SERVER_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    return tmp_path, tmp_path / "ap_coder.db"
+
+
+def team_server_stand_in(data: Path, *, https: bool = True, server_mode: bool = True):
+    """A stand-in for the server-mode dashboard of ``data``: /healthz on a free port (HTTPS with a self-signed
+    certificate, or plain HTTP), and its server file in the data folder. Returns (the server, its port)."""
+    answer = {"ok": True, "app": "ap-coder", "version": "0.3.0", "pid": 4242, "server_mode": server_mode}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # noqa: N802
+            body = json.dumps({**answer, "port": port}).encode()
+            self.send_response(200 if self.path == "/healthz" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = httpd.server_address[1]
+    if https:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(CERT), str(KEY))
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4242, "port": port, "token": "secret"}))
+    return httpd, port
+
+
+@pytest.fixture
+def started(monkeypatch):
+    """The dashboards a test's ``serve`` commands started (none really starts): what each was given."""
+    from ap_coder.web import server
+
+    calls: list[dict] = []
+    monkeypatch.setattr(server, "serve", lambda *a, **k: calls.append(k) or 0)
+    return calls
+
+
+def test_a_plain_laptop_data_folder_still_starts_as_before(laptop, started, capsys):
+    data, db = laptop
+    assert safety.team_server(data, db) is None  # no database yet: the first start
+    assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 0 and len(started) == 1
+    Store(db)  # (its database, made by that first start in real life)
+    assert safety.sign_in_accounts(db) == 0 and safety.team_server(data, db) is None
+    assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 0 and len(started) == 2
+    assert "sign-in" not in capsys.readouterr().err
+
+
+def test_a_stopped_servers_data_is_not_opened_without_sign_in(laptop, started, capsys):
+    """B-2119: a data folder with sign-in accounts opened in laptop mode, with no sign-in, whenever its server was
+    stopped (the night, a restart): ``serve`` refuses, whether or not anything answers on its port."""
+    data, db = laptop
+    Store(db).add_user("jsmith", GOOD, role="admin")
+    team = safety.team_server(data, db)
+    assert team is not None and not team.running and team.accounts == 1 and team.address == ""
+    assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
+    said = capsys.readouterr().err
+    assert "set up to serve your team" in said and "1 sign-in account" in said
+    assert "was not started without sign-in" in said and "--without-sign-in" in said
+    assert sorted(p.name for p in data.glob("ap_coder.db*")) == ["ap_coder.db"]  # (only read: nothing left beside it)
+
+
+def test_before_the_packages_are_installed_the_sign_in_codes_key_tells(laptop, monkeypatch):
+    """The launcher's first phase in a new AP Coder folder runs on the standard library alone: the store, which reads
+    the accounts, can't be loaded yet. The key made when the first person set up their authenticator app tells."""
+    import sys
+
+    from ap_coder.core import authenticator
+
+    data, db = laptop
+    Store(db).add_user("jsmith", GOOD, role="admin")
+    monkeypatch.setitem(sys.modules, "ap_coder.core.store.users", None)  # (as with no packages: ImportError)
+    assert safety.sign_in_accounts(db) == 0 and safety.team_server(data, db) is None
+    assert authenticator.load_key(data, create=True)
+    team = safety.team_server(data, db)
+    assert team is not None and team.key and not team.running
+    assert "the sign-in codes' key" in team.refusal()[0] and team.refusal(on_purpose=True) == ("", "")
+
+
+def test_server_settings_alone_mark_a_team_servers_data_folder(laptop, started, capsys, monkeypatch):
+    """Before its first account: server.json says this data folder is a server's, and where the team signs in."""
+    data, db = laptop
+    service.write_config(data, port=8443, certfile=str(CERT), keyfile=str(KEY), allowed_hosts=["apcoder.example"])
+    team = safety.team_server(data, db)
+    assert team is not None and not team.running and team.accounts == 0
+    assert team.address == "https://apcoder.example:8443"
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": 4242, "port": 8502}))  # left by a start that
+    assert safety.team_server(data, db).address == "https://apcoder.example:8443"  # was killed: not the team's port
+    assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
+    said = capsys.readouterr().err
+    assert "server.json" in said and "https://apcoder.example:8443" in said
+    service.write_config(data, allowed_hosts=[])  # no name given: this computer's own
+    monkeypatch.setattr(safety.socket, "gethostname", lambda: "AP-LAPTOP")
+    assert safety.team_server(data, db).address == "https://AP-LAPTOP:8443"
+
+
+def test_laptop_mode_again_is_a_step_taken_on_purpose(laptop, started, capsys):
+    """The way back to laptop mode on the same data: only with the option that says what it does."""
+    data, db = laptop
+    Store(db).add_user("jsmith", GOOD, role="admin")
+    code = cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser", "--without-sign-in"])
+    assert code == 0 and len(started) == 1
+    said = capsys.readouterr().err
+    assert "WARNING" in said and "no sign-in" in said and "1 sign-in account" in said
+    assert Store(db).user_count() == 1  # the accounts stay, unused
+
+
+@pytest.mark.parametrize("https", [True, False])
+def test_a_team_server_running_here_is_never_joined_by_a_laptop_mode_start(laptop, started, capsys, https):
+    """B-2119: beside the team's server (HTTPS with a self-signed certificate; plain HTTP for a first test), a
+    laptop-mode ``serve`` took the next port and opened the same database with no sign-in. Told by what answers,
+    before any account or server.json is there; and not even on purpose while it runs."""
+    data, db = laptop
+    httpd, port = team_server_stand_in(data, https=https)
+    try:
+        team = safety.team_server(data, db)
+        assert team is not None and team.running
+        assert team.address.startswith("https://" if https else "http://") and team.address.endswith(f":{port}")
+        for more in ([], ["--without-sign-in"]):
+            assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser", *more]) == 2
+            said = capsys.readouterr().err
+            assert f"AP Coder is serving your team from this computer (sign in at {team.address})" in said
+            assert "it was not started a second time" in said
+        assert started == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_a_laptop_mode_ap_coder_running_here_is_not_a_team_server(laptop):
+    data, db = laptop
+    httpd, _port = team_server_stand_in(data, https=False, server_mode=False)
+    try:
+        assert safety.team_server(data, db) is None
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_the_refusal_opens_the_teams_address_only_while_it_answers(laptop, started, monkeypatch):
+    from ap_coder.web import server
+
+    data, db = laptop
+    opened: list[str] = []
+    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(server, "browser_wanted", lambda: True)
+    service.write_config(data, port=8443, certfile=str(CERT), keyfile=str(KEY))
+    assert cli.main(["--db", str(db), "serve", "--port", "8599"]) == 2 and opened == []  # stopped: nothing to open
+    httpd, _port = team_server_stand_in(data)
+    try:
+        address = safety.team_server(data, db).address
+        assert cli.main(["--db", str(db), "serve", "--port", "8599"]) == 2 and opened == [address]
+        assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and opened == [address]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert started == []
+
+
+def test_server_mode_itself_starts_on_its_own_data(laptop, started):
+    data, db = laptop
+    Store(db).add_user("jsmith", GOOD, role="admin")
+    service.write_config(data, port=8599)
+    assert cli.main(["--db", str(db), "serve", "--server", "--insecure-http", "--port", "8599"]) == 0
+    assert len(started) == 1

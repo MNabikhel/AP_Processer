@@ -19,6 +19,9 @@ How a running AP Coder is found:
   folder, version, started) while they run: an older one is stopped through its process (as Ctrl+C, then ended),
   before the update deletes the .venv it runs from.
 
+A server-mode AP Coder (HTTPS, sign-in: the team's) is none of these: it is never stopped nor joined from here. The
+launcher asks for it first (``launch.team_server_instead``, ``ap_coder/ops/safety.py:team_server``, D-211).
+
 When none of that works (another user's process, no permission), the person is asked to close the old window, and
 the start waits for it (up to a minute). Standard library only: it runs before any package is installed. Never
 through a proxy: every request goes to 127.0.0.1.

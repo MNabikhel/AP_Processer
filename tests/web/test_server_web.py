@@ -372,6 +372,17 @@ def test_an_admin_adds_a_person_whose_temporary_password_is_shown_once(store):
     assert store.events(actions=["user_added"])[0]["actor"] == "Pat Tester"
 
 
+def test_the_second_backup_folders_hint_on_the_server_is_a_folder_it_allowed(store):
+    """B-2118: on the server the box *Also copy each backup to* showed the laptop's example, a OneDrive folder in a
+    person's own profile, which the server refuses: only a folder IT allowed is taken there."""
+    account(store, "boss", "admin")
+    client = server_client(store)
+    log_in(client, "boss")
+    page = client.get("/settings/data").text
+    box = page.split('name="folder"', 1)[1].split('placeholder="', 1)[1].split('"', 1)[0]  # (the box's hint)
+    assert "OneDrive" not in box and "C:\\Users\\you" not in box and "a folder IT allowed" in box
+
+
 def test_the_last_admin_cannot_be_demoted_or_turned_off_from_the_page(store):
     uid = account(store, "boss", "admin")
     client = server_client(store)
@@ -381,6 +392,19 @@ def test_the_last_admin_cannot_be_demoted_or_turned_off_from_the_page(store):
     refused = client.post(f"/admin/users/{uid}/deactivate", headers=PAGE)
     assert "at least one active Admin" in refused.json()["error"]
     assert store.user(uid)["role"] == "admin" and store.user(uid)["active"]
+
+
+def test_an_admin_is_not_offered_to_turn_their_own_account_off(store):
+    """B-2115: an Admin's own row offered *Turn off*: with a second Admin (who may never have logged in) one click and
+    a confirmation locked the Admin out of their own server, undone only from its console. The page offers it for
+    the other accounts only (the last Admin was refused already, and still is)."""
+    uid = account(store, "boss", "admin")
+    other = account(store, "second", "admin")
+    client = server_client(store)
+    log_in(client, "boss")
+    page = client.get("/admin/users").text
+    assert f'action="/admin/users/{other}/deactivate"' in page and f'action="/admin/users/{uid}/deactivate"' not in page
+    assert f'action="/admin/users/{uid}/activate"' not in page  # (nor the button of an account turned off)
 
 
 def test_an_admin_resets_a_password_and_turns_an_account_off(store):

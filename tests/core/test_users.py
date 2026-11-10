@@ -392,6 +392,21 @@ def test_a_wrong_code_is_refused_and_counts_toward_the_lockout_the_password_rest
     assert store.check_code(uid, _code(secret, clock), "10.0.0.77")["username"] == "ann"  # elsewhere: fine
 
 
+def test_the_refusal_of_a_code_says_it_may_have_been_used_already(store, clock):
+    """B-2117: someone who logged out and in again within 30 seconds typed the code their app still showed and was
+    told "That code doesn't match": it had matched, and was used. The one answer for both (nothing tells which) says
+    so, and that the app shows a new one every 30 seconds."""
+    uid, secret = _set_up(store, clock)
+    typed = _code(secret, clock)
+    assert store.check_code(uid, typed, "10.0.0.5")
+    with pytest.raises(LoginRefused) as used:
+        store.check_code(uid, typed, "10.0.0.5")
+    with pytest.raises(LoginRefused) as wrong:
+        store.check_code(uid, "000000" if typed != "000000" else "111111", "10.0.0.5")
+    assert str(used.value) == str(wrong.value) == WRONG_CODE
+    assert "or it was used already" in WRONG_CODE and "every 30 seconds" in WRONG_CODE
+
+
 def test_a_code_already_used_is_refused(store, clock):
     uid, secret = _set_up(store, clock)
     typed = _code(secret, clock)
