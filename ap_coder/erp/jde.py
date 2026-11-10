@@ -815,17 +815,18 @@ def _gross_problems(v: _Voucher, final: dict[str, Any]) -> list[str]:
     """Why a voucher sent with the gross amount only would have E1 work out another tax than the invoice charges
     (B-921): a line exempt or zero-rated (E1 taxes the whole gross), or the tax charged not the area's rate on the
     gross."""
-    if v.expensed:  # E1 would work the recovered tax out of an amount that holds the other (D-210)
-        return [
-            f"the {' and '.join(sorted(v.expensed))} is left in the expense (GL accounts & tax): with the gross "
-            "amount only JD Edwards works the tax out of the whole amount, that tax included. Code the tax to G/L "
-            "accounts or send tax amounts (Amounts): set it in Settings → JD Edwards E1, or ask whoever sets up AP "
-            "Coder"
-        ]
     on = _date(final.get("invoice_date"))
     types = _area_types(v.province, v.tax_code, on)
     if not types:
         return []
+    if v.expensed:  # E1 would work the recovered tax out of an amount that holds the other (D-210)
+        left = sorted(v.expensed)
+        return [
+            f"the {' and '.join(left)} {'is' if len(left) == 1 else 'are'} left in the expense (GL accounts & tax): "
+            "with the gross amount only JD Edwards works the tax out of the whole amount, that tax included. Code "
+            "the tax to G/L accounts or send tax amounts (Amounts): set it in Settings → JD Edwards E1, or ask "
+            "whoever sets up AP Coder"
+        ]
     items = final.get("line_items") or []
     basis = legacy_basis(items, final.get("tax_lines") or [])
     kinds = sorted({t["tax_type"] for t in v.charged})
@@ -975,6 +976,8 @@ def _tax_amounts(v: _Voucher, final: dict[str, Any], inv: dict[str, Any], settin
     if v.tax_code == "V" and dist:
         v.expensed = frozenset(t["tax_type"] for t in charged) & (recovers - _recovered_types(dist, final))
     on_item = [t for t in charged if t["tax_type"] not in v.expensed]
+    if v.expensed and not on_item:  # no tax left on the pay item: the exempt code, as when none is charged (B-2150)
+        v.tax_code, recovers = settings.exempt_code.strip().upper(), frozenset()
     v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in on_item)
     # The taxable amount of each tax, a tax printed twice (goods, freight) added up (B-923); GST and QST on the same
     # lines have the same one: the widest.
@@ -1557,6 +1560,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, code, f"JD Edwards: {problem}", None))
         else:
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
+    if said := not_recovered(v):  # a GST/HST the Tax setup keeps in the expense: meant, or a slip (B-2150)
+        out.append((WARNING, "JDE_TAX_NOT_RECOVERED", f"JD Edwards: {said}", None))
     if v.gl_moved and v.gl_day:  # posted in the open period: the person sees it before approving (D-182)
         out.append((WARNING, "JDE_GL_DATE_MOVED", f"JD Edwards: {moved_note(v.gl_day, v.gl_moved)}", None))
     no_code = terms_unmapped(output, settings)
@@ -1580,6 +1585,20 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
     from ap_coder.ops.offline import setup_contact
 
     return [(severity, code, setup_contact(text), line) for severity, code, text, line in out]
+
+
+def not_recovered(v: _Voucher) -> str:
+    """What to say of a voucher whose GST or HST the Tax setup keeps in the expense under code V ("" otherwise): no
+    input tax credit is claimed for it. Nearly every company recovers them, so it is asked, on the review screen and
+    on the keying sheet; a provincial tax left in the expense is the company's choice (D-210) and is not."""
+    left = [t for t in v.charged if t["tax_type"] in v.expensed and t["tax_type"] in ("GST", "HST")]
+    if not left:
+        return ""
+    names = " and ".join(dict.fromkeys(t["tax_type"] for t in left))
+    amount = sum(_units(t.get("tax_amount"), v.decimals) for t in left) / 100
+    return (f"the {names} ({amount:,.2f}) is not recovered: GL accounts & tax keeps it in the expense, so the "
+            "voucher claims no input tax credit for it. If that is not meant, set it to recoverable in GL accounts "
+            "& tax (or ask the pilot tester), then save the invoice again")  # fmt: skip
 
 
 def account_text(gl_code: str, cost_center: str, settings: JdeSettings) -> str:

@@ -110,10 +110,21 @@ CHECKS: dict[str, CheckHelp] = {
     "JDE_GROSS_TAX": CheckHelp(
         ERP, "JD Edwards would work out a different tax",
         "With the gross amount only, JD Edwards works the tax out itself from the tax area's rate on the whole gross. "
-        "This invoice has a line with no tax on it (exempt or zero-rated), or charges another tax than the area's "
-        "rate, so JD Edwards would post a tax the vendor did not charge.",
+        "This invoice has a line with no tax on it (exempt or zero-rated), charges another tax than the area's "
+        "rate, or carries a tax that GL accounts & tax leaves in the expense (a QST that is not recovered), so JD "
+        "Edwards would post a tax the vendor did not charge, or work the tax out of an amount that holds another.",
         "Check the tax lines and each line's tax code. If they are right, ask the pilot tester to code the tax to G/L "
         "accounts, or to send tax amounts (Settings → JD Edwards E1, Amounts).",
+    ),
+    "JDE_TAX_NOT_RECOVERED": CheckHelp(
+        ERP, "GST/HST not recovered on the JD Edwards voucher",
+        "GL accounts & tax keeps this invoice's GST or HST in the expense (not recoverable), so its JD Edwards "
+        "voucher claims no input tax credit: the tax is inside the G/L lines and off the pay item. Most companies "
+        "recover the GST/HST, so this is asked before it goes out. A provincial tax left in the expense (a QST that is "
+        "not recovered) is not asked.",
+        "If the company does not recover it, approve as usual. If it should be recovered, set the tax to recoverable "
+        "with its account in GL accounts & tax (the pilot tester does), then save the invoice again so its posting "
+        "is worked out anew.",
     ),
     "JDE_MEALS_PO": CheckHelp(
         ERP, "Meals on a PO-matched JD Edwards voucher",

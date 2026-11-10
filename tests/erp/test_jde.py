@@ -1000,3 +1000,72 @@ def test_the_remarks_stay_as_they_were_or_carry_what_a_person_types():
     assert jde.JdeSettings.from_json(json.dumps({"company": "00002"})).remarks == jde.REMARKS_REFERENCE
     assert jde.JdeSettings.from_json(json.dumps({"remarks": "both"})).remarks == jde.REMARKS_REFERENCE
     assert jde.JdeSettings.from_json(typed.to_json()).remarks == jde.REMARKS_TYPED
+
+
+def test_code_v_with_the_gst_left_in_the_expense_is_said_before_it_goes_out():
+    """B-2150: GST set to "not recoverable" by mistake under code V went out as "V, the tax area, no tax amounts"
+    with nothing said: typed so, JD Edwards works the tax out itself; loaded, the input tax credit is never claimed.
+    The review screen warns (JDE_TAX_NOT_RECOVERED), and a voucher with no tax left on its pay item goes with the
+    exempt code, as one that charges no tax does."""
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    inv = _invoice(AB, setup=_setup(GST=TaxTreatment("GST", "expense_to_line")))
+    assert jde.validate([inv], settings, AN8) == {}  # a warning, not a hold
+    (found,) = [f for f in jde.voucher_findings(inv["final_output"], settings, "10023") if f[1].startswith("JDE_TAX")]
+    assert found[:2] == (jde.WARNING, "JDE_TAX_NOT_RECOVERED")
+    assert "the GST (87.30) is not recovered" in found[2] and "GL accounts & tax" in found[2]
+    files = _files([inv], settings)
+    (head,) = files[jde.HEADER_FILE]
+    assert (head["VLEXR1"], head["VLTXA1"]) == ("E", "AB-GST")
+    assert (head["VLATXA"], head["VLATXN"], head["VLSTAM"]) == ("0", "183330", "0")
+    assert sum(int(r["VNAA"]) for r in files[jde.DIST_FILE]) == 183330
+    # Both Quebec taxes in the expense: the same, the federal one named.
+    both = _invoice(QC, setup=_setup(GST=TaxTreatment("GST", "expense_to_line"),
+                                     QST=TaxTreatment("QST", "expense_to_line")))  # fmt: skip
+    (found,) = [f for f in jde.voucher_findings(both["final_output"], settings, "10023") if f[1].startswith("JDE_TAX")]
+    assert "the GST (120.00) is not recovered" in found[2]
+    assert _files([both], settings)[jde.HEADER_FILE][0]["VLEXR1"] == "E"
+    # With the gross amount only and the exempt code JD Edwards works out no tax: it balances, nothing to hold.
+    assert jde.validate([both], jde.JdeSettings(amount_mode=jde.AMOUNT_GROSS), AN8) == {}
+    # The QST alone left in the expense is the Tax setup's choice (D-210): code V stays, and nothing is warned.
+    qst, on_gst_area = _quebec_qst_in_the_expense()
+    for fine, js in ((qst, on_gst_area), (_invoice(AB), settings)):
+        assert "JDE_TAX_NOT_RECOVERED" not in {f[1] for f in jde.voucher_findings(fine["final_output"], js, "10023")}
+
+
+def test_the_rule_for_a_tax_left_in_the_expense_is_code_vs_alone_and_counts_a_meals_cent_as_recovered():
+    """D-210's edges, each a deliberate break no test noticed: code C still holds a GST the Tax setup expenses; a
+    cent of GST all on a meal (nothing left to claim, so no tax line) is still a recovered tax; and the taxable
+    amount is the recovered tax's base, not a wider one of the tax left in the expense."""
+    tax_amounts = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX)
+    expensed = _invoice(BC, setup=_setup(GST=TaxTreatment("GST", "expense_to_line")))
+    assert "unbalanced" in jde.validate([expensed], tax_amounts, AN8)[1][0]  # BC is code C: as before D-210
+    # A meal of 0.10 with a cent of GST, among other lines: the cent is in the meal's line and no GST line is left.
+    from tests.erp.test_jde_gl_mode import _setup as meals_setup
+    from tests.erp.test_jde_gl_mode import coded, doc, line, tl
+
+    meal = coded(doc([line(1, 0.10, "6300", ["GST"], desc="Coffee")], [tl("GST", "", 0.05, 0.10, 0.01)], prov="AB"),
+                 meals_setup(meals=["6300"]))  # fmt: skip
+    assert not [e for e in meal["final_output"]["gl_distribution"] if e["kind"] == "tax"]
+    v = jde._prepare(meal, jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, default_bu="HQ"), "10023")
+    assert v.expensed == frozenset() and v.recoverable_types >= {"GST"} and (v.stam, v.recoverable) == (0, 0)
+    assert v.tax_code == "V" and not v.problems
+    # The QST charged on more than the GST (a line the GST does not apply to): the taxable amount is the GST's base.
+    lines = [line(1, 1000.0, "6010", ["GST", "QST"]), line(2, 500.0, "6010", ["QST"], exempt=["GST"])]
+    wider = coded(doc(lines, [tl("GST", "", 0.05, 1000.0, 50.0), tl("QST", "QC", 0.09975, 1500.0, 149.63)], prov="QC"),
+                  _setup(QST=TaxTreatment("QST", "expense_to_line")))  # fmt: skip
+    _inv, on_gst_area = _quebec_qst_in_the_expense()
+    assert jde.validate([wider], on_gst_area, AN8) == {}
+    (head,) = _files([wider], on_gst_area)[jde.HEADER_FILE]
+    assert (head["VLATXA"], head["VLSTAM"], head["VLATXN"]) == ("100000", "5000", "64963")
+    # One pay item per line: the taxable amount follows the GST's lines, not the QST's wider ones.
+    on_gst_area.line_numbering = jde.MATCH_HEADER
+    each = _files([wider], on_gst_area)[jde.HEADER_FILE]
+    assert [(h["VLATXA"], h["VLSTAM"]) for h in each] == [("100000", "5000"), ("0", "0")]
+
+
+def test_a_mapping_rows_own_subsidiary_wins_over_the_gl_codes_when_it_names_no_object():
+    """B-2085's corner: a mapping row that gives a subsidiary and no object keeps its subsidiary; the object is the
+    GL code's."""
+    mapped = jde.JdeSettings(gl_map=[jde.GlMap("6420.2210", sub="9001"), jde.GlMap("6431", sub="77")])
+    assert jde.ani(jde.account_for("6420.2210", "0312005561", mapped)) == "0312005561.6420.9001"
+    assert jde.ani(jde.account_for("6431", "0312005561", mapped)) == "0312005561.6431.77"

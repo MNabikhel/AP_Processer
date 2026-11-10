@@ -67,12 +67,10 @@ SHORT_FORMATS = {
     jde_keying.FORMAT: "JD Edwards keying sheet",
 }
 AGAIN_FORMATS = {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)",
-                 jde_keying.FORMAT: "JD Edwards keying sheet",
-                 jde_keying.CSV_FORMAT: "JD Edwards keying sheet (CSV)"}  # the others read as XLSX, CSV  # fmt: skip
-JDE_FORMATS = (jde.FORMAT, jde_keying.FORMAT, jde_keying.CSV_FORMAT)
-# A batch made in one of these holds only invoices that passed the JD Edwards checks (the others stay in Ready to
-# export, listed with why): the Z-files to load, and the sheet to type from (B-2148).
-JDE_CHECKED = (jde.FORMAT, jde_keying.FORMAT)
+                 jde_keying.FORMAT: "JD Edwards keying sheet"}  # the others read as XLSX, CSV  # fmt: skip
+# JD Edwards' formats: the Z-files to load and the sheet to type from. A batch made in one holds only invoices that
+# passed the JD Edwards checks (the others stay in Ready to export, listed with why: B-2148).
+JDE_FORMATS = (jde.FORMAT, jde_keying.FORMAT)
 FORMAT_SETTING = "export_format"  # the format of the last batch made: the page opens on it (Excel at first)
 
 
@@ -124,7 +122,7 @@ def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[i
     ids = store.batch_invoice_ids(batch)
     invoices = store.get_invoices(ids)
     known = store.export_batch(batch)
-    if known and known["format"] in JDE_CHECKED:
+    if known and known["format"] in JDE_FORMATS:
         return invoices, {}
     prior = jde.prior_records(store, exclude_ids=ids, invoices=invoices)  # only what has their numbers (D-156)
     left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), prior)
@@ -171,24 +169,24 @@ def jde_check(store: Store, invoice_ids: list[int],
     return ok, problems, blocking
 
 
-def keying_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
-    """The batch's JD Edwards keying sheet (the workbook or its CSV), from the approved data and the current JD
-    Edwards settings: every invoice of the batch is on it, one the checks hold back (a batch made in another
-    format, or settings changed since), or that JD Edwards has (or may have) through the API, on its "Not ready"
-    sheet with why."""
+def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
+    """The batch's JD Edwards keying sheet, from the approved data and the current JD Edwards settings: every invoice
+    of the batch is on it, one the checks hold back (a batch made in another format, or settings changed since), or
+    that JD Edwards has (or may have) through the API, on its "Not ready" sheet with why."""
     invoices, left_out = jde_left_out(store, batch)
     left_out = {**left_out, **jde_post.left_out_of_files(store, batch)}
     created = (store.export_batch(batch) or {}).get("created_at") or ""
-    return jde_keying.build(fmt, invoices, jde.load(store), store.vendor_ids(), batch=batch, gl_names=gl_names(store),
-                            on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out)  # fmt: skip
+    return jde_keying.build(invoices, jde.load(store), store.vendor_ids(), batch=batch, gl_names=gl_names(store),
+                            on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
+                            fx_rates=store.fx_rates())  # fmt: skip
 
 
 def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     """(bytes, file name, content type) of export batch ``batch`` in format ``fmt``."""
     if fmt == jde.FORMAT:
         return jde_file(store, batch)
-    if fmt in (jde_keying.FORMAT, jde_keying.CSV_FORMAT):
-        return keying_file(store, batch, fmt)
+    if fmt == jde_keying.FORMAT:
+        return keying_file(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
     return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store),
                          tax_treatments=store.tax_treatments(), bank_accounts=bank_accounts(store))  # fmt: skip
@@ -313,7 +311,7 @@ def exports_page(
     # ticked.
     problems: list[dict[str, Any]] = []
     blocking: list[str] = []
-    if fmt in JDE_CHECKED and ready:
+    if fmt in JDE_FORMATS and ready:
         problems = ready_problems(store, [r["id"] for r in ready])
         blocking = jde.settings_problems(jde.load(store)) if fmt == jde.FORMAT else []
     held = {p["id"] for p in problems}
@@ -328,7 +326,7 @@ def exports_page(
     if again_fmt not in exports.FORMATS:
         again_fmt = "xlsx"
     left_out = (0, 0)
-    if chosen and again_fmt in JDE_CHECKED:
+    if chosen and again_fmt in JDE_FORMATS:
         invoices, missing = jde_left_out(store, chosen["id"])
         left_out = (len(missing), len(invoices))
     totals = store.batch_totals()
@@ -450,7 +448,7 @@ def _create_batch(request: Request, form: Any) -> JSONResponse:
     if not chosen:
         return refuse("Tick the invoices to export.")
     ticked = len(chosen)
-    if fmt in JDE_CHECKED:
+    if fmt in JDE_FORMATS:
         chosen, _problems, blocking = jde_check(store, chosen, files=fmt == jde.FORMAT)
         if blocking:
             return refuse(" ".join(f"{p} Set it in Settings → JD Edwards E1." for p in blocking))
@@ -469,7 +467,7 @@ def _create_batch(request: Request, form: Any) -> JSONResponse:
         )
     count = len(store.batch_invoice_ids(batch))
     said = f"Batch {batch} created with {ui.plural(count, 'invoice')}. Download it below."
-    if fmt in JDE_CHECKED and ticked > len(chosen):  # ticked on a page drawn before one stopped being ready
+    if fmt in JDE_FORMATS and ticked > len(chosen):  # ticked on a page drawn before one stopped being ready
         left = ticked - len(chosen)
         said += (f" {ui.plural(left, 'ticked invoice')} {'is' if left == 1 else 'are'} not ready for JD Edwards and "
                  f"{'stays' if left == 1 else 'stay'} in Ready to export: the list says why.")  # fmt: skip

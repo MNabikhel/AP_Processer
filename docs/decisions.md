@@ -4775,14 +4775,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Open, for the JDE team:** on a voucher with a provincial tax left in the expense, is that tax entered as the pay
     item's non-taxable amount (what the batch files send), or is the taxable amount left at the base with nothing
     else typed? The keying sheet shows gross, taxable and tax, which is the same either way.
-  - **What, the keying sheet** (`erp/jde_keying.py`; the Exports page's formats "JD Edwards keying sheet" and its
-    CSV): for a batch's invoices, a block for each voucher (the pay item's fields, then its G/L lines with the account
-    string as typed, the account's description, the amount and the remark, then a check line: lines + recovered tax
-    = gross), made of the same voucher as the batch files (`jde._prepare`), so the two cannot disagree. Codes are
-    text cells, amounts numbers, dates dates; it prints upright with the column names on each page and a voucher
-    kept on one page when it fits. An invoice the JD Edwards checks hold back, or that JD Edwards has through the
-    API, is on the sheet "Not ready" with why. A batch made in this format takes every ticked invoice (the sheet
-    says which are not ready), where a JD Edwards batch leaves them out.
+  - **What, the keying sheet** (`erp/jde_keying.py`; the Exports page's format "JD Edwards keying sheet"): for a
+    batch's invoices, a block for each voucher in the screen's order (the header and pay item fields, then its G/L
+    lines with the account string as typed, the account's description, the amount and the remark, then a check line:
+    lines + recovered tax = gross, then in words what a person would otherwise work out), made of the same voucher
+    as the batch files (`jde._prepare`), so the two cannot disagree. Codes are text cells, amounts numbers, dates
+    dates; it prints upright with the column names on each page, a voucher that fits a page never cut.
+  - **Changed after its review (B-2147 to B-2152):** a keying batch first took every ticked invoice and listed those
+    not ready on its second sheet; it now holds only invoices that pass the JD Edwards checks, as a JD Edwards batch
+    does (the others stay in Ready to export, listed with why before the batch is made), keeps its vouchers once
+    they are back in the ERP register, and its invoices read "On keying sheet 12", not "Exported". The sheet "Not
+    ready" remains for a batch made in another format and for vouchers JD Edwards has through the API. The CSV twin
+    is gone: a spreadsheet reads its codes as numbers and no house convention keeps them text. A GST/HST left in
+    the expense under code V is warned of (JDE_TAX_NOT_RECOVERED), and a voucher with no tax left on its pay item
+    goes with the exempt code. Two federal rates on one invoice (lines supplied in two provinces) are two pay
+    items: the voucher is held (JDE_TAX_AREA) with both spelled out, until AP Coder makes two pay items itself.
   - **Remarks:** `jde.line_remark` and `jde.voucher_remark` alone say a G/L line's remark (today its description cut
     at 30 characters) and the pay item's (the first line's): the keying sheet always shows them, and one setting
     (Remarks) chooses what the batch files carry: AP Coder's invoice number in VLRMK and the invoice number in VNEXR

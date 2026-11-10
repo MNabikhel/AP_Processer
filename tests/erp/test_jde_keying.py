@@ -1,5 +1,6 @@
 """The JD Edwards keying sheet (D-210): a block per voucher to read while typing it into Standard Voucher Entry, its
-cells' values and types, the check line, the "Not ready" sheet, the CSV twin and the Exports page's download."""
+cells' values and types, the check line and what is said under it, the printed pages, the "Not ready" sheet and the
+Exports page's batches of it."""
 
 import csv
 import datetime as dt
@@ -83,8 +84,7 @@ def everything():
 
 
 def workbook(invoices, js=None, **kw):
-    data, name, mime = jde_keying.build(jde_keying.FORMAT, invoices, js or settings(), lookup, batch=7,
-                                        gl_names=NAMES, on=ON_DAY, **kw)  # fmt: skip
+    data, name, mime = jde_keying.build(invoices, js or settings(), lookup, batch=7, gl_names=NAMES, on=ON_DAY, **kw)
     assert name == "ap_coder_jde_keying_7.xlsx" and mime.endswith("spreadsheetml.sheet")
     return openpyxl.load_workbook(io.BytesIO(data))
 
@@ -115,6 +115,26 @@ def field(block, label):
     raise AssertionError(label)
 
 
+LINES = 10  # a block's rows above its G/L lines: the title, eight rows of fields and "G/L distribution"
+
+
+def lines_and_check(block):
+    """The G/L lines and the check line of a block, as values."""
+    rows = values(block)[LINES:]
+    return rows[: [r[0] for r in rows].index("Check") + 1]
+
+
+def said(block, label):
+    """The warnings or notes under a block's check line, each as one text."""
+    out: list[str] = []
+    for row in values(block):
+        if row[0] == label:
+            out.append(row[1])
+        elif out and row[0] is None and row[1]:
+            out[-1] += " " + row[1]
+    return out
+
+
 def test_a_one_line_gst_voucher_is_a_block_of_the_pay_item_its_line_and_a_check():
     wb = workbook([one_line()])
     assert wb.sheetnames == [jde_keying.SHEET, jde_keying.NOT_READY]
@@ -124,12 +144,13 @@ def test_a_one_line_gst_voucher_is_a_block_of_the_pay_item_its_line_and_a_check(
     assert values(block) == [
         ["Voucher 1 of 1", "AP Coder invoice 1", None, None],
         ["Supplier number", "40417", "Supplier name", "Prairie Office Supply Ltd."],
-        ["Invoice number", "POS-3301", "PO number", None],
+        ["Company", "00001", "Invoice number", "POS-3301"],
         ["Invoice date", dt.datetime(2026, 10, 2), "G/L date", dt.datetime(2026, 10, 2)],
-        ["Gross amount", 252, "Currency", "CAD"],
+        ["Currency", "CAD", "Gross amount", 252],
         ["Payment terms", "N30", "Remark", "Fibre line October"],
+        ["Due date", dt.datetime(2026, 11, 1), "PO number", None],
         ["Tax explanation code", "V", "Tax rate/area", "AB-GST"],
-        ["Taxable amount", 240, "Tax amount", 12],
+        ["Tax amount", 12, "Taxable amount", 240],
         ["G/L distribution", None, None, None],
         [f"{HQ}.6420.2210", "Data lines", 240, "Fibre line October"],
         ["Check", "G/L lines + recovered tax = gross", 240, "240.00 + 12.00 = 252.00: balanced"],
@@ -145,23 +166,25 @@ def test_codes_are_text_cells_amounts_are_numbers_and_dates_are_dates():
     assert (po.value, po.data_type, po.number_format) == ("00052316", "s", "@")
     supplier = field(third, "Supplier number")
     assert (supplier.value, supplier.data_type, supplier.number_format) == ("5512", "s", "@")
-    accounts = [row[0] for row in second[9:12]]
+    accounts = [row[0] for row in second[LINES : LINES + 3]]
     assert [a.value for a in accounts] == [f"{HQ}.6420.2210", f"{HQ}.0042", f"{IT}.6431"]
     assert all(a.data_type == "s" and a.number_format == "@" for a in accounts)
     assert field(third, "Tax explanation code").data_type == field(third, "Tax rate/area").data_type == "s"
     for label in ("Gross amount", "Taxable amount", "Tax amount"):
         cell = field(first, label)
         assert cell.data_type == "n" and cell.number_format == "#,##0.00", label
-    amount = second[9][2]
+    amount = second[LINES][2]
     assert (amount.value, amount.data_type, amount.number_format) == (100, "n", "#,##0.00")
     for label in ("Invoice date", "G/L date"):
         cell = field(first, label)
         assert cell.is_date and cell.value == dt.datetime(2026, 10, 2) and cell.number_format == "yyyy-mm-dd"
+    company = field(first, "Company")
+    assert (company.value, company.data_type, company.number_format) == ("00001", "s", "@")
 
 
 def test_a_voucher_split_across_two_business_units_has_a_line_each_with_its_remark_cut_at_30():
     (block,) = blocks(workbook([split()])[jde_keying.SHEET])
-    assert values(block)[9:] == [
+    assert lines_and_check(block) == [
         [f"{HQ}.6420.2210", "Data lines", 100, "Courier to the north office, t"],
         [f"{HQ}.0042", "Office supplies", 200, "Toner"],
         [f"{IT}.6431", "Courier", 300, "Same-day courier"],
@@ -176,7 +199,7 @@ def test_quebec_with_the_qst_in_the_expense_shows_the_gst_on_the_pay_item_and_th
     (block,) = blocks(workbook([quebec()])[jde_keying.SHEET])
     assert (field(block, "Gross amount").value, field(block, "Taxable amount").value) == (1425.69, 1240)
     assert (field(block, "Tax amount").value, field(block, "Tax rate/area").value) == (62, "GSTONLY")
-    assert values(block)[9:] == [
+    assert lines_and_check(block) == [
         [f"{IT}.6420.2210", "Data lines", 1363.69, "Fibre line October"],  # 1,240.00 and its QST 123.69
         ["Check", "G/L lines + recovered tax = gross", 1363.69, "1,363.69 + 62.00 = 1,425.69: balanced"],
     ]
@@ -187,13 +210,85 @@ def test_a_usd_voucher_and_a_credit_note():
     assert (field(foreign, "Currency").value, field(foreign, "Gross amount").value) == ("USD", 500)
     assert field(foreign, "Taxable amount").value is None and field(foreign, "Tax amount").value is None  # no tax
     assert field(foreign, "Tax explanation code").value == "E"
-    assert values(foreign)[-1][2:] == [500, "500.00 + 0.00 = 500.00: balanced"]
+    assert lines_and_check(foreign)[-1][2:] == [500, "500.00 + 0.00 = 500.00: balanced"]
     assert (field(minus, "Gross amount").value, field(minus, "Taxable amount").value) == (-252, -240)
     assert field(minus, "Tax amount").value == -12 and field(minus, "Payment terms").value is None  # a credit: no terms
-    assert values(minus)[-2:] == [
+    assert field(minus, "Due date").value == dt.datetime(2026, 10, 8)  # a credit: its own date
+    assert lines_and_check(minus) == [
         [f"{HQ}.6420.2210", "Data lines", -240, "Credit for September"],
         ["Check", "G/L lines + recovered tax = gross", -240, "-240.00 + -12.00 = -252.00: balanced"],
     ]
+
+
+def meal(inv_id=7):
+    """Alberta: a meal and a room, GST on both; half the GST on the meal is not claimed (D-90)."""
+    from tests.erp.test_jde_gl_mode import _setup as with_meals
+
+    lines = [line(1, 100.0, "6300", ["GST"], desc="Team lunch", cc=HQ),
+             line(2, 100.0, "6431", ["GST"], desc="Room", cc=HQ)]  # fmt: skip
+    d = doc(lines, [tl("GST", "", 0.05, 200.0, 10.0)], prov="AB", vendor_name="Prairie Office Supply Ltd.",
+            invoice_number="POS-3340", invoice_date="2026-10-07")  # fmt: skip
+    return coded(d, with_meals(meals=["6300"]), inv_id)
+
+
+def with_pst(inv_id=8):
+    """British Columbia: GST recovered, the PST in the expense line (code C)."""
+    d = doc([line(1, 100.0, "6431", ["GST", "PST"], desc="Parcels", cc=HQ)],
+            [tl("GST", "", 0.05, 100.0, 5.0), tl("PST", "BC", 0.07, 100.0, 7.0)], prov="BC",
+            vendor_name="Lakehead Courier Inc.", invoice_number="LC-00950", invoice_date="2026-10-07",
+            po_number="4500078813")  # fmt: skip
+    return coded(d, inv_id=inv_id)
+
+
+def test_what_a_person_would_have_to_work_out_is_said_under_the_voucher():
+    """The meals' half and where it is, what the tax amount holds under code C, a tax that is not recovered, the
+    currency the amounts are typed in and the rate, a PO number JD Edwards' field cannot hold."""
+    rates = {"USD": 1.37}
+    eaten, sales_tax, qc, foreign = blocks(
+        workbook([meal(), with_pst(), quebec(), usd()], fx_rates=rates)[jde_keying.SHEET])  # fmt: skip
+    assert (field(eaten, "Tax amount").value, field(eaten, "Taxable amount").value) == (7.5, 200)
+    assert lines_and_check(eaten)[0][2] == 102.5 and said(eaten, "Warning") == []
+    assert said(eaten, "Note") == [
+        "Meals: half the tax on meals (2.50) is not claimed. It is inside G/L line 1, and the tax amount is the "
+        "claimed part only: less than the area's rate on the taxable amount."
+    ]
+    assert (field(sales_tax, "Tax explanation code").value, field(sales_tax, "Tax amount").value) == ("C", 12)
+    assert lines_and_check(sales_tax)[-1][3] == "107.00 + 5.00 = 112.00: balanced"
+    assert said(sales_tax, "Note") == [
+        "The tax amount 12.00 is 5.00 that JD Edwards recovers and 7.00 of PST that stays inside the G/L lines (code "
+        "C: the tax area's sales tax).",
+        "PO number 4500078813 is longer than the 8 characters JD Edwards' purchase order field holds: it cannot be "
+        "typed there as it is.",
+    ]
+    assert said(qc, "Note") == [
+        "The QST (123.69) is not recovered: it is inside the G/L lines, not in the tax or taxable amount."
+    ]
+    assert said(foreign, "Note") == [
+        "USD voucher: type the amounts as shown, in USD (foreign entry), not in CAD. AP Coder's rate is 1.37 CAD for "
+        "1 USD (Settings → Review; the batch file sends it): leave JD Edwards' own rate unless told to type one."
+    ]
+    (no_rate,) = blocks(workbook([usd()])[jde_keying.SHEET])
+    assert said(no_rate, "Note")[0].endswith("not in CAD. JD Edwards takes the exchange rate from its own table.")
+    # No row of a note is wider than the three columns beside its label, and a plain voucher has none.
+    assert all(len(row[1]) <= jde_keying.NOTE_WIDTH for b in (eaten, sales_tax, qc, foreign) for row in values(b)
+               if row[0] in ("Note", None) and row[1])  # fmt: skip
+    (plain,) = blocks(workbook([one_line()])[jde_keying.SHEET])
+    assert plain[-1][0].value == "Check"
+
+
+def test_a_gst_the_tax_setup_does_not_recover_is_warned_of_on_the_voucher():
+    """B-2150 on the sheet: the GST kept in the expense under code V goes with the exempt code and a warning."""
+    d = {k: v for k, v in one_line()["final_output"].items() if k != "gl_distribution"}
+    (block,) = blocks(workbook([coded(d, _setup(GST=TaxTreatment("GST", "expense_to_line")))])[jde_keying.SHEET])
+    assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == ("E", "AB-GST")
+    assert field(block, "Tax amount").value is None and field(block, "Taxable amount").value is None
+    assert lines_and_check(block)[-1][2:] == [252, "252.00 + 0.00 = 252.00: balanced"]
+    assert said(block, "Warning") == [
+        "The GST (12.00) is not recovered: GL accounts & tax keeps it in the expense, so the voucher claims no input "
+        "tax credit for it. If that is not meant, set it to recoverable in GL accounts & tax (or ask the pilot "
+        "tester), then save the invoice again."
+    ]
+    assert [row[0].font.bold for row in block if row[0].value == "Warning"] == [True]
 
 
 def test_the_tax_coded_to_gl_accounts_is_a_line_of_its_own_and_no_tax_on_the_pay_item():
@@ -202,7 +297,7 @@ def test_the_tax_coded_to_gl_accounts_is_a_line_of_its_own_and_no_tax_on_the_pay
     (block,) = blocks(workbook([one_line()], js)[jde_keying.SHEET])
     assert field(block, "Tax explanation code").value == "E" and field(block, "Tax rate/area").value is None
     assert field(block, "Taxable amount").value is None
-    assert values(block)[9:] == [
+    assert lines_and_check(block) == [
         [f"{HQ}.6420.2210", "Data lines", 240, "Fibre line October"],
         ["0000900.2310", None, 12, "GST 5% (recoverable)"],
         ["Check", "G/L lines + recovered tax = gross", 252, "252.00 + 0.00 = 252.00: balanced"],
@@ -283,35 +378,11 @@ def test_text_that_looks_like_a_formula_is_kept_as_text():
     final = {k: v for k, v in one_line()["final_output"].items() if k != "gl_distribution"}
     final["line_items"][0]["description"] = "+1 800 555 0100"
     inv = coded({**final, "vendor_name": "=HYPERLINK(1)"})
-    data, _, _ = jde_keying.build(jde_keying.FORMAT, [inv], settings(), lambda final: "40417", gl_names=NAMES)
+    data, _, _ = jde_keying.build([inv], settings(), lambda final: "40417", gl_names=NAMES)
     (block,) = blocks(openpyxl.load_workbook(io.BytesIO(data))[jde_keying.SHEET])
-    name, remark = field(block, "Supplier name"), block[9][3]
+    name, remark = field(block, "Supplier name"), block[LINES][3]
     assert (name.value, name.data_type, name.quotePrefix) == ("=HYPERLINK(1)", "s", True)
     assert (remark.value, remark.data_type, remark.quotePrefix) == ("+1 800 555 0100", "s", True)
-
-
-def test_the_csv_twin_has_a_row_per_gl_line_with_its_vouchers_fields():
-    data, name, mime = jde_keying.build(jde_keying.CSV_FORMAT, everything(), settings(), lookup, batch=7,
-                                        gl_names=NAMES, on=ON_DAY)  # fmt: skip
-    assert (name, mime) == ("ap_coder_jde_keying_7.csv", "text/csv") and data.startswith(b"\xef\xbb\xbf")
-    rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
-    assert list(rows[0]) == jde_keying.CSV_COLUMNS
-    assert [(r["Voucher"], r["Line"], r["Account number"], r["Amount"]) for r in rows[:5]] == [
-        ("1", "1", f"{HQ}.6420.2210", "240.00"),
-        ("2", "1", f"{HQ}.6420.2210", "100.00"), ("2", "2", f"{HQ}.0042", "200.00"), ("2", "3", f"{IT}.6431", "300.00"),
-        ("3", "1", f"{IT}.6420.2210", "1363.69"),
-    ]  # fmt: skip
-    third = rows[4]
-    assert (third["Supplier number"], third["PO number"], third["Invoice date"], third["G/L date"]) == (
-        "5512", "00052316", "2026-10-06", "2026-10-06")  # fmt: skip
-    assert (third["Gross amount"], third["Taxable amount"], third["Tax amount"], third["Recovered tax"]) == (
-        "1425.69", "1240.00", "62.00", "62.00")  # fmt: skip
-    assert (third["Tax explanation code"], third["Tax rate/area"]) == ("V", "GSTONLY")
-    assert third["Remark"] == "Fibre line October"
-    assert third["Explanation -Remark-"] == "Fibre line October" and third["Not ready"] == ""
-    (held,) = [r for r in rows if r["Not ready"]]
-    assert (held["AP Coder invoice"], held["Voucher"], held["Account number"]) == ("6", "", "")
-    assert "no JDE supplier number" in held["Not ready"]
 
 
 def test_the_same_invoices_give_the_same_sheet_every_time():
@@ -319,9 +390,6 @@ def test_the_same_invoices_give_the_same_sheet_every_time():
         return [[(c.value, c.data_type, c.number_format) for c in row] for ws in wb for row in ws.iter_rows()]
 
     assert cells(workbook(everything())) == cells(workbook(everything()))
-    twice = [jde_keying.build(jde_keying.CSV_FORMAT, everything(), settings(), lookup, batch=7, gl_names=NAMES,
-                              on=ON_DAY)[0] for _ in range(2)]  # fmt: skip
-    assert twice[0] == twice[1]
     # The G/L date of the export day is the batch's day, not the day the sheet is downloaded again.
     (block,) = blocks(workbook([one_line()], settings(gl_date=jde.GL_DATE_EXPORT))[jde_keying.SHEET])
     assert field(block, "G/L date").value == dt.datetime(2026, 10, 9)
@@ -478,7 +546,9 @@ def test_a_keying_batchs_sheet_downloaded_again_keeps_its_vouchers_once_they_are
     follow(client, post(client, "/exports/create", {"fmt": "xlsx", "ids": [northwind["id"]]}))
     wb = openpyxl.load_workbook(
         io.BytesIO(client.get(f"/exports/batches/2/download?fmt={jde_keying.FORMAT}").content))  # fmt: skip
-    assert blocks(wb[jde_keying.SHEET]) == []
+    assert [values(b) for b in blocks(wb[jde_keying.SHEET])] == [
+        [["No voucher to type: see the sheet “Not ready”.", None, None, None]]
+    ]
     assert "already in the ERP" in wb[jde_keying.NOT_READY]["H2"].value
 
 
@@ -486,6 +556,36 @@ def test_the_keying_sheet_is_offered_only_where_jd_edwards_is_shown(store):
     from ap_coder.web.pages import exports as exports_page
 
     store.set_setting(jde.SHOW_SETTING, "0")
-    assert not {jde.FORMAT, jde_keying.FORMAT, jde_keying.CSV_FORMAT} & set(exports_page.shown_formats(store))
+    assert not {jde.FORMAT, jde_keying.FORMAT} & set(exports_page.shown_formats(store))
     store.set_setting(jde.SHOW_SETTING, "1")
-    assert {jde.FORMAT, jde_keying.FORMAT, jde_keying.CSV_FORMAT} <= set(exports_page.shown_formats(store))
+    assert {jde.FORMAT, jde_keying.FORMAT} <= set(exports_page.shown_formats(store))
+
+
+def test_a_voucher_jd_edwards_has_through_the_api_is_on_not_ready_never_to_be_typed_too(tmp_path, monkeypatch):
+    """A JD Edwards batch's keying sheet: a voucher posted through the API is not one to type (D-210)."""
+    from ap_coder.erp import jde_ais, jde_sync
+    from tests.erp.test_jde_post import batch_of
+    from tests.fake_ais import PASSWORD, FakeAis
+    from tests.webclient import client_for, post
+
+    monkeypatch.setattr(jde_ais, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(jde_ais, "env_path", lambda: tmp_path / ".env")
+    monkeypatch.setenv(jde_ais.PASSWORD_ENV, PASSWORD)
+    jde_sync.forget_cache()
+    with FakeAis() as ais:
+        store, batch = batch_of(tmp_path, ais)
+        client = client_for(store)
+
+        def sheet():
+            answer = client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
+            wb = openpyxl.load_workbook(io.BytesIO(answer.content))
+            return ([b[0][0].value for b in blocks(wb[jde_keying.SHEET])],
+                    list(wb[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)))  # fmt: skip
+
+        assert sheet() == (["Voucher 1 of 1"], [])
+        for step in ("dry-run", "post"):
+            post(client, f"/exports/batches/{batch}/jde-api/{step}")
+            assert client.app.state.jobs.get("jde-api").wait(30)
+        titles, held = sheet()
+        assert titles == ["No voucher to type: see the sheet “Not ready”."]
+        assert [(row[0], row[7]) for row in held] == [(1, "already posted to JD Edwards through the API")]
