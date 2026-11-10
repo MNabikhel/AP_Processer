@@ -119,6 +119,8 @@ def test_the_seven_invoices_in_review_are_scored_against_their_vouchers(chart_co
     assert (inv["ap_coder"], inv["in_review"], inv["in_voucher_list"], inv["scored"], inv["not_scored"]) == (
         7, 7, 7, 7, 0)  # fmt: skip
     assert inv["matched_by_amount"] == 0 and sum(report["vouchers"].values()) == 7
+    # the journal given is not the one AP Coder learned from: none of these vouchers was seen before
+    assert inv["learned_from"] == 0 and "Careful" not in proposed_score.paragraph(report)
     # each voucher's verdict is what the invoice's own proposal says of it
     for name, (invoice, _) in chart_company.invoices.items():
         accounts, left = _proposal(chart_company, name)
@@ -275,6 +277,9 @@ def test_the_command_scores_with_the_journal_loaded_here_and_says_the_paragraph(
     said = capsys.readouterr().out
     folder = chart_company.store.path.parent / pilot_score.FOLDER
     assert "Of 7 invoices read by AP Coder here" in said and str(folder / proposed_score.REPORT) in said
-    assert json.loads((folder / proposed_score.FIGURES).read_text(encoding="utf-8"))["invoices"]["scored"] == 7
+    figures = json.loads((folder / proposed_score.FIGURES).read_text(encoding="utf-8"))["invoices"]
+    # scored against the journal AP Coder learns from: said, the score is not a fair test of these invoices
+    assert (figures["scored"], figures["learned_from"]) == (7, 7)
+    assert "Careful: the vouchers of 7 of them are in the journal AP Coder learns from here" in said
     assert cli.main(["--db", db, "pilot-score", "--proposed"]) == 2
     assert "--vouchers" in capsys.readouterr().err

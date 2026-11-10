@@ -14,6 +14,9 @@ or approved) is scored on what AP Coder proposed before a person changed anythin
 4. the header fields as ``pilot-score`` compares them, and the journal's tax line against the invoice's recovered
    tax.
 
+A voucher scored that is in the journal loaded here is counted and said: AP Coder learns from that journal, so it may
+have seen how the invoice was keyed before it proposed anything.
+
 Writes ``proposed_score.md``, ``proposed_score_misses.csv`` (both sides of every voucher not wholly right) and
 ``proposed_score.json`` (the figures, no names) into ``pilot_score`` in the data folder.
 """
@@ -133,6 +136,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
     suppliers: dict[str, dict[str, Any]] = {}
     units: dict[str, dict[str, Any]] = {}
     misses: list[dict[str, Any]] = []
+    matched: list[jr.Voucher] = []
     unmatched = [{"id": o.id, "supplier": o.vendor_name, "invoice_number": o.invoice_number, "total": o.grand_total,
                   "why": NO_VOUCHER} for o in ours_only]  # fmt: skip
 
@@ -160,6 +164,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
             unmatched.append({"id": o.id, "supplier": o.vendor_name, "invoice_number": o.invoice_number,
                               "total": o.grand_total, "why": why})  # fmt: skip
             continue
+        matched.append(voucher)
         keyed = keyed_accounts(voucher)
         found = verdict(coded, left, keyed, FOREIGN_CENTS if foreign else ps.CENT)
         vouchers[found] += 1
@@ -202,7 +207,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
         "vouchers": vouchers, "lines": lines, "header": header, "tax": tax,
         "by_supplier": sorted(suppliers.values(), key=lambda s: (s["right"] - s["vouchers"], -s["vouchers"])),
         "by_unit": [{"unit": unit, **u} for unit, u in sorted(units.items(), key=lambda t: (-t[1]["accounts"], t[0]))],
-        "misses": misses, "unmatched": unmatched, "notes": list(notes or []),
+        "misses": misses, "unmatched": unmatched, "notes": list(notes or []), "matched_vouchers": matched,
     }  # fmt: skip
 
 
@@ -223,6 +228,10 @@ def paragraph(report: dict[str, Any]) -> str:
     if inv["not_scored"]:
         said += (f" {plural(inv['not_scored'], 'invoice')} could not be scored (no voucher, or two that fit): "
                  "listed in the report.")  # fmt: skip
+    if inv.get("learned_from"):
+        said += (f" Careful: the vouchers of {inv['learned_from']:,} of them are in the journal AP Coder learns from "
+                 "here. If that journal was loaded before these invoices were read, it had already seen how they "
+                 "were keyed; for a fair test, score invoices keyed after the journal's last voucher.")  # fmt: skip
     return said
 
 
@@ -311,6 +320,8 @@ def run(store: Any, vouchers: str | Path, journal: str | Path | None = None, out
     posted, notes = ps.posted_vouchers(ps.read_table(vouchers)[0], implied_decimals=implied_decimals,
                                        domestic=settings.domestic_currency)  # fmt: skip
     report = score(ps.our_invoices(store, settings, proposed=True), posted, read, settings.domestic_currency, notes)
+    # the vouchers scored that the journal loaded here holds: what AP Coder may have learned from before it proposed
+    report["invoices"]["learned_from"] = store.journal_already(jr.journal_of(report.pop("matched_vouchers")))
     report["made"] = dt.datetime.now().isoformat(timespec="minutes").replace("T", " ")
     report["source"] = f"{Path(vouchers).name} and {source}"
     folder = Path(out) if out else Path(store.path).parent / ps.FOLDER

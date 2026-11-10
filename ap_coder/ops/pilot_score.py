@@ -448,12 +448,12 @@ def our_invoices(store: Any, settings: jde.JdeSettings | None = None, proposed: 
             o.tax_area, o.tax_code = str(header[0].get("VLTXA1") or ""), str(header[0].get("VLEXR1") or "").upper()
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: its tax treatment is not compared
             pass
-        proposed = {li.get("line_number"): li for li in (inv.get("ai_output") or {}).get("line_items") or []}
+        as_proposed = {li.get("line_number"): li for li in (inv.get("ai_output") or {}).get("line_items") or []}
         for e in distribution(final, treatments):
             recoverable = e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < CENT
             gl, cc = str(e.get("gl_code") or ""), str(e.get("cost_center") or "")
             cc = "" if cc.upper() == UNASSIGNED else cc
-            ai = proposed.get(e.get("line_number")) if e.get("kind") == "expense" else None
+            ai = as_proposed.get(e.get("line_number")) if e.get("kind") == "expense" else None
             p_gl = str((ai or {}).get("predicted_gl_code") or UNASSIGNED) if ai is not None else ""
             p_cc = str((ai or {}).get("predicted_cost_center") or "")
             p_cc = "" if p_cc.upper() == UNASSIGNED else p_cc
