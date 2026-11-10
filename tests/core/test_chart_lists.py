@@ -179,3 +179,30 @@ def test_two_charts_with_the_same_lists_never_share_kept_pairs(tmp_path):
     assert first.chart_version() == 1 and len(first.chart_accounts()) == len(cf.CHART) - 1
     assert first.reference_data().pairs.status(OTHER, "5410") == NOT_IN_CHART
     assert first.account_pairs().status(OTHER, "5410") == NOT_IN_CHART
+
+
+def test_a_business_unit_and_a_supplier_are_retired_by_the_same_words_kept_in_one_place(store):
+    """One default, one setting and one way to find the word in a name, for the chart and the supplier master."""
+    from ap_coder.core.store import vendors as store_vendors
+
+    assert (
+        store_vendors.SKIP_WORDS_SETTING is chart.SKIP_WORDS_SETTING and chart.SKIP_WORDS_SETTING in chart.SETTING_KEYS
+    )
+    assert store_vendors._markers is chart.markers
+    assert (
+        store.skip_words() == list(store.chart_settings().skip_words) == list(chart.SKIP_WORDS) == ["DO NOT USE", "DNU"]
+    )
+    store.set_setting(chart.SKIP_WORDS_SETTING, "retired, DNU")
+    assert store.skip_words() == list(store.chart_settings().skip_words) == ["retired", "DNU"]
+    supplier = store_vendors.name_marker("Old Print Shop - RETIRED", store.skip_words())
+    assert supplier == ("Old Print Shop -", "RETIRED")
+    assert chart.skip_word("Old Annex (retired)", store.skip_words()) == "RETIRED"
+    for name in ("DO-NOT-USE yard", "****DO NOT USE**** Old Annex", "do  not\tuse", "Yard (DNU)"):  # the one rule
+        word = chart.skip_word(name)
+        assert word and store_vendors.name_marker(name, list(chart.SKIP_WORDS))[1] == word, name
+    for name in ("Adnure Supplies", "Do not disturb, use door", "DNUGGET"):
+        assert chart.skip_word(name) == "" == store_vendors.name_marker(name, list(chart.SKIP_WORDS))[1], name
+    _loaded(store)
+    assert store.account_pairs().skipped_units() == {}  # "Old Annex" is not retired by these words
+    store.set_setting(chart.SKIP_WORDS_SETTING, "")  # no word at all: no name retires a supplier or a business unit
+    assert store.skip_words() == [] and store.chart_settings().skip_words == ()

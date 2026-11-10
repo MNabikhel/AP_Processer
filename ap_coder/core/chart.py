@@ -67,11 +67,17 @@ POSTABLE = ("",)
 HEADER_EDIT = "N"  # the posting edit code of a title account: the accounts under it roll up into it
 # The business unit master's status of a business unit that takes postings; blank: the file gives no status.
 ACTIVE = ("ACT", "")
-SKIP_WORDS = ("DO NOT USE", "DNU")  # a business unit (or a supplier) whose name carries one is never offered
+# The words an ERP's names carry for "retired: do not use": a business unit whose name carries one is never offered,
+# a supplier whose name does is stopped (``core/store/vendors.py``, which takes the words, the setting's name and
+# ``markers`` from here). The one default and the one setting for both: ``SKIP_WORDS_SAVED`` is the default as the
+# setting holds it, its words with commas between; a setting saved blank names no word at all.
+SKIP_WORDS = ("DO NOT USE", "DNU")
+SKIP_WORDS_SETTING = "skip_words"
+SKIP_WORDS_SAVED = ", ".join(SKIP_WORDS)
 LABELS = ("Business unit", "Object", "Subsidiary")  # the three parts' names (job costing: job, cost type, cost code)
 # The settings' keys (plain ``settings`` rows: ``ChartSettings.read``), and the count of the chart's imports the
 # reference data is kept by (``Store.account_pairs``).
-SETTING_KEYS = ("postable_codes", "never_offered", "skip_words", "home_business_unit", "account_labels")
+SETTING_KEYS = ("postable_codes", "never_offered", SKIP_WORDS_SETTING, "home_business_unit", "account_labels")
 VERSION_KEY = "chart_version"
 
 
@@ -99,12 +105,14 @@ class ChartSettings:
     @classmethod
     def read(cls, saved: Mapping[str, str]) -> ChartSettings:
         """The settings as saved (``SETTING_KEYS``: text, a list one a line or with commas); one not saved, or left
-        blank, is the default."""
+        blank, is the default. The skip words are the supplier master's too, and read as it reads them
+        (``Store.skip_words``): commas between, and saved blank they are none."""
         labels = _listed(saved.get("account_labels"))
+        words = str(saved.get(SKIP_WORDS_SETTING, SKIP_WORDS_SAVED) or "").split(",")
         return cls(
             postable_codes=tuple(dict.fromkeys(("", *(c.upper() for c in _listed(saved.get("postable_codes")))))),
             never_offered=tuple(p.upper() for p in _listed(saved.get("never_offered"))),
-            skip_words=_listed(saved.get("skip_words")) or SKIP_WORDS,
+            skip_words=tuple(word.strip() for word in words if word.strip()),
             home_business_unit=clean(saved.get("home_business_unit")),
             account_labels=labels if len(labels) == len(LABELS) else LABELS,
         )
@@ -120,15 +128,24 @@ class ChartSettings:
         }
 
 
+def markers(words: Iterable[str]) -> list[tuple[str, re.Pattern[str]]]:
+    """Each skip word as it is said ("DO NOT USE") and as it is found: a word of its own, however it is spaced (``re``
+    keeps the few patterns compiled). The one way a name is found to carry one: a business unit's here, a supplier's
+    in ``core/store/vendors.name_marker``."""
+    found = []
+    for word in words:
+        parts = [re.escape(p) for p in re.split(r"[^0-9A-Za-z]+", word) if p]
+        if parts:
+            pattern = r"(?<![0-9a-z])" + r"[^0-9a-z]*".join(parts) + r"(?![0-9a-z])"
+            found.append((" ".join(word.split()).upper(), re.compile(pattern, re.IGNORECASE)))
+    return found
+
+
 def skip_word(name: Any, words: Iterable[str] = SKIP_WORDS) -> str:
     """The first of ``words`` the name carries as words of its own ("****DO NOT USE****", "Old yard DNU"), whatever
-    the case and the spaces; "" when it carries none."""
+    the case and the spacing, as it is said (in capitals); "" when it carries none."""
     text = str(name or "")
-    for word in words:
-        pattern = r"\s+".join(re.escape(part) for part in word.split())
-        if pattern and re.search(rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])", text, re.IGNORECASE):
-            return word
-    return ""
+    return next((said for said, pattern in markers(words) if pattern.search(text)), "")
 
 
 def _never_offered(patterns: Iterable[str], business_unit: str, code: str) -> str:

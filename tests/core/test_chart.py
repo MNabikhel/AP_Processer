@@ -167,7 +167,8 @@ def test_the_settings_are_read_as_typed_and_saved_back():
     assert ChartSettings.read(settings.saved()) == settings
     assert set(settings.saved()) == set(chart.SETTING_KEYS)
     # Left blank, or with a part missing: the default.
-    assert ChartSettings.read({"skip_words": " ", "account_labels": "Job, Cost code"}) == ChartSettings()
+    assert ChartSettings.read({"postable_codes": " ", "account_labels": "Job, Cost code"}) == ChartSettings()
+    assert ChartSettings.read({"skip_words": " "}).skip_words == ()  # the supplier master's words too: none
 
 
 @pytest.mark.parametrize(
