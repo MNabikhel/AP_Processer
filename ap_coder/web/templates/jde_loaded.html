@@ -41,7 +41,7 @@
   </form>
   <div class="card-head an-count">
     <span class="muted" id="loaded-count">{% if filtered %}{{ count | num }} of {{ total | plural(noun) }}{% else %}{{ total | plural(noun) }}{% endif %}{% if rows %} · {{ shown[0] | num }} to {{ shown[1] | num }} shown{% endif %}</span>
-    {% if count %}<a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download {{ "these" if filtered else "all" }} {{ count | num }} as CSV</a>{% endif %}
+    {% if count %}<a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download {{ "the" if filtered else "all" }} {{ count | plural(noun) }} as CSV</a>{% endif %}
   </div>
 
   {% if edit_gone %}{{ ui.empty_note("That row is not in the list any more.", " Nothing was changed.", "warning") }}{% endif %}
