@@ -61,7 +61,7 @@ class Line:
     """One row of a voucher: an account string with a debit (positive) or a credit (negative)."""
 
     row: int  # its row in the file, from 1
-    account: str  # "0880133142.6215.1170", the report's padding gone
+    account: str  # "0880133142.7340.2210", the report's padding gone
     business_unit: str
     object: str
     subsidiary: str  # blank, digits or letters

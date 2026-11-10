@@ -2,7 +2,7 @@
 
 A line keeps its two codes as before: the cost center is the business unit and the GL code is the object, or
 ``object.subsidiary`` when the account has one. This module alone joins them into the string a person types into
-JD Edwards ("0880133142.6215.1170") and splits such a string back, so nothing else has to know the order or the dot.
+JD Edwards ("0880133142.7340.2210") and splits such a string back, so nothing else has to know the order or the dot.
 
 It also knows the chart of accounts as JD Edwards exports it: the rows of the account master and of the business unit
 master made clean (``chart_rows``, ``bu_rows``), the chart's settings (``ChartSettings``), and which pairs exist and
@@ -34,13 +34,13 @@ def clean(value: Any) -> str:
 
 
 def code_of(obj: Any, subsidiary: Any = "") -> str:
-    """The GL code of an object and its subsidiary: "6215.1170", or "3005" when there is no subsidiary."""
+    """The GL code of an object and its subsidiary: "7340.2210", or "2110" when there is no subsidiary."""
     obj, subsidiary = clean(obj), clean(subsidiary)
     return f"{obj}{SEPARATOR}{subsidiary}" if obj and subsidiary else obj
 
 
 def split_code(code: Any) -> tuple[str, str]:
-    """A GL code as (object, subsidiary): "6215.1170" is ("6215", "1170"), "3005" is ("3005", "")."""
+    """A GL code as (object, subsidiary): "7340.2210" is ("7340", "2210"), "2110" is ("2110", "")."""
     obj, _, subsidiary = clean(code).partition(SEPARATOR)
     return obj.strip(), subsidiary.strip()
 
@@ -52,8 +52,8 @@ def join_account(business_unit: Any, code: Any) -> str:
 
 
 def split_account(text: Any) -> tuple[str, str]:
-    """An account string as (business unit, GL code), split at its first dot: "  0880133142.6215.1170" is
-    ("0880133142", "6215.1170"). With no dot the text is the business unit and the code is blank: whether a short
+    """An account string as (business unit, GL code), split at its first dot: "  0880133142.7340.2210" is
+    ("0880133142", "7340.2210"). With no dot the text is the business unit and the code is blank: whether a short
     text is a business unit or an account is for the caller, who knows the chart, to say."""
     business_unit, _, code = clean(text).partition(SEPARATOR)
     return business_unit.strip(), code_of(*split_code(code))

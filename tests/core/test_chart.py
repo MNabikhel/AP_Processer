@@ -14,12 +14,12 @@ from tests.chart_files import CLOSED, HOME, NOT_USED, OTHER, UNLISTED
 @pytest.mark.parametrize(
     ("business_unit", "code", "account"),
     [
-        ("0880133142", "6215.1170", "0880133142.6215.1170"),
-        ("0880133142", "3005", "0880133142.3005"),
+        ("0880133142", "7340.2210", "0880133142.7340.2210"),
+        ("0880133142", "2110", "0880133142.2110"),
         ("05504218", "5710.3120", "05504218.5710.3120"),
-        ("0880133142", "3091.ET", "0880133142.3091.ET"),
+        ("0880133142", "2180.QR", "0880133142.2180.QR"),
         ("05504218", "2165.60017734", "05504218.2165.60017734"),
-        ("08801", "0019", "08801.0019"),
+        ("08801", "0042", "08801.0042"),
     ],
 )
 def test_an_account_joins_and_splits_back(business_unit, code, account):
@@ -28,30 +28,30 @@ def test_an_account_joins_and_splits_back(business_unit, code, account):
 
 
 def test_an_exports_padding_and_blank_cells_are_dropped():
-    assert chart.split_account("  0880133142.6215.1170") == ("0880133142", "6215.1170")
+    assert chart.split_account("  0880133142.7340.2210") == ("0880133142", "7340.2210")
     assert chart.split_account("    05504218.5710.3120 ") == ("05504218", "5710.3120")
     assert chart.join_account("       08801", " ") == "08801"
-    assert chart.code_of("6215", " ") == "6215"
-    assert chart.code_of(" 6215 ", "1170") == "6215.1170"
+    assert chart.code_of("7340", " ") == "7340"
+    assert chart.code_of(" 7340 ", "2210") == "7340.2210"
     assert chart.clean(None) == chart.clean(" ") == chart.clean("nan") == ""
 
 
 def test_leading_zeros_and_letters_are_kept_as_text():
-    assert chart.split_code("0019") == ("0019", "")
+    assert chart.split_code("0042") == ("0042", "")
     assert chart.split_code("2190.7QXR3") == ("2190", "7QXR3")
-    assert chart.join_account("0550421", "0019") == "0550421.0019"
+    assert chart.join_account("0550421", "0042") == "0550421.0042"
 
 
 def test_a_text_with_no_dot_is_a_business_unit_and_a_code_alone_joins_to_itself():
     assert chart.split_account("0880133142") == ("0880133142", "")
-    assert chart.join_account("", "6215.1170") == "6215.1170"
+    assert chart.join_account("", "7340.2210") == "7340.2210"
     assert chart.join_account("0880133142", "") == "0880133142"
     assert chart.split_account("") == ("", "")
 
 
 def test_a_dot_left_at_the_end_is_not_an_empty_subsidiary():
-    assert chart.split_account("0880133142.3005.") == ("0880133142", "3005")
-    assert chart.code_of("3005", "") == "3005"
+    assert chart.split_account("0880133142.2110.") == ("0880133142", "2110")
+    assert chart.code_of("2110", "") == "2110"
 
 
 # --- The exports' rows -------------------------------------------------------------------------------------------

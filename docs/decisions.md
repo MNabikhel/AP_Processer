@@ -4724,7 +4724,7 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   codes: the cost center is the business unit and the GL code is `object.subsidiary`; which pairs exist and may be
   posted to comes from the chart of accounts as JD Edwards exports it** (a head-office overhead department's prototype;
   10 Nov 2026).
-  - **Why:** The department types one string into JD Edwards for each line ("0880133142.6215.1170"). An account exists
+  - **Why:** The department types one string into JD Edwards for each line ("0880133142.7340.2210"). An account exists
     on some business units and not on others, and only some may be posted to (the chart's posting edit code, the
     business unit's status). AP Coder knew a list of GL codes and a list of cost centers, each checked alone: a line
     coded to an account of another business unit, to a closed one, or to a header account had no finding. The chart is
