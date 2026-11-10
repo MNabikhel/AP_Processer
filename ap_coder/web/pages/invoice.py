@@ -963,8 +963,9 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
     if inv["status"] in (APPROVED, PENDING):
         edits = inv.get("edits") or []
         changed = [e for e in edits if e != "line_coded"]
+        labels = {**view.EDIT_LABELS, "line_coding": view.coding_changed(inv.get("ai_output") or {}, doc)}
         out["edits"] = ("no changes to the suggested coding" if not changed
-                        else "changed: " + ", ".join(view.EDIT_LABELS.get(e, e) for e in changed))  # fmt: skip
+                        else "changed: " + ", ".join(labels.get(e, e) for e in changed))  # fmt: skip
         if "line_coded" in edits:  # the reviewer's own coding where the AI proposed none (B-670)
             n = coded_blanks(inv.get("ai_output"), inv.get("final_output"))
             out["edits"] += (

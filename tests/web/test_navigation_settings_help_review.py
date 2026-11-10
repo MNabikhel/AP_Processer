@@ -204,3 +204,61 @@ def test_without_a_cost_center_list_no_empty_cost_center_column(demo_store):
     inv = demo_store.list_invoices(REVIEW)[0]
     page = client.get(f"/review/{inv['id']}").text
     assert "<th>Cost center</th>" not in page  # the line grid and the GL posting preview
+
+
+# --- B-2102, B-2103, B-2104: words that said something else than what is --------------------------------------------
+
+
+def test_the_data_page_names_this_computers_own_folder_not_a_tilde(tmp_path, monkeypatch):
+    """B-2102: Settings → Data & backups said the name and the logs are kept "in ~/.ap_coder", a path no Windows
+    user can open: it names the real folder of this computer's user."""
+    from ap_coder.core import paths
+    from ap_coder.core.store import Store
+    from tests.webclient import client_for
+
+    monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "home of sam" / ".ap_coder" / "settings.json"))
+    page = client_for(Store(tmp_path / "ap.db")).get("/settings/data").text
+    assert "~/.ap_coder" not in page
+    assert f"<code>{paths.user_settings_path().parent}</code>" in page and "home of sam" in page
+
+
+def test_the_setup_says_no_sales_tax_account_is_set_before_there_are_gl_accounts(tmp_path):
+    """B-2103: on a new laptop, before any GL account, the checklist said "Sales tax accounts: 2 of 5 set" (the two
+    taxes that need no account): nothing is set yet, and they are set after the GL accounts."""
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import Store, load_sample_setup
+
+    store = Store(tmp_path / "ap.db")
+    steps = {label: (state, detail) for state, label, detail in process.setup_steps(store, Settings())}
+    assert steps[process.TAX_STEP] == ("todo", "after the GL accounts: each tax is posted to one of them")
+    load_sample_setup(store)
+    steps = {label: (state, detail) for state, label, detail in process.setup_steps(store, Settings())}
+    assert steps[process.TAX_STEP] == ("ok", "5 of 5 set")
+
+
+def test_an_approval_that_only_changed_cost_centers_does_not_say_gl_coding_changed(demo_store, tmp_path):
+    """B-2104: an approved invoice where AP only changed the cost centers said "changed: GL coding". It says what was
+    changed of the lines' coding: the cost centers, the GL accounts, or both."""
+    import copy
+
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web.pages.invoice import _closed
+
+    load_sample_setup(demo_store)  # (with the sample cost centers)
+    centers = [a["code"] for a in demo_store.list_accounts("cost_centers")]
+    reference = demo_store.reference_data()
+    proposed = copy.deepcopy(demo_store.get_invoice(demo_store.list_invoices(REVIEW)[0]["id"])["ai_output"])
+    for li in proposed["line_items"]:
+        li.update(predicted_gl_code="6000", predicted_cost_center=centers[0])
+    said = {}
+    for n, what in enumerate(("cost centers", "GL accounts", "GL accounts and cost centers")):
+        ai = {**copy.deepcopy(proposed), "invoice_number": f"CC-{n}"}
+        invoice_id = demo_store.add_invoice(tmp_path / f"cc{n}.pdf", ai, {"requires_review": True})
+        final = copy.deepcopy(ai)
+        if "cost centers" in what:
+            final["line_items"][0]["predicted_cost_center"] = centers[1]
+        if "GL accounts" in what:
+            final["line_items"][-1]["predicted_gl_code"] = "6010"
+        demo_store.approve_invoice(invoice_id, final, "Sam Reviewer")
+        said[what] = _closed(demo_store, reference, demo_store.get_invoice(invoice_id))["edits"]
+    assert said == {what: f"changed: {what}" for what in said} and len(said) == 3
