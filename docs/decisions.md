@@ -5208,8 +5208,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       AI (the coding memory already learned the account chosen).
     - *One-off:* the existing way a line is kept out of what teaches is Learning → Coding memory → Forget
       (`delete_feedback`, which withdraws what the line taught its lessons, B-1422). `forget_one_off` uses it for
-      the invoice's lines of that kind and writes `lesson_one_off` in the invoice's history. No second path: a
-      one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity page say it.
+      the line the question named, no other (a line like it on the same invoice stays; the question's lesson
+      loses this approval's correction all the same), and writes `lesson_one_off` in the invoice's history. No
+      second path: a one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity
+      page say it.
+    - *Whose answer it is (B-2291):* the answer belongs to the question that was asked. The approval keeps it
+      (`why_questions`, by `_SCHEMA`: the invoice, the lesson, the line, the person as the approval recorded them,
+      `core.login`); it goes with the approval's learning (a reopen, a rejection). `POST /review/{id}/why` takes an
+      answer only from that person, for that question, once, while the setting is on and the approved invoice
+      still asks it; another person gets 403 (an Admin too: Forget on Learning is the Admin's way), an answer to
+      no question, a second answer or the setting off 409, in plain words, and nothing changes. The form's
+      `situation` is only compared. On a laptop the one person is the computer's own login, as before.
     - *The setting:* Settings → Review, "Ask why after a surprising correction" (`why_surprise`), on until turned
       off. Off turns both questions off: "never asked" would not be true with the older question still asking.
   - (`ap_coder/core/store/backups.py`, `ap_coder/web/app.py`, `ap_coder/web/pages/settings.py`,

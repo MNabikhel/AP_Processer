@@ -378,10 +378,11 @@ class InvoicesMixin:
         """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
         supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
         autonomy), its reader scores, a vendor name it corrected (D-119), its lines' descriptions (D-120) and what it
-        taught the supplier's template (``_withdraw_template``, capture.py). Returns what became of the template, for
-        the event's detail ({} when the approval taught it nothing)."""
+        taught the supplier's template (``_withdraw_template``, capture.py), and the question asked after it (D-218).
+        Returns what became of the template, for the event's detail ({} when the approval taught it nothing)."""
         forget_past_lines(conn, invoice_id)
-        for table in ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases", "line_texts"):
+        learned = ("feedback", "supplier_outcomes", "reader_outcomes", "vendor_aliases", "line_texts", "why_questions")
+        for table in learned:
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
         _store_class()._withdraw_lessons(conn, invoice_id)
         return _store_class()._withdraw_template(conn, invoice_id)

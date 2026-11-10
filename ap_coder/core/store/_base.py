@@ -50,7 +50,7 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
 # JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
 # summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
-# rules.py, D-217
+# rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -302,6 +302,10 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     invoice_id INTEGER NOT NULL, situation TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
+-- the question asked after an approval's surprising correction: about which line, of whom, answered or not (D-218)
+CREATE TABLE IF NOT EXISTS why_questions (
+    invoice_id INTEGER PRIMARY KEY, situation TEXT NOT NULL, line_number INTEGER, asked_of TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '', asked_at TEXT NOT NULL, answered_at TEXT);
 CREATE TABLE IF NOT EXISTS bank_accounts (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
     currency TEXT NOT NULL DEFAULT 'CAD', institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '',
     account_number TEXT NOT NULL DEFAULT '', gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0,
