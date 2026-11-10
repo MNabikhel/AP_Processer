@@ -31,12 +31,45 @@
 </section>
 {% endif %}
 {# --- Teach from past coding --------------------------------------------------------------------------- #}
-<details class="card an-expander" id="history"{% if upload or upload_gone or teach %} open{% endif %}>
-  <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}</summary>
+<details class="card an-expander" id="history"{% if upload or upload_gone or teach or journal %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}{% if journals %} · {{ journals | length | plural("JD Edwards journal") }} loaded{% endif %}</summary>
   <p class="muted">Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost
     center) and import them here: the AI then sees how each vendor was coded before, from the first invoice. Past lines
     never count in the accuracy figures.</p>
-  {% if upload %}
+  {% if journal %}
+  {# JD Edwards' Transaction Journal (R09321): what loading it would keep, then "Load this journal" #}
+  <p><b>{{ journal.name }}</b> · JD Edwards' Transaction Journal (report R09321). Nothing is loaded yet.</p>
+  {% if journal.said %}
+  <ul id="journal-summary">{% for a in journal.said %}
+    <li>{{ a.text }}{% if a.sub %}<ul>{% for b in a.sub %}<li>{{ b.text }}{% if b.sub %}<ul>{% for c in b.sub %}<li class="apc-muted">{{ c.text }}</li>{% endfor %}</ul>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>
+  {% endfor %}</ul>
+  {% endif %}
+  {% if journal.problem %}{{ ui.empty_note(journal.note, " " ~ journal.problem, "warning") }}{% endif %}
+  {% if journal.read and journal.state != "same_file" and can("/learning/journal/load") %}
+  <form class="row" method="get" action="/learning#history">
+    <input type="hidden" name="journal" value="{{ journal.token }}">
+    {% for key, label in journal.labels.items() %}
+    <label class="field">{{ label }}<input type="text" name="{{ key }}" value="{{ journal.objects[key] }}" autocomplete="off"></label>
+    {% endfor %}
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Check again with these</button>
+  </form>
+  <p class="muted">The object accounts of the lines JD Edwards adds to a voucher itself (commas between several): they
+    are not AP's coding. Change one and check again: what is loaded is what is shown above.</p>
+  <form method="post" action="/learning/journal/load" data-busy="Loading…" data-long>
+    <input type="hidden" name="token" value="{{ journal.token }}">
+    {% for key in journal.labels %}<input type="hidden" name="{{ key }}" value="{{ journal.objects[key] }}">{% endfor %}
+    {% if journal.state == "differs" %}
+    <label class="check"><input type="checkbox" name="anyway" value="1" required> Load it though its lines do not add up to the report's Grand Total</label>
+    {% endif %}
+    <div class="row">
+      <button class="btn primary" type="submit"{% if journal.state == "refused" %} disabled{% endif %}><span class="ms" aria-hidden="true">school</span>Load this journal</button>
+      <a class="btn" href="/learning#history">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  <p><a class="btn" href="/learning#history">Back</a></p>
+  {% endif %}
+  {% elif upload %}
   <p><b>{{ upload.name }}</b> · {{ upload.rows | plural("line") }}</p>
   {% if upload.sheets | length > 1 %}
   <form class="row" method="get" action="/learning#history">
@@ -72,6 +105,8 @@
       <input type="file" name="file" accept=".csv,.xlsx,.xls,.txt" required></label>
     <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload</span>Read the file</button>
   </form>
+  <p class="muted">From JD Edwards: the Transaction Journal (report R09321) saved as CSV is read as it comes. Its
+    summary is shown first; nothing is loaded until you say so.</p>
   {% else %}
   <p class="muted">An Admin imports the past coding.</p>
   {% endif %}
@@ -80,6 +115,23 @@
   <form method="post" action="/learning/history/forget" data-confirm="Forget all {{ history_count | num }} past lines? The AI no longer sees how vendors were coded in the ERP.">
     <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget all past coding</button>
   </form>
+  {% endif %}
+  {% if journals %}
+  <h4 id="journals-title">JD Edwards journals loaded</h4>
+  <div class="table-wrap"><table class="apc-table" aria-labelledby="journals-title">
+    <thead><tr><th>File</th><th>G/L dates</th><th class="r">Vouchers</th><th class="r">Coding lines to learn from</th><th>Loaded</th><th></th></tr></thead>
+    <tbody>{% for f in journals %}
+      <tr><td>{{ f.name }}</td><td>{{ f.first_date }} to {{ f.last_date }}</td>
+        <td class="r">{{ f.vouchers | num }}{% if f.counted != f.vouchers %}<br><span class="apc-muted">{{ f.counted | num }} in no other file</span>{% endif %}</td>
+        <td class="r">{{ f.learned_lines | num }}</td>
+        <td>{{ f.when }}{% if f.loaded_by %}<br><span class="apc-muted">{{ f.loaded_by }}</span>{% endif %}</td>
+        <td>{% if can("/learning/journal/forget") %}
+          <form method="post" action="/learning/journal/forget" data-confirm="Forget {{ f.name }}? Its {{ f.vouchers | num }} vouchers are no longer learned from.">
+            <input type="hidden" name="file_id" value="{{ f.id }}">
+            <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete</span>Forget</button>
+          </form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
   {% endif %}
 </details>
 
