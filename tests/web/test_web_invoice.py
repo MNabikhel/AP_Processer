@@ -1459,16 +1459,17 @@ def _queue_reason(client: TestClient, invoice_id: int) -> str:
 def test_the_queue_names_what_the_review_screen_flagged(client, store):
     """B-1522: once the review screen's check flagged an invoice (JD Edwards switched on, not set up), the queue said
     only "Flagged by the checks": a flagged invoice's reasons were its checks as first stored, which said nothing of
-    JD Edwards. Its reasons are today's checks now; and a flag whose cause is gone says to open it again."""
+    JD Edwards. Its reasons are today's checks now; and a flag whose cause is gone says to open it again. The first
+    of them is said in its own words, the others counted (B-2219)."""
     invoice_id = clean_invoice(client, store)
     store.set_setting("show_jde_settings", "1")
     assert not check(client, invoice_id)["allow"]
     assert store.get_invoice(invoice_id)["requires_review"]
     reason = _queue_reason(client, invoice_id)
-    assert "to fix" in reason and "Flagged by the checks" not in reason, reason
+    assert "JD Edwards: GL 2310" in reason and "Flagged by the checks" not in reason, reason
     store.set_setting("show_jde_settings", "0")
     reason = _queue_reason(client, invoice_id)  # today's checks: the JD Edwards errors are gone
-    assert "to fix" not in reason and "Flagged by the checks" not in reason, reason
+    assert "JD Edwards" not in reason and "Flagged by the checks" not in reason, reason
 
 
 def test_in_a_browser_ticking_approve_anyway_by_its_words_never_scrolls_either(browser, store):
