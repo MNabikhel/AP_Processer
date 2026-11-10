@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..ai.extraction import ExtractionResult
+from ..core import chart
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 from .money import CENT, EXACT, LINE_MATH_SHARE, READ_AGAIN, add_up, cash_rounded, half_up, nil, per_line, within
@@ -31,9 +32,11 @@ SETUP_PREFIXES = ("JDE_", "PAY_FROM_")
 # Confidence is two numbers (D-89): the Reading (how sure the header is: the coding's ``confidence_score``) and the
 # Coding (how sure the lines' accounts, cost centers and tax codes are: ``coding_confidence``); the invoice's is the
 # lower. A line to code, or coded to an account or cost center not in the lists, already counts 0 in the Coding: its
-# finding keeps Approve closed but takes nothing more off (as setup findings, D-86).
+# finding keeps Approve closed but takes nothing more off (as setup findings, D-86). So does a line coded to an account
+# its business unit does not have, or that is not to be posted to there, with a chart of accounts imported (D-209).
 COUNTED_IN_CODING = frozenset({"GL_UNASSIGNED", "CC_UNASSIGNED", "GL_UNKNOWN", "CC_UNKNOWN", "GL_IS_TAX_ACCOUNT",
-                               "PST_EXEMPTION_TO_CONFIRM"})  # fmt: skip
+                               "PST_EXEMPTION_TO_CONFIRM", "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE",
+                               "BU_INACTIVE", "ACCOUNT_RESERVED"})  # fmt: skip
 # Findings about the business, not about how the invoice was read or coded (the vendor master, a purchase order, a
 # possible duplicate, an unusual amount): like setup findings they keep Approve closed (an error), go to a person and
 # are said, but take nothing off the Reading or the Coding: every value can be read right and still not be in the
@@ -165,8 +168,49 @@ def _header_issues(coding: InvoiceCoding, add: Any) -> None:
         add(ERROR, "NO_LINE_ITEMS", "No line items were read: add a line for what the invoice charges")
 
 
+def _named(business_units: tuple[str, ...], first: str = "") -> str:
+    """Up to three business units by code, the home one first: "A, B and C", or "A, B, C and 12 more"."""
+    found = sorted(business_units, key=lambda bu: bu != first)
+    if len(found) > 3:
+        return f"{', '.join(found[:3])} and {len(found) - 3} more"
+    return " and ".join(filter(None, (", ".join(found[:-1]), found[-1])))
+
+
+def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, str, str] | None:
+    """With a chart of accounts imported (D-209), what is wrong with a line's account on its business unit (its cost
+    center), as (severity, code, message). None with no chart, for a line not coded to both yet or coded to a tax
+    account (said on its own), and for a pair that exists and may be posted to."""
+    pairs, gl, cc = reference.pairs, str(li.predicted_gl_code or ""), str(li.predicted_cost_center or "")
+    if pairs is None or reference.cost_centers is None or gl in ("", UNASSIGNED) or cc in ("", UNASSIGNED):
+        return None
+    status = chart.OK if gl in tax_gls else pairs.status(cc, gl)
+    account = chart.join_account(cc, gl)
+    if status == chart.RESERVED:
+        return (WARNING, "ACCOUNT_RESERVED", f"account {account} exists but is not offered for invoices: "
+                f"{pairs.why_reserved(cc, gl)}. Check it is the one meant")  # fmt: skip
+    if status == chart.BU_INACTIVE:
+        return (ERROR, "BU_INACTIVE", f"business unit {cc} is not active in JD Edwards, so nothing can be posted to "
+                "it: pick another business unit")  # fmt: skip
+    if status == chart.NOT_POSTABLE:
+        return (ERROR, "ACCOUNT_NOT_POSTABLE", f"account {account} cannot be posted to (its posting edit code is "
+                f"{pairs.posting_edit(cc, gl)}): pick an account that takes postings")  # fmt: skip
+    if status != chart.NOT_IN_CHART:
+        return None
+    others = pairs.bus_of(gl)
+    if not pairs.has_business_unit(cc):
+        why = f"it has no business unit {cc}: pick one from the list"
+    elif others:
+        why = f"business unit {cc} has no account {gl}; it is on {_named(others, pairs.settings.home_business_unit)}"
+    elif pairs.has_code(gl):
+        why = f"business unit {cc} has no account {gl}, and no business unit has one that may be posted to"
+    else:
+        why = f"no business unit has an account {gl}: pick one from the list"
+    return ERROR, "ACCOUNT_NOT_IN_CHART", f"account {account} is not in the chart of accounts: {why}"
+
+
 def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> None:
-    """Each line's numbering, arithmetic, GL account and cost center."""
+    """Each line's numbering, arithmetic, GL account and cost center; with a chart of accounts imported, the two
+    together (``_pair_issue``)."""
     numbers = [li.line_number for li in coding.line_items]
     if sorted(numbers) != list(range(1, len(numbers) + 1)):  # the parts of a split line sit under it (B-1188)
         add(WARNING, "LINE_NUMBERING", f"The line numbers don't run 1, 2, 3…: {', '.join(map(str, numbers))}")
@@ -186,9 +230,13 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
                 li.line_number,
             )
 
+        pair = _pair_issue(reference, li, tax_gls)
+        if pair is not None:
+            add(*pair, li.line_number)
+        told = pair is not None and pair[0] == ERROR  # the pair's error says why: not one more for each of its codes
         if li.predicted_gl_code == UNASSIGNED:
             add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
-        elif reference.chart_of_accounts.get(li.predicted_gl_code) is None:
+        elif not told and reference.chart_of_accounts.get(li.predicted_gl_code) is None:
             add(
                 ERROR,
                 "GL_UNKNOWN",
@@ -207,7 +255,7 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
             pass  # cost centers not configured
         elif li.predicted_cost_center == UNASSIGNED:
             add(WARNING, "CC_UNASSIGNED", "no cost center yet: pick one", li.line_number)
-        elif reference.cost_centers.get(li.predicted_cost_center) is None:
+        elif not told and reference.cost_centers.get(li.predicted_cost_center) is None:
             add(
                 ERROR,
                 "CC_UNKNOWN",
@@ -311,11 +359,13 @@ def doubtless(code: str) -> bool:
 
 
 def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: Any = None, cc_known: Any = None,
-                           tax_gls: Any = ()) -> float:  # fmt: skip
+                           tax_gls: Any = (), pairs: Any = None) -> float:  # fmt: skip
     """How sure one line's coding is: its account (none, or one not in the GL accounts or a tax account: 0; a guess:
     ``GUESS_SURE``; else sure), its cost center where they are used (none or unknown: 0), and its tax code when the
     invoice charges a tax (worked out from several possible sets of lines, an exemption to confirm, or none:
-    ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``)."""
+    ``GUESS_SURE``), multiplied. ``known``/``cc_known``: the GL accounts and cost centers (a ``ReferenceTable``);
+    ``pairs``: the chart of accounts' (``chart.AccountPairs``, D-209): an account its cost center, a business unit,
+    does not have, or that is not to be posted to there, is 0 as an unknown code is."""
     from ..ai.offline_coder import unsure
     from .line_tax import CODE_NONE, exemption_to_confirm, tax_code_of, tax_guessed
 
@@ -326,6 +376,8 @@ def line_coding_confidence(line: Any, cost_centers: bool, taxed: bool, known: An
     if cost_centers:
         cc = str(line.predicted_cost_center or "")
         if cc in ("", UNASSIGNED) or (cc_known is not None and cc_known.get(cc) is None):
+            return 0.0
+        if pairs is not None and pairs.status(cc, gl) != chart.OK:
             return 0.0
     if taxed and (tax_code_of(line) == CODE_NONE or tax_guessed(line) or exemption_to_confirm(line)):
         sure *= GUESS_SURE
@@ -341,8 +393,8 @@ def coding_confidence(coding: InvoiceCoding, reference: ReferenceData) -> float:
     taxed = any(t.tax_amount for t in coding.tax_lines)
     tax_gls = reference.tax.tax_gl_codes()
     ccs = reference.cost_centers
-    sure = [line_coding_confidence(li, ccs is not None, taxed, reference.chart_of_accounts, ccs, tax_gls)
-            for li in coding.line_items]  # fmt: skip
+    sure = [line_coding_confidence(li, ccs is not None, taxed, reference.chart_of_accounts, ccs, tax_gls,
+                                   reference.pairs) for li in coding.line_items]  # fmt: skip
     return round(sum(sure) / len(sure), 4)
 
 

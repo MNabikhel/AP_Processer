@@ -77,9 +77,9 @@ def plan_code_enums(gl_codes: list[str], cc_codes: list[str] | None) -> tuple[li
 
 
 def line_gl_codes(reference: ReferenceData) -> list[str]:
-    """GL codes an expense line may use: everything except accounts mapped to a tax type."""
-    tax_gls = reference.tax.tax_gl_codes()
-    return [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    """GL codes an expense line may use: everything except accounts mapped to a tax type (and, with a chart of
+    accounts imported, those never offered): ``ReferenceData.line_accounts``."""
+    return reference.line_accounts()
 
 
 def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes: bool = True) -> dict[str, Any]:

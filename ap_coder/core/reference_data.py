@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .chart import AccountPairs
 from .csvio import read_csv_rows
 from .tax_setup import TaxRateTable, TaxSetup, TaxTreatment, load_tax_mapping
 
@@ -143,13 +144,24 @@ class ReferenceData:
     cost_centers: ReferenceTable | None = None
     tax: TaxSetup = field(default_factory=TaxSetup.default)
     notes: list[str] = field(default_factory=list)
+    # Which GL code exists on which cost center (a JD Edwards business unit) and may be posted to, when a chart of
+    # accounts was imported (D-209); None: every GL code goes with every cost center, as before.
+    pairs: AccountPairs | None = None
+
+    def line_accounts(self) -> list[str]:
+        """The GL codes a line may be offered, in the list's order: every account but those mapped to a tax type and,
+        with a chart imported, those offered on no business unit (never-offered accounts, ``chart.ChartSettings``).
+        The one place that says so: the model's list, the suggestions and the review screen's picker all ask it."""
+        tax_gls = self.tax.tax_gl_codes()
+        offered = None if self.pairs is None else self.pairs.offered_codes()
+        return [c for c in self.chart_of_accounts.codes if c not in tax_gls and (offered is None or c in offered)]
 
     def to_prompt_context(self) -> str:
-        tax_gls = self.tax.tax_gl_codes()
+        offered = frozenset(self.line_accounts())
         expense_accounts = ReferenceTable(
             self.chart_of_accounts.kind,
             self.chart_of_accounts.key_column,
-            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] not in tax_gls],
+            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] in offered],
         )
         sections = ["### GL Accounts (use for line items)\n" + expense_accounts.to_markdown()]
         if self.cost_centers is not None:

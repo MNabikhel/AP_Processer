@@ -523,6 +523,34 @@ CHECKS: dict[str, CheckHelp] = {
         CODING, "Cost center not in your list", "The cost center is not in your cost centers.",
         "Pick a cost center from the list, or add it on the GL accounts & tax page.",
     ),
+    # With the chart of accounts imported from JD Edwards (D-209): the account and its business unit together.
+    "ACCOUNT_NOT_IN_CHART": CheckHelp(
+        CODING, "Account not on this business unit",
+        "The line's business unit and account do not go together: the chart of accounts imported from JD Edwards has "
+        "no such account on that business unit, so JD Edwards would refuse the line. The finding names the business "
+        "units that do have the account.",
+        "Pick an account that business unit has, or the business unit the account is on. If the account was added in "
+        "JD Edwards since, import the chart of accounts again.",
+    ),
+    "ACCOUNT_NOT_POSTABLE": CheckHelp(
+        CODING, "Account does not take postings",
+        "The chart of accounts marks this account as one that cannot be posted to (its posting edit code): a title "
+        "over other accounts, an inactive account, or one kept for budgets or for entries JD Edwards makes itself.",
+        "Pick the account under it that takes postings. If it should take postings, ask the JD Edwards team.",
+    ),
+    "BU_INACTIVE": CheckHelp(
+        CODING, "Business unit not active",
+        "The business unit master imported from JD Edwards says this business unit is not active, so nothing can be "
+        "posted to it.",
+        "Pick the business unit that replaced it. If it was opened again in JD Edwards, import the business units "
+        "again.",
+    ),
+    "ACCOUNT_RESERVED": CheckHelp(
+        CODING, "Account not offered for invoices",
+        "The account exists and takes postings, but it is one of those AP Coder never suggests: an account on the "
+        "never-offered list, or a business unit whose name says DO NOT USE.",
+        "Check the account is the one meant, then approve; else pick the usual account for this expense.",
+    ),
     "HISTORY_CONFLICT": CheckHelp(
         CODING, "Coded differently before",
         "Reviewers coded similar lines from this vendor to another GL account in the past.",

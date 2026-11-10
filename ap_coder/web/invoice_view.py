@@ -634,8 +634,7 @@ def gl_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tu
     labels = {UNASSIGNED: NEEDS_GL}
     for row in reference.chart_of_accounts.rows:
         labels[row["gl_code"]] = f"{row['gl_code']} · {short_name(row.get('description', ''))[:44]}"
-    tax_gls = reference.tax.tax_gl_codes()
-    codes = [UNASSIGNED] + [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    codes = [UNASSIGNED, *reference.line_accounts()]
     for li in lines:
         code = _text(li.get("predicted_gl_code"))
         if code and code not in codes:
@@ -1931,6 +1930,9 @@ HARD_CODES = frozenset({
     "POSTING_UNBALANCED", "INVOICE_DATE_INVALID", "DUE_DATE_INVALID", "DATE_AMBIGUOUS", "CURRENCY_UNKNOWN",
     # An account that is wrong or missing would post to the wrong (or a blank) GL (B-926).
     "GL_IS_TAX_ACCOUNT", "GL_UNKNOWN", "CC_UNKNOWN", "TAX_GL_UNMAPPED", "TAX_GL_UNKNOWN",
+    # With a chart of accounts imported, an account its business unit does not have or that takes no postings is said
+    # in place of the two above (D-209): JD Edwards would refuse the line.
+    "ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE",
     # A vendor on hold: the hold is lifted first (the Vendors page, or JD Edwards), or the invoice rejected (B-1544).
     "VENDOR_ON_HOLD",
 })  # fmt: skip

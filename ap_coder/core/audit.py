@@ -217,7 +217,8 @@ def _tax_text(doc: dict[str, Any]) -> str:
     )
 
 
-_TABLES = {"gl_accounts": "GL accounts", "cost_centers": "Cost centers", "bank_accounts": "Bank accounts"}
+_TABLES = {"gl_accounts": "GL accounts", "cost_centers": "Cost centers", "bank_accounts": "Bank accounts",
+           "chart_accounts": "Chart of accounts", "business_units": "Business units"}  # fmt: skip
 
 
 def _table(d: dict[str, Any]) -> str:
