@@ -97,7 +97,8 @@ LOCKED = (
     "again, or ask an Admin to reset your password."
 )
 LAST_ADMIN = "AP Coder needs at least one active Admin: make another person an Admin first."
-WRONG_CODE = "That code doesn't match. Type the 6 digits your authenticator app shows now."
+WRONG_CODE = ("That code doesn't match, or it was used already. Type the 6 digits your authenticator app shows now "
+              "(a new code every 30 seconds).")  # fmt: skip
 CODE_WHY = "authenticator code"  # login_failed's why: the code didn't match (D-146)
 KEY_WHY = "authenticator key missing"
 KEY_MISSING = (
