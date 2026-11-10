@@ -324,8 +324,9 @@ def test_a_discount_line_takes_its_share_below_zero():
 
 
 def test_freight_taxed_differently_from_the_goods_and_the_gst_printed_twice():
-    """Saskatchewan: goods with GST and PST, freight with GST only, the GST printed once for the goods and once for
-    the freight: each line ends with the GST of its own amount."""
+    """Saskatchewan: goods with GST and PST, freight the supplier charged GST only on (as the invoice shows it:
+    whether freight carries PST is the supplier's and the reviewer's to say, not worked out here), the GST printed
+    once for the goods and once for the freight: each line ends with the GST of its own amount."""
     d = doc([line(1, 1200.0, "7410", ["GST", "PST"], desc="Filing cabinets"),
              line(2, 85.0, "7440", ["GST"], exempt=["PST"], desc="Freight")],
             [tl("GST", "", 0.05, 1200.0, 60.0), tl("GST", "", 0.05, 85.0, 4.25), tl("PST", "SK", 0.06, 1200.0, 72.0)],
