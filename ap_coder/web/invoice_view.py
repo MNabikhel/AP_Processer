@@ -1893,7 +1893,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         hard += [Issue(i.severity, i.code, f"Only an Approver can approve it. {i.message[:1].upper()}{i.message[1:]}")
                  for i in soft if i.code == MOVED_OFF_HOLD]  # fmt: skip
         soft = [i for i in soft if i.code != MOVED_OFF_HOLD]
-    blockers = ordered_blockers(line_pick, bank, hard)
+    blockers = ordered_blockers(line_pick, bank, hard, account_lines.bar_words(coding.line_items, reference))
     key = override_key(soft) if soft else ""
     reason = draft.override_reason.strip()
     allow = not pick and not hard and (not soft or (draft.override == key and bool(reason)))
@@ -2239,16 +2239,17 @@ SCREEN_ORDER = (
 _CODE_PLACES = {"NO_LINE_ITEMS": "lines", "POSTING_UNBALANCED": "posting"}
 
 
-def ordered_blockers(line_pick: str, bank: str, hard: list[Any]) -> list[dict[str, str]]:
+def ordered_blockers(line_pick: str, bank: str, hard: list[Any], said: str = "") -> list[dict[str, str]]:
     """Everything that keeps Approve closed, in the order of the screen: {"text", "kind"} (``pick``: a line's account
-    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid)."""
+    or cost center, a button to it; ``bank``: the Pay from account; ``hard``: what makes the voucher invalid).
+    ``said``: the pick as a screen with one Account box a line says it (``account_lines.bar_words``), its ``said``."""
     place = {name: i for i, name in enumerate(SCREEN_ORDER)}
     found: list[tuple[int, int, dict[str, str]]] = []
     for n, (_bad, text, code, lines) in enumerate(grouped_issues(hard)):
         where = "lines" if lines else CODE_FIELDS.get(code) or _CODE_PLACES.get(code) or "posting"
         found.append((place.get(where, len(place)), n, {"text": _short_reason(text), "kind": "hard"}))
     if line_pick:
-        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick"}))
+        found.append((place["lines"], -1, {"text": line_pick, "kind": "pick", **({"said": said} if said else {})}))
     if bank:
         found.append((place["pay_from_account"], -1, {"text": bank, "kind": "bank"}))
     return [b for _, _, b in sorted(found, key=lambda f: (f[0], f[1]))]

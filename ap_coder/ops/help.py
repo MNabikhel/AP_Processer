@@ -576,7 +576,7 @@ CHECKS: dict[str, CheckHelp] = {
         CODING, "Account not on this business unit",
         f"{CHART_LOADED}: the line's business unit and account do not go together. The chart has no such account on "
         "that business unit, so JD Edwards would refuse the line. The finding names the business units that do have "
-        "the account.",
+        "the account. Words or part of a number left in a line's Account box are not an account either.",
         "Pick an account that business unit has, or the business unit the account is on. If the account was added in "
         f"JD Edwards since, import the chart of accounts again ({CHART_IMPORT}).",
     ),

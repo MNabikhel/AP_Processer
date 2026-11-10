@@ -8,6 +8,7 @@ Entry points: ``coding_from_inputs``, ``codes_to_pick`` (what approval still nee
 from __future__ import annotations
 
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -38,6 +39,10 @@ def _blank(code: Any) -> str:
     return "" if code in (None, "", UNASSIGNED) else str(code)
 
 
+PICKED = "Picked by a person."  # a line's reason once a person picked its account (``account_lines.why_words``)
+_LEFT = re.compile(r"^.*?: pick the account\.", re.S)  # why a line was left for a person (``ai.suggest.why_left``)
+
+
 def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str, Any]], vendor: str = "",
                       rules: list[Rule] | None = None) -> None:  # fmt: skip
     """What decided each line's account once a person had the invoice on the review screen (``decided_by``, D-212):
@@ -45,7 +50,9 @@ def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str,
     with another account or cost center was coded by a person (``source`` "person": with ``was``, the source of
     what was proposed, and ``candidate``, the place from 1 of the pick among the accounts offered, when it was one of
     them), or by a fixed coding rule a person applied (the rule that codes it so). The accounts offered stay with
-    the line: what the person chose among. A line without an account has no decision."""
+    the line: what the person chose among. A line without an account has no decision. A line left for a person
+    ("…: pick the account.") whose account a person picked says that instead (``PICKED``); what its reason says
+    after (its tax code) is kept."""
     for before, li in pair_lines(proposed, line_items):
         before = before or {}
         li["candidates"] = list(before.get("candidates") or [])
@@ -63,6 +70,8 @@ def decided_on_screen(line_items: list[dict[str, Any]], proposed: list[dict[str,
                       if c.get("code") == gl and _blank(c.get("business_unit")) in ("", cc)]  # fmt: skip
             li["decided_by"] = decided("person", was=(before.get("decided_by") or {}).get("source"),
                                        candidate=picked[0] if picked else None)  # fmt: skip
+            if _LEFT.match(str(li.get("reasoning_justification") or "")):
+                li["reasoning_justification"] = _LEFT.sub(PICKED, li["reasoning_justification"], count=1)
 
 
 def coding_from_inputs(
@@ -160,12 +169,13 @@ def uses_cost_centers(reference: ReferenceData) -> bool:
 MANY_LINES = 4  # this many lines or more to pick for: counted, and Apply to all lines… pointed to (B-667)
 
 
-def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
+def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True, once: bool = False) -> str:
     """What approval still needs on the lines (dicts or line items): "Pick a GL account for line 2 and a cost center
     for lines 1, 2 to approve", or "" when every line has a GL account and, where cost centers are used, a cost
     center. The review screen's Approve bar and the queue's Ready ask this one question, so they always agree.
     ``MANY_LINES`` or more are counted ("for 15 lines"), with ``hint`` (the review screen, where it is) "(or use
-    Apply to all lines…)"."""
+    Apply to all lines…)". ``once``: a line without a GL account is not named again for its cost center (a screen
+    with one Account box a line, ``account_lines.bar_words``)."""
 
     def code(li: Any, key: str) -> str:
         value = li.get(key) if isinstance(li, dict) else getattr(li, key, "")
@@ -183,6 +193,8 @@ def codes_to_pick(lines: Any, cost_centers: bool, hint: bool = True) -> str:
         if cost_centers
         else []
     )
+    if once:
+        no_cc = [number for number in no_cc if number not in uncoded]
     parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
         [f"a cost center for {which(no_cc)}"] if no_cc else []
     )

@@ -183,7 +183,7 @@ def validate_coding(
     checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
 
     # --- Reviewer history -------------------------------------------------------------
-    _history_issues(history, add, checks)
+    _history_issues(coding, history, add, checks)
 
     # --- Cross-checks against Document Intelligence ---------------------------
     if extraction is not None:
@@ -240,9 +240,14 @@ def _named(business_units: tuple[str, ...], first: str = "") -> str:
 def _pair_issue(reference: ReferenceData, li: Any, tax_gls: Any) -> tuple[str, str, str] | None:
     """With a chart of accounts imported (D-209), what is wrong with a line's account on its business unit (its cost
     center), as (severity, code, message). None with no chart, for a line not coded to both yet or coded to a tax
-    account (said on its own), and for a pair that exists and may be posted to."""
+    account (said on its own), and for a pair that exists and may be posted to. Words or part of a number typed in
+    the Account box (kept as typed in the business unit, which the chart does not have) are no account."""
     pairs, gl, cc = reference.pairs, str(li.predicted_gl_code or ""), str(li.predicted_cost_center or "")
-    if pairs is None or reference.cost_centers is None or gl in ("", UNASSIGNED) or cc in ("", UNASSIGNED):
+    if pairs is None or reference.cost_centers is None:
+        return None
+    if gl in ("", UNASSIGNED) and cc not in ("", UNASSIGNED) and reference.cost_centers.get(cc) is None:
+        return ERROR, "ACCOUNT_NOT_IN_CHART", f"“{cc}” is not an account: pick one from the list"
+    if gl in ("", UNASSIGNED) or cc in ("", UNASSIGNED):
         return None
     status = chart.OK if gl in tax_gls else pairs.status(cc, gl)
     account = chart.join_account(cc, gl)
@@ -296,7 +301,8 @@ def _line_issues(coding: InvoiceCoding, reference: ReferenceData, add: Any) -> N
             add(*pair, li.line_number)
         told = pair is not None and pair[0] == ERROR  # the pair's error says why: not one more for each of its codes
         if li.predicted_gl_code == UNASSIGNED:
-            add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
+            if not told:
+                add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
         elif not told and reference.chart_of_accounts.get(li.predicted_gl_code) is None:
             add(
                 ERROR,
@@ -364,12 +370,15 @@ def _totals_checks(coding: InvoiceCoding, reference: ReferenceData, add: Any) ->
     return checks
 
 
-def _history_issues(history: list[dict[str, Any]] | None, add: Any, checks: dict[str, Any]) -> None:
-    """Lines coded otherwise than reviewers coded the vendor's similar lines (``memory.compare_with_history``)."""
+def _history_issues(coding: InvoiceCoding, history: list[dict[str, Any]] | None, add: Any,
+                    checks: dict[str, Any]) -> None:  # fmt: skip
+    """Lines coded otherwise than reviewers coded the vendor's similar lines (``memory.compare_with_history``); a
+    line with no account yet is not coded otherwise: it has its own finding."""
     if history:
         checks["history"] = history
+        uncoded = {li.line_number for li in coding.line_items if li.predicted_gl_code in ("", UNASSIGNED)}
         for h in history:
-            if h["status"] == "conflict":
+            if h["status"] == "conflict" and h["line_number"] not in uncoded:
                 add(
                     WARNING,
                     "HISTORY_CONFLICT",

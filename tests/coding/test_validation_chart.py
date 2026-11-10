@@ -123,6 +123,20 @@ def test_a_line_not_coded_yet_or_coded_to_a_tax_account_is_said_as_before(refere
                               (4, WARNING, "CC_UNASSIGNED")]  # fmt: skip
 
 
+def test_words_or_part_of_a_number_in_the_account_box_are_one_finding_in_the_charts_words(reference, ground_truth):
+    """B-2262: words typed in the Account box are kept as typed in the line's business unit; the line said "no GL
+    account yet" and "cost center off is not in your cost centers". It says one thing; a business unit alone, a GL
+    code alone and an empty box are said as before."""
+    coding = _coded(ground_truth, ("off", UNASSIGNED), ("073106", UNASSIGNED), (HOME, UNASSIGNED), (UNASSIGNED, "5410"),
+                    (UNASSIGNED, UNASSIGNED))  # fmt: skip
+    report = validate_coding(coding, reference)
+    assert _found(report) == [(1, ERROR, "ACCOUNT_NOT_IN_CHART"), (2, ERROR, "ACCOUNT_NOT_IN_CHART"),
+                              (3, WARNING, "GL_UNASSIGNED"), (4, WARNING, "CC_UNASSIGNED"),
+                              (5, WARNING, "GL_UNASSIGNED"), (5, WARNING, "CC_UNASSIGNED")]  # fmt: skip
+    assert [i.message for i in report.issues[:2]] == ["“off” is not an account: pick one from the list",
+                                                      "“073106” is not an account: pick one from the list"]  # fmt: skip
+
+
 def test_a_reserved_account_is_for_a_person_to_confirm_not_a_blocker(reference, ground_truth):
     report = validate_coding(_coded(ground_truth, (NOT_USED, "5410")), reference)
     assert _found(report) == [(1, WARNING, "ACCOUNT_RESERVED")] and report.errors == []

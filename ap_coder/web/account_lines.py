@@ -16,7 +16,7 @@ from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
 from ap_coder.coding.remark import PERSON, REMARK_MOST, one_line
-from ap_coder.coding.review import is_blank
+from ap_coder.coding.review import codes_to_pick, is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
 from ap_coder.core.memory import pair_lines
@@ -85,6 +85,13 @@ def pick_words(text: str) -> str:
         f"the business unit of the account of {found['cc']}" if found["cc"] not in (None, found["gl"]) else "",
     ]
     return f"{' and '.join(filter(None, parts))}{found['rest']}"
+
+
+def bar_words(lines: Any, reference: ReferenceData | None) -> str:
+    """What approval still needs on the lines as the Approve bar of a screen with one Account box a line says it
+    (``pick_words``); "" with no chart, or when nothing is needed. A line without an account is counted once: an
+    empty box, or one holding words, is not asked for its business unit too."""
+    return pick_words(codes_to_pick(lines, True, once=True)) if in_use(reference) else ""
 
 
 SUPPLIER_MOST = 8  # of a supplier's accounts last year, offered first in an Account box's list
@@ -180,7 +187,7 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
         proposed_blank = not _code(before.get("predicted_gl_code"))
         reason = str(before.get("reasoning_justification") or "") if proposed_blank else ""
         typed = f"“{view['text']}” is not a whole account: type business unit.object.subsidiary, or pick one"
-        return {**view, "state": FIX, "note": typed if view["text"] else reason or NO_ACCOUNT,
+        return {**view, "state": FIX, "note": (said or typed) if view["text"] else reason or NO_ACCOUNT,
                 "candidates": _candidates(pairs, before.get("candidates"))}  # fmt: skip
     status = chart.OK if gl in reference.tax.tax_gl_codes() else pairs.status(cc, gl)
     view["name"], view["unit"] = pairs.description(cc, gl), pairs.name_of(cc)

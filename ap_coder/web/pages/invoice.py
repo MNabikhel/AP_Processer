@@ -677,7 +677,7 @@ def _shown_live(request: Request, live: dict[str, Any], may_edit: bool = True, d
     the JD Edwards settings are an Admin's. ``draft_rev``: the draft revision the screen is at (D-184)."""
     first = (live.get("bar") or {}).get("first") if live.get("account") else None
     return {**live, "read_only": not may_edit, "jde_settings": can(request, "/settings/jde", "GET"),
-            **({"bar_fix": account_lines.pick_words(first["text"])} if first and first["kind"] == "pick" else {}),
+            **({"bar_fix": first["said"]} if first and first.get("said") else {}),
             "setup_contact": "an Admin" if server_mode(request) else "the pilot tester",
             "draft_rev": draft_rev}  # fmt: skip
 
