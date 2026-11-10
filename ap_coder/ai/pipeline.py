@@ -15,10 +15,12 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -31,6 +33,7 @@ from ..capture.bridge import review_issues
 from ..capture.layout import PDF_LOCK, CannotRead
 from ..capture.workflow import AUTONOMOUS_REVIEWER, WAITING_FOR_PAGE_READER, autonomy_decision, capture_invoice
 from ..coding import banks
+from ..coding.claim import claim_findings
 from ..coding.po import po_findings
 from ..coding.remark import fill_remarks
 from ..coding.rules import apply as apply_rules
@@ -43,6 +46,7 @@ from ..core.memory import compare_patterns, compare_with_history, format_example
 from ..core.reference_data import ReferenceData, short_name
 from ..core.schema import InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
+from ..core.store.joined import CLAIM
 from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
 from . import azure_check, verifier
@@ -304,6 +308,8 @@ def finalise_coding(
         remarks_typed=remarks_typed,
         erp_posts_tax=jde.taxes_e1_posts(output, js) if js is not None else frozenset(),
     )
+    if store is not None and exclude_invoice_id is not None:  # the receipts of one expense claim say so (D-216)
+        claim_findings(report, store.joined_files(invoice_id=exclude_invoice_id), coding)
     return output, report
 
 
@@ -673,8 +679,12 @@ class InvoicePipeline:
         text_file = result.source.suffix.lower() in TEXT_EXTENSIONS
         # (capture, supplier key, profile) when read without AI: kept even if a later step of the reading fails
         captured: dict[str, tuple[Any, str, Any]] = {}
+        receipts = self._receipts(result.source, sha256, invoice_id)
         try:
-            self._read_and_code(result, page_text, invoice_id, text_file, captured)
+            if receipts:
+                self._read_claim(result, receipts, page_text, invoice_id)
+            else:
+                self._read_and_code(result, page_text, invoice_id, text_file, captured)
         except CannotRead as exc:  # no OCR or photo add-on, no pages, a web page: said plainly, never an empty reading
             log.warning("%s: %s", result.source.name, exc)
             result.error = str(exc)
@@ -686,12 +696,77 @@ class InvoicePipeline:
             else:
                 log.exception("Failed to process %s", result.source)
                 result.error = plain_error(exc, result.source)
-        azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
-                                                         pages_read, text_file)  # fmt: skip
+        if receipts:  # each receipt was read on its own: no capture of the whole, and a person approves it
+            azure, reviewer_plan = azure_check.Plan(), verifier.Plan()
+        else:
+            azure, reviewer_plan = self._checks_after_coding(result, captured.get("local"), page_text, invoice_id,
+                                                             pages_read, text_file)  # fmt: skip
         self._save_and_queue(result, save, invoice_id, azure, reviewer_plan)
         if save and result.invoice_id and (result.original or result.source != Path(path)):
             self._note_own_file(result.source)
         return result
+
+    def _receipts(self, path: Path, sha256: str | None, invoice_id: int | None) -> list[dict[str, Any]]:
+        """The files joined in this document when they are the receipts of one expense claim (``intake/joined.py``,
+        D-216: ``Store.joined_files``); [] for any other file."""
+        if self.store is None or path.suffix.lower() != ".pdf":
+            return []
+        if invoice_id is not None:
+            files = self.store.joined_files(invoice_id=invoice_id)
+        else:
+            try:
+                files = self.store.joined_files(sha256 or hashlib.sha256(path.read_bytes()).hexdigest())
+            except OSError:  # gone or locked: the reading says so
+                return []
+        return files if files and files[0]["kind"] == CLAIM else []
+
+    def _read_claim(self, result: PipelineResult, files: list[dict[str, Any]], page_text: list[str] | None,
+                    invoice_id: int | None) -> None:  # fmt: skip
+        """The receipts of one expense claim (``files``, joined in this document): each one's pages read and coded on
+        their own as an invoice is (``_read_and_code``; of ``page_text``, its own pages), then one voucher of them
+        (``coding.claim.claim_coding``) checked as any invoice is. A receipt that can't be read is named in a
+        finding, and the others are still read."""
+        from ..coding.claim import Receipt, claim_coding, tax_area
+        from ..intake.joined import pages_of
+
+        _check_pdf(result.source)
+        receipts, read = [], []
+        with tempfile.TemporaryDirectory() as work:
+            for f in files:
+                first, pages = f["first_page"], f["pages"]
+                target = Path(work) / str(f["position"]) / Path(f["name"]).with_suffix(".pdf").name
+                target.parent.mkdir()
+                one = PipelineResult(source=pages_of(result.source, first, pages, target))
+                own_text = None if page_text is None else page_text[first - 1 : first - 1 + pages]
+                try:
+                    self._read_and_code(one, own_text, None, False, {})
+                    receipts.append(Receipt(f["name"], one.coding.coding))
+                    read.append(one)
+                except Exception as exc:  # noqa: BLE001 - one receipt that can't be read must not lose the others
+                    log.warning("%s: %s could not be read (%s)", result.source.name, f["name"], exc)
+                    said = str(exc) if isinstance(exc, CannotRead) else plain_error(exc, target)
+                    receipts.append(Receipt(f["name"], None, said.rstrip(".")))
+        coding, notes = claim_coding(receipts, self.reference.tax, self.reference.cost_centers is not None)
+        # the tax area of each receipt in the total: two of them are one voucher a tax area for JD Edwards (B-2288)
+        taxes = [tax_area(r.coding.tax_lines) if r.coding is not None and not note else ""
+                 for r, note in zip(receipts, notes, strict=True)]  # fmt: skip
+        result.extraction = ExtractionResult(
+            source=str(result.source), model_id=read[0].extraction.model_id if read else "",
+            content="\n\n".join(f"## {r.source.name}\n\n{r.extraction.content}" for r in read),
+            page_count=sum(f["pages"] for f in files),
+            mean_word_confidence=min((r.extraction.mean_word_confidence for r in read
+                                      if r.extraction.mean_word_confidence is not None), default=None),
+        )  # fmt: skip
+        result.coding = CodingResult(coding, "", read[0].coding.model if read else "")
+        result.chat_deferred = any(r.chat_deferred for r in read)
+        for step in ("extraction", "inference"):
+            result.timings[step] = sum(r.timings.get(step, 0.0) for r in read)
+        self.store.note_joined_files(files[0]["joined"], notes, taxes)
+        result.output, result.report = finalise_coding(coding, self.reference, self.settings, result.extraction,
+                                                       store=self.store, exclude_invoice_id=invoice_id)  # fmt: skip
+        if invoice_id is None:  # (read again, ``finalise_coding`` finds the invoice's files itself)
+            said = [{**f, "note": note, "tax": tax} for f, note, tax in zip(files, notes, taxes, strict=True)]
+            claim_findings(result.report, said, coding)
 
     def _note_own_file(self, path: Path) -> None:
         """The file stored is one AP Coder wrote in the invoices folder itself (the PDF made from a picture, a file
@@ -879,6 +954,7 @@ class InvoicePipeline:
             )
             if result.capture is not None:
                 self.store.save_capture(result.invoice_id, result.capture.to_dict())
+            self.store.joined_read(result.invoice_id)  # who joined its files is in its history (B-2284)
             azure_check.queue(self.store, result.invoice_id, azure)
             verifier.queue(self.store, result.invoice_id, reviewer_plan,
                            held=bool(result.autonomy.get("verifier_hold")))  # fmt: skip

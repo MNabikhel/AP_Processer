@@ -31,7 +31,9 @@
     <div>
       <h4>Backups</h4>
       <p class="muted">Each backup is AP Coder as it was at that moment: the database and every invoice file, saved email,
-        attachment and manager's reply it needs. One is made automatically once a day when AP Coder starts (the newest 14
+        attachment and manager's reply it needs. One is made automatically once a day
+        {% if backup_hours %}between {{ backup_hours }}{% elif backup_at %}at {{ backup_at }}{% else %}when AP Coder
+        starts{% endif %} (the newest 14
         are kept{% if server_mode %}, then one a week for 8 weeks and one a month for a year; the backups you make
         yourself, and those made before an update or a restore, are always kept{% endif %}). A file that did not change
         is stored once for all the backups, so a daily backup copies only what is
@@ -46,6 +48,30 @@
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">backup</span>Back up now</button>
     </form>
   </div>
+
+  {% if backup_hours %}{# IT's hours decide: no time is shown that nobody chose (B-2296) #}
+  <p class="muted">On this server the daily backup is made from {{ backup_hours }}: IT set those hours
+    (AP_BACKUP_HOURS in the server's .env file, docs/SERVER.md section 9), and they decide. No time of day is set here
+    while they do.</p>
+  {% else %}
+  {% set own = server_mode and not backup_at_chosen %}
+  <form method="post" action="/settings/data/backup-time" class="row st-end" data-busy="Saving…">
+    <label class="field">Back up every day at
+      <input type="time" name="at" value="{{ '' if own else backup_at }}"
+             title="On the 24-hour clock, like {{ backup_at_default }}. Empty: no set time, once a day when AP Coder starts."></label>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
+  {% if own %}
+  <p class="muted">Nobody has chosen a time on this server: until one is saved here, the daily backup is made at
+    {{ backup_at_default }}, AP Coder's own time, which is in working hours. Save the time you want above (saved empty:
+    no set time), or have IT set the hours in the server's .env file (AP_BACKUP_HOURS, docs/SERVER.md section 9): those
+    then decide.</p>
+  {% endif %}
+  <p class="muted">The day's backup is made at that time while AP Coder is running{% if server_mode %} (the business time
+    zone's, where the server has one){% endif %}. A computer asleep or AP Coder closed at that time makes it at the next
+    start instead, and says so here. Empty: no set time, one is made once a day when AP Coder starts.
+    {% if backup_last %}<br>Last daily backup: {{ backup_last.at }}, {{ backup_last.why }}.{% endif %}</p>
+  {% endif %}
 
   <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
     <label class="field st-grow">Also copy each backup to (optional)

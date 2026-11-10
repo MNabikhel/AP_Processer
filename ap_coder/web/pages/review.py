@@ -807,8 +807,13 @@ def review_sample_gl(request: Request, back: str = Form("/review")) -> JSONRespo
 def delete_invoice(store: Store, invoice_id: int) -> None:
     """Delete an invoice; if its file is in the invoices folder, move it to ``invoices/deleted`` so the folder
     pick-up doesn't offer it again."""
+    from ap_coder.intake import joined
+
     inv = store.get_invoice(invoice_id) or {}
+    parts = store.joined_files(invoice_id=invoice_id)
     store.delete_invoice(invoice_id, actor=reviewer(), keep_approved=True)
+    if parts:  # a voucher made of several files (D-216): they go with it
+        joined.removed(store, inv, parts)
     folder = invoice_dir(store)
     path = Path(inv.get("source_path") or "")
     try:
@@ -868,6 +873,31 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     except OSError:
         return refuse(f"The original file at {shown_path(path)} can't be opened now (open in another program?).")
     return done(request, "/process", flash_message(f"Reading {path.name} again.", "info", icon="refresh"))
+
+
+@router.post("/review/{invoice_id:int}/separate")
+def review_separate(request: Request, invoice_id: int) -> JSONResponse:
+    """Make these separate invoices again (D-216): a voucher made of several files and not approved yet is removed,
+    and its files go back in the invoices folder and in line, each to be read as an invoice of its own."""
+    from ap_coder.core.store.folder import read_file
+    from ap_coder.intake.joined import CannotJoin, separate
+    from ap_coder.web.pages.invoice import forget_everyones_draft
+    from ap_coder.web.pages.process import queue_files
+
+    store = get_store(request)
+    inv = store.get_invoice(invoice_id)
+    if inv is None:
+        return refuse("That invoice is no longer in AP Coder.", 404)
+    if inv["status"] not in (REVIEW, FAILED):
+        return refuse("Only an invoice still in review can be made separate invoices again: reopen it first.", 409)
+    try:
+        files = separate(store, inv, reviewer())
+    except (CannotJoin, ValueError) as exc:
+        return refuse(str(exc), 409)
+    forget_everyones_draft(request, invoice_id)
+    queue_files(request, [read_file(path) for path in files], source="upload")
+    return done(request, "/process", flash_message(f"{ui.plural(len(files), 'file')} are being read again, each as "
+                                                   "an invoice of its own.", "info", icon="call_split"))  # fmt: skip
 
 
 @router.post("/review/{invoice_id}/unpark")

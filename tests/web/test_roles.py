@@ -18,6 +18,7 @@ from ap_coder.core.store.users import ROLES
 from ap_coder.web import roles
 from ap_coder.web.app import create_app
 from ap_coder.web.identity import SESSION_COOKIE, Identity
+from tests.ai.test_lessons import client_store  # noqa: F401 - the fixture
 from tests.webclient import PAGE, enrol, web_settings
 
 GOOD = "correct horse battery"
@@ -181,6 +182,10 @@ def test_what_each_role_may_do(setup):
         "POST /exports/batches/1/download",
         "POST /vendors/save",
         "GET /process",
+        "GET /rules",  # the fixed coding rules: anyone who reviews invoices changes and undoes them (D-217)
+        "POST /rules",
+        "POST /rules/add",
+        "POST /rules/undo",
     ):
         assert may("clerk", route) and not may("readonly", route), route
     for route in ("POST /review/1/final-approve",):
@@ -206,3 +211,45 @@ def test_what_each_role_may_do(setup):
         "GET /settings/data/backups/x.db",
     ):
         assert may("admin", route) and not may("approver", route), route
+
+
+def test_the_why_question_is_answered_by_the_person_who_approved_and_nobody_else(client_store):  # noqa: F811
+    """B-2291: any Clerk could answer "one-off" for another person's approval and so forget what it taught, which
+    Learning's Forget keeps for an Admin. The answer is the approver's own; an Admin forgets the house way."""
+    from ap_coder.ai import lessons
+    from tests.ai.test_why_question import _asked, _recode
+    from tests.web.test_web_invoice import form_of
+
+    _, store, ids = client_store
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    client = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    who = {}
+    for name, role in (("ann", "clerk"), ("bob", "clerk"), ("cy", "approver"), ("dee", "admin"), ("eve", "readonly")):
+        uid = store.add_user(name, GOOD, role=role, display_name=name.title(), must_change=False)
+        enrol(store, uid)
+        who[name] = {**PAGE, "Cookie": f"{SESSION_COOKIE}={store.start_session(uid)}"}
+    done = client.post(f"/review/{ids[0]}/approve", data=form_of(store, ids[0], _recode), headers=who["ann"]).json()
+    url, key = _asked(client.get(done["redirect"], headers=who["ann"]).text).groups()
+    line = store.why_asked(ids[0])["line_number"]
+
+    def taught():
+        rows = [r["id"] for r in store.feedback_rows() if r["invoice_id"] == ids[0] and r["line_number"] == line]
+        return rows, store.lesson(key)["corrected"], store.lesson(key)["explanation"] or ""
+
+    before = taught()
+    assert before[0] and before[1:] == (1, "")
+    for name in ("bob", "cy", "dee", "eve"):
+        for answer in ({"reason": lessons.ONE_OFF}, {"answer": f"{name} says so"}, {"reason": lessons.KIND}):
+            refused = client.post(url, data={"situation": key, **answer}, headers=who[name])
+            assert refused.status_code == 403, (name, answer, refused.text)
+            if name != "eve":  # (a Read-only account is stopped before the page, in the role's own words)
+                assert refused.json()["error"] == ("That question was asked of Ann, who approved this invoice: only "
+                                                   "Ann can answer it. Nothing was changed.")  # fmt: skip
+            assert taught() == before and store.events(ids[0], ["lesson_one_off", "lesson_explained"]) == []
+    # Forget stays an Admin's, on Learning; and the question is still Ann's to answer.
+    forget = {"ids": [str(i) for i in before[0]]}
+    assert client.post("/learning/memory/forget", data=forget, headers=who["bob"]).status_code == 403
+    assert client.post(url, data={"situation": key, "answer": "staff meals"}, headers=who["ann"]).json()["ok"]
+    assert store.lesson(key)["explanation"] == "staff meals"
+    assert client.post("/learning/memory/forget", data=forget, headers=who["dee"]).status_code in (200, 303)
+    assert taught()[0] == []

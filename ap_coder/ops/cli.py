@@ -41,7 +41,7 @@ from ..core.store.folder import read_file
 from ..core.store.imports import IMPORT_LEASE_SECONDS
 from ..intake.imports import Reader, owner_id, pick_up
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, pickup_lock, unpack, unpack_folder, wait_for_pickup
-from . import server_update, service
+from . import server_update, service, share
 from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
 
@@ -382,6 +382,7 @@ def _add_server_ops(sub: Any) -> None:
     """The company server's own commands (D-100): ``service`` and ``server-update`` (docs/SERVER.md)."""
     service.add_parser(sub)
     server_update.add_parser(sub)
+    share.add_parser(sub)  # one laptop serving a few colleagues, with sign-in (D-218)
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
@@ -1349,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": lambda: cmd_doctor(args, settings),
         "service": lambda: service.main(args),  # the company server (D-100)
         "server-update": lambda: server_update.main(args),
+        "share": lambda: share.main(args),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
         "read-pages": lambda: cmd_read_pages(args, settings),

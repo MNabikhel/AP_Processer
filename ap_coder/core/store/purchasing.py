@@ -1,4 +1,5 @@
-"""Purchase orders, ERP export batches, fixed coding rules."""
+"""Purchase orders, ERP export batches, the lines a fixed coding rule set on the review screen (the rules
+themselves: ``rules.py``)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...coding.po import CLOSED, OPEN, positive_lines
-from ...coding.rules import Rule
 from ..keys import po_key
 from ..memory import vendor_key
 from . import dialect
@@ -651,37 +651,7 @@ class PurchasingMixin:
             row = conn.execute("SELECT * FROM export_batches WHERE id = ?", (batch_id,)).fetchone()
         return dict(row) if row else None
 
-    # --- Fixed coding rules ---------------------------------------------------------------------------
-
-    def coding_rules(self) -> list[Rule]:
-        with self._conn() as conn:
-            return [
-                Rule(r["vendor"], r["contains"], r["gl_code"], r["cost_center"], r["id"])
-                for r in conn.execute("SELECT * FROM coding_rules ORDER BY id")
-            ]
-
-    def save_coding_rules(self, rules: list[Rule], actor: str | None = None) -> int:
-        """Replace the rules (rules without a GL account, or without a vendor and words, are left out).
-        Unchanged rules keep their id, so their age (the tie-breaker) is kept."""
-        keep = [r for r in rules if r.gl_code.strip() and (r.vendor.strip() or r.contains.strip())]
-        with self._conn() as conn:
-            old = {(r["vendor"], r["contains"], r["gl_code"], r["cost_center"]): r["id"]
-                   for r in conn.execute("SELECT * FROM coding_rules")}  # fmt: skip
-            conn.execute("DELETE FROM coding_rules")
-            now = _now()
-            seen = set()
-            for r in keep:
-                values = (r.vendor.strip(), r.contains.strip(), _clean_code(r.gl_code), _clean_code(r.cost_center))
-                if values in seen:  # the same rule twice: kept once
-                    continue
-                seen.add(values)
-                conn.execute(
-                    "INSERT INTO coding_rules (id, vendor, contains, gl_code, cost_center, created_at, created_by) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (old.get(values), *values, now, actor),
-                )
-            self._log(conn, "rules_changed", actor=actor, detail={"rules": len(keep)})
-        return len(keep)
+    # --- The lines a fixed coding rule set (the rules: rules.py) ----------------------------------------
 
     def add_rules_applied(self, invoice_id: int, changes: list[dict[str, Any]]) -> None:
         """Remember lines a fixed coding rule set on the review screen (as rules applied at processing are), so

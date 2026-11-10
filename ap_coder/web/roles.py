@@ -7,7 +7,8 @@ The roles, each able to do everything the one before it can (``core/store/users.
   exports, Help, Insights, Spend, the Activity log and their own account. Changes nothing.
 * **Clerk** (``CLERK``): imports invoices, reviews and checks them, gives the first approval, parks, rejects,
   reopens, undoes their own approval, approves in bulk, makes export batches and downloads them, puts vendors on hold
-  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``).
+  and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``), and adds,
+  changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
   gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
   a vendor off hold.
@@ -103,12 +104,15 @@ RULES: dict[tuple[str, str], str] = {
         CLERK,
         # Bringing invoices in.
         "GET /process", "POST /process/upload", "POST /process/folder", "GET /process/status",
+        # Several files that are one voucher, and making them separate invoices again while in review (D-216).
+        "POST /process/voucher", "POST /review/{invoice_id:int}/separate",
         "POST /spend/data",  # the Spend data workbook made in the background, for everyone (D-156)
         "GET /process/inbox/{entry_id}/file/{n}", "POST /process/inbox/{entry_id}/to-queue/{n}",
         "POST /process/inbox/{entry_id}/done", "POST /review/{invoice_id}/retry",
         # The review screen: edits, checks, the first approval, park, reject, reopen, undo (their own approval).
         "POST /review/{invoice_id:int}/vendor", "POST /review/{invoice_id:int}/check",
         "POST /review/{invoice_id:int}/approve", "POST /review/{invoice_id:int}/undo-approve",
+        "POST /review/{invoice_id:int}/why",
         "POST /review/{invoice_id:int}/park", "POST /review/{invoice_id:int}/reject",
         "POST /review/{invoice_id:int}/note", "POST /review/{invoice_id:int}/teach",
         "POST /review/{invoice_id:int}/split", "POST /review/{invoice_id:int}/apply-rules",
@@ -138,6 +142,9 @@ RULES: dict[tuple[str, str], str] = {
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
+        # The fixed coding rules: anyone who reviews invoices adds, changes, removes and undoes them; every change is
+        # kept with who made it (D-217).
+        "GET /rules", "POST /rules", "POST /rules/add", "POST /rules/undo",
     ),
     **_rules(
         APPROVER,
@@ -155,7 +162,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
         "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import", "POST /accounts/bank/save",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
-        "POST /accounts/tax", "POST /accounts/policy", "POST /accounts/rules", "POST /accounts/rules/add",
+        "POST /accounts/tax", "POST /accounts/policy",
         "POST /vendors/master/upload", "POST /vendors/master/import",
         "POST /purchase-orders/upload", "POST /purchase-orders/import", "POST /purchase-orders/sample",
         "POST /purchase-orders/status", "POST /purchase-orders/delete",
@@ -175,6 +182,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/azure-check/test", "POST /settings/review",
         "POST /settings/data/open-folder", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
+        "POST /settings/data/backup-time",
         "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",

@@ -187,6 +187,10 @@ per bug with the test that keeps it fixed, is [docs/BUGS.md](BUGS.md) (older one
 - **Every correction is remembered for its situation.** A situation is a vendor, a kind of document (invoice or credit
   note) and a field, or a kind of line ("lines like 'Mobility services'"). Each approval quietly counts, for each one,
   whether AP Coder's value was right or corrected, and the value AP chose. Nothing is asked.
+- **After a surprising correction, AP Coder asks why** (D-218). When you change an account it had coded by itself,
+  or had offered first, the next page asks once, the approval already made: "Why 7340 and not 7420 for 'Working
+  lunch'?", with a short box, one-click reasons and Skip. The reason is kept with that lesson (What was learned →
+  Lessons); "One-off: don't learn from it" keeps the line out of the coding memory. Settings → Review turns it off.
 - **When the same correction keeps coming back, AP Coder asks why.** The third time the same field is corrected on
   the same vendor (Settings → Review, "Ask AP for the reason once the same correction has been made this many times"), approving opens one short question
   before saving: "Why is your value the right one?". The answer is kept with the lesson; **Skip for now** saves

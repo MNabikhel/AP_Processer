@@ -5071,3 +5071,208 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Where:** `ap_coder/capture/reader/line_items.py` (`_amount_heading`, `_Columns`, `_columns_under`),
     `ap_coder/capture/bridge.py` (`printed_taxes`), `ap_coder/ai/offline_coder.py` (`_charges_outside`,
     `_lines_to_check`), `ap_coder/ops/help.py`; `tests/capture/test_line_table_columns.py`.
+- **D-216** · **Several files can be ONE voucher: a person ticks them on the Add invoices page and says whether they
+  are the pages of one invoice or the receipts of one expense claim; they are joined into one document, and can be
+  made separate invoices again while in review** (stage 2; 10 Nov 2026).
+  - **Why:** every file became its own invoice. An expense claim comes as several phone pictures of receipts, and a
+    scanner or a phone saves an invoice's pages one by one: each was read as an invoice of its own, with its own
+    supplier and total.
+  - **What:** on the Add invoices page, the files chosen for upload (two or more: "These files are" one voucher) or
+    ticked in the invoices folder's list are joined in the order shown, which arrows change (`intake/joined.py`
+    `join`): a picture becomes its pages as one coming in alone does, a PDF gives its pages. The one PDF
+    ("IMG_0412 and 2 more.pdf") goes in the import queue like any file; the files move to `originals/` as they came,
+    and `joined_files` (by `_SCHEMA`, no schema version) keeps which pages are whose, by the document's SHA-256.
+    **Pages of one invoice:** nothing else changes: the document is read by the normal path, the 60-page limit and
+    its finding included. **Receipts of one claim:** `InvoicePipeline._read_claim` reads each receipt's pages on
+    their own as an invoice is, and `coding/claim.py` makes one voucher of them: the receipts' lines in order, named
+    with their merchant and coded as each receipt was; a receipt whose lines do not add up to its total gives one
+    line (merchant and date, its amount before tax); each line carries the tax its own receipt charged
+    (`LineItem.taxes_read`, from that receipt's own `invoice_taxes`, so a tip takes none); the totals and the tax
+    lines are the receipts' added up. A receipt in another currency than most, or whose total could not be read,
+    adds nothing: a 0.00 line and the finding CLAIM_RECEIPT_NOT_ADDED naming the file and its page. With as many
+    receipts in each of two currencies the claim is put in CAD (else the first by its letters), never the first
+    file's, the finding names the receipts of both, and the currency is the person's to set (B-2285). Once the
+    person types the receipt's amount on its line the finding goes and the claim's subtotal and total take it,
+    while they are still the ones without it (`claim.totals_follow`, B-2286). The supplier
+    and the invoice number are left empty, and MISSING_VENDOR and MISSING_INVOICE_NUMBER say why in a claim's words
+    (the employee being repaid; a reference of your own), on the first reading and on every check after it
+    (`finalise_coding`). The review screen lists the files ("page 3 is from IMG_0412.jpg") over the one document,
+    and "Make these separate invoices again" (`POST /review/{id}/separate`, a Clerk's) removes the voucher, puts
+    the files back in the invoices folder and reads each on its own. A file that is one of a voucher's files counts
+    as in AP Coder wherever a file's content is asked (the upload's and the folder's skip, the folder's list), and
+    joining it into another voucher is refused with where it is ("page 2 of invoice #14"): from the moment it is
+    joined, its voucher read or still in line ("page 2 of IMG_0411 and 1 more.pdf, a voucher waiting to be read"),
+    the join and the queueing being one step under the pick-up's lock (B-2283). A file read as an invoice of its
+    own and still in review is taken into the voucher instead (that invoice is removed; one approved or rejected
+    is refused as before): what a separation did is undone the same way.
+    **Two tax areas (B-2288):** JD Edwards takes one tax area a pay item and AP Coder makes one pay item (D-210),
+    so a claim with the GST on some receipts and Ontario's HST on another is held by JDE_TAX_AREA. Each receipt's
+    tax area is kept as read (`joined_files.tax`), and the finding says what to do in a claim's words, naming the
+    files of each: make them separate invoices again, then choose each tax area's receipts again on Add invoices
+    as a claim of their own. Receipts already read on their own that show two tax areas are refused at the join,
+    with the same words. Two pay items on one voucher are not made (left).
+    **The audit trail (B-2284):** the events `joined` (who, which files, as what, the invoices taken in; the
+    voucher's own once it is read: `Store.joined_read`) and `separated` (who, which files), on Activity and in
+    the invoice's history. **Nothing left in `originals/` (B-2289):** a separation also removes the copy kept of
+    the document as joined (pages set upright since); a deleted voucher's files go to `invoices/deleted` with its
+    document, as a deleted invoice's file does, and are no voucher's files any more. A rejected voucher keeps
+    them (it can be reopened and separated). A backup holds the whole invoices folder, `originals/` included.
+  - **Measured:** three made-up phone pictures (fuel with GST, a lunch with GST and a tip, a room with HST) as one
+    claim: 5 lines, 273.00 + 27.80 = 300.80, GST 3.00 / 1.20 / 0.20 / none on the tip, HST 23.40 on the room, no
+    tax or total finding, read in 7 to 10 s (4 cores, OCR on the processor). Two scanned pages joined give the same
+    header, lines, totals and findings as the same two pages scanned as one PDF.
+  - **Not chosen:** a group in the import queue read file by file and merged afterwards (a second kind of queue
+    row, and nothing to show as one document); the link kept on the invoice's own row (it is found by the
+    document's SHA-256, so a failed read, a retry or pages set upright need nothing more); a supplier guessed from
+    the first merchant; a capture of the whole claim (each receipt has its own: a claim is never approved without
+    a person, and its fields are not boxed on the page).
+  - **Left:** two pay items on one voucher (a claim of two tax areas is two vouchers); a claim of one receipt (a
+    receipt alone in its tax area stays an invoice of its own, the employee chosen as its supplier by hand); a
+    claim cover sheet; per-employee settings; adding a file to a voucher already read; a claim's
+    receipt photographed sideways is read but shown as it was taken; a tip whose amount OCR reads before its
+    label is not split out (the receipt is then one line for its amount before tax).
+  - (`ap_coder/intake/joined.py`, `ap_coder/coding/claim.py`, `ap_coder/core/store/joined.py`,
+    `ap_coder/ai/pipeline.py`, `ap_coder/web/pages/process.py`, `review.py`, `invoice.py`,
+    `ap_coder/web/templates/process.html`, `_invoice_document.html`, `ap_coder/web/static/js/process.js`;
+    `tests/intake/test_joined.py`, `tests/coding/test_claim.py`, `tests/web/test_web_joined.py`)
+
+- **D-217** · **The coding rules are anyone's to change, on a page of their own that keeps every change, undoes any
+  of them and says what each rule coded** (the same department's prototype, stage 2; 10 Nov 2026).
+  - **Why:** The rules were a tab of *GL accounts & tax* that only an Admin could change on the server. The
+    department wants anyone who reviews invoices to change them, and to see how the rules worked over time: who
+    changed what, and which invoices a rule coded. Saving the rules also rewrote every rule as new (B-2231).
+  - **What:** `/rules` (*Coding rules* under More; **Rules** in the Simple menu, one click). On the server
+    `GET /rules`, `POST /rules`, `/rules/add` and `/rules/undo` are a Clerk's and above (`web/roles.py`); a
+    Read-only account does not open the page (as *GL accounts & tax*). A laptop is as before: on the office
+    network a colleague's browser still does not change the rules (`identity.SETUP_CHANGES_HERE_ONLY`).
+    `/accounts?tab=rules` goes to the page.
+  - **A rule's number is its own** (`coding_rules.id`, which every database has had since schema 11: nothing to
+    migrate). A save changes a rule in place, a number is never given to another rule, and an undone removal has
+    its number again. A rule has no name of its own: it is named by what it matches (`Rule.label`, as `decided_by`
+    already kept it), so "renaming" it is changing its vendor or words.
+  - **History:** `coding_rule_history` (by `_SCHEMA`, no schema version): rule, when, who, the rule before and
+    after as JSON. The page lists it newest first in plain words (`rules.change_words`), each with **Undo**: the
+    rule goes back to what it was before that entry, and the undo is an entry (so it can be undone). When the rule
+    is not as the entry left it, the page says "changed again since", names the newer change in the question it
+    asks, and only then overwrites (`overwrite=1`; without it the store refuses, `CHANGED_SINCE`). An entry whose
+    rule is already as it was before it has no Undo. An undo that would make a rule say the same as another is
+    refused (`TWICE`, B-2294; said on the page): two rules alike are one too many, and the next save dropped one
+    unasked. Not merged: which of the two numbers stays is a person's choice.
+  - **Several people, one list (B-2292):** a save writes the whole list, so a save made on older rules removed what
+    another person had just added. The page posts what it was drawn from (`version`: the history's last entry,
+    `Store.rules_seen`) with a save and with an undo; the store compares it inside its write (`_unseen`), so two
+    saves at the same moment cannot both pass. Changed since: nothing is written (`RulesChanged`), and the person
+    is sent back to the page (`?kept=`, kept an hour), told who changed what, with the rules as they are now and
+    their own changes still in the form (`rules.form_again`: a row left as their page showed it follows the newer
+    change, one they changed, cleared or added stays theirs). A request that names no page is refused (409).
+    *Add rule* reads and writes on one stamp.
+  - **What a rule coded:** a line's `decided_by` already kept the rule's number and its words (D-212); nothing was
+    added to the line. `summary_rules` (invoice, rule, lines, and what the rule said: its words as the line kept
+    them, the line's own account and cost center), filled with the invoices' summary from the coding as approved,
+    else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice directory's
+    `?rule=<number>` filter (`rules.rule_filter`). A number outlives what its rule says (B-2293): the count is of
+    the lines that say what the rule says now (its words, its GL account, its cost center when it has one); the
+    lines it coded while it said something else are said apart, "K lines on J invoices before it was changed
+    (when; it was ...)", from the history's last change, with their own link (`?rule=<number>&was=1`), and the
+    search says which it shows. Nothing is dated: a line says what coded it. `SUMMARY_RULES` is not raised (no
+    rebuild of every summary for a table that starts empty): an invoice is counted once it is coded or changed
+    from the first start of this version, the day kept as the setting `rule_use_since` and said on the page.
+    Nothing is guessed for the invoices before. (The table as this stage first made it, without what the rule
+    said, is dropped and made again empty at the next start: `_summary_schema`.)
+  - **With a chart of accounts** the rule's account is one box holding `business unit.object.subsidiary`, read as
+    the review screen's Account box is (`account_lines.posted`; joined and split only by `core/chart.py`). A rule
+    added or changed is refused, and nothing saved, when the pair is not in the chart, takes no postings or is on a
+    business unit that is not active, in the line check's own words (`validation.account_problem`), or names no
+    business unit. An account never offered (reserved) is allowed: the rule is a person's decision, and the line's
+    check still warns. A rule saved before the chart, left as it is, does not stop the others being saved: its row
+    says what is wrong. An undo to such a rule is refused with the same words.
+  - **Left:** the Account box has no search list (the review screen's is tied to its own script): the string is
+    typed or pasted; the history shows its newest 100 entries.
+  - (`ap_coder/coding/rules.py`, `ap_coder/coding/validation.py`, `ap_coder/core/store/rules.py`, `summary.py`,
+    `migrations.py`, `_base.py`, `ap_coder/erp/directory.py`, `ap_coder/web/pages/rules.py`, `search.py`,
+    `accounts.py`, `ap_coder/web/roles.py`, `identity.py`, `ap_coder/web/templates/rules.html`, `search.html`;
+    `tests/core/test_rules_store.py`, `tests/web/test_web_rules.py`)
+
+- **D-218** · **The last pieces of one laptop serving a few AP processors: a backup at a set time each day, one
+  command to start sharing with sign-in, and a "why?" asked after a surprising correction** (10 Nov 2026).
+  - **A backup at a set time.** The daily backup was made when AP Coder started, then not again for 20 hours: on a
+    laptop started each morning the day's work was in no backup until the next morning. *Settings* → *Data &
+    backups* now has *Back up every day at* (`backup_at`, kept with the other backup settings; 17:30 until one is
+    saved, so an install that never saw the page gets the end-of-day backup too; saved empty, "off": no set time,
+    the 20-hour rule as before). With a time, the day's backup is the one made since the clock last showed it
+    (`backups.backup_due`): made as the clock passes it while AP Coder runs, and at the next check when it did not
+    (the start's, as before), with why kept and shown ("made at start: AP Coder was not running at 17:30", "made
+    late: this computer was asleep or busy at 17:30"). The clock is the business time zone's where `server.json`
+    has one. Who looks at the clock: `app.DailyBackup`, every half minute, in the process that does the background
+    work (the laptop's own; on the server its background process, never a web worker), and it reads the time again
+    once a minute, so a time saved on the page is followed with no restart. The free-space check, the second folder
+    and the retention are `backup_now`'s and `drop_old`'s, unchanged.
+    - *A time changed while AP Coder runs (B-2295):* one moved to a time the clock already passed today is followed
+      at the watch's next read, within a minute (it waited for the hourly check, with the reason "asleep or busy"):
+      a new time that the clock showed more lately than the one before it has come (`DailyBackup._time_came`), and
+      `auto_backup` makes the day's backup when none was made since. The page saves the time through
+      `Store.save_backup_at`, which keeps when (`backup_at_changed`), so the reason says what happened: "made after
+      the time was changed to 14:00 at 15:00". A time moved later also makes one backup at the change, as the rule
+      (none since that time last passed) always did. The watch's first read counts from when the process began: a
+      start half a minute before the time does not wait a day for it.
+    - *On a company server (B-2296):* the page shows no time that nobody chose. With IT's hours it says them and
+      where they are set (`AP_BACKUP_HOURS`, the `.env`) in place of the box; without them and with no time saved,
+      the box is empty and the page says that 17:30, AP Coder's own time, applies until one is saved, and that it
+      is in working hours. What applies is unchanged: the 17:30 stays for a shared laptop that never saw the page.
+    - *Not chosen:* a time that also governs a server whose IT set `AP_BACKUP_HOURS`: those hours were chosen on
+      purpose (B-1671), so they decide, and the page says so in place of the time. A Windows scheduled task for
+      the backup: it needs AP Coder closed or a second process on the database, and administrator rights.
+  - **`python -m ap_coder share`** (`ops/share.py`), the short way through docs/SERVER.md section 16. It checks,
+    in order: an AP Coder already running on this data (shared: says the address; the owner's own window: asks to
+    close it); the certificate (`server.json`'s, else the data folder's `tls` files, else the guide's self-signed
+    one made with this computer's `openssl`, as section 3 already allowed by hand); the first Admin (asked for at
+    the console: the name on the owner's approvals, a username, a password); then writes `server.json`, allows the
+    second backup folder chosen in laptop mode (`allowed_folders`, D-109: from the console, by the person who chose
+    it, and only while the data has no account yet; later `--allow-folder`, which also works while AP Coder is being
+    shared, the list being read each time a folder is saved, B-2297), says the firewall rule and the address,
+    and runs `serve --server` as the service's host does (`serve_command`, `serve_env`), in its window, with 2 web
+    workers unless `server.json` says. `share --stop` asks that server to stop (`dashboard_stopped`).
+    - *Never:* a start without sign-in or over plain HTTP (`insecure_http` in `server.json` is ignored here); a
+      change to Windows' firewall or anything else that needs administrator rights (the rule is looked for with
+      `netsh ... show rule` and its command printed); `server.json` before the first Admin exists (a person who
+      stops at the password prompt still has a laptop that opens with a double-click). After it, D-211 holds: the
+      accounts and `server.json` mark the folder, and a plain start refuses it.
+    - *What could not be made simpler, and is said so:* the certificate without `openssl` (Windows writes no PEM
+      files; no certificate library is a dependency, and none was added for this); the firewall rule; the Windows
+      licence; a laptop asleep answers nobody. Not tried on Windows 11 (section 16 lists what to check there).
+  - **The "why?" after a surprising correction.** There was one question already, before saving: the same
+    correction of one situation made `why_after` times (D-72's lessons, `lessons.due_for_why`), its answer the
+    lesson's reason. Added (`lessons.surprise`): after an approval, never holding it, the next page asks once "Why
+    7340 and not 7420 for “Working lunch”?" when the person changed an account AP Coder expected: one it had coded
+    with no one picking (not a guess: `decided_by` "model", or a reason that says so), or the first account offered
+    on a line it left, when that came from this supplier's own history ("vendor", "supplier") with at least half
+    of its lines. Of several, the one it was surest of (a rule's, then a coded line by its share, then an offered
+    one): one question an invoice. Never for a line left with nothing offered, or offered from words alone, or a
+    line the person added; never in a bulk approval (it does not go through the review screen); not after the
+    question before saving. The message carries a short box, Skip, and one-click reasons built from what the line
+    kept, no model asked: "This supplier's lines like this go there", what may have changed by where the account
+    came from ("Last year's account no longer applies", "The rule does not fit this line"...), or "The unit named
+    on the line" when the line names the business unit chosen; and "One-off: don't learn from it".
+    - *Where the answer goes:* `explain_lesson` on that line's lesson, so What was learned → Lessons shows it and
+      one correction with its reason reaches the AI (D-72). For an account only offered, the lesson holds no
+      correction: its reason is listed all the same (`list_lessons`) and says both accounts, and is not sent to the
+      AI (the coding memory already learned the account chosen).
+    - *One-off:* the existing way a line is kept out of what teaches is Learning → Coding memory → Forget
+      (`delete_feedback`, which withdraws what the line taught its lessons, B-1422). `forget_one_off` uses it for
+      the line the question named, no other (a line like it on the same invoice stays; the question's lesson
+      loses this approval's correction all the same), and writes `lesson_one_off` in the invoice's history. No
+      second path: a one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity
+      page say it.
+    - *Whose answer it is (B-2291):* the answer belongs to the question that was asked. The approval keeps it
+      (`why_questions`, by `_SCHEMA`: the invoice, the lesson, the line, the person as the approval recorded them,
+      `core.login`); it goes with the approval's learning (a reopen, a rejection). `POST /review/{id}/why` takes an
+      answer only from that person, for that question, once, while the setting is on and the approved invoice
+      still asks it; another person gets 403 (an Admin too: Forget on Learning is the Admin's way), an answer to
+      no question, a second answer or the setting off 409, in plain words, and nothing changes. The form's
+      `situation` is only compared. On a laptop the one person is the computer's own login, as before.
+    - *The setting:* Settings → Review, "Ask why after a surprising correction" (`why_surprise`), on until turned
+      off. Off turns both questions off: "never asked" would not be true with the older question still asking.
+  - (`ap_coder/core/store/backups.py`, `ap_coder/web/app.py`, `ap_coder/web/pages/settings.py`,
+    `settings_data.html`; `ap_coder/ops/share.py`, `ap_coder/ops/cli.py`; `ap_coder/ai/lessons.py`,
+    `ap_coder/web/pages/invoice.py`, `ap_coder/core/store/learning.py`, `lessons.py`, `base.html`, `js/app.js`;
+    `tests/core/test_backup_time.py`, `tests/ops/test_share.py`, `tests/ai/test_why_question.py`)

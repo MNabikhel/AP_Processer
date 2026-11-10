@@ -48,7 +48,9 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
 # of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209), and
 # journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
-# JD Edwards' Transaction Journal has it, journal.py)
+# JD Edwards' Transaction Journal has it, journal.py), and coding_rule_history (by _SCHEMA) and summary_rules (with the
+# summary's tables), no version of their own either: the history of the fixed coding rules and the lines each coded,
+# rules.py, D-217; and why_questions (by _SCHEMA: the question asked after an approval, lessons.py, D-218)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -217,6 +219,11 @@ CREATE TABLE IF NOT EXISTS erp_invoices (
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
+-- every add, change and removal of a rule: the rule before and after (JSON; none: added, removed), D-217
+CREATE TABLE IF NOT EXISTS coding_rule_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, rule_id INTEGER NOT NULL, at TEXT NOT NULL, actor TEXT, before TEXT,
+    after TEXT, undo_of INTEGER);
+CREATE INDEX IF NOT EXISTS coding_rule_history_rule ON coding_rule_history (rule_id, id);
 CREATE TABLE IF NOT EXISTS invoice_capture (
     invoice_id INTEGER PRIMARY KEY REFERENCES invoices (id) ON DELETE CASCADE, capture_json TEXT NOT NULL,
     layout_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
@@ -295,6 +302,10 @@ CREATE TABLE IF NOT EXISTS lesson_approvals (
     invoice_id INTEGER NOT NULL, situation TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
+-- the question asked after an approval's surprising correction: about which line, of whom, answered or not (D-218)
+CREATE TABLE IF NOT EXISTS why_questions (
+    invoice_id INTEGER PRIMARY KEY, situation TEXT NOT NULL, line_number INTEGER, asked_of TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '', asked_at TEXT NOT NULL, answered_at TEXT);
 CREATE TABLE IF NOT EXISTS bank_accounts (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
     currency TEXT NOT NULL DEFAULT 'CAD', institution TEXT NOT NULL DEFAULT '', transit TEXT NOT NULL DEFAULT '',
     account_number TEXT NOT NULL DEFAULT '', gl_account TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0,
@@ -328,6 +339,10 @@ CREATE TABLE IF NOT EXISTS import_turns (uploader TEXT PRIMARY KEY, served INTEG
 CREATE TABLE IF NOT EXISTS report_answers (name TEXT NOT NULL, asked TEXT NOT NULL, version TEXT NOT NULL,
     stamp TEXT NOT NULL, value TEXT NOT NULL, made_at REAL NOT NULL, PRIMARY KEY (name, asked));
 CREATE TABLE IF NOT EXISTS past_lines (vendor_key TEXT PRIMARY KEY, stamp TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS joined_files (joined TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT
+    NOT NULL, sha256 TEXT NOT NULL, kept TEXT NOT NULL DEFAULT '', first_page INTEGER NOT NULL, pages INTEGER NOT NULL,
+    note TEXT NOT NULL DEFAULT '', tax TEXT NOT NULL DEFAULT '', PRIMARY KEY (joined, position));
+CREATE INDEX IF NOT EXISTS joined_files_sha ON joined_files (sha256);
 CREATE TABLE IF NOT EXISTS billing_facts (vendor_key TEXT NOT NULL, id INTEGER NOT NULL, facts TEXT NOT NULL,
     PRIMARY KEY (vendor_key, id));
 CREATE TABLE IF NOT EXISTS billing_vendors (vendor_key TEXT PRIMARY KEY, kept TEXT NOT NULL, logged INTEGER NOT NULL,

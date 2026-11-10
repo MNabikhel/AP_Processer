@@ -99,6 +99,31 @@ def row_view(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     }
 
 
+def _by_rule(store: Any, query: directory.Query) -> dict[str, str]:
+    """The fixed coding rule the directory is filtered by, said as the filter is: {text: which lines, other and
+    other_url: the link to the rule's other lines, when it has some}; {} when it is filtered by none. A rule's
+    number outlives what the rule says (B-2293): the lines that say what it says now, or (``query.rule_was``) the
+    ones it coded before it was changed. A rule removed since is named as it last was, with every line of its
+    number."""
+    if not query.rule:
+        return {}
+    found = store.coding_rule(query.rule)
+    if found is None:
+        last = store.coding_rule_history(query.rule, limit=1)
+        was = (last[0].before or last[0].after) if last else None
+        return {"text": f"‘{was.label}’ (removed since)" if was else f"number {query.rule}"}
+    before = store.rule_use(before=True).get(found.id)
+    if query.rule_was:
+        return {"text": f"‘{found.label}’ before it was changed, when it said something else",
+                "other": "The lines it coded as it is now",
+                "other_url": query.query_string(rule_was=False, page=1)}  # fmt: skip
+    if not before:
+        return {"text": f"‘{found.label}’"}
+    return {"text": f"‘{found.label}’ as it is now",
+            "other": f"The {ui.plural(before[0], 'line')} it coded before it was changed",
+            "other_url": query.query_string(rule_was=True, page=1)}  # fmt: skip
+
+
 @router.get("/search", response_class=HTMLResponse)
 def search_page(request: Request) -> HTMLResponse:
     store = get_store(request)
@@ -120,7 +145,8 @@ def search_page(request: Request) -> HTMLResponse:
         presets=directory.shown_presets(store, _owner(request)),
         default_preset=(directory.default_preset(store, _owner(request)) or {}).get("name", ""),
         here=query.query_string(),
-        filtered=bool(query.filters or query.q),
+        filtered=bool(query.filters or query.q or query.rule),
+        by_rule=_by_rule(store, query),
         kinds={"money": directory.MONEY, "date": directory.DATE, "number": directory.NUMBER},
         all_columns=directory.COLUMNS,
         default_columns=list(directory.DEFAULT_COLUMNS),

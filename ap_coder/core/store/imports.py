@@ -29,6 +29,7 @@ from typing import Any
 
 from ._base import _now
 from .dialect import begin_write
+from .joined import PART_KNOWN, PART_STORED
 
 IMPORT_WAITING, IMPORT_READING, IMPORT_DONE, IMPORT_FAILED, IMPORT_SKIPPED = (
     "waiting", "reading", "done", "failed", "skipped")  # fmt: skip
@@ -124,16 +125,24 @@ class ImportsMixin:
         return {"batch": batch, "run": run, "queued": len(todo), "skipped": left_out, "ahead": int(ahead or 0)}
 
     def known_files(self, shas: list[str], include_failed: bool = False) -> set[str]:
-        """Those of ``shas`` an invoice was made from (as its file, or the picture its PDF was made from), failed reads
-        too with ``include_failed``: one query, whatever their number (D-157)."""
+        """Those of ``shas`` an invoice was made from (as its file, the picture its PDF was made from, or one of the
+        files joined into its voucher, D-216), failed reads too with ``include_failed``: one query, whatever their
+        number (D-157)."""
         if not shas:
             return set()
         with self._conn() as conn:  # type: ignore[attr-defined]
             return {r[0] for r in conn.execute(
                 "SELECT value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM invoices WHERE file_sha256 = value AND "
                 "(? OR status != 'failed')) OR EXISTS (SELECT 1 FROM invoices WHERE original_sha256 = value AND "
-                "(? OR status != 'failed'))", (json.dumps(sorted(set(shas))), include_failed, include_failed),
+                f"(? OR status != 'failed')) OR {PART_KNOWN}",
+                (json.dumps(sorted(set(shas))), *[include_failed] * 4),
             )}  # fmt: skip
+
+    def in_line(self, sha256: str) -> bool:
+        """A file with this content waits in line or is being read."""
+        with self._conn() as conn:  # type: ignore[attr-defined]
+            return conn.execute("SELECT 1 FROM import_files WHERE status IN ('waiting', 'reading') AND sha256 = ? "
+                                "LIMIT 1", (sha256,)).fetchone() is not None  # fmt: skip
 
     def claim_import(self, owner: str, lease: float = IMPORT_LEASE_SECONDS,
                      batch: int | None = None) -> dict[str, Any] | None:  # fmt: skip
@@ -155,8 +164,7 @@ class ImportsMixin:
                 row = conn.execute(_NEXT, (owner, time.time(), batch, batch)).fetchone()
                 if row is None:
                     break
-                found = None if row["force"] else conn.execute(
-                    _STORED, (row["sha256"], row["sha256"], row["include_failed"])).fetchone()  # fmt: skip
+                found = self._stored(conn, row)
                 if found is not None:
                     self._close_file(conn, row["id"], IMPORT_SKIPPED, invoice_id=found[0])
                     closed.add(row["batch"])
@@ -295,6 +303,17 @@ class ImportsMixin:
             raise ClaimLost(f"{name} is read by another reader now: this reading is not stored")
         return invoice_id
 
+    @staticmethod
+    def _stored(conn: Any, row: Any) -> Any:
+        """The invoice already made from the content of the queue's file ``row``, or from a voucher it is one of the
+        files of (D-216), as a row whose first value is its id; None when there is none, or the batch reads every
+        file (``force``)."""
+        if row["force"]:
+            return None
+        sha, failed = row["sha256"], row["include_failed"]
+        return (conn.execute(_STORED, (sha, sha, failed)).fetchone()
+                or conn.execute(PART_STORED, (sha, failed, sha, failed)).fetchone())  # fmt: skip
+
     def _expire_imports(self, conn: Any) -> set[int]:
         """The files whose reader stopped (lease run out): done (or failed) with the invoice it stored before it
         stopped (B-1769), back in line, or on their last try skipped as already in AP Coder (another stored their
@@ -323,8 +342,7 @@ class ImportsMixin:
                 conn.execute("UPDATE import_files SET status = 'waiting', owner = '', lease_until = NULL WHERE id = ?",
                              (row["id"],))  # fmt: skip
                 continue
-            found = None if row["force"] else conn.execute(
-                _STORED, (row["sha256"], row["sha256"], row["include_failed"])).fetchone()  # fmt: skip
+            found = self._stored(conn, row)
             if found is not None:
                 self._close_file(conn, row["id"], IMPORT_SKIPPED, invoice_id=found[0])
                 closed.add(row["batch"])

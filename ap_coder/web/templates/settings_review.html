@@ -80,6 +80,12 @@
              title="When AP corrects the same thing for a vendor this many times, AP Coder asks why before saving, once; the AI reads the reason."></label>
     <p class="muted">When you correct the same thing for a vendor this many times, AP Coder asks you once why, and keeps
       your reason with that lesson (Learning &amp; accuracy → Lessons).</p>
+    <input type="hidden" name="why_shown" value="1">
+    <label class="check"><input type="checkbox" name="why_surprise" value="1"{% if why_surprise %} checked{% endif %}>
+      Ask why after a surprising correction</label>
+    <p class="muted">When you change an account AP Coder had coded by itself, or had offered first, the next page asks
+      once why, the approval already made: a few words, one click, or Skip. At most one question an invoice, never in
+      a bulk approval. Off: AP Coder never asks why, here or above.</p>
   </details>
 
   <div class="row st-save">

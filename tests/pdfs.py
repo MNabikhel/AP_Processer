@@ -66,3 +66,39 @@ def long_invoice(where: Path, pages: int, per_page: int = 20, name: str = "long.
               (400, y + 32, "Total Due", 10, pages), (500, y + 32, f"{(cents + gst) / 100:,.2f}", 10, pages),
               (50, y + 32, "GST/HST No. 814275533 RT0001", 10, pages)]  # fmt: skip
     return text_pdf(where, items, name=name, pages=pages), cents / 100, (cents + gst) / 100
+
+
+# Three made-up receipts of one expense claim (D-216): fuel with GST, a lunch with GST and a tip, a room with HST.
+# Each row is its text, with the amount at the right after a "|". Together: 273.00 before tax, 27.80 of tax, 300.80.
+RECEIPTS = {
+    "IMG_0411": ["Prairie Fuel Stop", "88 Range Road, Red Deer, AB T4N 2B2", "GST No. 123456789 RT0001", "",
+                 "Receipt No: 48213", "Date: 2026-05-04", "", "Regular fuel|60.00", "",
+                 "Subtotal|60.00", "GST 5%|3.00", "Total|63.00"],
+    "IMG_0412": ["Riverbend Diner", "14 Bow Street, Calgary, AB T2P 3K1", "GST No. 987654321 RT0001", "",
+                 "Receipt No: 7731", "Date: 2026-05-05", "", "LUNCH SPECIAL|24.00", "COFFEE|4.00", "",
+                 "SUBTOTAL|28.00", "GST 5%|1.40", "TIP|5.00", "TOTAL|34.40"],
+    "IMG_0413": ["Lakeshore Inn", "200 Front Street, Toronto, ON M5V 2Y3", "HST No. 555666777 RT0001", "",
+                 "Receipt No: F-20931", "Date: 2026-05-06", "", "Room one night|180.00", "",
+                 "Subtotal|180.00", "HST 13%|23.40", "Total|203.40"],
+}  # fmt: skip
+
+
+def receipt(where: Path, name: str, rows: list[str]) -> Path:
+    """A made-up till receipt as ``where / name``: a narrow PDF of text (``name`` ending in .pdf), or a grey JPEG of
+    it as a phone takes one, stating no resolution (.jpg)."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=280, height=60 + 18 * len(rows))
+    for n, row in enumerate(rows):
+        text, _, amount = row.partition("|")
+        page.insert_text((24, 40 + 18 * n), text, fontsize=11)
+        if amount:
+            page.insert_text((200, 40 + 18 * n), amount, fontsize=11)
+    path = where / name
+    if path.suffix.lower() == ".pdf":
+        doc.save(path)
+    else:
+        pymupdf.Pixmap(pymupdf.csGRAY, page.get_pixmap(dpi=220)).save(path, jpg_quality=80)
+    doc.close()
+    return path

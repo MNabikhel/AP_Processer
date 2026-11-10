@@ -295,18 +295,24 @@ def test_a_stale_gl_grid_does_not_delete_an_account_imported_meanwhile(tmp_path,
     assert "7777" in {a["code"] for a in store.list_accounts("gl_accounts")}
 
 
-def test_a_stale_rules_tab_does_not_drop_a_rule_added_meanwhile(tmp_path, monkeypatch):
+def test_a_stale_rules_page_does_not_drop_a_rule_added_meanwhile(tmp_path, monkeypatch):
     from tests.webclient import post
 
     store, client = _web(tmp_path, monkeypatch)
-    post(client, "/accounts/rules", {"vendor": ["Purolator"], "contains": [""], "gl_code": ["6000"],
-                                     "cost_center": [""]})  # fmt: skip
-    stale = _form(client.get("/accounts?tab=rules").text, "/accounts/rules")
-    assert post(client, "/accounts/rules/add", {"vendor": "Bell Canada", "gl_code": "6420"}).json()["ok"]
+    post(client, "/rules", {"vendor": ["Purolator"], "contains": [""], "gl_code": ["6000"],
+                                     "cost_center": [""], "version": str(store.rules_seen())})  # fmt: skip
+    stale = _form(client.get("/rules").text, "/rules")
+    assert post(client, "/rules/add", {"vendor": "Bell Canada", "gl_code": "6420"}).json()["ok"]
     stale["gl_code"] = ["6010" if v == "6000" else v for v in stale["gl_code"]]
-    answer = post(client, "/accounts/rules", stale)
-    assert answer.status_code == 409 and answer.json()["error"] == STALE
-    assert sorted(r.vendor for r in store.coding_rules()) == ["Bell Canada", "Purolator"]
+    answer = post(client, "/rules", stale)
+    # (the rules' own answer since two people saving at once: who changed what, the person's change kept in the form)
+    assert answer.status_code == 409 and answer.json()["error"].startswith("Nothing was saved: the rules were changed")
+    saved = [("Bell Canada", "6420"), ("Purolator", "6000")]
+    assert sorted((r.vendor, r.gl_code) for r in store.coding_rules()) == saved
+    again = _form(client.get(answer.json()["redirect"]).text, "/rules")
+    assert [v for v in again["vendor"] if v] == ["Purolator", "Bell Canada"] and "6010" in again["gl_code"]
+    assert post(client, "/rules", again).json()["ok"]
+    assert sorted((r.vendor, r.gl_code) for r in store.coding_rules()) == [saved[0], ("Purolator", "6010")]
 
 
 # --- B-656: payment terms "30 EOM", "EOM 30", "Net: 45", "45 net" (D-62) ----------------------------------------------

@@ -731,18 +731,16 @@ def test_a_background_process_that_seems_stuck_can_be_asked_to_write_every_threa
     monkeypatch.delenv(server.STACK_DUMP_ENV, raising=False)
     assert server.stack_dumps(tmp_path / "logs") is None and not (tmp_path / "logs").exists()
     script = (
-        "import sys, time\n"
+        "import faulthandler, sys, time\n"
         "from pathlib import Path\n"
         "from ap_coder.web import server\n"
         "folder = Path(sys.argv[1])\n"
         "def waiting_for_its_own_stack():\n"
         "    handle = server.stack_dumps(folder)\n"
-        "    path = folder / server.STACK_DUMP_LOG\n"
-        "    deadline = time.monotonic() + 10\n"
-        "    while ('waiting_for_its_own_stack' not in path.read_text(encoding='utf-8')\n"
-        "           and time.monotonic() < deadline):\n"
-        "        time.sleep(0.1)\n"
-        "    import faulthandler\n"
+        # Asleep while the dumps are written (at 0.2, 0.4 and 0.6 s): a dump reads this thread's frames without
+        # stopping it, and one taken while the thread ran (reading the log in a loop) ended the child with an
+        # access violation on Windows CI. The dumps are stopped before anything else runs here.
+        "    time.sleep(0.7)\n"
         "    faulthandler.cancel_dump_traceback_later()\n"
         "    handle.close()\n"
         "waiting_for_its_own_stack()\n"

@@ -1273,7 +1273,7 @@ def run_background(store: Store) -> int:
     try:
         while not halt.wait(30.0):
             health.beat(store)
-            backup.check()
+            backup.check(look=True)  # (and at the time set on Settings → Data & backups, D-218)
             hub.check()
     except KeyboardInterrupt:
         pass

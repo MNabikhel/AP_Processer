@@ -1,7 +1,8 @@
-"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy, fixed rules and our
-bank accounts (the account an invoice is paid from, D-66).
+"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy and our bank accounts
+(the account an invoice is paid from, D-66). The fixed coding rules have a page of their own (``pages/rules.py``,
+D-217): ``?tab=rules`` goes there.
 
-``GET /accounts?tab=gl|cc|tax|policy|rules|bank``. GL accounts and cost centers are imported from a spreadsheet (upload,
+``GET /accounts?tab=gl|cc|tax|policy|bank``. GL accounts and cost centers are imported from a spreadsheet (upload,
 then pick the code / description / category columns: ``?file=``), edited in place and downloaded as CSV
 (``GET /accounts/<table>.csv``). Before any GL account exists, the sample setup can be loaded instead.
 """
@@ -14,11 +15,9 @@ from typing import Any
 import pandas as pd
 from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ap_coder.coding import banks
-from ap_coder.coding.rules import Rule
-from ap_coder.coding.rules import suggest as suggest_rules
 from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
 from ap_coder.core import ui
 from ap_coder.core.reference_data import meals_column, short_name
@@ -50,7 +49,6 @@ TABS = {
     "cc": "Cost centers",
     "tax": "Sales tax accounts",  # (not the Sales tax page under More: M2)
     "policy": "Coding policy",
-    "rules": "Fixed rules",
     "bank": "Bank accounts",
 }
 BLANK_ROWS = 3  # empty rows under a list, to add more
@@ -150,35 +148,10 @@ def tax_context(store: Store) -> dict[str, Any]:
     }
 
 
-def rules_shown(store: Store) -> list[tuple[str, str, str, str]]:
-    """The coding rules as the Rules tab shows them (its ``page_version`` is posted with the form)."""
-    return [(r.vendor, r.contains, r.gl_code, r.cost_center) for r in store.coding_rules()]
-
-
-def rules_context(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]]) -> dict[str, Any]:
-    current = store.coding_rules()
-    gl_codes = [a["code"] for a in gl]
-    names = {a["code"]: f"{a['code']} · {a['description']}" for a in gl}
-    suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes][:8]
-    return {
-        "rules": current,
-        "rules_version": page_version(rules_shown(store)),
-        "gl_names": names,
-        "cc_codes": [a["code"] for a in cc],
-        "unknown": sorted({r.gl_code for r in current if r.gl_code and r.gl_code not in gl_codes}),
-        "suggestions": [
-            {
-                "rule": r,
-                "lines": n,
-                "target": names.get(r.gl_code, r.gl_code) + (f" · {r.cost_center}" if r.cost_center else ""),
-            }
-            for r, n in suggestions
-        ],
-    }
-
-
 @router.get("/accounts", response_class=HTMLResponse)
-def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str = "") -> HTMLResponse:
+def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str = "") -> Response:
+    if tab == "rules":  # an older link: the rules have their own page (D-217)
+        return RedirectResponse("/rules", status_code=303)
     store = get_store(request)
     tab = tab if tab in TABS else "gl"
     gl = store.list_accounts("gl_accounts")
@@ -202,8 +175,6 @@ def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str 
         context["acc"] = account_context(store, "gl_accounts" if tab == "gl" else "cost_centers", file, sheet)
     elif tab == "tax":
         context.update(tax_context(store))
-    elif tab == "rules":
-        context.update(rules_context(store, gl, cc))
     elif tab == "bank":
         context["bank"] = bank_context(store, gl, file, sheet)
     return render(request, "accounts.html", "accounts", **context)
@@ -487,7 +458,7 @@ def accounts_csv(request: Request, table: str) -> Response:
     return download(accounts_csv_bytes(get_store(request).list_accounts(table)), f"{table}.csv", "text/csv")
 
 
-# --- Sales tax, policy, rules --------------------------------------------------------------------------------------
+# --- Sales tax, policy ---------------------------------------------------------------------------------------------
 
 
 @router.post("/accounts/tax")
@@ -519,67 +490,3 @@ def _save_tax(request: Request, form: Any) -> JSONResponse:
 def save_policy(request: Request, notes: str = Form("")) -> JSONResponse:
     get_store(request).set_setting("policy_notes", notes, actor=reviewer())
     return done(request, "/accounts?tab=policy", "Coding policy saved.")
-
-
-def rules_from_form(form: Any) -> tuple[list[Rule], list[int]]:
-    """(the rules in the form, the numbers of incomplete rows). Wholly empty rows are not rules at all."""
-    vendors, contains, gls, ccs = (form.getlist(k) for k in ("vendor", "contains", "gl_code", "cost_center"))
-    rules, incomplete = [], []
-    for n in range(len(vendors)):
-        values = [str(x[n] if n < len(x) else "").strip() for x in (vendors, contains, gls, ccs)]
-        if not any(values):
-            continue
-        rule = Rule(*values)
-        if rule.gl_code and (rule.vendor or rule.contains):
-            rules.append(rule)
-        else:
-            incomplete.append(n + 1)
-    return rules, incomplete
-
-
-@router.post("/accounts/rules")
-async def save_rules(request: Request) -> JSONResponse:
-    """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
-    form = await posted_form(request)
-    return await run_in_threadpool(_save_rules, request, form)
-
-
-@one_connection
-def _save_rules(request: Request, form: Any) -> JSONResponse:
-    store = get_store(request)
-    if not store.list_accounts("gl_accounts"):
-        return refuse("Import your GL accounts first.")
-    stale = stale_page(form, rules_shown(store))  # a rule added meanwhile would be dropped (B-655)
-    if stale is not None:
-        return stale
-    rules, incomplete = rules_from_form(form)
-    saved = store.save_coding_rules(rules, actor=reviewer())
-    left_out = f"; {ui.plural(len(incomplete), 'incomplete row')} left out (no GL account, or no vendor or words)"
-    return done(
-        request,
-        "/accounts?tab=rules",
-        flash_message(
-            f"{ui.plural(saved, 'coding rule')} saved{left_out if incomplete else ''}.", "ok", icon="rule_settings"
-        ),
-    )
-
-
-@router.post("/accounts/rules/add")
-def add_rule(
-    request: Request,
-    vendor: str = Form(""),
-    contains: str = Form(""),
-    gl_code: str = Form(""),
-    cost_center: str = Form(""),
-) -> JSONResponse:
-    """One suggested rule added to the rules."""
-    store = get_store(request)
-    rule = Rule(vendor.strip(), contains.strip(), gl_code.strip(), cost_center.strip())
-    if not (rule.gl_code and (rule.vendor or rule.contains)):
-        return refuse("A rule needs a GL account and a vendor or words.")
-    store.save_coding_rules([*store.coding_rules(), rule], actor=reviewer())
-    return done(
-        request,
-        "/accounts?tab=rules",
-        flash_message(f"Rule added: {rule.vendor} → {rule.gl_code}.", "ok", icon="rule_settings"),
-    )

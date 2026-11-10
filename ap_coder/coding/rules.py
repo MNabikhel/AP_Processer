@@ -12,9 +12,10 @@ Entry points: ``apply`` (an invoice's lines), ``rule_for``, ``describe`` and ``s
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from ..core import chart
 from ..core.keys import plain as _plain
 from ..core.memory import vendor_key
 from ..core.schema import InvoiceCoding, decided
@@ -40,7 +41,9 @@ class Rule:
     contains: str = ""
     gl_code: str = ""
     cost_center: str = ""
-    id: int = 0
+    id: int = 0  # the saved rule's number: its own through every change, never given to another (0: not saved yet)
+    created_at: str = field(default="", compare=False)  # when it was first added, and by whom
+    created_by: str = field(default="", compare=False)
 
     @property
     def label(self) -> str:
@@ -48,6 +51,17 @@ class Rule:
         if self.contains.strip():
             parts.append(f"line contains “{self.contains.strip()}”")
         return ", ".join(parts)
+
+    @property
+    def target(self) -> str:
+        """The account the rule codes to as one string, ``business unit.object.subsidiary`` (the cost center is the
+        business unit); the GL code alone for a rule that leaves the line's cost center as it is."""
+        return chart.join_account(self.cost_center, self.gl_code)
+
+    @property
+    def complete(self) -> bool:
+        """Whether it can be a rule at all: a GL account, and a vendor or words."""
+        return bool(self.gl_code.strip() and (self.vendor.strip() or self.contains.strip()))
 
     def matches(self, vendor: str, description: str) -> bool:
         if not (self.vendor.strip() or self.contains.strip()) or not self.gl_code.strip():
@@ -149,3 +163,65 @@ def suggest(feedback: list[dict[str, Any]], existing: list[Rule], min_lines: int
         cc = ccs.pop() if len(ccs) == 1 else ""
         out.append((Rule(rows[0]["vendor_name"], "", gls.pop(), cc), len(rows)))
     return sorted(out, key=lambda x: -x[1])
+
+
+# --- The history of the rules -----------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RuleChange:
+    """One entry of the rules' history (``Store.coding_rule_history``): a rule added (no ``before``), removed (no
+    ``after``) or changed, by whom and when. ``undo_of``: the entry it undid, when it is an undo."""
+
+    id: int
+    rule_id: int
+    at: str
+    actor: str
+    before: Rule | None
+    after: Rule | None
+    undo_of: int | None = None
+
+
+def _account(rule: Rule, whole: bool) -> str:
+    """Where a rule codes to, named: one account string with a chart of accounts loaded (``whole``), else the GL
+    account and the cost center."""
+    if whole:
+        return f"account {rule.target}"
+    return f"GL account {rule.gl_code}" + (f", cost center {rule.cost_center}" if rule.cost_center else "")
+
+
+def rule_words(rule: Rule, whole: bool = False) -> str:
+    """A rule in plain words, as the history says one: "‘Courier’: GL account 7340"."""
+    return f"‘{rule.label}’: {_account(rule, whole)}"
+
+
+def _parts_changed(before: Rule, after: Rule, whole: bool) -> list[str]:
+    parts = []
+    if before.label != after.label:
+        parts.append(f"now ‘{after.label}’")
+    if whole:
+        if before.target != after.target:
+            parts.append(f"account {before.target} → {after.target}")
+        return parts
+    if before.gl_code != after.gl_code:
+        parts.append(f"GL account {before.gl_code} → {after.gl_code}")
+    if before.cost_center != after.cost_center:
+        parts.append(f"cost center {before.cost_center or 'none'} → {after.cost_center or 'none'}")
+    return parts
+
+
+def change_words(change: RuleChange, whole: bool = False) -> str:
+    """An entry of the history in plain words: "Dana changed ‘Courier’: account 0021061010.7340 → 0021061010.7350",
+    "Lee added ‘any vendor, line contains “freight”’: GL account 5200", "Dana removed ‘Courier’ (account ...)"; an
+    undo says it is one. ``whole``: a chart of accounts is loaded, the account is said as one string."""
+    who = (change.actor or "").strip() or "Someone"
+    before, after = change.before, change.after
+    if before is None and after is None:
+        return f"{who} changed a rule"
+    if before is None:
+        said = f"{who} added ‘{after.label}’: {_account(after, whole)}"
+    elif after is None:
+        said = f"{who} removed ‘{before.label}’ ({_account(before, whole)})"
+    else:
+        said = f"{who} changed ‘{before.label}’: {'; '.join(_parts_changed(before, after, whole))}"
+    return f"{said} (an undo)" if change.undo_of else said

@@ -13,6 +13,8 @@
      form[data-busy="Saving…"]        the button says so while the request runs
      a[data-busy="Gathering…"]        a link to a slow page says so until the page comes
      form[data-job]                   after it starts a job, show its progress (#job card), reload when done
+     form[data-once]                  a question in a message, answered once: the message goes when the server
+                                      kept the answer
      form[data-long]                  an action the server runs whole in the request (a restore, an import):
                                       waited for up to LONG_MS (any other gives up after ACTION_MS)
      select[data-autosubmit]          submit its (GET) form on change
@@ -338,6 +340,7 @@ async function submitForm(form, submitter) {
   if (!follow(answer)) {
     delete form.dataset.sending;
     setBusy(form, false);
+    if (answer.ok && form.hasAttribute("data-once")) form.closest(".flash")?.remove();
   }
 }
 

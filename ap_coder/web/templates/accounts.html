@@ -153,51 +153,6 @@
   </fieldset></form>
 </section>
 
-{% elif tab == "rules" %}
-<section class="card">
-  <h4>Fixed rules</h4>
-  <p class="muted">Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. <i>Purolator</i>), words
-    a line contains (e.g. <i>freight</i>), or both. Applied to invoices processed from now on (for one already in the
-    queue, open it and use <i>Apply the coding rules</i>); the review screen says which lines a rule changed. The most
-    specific rule wins. Clear a row to remove the rule.</p>
-  {% if not has_gl %}
-  <div class="flash info"><span class="ms" aria-hidden="true">account_tree</span><div>Import your GL accounts first.</div></div>
-  {% else %}
-  {% if unknown %}
-  <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
-  {% endif %}
-  <form{% if edit %} method="post" action="/accounts/rules"{% endif %} class="stack" data-busy="Saving…"><fieldset class="ro-fieldset"{% if not edit %} disabled{% endif %}>
-    <input type="hidden" name="version" value="{{ rules_version }}">
-    <div class="table-wrap">
-      <table class="apc-table edit">
-        <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th><th>GL account</th><th>Cost center</th></tr></thead>
-        <tbody>
-          {% for r in rules %}{{ rule_row(r, gl_names, cc_codes) }}{% endfor %}
-          {% for n in range(3 if edit else 0) %}{{ rule_row(none, gl_names, cc_codes) }}{% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <p class="muted small">A rule needs a GL account and a vendor or words, or both; an incomplete row is left out when you save.</p>
-    {% if edit %}<button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save rules</button>{% endif %}
-  </fieldset></form>
-  {% endif %}
-</section>
-{% if suggestions %}
-<section class="card">
-  <h4>Suggested from past coding</h4>
-  <p class="muted">These vendors were always coded to one GL account. Add a rule to make it certain.</p>
-  {% for s in suggestions %}
-  <div class="suggestion">
-    <div><b>{{ s.rule.vendor }}</b> → {{ s.target }}<div class="muted small">{{ s.lines | plural("line") }}, all coded the same</div></div>
-    {% if can("/accounts/rules/add") %}<form method="post" action="/accounts/rules/add">
-      <input type="hidden" name="vendor" value="{{ s.rule.vendor }}"><input type="hidden" name="contains" value="{{ s.rule.contains }}">
-      <input type="hidden" name="gl_code" value="{{ s.rule.gl_code }}"><input type="hidden" name="cost_center" value="{{ s.rule.cost_center }}">
-      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">add</span>Add rule</button>
-    </form>{% endif %}
-  </div>
-  {% endfor %}
-</section>
-{% endif %}
 {% elif tab == "bank" %}{% set b = bank %}
 <section class="card">
   <h4>Bank accounts</h4>
@@ -280,20 +235,5 @@
   {% for c, lbl in options %}<option value="{{ c }}"{% if c == value %} selected{% endif %}>{{ lbl }}</option>{% endfor %}
   {% if value and value not in options | map("first") %}<option value="{{ value }}" selected>{{ value }} (not in your GL accounts)</option>{% endif %}</select>
 {% else %}<input type="text" name="gl_account" value="{{ value }}" aria-label="Cash GL account {{ code }}" size="8">{% endif %}
-{% endmacro %}
-{% macro rule_row(r, gl_names, cc_codes) %}
-<tr{% if not r %} class="new"{% endif %}>
-  <td><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>
-  <td><input type="text" name="contains" value="{{ r.contains if r else '' }}" aria-label="Line contains" title="Not case-sensitive"></td>
-  <td><select name="gl_code" aria-label="GL account" data-picker data-picker-noun="account">
-    <option value="">(choose)</option>
-    {% if r and r.gl_code and r.gl_code not in gl_names %}<option value="{{ r.gl_code }}" selected>{{ r.gl_code }} (not in the GL list)</option>{% endif %}
-    {% for code, label in gl_names.items() %}<option value="{{ code }}"{% if r and code == r.gl_code %} selected{% endif %}>{{ label }}</option>{% endfor %}
-  </select></td>
-  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center" data-picker data-picker-noun="cost center">
-    <option value=""></option>
-    {% for code in cc_codes %}<option value="{{ code }}"{% if r and code == r.cost_center %} selected{% endif %}>{{ code }}</option>{% endfor %}
-  </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>
-</tr>
 {% endmacro %}
 {% block scripts %}<script type="module" src="{{ static_url('/static/js/accounts.js') }}"></script>{% endblock %}

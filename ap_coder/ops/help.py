@@ -170,7 +170,9 @@ CHECKS: dict[str, CheckHelp] = {
         "yet.",
         "Check the Place of supply; if it is right, ask the pilot tester to set the tax area in Settings → JD "
         "Edwards E1. For two rates, check each line's tax code, then key the voucher by hand in JD Edwards as the "
-        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason.",
+        "finding spells out (each pay item's tax area, taxable and tax amounts), and approve it with a reason. For "
+        "the receipts of one expense claim, the finding names the receipts of each tax area: make them separate "
+        "invoices again, then choose each tax area's receipts again on Add invoices as a claim of their own.",
     ),
     "JDE_NO_ACCOUNT": CheckHelp(
         ERP, "GL account not mapped to JD Edwards",
@@ -823,6 +825,16 @@ CHECKS: dict[str, CheckHelp] = {
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),
+    "CLAIM_RECEIPT_NOT_ADDED": CheckHelp(
+        READING, "Receipt not in the claim's total",
+        "One of the receipts joined into this expense claim adds nothing to it: its total could not be read, or it "
+        "is in another currency than the claim (with as many receipts in each of two currencies, the claim is put "
+        "in CAD and the finding names the receipts of both). The finding names the file and its page; its line is "
+        "there at 0.00.",
+        "Look at the receipt's page and type its amount on its line (in the claim's currency; change the claim's "
+        "currency first if it is the other one), or leave it at 0.00 when it is not part of the claim. Once the "
+        "amount is typed the finding goes and the claim's totals take it.",
+    ),
     "FILE_CUT_OFF": CheckHelp(
         READING, "File cut off",
         "The PDF's end is missing: it was still downloading or being saved when it came in, or an email cut it "
@@ -968,10 +980,11 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "Some lines always go to the same account. Can I make that certain?",
-        "Yes: GL accounts & tax → Fixed rules. A rule names a vendor, words a line contains, or both, and the GL "
-        "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
+        "Yes: Coding rules (under More; Rules in Simple screens). A rule names a vendor, words a line contains, or "
+        "both, and the account to use. Rules are applied after the AI when an invoice is processed, and the "
         "review screen says which lines a rule changed. Vendors your team always coded to one account are "
-        "suggested as rules. The AI's accuracy is still measured on its own answer, not on the rule's.",
+        "suggested as rules. Every change to a rule is listed there with who made it and Undo, and each rule says "
+        "how many lines it coded. The AI's accuracy is still measured on its own answer, not on the rule's.",
     ),
     (
         "How is an invoice read? Is there anything to set up?",
@@ -1065,8 +1078,8 @@ FAQ: list[tuple[str, str]] = [
         "Export batches can be "
         "undone on the Exports page. For anything else, Settings → Data & backups → Restore this state puts AP Coder "
         "back as it was at a backup: the database and the invoice files, saved emails and attachments (one is made "
-        "automatically once a day when AP Coder starts, the newest 14 are kept (on the company server also one a week "
-        "for 8 weeks and one a month for a year), and one before any restore). Files "
+        "automatically once a day, at the time set there, the newest 14 are kept (on the company server also one a "
+        "week for 8 weeks and one a month for a year), and one before any restore). Files "
         "that came in since are moved to a set-aside folder in backups, never deleted.",
     ),
     (

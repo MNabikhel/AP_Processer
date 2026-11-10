@@ -318,7 +318,7 @@ def test_the_vendor_master_reads_jd_edwards_tax_id_as_the_gst_number():
 
 SETUP_ROUTES = ["/accounts/sample", "/accounts/gl_accounts/upload", "/accounts/gl_accounts/import",
                 "/accounts/gl_accounts/save", "/accounts/bank/upload", "/accounts/bank/import", "/accounts/bank/save",
-                "/accounts/tax", "/accounts/policy", "/accounts/rules", "/accounts/rules/add",
+                "/accounts/tax", "/accounts/policy", "/rules", "/rules/add", "/rules/undo",
                 "/vendors/master/upload", "/vendors/master/import", "/settings/jde/gl-map/import"]  # fmt: skip
 
 

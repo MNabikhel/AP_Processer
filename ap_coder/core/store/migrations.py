@@ -24,10 +24,11 @@ from ..keys import po_key
 from ..memory import AUTONOMOUS_REVIEWER, CODED, CORRECTED, VENDOR_KEY_RULES, vendor_key
 from ..reference_data import UNASSIGNED
 from . import dialect
-from ._base import SCHEMA_VERSION, _due, _forget_learning
+from ._base import SCHEMA_VERSION, _due, _forget_learning, _now
 from .folder import add_register_keys, fill_seen_files
 from .old_readings import reading_as_d89
 from .register import add_jde_register, build_register_search
+from .rules import USE_SINCE
 from .users import add_columns
 
 Step = Callable[[Any, sqlite3.Connection], None]  # (the store, its connection)
@@ -265,6 +266,13 @@ def _account_columns(store: Any, conn: sqlite3.Connection) -> None:
     add_columns(conn)
 
 
+def _joined_tax(store: Any, conn: sqlite3.Connection) -> None:
+    """The tax area of each receipt joined into a claim (``joined_files.tax``, B-2288): a table made before it."""
+    columns = dialect.columns(conn, "joined_files")
+    if columns and "tax" not in columns:
+        dialect.add_column(conn, "joined_files", "tax", "TEXT NOT NULL DEFAULT ''")
+
+
 def _picture_sha(store: Any, conn: sqlite3.Connection) -> None:
     """An invoice made from a picture remembers the picture's SHA-256 (intake/pictures.py), so the same photo sent
     again is found."""
@@ -318,6 +326,12 @@ def _answer_work(store: Any, conn: sqlite3.Connection) -> None:
     (D-197). One kept before has none, and settles for the caller's settle alone."""
     if "lasted" not in dialect.columns(conn, "report_answers"):
         dialect.add_column(conn, "report_answers", "lasted", "REAL")
+
+
+def _rule_use_since(store: Any, conn: sqlite3.Connection) -> None:
+    """The day this database began to keep which lines each fixed coding rule coded (``summary_rules``, D-217),
+    written once: the rules page says its counts start then, and guesses nothing of the invoices before."""
+    conn.execute(dialect.insert_or_ignore("INSERT INTO settings (key, value) VALUES (?, ?)"), (USE_SINCE, _now()))
 
 
 def _po_open_amount(store: Any, conn: sqlite3.Connection) -> None:
@@ -443,6 +457,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _cost_center_managers),
     (EVERY_TIME, _account_columns),
     (EVERY_TIME, _picture_sha),
+    (EVERY_TIME, _joined_tax),
     (EVERY_TIME, _lookup_indexes),
     (EVERY_TIME, _register_columns),
     (EVERY_TIME, _register_by_number),
@@ -458,6 +473,7 @@ STEPS: tuple[tuple[int | None, Step], ...] = (
     (EVERY_TIME, _billing_by_vendor),
     (EVERY_TIME, _register_search),
     (EVERY_TIME, _answer_work),
+    (EVERY_TIME, _rule_use_since),
 )
 MIGRATIONS: dict[int, Step] = {number: step for number, step in STEPS if number is not EVERY_TIME}
 
