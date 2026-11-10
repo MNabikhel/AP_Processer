@@ -85,7 +85,7 @@ class ChartSettings:
     """How the chart is used. ``postable_codes``: the posting edit codes AP may post to (blank always is; the setting
     names any others). ``never_offered``: patterns of accounts that exist and may be posted to but are never
     suggested or listed (``*``: any characters): an object alone ("4110": that object, whatever its subsidiary),
-    ``object.subsidiary`` ("*.8801": that subsidiary of any object), or a whole string ("0880133142.*.*"). A line
+    ``object.subsidiary`` ("*.7701": that subsidiary of any object), or a whole string ("0880133142.*.*"). A line
     coded to one by hand is a warning. ``skip_words``: a business unit whose name carries one is not offered either.
     ``home_business_unit``: where a line is suggested to go when nothing says otherwise. ``account_labels``: what
     the three parts are called."""
