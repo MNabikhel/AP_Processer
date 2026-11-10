@@ -432,12 +432,14 @@ class _Cell:
 
 
 def _row_cells(row: int, segs: list[Line], cols: dict[str, Box]) -> list[_Cell]:
-    """The numbers of one row, each a cell; not those in the description's own cell ("Storage unit 95"). Amounts
-    printed as money that were read as one segment are each a cell ("9,98 114,98": the tax set close to the total)."""
+    """The numbers of one row, each a cell where the number itself is printed; not those among words ("Storage unit
+    95", "case of 10"), nor in the description's own cell (an item's code). Amounts printed as money that were read
+    as one segment are each a cell ("9,98 114,98": the tax set close to the total)."""
     cells = []
     for seg in segs:
         found = _amounts_in(seg.text)
-        if not found or ("description" in cols and abs(seg.box.x0 - cols["description"].x0) < 0.05):
+        if (not found or not _NUMBER_CELL.match(seg.text)
+                or ("description" in cols and abs(seg.box.x0 - cols["description"].x0) < 0.05)):  # fmt: skip
             continue
         money = [_printed_as_money(seg.text[a:b]) for _v, a, b in found]
         if len(found) >= 2 and all(money):
@@ -445,8 +447,11 @@ def _row_cells(row: int, segs: list[Line], cols: dict[str, Box]) -> list[_Cell]:
                 cells.append(
                     _Cell(row, seg, value, union_all([w.box for w in _span_words(seg, a, b)]) or seg.box, True)
                 )
-        else:
-            cells.append(_Cell(row, seg, found[-1][0], seg.box, money[-1]))
+        else:  # (where the number itself is printed: "387.24 H" is an amount with the tax code set close after it)
+            value, a, b = found[-1]
+            cells.append(
+                _Cell(row, seg, value, union_all([w.box for w in _span_words(seg, a, b)]) or seg.box, money[-1])
+            )
     return cells
 
 
@@ -496,6 +501,27 @@ def _table_headings(row: list[Line], cols: dict[str, Box]) -> list[tuple[str, Bo
             kind = "discount" if _DISCOUNT_HEAD.match(p) else "#" if _ROW_NUMBER_ALONE.match(p) else ""
             out.append((kind, line.box))
     return sorted(((kind, box) for kind, box in out if kind != "description"), key=lambda h: h[1].cx)
+
+
+def _heads_words(heads: list[tuple[str, Box]], rows: list[list[Line]]) -> set[int]:
+    """The headings (their place in ``heads``) that stand over a column of words, not of numbers: a tax code's ("G",
+    "GP", "H"), a unit's ("ea"). Of the headings that name no column of numbers for sure ("Tax", and those the reader
+    does not know), the ones with a word of letters printed under them on more than half of the rows that hold a
+    number. Printed from its column's left edge, such a heading sits nearer the amounts before it than the amount's
+    own heading does, and would be taken for theirs."""
+    data = [segs for segs in rows if any(_amounts_in(s.text) for s in segs)]
+    out = set()
+    for k, (kind, box) in enumerate(heads):
+        if kind and not kind.startswith("tax:"):
+            continue
+        worded = sum(
+            any(min(w.box.x1, box.x1) - max(w.box.x0, box.x0) > 0.002 and not any(ch.isdigit() for ch in w.text)
+                and any(ch.isalpha() or ch == "*" for ch in w.text) for s in segs for w in s.words)
+            for segs in data
+        )  # fmt: skip
+        if worded > len(data) / 2:
+            out.add(k)
+    return out
 
 
 def _paired(heads: int, columns: int, worth: Callable[[int, int], float | None]) -> dict[int, int]:
@@ -558,6 +584,8 @@ class _Columns:
 
     def __init__(self, head_row: list[Line], cols: dict[str, Box], rows: list[list[Line]]) -> None:
         heads = _table_headings(head_row, cols)
+        words = _heads_words(heads, rows)
+        heads = [head for k, head in enumerate(heads) if k not in words]
         self.columns = _number_columns([c for k, segs in enumerate(rows) for c in _row_cells(k, segs, cols)])
         under = _columns_under([box for _, box in heads], [_span(column) for column in self.columns])
         self.kinds = {j: heads[i][0] for i, j in under.items()}  # {column: what its heading heads}
@@ -602,12 +630,15 @@ class _Columns:
     def before_tax(self, amounts: dict[int, float], taxes: dict[int, float]) -> int | None:
         """The column of the amounts before tax, when the amounts read (``amounts``, by row) are the totals with the
         tax in them: on every row that prints a tax (``taxes``) and a number in that column, the number and the tax
-        make the amount read, to the cent; at least one row does. One column or none: two that fit prove nothing."""
+        make the amount read, to the cent, the tax the smaller of the two (a discount and the amount after it make
+        the amount before it just so); at least one row does. One column or none: two that fit prove nothing."""
         fits = []
         for j in self._money_columns():
             taxed = [(c.value, taxes[c.row], amounts[c.row]) for c in self.columns[j]
                      if c.row in amounts and abs(taxes.get(c.row, 0.0)) >= 0.005]  # fmt: skip
-            if taxed and all(abs(value + tax - amount) <= 0.011 for value, tax, amount in taxed):
+            if taxed and all(
+                abs(value + tax - amount) <= 0.011 and abs(tax) < abs(value) for value, tax, amount in taxed
+            ):
                 fits.append(j)
         return fits[0] if len(fits) == 1 else None
 

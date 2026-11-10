@@ -307,6 +307,31 @@ def test_quantity_price_and_total_under_left_aligned_headings(pipe, tmp_path):
     assert _amounts(result) == [1200.0, 100.0, 100.0] and not _codes(result) & {"SUBTOTAL_MISMATCH", "LINE_MATH"}
 
 
+def test_a_heading_over_tax_codes_or_numbers_among_words_take_no_column_of_amounts(tmp_path):
+    """Under left-aligned headings, a "Tax" heading over code letters ("H" set close after each amount) stands
+    nearer the amounts than "Ext. Price" does, and the numbers in the descriptions ("Unit 4", "case of 10") made
+    columns of their own: the unit price was read as the amount (39.30 for 78.60). A heading over words has no
+    column of numbers, and a number among words is no cell of one."""
+    heads = [("#", 44), ("Item No.", 70), ("Description", 139), _left("QTY", 298, 354), _left("Unit Price", 354, 441),
+             _left("Ext. Price", 441, 534), ("Tax", 537)]  # fmt: skip
+    rows = [["1", "120572", "Janitorial service - Unit 4", "1", "229.44", "229.44", "H"],
+            ["2", "551105", "Copy paper 8.5x11, case of 10", "2", "39.30", "78.60", "H"],
+            ["3", "369745", "Consulting services - September", "10.50", "150.11", "1,576.16", "H"],
+            ["4", "RS-24769", "Nitrile gloves, box of 100", "100", "9.89", "989.00", "H"]]  # fmt: skip
+    read = _rows_read(tmp_path, heads, rows)
+    assert [(li.quantity, li.unit_price, li.amount) for li in read] == [
+        (1.0, 229.44, 229.44), (2.0, 39.3, 78.6), (10.5, 150.11, 1576.16), (100.0, 9.89, 989.0)]  # fmt: skip
+    assert [li.taxes_read for li in read] == [None] * 4  # (letters under "Tax": codes, no amounts)
+
+
+def test_a_discount_and_the_amount_after_it_are_no_amount_and_its_tax(tmp_path):
+    """Before = discount + after has the shape of total = amount + tax: with the amount under the tax's heading, the
+    discount column (0.00, 6.00) was "the amount before tax". A tax is smaller than the amount it is charged on."""
+    heads = [("Description", 50), ("Credit", 380, "r"), ("GST", 460, "r"), ("Total", 550, "r")]
+    rows = [["Membership, prorated", "1.00", "20.00", "21.00"], ["Locker", "2.00", "40.00", "42.00"]]
+    assert [li.amount for li in _rows_read(tmp_path, heads, rows)] == [21.0, 42.0]
+
+
 # --- No made-up balancing line (B-2199) ------------------------------------------------------------------------------
 
 WITH_TAX = [["Network cabling", "26.00", "226.00"], ["Patch panel", "13.00", "113.00"]]
