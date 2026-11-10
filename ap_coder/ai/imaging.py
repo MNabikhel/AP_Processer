@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _PASSTHROUGH = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+_WITH_PILLOW = {".tif", ".tiff", ".bmp", ".heif", ".heic"}
 _PDF_DPI = 150
 # The most pixels a page image is sent with. Gemma 4 makes a token of each 48 x 48 pixels and must take a whole picture
 # in one batch, 512 tokens in LM Studio unless set otherwise: a letter page at 150 dpi (about 925 tokens) stopped its
@@ -33,18 +34,62 @@ class PageImage:
         return f"data:{self.mime_type};base64,{base64.b64encode(self.data).decode('ascii')}"
 
 
-def render_page_images(path: str | Path, max_pages: int = 5, max_pixels: int | None = MAX_PIXELS) -> list[PageImage]:
-    """The file's first ``max_pages`` pages, each at most ``max_pixels`` (None: as rendered, for the training export,
-    which sizes them itself). [] for a file without pages (a text file)."""
+def pages_to_show(count: int, most: int, busiest: int | None = None) -> list[int]:
+    """Which pages (from 1) of a file of ``count`` pages a model that is sent ``most`` pages is shown: all of a short
+    file; of a longer one the first (the header) and the LAST (the totals), then, room allowing, ``busiest`` (the page
+    with the most line items) and the pages after the first (B-2216)."""
+    if count <= most:
+        return list(range(1, count + 1))
+    chosen = [1, count][: max(1, most)]
+    for page in (busiest, *range(2, count)):
+        if len(chosen) >= most:
+            break
+        if page and 1 < page < count and page not in chosen:
+            chosen.append(page)
+    return sorted(chosen)
+
+
+def page_count(path: str | Path) -> int:
+    """How many pages ``render_page_images`` can render of the file (0: a text file)."""
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix in _PASSTHROUGH:
+        return 1
+    if suffix == ".pdf":
+        import pymupdf
+
+        from ..capture.layout import PDF_LOCK
+
+        with PDF_LOCK, pymupdf.open(path) as doc:
+            return doc.page_count
+    if suffix in _WITH_PILLOW:
+        from ..capture.layout import open_image
+
+        with open_image(path) as img:
+            return getattr(img, "n_frames", 1)
+    return 0
+
+
+def render_page_images(path: str | Path, max_pages: int = 5, max_pixels: int | None = MAX_PIXELS,
+                       pages: list[int] | None = None) -> list[PageImage]:  # fmt: skip
+    """The file's first ``max_pages`` pages, or the pages numbered in ``pages`` (from 1: ``pages_to_show``), each at
+    most ``max_pixels`` (None: as rendered, for the training export, which sizes them itself). [] for a file without
+    pages (a text file)."""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    wanted = set(range(1, max_pages + 1) if pages is None else pages)
+    if suffix in _PASSTHROUGH:
         return [_picture(path, _PASSTHROUGH[suffix], max_pixels)]
     if suffix == ".pdf":
-        return _render_pdf(path, max_pages, max_pixels)
-    if suffix in {".tif", ".tiff", ".bmp", ".heif", ".heic"}:
-        return _render_with_pillow(path, max_pages, max_pixels)
+        return _render_pdf(path, wanted, max_pixels)
+    if suffix in _WITH_PILLOW:
+        return _render_with_pillow(path, wanted, max_pixels)
     return []
+
+
+def render_first_and_last(path: str | Path, most: int, busiest: int | None = None) -> list[PageImage]:
+    """The ``most`` pages of the file a model is shown (``pages_to_show``), rendered."""
+    return render_page_images(path, most, pages=pages_to_show(page_count(path), most, busiest))
 
 
 def _shrunk(img, max_pixels: int | None):
@@ -93,7 +138,7 @@ def _pdf_zoom(width: float, height: float, max_pixels: int | None) -> float:
     return (math.sqrt(edges * edges + 4 * area * (max_pixels - 1)) - edges) / (2 * area)
 
 
-def _render_pdf(path: Path, max_pages: int, max_pixels: int | None) -> list[PageImage]:
+def _render_pdf(path: Path, wanted: set[int], max_pixels: int | None) -> list[PageImage]:
     try:
         import pymupdf
     except ImportError as exc:  # pragma: no cover - depends on optional install
@@ -103,9 +148,8 @@ def _render_pdf(path: Path, max_pages: int, max_pixels: int | None) -> list[Page
 
     images = []
     with PDF_LOCK, pymupdf.open(path) as doc:  # PyMuPDF one thread at a time (D-170)
-        for index, page in enumerate(doc):
-            if index >= max_pages:
-                break
+        for index in sorted(n - 1 for n in wanted if 1 <= n <= doc.page_count):
+            page = doc[index]
             zoom = _pdf_zoom(page.rect.width, page.rect.height, max_pixels)
             pix = (
                 page.get_pixmap(dpi=_PDF_DPI)
@@ -116,7 +160,7 @@ def _render_pdf(path: Path, max_pages: int, max_pixels: int | None) -> list[Page
     return images
 
 
-def _render_with_pillow(path: Path, max_pages: int, max_pixels: int | None) -> list[PageImage]:
+def _render_with_pillow(path: Path, wanted: set[int], max_pixels: int | None) -> list[PageImage]:
     try:
         from PIL import ImageSequence
     except ImportError as exc:  # pragma: no cover - depends on optional install
@@ -127,8 +171,8 @@ def _render_with_pillow(path: Path, max_pages: int, max_pixels: int | None) -> l
     images = []
     with open_image(path) as img:  # HEIC/HEIF photos too, with pillow-heif
         for index, frame in enumerate(ImageSequence.Iterator(img)):
-            if index >= max_pages:
-                break
+            if index + 1 not in wanted:
+                continue
             buf = io.BytesIO()
             _shrunk(frame.convert("RGB"), max_pixels).save(buf, format="PNG")
             images.append(PageImage(index + 1, "image/png", buf.getvalue()))

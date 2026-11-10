@@ -53,6 +53,10 @@ ABOUT_CODING = frozenset({"HISTORY_CONFLICT", "TAX_EXEMPTION_LEARNED", "EXEMPT_L
 # A line's account the chat model chose or a weak match (``offline_coder.unsure``), and a tax code worked out from
 # several possible sets of lines or an exemption to confirm: about one chance in two (the coding bench measures it).
 GUESS_SURE = 0.5
+# What decided a line's account (``LineItem.decided_by``) when nothing AP approved, keyed or ruled backs it: the chat
+# model, the words of an account's name, other vendors' lines. An invoice whose every account is one is not approved
+# in one click (ACCOUNTS_ALL_GUESSED, B-2218).
+GUESS_SOURCES = ("model", "words", "others")
 _LOW_OCR_CONFIDENCE = 0.90
 
 
@@ -161,6 +165,11 @@ def validate_coding(
     _header_issues(coding, add)
     # --- Line items -------------------------------------------------------
     _line_issues(coding, reference, add)
+    guesses = [li for li in coding.line_items if (li.decided_by or {}).get("source") in GUESS_SOURCES]
+    if guesses and len(guesses) == len(coding.line_items):
+        # Not one account a person, a rule, last year's journal or an approval decided: "Approve anyway" with a
+        # reason passes it, or changing an account (then a person decided that one).
+        add(ERROR, "ACCOUNTS_ALL_GUESSED", guessed_message(len(guesses)))
     for line, message in long_remarks(coding):  # held back only where the remark goes to JD Edwards (D-213)
         add(ERROR if remarks_typed else WARNING, "REMARK_LONG", message, line)
     # --- Totals reconciliation (what counts as equal: ``money``, D-183) ---------
@@ -195,6 +204,15 @@ def validate_coding(
         checks=checks,
         reference_stamp=getattr(reference, "stamp", ""),
     )
+
+
+def guessed_message(n: int) -> str:
+    """ACCOUNTS_ALL_GUESSED's words for an invoice of ``n`` lines."""
+    if n == 1:
+        return ("its account is still a guess: look at it. Nothing AP approved, keyed last year or set as a rule "
+                "backs it; change it, or tick “Approve anyway” and say why to keep it")  # fmt: skip
+    return (f"{n} accounts are still guesses: look at them. Nothing AP approved, keyed last year or set as a rule "
+            "backs any of them; change the wrong ones, or tick “Approve anyway” and say why to keep them")  # fmt: skip
 
 
 def _header_issues(coding: InvoiceCoding, add: Any) -> None:

@@ -537,6 +537,14 @@ CHECKS: dict[str, CheckHelp] = {
         "The AI could not decide on a GL account for this line.",
         "Pick the GL account in the line table; approving teaches the AI for next time.",
     ),
+    "ACCOUNTS_ALL_GUESSED": CheckHelp(
+        CODING, "Every account is a guess",
+        "Every line's GL account on this invoice was chosen by the chat model, from the words of an account's name "
+        "or from other vendors' lines: not one comes from what AP approved for this vendor, from last year's journal "
+        "or from a coding rule. One click would approve them all and teach them as this vendor's coding.",
+        "Look at each line's account. Change the wrong ones (a line you change is yours, and the finding goes once "
+        "one is); to keep them all as they are, tick Approve anyway and say why.",
+    ),
     "REMARK_LONG": CheckHelp(
         CODING, "Remark too long for JD Edwards",
         "The remark typed for this line is longer than the 30 characters JD Edwards keeps. Nothing is cut without "
@@ -801,9 +809,10 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "PAGES_NOT_READ": CheckHelp(
         READING, "Pages not read",
-        "The file has more pages than were read on this computer: its first 20 pages are read (a statement, a "
-        "catalogue or several invoices scanned as one file can be longer), and a scanned page OCR couldn't read is "
-        "left out. Nothing on those pages is in the fields, lines or totals shown.",
+        "Some of the file's pages were not read on this computer; the finding names them. Up to 60 pages of a file "
+        "are read; of a longer one (a statement, a catalogue or several invoices scanned as one file) the first 55 "
+        "and the last 5, where the totals are. A scanned page OCR couldn't read is left out too. Nothing on those "
+        "pages is in the fields, lines or totals shown.",
         "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
         "its own. It is never approved without a person.",
     ),
@@ -858,6 +867,15 @@ CHECKS: dict[str, CheckHelp] = {
         "prebuilt-invoice (prebuilt-layout and prebuilt-read find no invoice fields), or Azure found no invoice.",
         "Check the invoice against the page yourself, then approve. It isn't approved without a person. Set the "
         "Azure model back to prebuilt-invoice if it was changed.",
+    ),
+    "NOT_AN_INVOICE": CheckHelp(
+        READING, "May not be an invoice",
+        "The document looks like something else that arrives with invoices: its title says so (a statement of "
+        "account, a remittance advice, a quote, a packing slip, an order confirmation, a notice), or it lists "
+        "several invoices with their balances or payments, or no invoice number and no amounts were found on it. "
+        "The finding says which. AP Coder never rejects a document on its own.",
+        "Look at the page. If it is not an invoice, click Reject and give the reason (nothing is posted or "
+        "learned from it); if it is one, check and approve it as any other.",
     ),
     "INVOICE_DATE_NOT_FOUND": CheckHelp(
         READING, "Invoice date not found",

@@ -47,7 +47,7 @@ from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
 from . import azure_check, verifier
 from .extraction import TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
-from .imaging import render_page_images
+from .imaging import render_first_and_last, render_page_images
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 
 if TYPE_CHECKING:
@@ -63,6 +63,7 @@ log = logging.getLogger(__name__)
 # an answer in time asks again from the next one on). A hung or slow model never holds up the imports. With a backup
 # server (D-180) the chat model's breaker (``local_llm.Failover``) moves the calls there first, and this one counts
 # afresh for the server in use: arrivals stop asking only when neither answers in time.
+HEADER_PAGES = 2  # pages the chat model reads the header from: the first, and the last (the totals)
 ARRIVAL_ENV = "AP_LLM_ARRIVAL_SECONDS"
 ARRIVAL_SECONDS = 20.0
 BREAKER_FAILURES = 2
@@ -582,7 +583,8 @@ class InvoicePipeline:
         except (OSError, ValueError):
             pass
         try:
-            values = read_header(self.coder, render_page_images(path, 2))  # the header, and the totals on page 2
+            # The header on the first page, and the totals on the LAST one (B-2216).
+            values = read_header(self.coder, render_first_and_last(path, HEADER_PAGES))
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: the chat model could not read the header (%s)", path.name, exc)
             return None

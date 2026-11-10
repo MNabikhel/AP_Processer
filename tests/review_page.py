@@ -21,6 +21,8 @@ read the markup themselves and stay as they are.
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
@@ -116,6 +118,20 @@ class _Screen(HTMLParser):
             if chosen is not None:
                 self.controls.append([name, chosen[2] if chosen[0] is None else chosen[0], chosen[2]])
             self._select = None
+
+
+def queue_reasons(client: TestClient, address: str = "/review") -> dict[int, str]:
+    """What the review queue says of each invoice it lists, by id: why it needs attention ("": it is Ready). The one
+    place that knows the queue's markup: a row's link to its invoice, then its status cell's ``title``."""
+    answer = client.get(address)
+    assert answer.status_code == 200, answer.text
+    rows = re.split(r'href="/review/(\d+)["?]', answer.text)[1:]
+    said: dict[int, str] = {}
+    for number, row in zip(rows[::2], rows[1::2], strict=True):
+        cell = re.search(r'class="c-status"(?: title="([^"]*)")?', row)
+        if cell and int(number) not in said:
+            said[int(number)] = html.unescape(cell.group(1) or "")
+    return said
 
 
 class ReviewPage:

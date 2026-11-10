@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
-from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available
+from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available, read_pages
 from .locate import locate
 from .normalize import find_amounts
+from .not_invoice import not_an_invoice
 from .reader import (
     STRAIGHTEN_FROM,
     _on_tilted_page,
@@ -282,7 +283,7 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     if tables is True:
         from .table_finder import find_tables
 
-        tables = find_tables(path, max_pages=len(layout.pages) or 1)
+        tables = find_tables(path, max_pages=min(len(layout.pages), read_pages()) or 1)
     found = tables if isinstance(tables, dict) else None
     targets = _line_targets(fields)
     in_tables = _labelled(read_line_items(layout, found, targets), "table") if found else []
@@ -555,7 +556,9 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                 fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
                 fr.reasons.append(f"scanned at about {coarse:.0f} dpi, coarser than the scans its reading was measured "
                                   "on (150 dpi and up): a person checks it")  # fmt: skip
+    credit = credit_titled(layout)
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages) + layout.pages_left_out,
                          pages_left_out=layout.pages_left_out + layout.pages_unread_locally,
-                         credit_note=credit_titled(layout))  # fmt: skip
+                         credit_note=credit, pages_not_read=list(layout.not_read),
+                         not_invoice="" if credit else not_an_invoice(layout, fields, items))  # fmt: skip
