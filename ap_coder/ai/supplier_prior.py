@@ -163,10 +163,12 @@ class Prior:
         return " / ".join(f"{100 * u.share:.0f}%" for u in self.accounts[:most])
 
     def total_said(self) -> str:
-        """How many lines it is counted from: "24 lines last year", "27 lines (24 last year, 3 approved here)"."""
+        """How many lines it is counted from: "24 lines last year", "27 lines (24 last year, 3 approved here)", "1
+        line last year"."""
         if self.approved and self.journal_lines:
             return f"{self.lines} lines ({self.journal_lines} last year, {self.approved} approved here)"
-        return f"{self.lines} lines {'approved here' if self.approved else 'last year'}"
+        lines = "1 line" if self.lines == 1 else f"{self.lines} lines"
+        return f"{lines} {'approved here' if self.approved else 'last year'}"
 
 
 EMPTY = Prior()

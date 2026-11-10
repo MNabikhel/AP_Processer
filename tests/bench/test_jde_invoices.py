@@ -6,7 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from ap_coder.bench import jde_company, jde_invoices
+from ap_coder.ai.supplier_prior import SURE_LINES
+from ap_coder.bench import jde_company, jde_invoices, jde_names
 from ap_coder.bench.generator import load_cases
 from ap_coder.core import chart
 
@@ -52,6 +53,26 @@ def test_each_of_the_seven_is_the_case_it_is_named_for(truth, seven):
     )
     credit = seven["credit_note"]
     assert credit.total < 0 and credit.recovered < 0 and all(part.amount < 0 for part in credit.parts)
+
+
+def test_the_one_line_invoices_supplier_has_the_history_that_codes_a_line_alone(truth, seven):
+    """Its supplier "always goes to one account": in last year's books too, on enough lines for the line to be coded
+    with no one picking (``supplier_prior.SURE_LINES``). The first one-account supplier of the books has two
+    (B-2181)."""
+    one = seven["one_line"]
+    history = [line.account for voucher in truth.vouchers if voucher.supplier == one.supplier.number
+               and voucher.oddity != "unbalanced" for line in voucher.lines]  # fmt: skip
+    assert len(history) >= SURE_LINES and set(history) == {one.parts[0].account}
+
+
+def test_the_seven_are_worded_from_the_one_table_of_what_suppliers_print(truth, seven):
+    wording = jde_names.invoice_wording()
+    assert not hasattr(jde_invoices, "INVOICE_WORDING")
+    for name in ("one_line", "quebec", "credit_note"):
+        (account,) = {part.account for part in seven[name].parts}
+        row = truth.account(account)
+        stems = [phrasing.split("{")[0] for phrasing in wording[(row.object, row.subsidiary)]]
+        assert all(any(line.description.startswith(stem) for stem in stems) for line in seven[name].lines), name
 
 
 def test_the_quebec_invoice_recovers_the_gst_and_keeps_the_qst_in_its_lines(seven):

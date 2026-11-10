@@ -23,15 +23,18 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import random
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from ..ai.supplier_prior import SURE_LINES
 from ..coding import money as shares
 from ..core import chart
 from . import content as C
 from .generator import MISREAD_BASES, Case, Inv, Renderer, Style, _header_items, _knobs, _write_case
 from .jde_company import MAIN_UNIT, Account, Supplier, Truth, Voucher, money
+from .jde_names import invoice_wording
 
 NAMED = ("one_line", "four_lines", "fifteen_lines", "split_line", "quebec", "usd_new_supplier", "credit_note")
 HOME_PROVINCE = "AB"  # head office: a supplier there charges the GST alone
@@ -44,42 +47,6 @@ DATE_STYLES = ("iso", "mon_d_y", "month_d_y", "d_mon_y", "dd-mon-yyyy", "yyyy/mm
 NEW_SUPPLIER = "Harlow Peak Analytics LLC"  # in no supplier master
 TERMS = C.Terms("Net 30", 30)
 
-# What a supplier prints for a purchase AP codes to an account: object, subsidiary ("-": every subsidiary of the
-# object) | its phrasings, a semicolon between; ``{n}`` a reference number, ``{month}`` the month billed, ``{who}``
-# the person the account's description names. The supplier's own words, not the department's remark
-# (``jde_names.CHART``'s phrases). A small table of this module's own, in the layout of the fuller
-# ``jde_names.INVOICE_WORDING`` being written beside it: to be replaced by that one.
-INVOICE_WORDING = """
-1450 - | Household goods move - transferee {who}; Furnished suite 30 nights - guest {who}
-1620 - | Annual term paid in advance - contract {n}; 12-month term - renewal notice {n}
-7120 - | Candidate search - engagement {n}; Posting package 30 days - order {n}
-7140 - | Registration - workshop series {n}; Annual member fee - ID {n}
-7160 - | Group event package - booking {n}; Custom embroidered apparel - order {n}
-7310 - | Base rent {month} - suite 400; Additional rent - common area {month}
-7330 - | Service call - work order {n}; Preventive maintenance visit - {month}
-7340 - | Nightly service - {month}; Secure bin exchange - ticket {n}
-7350 - | Energy charges - meter {n}; Delivery and consumption - {month}
-7360 - | Commercial property coverage - policy {n}; Annual assessment - roll {n}
-7410 - | Assorted office products - order {n}; Breakroom restock - order {n}
-7420 - | Ground shipment waybill {n}; Express envelope - waybill {n}
-7430 - | Colour and mono clicks - {month}; Print job {n} - saddle stitched
-7440 - | Annual access - account {n}; Publication renewal - 12 issues
-7450 - | Carton storage - {month}; Document imaging - job {n}
-7510 - | Wireless service - {month}; Voice lines and features - {month}
-7520 - | Dedicated access 500 Mbps - {month}; Managed circuit - site {n}
-7530 - | Platform seats - annual term {n}; Maintenance and support - contract {n}
-7540 - | Hardware order {n}; Bench service - ticket {n}
-7550 - | Monthly managed plan - {month}; Professional services - statement of work {n}
-7610 - | Professional services rendered - file {n}; Fees and disbursements - matter {n}
-7620 - | Professional services - engagement {n}; Interim billing - engagement {n}
-7630 - | Advisory engagement {n} - phase 2; Language services - job {n}
-7640 - | Commercial general coverage - policy {n}; Placement fee - policy {n}
-7710 - | Room and tax - folio {n}; Ticket {n} - economy fare
-7720 - | Group order {n} - delivered; Private dining - booking {n}
-7730 - | Delegate pass - order {n}; Boardroom booking {n} - full day
-7810 - | Annual campaign gift - receipt {n}; Event partner package - {month}
-7830 - | Fleet card purchases - {month}; Service visit - invoice {n}
-"""
 # The words of a line that does not say what was bought: with a supplier coded to several accounts, a person decides.
 VAGUE = "Additional charges per work order {n}"
 
@@ -162,17 +129,8 @@ class Invoice:
 # --- wording -------------------------------------------------------------------------------------
 
 
-def invoice_wording() -> dict[tuple[str, str], tuple[str, ...]]:
-    """{(object, subsidiary): what a supplier prints for it}; a subsidiary "" stands for all of the object's."""
-    found = {}
-    for line in INVOICE_WORDING.strip().splitlines():
-        head, _, phrasings = line.partition("|")
-        obj, subsidiary = head.split()
-        found[(obj, subsidiary.strip("-"))] = tuple(p.strip() for p in phrasings.split(";") if p.strip())
-    return found
-
-
-_WORDING = invoice_wording()
+_WORDING = invoice_wording()  # the one table of what a supplier prints for an account (``jde_names``)
+QUANTITIES = (2, 3, 4, 6, 12, 24, 40)  # a phrasing's ``{qty}``, by its reference number
 
 
 def printed_name(name: str) -> str:
@@ -185,7 +143,8 @@ def _words(account: Account, which: int, number: int, on: dt.date) -> str:
     description when the table has none), with reference number ``number``."""
     phrasings = (_WORDING.get((account.object, account.subsidiary)) or _WORDING.get((account.object, ""))
                  or (account.description,))  # fmt: skip
-    return phrasings[which % len(phrasings)].format(n=number, month=calendar.month_name[on.month],
+    return phrasings[which % len(phrasings)].format(n=number, qty=QUANTITIES[number % len(QUANTITIES)],
+                                                    month=calendar.month_name[on.month],
                                                     who=account.description.rpartition(" - ")[2])  # fmt: skip
 
 
@@ -252,13 +211,15 @@ def _codes(supplier: Supplier) -> list[str]:
 
 def _suppliers_of_the_seven(truth: Truth) -> dict[str, Supplier]:
     """The supplier of each invoice of ``NAMED`` that is from one of the books': the first that fits, none twice,
-    so the set follows the books. ``LookupError`` when the books have none for one."""
+    so the set follows the books. ``LookupError`` when the books have none for one. The one-line invoice's has the
+    lines last year that code a line with no one picking (``supplier_prior.SURE_LINES``, all to its one account)."""
     home = [s for s in truth.suppliers if _in_use(s) and s.currency == "CAD" and s.taxed]
     plain = [s for s in home if not s.provincial_rate]  # the GST alone
     most = max((len(s.accounts) for s in plain), default=0)
+    history = Counter(v.supplier for v in truth.vouchers if v.oddity != "unbalanced" for _ in v.lines)
     wanted = {
         "fifteen_lines": lambda s: s in plain and len(s.accounts) == most,
-        "one_line": lambda s: s in plain and len(s.accounts) == 1,
+        "one_line": lambda s: s in plain and len(s.accounts) == 1 and history[s.number] >= SURE_LINES,
         "four_lines": lambda s: s in plain and len(set(_codes(s))) >= 3,
         "split_line": lambda s: s in plain and len(s.accounts) >= 2 and len(set(_codes(s))) == 1,
         "quebec": lambda s: PROVINCES.get(s.provincial_rate) == "QC",

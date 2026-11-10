@@ -37,20 +37,28 @@ def test_the_company_is_set_up_the_way_a_department_that_types_its_vouchers_keys
     assert tax["GST"] == tax["HST"] == (RECOVERABLE, company.gst_object)
     assert tax["PST"] == tax["QST"] == (EXPENSE_TO_LINE, "")
     js = jde.load(store)
-    assert js == demo.company_jde_settings(company) and jde.in_use(store)
+    # The department's way (``jde.prototype_settings``: the one definition) over the company's own two values; the
+    # company's GST-only tax area is the one the department's placeholder is named after.
+    own = jde.JdeSettings(company=company.number, terms_codes={"Net 30": company.payment_terms})
+    assert js == jde.prototype_settings(own) and jde.in_use(store)
     assert (js.company, js.amount_mode, js.remarks) == ("00210", jde.AMOUNT_TAX, jde.REMARKS_TYPED)
     assert js.terms_codes == {"Net 30": "N30"}
+    assert company.tax_area == jde.PROTOTYPE_GST_AREA == "CDNGST"
     assert {(area.tax_area, area.code) for p, area in js.tax_map.items() if p in ("AB", "BC", "QC", "SK", "MB")} == {
         ("CDNGST", "V")
     }
-    assert (js.tax_map["ON"].tax_area, js.tax_map["ON"].code) == ("ON-HST", "V")
+    assert (js.tax_map["ON"].tax_area, js.tax_map["ON"].code) == ("ONHST", "V")
     assert js.tax_map[jde.OUTSIDE_CANADA] == jde.TaxArea("", "")
 
 
 def test_the_seven_invoices_are_in_the_review_queue_read_from_their_pdfs(chart_company):
     store = chart_company.store
     assert list(chart_company.invoices) == list(jde_invoices.NAMED)
-    assert [i["id"] for i in store.list_invoices(REVIEW)] == [iid for _, iid in chart_company.invoices.values()]
+    # The queue lists the ones to look at first: the five with a line left for a person in the order read, then the
+    # two that arrived coded from last year's journal (D-212), the surer last.
+    ids = {name: invoice_id for name, (_, invoice_id) in chart_company.invoices.items()}
+    coded = [ids["one_line"], ids["quebec"]]
+    assert [i["id"] for i in store.list_invoices(REVIEW)] == [i for i in ids.values() if i not in coded] + coded
     for name, (invoice, invoice_id) in chart_company.invoices.items():
         read = store.get_invoice(invoice_id)["ai_output"]
         assert (read["vendor_name"], read["invoice_number"], read["invoice_date"], read["currency"]) == (

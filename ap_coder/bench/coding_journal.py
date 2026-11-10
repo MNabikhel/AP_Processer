@@ -43,7 +43,7 @@ from typing import Any
 
 from ap_coder.bench import jde_company, jde_exports
 from ap_coder.bench.harness import _table
-from ap_coder.bench.jde_names import INVOICE_WORDING
+from ap_coder.bench.jde_names import invoice_wording
 from ap_coder.core import chart
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import UNASSIGNED
@@ -57,16 +57,6 @@ SIZES = {"quick": "tenth", "full": "year"}
 REVIEWER = "AP clerk (benchmark)"
 # The sure rule tried at other bars (``sure_grid``): the share one account has, and the lines the supplier has.
 GRID_SHARES, GRID_LINES = (0.8, 0.9, 0.95, 1.0), (2, 3, 5)
-
-
-def invoice_wording() -> dict[tuple[str, str], tuple[str, ...]]:
-    """{(object, subsidiary): what a supplier prints for it}; a subsidiary "-" stands for all of the object's."""
-    found = {}
-    for line in INVOICE_WORDING.strip().splitlines():
-        head, _, phrasings = line.partition("|")
-        obj, subsidiary = head.split()
-        found[(obj, subsidiary.strip("-"))] = tuple(p.strip() for p in phrasings.split(";") if p.strip())
-    return found
 
 
 _WORDING = invoice_wording()

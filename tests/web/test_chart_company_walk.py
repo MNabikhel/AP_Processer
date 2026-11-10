@@ -1,10 +1,11 @@
 """A day on the made-up company (the ``chart_company`` fixture: a chart of accounts, last year's journal, JD Edwards
-set up for vouchers typed by hand): the queue, each of the seven invoices on the review screen, the chart's checks,
-approving, and the keying sheet and batch files made from what was approved.
+set up for vouchers typed by hand): the queue, each of the seven invoices on the review screen, how each line arrives
+(coded from last year's journal, or left with why and the accounts offered: D-212), the chart's checks, approving,
+and the keying sheet and batch files made from what was approved (D-210).
 
-These are the first end-to-end tests of an install with a chart loaded, on today's code. Where a part is not built
-yet the test of it is ``xfail(strict=True)`` with what is missing: it fails the run the day it starts passing, so the
-build that brings it takes the mark off. What today's code does instead is asserted beside it, with a comment."""
+These are the end-to-end tests of an install with a chart loaded, on today's code. A part that is not built yet has
+its test ``xfail(strict=True)`` with what is missing: it fails the run the day it starts passing, so the build that
+brings it takes the mark off."""
 
 import csv
 import datetime as dt
@@ -19,12 +20,17 @@ import pytest
 from ap_coder.bench import jde_invoices
 from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde, jde_keying
-from tests.erp.test_jde_keying import blocks, field
+from tests.erp.test_jde_keying import LINES, blocks, field, said
 from tests.review_page import ReviewPage
 from tests.webclient import PAGE, follow, post
 
 NEW_NUMBER = "99001"  # the new supplier's JD Edwards address number, once it is set up
 TAX_WORDS = {"quebec": "GST + QST", "usd_new_supplier": "No tax charged"}  # each line's tax code as shown; else GST
+# Why a line is left for a person (``suggest.why_left``, D-212), as the line says it.
+SEVERAL = "This supplier's {lines} lines last year went to {accounts} accounts: {shares}: pick the account."
+TOO_FEW = "Only {counted} last year went to {account}: too few to code it alone: pick the account."
+NEW_SUPPLIER = "A new supplier: not in last year's journal: pick the account."
+PICK = "Pick a GL account for {lines} and a cost center for {lines} to approve"  # why Approve is closed
 
 
 def _coded(client, chart_company, name: str) -> ReviewPage:
@@ -76,9 +82,39 @@ def _money(block, label: str) -> Decimal | None:
     return _cents(field(block, label).value)
 
 
+def _check(block):
+    """A voucher's check line: under its G/L lines, above its warnings and notes."""
+    return next(row for row in block[LINES:] if row[0].value == "Check")
+
+
+def _rows(block) -> list:
+    """A voucher's G/L lines as rows of cells: under the row "G/L distribution", above the check line."""
+    return block[LINES : block.index(_check(block))]
+
+
 def _lines(block) -> list[tuple[str, Decimal]]:
     """A voucher's G/L lines: (the account string, the amount)."""
-    return [(row[0].value, _cents(row[2].value)) for row in block[9:-1]]
+    return [(row[0].value, _cents(row[2].value)) for row in _rows(block)]
+
+
+def _shown(invoice) -> list[str]:
+    """The description of each G/L line as the review screen has it: as printed, a share of a split line with its
+    percentage."""
+    shown = []
+    for line in invoice.lines:
+        whole = sum(part.amount for part in line.parts)
+        shown += [line.description if len(line.parts) == 1 else f"{line.description} ({part.amount * 100 / whole:.0f}%)"
+                  for part in line.parts]  # fmt: skip
+    return shown
+
+
+def _left(invoice_lines: list[dict], reason: str, first: list[str]) -> None:
+    """Each of these stored lines was left for a person: no account, nothing recorded as deciding it, ``reason``,
+    and accounts offered of which the first is ``first``'s (in the lines' order)."""
+    assert [line["predicted_gl_code"] for line in invoice_lines] == ["UNASSIGNED"] * len(first)
+    assert [line["reasoning_justification"] for line in invoice_lines] == [reason] * len(first)
+    assert not any(line.get("decided_by") for line in invoice_lines)
+    assert [line["candidates"][0]["account"] for line in invoice_lines] == first
 
 
 # --- the queue and the screen -------------------------------------------------------------------------------------
@@ -102,41 +138,117 @@ def test_each_invoice_opens_with_its_lines_as_printed(chart_company, chart_compa
         assert all(row.reason for row in page.lines), name
 
 
-def test_today_every_line_arrives_without_an_account_and_says_why(chart_company, chart_company_client):
-    """Today nothing is suggested from last year's journal: each line is left for a person with a reason, and
-    Approve is closed until every line has its account. The suggestions build changes this for the lines the journal
-    settles (the two tests below); a line it cannot settle must still arrive like this."""
-    for name, (_, invoice_id) in chart_company.invoices.items():
-        page = ReviewPage(chart_company_client, invoice_id)
-        assert [row.account for row in page.lines] == [""] * len(page.lines), name
-        assert all(row.reason for row in page.lines), name
-        assert {"GL_UNASSIGNED", "CC_UNASSIGNED"} <= set(page.findings), name
-        assert page.not_ready.startswith("Pick a GL account for") or name == "usd_new_supplier", name
-    one = ReviewPage(chart_company_client, chart_company.invoices["one_line"][1])
-    assert one.not_ready == "Pick a GL account for line 1 and a cost center for line 1 to approve"
-    assert one.approve() == {"ok": False, "error": one.not_ready + "."}
+# How each line arrives (D-212): coded with no one picking when one account has 90% of three or more of the supplier's
+# lines in last year's journal, else left for a person with why and the accounts offered. The supplier is found by its
+# JD Edwards number (the supplier master's), in the journal loaded before the invoices were read.
 
 
-@pytest.mark.xfail(strict=True, reason="Not built yet (the suggestions build): nothing is suggested from last year's "
-                   "journal, where this supplier's vouchers all went to one account string")  # fmt: skip
-def test_the_one_line_invoice_arrives_coded_to_its_suppliers_one_account(chart_company, chart_company_client):
-    invoice, invoice_id = chart_company.invoices["one_line"]
-    page = ReviewPage(chart_company_client, invoice_id)
-    assert [row.account for row in page.lines] == [invoice.lines[0].parts[0].account]
-    assert page.lines[0].reason and not page.not_ready
+def _arrived(chart_company, client, name: str):
+    """(the invoice with what AP should key, its review screen, its lines as the pipeline stored them)."""
+    invoice, invoice_id = chart_company.invoices[name]
+    stored = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"]
+    return invoice, ReviewPage(client, invoice_id), stored
 
 
-@pytest.mark.xfail(strict=True, reason="Not built yet (the suggestions build): the lines that name whose move it is "
-                   "should get that person's account from the journal, and the line that says nothing of what was "
-                   "bought should be left for a person, with why")  # fmt: skip
-def test_the_four_line_invoice_arrives_with_three_lines_coded_and_the_vague_one_left(
+def _last_year(truth, supplier) -> list[str]:
+    """The accounts of the supplier's coding lines in last year's journal (a voucher that does not balance is not in
+    it), the most used first."""
+    used = [line.account for voucher in truth.vouchers if voucher.supplier == supplier.number
+            and voucher.oddity != "unbalanced" for line in voucher.lines]  # fmt: skip
+    return sorted(used, key=lambda account: (-used.count(account), used.index(account)))
+
+
+@pytest.mark.parametrize("name, lines", [("one_line", 8), ("quebec", 6)])
+def test_an_invoice_of_a_supplier_always_coded_to_one_account_arrives_coded_and_is_approved_as_it_is(
+    chart_company, chart_company_client, name, lines
+):
+    invoice, page, stored = _arrived(chart_company, chart_company_client, name)
+    assert _last_year(chart_company.truth, invoice.supplier) == [invoice.parts[0].account] * lines
+    assert [row.account for row in page.lines] == [line.parts[0].account for line in invoice.lines]
+    counted = f"{lines} of this supplier's {lines} lines last year"
+    assert all(row.reason == counted or row.reason.startswith(f"{counted}; ") for row in page.lines)
+    by = {"source": "supplier", "lines": lines, "of": lines, "share": 1.0}
+    assert [line["decided_by"] for line in stored] == [by] * len(invoice.lines)
+    assert not any(line.get("candidates") for line in stored)
+    assert (page.findings, page.not_ready) == ({}, "")
+    assert page.check()["allow"] and page.approve()["ok"]  # nothing picked, nothing typed
+    assert chart_company.store.get_invoice(page.id)["status"] == APPROVED
+
+
+def test_the_four_line_invoice_is_left_with_the_account_of_each_line_offered_first(chart_company, chart_company_client):
+    """Its supplier's three lines last year went to three accounts, one each: no account has 90%, so no line is coded
+    with no one picking, the lines that name whose move it is no more than the one that says nothing of what was
+    bought. Each says why, and the account offered first is the one AP keys: the named person's, and for the vague
+    line the supplier's latest (the billback), with the supplier's other two next."""
+    invoice, page, stored = _arrived(chart_company, chart_company_client, "four_lines")
+    his, hers, billback = invoice.supplier.accounts
+    assert sorted(_last_year(chart_company.truth, invoice.supplier)) == sorted([his, hers, billback])
+    reason = SEVERAL.format(lines=3, accounts=3, shares="33% / 33% / 33%")
+    assert [(row.account, row.reason) for row in page.lines] == [("", reason)] * 4
+    _left(stored, reason, [his, his, hers, billback])
+    assert [line.parts[0].account for line in invoice.lines] == [his, his, hers, billback]
+    assert all({c["account"] for c in line["candidates"][:3]} == {his, hers, billback} for line in stored)
+    assert all(c["source"] == "supplier" and (c["lines"], c["of"]) == (1, 3)
+               for line in stored for c in line["candidates"][:3])  # fmt: skip
+    assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED"]
+    assert page.not_ready == PICK.format(lines="4 lines") + " (or use Apply to all lines…)"
+
+
+def test_the_fifteen_line_invoice_is_left_with_the_suppliers_most_used_business_units_offered(
     chart_company, chart_company_client
 ):
-    invoice, invoice_id = chart_company.invoices["four_lines"]
-    page = ReviewPage(chart_company_client, invoice_id)
-    wanted = ["" if line.for_a_person else line.parts[0].account for line in invoice.lines]
-    assert [row.account for row in page.lines] == wanted
-    assert page.lines[3].reason and page.not_ready
+    """One object.subsidiary on thirteen business units (who ordered decides): no line is coded with no one picking.
+    Each keeps five of the supplier's accounts, the most used first whichever business unit the line names: the
+    right account is first on one line of the fifteen, among the five on seven, and not offered on eight."""
+    invoice, page, stored = _arrived(chart_company, chart_company_client, "fifteen_lines")
+    history = _last_year(chart_company.truth, invoice.supplier)
+    assert (len(history), len(set(history))) == (23, 13)
+    reason = SEVERAL.format(lines=23, accounts=13, shares="26% / 13% / 9% / 9% / ...")
+    assert [(row.account, row.reason) for row in page.lines] == [("", reason)] * 15
+    _left(stored, reason, [history[0]] * 15)
+    offered = [[c["account"] for c in line["candidates"]] for line in stored]
+    assert all(len(found) == 5 and set(found) <= set(invoice.supplier.accounts) for found in offered)
+    right = [line.parts[0].account for line in invoice.lines]
+    place = [found.index(account) + 1 if account in found else 0 for found, account in zip(offered, right, strict=True)]
+    assert place == [2, 4, 1, 0, 0, 0, 0, 0, 3, 0, 5, 0, 0, 2, 4]  # 0: not among the five kept
+    assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED"]
+    assert page.not_ready == PICK.format(lines="15 lines") + " (or use Apply to all lines…)"
+
+
+@pytest.mark.parametrize(
+    "name, counted, to_pick",
+    [
+        ("split_line", "1 of this supplier's 1 line", "lines 1, 2"),
+        ("credit_note", "2 of this supplier's 2 lines", "line 1"),
+    ],
+)
+def test_an_invoice_of_a_supplier_with_under_three_lines_last_year_is_left_with_its_account_offered(
+    chart_company, chart_company_client, name, counted, to_pick
+):
+    """One account last year, on fewer lines than code a line with no one picking (``supplier_prior.SURE_LINES``):
+    each line says so and offers that account first. It is right, for the split line as its larger part."""
+    invoice, page, stored = _arrived(chart_company, chart_company_client, name)
+    account = invoice.parts[0].account
+    assert set(_last_year(chart_company.truth, invoice.supplier)) == {account}
+    reason = TOO_FEW.format(counted=counted, account=account)
+    assert [(row.account, row.reason) for row in page.lines] == [("", reason)] * len(invoice.lines)
+    _left(stored, reason, [account] * len(invoice.lines))
+    assert [line.parts[0].account for line in invoice.lines] == [account] * len(invoice.lines)
+    assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED"]
+    assert page.not_ready == PICK.format(lines=to_pick)
+    assert page.approve() == {"ok": False, "error": page.not_ready + "."}
+
+
+def test_the_new_suppliers_line_is_left_with_no_account_offered(chart_company, chart_company_client):
+    """A supplier that is in neither the supplier master nor last year's journal: its line says so, and the words it
+    prints ("SaaS seats x 3 - annual") are near no account's name, so nothing is offered for it."""
+    invoice, page, stored = _arrived(chart_company, chart_company_client, "usd_new_supplier")
+    assert [(row.account, row.reason) for row in page.lines] == [("", NEW_SUPPLIER)]
+    assert [line["predicted_gl_code"] for line in stored] == ["UNASSIGNED"]
+    assert not any(line.get("candidates") or line.get("decided_by") for line in stored)
+    assert list(page.findings) == ["GL_UNASSIGNED", "CC_UNASSIGNED", "VENDOR_NOT_IN_MASTER", "JDE_NO_AN8",
+                                   "NO_TAX_CHARGED"]  # fmt: skip
+    assert page.not_ready == "JD Edwards: this vendor has no supplier number (AN8)"
 
 
 # --- the chart's checks -------------------------------------------------------------------------------------------
@@ -185,9 +297,10 @@ def test_a_reserved_subsidiary_typed_by_hand_is_a_warning_and_may_be_approved(ch
 
 def test_the_ready_invoices_are_approved_and_the_keying_sheet_is_what_ap_keys(chart_company, chart_company_client):
     """Six of the seven, coded by hand and approved, on the keying sheet: each voucher's pay item (the supplier's
-    number, the invoice, the gross, the terms code, tax explanation code V with the company's tax area, the taxable
-    amount and the tax recovered), its G/L lines (the account string a text cell, the amount as keyed) and a check
-    line that balances. Nothing is on "Not ready"."""
+    number, the company, the invoice, the gross, the terms code and the due date, tax explanation code V with the
+    company's tax area, the taxable amount and the tax recovered), then under "G/L distribution" its G/L lines (the
+    account string a text cell, the amount as keyed) and a check line that balances, with a note only where a tax
+    stays in the expense. Nothing is on "Not ready"."""
     store, company = chart_company.store, chart_company.truth.company
     ids = _approve_the_ready_ones(chart_company_client, chart_company)
     assert [i["id"] for i in store.list_invoices(REVIEW)] == [chart_company.invoices["usd_new_supplier"][1]]
@@ -204,23 +317,31 @@ def test_the_ready_invoices_are_approved_and_the_keying_sheet_is_what_ap_keys(ch
         day = dt.datetime.combine(invoice.date, dt.time())
         assert (field(block, "Invoice date").value, field(block, "G/L date").value) == (day, day), name
         assert (_money(block, "Gross amount"), field(block, "Currency").value) == (invoice.total, "CAD"), name
-        assert field(block, "Payment terms").value == (None if name == "credit_note" else company.payment_terms), name
+        credit = name == "credit_note"  # no terms: due the day it is dated
+        assert field(block, "Payment terms").value == (None if credit else company.payment_terms), name
+        assert field(block, "Due date").value == day + dt.timedelta(days=0 if credit else jde_invoices.TERMS.days), name
+        of = field(block, "Company")
+        assert (of.value, of.data_type, of.number_format) == (company.number, "s", "@"), name
         assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == (
             "V", company.tax_area), name  # fmt: skip
         assert (_money(block, "Taxable amount"), _money(block, "Tax amount")) == (
             invoice.subtotal, invoice.recovered), name  # fmt: skip
-        lines, check = block[9:-1], block[-1]
+        assert [cell.value for cell in block[LINES - 1]] == ["G/L distribution", None, None, None], name
+        lines, check = _rows(block), _check(block)
         assert _lines(block) == [(part.account, part.amount) for part in invoice.parts], name
         assert {(a.data_type, a.number_format) for a, _, _, _ in lines} == {("s", "@")}, name  # text: zeros kept
         assert all(description.value for _, description, _, _ in lines), name  # the account's name from the chart
-        # The remark is the start of the line as printed, cut at 30 characters (D-210). The remark build (a remark
-        # of the line's own: the department's words, ``Part.remark``) changes this column.
-        printed = [line.description for line in invoice.lines for _ in line.parts]
-        assert all(0 < len(remark.value) <= 30 and text.startswith(remark.value)
-                   for (_, _, _, remark), text in zip(lines, printed, strict=True)), name  # fmt: skip
+        # The remark is the line as the review screen has it (as printed; a share of a split line says its
+        # percentage), cut at 30 characters (D-210). The remark build (a remark of the line's own: the department's
+        # words, ``Part.remark``) changes this column.
+        assert [remark.value for _, _, _, remark in lines] == [text[:30].strip() for text in _shown(invoice)], name
         assert field(block, "Remark").value == lines[0][3].value, name
         assert check[0].value == "Check" and _cents(check[2].value) == invoice.total - invoice.recovered, name
         assert check[3].value.endswith(": balanced"), name
+        kept = [f"The QST ({tax.amount:,.2f}) is not recovered: it is inside the G/L lines, not in the tax or taxable "
+                "amount." for tax in invoice.taxes if tax.code == "QST"]  # fmt: skip
+        assert (said(block, "Warning"), said(block, "Note")) == ([], kept), name
+        assert kept or block[-1] is check, name  # nothing under the check line but that note
     assert list(workbook[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)) == []
 
 
@@ -236,13 +357,15 @@ def test_the_quebec_voucher_carries_only_the_tax_recovered_and_the_credit_note_i
     assert (_money(block, "Taxable amount"), _money(block, "Tax amount")) == (quebec.subtotal, taxes["GST"])
     assert _money(block, "Gross amount") == quebec.subtotal + taxes["GST"] + taxes["QST"]
     assert sum(amount for _, amount in _lines(block)) == quebec.subtotal + taxes["QST"]  # the QST is in the expense
-    assert block[-1][3].value == "1,363.69 + 62.00 = 1,425.69: balanced"
+    assert _check(block)[3].value == "1,363.69 + 62.00 = 1,425.69: balanced"
+    assert said(block, "Note") == ["The QST (123.69) is not recovered: it is inside the G/L lines, not in the tax "
+                                   "or taxable amount."]  # fmt: skip
     credit = chart_company.invoices["credit_note"][0]
     block = found[credit.number]
     amounts = [_money(block, label) for label in ("Gross amount", "Taxable amount", "Tax amount")]
     assert amounts == [credit.total, credit.subtotal, credit.recovered] and all(amount < 0 for amount in amounts)
     assert _lines(block) == [(part.account, part.amount) for part in credit.parts]
-    assert block[-1][3].value == "-578.00 + -28.90 = -606.90: balanced"
+    assert _check(block)[3].value == "-578.00 + -28.90 = -606.90: balanced" and block[-1] is _check(block)
 
 
 def test_the_line_split_across_two_business_units_is_two_lines_of_the_voucher(chart_company, chart_company_client):
@@ -273,14 +396,15 @@ def test_the_batch_files_of_the_same_invoices_agree_with_the_sheet(chart_company
     for head, block in zip(heads, sheet, strict=True):
         assert (head["VLAN8"], head["VLVINV"], head["VLEXR1"], head["VLTXA1"], head["VLCO"]) == (
             field(block, "Supplier number").value, field(block, "Invoice number").value,
-            field(block, "Tax explanation code").value, field(block, "Tax rate/area").value, "00210")  # fmt: skip
+            field(block, "Tax explanation code").value, field(block, "Tax rate/area").value,
+            field(block, "Company").value)  # fmt: skip
         assert (head["VLATXA"], head["VLSTAM"]) == (
             cents(field(block, "Taxable amount").value), cents(field(block, "Tax amount").value))  # fmt: skip
         gross = field(block, "Gross amount").value  # not sent: taxable + not taxable + tax add up to it
         assert int(head["VLATXA"]) + int(head["VLATXN"]) + int(head["VLSTAM"]) == round(gross * 100)
         assert head["VLDGJ"] == str(jde.julian(field(block, "G/L date").value))
         assert head["VLRMK"] == field(block, "Remark").value  # the remarks as typed (the settings' choice)
-    typed = [(row[0].value, cents(row[2].value), row[3].value) for block in sheet for row in block[9:-1]]
+    typed = [(row[0].value, cents(row[2].value), row[3].value) for block in sheet for row in _rows(block)]
     assert typed == [(line["VNANI"], line["VNAA"], line["VNEXA"]) for line in lines]
 
 
@@ -291,8 +415,8 @@ def test_the_new_suppliers_invoice_cannot_be_approved_until_the_supplier_has_its
     chart_company, chart_company_client
 ):
     """A supplier that is not in the supplier master has no JD Edwards number: its invoice is held on the review
-    screen, which says so, and so never reaches a keying sheet (not even its "Not ready" sheet, which lists approved
-    invoices only)."""
+    screen, which says so, and so never reaches a keying sheet: a keying batch takes only invoices that pass the JD
+    Edwards checks, and a batch of none is refused (D-210)."""
     invoice, invoice_id = chart_company.invoices["usd_new_supplier"]
     page = _coded(chart_company_client, chart_company, "usd_new_supplier")
     assert not page.check()["allow"]
@@ -300,7 +424,9 @@ def test_the_new_suppliers_invoice_cannot_be_approved_until_the_supplier_has_its
     assert page.not_ready == "JD Edwards: this vendor has no supplier number (AN8)"
     assert page.approve() == {"ok": False, "error": f"Not ready: {page.not_ready}."}
     refused = post(chart_company_client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [invoice_id]})
-    assert "no longer approved" in follow(chart_company_client, refused)
+    assert (refused.status_code, refused.json()) == (400, {
+        "ok": False,
+        "error": "None of the ticked invoices can go to JD Edwards yet: fix them first (see the list)."})  # fmt: skip
     assert chart_company.store.export_batches() == []
 
 
@@ -325,30 +451,39 @@ def test_once_the_new_supplier_has_its_number_its_usd_voucher_is_right_on_the_sh
     assert _money(block, "Gross amount") == invoice.total
     assert (_money(block, "Taxable amount"), _money(block, "Tax amount")) == (None, None)
     assert _lines(block) == [(part.account, part.amount) for part in invoice.parts]
-    assert block[-1][3].value == "2,400.00 + 0.00 = 2,400.00: balanced"
+    assert _check(block)[3].value == "2,400.00 + 0.00 = 2,400.00: balanced"
+    assert (said(block, "Warning"), said(block, "Note")) == ([], [
+        "USD voucher: type the amounts as shown, in USD (foreign entry), not in CAD. JD Edwards takes the exchange "
+        "rate from its own table."])  # fmt: skip
     settings = jde.load(store)
     settings.an8_overrides = {}
     jde.save(store, settings)
     batch = store.export_batches()[0]["id"]
     again = client.get(f"/exports/batches/{batch}/download?fmt={jde_keying.FORMAT}")
     held = openpyxl.load_workbook(io.BytesIO(again.content))
-    assert blocks(held[jde_keying.SHEET]) == []
+    ((row,),) = blocks(held[jde_keying.SHEET])  # no voucher: one row that says where it went
+    assert [cell.value for cell in row] == ["No voucher to type: see the sheet “Not ready”.", None, None, None]
     ((number, _, name, *_, why),) = held[jde_keying.NOT_READY].iter_rows(min_row=2, values_only=True)
     assert (number, name) == (invoice_id, invoice.supplier_name) and jde.NO_AN8 in why
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="To settle with the JD Edwards settings: a voucher "
-                   "with no tax shows tax explanation code E and the tax area of where it was supplied "
-                   "(jde._tax_area_code keeps the area, and no setting leaves both blank), where the made-up "
-                   "company's books key neither on a voucher without tax (jde_company.PayItem)")  # fmt: skip
-def test_a_voucher_with_no_tax_has_no_tax_code_and_no_tax_area_on_the_sheet(chart_company, chart_company_client):
-    client = chart_company_client
+def test_a_voucher_with_no_tax_goes_with_the_exempt_code_on_the_tax_area_of_where_it_was_supplied(
+    chart_company, chart_company_client
+):
+    """A voucher with no tax on its pay item goes with the exempt code (D-210), E, and keeps the tax rate/area of the
+    province it was supplied to (``jde._tax_area_code``): the US supplier's invoice billed to head office shows E and
+    the company's GST area, with no taxable and no tax amount. Still to ask the JDE team: the made-up company's own
+    books key neither a code nor an area on a voucher without tax (``jde_company.PayItem``, ``Invoice.coding``), and
+    no setting leaves both blank."""
+    client, company = chart_company_client, chart_company.truth.company
     invoice, invoice_id = chart_company.invoices["usd_new_supplier"]
     post(client, f"/review/{invoice_id}/vendor", {"name": invoice.supplier_name, "an8": NEW_NUMBER})
     page = _coded(client, chart_company, "usd_new_supplier")
     page.check()
-    if not page.approve(anyway="Being set up in JD Edwards")["ok"]:  # (not the subject: never an expected failure)
-        raise RuntimeError("the new supplier's invoice was not approved")
+    assert page.approve(anyway="Being set up in JD Edwards")["ok"]
     _, workbook = _sheet(client, chart_company.store, [invoice_id])
     (block,) = blocks(workbook[jde_keying.SHEET])
-    assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == (None, None)
+    assert not invoice.taxes and invoice.coding()["tax_code"] == invoice.coding()["tax_area"] == ""  # the books' way
+    assert (field(block, "Tax explanation code").value, field(block, "Tax rate/area").value) == (
+        jde.JdeSettings().exempt_code, company.tax_area) == ("E", "CDNGST")  # fmt: skip
+    assert (field(block, "Taxable amount").value, field(block, "Tax amount").value) == (None, None)
