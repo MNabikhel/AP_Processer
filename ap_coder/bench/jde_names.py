@@ -361,3 +361,14 @@ IT_UNITS = (
 STREETS = ("Alder", "Quarry Rd", "104 st", "Lakeshore", "51 ave", "Dunmore", "Ferry Rd", "8 st NE")
 GENERIC_REMARKS = ("monthly invoice", "as per quote", "see attached", "statement", "misc purchase", "invoice")
 USERS = ("LTREMBLAY", "MOKAFOR", "SPATEL2")
+
+
+def invoice_wording() -> dict[tuple[str, str], tuple[str, ...]]:
+    """``INVOICE_WORDING`` read: {(object, subsidiary): what a supplier prints for it}; a subsidiary "" stands for
+    all of the object's."""
+    found = {}
+    for line in INVOICE_WORDING.strip().splitlines():
+        head, _, phrasings = line.partition("|")
+        obj, subsidiary = head.split()
+        found[(obj, subsidiary.strip("-"))] = tuple(p.strip() for p in phrasings.split(";") if p.strip())
+    return found

@@ -45,7 +45,6 @@ DEMO_SETUP_SETTING = "demo_reference_setup"  # the reference data before and aft
 DEMO_REVIEWER = "Demo reviewer"
 COMPANY_FOLDER = "demo_company"  # beside the database: the made-up company's exports and invoices, as files
 COMPANY_ACTOR = "the made-up company's demo"
-HST_PROVINCES = ("NB", "NL", "NS", "ON", "PE")
 
 
 @dataclass
@@ -264,20 +263,6 @@ def remove_demo(store: Store) -> int:
 # --- the made-up company: a database of its own ----------------------------------------------------------------
 
 
-def company_jde_settings(company: Any) -> jde.JdeSettings:
-    """JD Edwards set the way a department that types its vouchers keys them, with the made-up company's own values
-    (``jde_company.Company``): its company number and terms code, the tax's amounts on the pay item under tax
-    explanation code V, the remarks as typed, and a tax area for each province: the company's GST area wherever the
-    GST is charged on its own (a PST or QST beside it stays in the expense), the placeholder name where the HST is."""
-    settings = jde.JdeSettings(company=company.number, amount_mode=jde.AMOUNT_TAX, remarks=jde.REMARKS_TYPED,
-                               terms_codes={"Net 30": company.payment_terms})  # fmt: skip
-    for province, area in settings.tax_map.items():
-        if province != jde.OUTSIDE_CANADA:
-            name = area.tax_area if province in HST_PROVINCES else company.tax_area
-            settings.tax_map[province] = jde.TaxArea(name, "V")
-    return settings
-
-
 def _company_lists(store: Store, folder: Path) -> list[str]:
     """The made-up company's exports in ``folder`` loaded as a person loads them: the business units and the chart of
     accounts, the supplier master with the columns the Vendors page offers, last year's Transaction Journal, and the
@@ -309,17 +294,23 @@ def _company_lists(store: Store, folder: Path) -> list[str]:
 
 def _company_setup(store: Store, company: Any) -> None:
     """The settings a person makes after the lists are in: the chart's (its reserved subsidiaries never offered, its
-    home business unit), the tax setup (the GST and HST recovered, to the company's clearing account; a PST or QST
-    kept in the expense line) and JD Edwards' (``company_jde_settings``), shown."""
+    home business unit), the tax setup (the GST and HST recovered, to the company's clearing account; a PST kept in
+    the expense line) and JD Edwards': the company's own values (its company number, its terms code), then the way a
+    department that types its vouchers keys them (``jde.use_prototype``: the one definition; it shows JD Edwards and
+    keeps the QST in the expense line), with the company's GST-only tax area where that has its placeholder."""
     never = tuple(f"*.{subsidiary}" for subsidiary in company.reserved_subsidiaries)
     store.save_chart_settings(replace(store.chart_settings(), never_offered=never,
                                       home_business_unit=company.main_business_unit), actor=COMPANY_ACTOR)  # fmt: skip
     for tax_type in ("GST", "HST"):
         store.set_tax_treatment(tax_type, RECOVERABLE, company.gst_object, actor=COMPANY_ACTOR)
-    for tax_type in ("PST", "QST"):
-        store.set_tax_treatment(tax_type, EXPENSE_TO_LINE, actor=COMPANY_ACTOR)
-    jde.save(store, company_jde_settings(company), actor=COMPANY_ACTOR)
-    store.set_setting(jde.SHOW_SETTING, "1", actor=COMPANY_ACTOR)
+    store.set_tax_treatment("PST", EXPENSE_TO_LINE, actor=COMPANY_ACTOR)
+    jde.save(store, jde.JdeSettings(company=company.number, terms_codes={"Net 30": company.payment_terms}),
+             actor=COMPANY_ACTOR)  # fmt: skip
+    settings = jde.use_prototype(store, actor=COMPANY_ACTOR)
+    for province, area in settings.tax_map.items():
+        if area.tax_area == jde.PROTOTYPE_GST_AREA:
+            settings.tax_map[province] = jde.TaxArea(company.tax_area, area.code)
+    jde.save(store, settings, actor=COMPANY_ACTOR)
 
 
 def load_company(store: Store, settings: Settings | None = None, on: dt.date | None = None) -> dict[str, Any]:

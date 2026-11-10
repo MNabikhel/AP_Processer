@@ -124,6 +124,19 @@ def test_a_line_approved_here_outweighs_the_journal_and_a_correction_more(store,
     assert prior_for(store, "Brightway Janitorial Ltd.").accounts[0].weight == 8.0
 
 
+def test_a_supplier_with_one_line_last_year_is_counted_in_the_singular(store):
+    """ "1 line last year" where the line left for a person said "this supplier's 1 lines" (B-2182)."""
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    load_journal(store, monthly(740075, "BRIGHTWAY JANITORIAL LTD.", JANITOR, "{month} janitorial", 1))
+    assert prior_for(store, "Brightway Janitorial Ltd.").total_said() == "1 line last year"
+    coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning"), reference,
+                               store.feedback_rows(), store).coding  # fmt: skip
+    assert coding.line_items[0].reasoning_justification == (
+        f"Only 1 of this supplier's 1 line last year went to {JANITOR}: too few to code it alone: pick the account."
+    )
+
+
 def test_thirty_lines_of_history_are_not_sure_once_a_person_coded_a_line_elsewhere(store, tmp_path):
     reference = load_chart(store)
     _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
