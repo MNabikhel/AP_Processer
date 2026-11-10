@@ -99,6 +99,8 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.core.schema import FROM_VENDOR_LIST, PROVINCE_VALUES, InvoiceCoding
 from ap_coder.core.store import Store, line_guessed, nothing_proposed, suggestion_kept
 from ap_coder.core.store.accounts import CURRENCY_CHANGED
+from ap_coder.core.store.invoices import TAX_ID_DIFFERS
+from ap_coder.core.store.vendor_master import with_number
 from ap_coder.core.ui import TAX_LABELS, plural
 from ap_coder.ops.help import help_for
 from ap_coder.ops.offline import setup_contact
@@ -192,6 +194,7 @@ FIELD_FLAGS: dict[str, tuple[str, str | None]] = {
                             "before paying"),
     "PAY_FROM_CURRENCY": ("pay_from_account", "Not an account in the invoice's currency"),
     "PAY_FROM_MISSING": ("pay_from_account", "Pick the account that pays this invoice"),
+    "PAY_FROM_NO_ACCOUNT": ("pay_from_account", "No bank account in the invoice's currency"),
     "PAY_FROM_UNKNOWN": ("pay_from_account", "Not one of your bank accounts in use"),
 }  # fmt: skip
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
@@ -443,14 +446,20 @@ def unread_numbers(read: dict[str, Any] | None) -> set[str] | None:
 
 
 def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None) -> dict[str, str]:
-    """What the server fills in the invoice details before they are checked: the vendor list's tax numbers (D-65) and
+    """What the server fills in the invoice details before they are checked: the supplier a GST/HST number read or
+    typed belongs to, when none is chosen (``supplier_by_number``, D-219), the vendor list's tax numbers (D-65) and
     the default Pay from account (D-66). Returns {field: value} changed, for the screen to show."""
     header = draft.header
+    one = "" if str(header.get("vendor_name") or "").strip() else supplier_by_number(store, draft)
+    if one:
+        header["vendor_name"] = one
     key = vendor_key(header.get("vendor_name") or "")
     # of two vendors whose names read alike, the one with the GST/HST number on screen (B-1021)
     vendor = store.find_vendor(header.get("vendor_name"), header.get("gst_hst_registration_number")) if key else None
     key = (vendor or {}).get("vendor_key") or key
     draft.from_vendor, changed = fill_from_vendor(header, draft.from_vendor, draft.absent, vendor, unread_numbers(read))
+    if one:
+        changed["vendor_name"] = one
     currency = (header.get("currency") or "CAD").strip().upper() or "CAD"
     if draft.pay_from_for and draft.pay_from_for != currency:
         draft.pay_from_for = ""  # picked for another currency: the default follows the invoice's currency
@@ -462,6 +471,28 @@ def settle_header(store: Store, draft: Draft, read: dict[str, Any] | None = None
         if chosen != (header.get("pay_from_account") or ""):
             header["pay_from_account"] = changed["pay_from_account"] = chosen
     return changed
+
+
+def tax_id_second(store: Store, output: dict[str, Any]) -> str:
+    """Why approving this coding needs a second approver for its tax ID ("" when it does not): it differs from the
+    supplier list's and people sign in, so approved anyway, someone else confirms it (``Store.approve_invoice``,
+    D-219). Said on the approve bar before approving, as a currency changed is."""
+    person = identity.person()
+    return TAX_ID_DIFFERS if person is not None and person.user_id and store.tax_id_differs(output) else ""
+
+
+def supplier_by_number(store: Store, draft: Draft) -> str:
+    """The name, as the vendor field takes it, of the ONE supplier in use whose GST/HST number is the one in the
+    invoice's box (``Store.supplier_of_tax_number``); "" when the box is empty, holds a number filled from the
+    vendor list (that vendor's own: it says nothing of who sent the invoice) or one that is no supplier's, or
+    several suppliers'. A name several supplier numbers go by comes with its number (B-2161)."""
+    number = str(draft.header.get("gst_hst_registration_number") or "").strip()
+    if not number or "gst_hst_registration_number" in (draft.from_vendor.get("fields") or {}):
+        return ""
+    one = store.supplier_of_tax_number(number)
+    if one is None:
+        return ""
+    return with_number(one) if store.vendors_sharing(one["display_name"]) else str(one["display_name"])
 
 
 def parse_absent(raw: Any, header: dict[str, str]) -> list[str]:
@@ -1906,7 +1937,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     cc = uses_cost_centers(reference)
     line_pick = pick = codes_to_pick(coding.line_items, cc)
     # never approved without one of our accounts in use to pay from, whatever is ticked (D-66, B-683)
-    bank = banks.blocking(coding.pay_from_account, store.bank_accounts())
+    bank = banks.blocking(coding.pay_from_account, store.bank_accounts(), coding.currency)
     if bank:
         pick = f"{pick}; {bank[0].lower()}{bank[1:]}" if pick else bank
     # What makes the voucher invalid is never approved anyway; the rest of the errors only with a reason (D-75).
@@ -1973,7 +2004,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
             "override_reason": draft.override_reason if bool(key) and draft.override == key else "",
             "hard": hard_reasons(hard), "allow": allow, "credit": coding.grand_total < 0,
             "first": blockers[0] if blockers else None, "blockers": blockers,
-            "second": second if second.startswith(CURRENCY_CHANGED) else "",
+            "second": second if second.startswith(CURRENCY_CHANGED) else tax_id_second(store, output),
         },
     }  # fmt: skip
     return Analysis(coding=coding, problems=[], output=output, report=report, errors=errors, warnings=warnings,
@@ -2287,6 +2318,15 @@ def field_help(store: Store, coding: InvoiceCoding, draft: Draft, capture: Captu
         out[name] = {"text": "Which date is it?",
                      "actions": [{"label": c["label"], "value": c["value"]} for c in choices]}  # fmt: skip
     header = draft.header
+    # The GST/HST number on the invoice is ONE supplier's, and another is chosen: offered with one click (D-219).
+    other = supplier_by_number(store, draft)
+    chosen = store.find_vendor(header.get("vendor_name"), header.get("gst_hst_registration_number")) if other else None
+    if other and chosen and chosen["vendor_key"] != (store.find_vendor(other) or {}).get("vendor_key"):
+        out["vendor_name"] = {
+            "text": f"GST/HST number {str(header['gst_hst_registration_number']).strip()} is {other}'s in the "
+            "supplier list.",
+            "actions": [{"label": f"Use {other}", "value": other}],
+        }
     if not str(header.get("po_number") or "").strip() and any(i.code == "PO_NOT_QUOTED" for i in issues):
         numbers = store.open_pos_for_vendor(vendor_key(coding.vendor_name))[:3]
         if numbers:

@@ -23,6 +23,7 @@
 {% macro loaded_now(card, count, what, last) %}
 <p id="{{ card }}-now">{% if count %}{{ ui.pill("Loaded", "ok", "check") }} <b>{{ count | plural(what) }}</b>{% if last %}
   <span class="muted">· last loaded {{ last.when }}{% if last.by %} by {{ last.by }}{% endif %}</span>{% endif %}
+  · <a href="/jde-files/loaded/{{ card }}">See what is loaded</a>
   {% else %}{{ ui.pill("Not yet", "gray") }} <span class="muted">Nothing is loaded.</span>{% endif %}</p>
 {% endmacro %}
 {% block content %}
@@ -32,7 +33,10 @@
   <dl class="apc-kv">
     {% for item in checklist %}
     <dt>{{ loop.index }}. <a href="#{{ item.card }}">{{ item.name }}</a></dt>
-    <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}{% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
+    <dd>{% if item.loaded %}{{ ui.pill("Loaded", "ok", "check") }}
+      <a href="/jde-files/loaded/{{ item.card }}" data-see="{{ item.card }}">See the {{ item.rows }}</a>{% if item.by_hand %}
+      <span class="muted">· {{ item.by_hand | num }} changed by hand, kept when a newer file is loaded</span>{% endif %}
+      {% else %}{{ ui.pill("Not yet", "gray") }}{% endif %}</dd>
     {% endfor %}
     {# The chart does not say which accounts are meals accounts: ticked here with one click, or one by one. #}
     {% if meals %}
@@ -110,15 +114,25 @@
 
 <section class="card stack" id="suppliers">
   <h4>3. Suppliers</h4>
-  <p class="muted">The supplier master: each supplier's number, name, tax number, payment terms and hold code. Export
-    its grid from JD Edwards to Excel (.xlsx).</p>
+  <p class="muted">Two exports are loaded here, one after the other, in either order: the page tells them apart by
+    their column names. The supplier master's grid gives each supplier's number, name and payment hold code. The
+    vendor information list gives each supplier's tax ID, currency, payment terms, address and e-mail. Each row goes
+    to the supplier of its number, and loading one never removes what only the other gives. Export each from
+    JD Edwards to Excel (.xlsx), every column.</p>
   {{ loaded_now("suppliers", loaded.suppliers, "supplier", last.suppliers) }}
+  {% if loaded.suppliers %}<p class="muted" id="suppliers-tax-ids">{% if tax_ids %}The vendor information list is loaded for {{ tax_ids | plural("supplier") }}: picking a supplier on the review screen fills its tax ID, and a tax ID typed there finds its supplier.{% else %}The vendor information list is not loaded yet: no tax ID is filled or compared from it.{% endif %}</p>{% endif %}
   {{ what_was_said("suppliers") }}
   {% if suppliers %}
   <div id="suppliers-summary" class="stack">
     {% if suppliers.name %}
     <p><b>{{ suppliers.name }}</b> · nothing is loaded yet.</p>
-    {% if suppliers.rows is defined %}
+    {% if suppliers.info %}
+    <ul>
+      {% for line in suppliers.said %}<li>{{ line }}</li>{% endfor %}
+      <li>Columns found: {% for label, column in suppliers.found %}{{ label }} (“{{ column }}”){% if not loop.last %}, {% endif %}{% endfor %}.</li>
+      {% if suppliers.missing %}<li>No column found for: {{ suppliers.missing | join(", ") }}.</li>{% endif %}
+    </ul>
+    {% elif suppliers.rows is defined %}
     <ul>
       <li>{{ suppliers.rows | plural("row") }} read{% if not suppliers.problem %}: {{ suppliers.kept | plural("supplier") }} to load{% if suppliers.left_out %}, {{ suppliers.left_out | plural("row") }} left out (no name){% endif %}{% endif %}.</li>
       {% if suppliers.found %}<li>Columns found: {% for label, column in suppliers.found %}{{ label }} (“{{ column }}”){% if not loop.last %}, {% endif %}{% endfor %}.</li>{% endif %}
@@ -135,7 +149,7 @@
         <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">storefront</span>Load these suppliers</button>
       </form>
       {% endif %}
-      <a class="btn" href="/vendors?file={{ suppliers.token }}#import">Pick the columns on Vendors</a>
+      {% if not suppliers.info %}<a class="btn" href="/vendors?file={{ suppliers.token }}#import">Pick the columns on Vendors</a>{% endif %}
       <a class="btn" href="/jde-files#suppliers">Cancel</a>
     </div>
     {% endif %}

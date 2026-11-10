@@ -347,6 +347,14 @@ def _bank_save(request: Request, form: Any) -> JSONResponse:
                 f"Saved: {ui.plural(changed, 'bank account')} changed." if changed else "Nothing changed.")  # fmt: skip
 
 
+@router.post("/accounts/bank/remove")
+def bank_remove(request: Request, remove: str = Form("")) -> JSONResponse:
+    """Remove one bank account (the grid's Remove button posts its code)."""
+    if not get_store(request).remove_bank_account(remove.strip(), actor=reviewer()):
+        return refuse("That bank account is not in the list any more.")
+    return done(request, "/accounts?tab=bank", f"Bank account {remove.strip()} removed.")
+
+
 @router.get("/accounts/bank/template.csv")
 def bank_template() -> Response:
     """The columns a bank account file takes, with one made-up row (never the accounts themselves: only the last 4

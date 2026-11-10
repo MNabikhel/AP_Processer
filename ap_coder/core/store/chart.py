@@ -258,8 +258,11 @@ class ChartMixin:
         with self._conn() as conn:
             dialect.begin_write(conn)
             old = _chart(conn)
+            by_hand = self._hand_edits_put_back(conn, "chart_accounts", after)  # (D-221: kept across a load)
             result = _changes({(r.bu, r.object, r.subsidiary): r for r in old}, after)
             result["rows"] = len(after)
+            if by_hand:
+                result["by_hand"] = by_hand[:NAMED]
             was = account_lists(old, _units(conn), _settings(conn))[0]
             if result["added"] or result["updated"] or result["removed"]:
                 conn.execute("DELETE FROM chart_accounts")
@@ -287,8 +290,11 @@ class ChartMixin:
         with self._conn() as conn:
             dialect.begin_write(conn)
             old = _units(conn)
+            by_hand = self._hand_edits_put_back(conn, "business_units", after)  # (D-221: kept across a load)
             result = _changes({r.code: r for r in old}, after)
             result["rows"] = len(after)
+            if by_hand:
+                result["by_hand"] = by_hand[:NAMED]
             was = account_lists(_chart(conn), old, _settings(conn))[0]
             if result["added"] or result["updated"] or result["removed"]:
                 conn.execute("DELETE FROM business_units")
@@ -335,6 +341,14 @@ class ChartMixin:
         its event with everything the result says."""
         if not _moved(result):
             return
+        self._chart_stamped(conn)
+        self._log(conn, "accounts_imported", actor=actor, detail={"table": table, **result, "replace_all": True})
+
+    @staticmethod
+    def _chart_stamped(conn: sqlite3.Connection) -> None:
+        """One more change to the chart (``chart_version``) and what its tables now hold (``chart_hash``): the
+        reference data and the checks are worked out again. An import's, a rebuild's, and a row changed by hand
+        (``by_hand``, which records its own event)."""
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, '1') "
             "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1",
@@ -342,7 +356,6 @@ class ChartMixin:
         )
         held = hashlib.sha256(repr((_chart(conn), _units(conn))).encode("utf-8")).hexdigest()[:20]
         _put(conn, HASH_KEY, held)
-        self._log(conn, "accounts_imported", actor=actor, detail={"table": table, **result, "replace_all": True})
 
     def _rebuild_account_lists(self, conn: sqlite3.Connection, was: dict[str, tuple[str, str]]) -> dict[str, Any]:
         """The GL accounts and the cost centers made what the chart, the business units and the chart's settings

@@ -31,10 +31,12 @@ from pathlib import Path
 
 from ..ai.supplier_prior import SURE_LINES
 from ..coding import money as shares
+from ..coding.vendor_info import gst_number
 from ..core import chart
 from . import content as C
 from .generator import MISREAD_BASES, Case, Inv, Renderer, Style, _header_items, _knobs, _write_case
 from .jde_company import MAIN_UNIT, Account, Supplier, Truth, Voucher, money
+from .jde_exports import vendor_tax_id
 from .jde_names import invoice_wording
 
 NAMED = ("one_line", "four_lines", "fifteen_lines", "split_line", "quebec", "usd_new_supplier", "credit_note")
@@ -337,6 +339,9 @@ def render(invoice: Invoice, truth: Truth, seed: int = 1) -> tuple[bytes, dict]:
     domain = C.slug(invoice.supplier_name)
     vendor.email, vendor.web = (text.replace(C.slug(vendor.name), domain) for text in (vendor.email, vendor.web))
     vendor.name = invoice.supplier_name
+    listed = gst_number(vendor_tax_id(invoice.supplier), "CA") if invoice.supplier else ""
+    if listed and vendor.bn:  # the number the vendor information list has for this supplier (B-2299)
+        vendor.bn = re.sub(r"\D", "", listed)[:9]
     customer = C.make_customer(style("customer"), invoice.province or HOME_PROVINCE)
     customer.name = printed_name(truth.company.name)
     credit = invoice.layout == "credit_note"

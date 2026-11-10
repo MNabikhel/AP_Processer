@@ -192,6 +192,72 @@ def test_suppliers_without_their_number_column_are_refused_with_the_columns_name
     assert store.master_vendors() == []
 
 
+def _summary(client, token: str) -> str:
+    page = client.get(f"/jde-files?suppliers={token}").text
+    return page.split('id="suppliers-summary"', 1)[1].split("</section>", 1)[0]
+
+
+def test_the_vendor_information_list_is_told_by_its_columns_and_shown_before_it_is_loaded(client, store, exports):
+    """The same box takes the second supplier export (D-219): its summary first, nothing kept; then its tax IDs,
+    terms and addresses, each on the supplier of its number."""
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.VENDOR_INFO_FILE))
+    summary = _summary(client, token)
+    assert made.VENDOR_INFO_FILE in summary and "nothing is loaded yet" in summary
+    assert "55 suppliers to load: 0 already in the supplier list by their number" in summary
+    assert "Left out: 1 row of totals at the end." in summary and "Tax ID: " in summary and "Currency: CAD" in summary
+    assert "Tax ID (“Tax ID”)" in summary and "Business unit (“Business Unit”)" in summary
+    assert "Load these suppliers" in summary and "/vendors?file=" not in summary  # its columns are not picked
+    assert store.master_vendors() == [] and store.vendor_info_count() == 0
+    page = follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
+    assert "Suppliers: 55 added, 0 updated, from the vendor information list." in page
+    assert len(store.master_vendors()) == store.vendor_info_count() == 55
+    assert "The vendor information list is loaded for 55 suppliers" in page
+    info = store.vendor_info("900071")
+    assert info["tax_id"] == "#814402719" and info["country"] == "US" and info["currency"] == "USD"
+    gone = client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE)
+    assert gone.status_code == 400 and gone.json()["error"] == files.GONE  # loaded once
+
+
+def test_each_supplier_file_keeps_what_only_the_other_gives(client, store, exports):
+    for name in (made.SUPPLIERS_FILE, made.VENDOR_INFO_FILE, made.SUPPLIERS_FILE):
+        token = _token(_send(client, "/jde-files/suppliers/upload", exports, name))
+        if name == made.VENDOR_INFO_FILE:  # the master's 40 are known by their number
+            assert "55 suppliers to load: 40 already in the supplier list by their number" in _summary(client, token)
+        page = follow(client, client.post("/jde-files/suppliers/load", data={"token": token}, headers=PAGE))
+    assert "Suppliers: 0 added, 40 updated." in page
+    vendors = store.master_vendors()
+    assert len(vendors) == len({v["erp_id"] for v in vendors}) == 55
+    assert sum(1 for v in vendors if v["erp_hold"]) > 0 and sum(1 for v in vendors if v["expected_gst"]) > 20
+    assert store.vendor_info_count() == 55
+
+
+def test_the_long_list_goes_to_the_reader_of_long_exports_and_the_supplier_master_keeps_its_limit(
+        client, store, exports, monkeypatch):  # fmt: skip
+    """20,000 suppliers' sheet unzips to more than the 20 MB a sheet of any other upload may: the list is read a row
+    at a time, as the chart is; a damaged one is refused in the reader's plain words."""
+    monkeypatch.setattr(files.triage, "sheet_unzips_too_big", lambda content: True)
+    token = _token(_send(client, "/jde-files/suppliers/upload", exports, made.VENDOR_INFO_FILE))
+    assert "55 suppliers to load" in _summary(client, token)
+    refused = _send(client, "/jde-files/suppliers/upload", exports, made.SUPPLIERS_FILE)
+    assert refused.status_code == 400 and refused.json()["error"] == files.TOO_BIG_UNZIPPED
+
+
+def test_two_suppliers_of_one_name_keep_their_own_numbers_when_a_list_comes_in_another_order(client, store):
+    """Loaded sorted by number, then again sorted by name: the vendor under the name took the other supplier's
+    number, with the hold and everything AP had set on it, and a third vendor was made (B-2298)."""
+    from tests.jde_exports import supplier, supplier_master
+
+    rows = [supplier(410001, "PRAIRIE LIFT SERVICES LTD"), supplier(410077, "PRAIRIE LIFT SERVICES LTD"),
+            supplier(410090, "QUARRY ROAD SIGNS INC")]  # fmt: skip
+    for order in (rows, rows[::-1]):
+        answer = client.post("/jde-files/suppliers/upload", files={"file": ("grid.xlsx", supplier_master(order))},
+                             headers=PAGE)  # fmt: skip
+        follow(client, client.post("/jde-files/suppliers/load", data={"token": _token(answer)}, headers=PAGE))
+        vendors = {v["vendor_key"]: v["erp_id"] for v in store.master_vendors()}
+        assert vendors == {"prairie lift services": "410001", "prairie lift services #410077": "410077",
+                           "quarry road signs": "410090"}  # fmt: skip
+
+
 def test_a_journal_saved_as_unicode_text_is_read_as_the_csv_is(client, store, exports):
     """Excel's "Unicode Text" (UTF-16 with its mark, tabs between the cells) said "No voucher could be read from this
     file" with no reason (B-2276)."""

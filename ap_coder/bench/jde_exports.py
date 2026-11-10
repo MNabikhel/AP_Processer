@@ -9,6 +9,13 @@ layouts, with their quirks, are a real E1's:
   description indented by the level of detail and cut at 30 characters in all; a business unit's own header row has
   no object;
 * ``business_units_xlsx``: the business-unit master, 67 columns; ``suppliers_xlsx``: the supplier master, 10;
+* ``vendor_info_xlsx``: the vendor information list, 22 columns, one row per supplier paid by any company of the
+  group (the books' suppliers and a few of another company's), sorted by name as stored (a name starting with a
+  space first). Two columns are both named ``Business Unit`` (the number, then its name). Every cell is text
+  (number format ``@``; an empty one truly empty) but the supplier number and the payment count (numbers) and the
+  last payment's date (``mm-dd-yy``); the last row is a totals row, only its payment count filled. A name can
+  start with a space or carry ``(DNU)``, ``DO NOT USE``, ``O/A`` or a run of spaces and an old reference number;
+  the tax ID is free text (a business number with or without its program account, an EIN, a word);
 * ``journal_csv``: report R09321 "Transaction Journal" (vouchers only) saved as CSV. A printed report, not a table:
   UTF-8 with a BOM, CRLF, 5 title rows, the header over rows 6 and 7, data from row 8 at fixed positions
   (``JOURNAL_POSITIONS``), a voucher's first row starting ``PV``, company, G/L date and its other rows with those
@@ -30,6 +37,7 @@ import argparse
 import csv
 import datetime as dt
 import io
+import random
 import re
 import zipfile
 from collections.abc import Iterable
@@ -42,12 +50,14 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
 
 from ..core.chart import join_account, split_account
-from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Truth, Voucher, build
+from .jde_company import OVERHEAD_CLASS, Account, BusinessUnit, Supplier, Truth, Voucher, build
 
 BLANK = " "  # an empty text field of a grid's export
 DATE_FORMAT, THOUSANDS = "MM/dd/yyyy", "#,##0.00"
+TEXT_FORMAT, SHORT_DATE = "@", "mm-dd-yy"  # the vendor information list's cells
 CHART_FILE, UNITS_FILE, SUPPLIERS_FILE = "chart_of_accounts.xlsx", "business_units.xlsx", "supplier_master.xlsx"
 JOURNAL_FILE, HEADERS_FILE = "transaction_journal.csv", "voucher_headers.xlsx"
+VENDOR_INFO_FILE = "vendor_info.xlsx"
 # Where the journal's fields are in a data row (0-based).
 JOURNAL_POSITIONS = {"doc_type": 0, "company": 1, "gl_date": 2, "account": 3, "description": 7, "debit": 9,
                      "credit": 11, "remark": 13, "supplier_number": 15, "supplier_name": 16}  # fmt: skip
@@ -72,6 +82,36 @@ UNITS_HEADER = [
 ]  # fmt: skip
 SUPPLIERS_HEADER = ["Address Number", "Alpha Name", "Individual Tax ID", "Long Address", "Industry Class", "Sch Typ",
                     "C M", "Status", "Hold Payment Code", "Hold Orders Code"]  # fmt: skip
+VENDOR_INFO_HEADER = [
+    "Internal Supplier Number", "Company Name", "Complete Address", "Address Line 1", "Address Line 2",
+    "Address Line 3", "Address Line 4", "City - CTY1", "State", "Country", "Postal Code", "Tax ID", "Cur Cod",
+    "Check/ Itm Date", "JDE email address", "Total Payment Count", "Pmt Trm", "Payment Terms - A/P", "Business Unit",
+    "Business Unit", "DUNS Number", "Sch Typ",
+]  # fmt: skip
+# Another company's suppliers, in the list beside the books' own: (name as stored, city, state, country, postal
+# code, tax ID, currency). Invented, each for a shape such a list has.
+OTHER_SUPPLIERS = (
+    (" HARBOURVIEW MARINE SUPPLY LTD", "Halifax", "NS", "CA", "B3J 1P3", "70412 9930 RT0001", "CAD"),
+    ("(DNU) OLD MILL STATIONERS", "Brandon", "MB", "CA", "R7A5Y1", "", "CAD"),
+    ("(DO NOT USE)REDWATER TOWING", "Red Deer", "AB", "CA", "T4N 3T2", "R104482261", "CAD"),
+    ("TAMARACK SIGNS - DO NOT USE", "Kenora", "ON", "CA", "P9N 1T1", "CHARITABLE", "CAD"),
+    ("OKAFOR, DANIEL O/A PRAIRIE SHARPENING", "Estevan", "SK", "CA", "S4A 0W5", "714-20-3381", "CAD"),
+    ("C/O NORTHGATE PROPERTY MGMT", "Thunder Bay", "ON", "CA", "P7B-5E1", "88104 2267 RC0001", "CAD"),
+    ("WINDROW SEED CLEANING               00417", "Swift Current", "SK", "CA", "S9H 3W4", " 131904417", "CAD"),
+    ("TOWN OF COPPER CREEK", "Copper Creek", "BC", "CA", "V0B 1G0", "GOVERNMENT", "CAD"),
+    ("ST. BRENDAN'S FOOD BANK SOCIETY", "Corner Brook", "NL", "CA", "A2H 6J8", "CHARITABLE", "CAD"),
+    ("CASCADE BEARING & DRIVE INC", "Spokane", "WA", "US", "99201-4410", "91-4402718", "USD"),
+    ("LONE PINE CALIBRATION LLC", "Billings", "MT", "US", "59101", "#814402719", "USD"),
+    ("KOORA FIELD SYSTEMS PTY LTD", "", "WA", "AU", "6000", "51 824 753 556", "AUD"),
+    ("FENWICK INSTRUMENTS LTD", "Leeds", "", "GB", "LS1 4AP", "GB 318 4402 71", "CAD"),
+    ("9042 1187 QUEBEC INC", "Sherbrooke", "QC", "CA", "J1H 5N4", "720481193RT0001", "CAD"),
+    ("ATELIER  BEAUSÉJOUR", "Moncton", "NB", "CA", "E1C 4Z5", "N/A", "CAD"),
+)  # fmt: skip
+OTHER_UNIT = ("0031045990", "SHARED SERVICES 00310")  # the business unit the other company's suppliers are paid on
+# (code, description) of the payment terms a supplier can have: a code with no description's is blank for some.
+VENDOR_TERMS = (("N", "Net 30"), ("F", "Net 45"), ("T", "Net 15"), ("", "Due on receipt"), ("E", "End of next month"),
+                ("", ""))  # fmt: skip
+MAIL_DOMAINS = ("example.com", "example.org", "example.net")  # reserved for examples: no one's address
 HEADERS_HEADER = [
     "Document Number", "Doc Type", "Document Type", "Doc Co", "Invoice Date", "G/L Date", "Due Date", "Gross Amount",
     "Open Amount", "Foreign Amount", "Foreign Open", "Pay Stat", "Pay Status Code", "Supplier Number",
@@ -233,6 +273,98 @@ def suppliers_xlsx(truth: Truth) -> bytes:
         for s in truth.suppliers
     ]  # fmt: skip
     return _workbook(SUPPLIERS_HEADER, rows)
+
+
+def _check_digit(digits: str) -> str:
+    """The digit that makes ``digits`` and it pass the Luhn formula: a business number's ninth."""
+    total = 0
+    for n, ch in enumerate(reversed(digits)):
+        doubled = int(ch) * (1 if n % 2 else 2)
+        total += doubled - 9 if doubled > 9 else doubled
+    return str(-total % 10)
+
+
+def vendor_tax_id(supplier: Supplier) -> str:
+    """The tax ID the vendor information list holds for a supplier of the books, in the shapes such a list has: a
+    business number with its program account for most that charge the GST (with spaces for some, the nine digits
+    alone or another account of the same business for others), an EIN for a foreign one, a personal number for some
+    people, a word or nothing for the rest. Invented from the supplier's number; a business number passes its check
+    digit."""
+    rng = random.Random(f"tax-id-{supplier.number}")
+    eight = "7" + "".join(rng.choice("0123456789") for _ in range(7))
+    number = eight + _check_digit(eight)
+    if supplier.currency != "CAD":
+        return f"{number[:2]}-{number[2:]}"
+    if supplier.kind == "employee":
+        return f"{number[:3]}-{number[3:5]}-{number[5:]}" if supplier.number % 3 == 0 else ""
+    if supplier.kind == "remittance":
+        return "GOVERNMENT"
+    if not supplier.taxed:
+        return ("", "N/A", number)[supplier.number % 3]
+    shapes = (f"{number}RT0001", f"{number}RT0001", f"{number[:5]} {number[5:]} RT0001", number,
+              f"{number} RT 0001", f"{number}RT0002")  # fmt: skip
+    return shapes[rng.randrange(len(shapes))]
+
+
+def _vendor_row(truth: Truth, rng: random.Random, number: int, name: str, lines: list[str], place: tuple[str, ...],
+                tax_id: str, currency: str, unit: tuple[str, str]) -> list[Any]:  # fmt: skip
+    """One row of the vendor information list; ``place``: (city, state, country, postal code)."""
+    city, state, country, postal = place
+    lines = (lines + [""] * 4)[:4]
+    where = f"{city}, {state} {postal}".strip() if country else ",  "
+    complete = "\n".join([name.strip(), *[text for text in lines if text], where, country, ""])
+    mail = re.sub(r"[^a-z]+", "", name.lower())[:14] or "accounts"
+    email = ("", f"ap@{mail}.{rng.choice(MAIL_DOMAINS)}", f"AR@{mail.upper()}.{rng.choice(MAIL_DOMAINS).upper()}",
+             f"{mail} billing <billing@{mail}.{rng.choice(MAIL_DOMAINS)}>")[rng.randrange(4)]  # fmt: skip
+    code, terms = VENDOR_TERMS[rng.randrange(len(VENDOR_TERMS))]
+    paid = dt.datetime(truth.company.year, rng.randint(1, 12), rng.randint(1, 28))
+    duns = "" if rng.randrange(3) else str(rng.randrange(10**8, 10**9))
+
+    def text(*values: str) -> list[Any]:
+        return [(value, TEXT_FORMAT) if value else None for value in values]
+
+    return [number, *text(name, complete, *lines, city, state, country, postal, tax_id, currency),
+            (paid, SHORT_DATE), *text(email), rng.choice((1, 2, 3, 7, 12, 31, 118, 1204)),
+            *text(code, terms, *unit, duns, "V")]  # fmt: skip
+
+
+def _vendor_rows(truth: Truth) -> list[list[Any]]:
+    """The vendor information list's rows before they are sorted: the books' suppliers under their names as the
+    supplier master has them (one in eleven stored with a space before it), then the other company's."""
+    rows: list[list[Any]] = []
+    units = [unit for unit in truth.business_units if unit.status == "ACT"] or truth.business_units
+    cities = {"AB": "Edmonton", "BC": "Kamloops", "QC": "Trois-Rivieres", "WA": "Yakima", "MT": "Helena",
+              "MN": "Duluth"}  # fmt: skip
+    for n, s in enumerate(truth.suppliers):
+        rng = random.Random(f"vendor-info-{s.number}")
+        foreign = s.currency != "CAD"
+        state = rng.choice(("WA", "MT", "MN")) if foreign else {"0.07": "BC", "0.09975": "QC"}.get(
+            str(s.provincial_rate), "AB")  # fmt: skip
+        postal = str(rng.randrange(10000, 99999)) if foreign else (
+            f"{'TVG'[('AB', 'BC', 'QC').index(state)]}{rng.randrange(1, 9)}{rng.choice('ABCEGHJ')} "
+            f"{rng.randrange(1, 9)}{rng.choice('KLMNPRS')}{rng.randrange(1, 9)}")  # fmt: skip
+        street = f"{rng.randrange(100, 9900)} {rng.choice(('Alder St', 'Quarry Rd', '104 St NW', 'Ferry Rd'))}"
+        lines = ([street], [f"PO BOX {rng.randrange(100, 999)}", street], ["", street], [])[rng.randrange(4)]
+        unit = units[n % len(units)]
+        name = f" {s.name}"[:40] if n % 11 == 3 else s.name
+        rows.append(_vendor_row(truth, rng, s.number, name, lines, (cities[state], state, "US" if foreign else "CA",
+                                                                    postal), vendor_tax_id(s), s.currency,
+                                (unit.number, unit.name)))  # fmt: skip
+    for n, (name, city, state, country, postal, tax_id, currency) in enumerate(OTHER_SUPPLIERS):
+        rng = random.Random(f"vendor-info-other-{n}")
+        lines = [f"{rng.randrange(10, 990)} {rng.choice(('Harbour Rd', 'Mill Lane', 'Station St'))}"] if n % 4 else []
+        rows.append(_vendor_row(truth, rng, 900_001 + 7 * n, name, lines, (city, state, country, postal), tax_id,
+                                currency, OTHER_UNIT))  # fmt: skip
+    return rows
+
+
+def vendor_info_xlsx(truth: Truth) -> bytes:
+    """The vendor information list, 22 columns, by name as stored, a totals row last (only its payment count)."""
+    rows = sorted(_vendor_rows(truth), key=lambda row: row[1][0])
+    count = VENDOR_INFO_HEADER.index("Total Payment Count")
+    totals: list[Any] = [None] * len(VENDOR_INFO_HEADER)
+    totals[count] = sum(row[count] for row in rows)
+    return _workbook(VENDOR_INFO_HEADER, [*rows, totals])
 
 
 # --- the journal ---------------------------------------------------------------------------------
@@ -426,13 +558,13 @@ def example_vouchers(truth: Truth) -> dict[str, Voucher]:
 
 def write_all(folder: str | Path, seed: int = 1, size: str = "small", year: int = 2024) -> Truth:
     """Every export of the made-up company in ``folder`` (made if missing): the chart, the business units, the
-    suppliers, the journal, the voucher headers, and the three grids of each example voucher
-    (``voucher_<which>_gl_distribution.xlsx``, ``..._pay_items.xlsx``, ``..._payment_history.xlsx``). Returns the
-    truth the files were written from."""
+    suppliers, the vendor information list, the journal, the voucher headers, and the three grids of each example
+    voucher (``voucher_<which>_gl_distribution.xlsx``, ``..._pay_items.xlsx``, ``..._payment_history.xlsx``). Returns
+    the truth the files were written from."""
     truth = build(seed, size, year)
     files = {CHART_FILE: chart_xlsx(truth), UNITS_FILE: business_units_xlsx(truth),
-             SUPPLIERS_FILE: suppliers_xlsx(truth), JOURNAL_FILE: journal_csv(truth),
-             HEADERS_FILE: voucher_headers_xlsx(truth)}  # fmt: skip
+             SUPPLIERS_FILE: suppliers_xlsx(truth), VENDOR_INFO_FILE: vendor_info_xlsx(truth),
+             JOURNAL_FILE: journal_csv(truth), HEADERS_FILE: voucher_headers_xlsx(truth)}  # fmt: skip
     for label, voucher in example_vouchers(truth).items():
         files[f"voucher_{label}_gl_distribution.xlsx"] = gl_distribution_xlsx(truth, voucher)
         files[f"voucher_{label}_pay_items.xlsx"] = pay_items_xlsx(truth, voucher)

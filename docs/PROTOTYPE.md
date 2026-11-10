@@ -38,6 +38,10 @@ A new installation shows the short menu ("Simple screens"): **To review**, **Add
 **Find an invoice**, **What was learned**, and under **Setup**: GL accounts & tax, JD Edwards files, Vendors,
 Activity, Settings. **Settings → About → Screens** shows every page again.
 
+A laptop that ran an earlier AP Coder keeps its data folder, and with it the long menu. The first time you open
+**To review** after the update, a card says what is new and asks once: **Use the simple screens** or **Keep every
+page**. Either way it does not come back.
+
 ## 2. Look around with a made-up company first (optional, 5 minutes)
 
 To see the whole path before loading anything of your own, make a second data folder with a made-up company in it:
@@ -61,12 +65,26 @@ delete. The top of the page ticks off what is loaded.
 |---|---|---|---|
 | 1 | Chart of accounts (Excel) | every account string a line may be coded to, and which can be posted to | account master |
 | 2 | Business units (Excel) | their names, and which are closed | business unit master |
-| 3 | Suppliers (Excel) | supplier numbers, names, payment holds | address book and supplier master |
+| 3 | Suppliers (Excel): two exports, loaded one after the other in either order | the supplier master's grid: supplier numbers, names, payment holds; the vendor information list: each supplier's tax ID, currency, payment terms, address and e-mail | supplier master; vendor information list |
 | 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
 | 5 | Vouchers already in JD Edwards (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
 Each upload shows what it found (how many rows, which columns it read as what) before anything is kept. Loading a
 newer file later replaces the older one; what you typed in AP Coder is set aside, not lost.
+
+Box 3 takes both supplier exports and tells them apart by their column names. Each row goes to the supplier of its
+number, so loading one never removes what only the other gives. The vendor information list lists the suppliers of
+every company (about 20,000): it is read in a few seconds, its last row of totals is left out, and the summary says
+how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVERNMENT) or another kind of number
+(a US EIN) is kept as written and compared with nothing.
+
+**See what is loaded.** Once a file is loaded, *What is loaded* at the top links to its rows: a table with a search
+box, filters, a count and *Download as CSV* (codes keep their leading zeros). In the chart, the business units and
+the suppliers, **Change** beside a row lets you correct it: an account's description, whether it can be posted to
+and its meals tick; a business unit's name and status; a supplier's name, hold, note, tax numbers and terms. What
+you change is kept when you load a newer file (the page shows what the file says beside it), and every change is in
+**Activity** with who made it. Last year's coding and the vouchers are a record of what happened: you can look and
+download, not change; forget the file to take them out.
 
 Under the chart, **The chart's settings** has three boxes worth a look:
 
@@ -80,6 +98,12 @@ pay item (tax explanation code V), and PST or QST that is not recovered stays in
 not say which accounts are meals accounts, so the top of the JD Edwards files page has a **Meals accounts** line that
 names the accounts that read like meals and ticks them with one click: until one is ticked, the GST/HST of a meal is
 claimed in full, not by half.
+
+**Bank accounts (optional).** JD Edwards' voucher entry takes a G/L bank account. To have each voucher carry
+one, type your bank accounts on **Setup → GL accounts & tax → Bank accounts**: the account as you key it in
+JD Edwards, a description, its currency, and a tick on the default of each currency. *Remove* takes one off the
+list. Where people sign in, an Approver or an Admin does this; a Clerk sees the list and picks from it. With no
+bank account entered, nothing changes and nothing asks for one.
 
 ## 4. See how it would have coded last year (5 minutes)
 
@@ -115,10 +139,21 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice
      is marked under the lines and in the findings; it does not stop the approval by itself, so look before
      approving.
+   - **Supplier and tax ID** (with the vendor information list loaded): picking a supplier fills its GST/HST
+     number under *More details* when the invoice shows none; a number that was read or typed is never replaced.
+     A number that belongs to one supplier of the list picks that supplier when the box is empty, and offers it
+     with one click (*Use ...*) when another supplier is chosen. A number that differs from the chosen supplier's
+     is an error: *Approve anyway* with a reason approves it, and the keying sheet then says on that voucher
+     "Tax ID differs from the supplier list: confirm before paying". Where people sign in, such a voucher waits
+     for a second approval by an Approver or an Admin before it can be exported.
+   - **Bank account** (once a bank account is entered): shown in the header, set to the one this supplier was
+     last paid from, else the default of the invoice's currency; pick another from the list. An invoice in a
+     currency no bank account is in gets a warning and is not held.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
 3. **To key into JDE:** **Export** puts the approved invoices on a **keying sheet**: one block a voucher, the
    header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax
-   explanation code, tax rate/area, tax amount, taxable amount), then one row a line (account, amount, remark). Print
+   explanation code, tax rate/area, tax amount, taxable amount, and the G/L bank account once bank accounts are
+   entered), then one row a line (account, amount, remark). Print
    it or keep it
    beside JD Edwards and key from it. An invoice that is not ready is listed with why and is not put on the sheet.
    The same page makes the JD Edwards batch files, for when the JDE team can load one.

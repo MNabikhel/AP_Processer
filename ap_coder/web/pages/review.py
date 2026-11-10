@@ -67,6 +67,7 @@ from ap_coder.web.core import (
     refuse,
     render,
     reviewer,
+    screens_to_choose,
     server_mode,
 )
 from ap_coder.web.identity import shown_path
@@ -185,7 +186,7 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
             if asked not in blocks:
                 choice = banks.opening_choice({"pay_from_account": code, "currency": currency}, approved, accounts,
                                               asked[3])  # fmt: skip
-                blocks[asked] = banks.blocking(choice, accounts)
+                blocks[asked] = banks.blocking(choice, accounts, currency)
             bank = blocks[asked]
         why = [
             to_pick,
@@ -449,7 +450,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     reference = reference_or_none(store)
     # The queue's invoices only (in review, parked, waiting for a second approval), and the others counted: a year of
     # approved invoices is not read on every visit (D-110). The tabs only show their counts: a few seconds behind
-    # (B-1738); the first start's page offers the demo by them: exact.
+    # (B-1738); the first start's page counts its steps by them: exact.
     if reference is None or not store.has_invoices():
         return _getting_started(request, store, store.status_counts())
     counts = store.status_counts(settled=True)
@@ -498,6 +499,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     context["bulk_job"] = bulk_notice(store)  # the person's bulk approval under way, or ended since (D-185)
+    context["choose_screens"] = screens_to_choose(request, store)  # an older data folder: asked once (D-221)
     if tab == "review":
         from ap_coder.web.pages.invoice import open_elsewhere
 
@@ -559,7 +561,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 
 def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> HTMLResponse:
-    from ap_coder.web.pages.process import demo_offered, first_steps, next_step, shown_setup, step_state
+    from ap_coder.web.pages.process import first_steps, next_step, shown_setup, step_state
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(counts))  # as Import invoices counts
     named = step_state(steps, "Your name") == "ok"  # (before it, first_name() is the login: "Good morning, root")
@@ -573,9 +575,7 @@ def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> 
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
         waiting=counts.get(REVIEW, 0) if reference_or_none(store) is None else 0,
-        demo_available=demo_offered(store.demo_count(), sum(counts.values())),
-        demo_count=store.demo_count(),
-        where="/review",
+        choose_screens=screens_to_choose(request, store),
     )  # fmt: skip
 
 

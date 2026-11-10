@@ -2,8 +2,10 @@
 Edwards sync), what its rows say (JD Edwards' hold payment codes, ``hold_code``; a name marked as retired,
 ``name_marker``; a person listed "LAST, FIRST M.", ``person_name``), the vendor a name is when none is kept under it
 as written (``_vendor_named_otherwise``, for ``find_vendor``), and what the rest reads of the master: its vendors,
-their ERP IDs (``vendor_ids``), the one a GST/HST number belongs to. The vendor list itself (a vendor's own row, its
-invoices, the Vendors page) is ``vendors``, which keeps every name of this part importable from there too."""
+their ERP IDs (``vendor_ids``), the one a GST/HST number belongs to; and JD Edwards' vendor information list, the
+second supplier export, kept by supplier number beside the vendors (``import_vendor_info``, ``vendor_info``, D-219).
+The vendor list itself (a vendor's own row, its invoices, the Vendors page) is ``vendors``, which keeps every name of
+this part importable from there too."""
 
 from __future__ import annotations
 
@@ -29,6 +31,9 @@ NEVER_HOLD = ("", "N")
 # pays nothing, so the invoice goes on with a warning (VENDOR_PAYMENTS_HELD), not held as one of ``Y`` or ``1`` is
 # (B-2157).
 PAYMENTS_ONLY = ("2",)
+# What JD Edwards' vendor information list says of a supplier, kept by its number (``vendor_info``, D-219).
+INFO_COLUMNS = ("tax_id", "tax_id_norm", "currency", "terms", "address1", "address2", "address3", "address4", "city",
+                "state", "country", "postal_code", "email", "business_unit", "business_unit_name")  # fmt: skip
 
 
 def stops_vouchers(code: Any) -> bool:
@@ -460,6 +465,45 @@ class VendorMasterMixin:
             names[key] = [there["vendor_name"]]
         return key
 
+    # --- JD Edwards' vendor information list (D-219) --------------------------------------------------------
+
+    def import_vendor_info(self, rows: list[dict[str, Any]], info: list[dict[str, Any]],
+                           actor: str | None = None) -> dict[str, Any]:  # fmt: skip
+        """Load JD Edwards' vendor information list: ``rows``, its suppliers as the vendor master's import takes
+        them (``coding/vendor_info.master_rows``), each going to the vendor of its name holding its number
+        (``by_erp_id``), which keeps its hold code, its status and everything AP set on it; and ``info``, what the
+        list says of each supplier, kept by supplier number (``INFO_COLUMNS``; the newer list's row replaces the
+        older one's). All of it kept, or none. Returns what ``import_vendor_master`` does."""
+        now = _now()
+        columns, marks = ", ".join(INFO_COLUMNS), ", ".join("?" * len(INFO_COLUMNS))
+        newer = ", ".join(f"{c} = excluded.{c}" for c in (*INFO_COLUMNS, "updated_at"))
+        upsert = (f"INSERT INTO vendor_info (erp_id, {columns}, updated_at) VALUES (?, {marks}, ?) "
+                  f"ON CONFLICT(erp_id) DO UPDATE SET {newer}")  # fmt: skip
+        with self.transaction():
+            result = self.import_vendor_master(rows, actor=actor, by_erp_id=True, log=False)
+            with self._conn() as conn:
+                conn.executemany(upsert, [(str(r["erp_id"]).strip(), *(str(r.get(c) or "") for c in INFO_COLUMNS), now)
+                                          for r in info])  # fmt: skip
+                self._log(conn, "vendors_imported", actor=actor, detail={
+                    "added": result["added"], "updated": result["updated"], "duplicates": len(result["duplicates"]),
+                    "list": "vendor information", "tax_ids": sum(1 for r in info if r.get("tax_id")),
+                })  # fmt: skip
+        return result
+
+    def vendor_info(self, erp_id: Any) -> dict[str, Any] | None:
+        """What the vendor information list says of the supplier of this number (its tax ID as written, ``tax_id``,
+        and as compared, ``tax_id_norm``; currency, terms, address, e-mail); None when it does not list it."""
+        ident = str(erp_id or "").strip()
+        if not ident:
+            return None
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM vendor_info WHERE erp_id = ?", (ident,)).fetchone()
+        return dict(row) if row else None
+
+    def vendor_info_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM vendor_info").fetchone()[0])
+
     # --- What the rest reads of the master ----------------------------------------------------------------
 
     def has_vendor_master(self) -> bool:
@@ -556,6 +600,26 @@ class VendorMasterMixin:
                 "ORDER BY rowid", (json.dumps(sorted(found)),),
             )]  # fmt: skip
         return [r for r in rows if same_tax_number(r["expected_gst"], number)]
+
+    def supplier_of_tax_number(self, number: Any) -> dict[str, Any] | None:
+        """The ONE supplier in use of the vendor master whose GST/HST number ``number`` is (a business number with
+        or without its program account, ``same_tax_number``); None when it is no number, no supplier's, or several
+        suppliers': a number like that picks none (D-219)."""
+        if sum(c.isdigit() for c in norm_tax_number(number)) < 9:
+            return None
+        found = [v for v in self.master_by_tax_number(number) if not erp_stopped(v)]
+        return found[0] if len(found) == 1 else None
+
+    def tax_id_differs(self, coding: dict[str, Any]) -> str:
+        """The vendor master's GST/HST number of the supplier an invoice is coded to, when the invoice shows another
+        one ("" when they are the same, or either has none): what ``VENDOR_TAX_NUMBER_CHANGED`` says of the vendor
+        list, asked of the stored coding (the approval, the keying sheet: D-219)."""
+        printed = coding.get("gst_hst_registration_number")
+        vendor = self.find_vendor(coding.get("vendor_name"), printed)  # (a method of ``vendors``' part)
+        listed = str((vendor or {}).get("expected_gst") or "").strip()
+        if not vendor or not vendor.get("in_master") or not norm_tax_number(listed) or not norm_tax_number(printed):
+            return ""
+        return "" if same_tax_number(printed, listed) else listed
 
     def _master_numbers(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
         """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:

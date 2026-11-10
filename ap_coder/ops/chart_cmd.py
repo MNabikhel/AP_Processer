@@ -118,6 +118,9 @@ def lists_lines(results: list[dict[str, Any]]) -> list[str]:
         kinds = {kind: [code for r in results for code in r[key][kind]] for kind in results[-1][key]}
         if any(kinds.values()):
             said.append(f"  {words}: {_kept(kinds)}.")
+    by_hand = [name for r in results for name in r.get("by_hand", ())]
+    if by_hand:  # (D-221: a row changed on the JD Edwards files page keeps its change across a load)
+        said.append(f"  Kept as changed by hand here, where the file says otherwise: {_some(by_hand)}.")
     for what in results[-1]["unmapped"]:
         said.append(f"  To set right: {what}, which is no longer in the list.")
     return said

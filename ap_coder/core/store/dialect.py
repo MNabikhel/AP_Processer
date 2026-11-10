@@ -189,6 +189,13 @@ def columns(conn: Any, table: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
+def column_kinds(conn: Any, table: str) -> dict[str, str]:
+    """``table``'s columns in the table's own order, each with the type it was declared with, in capitals ("TEXT",
+    "INTEGER": ``PRAGMA table_info``). PostgreSQL: ``SELECT column_name, upper(data_type) FROM
+    information_schema.columns WHERE table_name = %s ORDER BY ordinal_position``."""
+    return {r[1]: str(r[2] or "").upper() for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def add_column(conn: Any, table: str, column: str, kind: str) -> None:
     """``ALTER TABLE table ADD COLUMN column kind`` (both have it; PostgreSQL also says ``IF NOT EXISTS``)."""
     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")

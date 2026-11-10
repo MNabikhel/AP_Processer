@@ -810,14 +810,6 @@ RECENT_COLUMNS = ("id, file_name, status, vendor_name, invoice_number, invoice_d
                   "second_reviewer")  # (as ``Store.list_invoices`` has them)  # fmt: skip
 
 
-def demo_offered(demo_count: int, total: int) -> bool:
-    """The demo card shows while there are no invoices of your own, or to remove a demo already loaded: loading it
-    beside your own invoices would add the samples again and mix made-up invoices into your numbers (D-137)."""
-    from ap_coder.ops.demo import demo_available
-
-    return demo_available() and (bool(demo_count) or not total)
-
-
 @router.get("/process", response_class=HTMLResponse)
 def process_page(request: Request) -> HTMLResponse:
     store, settings = get_store(request), get_settings(request)
@@ -833,8 +825,9 @@ def process_page(request: Request) -> HTMLResponse:
     files, not_read, folder_note = (shared_files if server_mode(request) else folder_files)(store)
     return render(
         request, "process.html", "process",
-        # The demo still loaded and none of your own invoices yet: asked to remove it first, so its reviewer, lessons
-        # and vendors don't mix into your numbers (B-468).
+        # The demo still loaded and none of your own invoices yet: asked to remove it first (in Settings → Data &
+        # backups, where it was loaded: D-221), so its reviewer, lessons and vendors don't mix into your numbers
+        # (B-468).
         demo_first=bool(demo_count) and demo_count >= total,
         steps=steps,
         step_links=links,
@@ -854,9 +847,6 @@ def process_page(request: Request) -> HTMLResponse:
         accept=",".join(ACCEPT),
         voucher_kinds=joined.KINDS,
         job=import_status(store, settings),
-        demo_available=demo_offered(demo_count, total),
-        demo_count=demo_count,
-        where="/process",
     )  # fmt: skip
 
 
@@ -1226,7 +1216,7 @@ def inbox_done(request: Request, entry_id: str) -> JSONResponse:
     return done(request, "/process", flash_message("Marked as dealt with.", "ok", icon="done_all"))
 
 
-# --- Demo invoices -------------------------------------------------------------------------------------------------
+# --- Demo invoices (offered in Settings → Data & backups only: settings.data_context, D-221) -------------------------
 
 
 @router.post("/demo/load")

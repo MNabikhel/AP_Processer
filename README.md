@@ -55,8 +55,9 @@ invoice (PDF, scan, photo, email) ─► read on the machine: text layer or OCR,
 | ![An invoice in review: the page with every value boxed, the checks, and the approve bar](docs/screenshots/invoice-review.png) | ![The invoice directory: every invoice in one table, filtered by any column](docs/screenshots/invoice-directory.png) |
 | ![Sales tax: the GST/HST and QST to claim back for a period](docs/screenshots/sales-tax.png) | ![Learning & accuracy: how often the coding is right, and what was learned](docs/screenshots/learning.png) |
 
-**Want to look around?** Start AP Coder and click **Load demo invoices**: ten sample invoices from across Canada,
-with sample purchase orders and a vendor list. (The screenshots are of these samples.)
+**Want to look around?** Start AP Coder and, in **Settings** → **Data & backups**, click **Load demo invoices**: ten
+sample invoices from across Canada, with sample purchase orders and a vendor list. (The screenshots are of these
+samples.)
 
 ## Get started on a laptop
 

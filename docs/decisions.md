@@ -5276,3 +5276,137 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     `settings_data.html`; `ap_coder/ops/share.py`, `ap_coder/ops/cli.py`; `ap_coder/ai/lessons.py`,
     `ap_coder/web/pages/invoice.py`, `ap_coder/core/store/learning.py`, `lessons.py`, `base.html`, `js/app.js`;
     `tests/core/test_backup_time.py`, `tests/ops/test_share.py`, `tests/ai/test_why_question.py`)
+- **D-219** · **The supplier list takes a second JD Edwards export, the vendor information list, for its tax IDs;
+  the review screen fills, finds and compares by them; a tax ID that differs is confirmed by a second person**
+  (10 Nov 2026). Asked by the person testing the prototype path (D-209 to D-218).
+  - **The file.** One row per supplier paid by any company of the group (about 20,000), 22 columns, two of them
+    both named "Business Unit" (read by where they are), a totals row last. It is loaded in the same box as the
+    supplier master's grid (JD Edwards files, box 3), told apart by its column names (`coding/vendor_info.py`:
+    the list's own supplier number, name and tax ID columns). Its sheet unzips to more than the 20 MB any other
+    spreadsheet may, so it is read by the reader of JD Edwards' long exports (`core/chart_file.read_rows`, the
+    chart's bounds), once, at its upload (about 4 s for 20,000 suppliers); what was read is kept for the summary
+    and the load (about 1 s), so the page says what it found before anything is kept.
+  - **The two files meet on the supplier number.** The list's suppliers go through the vendor master's import
+    (`Store.import_vendor_master`, `by_erp_id`: a row goes to the vendor of its name holding its number), which
+    keeps the hold code, the status and everything AP set; what only the list gives is kept by supplier number in
+    a table of its own (`vendor_info`: tax ID as written and as compared, currency, terms, address lines, city,
+    province or state, country, postal code, e-mail, business unit). The supplier master's grid is loaded
+    `by_erp_id` too (B-2298), so neither file moves a number to another vendor or removes what the other gave.
+    - *Not chosen:* eleven more columns on `vendors`, which is read whole in many places (20,000 rows); a match
+      of the two files by name, which two suppliers of one name break.
+  - **The tax ID is free text.** Kept as written. Compared form (`tax_id_norm`): letters and digits, empty for a
+    word (CHARITABLE, GOVERNMENT, N/A), which is never matched as a number. Only a tax ID that reads as a Canadian
+    business number becomes the vendor's GST/HST number (`vendors.expected_gst`, which every existing piece reads:
+    the fill of D-65, `master_by_tax_number`, VENDOR_MATCHED_BY_TAX_NUMBER, VENDOR_TAX_NUMBER_CHANGED): with its RT
+    account as written; the nine digits alone for another program account of the same business (RC, RP), an older
+    "R" number, or nine digits without a dash of a supplier in Canada. `same_tax_number` then matches it with or
+    without the program account.
+    - *Not chosen:* an EIN, a personal number or a foreign number in the invoice's GST/HST box. The box is what
+      the GST/HST checks, the exports' "Vendor GST/HST #" and the input tax credit read; nine digits of a US
+      supplier would be compared with a GST/HST number it is not. They are kept, and compared with nothing.
+  - **The review screen, both ways.** Picking a supplier fills the invoice's GST/HST number when the box is empty
+    or still holds what was filled (D-65, unchanged: never over a number read or typed). A number read or typed
+    that is ONE supplier's in use (`Store.supplier_of_tax_number`; none when several share it) selects that
+    supplier when the vendor box is empty (`invoice_view.settle_header`, at every check, the screen's opening
+    included, and says so) and is offered with one click under the vendor box when another supplier is chosen
+    (`field_help`). `/review/vendors.json` is unchanged: it carried the GST/HST number already, and no bank
+    details (D-160).
+  - **A tax ID that differs from the chosen supplier's** is VENDOR_TAX_NUMBER_CHANGED, as before: an error,
+    approved only with "Approve anyway" and a reason. New: where people sign in, that approval is a first
+    approval whatever the approval limit (`Store.approve_invoice`, `tax_id_differs`): the voucher waits in Second
+    approval, is in no keying sheet or batch file until someone else with the Approver role (or an Admin) gives
+    it, and the bar says so before approving. On one person's laptop there is nobody else: the approval asks for
+    the reason, Activity records it, and the keying sheet says on that voucher "Tax ID differs from the supplier
+    list: confirm before paying" (`pages/exports.tax_id_warnings`, asked of the stored coding and today's list).
+  - **With D-221.** What the list gives is seen with the suppliers loaded (`core/store/loaded.py`: tax ID as
+    written, currency, address, e-mail, business unit, read from `vendor_info` by supplier number; searched, in
+    the CSV, not changed by hand). The list's load goes through `Store.import_vendor_master`, so a GST/HST number
+    or terms an Admin changed by hand are put back after it, as after the supplier master's grid.
+  - Scoring and learning are not touched. (`ap_coder/coding/vendor_info.py`, `core/chart_file.py`,
+    `core/store/vendor_master.py`, `core/store/invoices.py`, `web/pages/jde_files.py`, `web/invoice_view.py`,
+    `web/pages/exports.py`, `erp/jde_keying.py`, `bench/jde_exports.py`; `tests/coding/test_vendor_info.py`,
+    `tests/web/test_supplier_tax_id.py`, `tests/web/test_web_jde_files.py`)
+- **D-220** · **The bank account on the voucher is part of the prototype path: bank accounts typed in and
+  removed by hand by the AP manager, shown in the review header and on the keying sheet; a currency with no
+  account warns and holds nothing** (10 Nov 2026). JD Edwards' standard voucher entry takes a G/L bank account. AP
+  Coder had the pieces (D-66: `bank_accounts`, Pay from, `last_pay_froms`, VLGLBA in the batch file), folded away
+  where a chart of accounts is loaded.
+  - **Who enters them.** `POST /accounts/bank/save` and the new `/accounts/bank/remove` need an Approver
+    (`web/roles.py`): the Approver is the role nearest the AP manager (it gives the second approval and takes a
+    vendor off hold, D-142), and there is no role between it and Admin. An Admin can too; a Clerk sees the list
+    and picks an account on an invoice. Importing a file of them stays an Admin's (no import is needed). On a
+    laptop the one person does everything, as for every page.
+  - **The page** is the existing tab (GL accounts & tax → Bank accounts, under Setup in Simple screens). In
+    Simple screens its grid is what voucher entry asks: the bank account as keyed in JD Edwards (the account's
+    code, which the invoice keeps), a description, the currency, the default of each currency, and Remove; the
+    other columns (institution, transit, account number, cash GL account, In use) are kept as they are and shown
+    again when every screen is shown. Remove deletes the account (`Store.remove_bank_account`, in Activity): a
+    voucher approved with it keeps its code, an invoice still to review asks for another, as an account no longer
+    in use did.
+  - **The review screen.** With a chart of accounts and at least one bank account, the header has a "Bank account"
+    row (the same field as Pay from; before, under More details): this supplier's last account, else the default
+    of the invoice's currency (`banks.choose`, unchanged).
+  - **A currency no account is in** (a USD voucher, only CAD accounts): a warning, PAY_FROM_NO_ACCOUNT, and
+    nothing is held; the voucher goes without a bank account and the keying sheet says so. Before, such an
+    invoice was held until an account of another currency was picked (B-683, B-685). Still held, never approved
+    anyway: no account chosen where the currency has one (two accounts and no default), an account that is not
+    in the list or not in use.
+  - **The keying sheet** has a row "G/L bank account" (and the account's name) in each voucher's header block
+    once a bank account is entered (`jde_keying`, `banks.keyed`): the value JD Edwards' settings map to the
+    account (VLGLBA) when there is one, else its cash GL account, else its code.
+  - **The batch file** already has the field: VLGLBA is sent when Settings → JD Edwards E1 maps a value per bank
+    account (D-66), and stays blank otherwise (E1 takes its AAI PB bank). Not changed: a code is not sent as
+    VLGLBA unmapped, since E1 expects the short account ID there, which only the JDE team can give.
+  - With no bank account entered nothing changes and nothing is asked: `python scripts/same_behaviour.py` gives
+    the same approve and pipeline answers. (`ap_coder/coding/banks.py`, `web/roles.py`, `web/pages/accounts.py`,
+    `accounts.html`, `invoice.html`, `erp/jde_keying.py`, `web/pages/exports.py`, `core/store/accounts.py`;
+    `tests/web/test_voucher_bank_account.py`, `tests/coding/test_bank_accounts.py`, `tests/erp/test_jde_keying.py`)
+- **D-221** · **What JD Edwards' files loaded is seen row by row and changed by hand; the demo invoices live in
+  Settings; an older data folder is asked once which screens to show.** Three things the prototype's tester asked
+  for.
+  - *Seeing what is loaded.* "What is loaded" on JD Edwards files only said loaded or not yet. Each of the five
+    (chart of accounts, business units, suppliers, last year's coding, vouchers already in JD Edwards) now opens
+    `/jde-files/loaded/<list>`: a table with a search (each word somewhere in the row), exact filters on the
+    columns with few values, a count, pages, and a CSV of everything the search keeps. A chart is 15,000 rows and
+    a register up to 600,000, so no list is read whole: the count and the page are SQLite's (`LIMIT`, `OFFSET`),
+    the CSV reads on from the last row it gave, 2,000 at a time, in the order of the list's own key
+    (`core/store/loaded.py`). Codes are given as the text the table keeps (leading zeros). The suppliers show
+    whichever columns their table has, under a known label or the column's name in words, so a version that keeps
+    more of the master row shows it; a bank account is never among them (D-160).
+  - *Who:* whoever opens JD Edwards files sees the lists and downloads them (server mode: a Clerk and above, as
+    the page itself). Changing a row is an Admin's (a laptop: the one person).
+  - *What is changed by hand:* a chart row's description, whether it may be posted to (its posting edit code made
+    blank, or the file's own code again, `I` when the file's let it be posted to) and its GL account's meals tick;
+    a business unit's name and status; a supplier's own fields (name, AP's own hold, note, tax numbers, terms and
+    the rest), not its number nor JD Edwards' hold payment code, which are JD Edwards' to give. Last year's coding
+    and the vouchers are a record of what happened: looked at, and forgotten whole by the buttons there were.
+  - *Kept across the next load* (`core/store/by_hand.py`, the setting `hand_edits`, as B-2090's `chart_set_aside`
+    keeps what was typed on a code that left the lists): each change is kept beside what the file said. The
+    chart's and the business units' imports put it back on the rows they read before they compare and write, so
+    the same file loaded again changes nothing and says which rows keep a change; a row the file no longer has
+    keeps its change set aside. The supplier importer replaces what its file gives, and another piece of work was
+    rewriting it, so it is not touched: `Store.import_vendor_master` (the one method written on `Store` itself)
+    calls it and then puts back each field the import replaced, in one transaction, whoever imports. A field
+    changed elsewhere since (the Vendors page) is no longer that change and is let go; so is one the file now
+    agrees with, or one the person types back to the file's value. Rejected: an overlay applied at every read (the
+    vendor list is read in dozens of places), triggers (a save on the Vendors page would be undone by one).
+    One limit, said on the screen: a supplier renamed in JD Edwards arrives as a new row, and what was changed on
+    the old name stays with the old name.
+  - *Recorded:* each change is one event, `changed_by_hand` (Activity → Setup): who, the row, each field before →
+    after; what a load put back is in the load's own event (chart, business units) or one of its own (suppliers).
+  - *The demo invoices* were offered on the welcome page and on Import invoices, where a person setting up their
+    own company met ten made-up invoices first. They are loaded and removed in Settings → Data & backups only,
+    which says how many are loaded; the routes and their roles are unchanged (an Admin's in server mode), and so
+    is `python -m ap_coder demo`. Import invoices still warns while the demo is loaded and none of your own
+    invoices are (B-468), and points to Settings.
+  - *An older data folder* keeps showing every page (`first_run` leaves an existing database as it is), so after an
+    update the person saw the old menu and wondered whether it had worked. A laptop's database on which the
+    Screens choice was never saved shows a card on the queue page, once: what is new, "Use the simple screens" or
+    "Keep every page" (`POST /settings/about/screens`), and where to change it later. Either answer is saved, as
+    is Everything saved on Settings → About. A new data folder starts Simple and the company server's screens are
+    an Admin's: neither is asked.
+  - (`ap_coder/core/store/loaded.py`, `by_hand.py`, `chart.py`, `__init__.py`, `dialect.py`;
+    `ap_coder/web/pages/jde_loaded.py`, `jde_loaded.html`, `jde_files.html`, `web/roles.py`, `core/audit.py`,
+    `ops/chart_cmd.py`; `_demo_card.html`, `settings_data.html`, `web/pages/process.py`; `_screens_card.html`,
+    `web/core.py`, `web/pages/settings.py`, `review.py`; `tests/core/test_by_hand.py`,
+    `tests/web/test_web_jde_loaded.py`, `test_web_process.py`, `test_simple_screens.py`)

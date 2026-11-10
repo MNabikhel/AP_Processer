@@ -40,8 +40,8 @@ what's next.
    ERP. The first export is an **Excel workbook**; for a CSV file, click **CSV, one row per GL line** above the list
    first.
 
-Just looking around? **Load demo invoices** on the welcome page adds ten sample invoices; **Remove demo invoices**
-on **Import invoices** takes them away.
+Just looking around? **Settings** → **Data & backups** → **Load demo invoices** adds ten sample invoices; **Remove
+demo invoices**, in the same place, takes them away.
 
 ## On the company server
 

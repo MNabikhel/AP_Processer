@@ -5,6 +5,8 @@ each PDF or picture locally, codes the GL accounts and cost centers, checks GST/
 what AP approves, and exports approved invoices to JD Edwards E1 or Excel/CSV. People review on a local dashboard
 (FastAPI) at 127.0.0.1 (or a company server: docs/SERVER.md).
 
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.
+
 Taking AP Coder over in a new place (the company's own repository)? Start with `docs/HANDOFF.md`: how to get the
 code in, the connection points, the company's information to gather, and the order of work.
 
@@ -32,6 +34,11 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   `erp/jde_keying.py`; the review row with one Account box `web/account_lines.py`; the uploads
   `web/pages/jde_files.py`; scoring against last year `ops/journal_score.py`, `ops/proposed_score.py`; a made-up
   company for tests `bench/jde_company.py`, `jde_exports.py`, `jde_invoices.py` (fixture `chart_company`).
+- What is loaded of JD Edwards' files, row by row, and what a person changed by hand in it (D-221):
+  `core/store/loaded.py`, `core/store/by_hand.py`, `web/pages/jde_loaded.py`. The vendor information list, the second
+  supplier export (D-219): its reader `coding/vendor_info.py`, kept by supplier number in `vendor_info`
+  (`core/store/vendor_master.py`). The bank account on the voucher (D-220): `Store.bank_accounts`, the Bank accounts
+  tab of `web/pages/accounts.py`.
 - Checks (findings with a code): `coding/validation.py` (`validate_coding` gathers them), payment terms
   `coding/terms.py`, tax `coding/tax.py` (`check_taxes`, `place_of_supply`), the Tax check `coding/taxmath.py`, line
   tax codes `coding/line_tax.py`, ITCs and self-assessment `coding/taxreturn.py`, vendors `coding/vendors.py`. Every

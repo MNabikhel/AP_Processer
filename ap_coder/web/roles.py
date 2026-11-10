@@ -10,8 +10,8 @@ The roles, each able to do everything the one before it can (``core/store/users.
   and keeps their notes (taking a vendor off hold is an Approver's, D-142: ``access.may_lift_hold``), and adds,
   changes, removes and undoes the fixed coding rules (each change kept in their history, D-217).
 * **Approver** (``APPROVER``): also gives the second approval (over the approval limit) or sends the invoice back,
-  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), and takes
-  a vendor off hold.
+  gives the go-ahead to post vouchers to JD Edwards through the API (D-104; a Clerk may run its dry run), takes
+  a vendor off hold, and adds, changes and removes the company's bank accounts (D-220).
 * **Admin** (``ADMIN``): everything else: Settings, the people who log in, JD Edwards setup (the API connection and
   its sync too), the account lists and tax setup, imports of the vendor master and the like, backups and restore,
   deleting, the Azure check, the learning memory's resets, the finance hub feed.
@@ -140,6 +140,8 @@ RULES: dict[tuple[str, str], str] = {
         "GET /vendors", "POST /vendors/save",
         "GET /accounts", "GET /accounts/{table}.csv", "GET /accounts/bank/template.csv",
         "GET /jde-files",  # what is loaded of JD Edwards' exports (loading them: an Admin's)
+        # The rows of what is loaded, and their CSV (D-221): whoever opens the page; changing a row is an Admin's.
+        "GET /jde-files/loaded/{what}", "GET /jde-files/loaded/{what}.csv",
         "GET /purchase-orders", "GET /purchase-orders/template.csv",
         "GET /learning", "POST /learning/lessons/explain",
         # The fixed coding rules: anyone who reviews invoices adds, changes, removes and undoes them; every change is
@@ -151,6 +153,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /review/{invoice_id}/final-approve", "POST /review/{invoice_id}/send-back",
         # The go-ahead to post vouchers to JD Edwards through the API, and its queue (D-104).
         "POST /exports/batches/{batch:int}/jde-api/post", "POST /exports/jde-api/retry",
+        # Our bank accounts typed in, changed and removed: the AP manager's, as an Admin's (D-220). A Clerk sees them
+        # and picks one on an invoice; importing a file of them stays an Admin's.
+        "POST /accounts/bank/save", "POST /accounts/bank/remove",
     ),
     **_rules(
         ADMIN,
@@ -160,7 +165,7 @@ RULES: dict[tuple[str, str], str] = {
         "POST /exports/batches/{batch:int}/undo", "POST /exports/layout", "POST /exports/layout/preview",
         "POST /exports/batches/{batch:int}/jde-api/release",  # a voucher checked in JD Edwards, released (D-107)
         "POST /exports/register/upload", "POST /exports/register/import", "POST /exports/register/clear",
-        "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import", "POST /accounts/bank/save",
+        "POST /accounts/sample", "POST /accounts/bank/upload", "POST /accounts/bank/import",
         "POST /accounts/{table}/upload", "POST /accounts/{table}/import", "POST /accounts/{table}/save",
         "POST /accounts/tax", "POST /accounts/policy",
         "POST /vendors/master/upload", "POST /vendors/master/import",
@@ -177,13 +182,16 @@ RULES: dict[tuple[str, str], str] = {
         "POST /jde-files/journal/upload", "POST /jde-files/journal/load", "POST /jde-files/journal/forget",
         "POST /jde-files/vouchers/upload", "POST /jde-files/vouchers/load",
         "POST /jde-files/meals", "POST /jde-files/company",
+        "POST /jde-files/loaded/{what}/edit",  # a row of the chart, the business units or the suppliers, by hand
         "POST /insights/assumptions",
         "GET /settings", "GET /settings/{tab}", "GET /settings/azure-check", "POST /settings/azure-check",
         "POST /settings/azure-check/test", "POST /settings/review",
         "POST /settings/data/open-folder", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
         "POST /settings/data/backup-time",
-        "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
+        "POST /settings/about/show",
+        "POST /settings/about/screens",  # the queue's card of an older laptop data folder; never shown here (D-221)
+        "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",
         "POST /settings/reading/servers",  # the backup model servers (D-180)

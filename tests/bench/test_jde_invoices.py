@@ -2,6 +2,7 @@
 key from each, more made from the books' vouchers, and the files (a PDF with its ground truth)."""
 
 import json
+import re
 from decimal import Decimal
 
 import pytest
@@ -136,3 +137,22 @@ def test_more_invoices_are_made_from_the_books_vouchers(truth):
         assert bool(invoice.recovered) == supplier.taxed and invoice.currency == supplier.currency
     assert {invoice.currency for invoice in more} == {"CAD", "USD"}
     assert any(invoice.total < 0 for invoice in more) and any(len(invoice.lines) > 1 for invoice in more)
+
+
+def test_an_invoice_prints_the_gst_number_the_vendor_list_has_for_its_supplier(truth, seven):
+    """B-2299: with the vendor information list loaded, the made-up company's own invoices must not all be flagged
+    for a GST/HST number that differs from the list's. The business number is the list's; the program account an
+    invoice prints after it may be another one (RT0002 for RT0001), as on real invoices."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.coding import vendor_info
+
+    checked = 0
+    for invoice in seven.values():
+        listed = vendor_info.gst_number(jde_exports.vendor_tax_id(invoice.supplier), "CA") if invoice.supplier else ""
+        if not listed:
+            continue
+        _pdf, read = jde_invoices.render(invoice, truth)
+        printed = read["fields"].get("gst_hst_registration_number", {}).get("value")
+        assert printed and printed[:9] == re.sub(r"\D", "", listed)[:9], (invoice.name, printed, listed)
+        checked += 1
+    assert checked >= 3

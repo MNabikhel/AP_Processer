@@ -43,6 +43,7 @@ ACTIONS = {
     "exported": ("ios_share", "violet", "Exported"),
     "accounts_imported": ("upload", "info", "Accounts imported"),
     "accounts_edited": ("edit", "info", "Accounts edited"),
+    "changed_by_hand": ("edit_note", "info", "Changed by hand"),  # a row of JD Edwards' files loaded (D-221)
     "accounts_deleted": ("delete", "warn", "Accounts deleted"),
     "tax_setup_changed": ("percent", "info", "Tax setup changed"),
     "policy_changed": ("rule", "info", "Coding policy changed"),
@@ -331,6 +332,8 @@ def _review_text(action: str, d: dict[str, Any]) -> str | None:
                                                 for o in over) + ". ") if over else ""  # fmt: skip
         if d.get("needs_second"):
             prefix += f"Second approval needed: {second_reason(d)}. "
+        elif d.get("tax_id_differs"):  # one person on a laptop: nobody else to confirm it (D-219)
+            prefix += f"Tax ID differs from the supplier list's ({d['tax_id_differs']}): confirm before paying. "
         return prefix + _approved_text(d)
     if action == "rejected":
         return f"reason: {d.get('reason') or 'none given'}" + (
@@ -378,13 +381,43 @@ def _chart_text(d: dict[str, Any]) -> str:
                  if kinds.get(kind)]  # fmt: skip
         if parts:
             said.append(f"{verb}: {', '.join(parts)}")
+    if d.get("by_hand"):
+        said.append(f"kept as changed by hand: {', '.join(d['by_hand'][:8])}{' …' if len(d['by_hand']) > 8 else ''}")
     return "; ".join(said)
+
+
+# A row of what JD Edwards' files loaded changed by hand (``core/store/by_hand.py``, D-221): its fields in words.
+_BY_HAND_FIELDS = {"posting_edit": "posting edit code", "meals": "meals account", "display_name": "name",
+                   "expected_gst": "GST/HST number", "notes": "note", "status": "status", "terms": "payment terms",
+                   "default_gl": "default GL account"}  # fmt: skip
+_BY_HAND_VALUES = {True: "yes", False: "no", "": "(blank)", "on_hold": "on hold", "active": "not on hold"}
+
+
+def _by_hand_text(d: dict[str, Any]) -> str:
+    """A change made by hand: the row and each field before → after; or the suppliers whose changes were put back
+    after the supplier list was loaded."""
+    table = {"vendors": "Suppliers"}.get(str(d.get("table")), _table(d))
+    if "kept" in d:
+        names = [str(name) for name in d.get("kept") or []]
+        return (f"{table}: {d.get('count', len(names)):,} kept as changed by hand where the file loaded says "
+                f"otherwise: {', '.join(names[:8])}{' …' if d.get('count', len(names)) > 8 else ''}")  # fmt: skip
+
+    def shown(field: str, value: Any) -> str:
+        if isinstance(value, bool) or value == "" or (field == "status" and d.get("table") == "vendors"):
+            return _BY_HAND_VALUES.get(value, str(value))
+        return str(value)
+
+    parts = [f"{_BY_HAND_FIELDS.get(field, field.replace('_', ' '))} {shown(field, c.get('from'))} → "
+             f"{shown(field, c.get('to'))}" for field, c in (d.get("changes") or {}).items()]  # fmt: skip
+    return f"{table} {d.get('row', '')}: {'; '.join(parts)}"
 
 
 def _setup_text(action: str, d: dict[str, Any]) -> str | None:
     """The lists and settings changed: accounts, tax set-up, lessons, vendors. None for another action."""
     if action == "accounts_imported" and d.get("table") in ("chart_accounts", "business_units"):
         return _chart_text(d)
+    if action == "changed_by_hand":
+        return _by_hand_text(d)
     if action == "accounts_imported":
         return f"{_table(d)}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
             " (replaced the list)" if d.get("replace_all") else ""

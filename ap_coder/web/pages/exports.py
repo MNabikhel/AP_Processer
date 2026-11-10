@@ -26,6 +26,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
+from ap_coder.core.store.invoices import TAX_ID_NOTE
 from ap_coder.erp import dupaudit, export_layout, exports, jde, jde_ais, jde_keying, jde_post, registers, stamp
 from ap_coder.web.core import (
     by_currency,
@@ -178,7 +179,16 @@ def keying_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     created = (store.export_batch(batch) or {}).get("created_at") or ""
     return jde_keying.build(invoices, jde.load(store), store.vendor_ids(), batch=batch, gl_names=gl_names(store),
                             on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
-                            fx_rates=store.fx_rates())  # fmt: skip
+                            fx_rates=store.fx_rates(), warned=tax_id_warnings(store, invoices),
+                            bank_accounts={a["code"]: a for a in store.bank_accounts(active_only=True)})  # fmt: skip
+
+
+def tax_id_warnings(store: Store, invoices: list[dict[str, Any]]) -> dict[int, list[str]]:
+    """{invoice: the keying sheet's warning} for the vouchers whose tax ID differs from the supplier list's and that
+    no second person approved (one person on a laptop, where the approval asked for the reason: D-219). Where people
+    sign in such a voucher waits for its second approval, so it comes here confirmed."""
+    return {inv["id"]: [f"{TAX_ID_NOTE}."] for inv in invoices
+            if not inv.get("second_reviewer") and store.tax_id_differs(inv.get("final_output") or {})}  # fmt: skip
 
 
 def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:

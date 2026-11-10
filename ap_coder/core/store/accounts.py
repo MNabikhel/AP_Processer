@@ -500,6 +500,15 @@ class AccountsMixin:
                     "codes": sorted(r["code"] for r in rows if before.get(r["code"]) != r)[:50]})  # fmt: skip
         return {"added": added, "updated": updated}
 
+    def remove_bank_account(self, code: str, actor: str | None = None) -> bool:
+        """Remove the bank account ``code`` (D-220); whether there was one. An invoice approved with it keeps its
+        code; one still to review asks for another account."""
+        with self._conn() as conn:
+            removed = conn.execute("DELETE FROM bank_accounts WHERE code = ?", (code,)).rowcount > 0
+            if removed:
+                self._log(conn, "accounts_deleted", actor=actor, detail={"table": "bank_accounts", "codes": [code]})
+        return removed
+
     def last_pay_from(self, key: str) -> str:
         """The bank account this vendor's last approved invoice was paid from ("" when none recorded)."""
         return self.last_pay_froms([key]).get(key, "") if key else ""

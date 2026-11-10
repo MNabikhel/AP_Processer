@@ -1147,6 +1147,13 @@ function applyHeader(header, posted) {
     if (!el || (sent(name) !== null && el.value !== sent(name))) continue;
     el.value = value;
     if (name in TAX_FIELDS) viewer?.setEdited(name, value.trim(), false);
+    if (name === "vendor_name") {
+      // the supplier the GST/HST number on the invoice belongs to, picked by the server while none was (D-219)
+      vendorBefore = value;
+      viewer?.setEdited(name, value.trim(), false);
+      showVendorMatch();
+      toast({ text: `${value} picked: the GST/HST number on the invoice is its number in the supplier list.`, tone: "info", icon: "menu_book" }, 9000);
+    }
   }
   if (fromVendorBox && header.from_vendor && (sent("from_vendor") === null || fromVendorBox.value === sent("from_vendor"))) {
     fromVendorBox.value = JSON.stringify(header.from_vendor);

@@ -210,7 +210,8 @@ PAGES: list[Page] = [
 # (/settings/azure-check); the "Who are you?" page of a colleague on the office network (/who); in server mode
 # (D-97), logging in and out and one's own password (/login, /logout, /account/password) and the Users page
 # (/admin/users).
-MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users", "downloads"]
+# ``jde_loaded``: the rows of what the JD Edwards files page loaded (/jde-files/loaded/..., D-221).
+MORE_MODULES: list[str] = ["invoice", "azure", "who", "login", "users", "downloads", "jde_loaded"]
 
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}
 PINNED = {"settings", "help"}  # at the rail's foot, always on screen
