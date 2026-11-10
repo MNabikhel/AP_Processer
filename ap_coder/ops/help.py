@@ -234,11 +234,21 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_ON_HOLD": CheckHelp(
         FRAUD, "Vendor on hold",
         "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
-        "marks it as blocked or inactive.",
+        "does: it marks the vendor as blocked or inactive, its name carries a word for a retired supplier (DO NOT "
+        "USE, DNU: the note says which), or JD Edwards' hold payment code is one that stops vouchers (Y or 1; the "
+        "codes that hold are listed on the vendor master's import).",
         "It can't be approved while the vendor is on hold: lift the hold on the Vendors page (on the company server "
         "an Approver or an Admin does that, not a Clerk; a hold set in JD Edwards is lifted in JD Edwards, then the "
-        "vendor list imported or synced again), or reject the invoice. Coding it to another vendor instead needs an "
-        "Approver too (Moved off a vendor on hold).",
+        "vendor list imported or synced again), or reject the invoice. A vendor held for a word in its name is held "
+        "again at each import: rename it in JD Edwards, or take the word off the import's list. Coding it to "
+        "another vendor instead needs an Approver too (Moved off a vendor on hold).",
+    ),
+    "VENDOR_PAYMENTS_HELD": CheckHelp(
+        FRAUD, "Payments held in JD Edwards",
+        "JD Edwards' hold payment code for this supplier is 2: its payments are held, its vouchers are still "
+        "entered.",
+        "Code and approve the invoice as usual: the voucher can be keyed. It is paid once the hold is lifted in "
+        "JD Edwards. If the invoice should not go in at all, put the vendor on hold on the Vendors page.",
     ),
     "VENDOR_CHANGED_FROM_HELD": CheckHelp(
         FRAUD, "Moved off a vendor on hold",

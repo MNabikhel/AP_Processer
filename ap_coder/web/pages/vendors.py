@@ -34,7 +34,8 @@ from ap_coder.coding.vendors import (
 )
 from ap_coder.core import ui
 from ap_coder.core.store import PARKED, REVIEW, Store, reports
-from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS_SETTING, listed
+from ap_coder.core.store.vendor_master import PAYMENTS_ONLY, stops_vouchers
+from ap_coder.core.store.vendors import HOLD_CODES_SETTING, SKIP_WORDS, SKIP_WORDS_SETTING, listed
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
@@ -232,7 +233,7 @@ def vendors_page(
         vendors = store.vendor_summaries(settled=True)  # (only shown: D-197)
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
     new = [v for v in vendors if (v["first_seen"] or "") >= month_ago]
-    on_hold = [v for v in vendors if v["status"] == ON_HOLD or v.get("erp_hold")]  # here, or in JD Edwards
+    on_hold = [v for v in vendors if v["status"] == ON_HOLD or stops_vouchers(v.get("erp_hold"))]  # or in JDE
     shown = on_hold if view == "hold" else new if view == "new" else vendors
     if q.strip():
         shown = [v for v in shown if q.strip().lower() in (v["vendor_name"] or "").lower()]
@@ -266,7 +267,11 @@ def vendors_page(
                 master_error = NO_ROWS
             chosen = picked_columns({}, MASTER_LABELS, columns, master_columns(columns))
             master = sheet_context(file, upload, df, sheets, sheet, MASTER_LABELS, chosen, ("vendor_name",))
-            master |= {"hold_codes": ", ".join(store.hold_codes()), "skip_words": ", ".join(store.skip_words())}
+            master |= {
+                "hold_codes": ", ".join(store.hold_codes()),
+                "skip_words": ", ".join(store.skip_words()),
+                "hold_codes_label": HOLD_CODES_LABEL,
+            }
         except SheetError as exc:
             master_error = str(exc)
 
@@ -306,6 +311,7 @@ def vendors_page(
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
         provinces={**PROVINCE_NAMES, OUTSIDE_CANADA: "Outside Canada"},
         on_hold=ON_HOLD,
+        payments_only=PAYMENTS_ONLY,  # JD Edwards' hold payment codes that hold payments, not vouchers
         may_lift_hold=may_lift_hold(request),
         lift_hold=LIFT_HOLD,
         held_numbers=HELD_NUMBERS,
@@ -343,7 +349,7 @@ def save_vendor(
     if vendor["status"] == ON_HOLD and status == ACTIVE and not may_lift_hold(request):
         return refuse(LIFT_HOLD, 403)
     typed = {"expected_gst": expected_gst, "qst_number": qst_number, "pst_number": pst_number}
-    held = vendor["status"] == ON_HOLD or vendor.get("erp_hold")
+    held = vendor["status"] == ON_HOLD or stops_vouchers(vendor.get("erp_hold"))
     changed = any(v.strip() != (vendor.get(k) or "").strip() for k, v in typed.items())
     if held and changed and not may_lift_hold(request):
         return refuse(HELD_NUMBERS, 403)  # cleared, the hold would no longer catch an invoice showing them (B-1554)
@@ -373,16 +379,21 @@ async def master_import(request: Request) -> JSONResponse:
     return await run_in_threadpool(_master_import, request, form)  # a large company's list: 20,000 vendors
 
 
+HOLD_CODES_LABEL = "Hold payment codes that put a supplier on hold"  # the import form's field, as its notes name it
+
+
 def save_import_rules(store: Store, form: Any) -> None:
     """The import's own rules as typed on its form, kept for the next import and the JD Edwards sync: the hold payment
     codes that put a supplier on hold (left blank: as they were), and the words that mark a retired supplier (left
-    blank: none, a star still does)."""
+    blank: the default words again, as the chart of accounts reads the same setting)."""
     codes = ", ".join(code.upper() for code in listed(form.get("hold_codes")))
     if codes and codes != ", ".join(store.hold_codes()):
         store.set_setting(HOLD_CODES_SETTING, codes, actor=reviewer())
     words = form.get("skip_words")
-    if words is not None and listed(words) != store.skip_words():
-        store.set_setting(SKIP_WORDS_SETTING, ", ".join(listed(words)), actor=reviewer())
+    if words is not None:
+        typed = ", ".join(listed(str(words).replace(";", ",").replace("\n", ",")))
+        if (listed(typed) or listed(SKIP_WORDS)) != store.skip_words():
+            store.set_setting(SKIP_WORDS_SETTING, typed, actor=reviewer())
 
 
 @one_connection
@@ -401,6 +412,12 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
     save_import_rules(store, form)
     result = store.import_vendor_master(master_rows(df.to_dict("records"), chosen), actor=reviewer())
     drop_upload(token)
+    return done(request, "/vendors", *import_notes(result))
+
+
+def import_notes(result: dict[str, Any]) -> list[Any]:
+    """What an import of the vendor master says: how many, the names merged, and the hold payment codes it did not
+    treat as a hold."""
     notes = [
         flash_message(f"Vendor master: {result['added']} added, {result['updated']} updated.", "ok", icon="storefront")
     ]
@@ -415,4 +432,8 @@ def _master_import(request: Request, form: Any) -> JSONResponse:
                 [" / ".join(n) for n in dupes[:8]],
             )
         )
-    return done(request, "/vendors", *notes)
+    for code, count in sorted(result.get("other_holds", {}).items()):
+        notes.append(flash_message(
+            f"{ui.plural(count, 'supplier')} with hold payment code {code}: not treated as a hold. Add it under "
+            f"“{HOLD_CODES_LABEL}” and import again if it is one.", "warn"))  # fmt: skip
+    return notes

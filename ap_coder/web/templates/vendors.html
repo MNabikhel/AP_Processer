@@ -4,7 +4,7 @@
 {% block head %}<link rel="stylesheet" href="{{ static_url('/static/data.css') }}">{% endblock %}
 {% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
 {% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
-{% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
+{% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold and v.erp_hold not in payments_only else ui.pill("Payments held in JD Edwards", "warn", "payments") if v.erp_hold else ui.pill("Active", "ok") }}{% if number_problems(v) %} {{ ui.pill("Tax number to check", "warn", "warning") }}{% endif %}{% if v.added_here %} {{ ui.pill("Added here: set up in JD Edwards", "warn", "person_add") }}{% elif has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
 {% block content %}
 <details class="card expander" id="import"{% if master or master_error or setup %} open{% endif %}>
   <summary><span class="ms" aria-hidden="true">upload</span>Vendor master from the ERP{% if has_master %} (imported){% endif %}</summary>
@@ -17,11 +17,15 @@
   <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…" data-long>
     {{ columns(master) }}
     <div class="map-grid">
-      <label class="field">Hold payment codes that hold
+      <label class="field">{{ master.hold_codes_label }}
         <input type="text" name="hold_codes" value="{{ master.hold_codes }}" maxlength="60" title="JD Edwards' hold payment codes that put a supplier on hold, with commas between them. N and blank never hold."></label>
       <label class="field">Words that mark a retired supplier
-        <input type="text" name="skip_words" value="{{ master.skip_words }}" maxlength="200" title="A supplier with one of these in its name (or a star before or after it) is found by its name without it, and put on hold. Commas between them."></label>
+        <input type="text" name="skip_words" value="{{ master.skip_words }}" maxlength="200" title="A supplier with one of these in its name is found by its name without it, and put on hold. Commas between them; * is a star before or after the name. Left blank: the usual words."></label>
     </div>
+    <p class="muted small">Hold payment codes: N and blank never hold; 2 holds the payments only (a warning, the invoice is still
+      coded). A code added here reaches the suppliers of this file now, and the others when they are next imported or
+      synced; a code taken off stops holding every supplier at this import. The words (and * for a star before or after
+      a name) are also the ones a business unit of the chart is left out for.</p>
     <div class="row">
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
       <a class="link" href="/vendors">Cancel</a>
@@ -86,7 +90,7 @@
   <div class="vendor-head">
     {{ ui.avatar(v.vendor_name or "") }}
     <div>
-      <div class="vendor-name">{{ v.vendor_name }} {{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold else ui.pill("Active", "ok") }}</div>
+      <div class="vendor-name">{{ v.vendor_name }} {{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("On hold in JD Edwards", "warn", "front_hand") if v.erp_hold and v.erp_hold not in payments_only else ui.pill("Payments held in JD Edwards", "warn", "payments") if v.erp_hold else ui.pill("Active", "ok") }}</div>
       <div class="muted">First invoice {{ v.first_invoice or "—" }} · last {{ v.last_invoice or "—" }} · {{ v.lessons | plural("line") }} in the coding memory</div>
       {% if v.in_master %}
       <div class="muted">{{ ui.pill("In the vendor master", "ok", "verified") }} ERP ID <b>{{ v.erp_id or "—" }}</b>{% if v.terms %} · terms {{ v.terms }}{% endif %}{% if v.default_gl %} · default GL {{ v.default_gl }}{% endif %}</div>
@@ -151,7 +155,7 @@
   {% endfor %}
   <form method="post" action="/vendors/save" class="stack controls" data-busy="Saving…">
     <input type="hidden" name="key" value="{{ v.vendor_key }}">
-    {% set locked = (v.status == on_hold or v.erp_hold) and not may_lift_hold %}
+    {% set locked = (v.status == on_hold or (v.erp_hold and v.erp_hold not in payments_only)) and not may_lift_hold %}
     <div class="row">
       <fieldset class="radios"><legend class="muted small">Status</legend>
         {% for key, label in statuses.items() %}

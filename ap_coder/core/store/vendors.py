@@ -15,6 +15,8 @@ from types import MappingProxyType
 from typing import Any
 
 from ..caches import MB, Bounded, size_of
+from ..chart import SKIP_WORDS as _CHART_SKIP_WORDS
+from ..chart import _listed as _setting_list
 from ..keys import ADDED_HERE, norm_tax_number, same_tax_number
 from ..memory import vendor_key
 from ._base import (
@@ -34,6 +36,8 @@ from .vendor_master import (  # noqa: F401  (the names this module had before th
     MARKED,
     MARKED_LIKE,
     NEVER_HOLD,
+    PAYMENTS_ONLY,
+    STAR,
     Person,
     hold_code,
     listed,
@@ -62,10 +66,12 @@ VENDORS_SETTLE = OWN_WORK  # the Vendors page's counts and spend: behind a chang
 TOTALS_FORMAT = "vendor-totals-1"  # their format as kept for every process (``shared_answer``, D-198)
 
 
-# The words an ERP's names carry for "retired: do not use" (a setting; a star before or after a name marks one too).
-# Defined here, in core, because the store reads it (D-192): the one default for whatever else skips such names.
+# The words an ERP's names carry for "retired: do not use": one setting, read as the chart of accounts reads it for
+# its business units (``core/chart.py``: a list with commas, semicolons or lines; blank or unset is the default).
+# The default words are the chart's, and for a supplier a star before or after the name (``STAR``, a word of the
+# list like the others: taken off it, a star marks nothing).
 SKIP_WORDS_SETTING = "skip_words"
-SKIP_WORDS = "DO NOT USE, DNU"
+SKIP_WORDS = ", ".join((*_CHART_SKIP_WORDS, STAR))
 
 
 def _keep_vendor_rows(key: tuple[str, str], stamp: tuple[Any, int, int], rows: list[Any]) -> None:
@@ -226,7 +232,9 @@ class VendorsMixin:
 
     def _held_vendors(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
-            return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR COALESCE(erp_hold, '') != ''")
+            # (a hold payment code that holds the payments only stops no invoice: ``stops_vouchers``, B-2157)
+            return fetch_rows(conn, "SELECT * FROM vendors WHERE status = 'on_hold' OR (COALESCE(erp_hold, '') != '' "
+                              f"AND NOT {_in_list('erp_hold')})", (json.dumps(list(PAYMENTS_ONLY)),))  # fmt: skip
 
     def find_vendor(self, name: str | None, gst_number: Any = None, erp_id: Any = None) -> dict[str, Any] | None:
         """The vendor list's row for an invoice's vendor: among the vendors whose names read as this one (the vendor
@@ -264,8 +272,9 @@ class VendorsMixin:
         return own
 
     def skip_words(self) -> list[str]:
-        """The words that mark a retired supplier in the ERP's names (SKIP_WORDS unless the setting lists others)."""
-        return listed(self.get_setting(SKIP_WORDS_SETTING, SKIP_WORDS))
+        """The words that mark a retired supplier in the ERP's names (SKIP_WORDS unless the setting lists others;
+        left blank it is the default, as for the chart)."""
+        return list(_setting_list(self.get_setting(SKIP_WORDS_SETTING))) or listed(SKIP_WORDS)
 
     def vendor_key_for(self, name: str | None, gst_number: Any = None) -> str:
         """The vendor key an invoice's vendor is kept under (its history, its lessons, its checks): ``vendor_key`` of

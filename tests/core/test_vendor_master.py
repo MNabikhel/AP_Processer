@@ -219,26 +219,25 @@ def _said(store, code, **header):
 
 def test_only_the_hold_codes_listed_put_a_supplier_on_hold_in_jd_edwards(tmp_path):
     """B-2081: any hold payment code that was not blank read as "on hold", and JD Edwards' usual value is ``N``: every
-    supplier was on hold and every invoice got VENDOR_ON_HOLD. ``N`` and blank never hold; ``Y``, ``1`` and ``2`` do;
-    another code (``0``) holds once it is listed in the setting."""
+    supplier was on hold and every invoice got VENDOR_ON_HOLD. ``N`` and blank never hold; ``Y`` and ``1`` do; ``2``
+    holds the payments only (a warning, B-2157); another code (``0``) holds once it is listed in the setting."""
     store = Store(tmp_path / "a.db")
     codes = {"N": "Maple Leaf Coffee", "": "Quickship Courier", "Y": "Northern Paper", "1": "Old Print Shop",
              "2": "Harbour Telecom", "0": "Prairie Office Furniture"}  # fmt: skip
     store.import_vendor_master([{"vendor_name": name, "erp_id": f"41000{i}"} for i, name in enumerate(codes.values())])
     by_id = {f"41000{i}": ("", code) for i, code in enumerate(codes)}
     store.set_erp_bank_and_hold(by_id)
-    assert _held(store) == ["Harbour Telecom", "Northern Paper", "Old Print Shop"]
+    assert _held(store) == ["Northern Paper", "Old Print Shop"]
     assert store.get_vendor("harbour telecom")["erp_hold"] == "2"  # the code is kept: the check says which
     assert store.get_vendor("maple leaf coffee")["erp_hold"] == ""
     assert _said(store, "VENDOR_ON_HOLD", vendor_name="Maple Leaf Coffee") == []
-    said = _said(store, "VENDOR_ON_HOLD", vendor_name="Harbour Telecom")[0]
-    assert "on hold in JD Edwards" in said and "hold payment code 2" in said and "new vouchers still allowed" in said
+    assert _said(store, "VENDOR_PAYMENTS_HELD", vendor_name="Maple Leaf Coffee") == []
     assert "new vouchers stopped" in _said(store, "VENDOR_ON_HOLD", vendor_name="Northern Paper")[0]
     # One setting away: the codes that hold, as the JDE team confirms them. A code is read as the list says when the
     # suppliers are next imported or synced.
     store.set_setting(HOLD_CODES_SETTING, "Y, 1, 2, 0")
     store.set_erp_bank_and_hold(by_id)
-    assert _held(store) == ["Harbour Telecom", "Northern Paper", "Old Print Shop", "Prairie Office Furniture"]
+    assert _held(store) == ["Northern Paper", "Old Print Shop", "Prairie Office Furniture"]
     assert "hold payment code 0" in _said(store, "VENDOR_ON_HOLD", vendor_name="Prairie Office Furniture")[0]
     store.set_erp_bank_and_hold({"410002": ("", "n")})  # released in JD Edwards
     assert "Northern Paper" not in _held(store)
@@ -283,8 +282,8 @@ def test_jd_edwards_supplier_master_imports_as_it_comes_with_no_column_picked(tm
     assert sorted(vendors) == [str(n) for n in range(410001, 410010)]  # the address number, a number in the file
     assert {i: v["erp_hold"] for i, v in vendors.items() if v["erp_hold"]} == {"410003": "Y", "410004": "1",
                                                                                 "410005": "2"}  # fmt: skip
-    assert {"Harbour Telecom".upper(), "DNU - OLD PRINT SHOP"} <= set(_held(store))
-    assert "hold payment code 2" in _said(store, "VENDOR_ON_HOLD", vendor_name="Harbour Telecom")[0]
+    assert "DNU - OLD PRINT SHOP" in _held(store) and "HARBOUR TELECOM" not in _held(store)
+    assert "hold payment code 2" in _said(store, "VENDOR_PAYMENTS_HELD", vendor_name="Harbour Telecom")[0]
     assert _said(store, "VENDOR_ON_HOLD", vendor_name="Maple Leaf Coffee Services Inc.") == []
     assert vendors["410001"]["status"] == "active" and vendors["410006"]["status"] == "active"  # 0: not listed
     assert {v["expected_gst"] for v in vendors.values()} == {""}
@@ -350,7 +349,7 @@ def test_the_sample_vendor_master_imports_as_it_did(tmp_path):
 
 def test_a_name_marked_as_retired_is_told_from_the_name_itself():
     """B-2083: the words of the list (in any case, however spaced), or a star before or after the name."""
-    words = ["DO NOT USE", "DNU"]
+    words = ["DO NOT USE", "DNU", "*"]
     marked = {
         "NORTHERN PAPER CO  DO NOT USE": ("northern paper", "DO NOT USE"),
         "Northern Paper Co - do  not   use": ("northern paper", "DO NOT USE"),
@@ -366,6 +365,8 @@ def test_a_name_marked_as_retired_is_told_from_the_name_itself():
     for name in ("Northern Paper Co", "Dnuba Imports", "SIDNU Tools", "Star*Light Signs", "Do Not Disturb Signs"):
         assert name_marker(name, words) == (name, ""), name
     assert name_marker("ACME FASTENERS INACTIVE", ["INACTIVE"])[1] == "INACTIVE"
+    # the star is a word of the list like the others (B-2160)
+    assert name_marker("*LAKESIDE CATERING", ["DO NOT USE", "DNU"]) == ("*LAKESIDE CATERING", "")
 
 
 def test_a_supplier_marked_do_not_use_is_found_by_its_real_name_and_stopped(tmp_path):
@@ -527,3 +528,61 @@ def test_a_company_with_a_comma_in_its_name_is_never_matched_as_a_person(tmp_pat
     for other in ("Brown Smith", "Brown Smith & Co", "Town of Granite Ridge", "Western Division Harbour Telecom"):
         assert _number(store, other) is None, other
     assert set(store.vendor_ids()) == {"smith brown", "granite ridge town of", "harbour telecom western division"}
+
+
+# --- The hold payment codes, once more (B-2157 to B-2159) ----------------------------------------------------------
+
+
+def test_hold_payment_code_2_is_a_warning_the_invoice_is_still_coded_and_keyed(tmp_path):
+    """B-2157: JD Edwards' code 2 holds a supplier's payments and still takes its vouchers, and VENDOR_ON_HOLD, an
+    error no approval covers, said so in its own words. The invoice is coded, approved and keyed with a warning; its
+    voucher is not held back; ``Y`` and ``1`` stop it as before."""
+    from ap_coder.coding.vendors import voucher_hold
+
+    store = Store(tmp_path / "a.db")
+    store.import_vendor_master([{"vendor_name": "Harbour Telecom", "erp_id": "410005", "hold": "2"},
+                                {"vendor_name": "Cedar Ridge Towing", "erp_id": "410010", "hold": "1"}])  # fmt: skip
+    doc = InvoiceCoding.model_validate(_gt(gst_hst_registration_number="", vendor_name="Harbour Telecom"))
+    found = {code: (severity, text) for severity, code, text in vendor_findings(doc, store)}
+    assert "VENDOR_ON_HOLD" not in found
+    severity, said = found["VENDOR_PAYMENTS_HELD"]
+    assert severity == "warning" and "hold payment code 2" in said and "can be entered" in said
+    assert _held(store) == ["Cedar Ridge Towing"]
+    assert voucher_hold(store, "harbour telecom", "410005") == "" and voucher_hold(store, "", "410010")
+    assert _said(store, "VENDOR_ON_HOLD", vendor_name="Cedar Ridge Towing")
+    assert _said(store, "VENDOR_PAYMENTS_HELD", vendor_name="Cedar Ridge Towing") == []
+
+
+def test_a_hold_code_that_no_longer_holds_is_lifted_at_the_next_import_or_sync_and_n_at_start(tmp_path):
+    """B-2158: a hold an earlier version kept for JD Edwards' ``N`` (B-2081) stayed until a read listed that very
+    supplier again, and a code taken off the list kept holding the suppliers not in the next file. ``N`` goes when
+    the database is next opened; a code no longer listed goes from every vendor at the next import or sync."""
+    path = tmp_path / "a.db"
+    store = Store(path)
+    names = ("Alpha Paper Ltd", "Bravo Print Inc", "Delta Fuel")
+    store.import_vendor_master([{"vendor_name": name, "erp_id": str(1001 + i)} for i, name in enumerate(names)])
+    with sqlite3.connect(path) as conn:  # as the sync left it before B-2081, and a code 1 from a later one
+        conn.execute("UPDATE vendors SET erp_hold = 'N' WHERE erp_id IN ('1001', '1002')")
+        conn.execute("UPDATE vendors SET erp_hold = '1' WHERE erp_id = '1003'")
+    store = Store(path)  # the update: the database opened by the new version
+    assert _held(store) == ["Delta Fuel"]
+    assert {v["erp_id"]: v["erp_hold"] for v in store.master_vendors()} == {"1001": "", "1002": "", "1003": "1"}
+    # the list cut to Y: code 1 is no hold any more, for a supplier this read does not list either
+    store.set_setting(HOLD_CODES_SETTING, "Y")
+    store.set_erp_bank_and_hold({"1001": ("", "N")})
+    assert _held(store) == []
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE vendors SET erp_hold = '1' WHERE erp_id = '1003'")
+    store.import_vendor_master([{"vendor_name": "Alpha Paper Ltd", "erp_id": "1001", "hold": "N"}])
+    assert store.get_vendor("delta fuel")["erp_hold"] == ""
+
+
+def test_the_import_counts_the_hold_codes_it_did_not_treat_as_a_hold(tmp_path):
+    """B-2159: a hold payment code the list does not name (``0``, ``3``) was dropped without a word."""
+    store = Store(tmp_path / "a.db")
+    rows = [{"vendor_name": f"Supplier {i}", "erp_id": str(3000 + i), "hold": code}
+            for i, code in enumerate(["N", "", "Y", "0", "0", "3", "2", "n", " 0 "])]  # fmt: skip
+    assert store.import_vendor_master(rows)["other_holds"] == {"0": 3, "3": 1}
+    store.set_setting(HOLD_CODES_SETTING, "Y, 1, 2, 0")
+    assert store.import_vendor_master(rows)["other_holds"] == {"3": 1}
+    assert store.import_vendor_master([{"vendor_name": "No Column Co", "erp_id": "1"}])["other_holds"] == {}

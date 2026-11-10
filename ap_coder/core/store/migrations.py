@@ -247,6 +247,8 @@ def _vendor_numbers(store: Any, conn: sqlite3.Connection) -> None:
     for column in ("qst_number", "pst_number", "province", "erp_bank", "erp_hold"):
         if columns and column not in columns:
             dialect.add_column(conn, "vendors", column, "TEXT NOT NULL DEFAULT ''")
+    if columns:  # JD Edwards' "N" is no hold: a sync before B-2081 kept it as one (B-2158)
+        conn.execute("UPDATE vendors SET erp_hold = '' WHERE erp_hold IN ('N', 'n')")
 
 
 def _cost_center_managers(store: Any, conn: sqlite3.Connection) -> None:

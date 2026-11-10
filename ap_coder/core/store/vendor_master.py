@@ -23,6 +23,35 @@ from .summary import fetch_rows
 HOLD_CODES_SETTING = "jde_hold_codes"
 HOLD_CODES = "Y, 1, 2"
 NEVER_HOLD = ("", "N")
+# JD Edwards' "2": the supplier's payments are held, its vouchers still entered. AP Coder codes and keys vouchers and
+# pays nothing, so the invoice goes on with a warning (VENDOR_PAYMENTS_HELD), not held as one of ``Y`` or ``1`` is
+# (B-2157).
+PAYMENTS_ONLY = ("2",)
+
+
+def stops_vouchers(code: Any) -> bool:
+    """Whether a hold payment code a vendor keeps (``vendors.erp_hold``) stops the vendor's invoices and vouchers:
+    any but blank and the codes that hold payments only."""
+    return bool(code) and str(code).strip().upper() not in PAYMENTS_ONLY
+
+
+def other_holds(rows: list[dict[str, Any]], holding: list[str]) -> dict[str, int]:
+    """{a hold payment code of an import's rows that is neither "N", blank nor one that holds: how many suppliers
+    have it}: what the import says it did not treat as a hold (B-2159)."""
+    counted: dict[str, int] = {}
+    for row in rows:
+        code = str(row.get("hold") or "").strip().upper()
+        if code not in NEVER_HOLD and not hold_code(code, holding):
+            counted[code] = counted.get(code, 0) + 1
+    return counted
+
+
+def holds_as_listed(conn: Any, holding: list[str]) -> None:
+    """A hold payment code a vendor keeps that the list does not name (any more) is no hold: blanked on every vendor,
+    whichever of them an import or a sync lists (B-2158)."""
+    codes = sorted({code.upper() for code in holding} - set(NEVER_HOLD))
+    conn.execute(f"UPDATE vendors SET erp_hold = '' WHERE erp_hold != '' AND NOT {_in_list('UPPER(TRIM(erp_hold))')}",
+                 (json.dumps(codes),))  # fmt: skip
 
 
 def listed(text: Any) -> list[str]:
@@ -39,7 +68,8 @@ def hold_code(code: Any, holding: list[str]) -> str:
 
 
 # A supplier whose name the ERP marks as retired (the words: the setting ``skip_words``, ``Store.skip_words``, whose
-# default is ``vendors.SKIP_WORDS``; a star before or after the name marks one too).
+# default is ``vendors.SKIP_WORDS``; STAR in the list: a star before or after the name marks one too).
+STAR = "*"
 MARKED = "marked {} in the supplier master"  # the note of a vendor on hold for its marker (B-2083)
 MARKED_LIKE = MARKED.format("%")
 _WAS_MARKED = like("vendors.notes")  # (with MARKED_LIKE) a vendor whose note is a marker's: on hold for it
@@ -59,17 +89,17 @@ def _markers(words: list[str]) -> list[tuple[str, re.Pattern[str]]]:
 
 def name_marker(name: Any, words: list[str]) -> tuple[str, str]:
     """(the name without it, the marker) of a name the ERP marks as retired: one of ``words`` (``Store.skip_words``)
-    in any case and spacing ("NORTHERN PAPER CO  DO NOT USE", "DNU - Old Print Shop"), or a star before or after the
-    name ("*LAKESIDE CATERING"); the name as it is and "" for any other. The marker is not part of the vendor's key:
-    the supplier is found by its real name, and stopped (B-2083)."""
+    in any case and spacing ("NORTHERN PAPER CO  DO NOT USE", "DNU - Old Print Shop"), or, with STAR among them, a
+    star before or after the name ("*LAKESIDE CATERING"); the name as it is and "" for any other. The marker is not
+    part of the vendor's key: the supplier is found by its real name, and stopped (B-2083)."""
     text = str(name or "")
     for said, pattern in _markers(words):
         found = pattern.search(text)
         if found:
             return f"{text[: found.start()]} {text[found.end() :]}".strip(), said
     plain = text.strip()
-    if plain.startswith("*") or plain.endswith("*"):
-        return plain.strip("* "), "*"
+    if STAR in words and (plain.startswith(STAR) or plain.endswith(STAR)):
+        return plain.strip("* "), STAR
     return text, ""
 
 
@@ -204,6 +234,7 @@ class VendorMasterMixin:
         that one is the vendor of the name and the retired one is kept under its ERP ID (B-2083)."""
         added = updated = 0
         now = _now()
+        holding = self.hold_codes()
         merged, names = self._master_rows_merged(rows, by_erp_id)
         duplicates = [n for n in names.values() if len(n) > 1]
         inserted: list[str] = []
@@ -251,11 +282,13 @@ class VendorMasterMixin:
                     added += 1
                     inserted.append(key)
                     existing.add(key)
+            holds_as_listed(conn, holding)
             if log:
                 self._log(conn, "vendors_imported", actor=actor, detail={
                     "added": added, "updated": updated, "duplicates": len(duplicates),
                 })  # fmt: skip
-        return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
+        return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted,
+                "other_holds": other_holds(rows, holding)}  # fmt: skip
 
     def _master_rows_merged(
         self, rows: list[dict[str, Any]], by_erp_id: bool
@@ -367,12 +400,13 @@ class VendorMasterMixin:
     def set_erp_bank_and_hold(self, values: dict[str, tuple[str, str]]) -> None:
         """{ERP ID: (the bank account JDE pays on, JDE's hold code)} on the vendor master's vendors of those IDs (kept
         apart from AP's own hold, D-105): only where either changed. The hold code is kept when it is one that holds
-        (``hold_code``), blank otherwise."""
+        (``hold_code``), blank otherwise; and a code no vendor should keep any more goes (``holds_as_listed``)."""
         holding = self.hold_codes()
         kept = [(bank, hold_code(hold, holding), erp_id) for erp_id, (bank, hold) in values.items()]
         with self._conn() as conn:
             conn.executemany("UPDATE vendors SET erp_bank = ?1, erp_hold = ?2 WHERE erp_id = ?3 AND in_master = 1 AND "
                              "(erp_bank != ?1 OR erp_hold != ?2)", kept)  # fmt: skip
+            holds_as_listed(conn, holding)
 
     def vendor_ids(self) -> dict[str, str]:
         """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
