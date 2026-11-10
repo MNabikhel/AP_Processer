@@ -463,7 +463,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if server_mode() and workers > 1:
         network["workers"] = workers
     extra = network if server_mode() or any(network.values()) else {}  # (the laptop's call is as before)
-    return server.serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)), **extra)
+    from ..web.core import first_run
+
+    store = first_run(Path(args.db), server=server_mode())  # a laptop's new data folder starts with Simple screens
+    return server.serve(host, port, open_browser=not args.no_browser, store=store, **extra)
 
 
 def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Any], bool, int] | None:

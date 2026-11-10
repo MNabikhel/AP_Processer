@@ -21,6 +21,15 @@
     {% if developer_tools or developer_env %}The tools for developers are shown.{% else %}The tools for developers are
     hidden.{% endif %} Nothing is removed: tick or untick them here.</p>
   <form method="post" action="/settings/about/show" class="stack" data-busy="Saving…">
+    <div class="stack" role="radiogroup" aria-labelledby="screens-title">
+      <b id="screens-title">Screens</b>
+      <label class="check"><input type="radio" name="screens" value="simple"{% if simple %} checked{% endif %}>
+        Simple: the short menu for coding invoices to JD Edwards (To review, Add invoices, To key into JDE, Find an
+        invoice, What was learned, then Setup and Help)</label>
+      <label class="check"><input type="radio" name="screens" value="everything"{% if not simple %} checked{% endif %}>
+        Everything: every page as well (purchase orders, vendor statements, month-end, sales tax, spend, insights,
+        manager confirmations, activity) and the Automation and Finance hub settings</label>
+    </div>
     <label class="check"><input type="checkbox" name="show_jde" value="1"{% if show_jde %} checked{% endif %}>
       Show JD Edwards settings (a Settings tab, and JD Edwards E1 as an export format). Turning it on also
       adds the JD Edwards checks to every invoice: each needs its supplier's address number and a JD Edwards account
