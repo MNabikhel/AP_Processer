@@ -14,6 +14,9 @@ from types import MappingProxyType
 from typing import Any
 
 from ..caches import MB, Bounded, size_of
+from ..chart import SKIP_WORDS_SAVED as SKIP_WORDS  # noqa: F401  (the default as the setting holds it)
+from ..chart import SKIP_WORDS_SETTING  # noqa: F401  (imported from here by the Vendors page)
+from ..chart import markers as _markers
 from ..keys import ADDED_HERE, BUSINESS_NUMBER, norm_tax_number, same_tax_number
 from ..memory import _LEGAL_SUFFIXES, _normalise, vendor_key
 from ._base import (
@@ -69,25 +72,12 @@ def hold_code(code: Any, holding: list[str]) -> str:
     return code if code not in NEVER_HOLD and code in {c.upper() for c in holding} else ""
 
 
-# The words an ERP's names carry for "retired: do not use" (a setting; a star before or after a name marks one too).
-# Defined here, in core, because the store reads it (D-192): the one default for whatever else skips such names.
-SKIP_WORDS_SETTING = "skip_words"
-SKIP_WORDS = "DO NOT USE, DNU"
+# The words an ERP's names carry for "retired: do not use" (a setting; a star before or after a name marks one too):
+# the default, the setting's name and how a word is found in a name are ``core/chart.py``'s, the one definition for a
+# supplier and a business unit of the chart of accounts alike (D-209).
 MARKED = "marked {} in the supplier master"  # the note of a vendor on hold for its marker (B-2083)
 MARKED_LIKE = MARKED.format("%")
 _WAS_MARKED = like("vendors.notes")  # (with MARKED_LIKE) a vendor whose note is a marker's: on hold for it
-
-
-def _markers(words: list[str]) -> list[tuple[str, re.Pattern[str]]]:
-    """Each skip word as it is said ("DO NOT USE") and as it is found: a word of its own, however it is spaced (``re``
-    keeps the few patterns compiled)."""
-    found = []
-    for word in words:
-        parts = [re.escape(p) for p in re.split(r"[^0-9A-Za-z]+", word) if p]
-        if parts:
-            pattern = r"(?<![0-9a-z])" + r"[^0-9a-z]*".join(parts) + r"(?![0-9a-z])"
-            found.append((" ".join(word.split()).upper(), re.compile(pattern, re.IGNORECASE)))
-    return found
 
 
 def name_marker(name: Any, words: list[str]) -> tuple[str, str]:

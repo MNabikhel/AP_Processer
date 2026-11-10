@@ -242,7 +242,7 @@ def _reference_checks(settings: Settings, load_reference: Callable[[], Reference
     except Exception as exc:  # report and continue with the remaining checks
         add("reference data", FAIL, _scrub(str(exc), settings))
     if reference is not None:
-        cc_codes = reference.cost_centers.codes if reference.cost_centers is not None else None
+        cc_codes = reference.line_cost_centers()
         enums = plan_code_enums(line_gl_codes(reference), cc_codes)
         tables = [
             ("GL accounts", reference.chart_of_accounts),

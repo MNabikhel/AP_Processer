@@ -645,18 +645,19 @@ def gl_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tu
 
 
 def cc_options(reference: ReferenceData, lines: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """(code, label) of the cost centers ([] when the organisation has none)."""
+    """(code, label) of the cost centers a line may be offered ([] when the organisation has none:
+    ``ReferenceData.line_cost_centers``); one a line has that is not offered, or not in the list, is kept, so it
+    shows and can be fixed."""
     if reference.cost_centers is None:
         return []
-    out = [(UNASSIGNED, NEEDS_CC)] + [
-        (row["cost_center"], f"{row['cost_center']} · {row.get('description', '')[:30]}")
-        for row in reference.cost_centers.rows
-    ]
+    labels = {row["cost_center"]: f"{row['cost_center']} · {row.get('description', '')[:30]}"
+              for row in reference.cost_centers.rows}  # fmt: skip
+    out = [(UNASSIGNED, NEEDS_CC)] + [(code, labels[code]) for code in reference.line_cost_centers() or ()]
     known = {c for c, _ in out}
     for li in lines:
         code = _text(li.get("predicted_cost_center"))
         if code and code not in known:
-            out.append((code, code))
+            out.append((code, labels.get(code, code)))
             known.add(code)
     return out
 

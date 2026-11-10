@@ -147,14 +147,32 @@ class ReferenceData:
     # Which GL code exists on which cost center (a JD Edwards business unit) and may be posted to, when a chart of
     # accounts was imported (D-209); None: every GL code goes with every cost center, as before.
     pairs: AccountPairs | None = None
+    # What the store built it from, as it compares it (``Store.reference_stamp``); "" when read from files. Checks
+    # made with it say so (``ValidationReport.reference_stamp``), so an invoice checked against lists that changed
+    # before it was saved is checked again (B-2094).
+    stamp: str = ""
 
     def line_accounts(self) -> list[str]:
         """The GL codes a line may be offered, in the list's order: every account but those mapped to a tax type and,
         with a chart imported, those offered on no business unit (never-offered accounts, ``chart.ChartSettings``).
-        The one place that says so: the model's list, the suggestions and the review screen's picker all ask it."""
+        The one place that says so. Asked by the coding's schema (``schema.line_gl_codes``), the review screen's
+        picker (``invoice_view.gl_options``), the doctor and ``to_prompt_context``; the suggestions
+        (``ai/suggest.suggest_gl``) and the model's account pass (``ai/inference._account_schema``) still work their
+        own list out, tax accounts aside only, until they are rebuilt on this and the pairs (B-2093)."""
         tax_gls = self.tax.tax_gl_codes()
         offered = None if self.pairs is None else self.pairs.offered_codes()
         return [c for c in self.chart_of_accounts.codes if c not in tax_gls and (offered is None or c in offered)]
+
+    def line_cost_centers(self) -> list[str] | None:
+        """The cost centers a line may be offered, in the list's order (None: the organisation has none): all of
+        them, or with a chart imported those with an account the pairs offer, so not a business unit named DO NOT USE
+        or one all of whose accounts are never offered (B-2093). Such a one stays a cost center: a line coded to it by
+        hand is checked. Asked by the coding's schema, the review screen's picker (``invoice_view.cc_options``, which
+        keeps a line's own) and ``to_prompt_context``; ``ai/inference._account_schema`` still lists them all."""
+        if self.cost_centers is None:
+            return None
+        offered = None if self.pairs is None else frozenset(self.pairs.business_units())
+        return [c for c in self.cost_centers.codes if offered is None or c in offered]
 
     def to_prompt_context(self) -> str:
         offered = frozenset(self.line_accounts())
@@ -165,7 +183,9 @@ class ReferenceData:
         )
         sections = ["### GL Accounts (use for line items)\n" + expense_accounts.to_markdown()]
         if self.cost_centers is not None:
-            sections.append("### Cost Centers\n" + self.cost_centers.to_markdown())
+            centers, key = frozenset(self.line_cost_centers() or ()), self.cost_centers.key_column
+            rows = [r for r in self.cost_centers.rows if r[key] in centers]
+            sections.append("### Cost Centers\n" + ReferenceTable(self.cost_centers.kind, key, rows).to_markdown())
         sections.append("### Canadian Sales Tax Rates in force today\n" + self.tax.rates.to_markdown())
         if self.notes:
             sections.append("### Coding Policy Notes\n" + "\n".join(f"- {n}" for n in self.notes))
