@@ -137,6 +137,16 @@ def test_approve_anyway_never_covers_an_account_jd_edwards_would_refuse():
     assert {"ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED"} <= COUNTED_IN_CODING
 
 
+def test_the_help_of_each_check_says_it_applies_once_a_chart_is_loaded_and_how_to_load_one():
+    """The Help page lists the four for every install, a chart loaded or not."""
+    from ap_coder.ops.help import CHECKS
+
+    for code in ("ACCOUNT_NOT_IN_CHART", "ACCOUNT_NOT_POSTABLE", "BU_INACTIVE", "ACCOUNT_RESERVED"):
+        assert CHECKS[code].meaning.startswith("Once a chart of accounts is loaded from JD Edwards: "), code
+    for code in ("ACCOUNT_NOT_IN_CHART", "BU_INACTIVE"):
+        assert "python -m ap_coder chart import" in CHECKS[code].action, code
+
+
 def test_a_list_changed_by_hand_since_the_import_is_still_checked(reference, ground_truth, store):
     """An account taken off the GL accounts by hand is unknown, as before, though the chart has the pair."""
     store.save_accounts("gl_accounts", [r for r in store.list_accounts("gl_accounts") if r["code"] != "5450"])

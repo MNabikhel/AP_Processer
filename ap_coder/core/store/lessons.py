@@ -530,7 +530,7 @@ class LessonsMixin:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
         if validation:  # checked now, against the settings as they are (B-815)
-            validation[CHECKS_STAMP_KEY] = self.checks_stamp()
+            validation = self.checked_stamp({k: v for k, v in validation.items() if k != CHECKS_STAMP_KEY})
         if capture is not None and hasattr(capture, "to_dict"):
             capture = capture.to_dict()
         # The vendor's own key, of two whose names read alike (B-1021): as ``add_invoice`` keeps it (B-1311).

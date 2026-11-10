@@ -27,7 +27,6 @@ from ._base import (
     _LOOK_AGAIN_SECONDS,
     _NOT_FOUND,
     APPROVED,
-    CHECKS_STAMP_KEY,
     FAILED,
     PARKED,
     PENDING,
@@ -80,7 +79,7 @@ class InvoicesMixin:
         sha = sha256 or (hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None)
         out = output or {}
         if validation:  # what it was checked against: the queue checks it again once that changes (B-815)
-            validation = {CHECKS_STAMP_KEY: self.checks_stamp(), **validation}
+            validation = self.checked_stamp(validation)
         val = validation or {}
         key = self.vendor_key_for(out.get("vendor_name", ""), out.get("gst_hst_registration_number"))  # B-1021
         with self._conn() as conn:

@@ -6,6 +6,7 @@ in force (``approval_controls``, ``approval_reason``) and the reference data the
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import hashlib
 import json
 import math
@@ -22,7 +23,9 @@ from ..tax_setup import TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatm
 from ._base import (
     ACCOUNT_TABLES,
     APPROVAL_CONTROLS,
+    CHECKS_STAMP_KEY,
     EVENT_ORIGIN,
+    REFERENCE_STAMP_KEY,
     _clean_code,
     _in_list,
     _now,
@@ -72,6 +75,11 @@ def _file_stamp(path: Path) -> tuple[str, tuple[int, int] | None]:
     except OSError:
         return str(path), None
     return str(path), (seen.st_mtime_ns, seen.st_size)
+
+
+def _short(parts: tuple[Any, ...]) -> str:
+    """A stamp's parts as the short fingerprint that is stored and compared."""
+    return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
 
 
 # The audit events of a change to the vendor master or the POs: each one counts (``count_masters_change``).
@@ -611,12 +619,18 @@ class AccountsMixin:
             kept = _REFERENCE.get(key)
             if kept is not None and kept[0] == stamp:
                 return kept[1]
-        built = self._reference_data(TaxRateTable.load(path))
+        built = dataclasses.replace(self._reference_data(TaxRateTable.load(path)), stamp=_short(stamp))
         with _REFERENCE_LOCK:
             _REFERENCE[key] = (stamp, built)
             while len(_REFERENCE) > 8:
                 _REFERENCE.pop(next(iter(_REFERENCE)))
         return built
+
+    def reference_stamp(self) -> str:
+        """A short fingerprint of what ``reference_data`` is built from now: the ``stamp`` of the reference data it
+        would give. Checks made with reference data of another stamp were made against lists changed since."""
+        with self._conn() as conn:
+            return _short((*_file_stamp(_tax.rates_path()), *conn.execute(_REFERENCE_STAMP).fetchone()))
 
     def checks_stamp(self) -> str:
         """A short fingerprint of everything an invoice's checks read that a person changes in Settings: the GL
@@ -626,7 +640,19 @@ class AccountsMixin:
         with self._conn() as conn:
             parts = (*_file_stamp(_tax.rates_path()), *conn.execute(_REFERENCE_STAMP).fetchone(),
                      *conn.execute(_CHECKS_STAMP).fetchone())  # fmt: skip
-        return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
+        return _short(parts)
+
+    def checked_stamp(self, validation: dict[str, Any]) -> dict[str, Any]:
+        """``validation`` (a report's dict) as it is stored: stamped with what it was checked against
+        (``CHECKS_STAMP_KEY``). That is today's ``checks_stamp``, unless the checks say they were made with reference
+        data that is no longer the one in force (``reference_stamp``: a reader keeps its own for a whole run of
+        files, and a list changed meanwhile): then the stamp names those older lists, never today's, so the queue
+        checks the invoice again (B-2094). The stamp was taken when the invoice was saved, whatever it had been
+        checked against. A stamp the caller gives is kept."""
+        stored = {k: v for k, v in validation.items() if k != REFERENCE_STAMP_KEY}
+        used = validation.get(REFERENCE_STAMP_KEY)
+        stale = bool(used) and used != self.reference_stamp()
+        return {CHECKS_STAMP_KEY: f"lists {used}" if stale else self.checks_stamp(), **stored}
 
     @staticmethod
     def rates_stamp() -> tuple[str, tuple[int, int] | None]:

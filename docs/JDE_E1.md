@@ -497,6 +497,58 @@ settings* on in Settings → About); a test checks that each one stays covered.
   the automation columns of the pay item.
 * Exchange rates: E1's table (VLCRR blank) or AP Coder's.
 
+## Loading the chart of accounts and the business units
+
+A company that types one account string for each line, `business unit.object.subsidiary`, loads its chart from JD
+Edwards' own exports (D-209). AP Coder then knows which account exists on which business unit and which may be posted
+to, and checks each line's pair: *Account not on this business unit*, *Account does not take postings*, *Business unit
+not active*, *Account not offered for invoices* (Help lists them). Without a chart nothing changes.
+
+**Pull the two exports** in JD Edwards, each from its grid with *Export to Excel*, every column, and use the file as it
+comes (do not open and save it in between: a code like `0042` would become the number 42, and such a file is refused):
+
+- the **account master** for the company, all business units (about 110 columns: `Business Unit`, `Object Account`,
+  `Subsidiary`, `Account Description`, `L D`, `P E`...);
+- the **business unit master** (about 67 columns: `Job Number`, `Job Name`, `Co`, `BU Ty`, `Job Sts`...).
+
+**Import them** from `scripts\terminal.bat` (the business units alone, the chart alone, or both):
+
+```
+python -m ap_coder chart import --chart "Account master.xlsx" --business-units "Business units.xlsx"
+```
+
+A chart of 15,000 rows takes 10 to 20 seconds. **The summary says** how many business units and accounts were read and
+how many may be posted to (posting edit code blank; the others are counted by their code), the rows left out and why,
+how many GL accounts and cost centers there are now, what left the two lists, and how many accounts a line may be
+coded to. The GL accounts and cost centers are worked out from the chart: an account is listed when it may be posted
+to on an active business unit, with the title account above it as its category. Importing again replaces the chart;
+the same file again changes nothing (and puts right a list changed by hand).
+
+- A GL account's meals tick, a category typed for it and a cost center's manager stay. When an import no longer has
+  the account or the business unit, they are **set aside**, said in the summary, and put back when a later import has
+  it again.
+- *To set right* in the summary: a tax type or a bank account still pointing at a GL account that is gone (choose its
+  account on GL accounts & tax).
+- With a chart imported, the API sync (below) leaves the GL accounts and business units alone: the chart says which
+  exist.
+
+**The chart's settings** (shown by `python -m ap_coder chart settings`, each changed by naming it; `""` clears one):
+
+```
+python -m ap_coder chart settings --never-offered "*.7701, 4110" --home-business-unit 0880133142
+```
+
+- `--never-offered`: accounts that exist and may be posted to but are never suggested or listed, with commas between:
+  `*.7701` (that subsidiary of any object), `4110` (that object, whatever its subsidiary), `0880133142.*.*` (a whole
+  business unit). A line coded to one by hand is flagged for a person to confirm.
+- `--postable`: posting edit codes AP may post to besides blank (ask the JD Edwards team before adding one).
+- `--skip-words`: a business unit whose name carries one (DO NOT USE, DNU) is never offered; the same words mark a
+  retired supplier (the Vendors page).
+- `--home-business-unit`: where a line is suggested to go when nothing says otherwise.
+
+`python -m ap_coder chart show` says what is imported, the settings, and what is held back and why; `chart rebuild`
+works the GL accounts and cost centers out again from the chart as it is.
+
 ## Through the API (AIS Server, D-104)
 
 Option 2 of the ways below is built, off until an Admin switches it on: **Settings → JD Edwards E1 → API

@@ -58,6 +58,9 @@ _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
 # The key of a stored validation that holds the stamp of what it was checked against (``Store.checks_stamp``, B-815).
 CHECKS_STAMP_KEY = "checks_stamp"
+# The key of a report's dict that says which reference data its checks were made with (``ReferenceData.stamp``): read
+# when the validation is stored, never stored itself (``Store.checked_stamp``, B-2094).
+REFERENCE_STAMP_KEY = "reference_stamp"
 
 
 def _in_list(column: str) -> str:

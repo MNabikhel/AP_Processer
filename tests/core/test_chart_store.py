@@ -204,3 +204,24 @@ def test_the_accounts_a_line_may_be_offered_are_said_in_one_place(store, referen
     assert [c for c, _ in options][1:] == [*offered, "5410.7701"]  # a line that has it still shows it, by its name
     assert dict(options)["5410.7701"] == "5410.7701 · Recoveries"
     assert "5410.7701" not in with_chart.to_prompt_context() and "5410.2210" in with_chart.to_prompt_context()
+
+
+def test_a_business_unit_named_do_not_use_is_not_in_the_lists_offered(store, reference):
+    """B-2093: it was in the cost center drop-down and in the model's list of cost centers, though the chart's pairs
+    never offer it. It stays a cost center (a line coded to it by hand is checked), like a never-offered account."""
+    assert reference.line_cost_centers() == reference.cost_centers.codes  # no chart: every cost center, as before
+    assert dataclasses.replace(reference, cost_centers=None).line_cost_centers() is None
+    _loaded(store)
+    with_chart = store.reference_data()
+    offered = sorted(set(cf.COST_CENTERS) - {NOT_USED})
+    assert NOT_USED in with_chart.cost_centers.codes and with_chart.line_cost_centers() == offered
+    assert with_chart.line_cost_centers() == with_chart.pairs.business_units()
+    line = schema.build_json_schema(with_chart)["properties"]["line_items"]["items"]["properties"]
+    assert line["predicted_cost_center"]["enum"] == [*offered, "UNASSIGNED"]
+    assert [c for c, _ in invoice_view.cc_options(with_chart, [])][1:] == offered
+    kept = invoice_view.cc_options(with_chart, [{"predicted_cost_center": NOT_USED}])
+    assert kept[-1] == (NOT_USED, f"{NOT_USED} · ****DO NOT USE**** Old Annex")  # a line that has it still shows it
+    assert NOT_USED not in with_chart.to_prompt_context() and HOME in with_chart.to_prompt_context()
+    # A business unit all of whose accounts are never offered is not offered either.
+    store.set_setting("never_offered", "0731066177.*.*")
+    assert UNLISTED not in store.reference_data().line_cost_centers()
