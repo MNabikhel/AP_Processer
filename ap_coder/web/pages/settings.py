@@ -724,7 +724,9 @@ def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form
         store.set_setting(SCREENS, screens, actor=reviewer())
         changed.append("Simple screens" if screens == SIMPLE else "every screen shown")
         keys.append(SCREENS)
-    switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
+    elif screens == EVERYTHING and not store.get_setting(SCREENS):
+        store.set_setting(SCREENS, screens, actor=reviewer())  # chosen here: the queue's card asks no more (D-221)
+    switches =[(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
     if not developer_env_on():  # set by AP_DEVELOPER_TOOLS: shown as on, never stored (B-527)
         switches.append((DEVELOPER_TOOLS, developer, "developer tools", developer_tools(store)))
     for key, value, words, was in switches:
@@ -736,6 +738,19 @@ def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form
     if keys:  # only the switches that changed
         store.log_event("settings_changed", actor=reviewer(), detail={"keys": keys})
     return done(request, tab_url("about"), ("Saved: " + ", ".join(changed) + ".") if changed else "Nothing changed.")
+
+
+@router.post("/settings/about/screens")
+def choose_screens(request: Request, screens: str = Form("")) -> JSONResponse:
+    """The answer to the queue page's card for a data folder an earlier AP Coder made (``core.screens_to_choose``,
+    D-221): the Simple screens or every page, saved either way so the card is not shown again. Logged."""
+    if screens not in (SIMPLE, EVERYTHING):
+        return refuse("Choose the simple screens or every page.")
+    store = get_store(request)
+    store.set_setting(SCREENS, screens, actor=reviewer())
+    store.log_event("settings_changed", actor=reviewer(), detail={"keys": [SCREENS]})
+    said = "The simple screens are on: the short menu." if screens == SIMPLE else "Every page stays in the menu."
+    return done(request, "/review", f"{said} To change it later: Settings → About → Screens.")
 
 
 # The other tabs' routes (their modules import nothing from this one at import time but the helpers above).

@@ -1,0 +1,25 @@
+{# The queue page's card for a data folder an earlier AP Coder made (core.screens_to_choose, D-221): what is new, and
+   which screens to show. Either button saves the choice, so it shows once. Needs: choose_screens. #}
+{% if choose_screens %}
+<section class="card stack" id="choose-screens">
+  <h4><span class="ms" aria-hidden="true">new_releases</span> AP Coder was updated: choose your screens</h4>
+  <p>Your data folder was kept as it is, so the menu still shows every page. What is new in this version:</p>
+  <ul>
+    <li><b>A shorter menu</b> for coding invoices to JD Edwards: To review, Add invoices, To key into JDE, Find an
+      invoice, What was learned and Rules, then Setup and Help. The other pages are hidden, not removed.</li>
+    <li><b>One Account box a line</b> on an invoice, once a JD Edwards chart of accounts is loaded (JD Edwards files):
+      the business unit, the object and the subsidiary in one box, whichever screens you choose.</li>
+  </ul>
+  <div class="row">
+    <form method="post" action="/settings/about/screens" data-busy="Saving…">
+      <input type="hidden" name="screens" value="simple">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">menu_open</span>Use the simple screens</button>
+    </form>
+    <form method="post" action="/settings/about/screens" data-busy="Saving…">
+      <input type="hidden" name="screens" value="everything">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">menu</span>Keep every page</button>
+    </form>
+  </div>
+  <p class="muted">Either choice can be changed later: Settings → About → Screens.</p>
+</section>
+{% endif %}

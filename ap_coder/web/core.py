@@ -772,6 +772,15 @@ def server_mode(request: Request) -> bool:
     return bool(getattr(request.app.state, "server_mode", False))
 
 
+def screens_to_choose(request: Request, store: Store) -> bool:
+    """Whether the queue page asks which screens to show (its card, ``_screens_card.html``, D-221): a laptop's
+    database on which the Screens choice was never saved, so one an earlier AP Coder made, which goes on showing
+    every page (``first_run``) while the person wonders whether the update worked. Either answer is saved (``POST
+    /settings/about/screens``), so it is asked once; a new data folder starts Simple and is never asked, nor is
+    the company server, whose screens are an Admin's to choose."""
+    return not server_mode(request) and not store.get_setting(SCREENS)
+
+
 def can(request: Request, path: str, method: str = "POST") -> bool:
     """Whether the person asking may use ``path`` (a page hides what they can't; the server refuses it anyway):
     always on a laptop, their role's say in server mode (web/roles.py)."""

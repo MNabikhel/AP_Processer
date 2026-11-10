@@ -183,7 +183,9 @@ RULES: dict[tuple[str, str], str] = {
         "POST /settings/data/open-folder", "POST /settings/data/backup",
         "POST /settings/data/backup-copy", "GET /settings/data/backups/{name}", "POST /settings/data/restore",
         "POST /settings/data/backup-time",
-        "POST /settings/about/show", "POST /settings/reading/reviewer", "POST /settings/reading/check",
+        "POST /settings/about/show",
+        "POST /settings/about/screens",  # the queue's card of an older laptop data folder; never shown here (D-221)
+        "POST /settings/reading/reviewer", "POST /settings/reading/check",
         "POST /settings/reading/self-test", "GET /settings/reading/self-test", "POST /settings/reading/load-model",
         "POST /settings/reading/azure", "POST /settings/reading/azure-test", "POST /settings/automation/touchless",
         "POST /settings/reading/servers",  # the backup model servers (D-180)

@@ -11,6 +11,7 @@
 {% endblock %}
 {% block content %}
 <div class="narrow">
+  {% include "_screens_card.html" %}
   {% if waiting %}
   <section class="card">
     <h4><span class="ms" aria-hidden="true">inbox</span> {{ waiting | plural("invoice") }} read and waiting</h4>
