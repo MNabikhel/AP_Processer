@@ -760,6 +760,7 @@ def grid(reference: ReferenceData, draft: Draft, ai: dict[str, Any] | None = Non
         checked.report.issues if checked is not None and checked.report is not None else (),
         checked.taxes if checked is not None else None,
         (checked.output.get("line_items") if checked is not None and checked.coding is not None else None),
+        meals_note(codes["province"]),
     ) if account else []  # fmt: skip
     for shown, row in zip(views, draft.lines, strict=False):  # still the model's own guess: to check (B-463)
         if id(row) in guesses and not shown["state"] and shown["name"]:

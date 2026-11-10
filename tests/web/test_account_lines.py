@@ -239,6 +239,20 @@ def test_a_line_with_no_tax_kept_in_it_shows_no_keyed_amount(chart_company, char
     assert "GST <b>240.00</b>" in row["tax"] and not row["has_keyed"] and not row["keyed"]
 
 
+def test_a_meals_line_says_so_under_its_tax():
+    """B-2208: a line coded to a meals account says under its tax that half is claimable; another line doesn't."""
+    from ap_coder.coding.tax import meals_note
+    from ap_coder.coding.taxmath import LineTaxes
+
+    def line(meals):
+        return LineTaxes(0, 1, "G", "GST 5%", False, 100.0, (), (), 0.0, 100.0, meals, False, ())
+
+    note = meals_note("AB")
+    assert account_lines.tax_view(line(True), note)["notes"] == [note]
+    assert account_lines.tax_view(line(False), note)["notes"] == []
+    assert account_lines.tax_view(line(True))["notes"] == []
+
+
 def test_a_line_whose_tax_is_not_the_invoices_usual_one_is_marked(chart_company, chart_company_client):
     page = _page(chart_company, chart_company_client, "four_lines")
     codes = page.form["line_tax_code"]

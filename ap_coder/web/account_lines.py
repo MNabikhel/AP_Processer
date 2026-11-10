@@ -212,11 +212,12 @@ def remark_view(row: dict[str, Any], coded: dict[str, Any] | None, issue: Any = 
 
 def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: list[dict[str, Any]],
               issues: Any = (), taxes: InvoiceTaxes | None = None,
-              coded: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+              coded: list[dict[str, Any]] | None = None, meals_note: str = "") -> list[dict[str, Any]]:  # fmt: skip
     """What each line of ``lines`` (the draft's rows) shows in its row. ``proposed``: the lines as AP Coder proposed
     them; ``issues``: the checks' findings (the chart's and the remark's are said on the line); ``taxes``:
     ``taxmath.invoice_taxes`` of the coding on screen, None while it is not worked out (the row then shows no tax
-    amounts); ``coded``: that coding's lines as checked (each with its remark), None likewise."""
+    amounts); ``coded``: that coding's lines as checked (each with its remark), None likewise; ``meals_note``: what a
+    line coded to a meals account says under its tax (``tax.meals_note``)."""
     found: dict[Any, Any] = {}
     long: dict[Any, Any] = {}
     for issue in issues or ():
@@ -231,7 +232,7 @@ def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: l
         # the coding leaves out a row with no description and no amount (``coding_from_inputs``)
         mine = None
         if not all(is_blank(row.get(k)) for k in ("description", "amount")):
-            view["taxes"] = tax_view(by_position[position]) if position in by_position else None
+            view["taxes"] = tax_view(by_position[position], meals_note) if position in by_position else None
             mine = coded[position] if coded is not None and position < len(coded) else None
             position += 1
         view["remark"] = remark_view(row, mine, long.get(row.get("line_number")))
@@ -259,10 +260,10 @@ def money(value: float) -> str:
     return f"{value:,.2f}"
 
 
-def tax_view(line: LineTaxes) -> dict[str, Any]:
+def tax_view(line: LineTaxes, meals_note: str = "") -> dict[str, Any]:
     """One line's taxes as its Tax cell shows them: the tax code in words, each tax with its own amount ("read" when
     the invoice prints it on the line), whether the line's tax is not the invoice's usual one, and the amount keyed
-    when a tax stays in the line."""
+    when a tax stays in the line. A line coded to a meals account says so (``meals_note``, D-90)."""
     rows = []
     for tax in line.taxes:
         where = {INSIDE: "in the line", OWN_LINE: "on its own account"}.get(tax.where, "")
@@ -271,5 +272,6 @@ def tax_view(line: LineTaxes) -> dict[str, Any]:
         rows.append({"name": tax.name, "amount": money(tax.amount), "read": tax.source == READ, "where": where})
     for due in line.due:
         rows.append({"name": due.name, "amount": money(due.amount), "read": False, "where": "due, not charged"})
-    return {"label": line.label, "unusual": line.unusual, "rows": rows, "notes": list(line.notes),
+    notes = [*line.notes, *([meals_note] if line.meals and meals_note else [])]
+    return {"label": line.label, "unusual": line.unusual, "rows": rows, "notes": notes,
             "keyed": money(line.keyed) if abs(line.inside) >= 0.005 else ""}  # fmt: skip
