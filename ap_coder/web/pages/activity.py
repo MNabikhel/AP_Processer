@@ -44,6 +44,7 @@ GROUPS = {
               "files_moved", "file_found", "directory_preset_saved", "directory_preset_deleted", "jde_api_tested",
               "jde_synced"],
     "Learning": ["lessons_forgotten", "lesson_explained", "lesson_retired", "lesson_restored", "history_imported",
+                 "journal_imported", "journal_forgotten",
                  "autonomy_on", "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed",
                  "layout_reset", "touchless_on", "touchless_off", "page_reader_tested", "chat_model_tested"],
     "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],

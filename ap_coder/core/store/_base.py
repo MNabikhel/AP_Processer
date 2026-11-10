@@ -46,7 +46,9 @@ SCHEMA_VERSION = 27  # 19: the invoices' summary and its triggers (summary.py, `
 # billing_facts and billing_vendors (by _SCHEMA, no version of their own either: month-end's billing lines by invoice,
 # purchasing.py, D-194), and answer_wants (by _SCHEMA, no version of its own either: the settled answers the server's
 # background process works out again, reports.py, D-198), and chart_accounts and business_units (by _SCHEMA, no version
-# of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209)
+# of their own either: the chart of accounts and the business units as JD Edwards exports them, chart.py, D-209), and
+# journal_files, journal_vouchers and journal_lines (by _SCHEMA, no version of their own either: last year's coding as
+# JD Edwards' Transaction Journal has it, journal.py)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -339,6 +341,25 @@ CREATE TABLE IF NOT EXISTS chart_accounts (bu TEXT NOT NULL, object TEXT NOT NUL
     DEFAULT '', category TEXT NOT NULL DEFAULT '', PRIMARY KEY (bu, object, subsidiary));
 CREATE TABLE IF NOT EXISTS business_units (code TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', company TEXT NOT NULL
     DEFAULT '', type TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS journal_files (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, hash TEXT NOT NULL,
+    loaded_at TEXT NOT NULL, loaded_by TEXT NOT NULL DEFAULT '', first_date TEXT NOT NULL DEFAULT '', last_date TEXT
+    NOT NULL DEFAULT '', vouchers INTEGER NOT NULL DEFAULT 0, lines INTEGER NOT NULL DEFAULT 0, coding_lines INTEGER
+    NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '{}', done INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS journal_files_hash ON journal_files (hash);
+CREATE TABLE IF NOT EXISTS journal_vouchers (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL, row INTEGER NOT NULL,
+    doc_type TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', gl_date TEXT NOT NULL DEFAULT '',
+    supplier_number TEXT NOT NULL DEFAULT '', supplier_key TEXT NOT NULL DEFAULT '', supplier_name TEXT NOT NULL
+    DEFAULT '', gross REAL NOT NULL DEFAULT 0, tax REAL NOT NULL DEFAULT 0, affiliate INTEGER NOT NULL DEFAULT 0,
+    credit INTEGER NOT NULL DEFAULT 0, balanced INTEGER NOT NULL DEFAULT 1, both_columns INTEGER NOT NULL DEFAULT 0,
+    coding_lines INTEGER NOT NULL DEFAULT 0, identity TEXT NOT NULL, counted INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS journal_vouchers_supplier ON journal_vouchers (supplier_key, gl_date);
+CREATE INDEX IF NOT EXISTS journal_vouchers_identity ON journal_vouchers (identity);
+CREATE INDEX IF NOT EXISTS journal_vouchers_file ON journal_vouchers (file_id);
+CREATE INDEX IF NOT EXISTS journal_vouchers_date ON journal_vouchers (gl_date);
+CREATE TABLE IF NOT EXISTS journal_lines (voucher_id INTEGER NOT NULL, n INTEGER NOT NULL, row INTEGER NOT NULL
+    DEFAULT 0, account TEXT NOT NULL, business_unit TEXT NOT NULL DEFAULT '', object TEXT NOT NULL DEFAULT '',
+    subsidiary TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', amount REAL NOT NULL DEFAULT 0,
+    remark TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, PRIMARY KEY (voucher_id, n));
 """
 _SCHEMA += ANSWER_WANTS + ";\n"  # (made in a restore's copy of an older backup too)
 

@@ -15,13 +15,15 @@ Nothing is stored and nothing is refused here: ``Journal.notes`` says in plain w
 left out, and ``Journal.totals.differ`` that the lines do not add up to the file's ``Grand Total`` row (the caller
 decides what to do about it).
 
-Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal`` and ``coding_lines``.
+Entry points: ``read_journal`` (a ``Journal``), ``looks_like_journal``, ``coding_lines`` and ``suggest_objects``
+(which objects are the payable and tax ones, worked out from the file itself).
 """
 
 from __future__ import annotations
 
 import csv
 import io
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -45,6 +47,11 @@ _HEAD = ("doc_type", "company", "gl_date")  # filled on a voucher's first row, b
 HEADER_ROWS = 30  # the header is looked for in the first rows only
 _HEAD_BYTES = 16384  # enough of a file to recognise it by
 SHOWN = 5  # how many rows or vouchers a note names before "and N more"
+# ``suggest_objects``: a payable object closes at least this share of the vouchers it is looked for in; a tax object
+# is on at least TAX_ON of the vouchers (and TAX_VOUCHERS of them), the same share of the rest of the voucher, to the
+# nearest percent and no more than TAX_MOST, on TAX_STEADY of those it is on.
+CLOSES_MOST = 0.5
+TAX_ON, TAX_VOUCHERS, TAX_MOST, TAX_STEADY = 0.05, 5, 16, 0.6
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,3 +398,137 @@ def coding_lines(
             for line in coding
         ]
     return found
+
+
+# --- Which objects are the payable and tax ones ---------------------------------------------------------------------
+
+
+def _side_objects(voucher: Voucher) -> tuple[set[str], set[str]]:
+    """The objects of a voucher's credit lines and of its debit lines (a line of zero is on neither side)."""
+    credits = {line.object for line in voucher.lines if line.amount < 0}
+    debits = {line.object for line in voucher.lines if line.amount > 0}
+    return credits, debits
+
+
+@dataclass(slots=True)
+class _Closing:
+    """How often each object closes a voucher: its lines alone are one side, every other line the other side."""
+
+    credit: Counter[str] = field(default_factory=Counter)  # as credits: what a payable is on an invoice
+    either: Counter[str] = field(default_factory=Counter)  # as credits, or as debits (a credit note)
+    suppliers: dict[str, set[str]] = field(default_factory=dict)  # the suppliers of the vouchers it closes
+
+    def best(self) -> str:
+        """The object that closes the most vouchers from the credit side ("" when none does)."""
+        ranked = sorted(self.credit, key=lambda obj: (-self.credit[obj], -self.either[obj], obj))
+        return ranked[0] if ranked else ""
+
+
+def _closing(vouchers: Iterable[Voucher]) -> _Closing:
+    found = _Closing()
+    for voucher in vouchers:
+        credits, debits = _side_objects(voucher)
+        for side, other in ((credits, debits), (debits, credits)):
+            if len(side) == 1 and other and not side & other:
+                (obj,) = side
+                found.either[obj] += 1
+                found.credit[obj] += side is credits
+                found.suppliers.setdefault(obj, set()).add(voucher.supplier_number)
+    return found
+
+
+def _tax_shares(vouchers: Iterable[Voucher], payable: set[str]) -> tuple[Counter[str], dict[str, Counter[int]]]:
+    """For each object that is not a payable one: (how many vouchers it is on with other lines beside it, {its
+    lines as a percentage of the rest of the voucher, to the nearest percent: on how many vouchers})."""
+    on: Counter[str] = Counter()
+    shares: dict[str, Counter[int]] = {}
+    for voucher in vouchers:
+        cents: Counter[str] = Counter()
+        for line in voucher.lines:
+            cents[line.object] += round(line.amount * 100)
+        gross = -sum(amount for obj, amount in cents.items() if obj in payable)
+        for obj, amount in cents.items():
+            rest = gross - amount
+            if obj in payable or not gross or not rest:
+                continue
+            on[obj] += 1
+            shares.setdefault(obj, Counter())[round(100 * amount / rest)] += 1
+    return on, shares
+
+
+def _tax_guess(closed: list[Voucher], payable: set[str]) -> tuple[tuple[str, ...], list[str]]:
+    """The objects whose lines are a small steady share of their voucher on many vouchers, and why."""
+    on, shares = _tax_shares(closed, payable)
+    found, why = [], []
+    for obj in sorted(on, key=lambda o: (-on[o], o)):
+        percent, steady = shares[obj].most_common(1)[0]
+        if on[obj] < max(TAX_VOUCHERS, TAX_ON * len(closed)) or not 0 < percent <= TAX_MOST:
+            continue
+        if steady >= TAX_STEADY * on[obj]:
+            found.append(obj)
+            why.append(f"Tax: object {obj} is on {plural(on[obj], 'voucher')} and is {percent}% of the rest of the "
+                       f"voucher on {steady:,} of them.")  # fmt: skip
+    if not found:
+        why.append("Tax: no object is the same small share of its vouchers time after time, so none is taken. If "
+                   "the journal has a tax line (GST clearing), name its object.")  # fmt: skip
+    return tuple(found), why
+
+
+def _payable_guess(balanced: list[Voucher]) -> tuple[PayableObjects, list[str]]:
+    """The trade payable object and the intercompany one, and why."""
+    closing = _closing(balanced)
+    trade = closing.best()
+    if not trade or closing.either[trade] < CLOSES_MOST * len(balanced):
+        return PayableObjects(()), ["Trade payable: no object closes most of the vouchers (its lines alone on one "
+                                    "side, every other line on the other), so none is taken. Name the trade payable "
+                                    "object."]  # fmt: skip
+    why = [f"Trade payable: object {trade} closes {closing.either[trade]:,} of {plural(len(balanced), 'voucher')} "
+           "that balance (its lines alone are the other side of the coding lines)."]  # fmt: skip
+    rest = [v for v in balanced if all(line.object != trade for line in v.lines)]
+    others = _closing(rest)
+    second = others.best()
+    apart = second and not others.suppliers[second] & closing.suppliers[trade]
+    if second and apart and others.either[second] >= max(2, CLOSES_MOST * len(rest)):
+        why.append(
+            f"Intercompany payable: object {second} closes {others.either[second]:,} of the "
+            f"{plural(len(rest), 'voucher')} that {trade} is not on, for "
+            f"{plural(len(others.suppliers[second]), 'supplier')} with no voucher that {trade} closes. An "
+            "affiliate's vouchers are kept but not learned from; if this is a second trade payable object, move it."
+        )
+        return PayableObjects((trade,), (second,)), why
+    if rest:
+        why.append(f"Intercompany payable: none found among the {plural(len(rest), 'voucher')} that {trade} is not "
+                   "on.")  # fmt: skip
+    return PayableObjects((trade,)), why
+
+
+def suggest_objects(
+    data: bytes, tax_setup_objects: Iterable[str] = ()
+) -> tuple[PayableObjects, tuple[str, ...], tuple[str, ...]]:
+    """Which objects of a journal file are the lines AP did not choose, worked out from the file itself (read once
+    with nothing marked): (the payable objects, the tax objects, why: a sentence for each guess, with its counts).
+
+    * The trade payable object: the one that closes the most vouchers (its lines alone are the credit side, every
+      other line the debit side; the other way round on a credit note), when that is most of those that balance.
+    * The intercompany payable object: the one that closes most of the vouchers the trade one is not on, for
+      suppliers none of which has a voucher the trade one closes.
+    * The tax objects: those of ``tax_setup_objects`` (the objects of the tax setup's GL accounts) that the file
+      has; with none of them, the objects whose lines are the same small share of the rest of the voucher, to the
+      nearest percent, on most of the many vouchers they are on.
+
+    A guess that cannot be made is left empty and said. Raises ValueError when the file is not a CSV at all."""
+    journal = read_journal(data, payable_objects=PayableObjects(()), tax_objects=())
+    balanced = [v for v in journal.vouchers if v.balanced and all(_side_objects(v))]
+    objects, why = _payable_guess(balanced)
+    if not objects.trade:
+        return objects, (), tuple(why)
+    lines = Counter(line.object for voucher in journal.vouchers for line in voucher.lines)
+    mapped = tuple(dict.fromkeys(o for o in (clean(o) for o in tax_setup_objects) if o in lines))
+    if mapped:
+        why += [f"Tax: object {obj} is a GL account of the tax setup; it is on {plural(lines[obj], 'line')}."
+                for obj in mapped]  # fmt: skip
+        return objects, mapped, tuple(why)
+    payable = {*objects.trade, *objects.intercompany}
+    closed = [v for v in balanced if any(line.object in payable for line in v.lines)]
+    tax, said = _tax_guess(closed, payable)
+    return objects, tax, tuple(why + said)
