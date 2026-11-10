@@ -5,7 +5,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.schema import InvoiceCoding
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import registers
-from tests.jde_exports import LONG_NAME, VOUCHER_HEAD, records, sample_pay_items, voucher_headers
+from tests.jde_exports import LONG_NAME, VOUCHER_HEAD, pay_item, records, sample_pay_items, voucher_headers
 from tests.webclient import gt as _gt
 
 
@@ -82,7 +82,7 @@ def test_jd_edwards_voucher_list_is_read_as_it_comes():
     assert [tuple(r[field] for field in kept) for r in rows] == [
         ("08801-PV-700101", "MAPLE LEAF COFFEE SERVICES INC.", "410001", "INV-0042", "2026-03-04", 214.20),
         ("08801-PV-700102", "QUICKSHIP COURIER CANADA LTD", "410002", "7-100-20001", "2026-03-04", 700.00),
-        ("08801-PV-700103", "HARBOUR TELECOM", "410005", "00812", "2026-03-04", 1005.65),
+        ("08801-PV-700103", "MAPLE LEAF COFFEE SERVICES INC.", "410001", "ML-3318", "2026-03-04", 642.90),
         ("08801-PV-700104", LONG_NAME[:30], "410009", "US-5001", "2026-03-04", 1100.00),  # not in the master
         ("08802-PV-700101", "QUICKSHIP COURIER CANADA LTD", "410002", "Q-9", "2026-03-04", 61.00),
     ]  # fmt: skip
@@ -143,3 +143,21 @@ def test_jd_edwards_vouchers_are_duplicates_by_supplier_number_and_keep_their_do
     # Replace: the list as it now is, and nothing else
     assert store.import_erp_vouchers(rows[:1], replace_all=True) == 1 and store.erp_register_count() == 1
     assert store.erp_vouchers_of("Quickship Courier Canada Ltd.", "7-100-20001", 700.00) == []
+    # the vouchers replaced are gone themselves, not only their bills: the same bill listed again by a plain
+    # register (no document number) has no voucher of the old list under it
+    store.import_erp_register([{"vendor_name": "Quickship Courier Canada Ltd.", "invoice_number": "7-100-20001",
+                                "total": 700.00}])  # fmt: skip
+    assert store.in_erp("Quickship Courier Canada Ltd.", "7-100-20001", 700.00)
+    assert store.erp_vouchers_of("Quickship Courier Canada Ltd.", "7-100-20001", 700.00) == []
+
+
+def test_a_supplier_number_written_with_leading_zeros_is_named_from_the_master():
+    """The voucher list writes "0410002" where the master has 410002 (or the reverse): the same supplier."""
+    items = [pay_item(700201, "001", 10.0, 410002, "QUICKSHIP COURIER CANADA LTD", "Z-1")]
+    items[0]["Supplier Number"] = "0410002"
+    columns, listed = records("vouchers.xlsx", voucher_headers(items))
+    rows, read = registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns), NAMES)
+    assert (rows[0]["vendor_name"], read["named"]) == ("QUICKSHIP COURIER CANADA LTD", 1)
+    rows, read = registers.vouchers_from_pay_items(listed, registers.voucher_columns(columns),
+                                                   {"00410002": "Quickship Courier"})  # fmt: skip
+    assert (rows[0]["vendor_name"], read["named"]) == ("Quickship Courier", 1)

@@ -391,7 +391,7 @@ def test_jd_edwards_voucher_list_is_imported_as_it_comes_and_says_what_was_read(
     assert "5 ERP invoices known." in page.text and read in page.text and store.erp_register_count() == 5
     found = store.erp_vouchers_of("Quickship Courier Canada Ltd.", "7-100-20001", 700.00)
     assert [(v["document"], v["batch"]) for v in found] == [("700102", "5550002")]
-    assert store.in_erp("Harbour Telecom", "00812", 1005.65)
+    assert store.in_erp("Maple Leaf Coffee Services Inc.", "ML-3318", 642.90)
     # a list with no voucher to keep changes nothing, Replace ticked or not
     empty = ("vouchers.xlsx", voucher_headers(sample_pay_items()[7:10]), "application/zip")
     page = follow(client, client.post("/exports/register/upload", files={"file": empty}, headers=PAGE))
