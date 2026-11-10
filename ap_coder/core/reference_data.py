@@ -168,7 +168,7 @@ class ReferenceData:
         them, or with a chart imported those with an account the pairs offer, so not a business unit named DO NOT USE
         or one all of whose accounts are never offered (B-2093). Such a one stays a cost center: a line coded to it by
         hand is checked. Asked by the coding's schema, the review screen's picker (``invoice_view.cc_options``, which
-        keeps a line's own) and ``to_prompt_context``; ``ai/inference._account_schema`` still lists them all."""
+        keeps a line's own), ``to_prompt_context`` and the chat model's list (``ai/inference._account_schema``)."""
         if self.cost_centers is None:
             return None
         offered = None if self.pairs is None else frozenset(self.pairs.business_units())

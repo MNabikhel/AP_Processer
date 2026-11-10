@@ -93,6 +93,10 @@ SIZES = {
     "small": Size(business_units=20, it_units=3, regions=3, region_departments=1, used_regional=3, chart_rows=250,
                   suppliers=40, employees=10, affiliates=2, remittances=2, usd_suppliers=3, unused=3, vouchers=120,
                   billbacks=3, relocations=3, locations=4),
+    # A quarter of a year's vouchers: enough suppliers of each kind to score coding in seconds (bench coding --quick).
+    "tenth": Size(business_units=40, it_units=5, regions=4, region_departments=3, used_regional=8, chart_rows=1500,
+                  suppliers=240, employees=60, affiliates=3, remittances=3, usd_suppliers=14, unused=5, vouchers=1400,
+                  billbacks=6, relocations=5, locations=8),
     "year": Size(business_units=130, it_units=12, regions=8, region_departments=11, used_regional=39,
                  chart_rows=14000, suppliers=970, employees=330, affiliates=5, remittances=8, usd_suppliers=70,
                  unused=20, vouchers=5500, billbacks=14, relocations=12, locations=14),

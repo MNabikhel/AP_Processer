@@ -4,6 +4,7 @@ python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
 python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
 python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding] [--realistic] [--ai]
+python -m ap_coder.bench coding --journal [--quick] [--seed 1]   (coding from last year's journal: coding_journal.py)
 python -m ap_coder.bench triage --n 300 --seed 1 [--msg-share 0.4] [--out bench_triage]
 python -m ap_coder.bench load --users 10 --duration 60 --workers 2 [--data DIR] [--baseline FILE] (bench/load.py)
 python -m ap_coder.bench fake-model --port 1234 [--latency 8-20] [--slots 2] [--hang-rate 0.1] [--down-after 50]
@@ -149,11 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     for name, sizes in QUICK.items():
         took = sizes["took"]
         parsers[name].add_argument("--quick", action="store_true", help=f"a small run to check a change ({took})")
-    from ap_coder.bench import load, seed, volume  # the scale goal's benches: each adds its own subcommand
+    from ap_coder.bench import coding_journal, load, seed, volume  # each adds its own subcommand, or its options
 
-    load.add_parser(sub)
-    seed.add_parser(sub)
-    volume.add_parser(sub)
+    for part in (load, seed, volume, coding_journal):
+        part.add_parser(sub)
     a = p.parse_args(argv)
     if a.cmd == "load":
         return load.main_load(a)

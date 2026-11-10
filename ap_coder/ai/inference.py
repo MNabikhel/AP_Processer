@@ -93,6 +93,10 @@ class CodingResult:
     # The local reader's weak match for each line it left blank: the line's place on the invoice (from 1) -> account
     # (``offline_coder.code_from_capture``). Never put in the line; compared with the chat model's answer.
     hints: dict[int, str] = field(default_factory=dict)
+    # With whole account strings (a chart of accounts imported, or a journal loaded): the accounts offered for each
+    # line left blank, its place on the invoice (from 1) -> ``suggest.candidates``, the likeliest first. The chat
+    # model chooses among them, never from the whole chart (D-212).
+    offered: dict[int, list[Any]] = field(default_factory=dict)
 
 
 def build_openai_client(settings: Settings) -> Any:
@@ -546,15 +550,14 @@ class InvoiceCoder:
 
 
 def _account_schema(reference: ReferenceData) -> dict[str, Any]:
-    tax_gls = reference.tax.tax_gl_codes()
-    gl = [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    gl = reference.line_accounts()
     line: dict[str, Any] = {
         "line_number": {"type": "integer"},
         "gl_code": {"type": "string", "enum": gl},
         "reason": {"type": "string"},
     }
     if reference.cost_centers is not None:
-        line["cost_center"] = {"type": "string", "enum": [*reference.cost_centers.codes, ""]}
+        line["cost_center"] = {"type": "string", "enum": [*(reference.line_cost_centers() or ()), ""]}
     item = {"type": "object", "properties": line, "required": list(line), "additionalProperties": False}
     return {
         "type": "object",
@@ -565,19 +568,30 @@ def _account_schema(reference: ReferenceData) -> dict[str, Any]:
 
 
 def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, str, float]], history: str = "",
-                     kept: Path | None = None,
-                     within: float | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+                     kept: Path | None = None, within: float | None = None,
+                     offered: dict[int, list[Any]] | None = None,
+                     notes: dict[int, str] | None = None) -> dict[int, tuple[str, str, str]]:  # fmt: skip
     """A local model's GL account (and cost center) for each line the approval memory could not code:
     line number -> (gl_code, cost_center, reason). The invoice itself is read by the local reader, which a
     small model is worse at than at choosing an account; this call is short, so it is quick on a laptop.
     Only codes from the chart come back (the schema lists them); anything else is dropped. ``kept``: a folder where
     each answer is kept, so the same question (model, lines, history, chart) is never asked twice: the page reader's
     pass asks what arrival asked (D-131). ``within``: the most it may take, every batch's wait for a chat slot
-    included (an arriving invoice on the company server, D-168), else ``ChatTimeout``."""
+    included (an arriving invoice on the company server, D-168), else ``ChatTimeout``.
+
+    ``offered`` (with a chart of accounts imported or a journal loaded, D-212): line number -> the accounts offered
+    for that line (``suggest.candidates``). The model then chooses among those of each line (``closed_list``), or
+    none of them, and is never shown or allowed the whole chart; an answer that is not an account offered for the
+    line leaves it for a person. ``notes``: filled with why a line asked about got no account, by line number."""
     if not lines:
         return {}
+    notes = {} if notes is None else notes
     deadline = None if within is None else time.monotonic() + within
     model = coder._prepare_local()
+    if offered is not None:
+        return _suggest_closed(coder, model, vendor, lines, history, kept, deadline, offered, notes)
+    for n, _, _ in lines[SUGGEST_MAX_LINES:]:
+        notes[n] = f"The chat model is asked about the first {SUGGEST_MAX_LINES} lines of an invoice: not this one"
     schema = _account_schema(coder.reference)
     budget = int(coder.settings.llm.max_prompt_chars or 0)  # AP_LLM_MAX_PROMPT_CHARS: the whole prompt, both messages
     # The chart of accounts in at most half the budget (a real JDE chart is long): its start and its end (the tax
@@ -591,7 +605,7 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     if history and budget:
         history, _ = local_llm.clip_document(history, SUGGEST_HISTORY_CHARS)
     valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
-    valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
+    valid_cc = set(coder.reference.line_cost_centers() or ())
     out: dict[int, tuple[str, str, str]] = {}
     # A long invoice is asked in batches; past SUGGEST_MAX_LINES the lines are left for AP.
     if len(lines) > SUGGEST_MAX_LINES:
@@ -608,7 +622,13 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
                 raise
             log.info("the local model suggested accounts for %d lines, then failed (%s): the rest left for AP",
                      len(out), exc)  # fmt: skip
+            for n, _, _ in asked:
+                if n not in out:
+                    notes.setdefault(n, f"The chat model stopped answering before this line ({exc})")
             break
+    for n, _, _ in asked:
+        if n not in out:
+            notes.setdefault(n, "The chat model gave no account of the list for this line")
     return out
 
 
@@ -628,6 +648,13 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
     if history:
         user += f"\n\nHow AP coded similar lines before:\n{history}"
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    return _picks(_asked_once(coder, model, messages, schema, kept, deadline), lines, valid_gl, valid_cc)
+
+
+def _asked_once(coder: InvoiceCoder, model: str, messages: list[dict[str, Any]], schema: dict[str, Any],
+                kept: Path | None, deadline: float | None) -> dict[str, Any]:  # fmt: skip
+    """The model's answer to one question about accounts, as data: asked, or read from ``kept`` when this very
+    question (model, messages, schema) was answered before (D-131). ``CodingError`` when it gives nothing usable."""
     path = None
     if kept is not None:
         digest = hashlib.sha256(json.dumps([model, messages, schema], sort_keys=True).encode()).hexdigest()
@@ -637,7 +664,7 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
         except (OSError, ValueError):
             data = None
         if isinstance(data, dict):
-            return _picks(data, lines, valid_gl, valid_cc)
+            return data
     response = coder._local_create(model, messages, schema, deadline=deadline)
     reply = local_llm.read_reply(response.choices[0], coder.settings.llm.max_output_tokens)
     if reply.data is None:  # the lines stay for AP to code; the reason is logged, and shown by the doctor
@@ -652,7 +679,7 @@ def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], syst
             pass
         else:
             prune_kept(kept, path)  # by age and size (D-171)
-    return _picks(reply.data, lines, valid_gl, valid_cc)
+    return reply.data
 
 
 def _picks(data: dict[str, Any], lines: list[tuple[int, str, float]], valid_gl: set[str],
@@ -671,6 +698,168 @@ def _picks(data: dict[str, Any], lines: list[tuple[int, str, float]], valid_gl: 
         if n in wanted and gl in valid_gl:
             cc = str(row.get("cost_center") or "").strip()
             out[n] = (gl, cc if cc in valid_cc else "", str(row.get("reason") or "").strip()[:300])
+    return out
+
+
+# --- The chat model chooses among the accounts offered for each line (D-212) ----------------------------------------
+
+NONE_OF_THESE = "none of these"
+OFFERED_OWN = 8  # of the supplier's own accounts (its coding last year, this vendor's approved lines), the likeliest
+OFFERED_OTHERS = 8  # of the others (the words of the accounts' names across the chart, other vendors' lines)
+OFFERED_WHY_CHARS = 110  # of what is said of an account
+CLOSED_SYSTEM = (
+    "You code accounts-payable invoice lines to the company's accounts. Each line comes with the accounts offered for "
+    "it: the account string (business unit.object.subsidiary), its name, its business unit, and how the supplier's "
+    "lines were coded before. Choose, for each line, the one account offered for that line that fits what was bought, "
+    f'copied exactly as written, or "{NONE_OF_THESE}" when none of them fits: never an account that is not offered '
+    "for that line. Say why in a few words. Answer with JSON only."
+)
+
+
+def closed_list(found: list[Any]) -> list[Any]:
+    """The accounts the chat model is offered for a line, of its ``suggest.candidates``: the first ``OFFERED_OWN`` of
+    the supplier's own and the first ``OFFERED_OTHERS`` of the others, in their order."""
+    own = [c for c in found if c.source in ("vendor", "supplier")][:OFFERED_OWN]
+    others = [c for c in found if c.source not in ("vendor", "supplier")][:OFFERED_OTHERS]
+    return own + others
+
+
+def _unit_name(reference: ReferenceData, unit: str) -> str:
+    if reference.pairs is not None:
+        return reference.pairs.name_of(unit)
+    row = reference.cost_centers.get(unit) if reference.cost_centers is not None and unit else None
+    return str((row or {}).get("description") or "")
+
+
+def _offered_line(reference: ReferenceData, c: Any) -> str:
+    """One account as the chat model reads it: its string, its name, its business unit's name and what is known of
+    it for this supplier."""
+    if c.of:
+        said = f"used {c.lines} time{'' if c.lines == 1 else 's'} for this supplier"
+        said += f", e.g. “{c.example}”" if c.example else ""
+    else:
+        said = c.reason
+    parts = [c.account, c.name, _unit_name(reference, c.business_unit), said[:OFFERED_WHY_CHARS]]
+    return " | ".join(str(p).replace("|", "/").replace("\n", " ") for p in parts)
+
+
+def _closed_schema(accounts: list[str]) -> dict[str, Any]:
+    line = {
+        "line_number": {"type": "integer"},
+        "account": {"type": "string", "enum": [*accounts, NONE_OF_THESE]},
+        "reason": {"type": "string"},
+    }
+    item = {"type": "object", "properties": line, "required": list(line), "additionalProperties": False}
+    return {"type": "object", "properties": {"lines": {"type": "array", "items": item}}, "required": ["lines"],
+            "additionalProperties": False}  # fmt: skip
+
+
+def _closed_question(reference: ReferenceData, vendor: str, batch: list[tuple[int, str, float]],
+                     lists: dict[int, list[Any]]) -> tuple[str, list[str]]:  # fmt: skip
+    """(the question for a batch of lines, the account strings it offers): each account described once, then each
+    line with the strings offered for it."""
+    described: dict[str, str] = {}
+    listing = []
+    for n, desc, amount in batch:
+        for c in lists[n]:
+            described.setdefault(c.account, _offered_line(reference, c))
+        listing.append(f"{n}. {str(desc)[:SUGGEST_DESCRIPTION_CHARS]} | {amount:,.2f} | offered: "
+                       + ", ".join(c.account for c in lists[n]))  # fmt: skip
+    text = "\n".join([
+        f"Vendor: {vendor or 'unknown'}", "Accounts (account | name | business unit | what is known of it):",
+        *described.values(), "", "Lines (number. description | amount | the accounts offered for it):", *listing,
+    ])  # fmt: skip
+    return text, list(described)
+
+
+def _closed_batches(reference: ReferenceData, vendor: str, lines: list[tuple[int, str, float]],
+                    lists: dict[int, list[Any]], room: int) -> list[list[tuple[int, str, float]]]:  # fmt: skip
+    """The lines in batches whose question fits ``room`` characters (0: no limit), ``SUGGEST_BATCH_LINES`` lines at
+    most each; a line always goes in a batch, alone when its own question is longer."""
+    batches: list[list[tuple[int, str, float]]] = []
+    batch: list[tuple[int, str, float]] = []
+    for line in lines:
+        fits = len(batch) < SUGGEST_BATCH_LINES and (
+            not room or len(_closed_question(reference, vendor, [*batch, line], lists)[0]) <= room)  # fmt: skip
+        if batch and not fits:
+            batches.append(batch)
+            batch = []
+        batch.append(line)
+    return [*batches, batch] if batch else batches
+
+
+def _closed_picks(data: dict[str, Any], batch: list[tuple[int, str, float]], lists: dict[int, list[Any]],
+                  notes: dict[int, str]) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """The model's answer for a batch: line number -> (GL code, business unit, reason), only an account offered for
+    that line. Any other answer leaves the line for a person, and ``notes`` says why: none of them, an account that
+    was not offered, a code that was offered on another business unit, or no answer for the line."""
+    from ..core.chart import split_account
+
+    out: dict[int, tuple[str, str, str]] = {}
+    answered: dict[int, tuple[str, str]] = {}
+    for row in data.get("lines") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            n = int(row.get("line_number"))
+        except (TypeError, ValueError):
+            continue
+        if n in lists and n not in answered:
+            answered[n] = (str(row.get("account") or "").strip(), str(row.get("reason") or "").strip()[:300])
+    for n, _, _ in batch:
+        account, reason = answered.get(n, ("", ""))
+        chosen = next((c for c in lists[n] if c.account == account), None)
+        if chosen is not None:
+            out[n] = (chosen.code, chosen.business_unit, reason)
+        elif not account:
+            notes[n] = "The chat model gave no answer for this line"
+        elif account.lower() == NONE_OF_THESE:
+            notes[n] = f"The chat model found that none of the accounts offered fits{f' ({reason})' if reason else ''}"
+        elif any(c.code == split_account(account)[1] for c in lists[n]):
+            notes[n] = (f"The chat model answered {account}: that account was offered, but not on business unit "
+                        f"{split_account(account)[0]}")  # fmt: skip
+        else:
+            notes[n] = f"The chat model answered {account[:60]}, which is not one of the accounts offered"
+    return out
+
+
+def _suggest_closed(coder: InvoiceCoder, model: str, vendor: str, lines: list[tuple[int, str, float]], history: str,
+                    kept: Path | None, deadline: float | None, offered: dict[int, list[Any]],
+                    notes: dict[int, str]) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """``suggest_accounts`` when each line has the accounts offered for it: the model chooses among them, in
+    batches whose prompt fits the budget."""
+    reference = coder.reference
+    budget = int(coder.settings.llm.max_prompt_chars or 0)
+    policy = "\n".join(f"- {note}" for note in reference.notes)
+    system = CLOSED_SYSTEM + (f"\n\nCoding policy:\n{policy[: budget // 4 if budget else None]}" if policy else "")
+    if history and budget:
+        history, _ = local_llm.clip_document(history, SUGGEST_HISTORY_CHARS)
+    for n, _, _ in lines[SUGGEST_MAX_LINES:]:
+        notes[n] = f"The chat model is asked about the first {SUGGEST_MAX_LINES} lines of an invoice: not this one"
+    lists = {n: closed_list(offered.get(n) or []) for n, _, _ in lines[:SUGGEST_MAX_LINES]}
+    asked = [line for line in lines[:SUGGEST_MAX_LINES] if lists[line[0]]]
+    for n in lists:
+        if not lists[n]:
+            notes[n] = "The chat model was not asked: there is no account to offer it for this line"
+    room = max(budget - len(system) - len(history) - 200, 2000) if budget else 0
+    out: dict[int, tuple[str, str, str]] = {}
+    for batch in _closed_batches(reference, vendor, asked, lists, room):
+        user, accounts = _closed_question(reference, vendor, batch, lists)
+        if history:
+            user += f"\n\nHow AP coded similar lines before:\n{history}"
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        try:
+            data = _asked_once(coder, model, messages, _closed_schema(accounts), kept, deadline)
+        except Exception as exc:  # the batches answered before keep their accounts (B-1342); the rest stay for AP
+            if not out:
+                raise
+            log.info("the local model suggested accounts for %d lines, then failed (%s): the rest left for AP",
+                     len(out), exc)  # fmt: skip
+            for n, _, _ in asked:
+                if n not in out:
+                    notes.setdefault(n, f"The chat model stopped answering before this line ({exc})")
+            break
+        out.update(_closed_picks(data, batch, lists, notes))
     return out
 
 

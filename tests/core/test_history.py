@@ -52,3 +52,18 @@ def test_history_dates_are_read_not_cut_at_ten_characters(tmp_path):
     assert store.import_history(rows) == {"added": 2, "skipped": 1, "unknown_gl": 0}
     rows, _ = history.rows_from_records([{**line, "When": "1/5/2026 0:00"}], cols)
     assert rows[0]["date"] == "1/5/2026"
+
+
+def test_past_coding_with_a_cost_center_that_is_not_in_the_list_is_learned_without_it(tmp_path):
+    """B-2146: an unknown GL account was left out, an unknown cost center was kept, so a cost center since closed
+    was proposed again with the line (then flagged as unknown)."""
+    store = Store(tmp_path / "a.db")
+    store.import_accounts("gl_accounts", [{"code": "6230", "description": "Cleaning"}], "code", "description")
+    store.import_accounts("cost_centers", [{"code": "CC700", "description": "Facilities"}], "code", "description")
+    lines = (("Janitorial", "CC700"), ("Window cleaning", "CC-CLOSED"))
+    rows = [{"vendor_name": "Acme Ltd.", "description": text, "gl_code": "6230", "cost_center": cc, "amount": 10.0,
+             "date": "2025-01-31"} for text, cc in lines]  # fmt: skip
+    assert store.import_history(rows) == {"added": 2, "skipped": 0, "unknown_gl": 0, "unknown_cc": 1}
+    kept = {r["description"]: r["final_cc"] for r in store.feedback_rows()}
+    assert kept == {"Janitorial": "CC700", "Window cleaning": ""}
+    assert store.import_history(rows) == {"added": 0, "skipped": 2, "unknown_gl": 0, "unknown_cc": 1}

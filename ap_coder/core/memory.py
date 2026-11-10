@@ -34,7 +34,7 @@ import sys
 import unicodedata
 from array import array
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Any
@@ -649,9 +649,13 @@ def select_examples(
     return vendor_patterns + [p for _, _, p in scored[:max_similar]]
 
 
-def format_examples(examples: list[Pattern], with_cost_center: bool = True) -> str:
+def format_examples(examples: list[Pattern], with_cost_center: bool = True,
+                    names: Mapping[str, str] | None = None) -> str:  # fmt: skip
+    """The examples as the chat model reads them. ``names``: {GL code: the account's name}, shown beside each
+    code (a code alone says nothing to a model that was not shown that account, B-2143)."""
     if not examples:
         return ""
+    names = names or {}
     header = "| vendor | past line description | GL | " + ("cost center | " if with_cost_center else "")
     header += "approved | corrected-to |"
     sep = "|" + " --- |" * (5 + int(with_cost_center))
@@ -667,7 +671,9 @@ def format_examples(examples: list[Pattern], with_cost_center: bool = True) -> s
     for p in examples:
         desc = p.description.replace("|", "/")[:120]
         cc = f" {p.cost_center or '-'} |" if with_cost_center else ""
-        lines.append(f"| {p.vendor_name} | {desc} | {p.gl_code} |{cc} {p.approvals} | {p.corrections} |")
+        name = str(names.get(p.gl_code) or "").replace("|", "/")
+        gl = f"{p.gl_code} {name}".strip()
+        lines.append(f"| {p.vendor_name} | {desc} | {gl} |{cc} {p.approvals} | {p.corrections} |")
     return "\n".join(lines)
 
 

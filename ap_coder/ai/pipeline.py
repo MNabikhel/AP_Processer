@@ -39,8 +39,8 @@ from ..coding.validation import WARNING, Issue, ValidationReport, validate_codin
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_patterns, compare_with_history, format_examples, select_examples, vendor_key
-from ..core.reference_data import ReferenceData
-from ..core.schema import InvoiceCoding
+from ..core.reference_data import ReferenceData, short_name
+from ..core.schema import InvoiceCoding, decided
 from ..core.store.imports import ClaimLost
 from ..core.store.reports import anywhere_in
 from ..intake.files import folder_names
@@ -298,6 +298,15 @@ def finalise_coding(
     return output, report
 
 
+def _say_on(lines: dict[int, Any], said: str | dict[int, str]) -> None:
+    """Why the chat model gave a line no account, added to what the line says of itself (``said``: for all of
+    ``lines``, or by line number): asked and silent, not asked, or an answer that was not an account offered."""
+    for n, li in lines.items():
+        note = said if isinstance(said, str) else said.get(n, "")
+        if note:
+            li.reasoning_justification = f"{str(li.reasoning_justification or '').strip()} {note.rstrip('.')}.".strip()
+
+
 def _mark_chat_accounts(coding: InvoiceCoding) -> None:
     """Each line's account the chat model chose, coding the whole invoice (Azure OpenAI), marked a guess
     (``CHAT_SUGGESTED``), as the local model's are: its ``confidence_score`` is about the header (D-89), so without
@@ -310,6 +319,7 @@ def _mark_chat_accounts(coding: InvoiceCoding) -> None:
             continue
         reason = str(li.reasoning_justification or "").strip()
         li.reasoning_justification = f"{CHAT_SUGGESTED}: {reason}" if reason else CHAT_SUGGESTED
+        li.decided_by = decided("model")
 
 
 def _model_line_taxes(coding: InvoiceCoding, text: str, feedback: list[dict[str, Any]] | None = None) -> None:
@@ -440,6 +450,11 @@ class InvoicePipeline:
         self.store = store
         self.arrival_seconds = arrival_seconds()
 
+    def _account_names(self) -> dict[str, str]:
+        """{GL code: its name}: what the chat model's examples name each account by."""
+        table = self.reference.chart_of_accounts
+        return {row[table.key_column]: short_name(str(row.get("description") or "")) for row in table.rows}
+
     def _local_accounts(self, result: CodingResult, history: str, arriving: bool = False) -> bool:
         """The local model's account for each line the approval memory has not taught. Never fatal: a model
         that is slow or wrong leaves the line as it was for AP to code. ``arriving``: a new invoice, which waits at
@@ -467,6 +482,7 @@ class InvoicePipeline:
         if within is not None and not ARRIVAL_BREAKER.asks(server):
             log.info("the chat model gave no answer in time to the last arriving invoices: not asked now (D-168); the "
                      "page reader's pass asks again")  # fmt: skip
+            _say_on(todo, "The chat model was not asked yet: it gave no answer in time to the last invoices")
             return True
         from .lessons import prompt_lines
 
@@ -480,28 +496,36 @@ class InvoicePipeline:
             from ..core.paths import private_dir
 
             kept = private_dir() / ".cache" / "model_accounts"
+        # With whole account strings the model chooses among the accounts offered for each line, never the whole
+        # chart (D-212); what it says of a line it gives no account is kept on the line.
+        offered = getattr(result, "offered", None) or None
+        notes: dict[int, str] = {}
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history,
-                kept=kept, within=within,
+                kept=kept, within=within, offered=offered, notes=notes,
             )  # fmt: skip
         except ChatTimeout as exc:  # slow or hung: on arrival, the page reader's pass asks again
             log.info("local model could not suggest accounts in time (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer in time ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(False, server)
             return within is not None
         except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
             log.info("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
+            _say_on(todo, f"The chat model was asked and gave no answer ({exc})")
             if within is not None:
                 ARRIVAL_BREAKER.answered(None, server)
             return False
         if within is not None:
             ARRIVAL_BREAKER.answered(True, server)
+        model = getattr(self.coder, "_local_model", "") or "local model"
         for n, (gl, cc, reason) in picks.items():
             li = todo.get(n)
             if li is None:
@@ -516,7 +540,8 @@ class InvoicePipeline:
             elif hint:
                 why += f" (the account's name pointed to {hint} instead)"
             li.reasoning_justification = why
-        model = getattr(self.coder, "_local_model", "") or "local model"
+            li.decided_by = decided("model", model=model)  # a guess: a person checks it
+        _say_on({n: li for n, li in todo.items() if n not in picks}, notes)
         result.model = f"local reader + {model}"
         return False
 
@@ -685,7 +710,7 @@ class InvoicePipeline:
         feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
         examples = select_examples(feedback, result.extraction.content, vendor_hint)
         result.history_examples = len(examples)
-        history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+        history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
 
         # Read again (the page reader): as of the day it came in, which settles a 03/04/2026 the page leaves open.
         received = None
@@ -752,7 +777,7 @@ class InvoicePipeline:
                 feedback = self.store.learning_rows(str(vendor.value))
             examples = select_examples(feedback, result.extraction.content, str(vendor.value))
             result.history_examples = len(examples)
-            history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
+            history_text = format_examples(examples, self.reference.cost_centers is not None, self._account_names())
         # A weak match (an account's name) is never put in the line: it is left blank, suggested on the review
         # screen, and the chat model is asked about it when it answers (B-463).
         result.coding = code_from_capture(

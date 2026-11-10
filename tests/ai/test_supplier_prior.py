@@ -1,0 +1,181 @@
+"""The supplier prior (D-212): how a supplier's lines were coded last year and here, by account string."""
+
+import datetime as dt
+
+import pytest
+
+from ap_coder.ai import supplier_prior as sp
+from ap_coder.ai.offline_coder import code_from_capture
+from ap_coder.ai.supplier_prior import prior_for, rank, remark_shape
+from ap_coder.core.caches import size_of
+from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
+
+JANITOR = f"{MAIN}.7340.3307"
+CARPET = f"{MAIN}.7340.3313"
+COURIER = f"{MAIN}.7420.4207"
+
+
+def _vendor(store, name, number=""):
+    store.import_vendor_master([{"vendor_name": name, "erp_id": str(number), "status": "active"}], by_erp_id=True)
+
+
+def test_a_database_with_no_journal_has_no_prior(store):
+    load_chart(store)
+    assert prior_for(store, "Brightway Janitorial Ltd.") is sp.EMPTY and not sp.EMPTY
+
+
+@pytest.mark.parametrize(
+    "remark, shape",
+    [
+        ("KT Jul.cellphone", "kt cellphone"),
+        ("KT Aug.cellphone", "kt cellphone"),
+        ("May janitorial 410 Elm", "janitorial 410 elm"),
+        ("Q3 2026 audit fees", "audit fees"),
+        ("INVOICE 884512 courier", "invoice courier"),
+        ("Sept/24 lease 2-3-104", "lease 2-3-104"),
+        ("", ""),
+    ],
+)
+def test_a_remarks_shape_leaves_out_the_month_the_quarter_and_long_numbers(remark, shape):
+    assert remark_shape(remark) == shape
+
+
+def test_a_suppliers_lines_are_counted_by_account_string(store):
+    load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    vouchers = monthly("00740075", "BRIGHTWAY JANITORIAL LTD.", JANITOR, "{month} janitorial 410 Elm", 9)
+    vouchers += [(740075, "BRIGHTWAY JANITORIAL LTD.", dt.date(2025, 10, 3),
+                  [(CARPET, 300, "carpet cleaning"), (f"{FACILITIES}.7340.3313", 200, "carpet cleaning")])]  # fmt: skip
+    load_journal(store, vouchers)
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert (prior.found_by, prior.supplier_number, prior.lines, prior.vouchers) == ("number", "740075", 11, 10)
+    top = prior.accounts[0]
+    assert (top.account, top.business_unit, top.code, top.lines, top.vouchers) == (JANITOR, MAIN, "7340.3307", 9, 9)
+    assert round(top.share, 3) == round(9 / 11, 3) and top.last_date == "2025-09-15"
+    assert [(r.shape, r.lines, r.example) for r in top.remarks] == [("janitorial 410 elm", 9, "Sep janitorial 410 Elm")]
+    assert prior.one_line_share == 0.9  # nine of its ten vouchers have one coding line
+    assert prior.units_of == {"7340.3307": (MAIN,), "7340.3313": (MAIN, FACILITIES)}
+    assert prior.sure() is None  # 82% of its lines: not 90%
+    assert prior_for(store, "Brightway Janitorial Ltd.") is prior  # kept until something changes
+
+
+def test_a_supplier_number_the_journal_does_not_have_is_never_looked_up_by_name(store):
+    """The vendor list says the vendor is supplier 555; the journal has the same name under 740075 only because the
+    two read alike once cut: the number decides, and a whole-name twin is the one case that is added."""
+    load_chart(store)
+    _vendor(store, "RAPIDWAY COURIER CANADA LIMITED PARTNERSHIP", 555)
+    load_journal(store, monthly(740075, "RAPIDWAY COURIER CANADA LI", COURIER, "courier charges", 4))
+    prior = prior_for(store, "Rapidway Courier Canada Limited Partnership")
+    assert not prior and prior.found_by == "" and prior.journal
+
+
+def test_without_a_number_the_supplier_is_found_by_the_name_the_journal_prints(store):
+    load_chart(store)
+    load_journal(store, [
+        *monthly(1001, "RAPIDWAY COURIER CANADA LT", COURIER, "courier charges", 3),  # cut at 26 characters
+        *monthly(1002, "NORTHERN PAPER", JANITOR, "paper", 3),  # whole
+        *monthly(1003, "OAK & EMBER STATIONERS INC", CARPET, "pens", 3),  # 26 characters, whole but for the dot
+    ])  # fmt: skip
+    cut = prior_for(store, "Rapidway Courier Canada Ltd.")
+    assert (cut.found_by, cut.supplier_number, cut.supplier_name) == ("name", "1001", "RAPIDWAY COURIER CANADA LT")
+    assert prior_for(store, "Northern Paper Ltd").supplier_number == "1002"  # legal forms aside
+    assert prior_for(store, "Oak and Ember Stationers Inc.").supplier_number == "1003"  # "&" is "and"
+    # False matches: a whole name that only starts the vendor's, a vendor's that only starts a cut one.
+    assert not prior_for(store, "Northern Paper Recycling Inc.")
+    assert not prior_for(store, "Rapidway Courier")
+    assert not prior_for(store, "Rapidway Couriers of Canada Ltd.")
+
+
+def test_two_suppliers_printed_with_the_same_26_characters_are_not_told_apart_by_name(store):
+    load_chart(store)
+    load_journal(store, [
+        *monthly(2001, "ALDERBROOK OFFICE PRODUCTS", COURIER, "courier", 3),
+        *monthly(2002, "ALDERBROOK OFFICE PRODUCTS", JANITOR, "cleaning", 3),
+        *monthly(2003, "HEARTHSIDE BUILDING SERVIC", JANITOR, "cleaning", 3),
+        *monthly(2004, "HEARTHSIDE BUILDING SERVIC", CARPET, "carpets", 3),
+    ])  # fmt: skip
+    cut = prior_for(store, "Hearthside Building Services East Ltd.")  # which of the two? Neither is taken.
+    assert not cut and "2 suppliers of last year's journal print the start of this name (2003, 2004)" in cut.note
+    # The same whole name under two numbers is one vendor in the vendor list: counted together, and said.
+    whole = prior_for(store, "Alderbrook Office Products")
+    assert whole.lines == 6 and {a.account for a in whole.accounts} == {COURIER, JANITOR} and whole.sure() is None
+    assert whole.note == "2 supplier numbers of last year's journal go by this name (2001, 2002)"
+
+
+def test_a_line_approved_here_outweighs_the_journal_and_a_correction_more(store, tmp_path):
+    """A journal line counts 1, a line approved as proposed 3, a line a person coded or changed 5."""
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    load_journal(store, monthly(740075, "BRIGHTWAY JANITORIAL LTD.", JANITOR, "{month} janitorial", 4))
+    before = prior_for(store, "Brightway Janitorial Ltd.")
+    assert before.sure().account == JANITOR and before.weight == 4
+    coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning"), reference,
+                               store.feedback_rows(), store).coding  # fmt: skip
+    approve(store, tmp_path, coding, [CARPET])  # a person changes the account proposed
+    after = prior_for(store, "Brightway Janitorial Ltd.")
+    assert after is not before and [(a.account, a.weight) for a in after.accounts] == [(CARPET, 5.0), (JANITOR, 4.0)]
+    assert after.latest_approved == CARPET and after.sure() is None and after.total_said() == (
+        "5 lines (4 last year, 1 approved here)")  # fmt: skip
+    # Kept as proposed the next time: 3 more for that account.
+    again = code_from_capture(captured("Brightway Janitorial Ltd.", "Nightly office cleaning", number="INV-2"),
+                              reference, store.feedback_rows(), store).coding  # fmt: skip
+    assert again.line_items[0].predicted_gl_code == "7340.3313"  # this vendor's own approval, as before
+    approve(store, tmp_path, again, [CARPET])
+    assert prior_for(store, "Brightway Janitorial Ltd.").accounts[0].weight == 8.0
+
+
+def test_thirty_lines_of_history_are_not_sure_once_a_person_coded_a_line_elsewhere(store, tmp_path):
+    reference = load_chart(store)
+    _vendor(store, "BRIGHTWAY JANITORIAL LTD.", 740075)
+    printed = "BRIGHTWAY JANITORIAL LTD."
+    load_journal(store, [*monthly(740075, printed, JANITOR, "{month} janitorial", 12),
+                         *monthly(740075, printed, JANITOR, "{month} janitorial", 12, year=2024),
+                         *monthly(740075, printed, JANITOR, "{month} janitorial", 6, year=2023)])  # fmt: skip
+    coding = code_from_capture(captured("Brightway Janitorial Ltd.", "Steam clean boardroom carpets"), reference,
+                               store.feedback_rows(), store).coding  # fmt: skip
+    assert coding.line_items[0].predicted_gl_code == "7340.3307"  # 30 of 30 lines
+    approve(store, tmp_path, coding, [CARPET])
+    prior = prior_for(store, "Brightway Janitorial Ltd.")
+    assert prior.accounts[0].account == JANITOR and round(prior.accounts[0].share, 3) == round(30 / 35, 3)
+    assert prior.sure() is None  # 86%, and the last line approved here went elsewhere
+    line = code_from_capture(captured("Brightway Janitorial Ltd.", "Day porter service", number="INV-2"), reference,
+                             store.feedback_rows(), store).coding.line_items[0]  # fmt: skip
+    assert line.predicted_gl_code == "UNASSIGNED" and [c["account"] for c in line.candidates[:2]] == [JANITOR, CARPET]
+
+
+def test_rank_orders_by_share_and_words_and_says_why_with_the_counts(store):
+    reference = load_chart(store)
+    _vendor(store, "RAPIDWAY COURIER CANADA LTD.", 3001)
+    load_journal(store, [
+        *monthly(3001, "RAPIDWAY COURIER CANADA LT", COURIER, "{month} courier charges", 9),
+        *monthly(3001, "RAPIDWAY COURIER CANADA LT", f"{MAIN}.7420.4213", "customs courier", 4),
+        *monthly(3001, "RAPIDWAY COURIER CANADA LT", JANITOR, "mailroom cleaning", 2),
+    ])  # fmt: skip
+    prior = prior_for(store, "Rapidway Courier Canada Ltd.")
+    plain = rank(prior, "Fuel surcharge", reference)  # no word says anything: the shares
+    assert [c.account for c in plain] == [COURIER, f"{MAIN}.7420.4213", JANITOR]
+    assert plain[0].reason == "9 of this supplier's 15 lines last year" and plain[0].source == "supplier"
+    assert (plain[0].lines, plain[0].of, round(plain[0].share, 2), plain[0].example) == (
+        9,
+        15,
+        0.6,
+        "Sep courier charges",
+    )
+    customs = rank(prior, "Customs brokerage - entry 77812", reference)
+    assert customs[0].account == f"{MAIN}.7420.4213"
+    assert customs[0].reason == "4 of this supplier's 15 lines last year; 4 of its 4 “custom” lines"
+    cleaning = rank(prior, "Cleaning of the mailroom", reference)
+    assert cleaning[0].account == JANITOR and cleaning[0].reason == (
+        "2 of this supplier's 15 lines last year; 2 of its 2 “cleaning” lines; the word “cleaning” in the account's "
+        "name")  # fmt: skip
+    named = rank(prior, "Courier", reference)[0]
+    assert named.account == COURIER and "the word “courier” in the account's name" in named.reason
+
+
+def test_a_prior_is_small_and_kept_within_the_caches_bytes(store):
+    load_chart(store)
+    load_journal(store, [v for n in range(40) for v in monthly(5000 + n, f"SUPPLIER {n:02d} SERVICES", JANITOR,
+                                                               "{month} janitorial", 6)])  # fmt: skip
+    sizes = [size_of(prior_for(store, f"Supplier {n:02d} Services")) for n in range(40)]
+    assert max(sizes) < 8_000  # (the made-up year's 950 suppliers: 4.6 KB each at the median, 5 MB in all)
+    assert sp._KEPT.held <= sp._KEPT.most and len(sp._KEPT) >= 40

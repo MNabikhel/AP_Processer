@@ -554,7 +554,7 @@ def simulate(
             coded = coding_confidence(coding, reference)
             taxed = any(t.tax_amount for t in coding.tax_lines)
             sure = [line_coding_confidence(li, reference.cost_centers is not None, taxed, reference.chart_of_accounts,
-                                           reference.cost_centers, reference.tax.tax_gl_codes())
+                                           reference.cost_centers, reference.tax.tax_gl_codes(), pairs=reference.pairs)
                     for li in coding.line_items]  # fmt: skip
             # The HISTORY_CONFLICT check on the lines as the reviewer sees them (``pipeline.finalise_coding``).
             warned = {h["line_number"] for h in compare_with_history(coding, feedback) if h["status"] == "conflict"}
