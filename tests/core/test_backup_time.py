@@ -214,3 +214,89 @@ def test_a_page_asked_for_never_reads_the_time_from_the_database(tmp_path):
     assert read == [] and backup.thread is None
     backup.check(look=True)
     assert read == [1] and backup.at == HALF_PAST_FIVE
+
+
+def test_a_time_moved_to_one_already_passed_today_is_followed_within_a_minute_and_says_why(tmp_path):
+    """B-2295: at 15:00 the time was moved from 17:30 to 14:00; today's backup came only from the hourly check, up
+    to an hour later, and the page said "made late: this computer was asleep or busy at 14:00"."""
+    store = Store(tmp_path / "ap.db")
+    store.set_setting(BACKUP_AT, "17:30")
+    made_at(store.backup_now(), at(17, 30, day=-1))  # yesterday's, at its time
+    clock = Clock(at(15))
+    backup = DailyBackup(store, clock=clock.wall, monotonic=clock.monotonic)
+    backup.check(look=True)
+    assert backup.thread is None and backup.next_at == at(17, 30)
+    store.save_backup_at((14, 0), actor="Dana", now=at(15, 0))  # as Settings saves it
+    assert store.backup_at() == (14, 0)
+    clock.now = at(15, 1)
+    backup.check(look=True)  # the watch's look a minute later
+    assert backup.thread is not None, "the time moved earlier waits for the hourly check"
+    backup.thread.join(30)
+    assert len(store.list_backups()) == 2 and backup.next_at == at(14, day=1)
+    last = store.last_timed_backup()
+    assert last["at"] == "2026-11-10 15:01" and last["why"] == "made after the time was changed to 14:00 at 15:00"
+    made_at(store.backup_dir() / last["file"], at(15, 1))
+    # Nothing more today: the day's backup is made.
+    first = backup.thread
+    for minutes in (2, 30, 59, 61, 125):
+        clock.now = at(15, minutes)
+        backup.check(look=True)
+        if backup.thread is not first:
+            backup.thread.join(30)
+    assert len(store.list_backups()) == 2
+    # The next day at its time, the reason is the time's own again.
+    assert store.auto_backup(at=(14, 0), now=at(14, 0, day=1)) is not None
+    assert store.last_timed_backup()["why"] == "made at its time, 14:00"
+
+
+def test_a_start_just_before_the_time_does_not_wait_a_day_for_it(tmp_path):
+    """The watch first reads the time half a minute after the start: a time passed in between is still today's."""
+    store = Store(tmp_path / "ap.db")
+    store.set_setting(BACKUP_AT, "17:30")
+    made_at(store.backup_now(), at(17, 30, day=-1))
+    clock = Clock(at(17, 29) + dt.timedelta(seconds=45))
+    backup = DailyBackup(store, clock=clock.wall, monotonic=clock.monotonic)
+    clock.now = at(17, 30) + dt.timedelta(seconds=15)
+    backup.check(look=True)
+    assert backup.thread is not None
+    backup.thread.join(30)
+    assert store.last_timed_backup()["why"] == "made at its time, 17:30" and backup.next_at == at(17, 30, day=1)
+
+
+def _server_page(store, monkeypatch, hours: str | None) -> str:
+    """Settings → Data & backups as an Admin of the company server sees it, with IT's backup hours set or not."""
+    from fastapi.testclient import TestClient
+
+    from ap_coder.web.app import create_app
+    from ap_coder.web.identity import SESSION_COOKIE
+    from tests.webclient import enrol, web_settings
+
+    if hours is None:
+        monkeypatch.delenv("AP_BACKUP_HOURS", raising=False)
+    else:
+        monkeypatch.setenv("AP_BACKUP_HOURS", hours)
+    if store.find_user("pat") is None:
+        enrol(store, store.add_user("pat", "correct horse battery", role="admin", must_change=False))
+    session = store.start_session(store.find_user("pat")["id"])
+    app = create_app(web_settings(), store, start_reader=False, server=True)
+    client = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000), follow_redirects=False)
+    answer = client.get("/settings/data", headers={**PAGE, "Cookie": f"{SESSION_COOKIE}={session}"})
+    assert answer.status_code == 200, answer.text[:300]
+    return " ".join(answer.text.split())
+
+
+def test_on_the_company_server_the_page_shows_no_time_that_nobody_chose(store, monkeypatch):
+    """B-2296: a server showed "17:30" (greyed with IT's hours set, as its own without) though nobody had chosen it."""
+    page = _server_page(store, monkeypatch, "1-5")  # IT's hours decide: said, with where they are set
+    assert "17:30" not in page and 'action="/settings/data/backup-time"' not in page
+    assert "On this server the daily backup is made from 1:00 to 5:00" in page
+    assert "IT set those hours (AP_BACKUP_HOURS in the server's .env file" in page
+    page = _server_page(store, monkeypatch, None)  # no hours, no time saved: AP Coder's own time applies, and is said
+    assert 'name="at" value=""' in page and 'value="17:30"' not in page
+    assert "Nobody has chosen a time on this server: until one is saved here, the daily backup is made at 17:30" in page
+    assert "AP_BACKUP_HOURS" in page
+    store.save_backup_at((22, 0), actor="Pat")
+    page = _server_page(store, monkeypatch, None)  # chosen: shown as any saved time
+    assert 'name="at" value="22:00"' in page and "Nobody has chosen a time" not in page
+    # On a laptop the time is AP Coder's until changed, as before.
+    assert 'name="at" value="17:30"' in client_for(Store(store.path.parent / "laptop.db")).get("/settings/data").text

@@ -19,7 +19,8 @@ The chosen columns, filters and sort are a URL query (``query_string``), so a la
 by name as a preset (Settings: ``directory_presets``, one of them the default).
 
 ``rule=<number>`` keeps the invoices with a line a fixed coding rule coded (the rules page links here, D-217): the
-summary's ``summary_rules``, off its index.
+summary's ``summary_rules``, off its index. A rule's number outlives what the rule says: the lines that say what the
+rule says now, or with ``was=1`` those it coded before it was changed (``rules.rule_filter``).
 
 Entry points: ``Query.from_params`` (the page's address), ``run`` (a page of rows, or all for an export),
 ``export_rows`` (all of them, a part at a time), ``cell``, and the presets (``presets``, ``save_preset``,
@@ -38,7 +39,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, fold_text
-from ..core.store.rules import RULE_FILTER
+from ..core.store.rules import rule_filter
 
 TEXT, MONEY, DATE, NUMBER, STATUS, WHERE = "text", "money", "date", "number", "status", "where"
 STATUSES = (REVIEW, PARKED, PENDING, APPROVED, REJECTED, FAILED)
@@ -120,6 +121,7 @@ class Query:
     q: str = ""  # the quick search (search.condition), on top of the filters
     erp_shown: int = ERP_SHOWN  # how many of its hits in the ERP register are shown
     rule: int = 0  # a fixed coding rule's number: only the invoices with a line it coded (D-217)
+    rule_was: bool = False  # with ``rule``: the lines it coded before it said what it says now
 
     @classmethod
     def from_params(cls, params: Any) -> Query:
@@ -147,6 +149,7 @@ class Query:
             q=str(values.get("q") or "").strip()[:200],
             erp_shown=_shown(values.get("erp")),
             rule=_rule(values.get("rule")),
+            rule_was=values.get("was") == "1",
         )
 
     def params(self, **change: Any) -> list[tuple[str, str]]:
@@ -161,6 +164,8 @@ class Query:
                 pairs.append(("erp", str(q.erp_shown)))
         if q.rule:
             pairs.append(("rule", str(q.rule)))
+            if q.rule_was:
+                pairs.append(("was", "1"))
         if q.page > 1:
             pairs.append(("page", str(q.page)))
         return pairs
@@ -291,10 +296,11 @@ def condition(key: str, typed: str) -> tuple[str, list[Any]]:
     return _compare(col.sql, typed, col.kind)
 
 
-def where(query: Query) -> tuple[str, list[Any], dict[str, str]]:
+def where(query: Query, store: Any = None) -> tuple[str, list[Any], dict[str, str]]:
     """The query's ``WHERE`` (``1`` when nothing is filtered), its parameters, and each filter that can't be read
     (column key -> what to type instead; those filters are left out). The quick search is one more condition
-    (``search.condition``): its hits are counted, sorted and paged by SQLite like the rest (D-157)."""
+    (``search.condition``): its hits are counted, sorted and paged by SQLite like the rest (D-157). ``store``: where
+    the rule of ``query.rule`` is read as it is now (without it, every line that names the rule's number)."""
     parts, params, problems = [], [], {}
     for key, typed in query.filters.items():
         try:
@@ -312,8 +318,9 @@ def where(query: Query) -> tuple[str, list[Any], dict[str, str]]:
         parts.append(f"({sql})")
         params += values
     if query.rule:
-        parts.append(f"({RULE_FILTER})")
-        params.append(query.rule)
+        sql, values = rule_filter(query.rule, store.coding_rule(query.rule) if store else None, query.rule_was)
+        parts.append(f"({sql})")
+        params += values
     return " AND ".join(parts) or "1", params, problems
 
 
@@ -361,7 +368,7 @@ def run(store: Any, query: Query, *, page_size: int = PAGE_SIZE, everything: boo
         from .search import erp_hits, parts
 
         erp = erp_hits(store, *parts(query.q))
-    sql_where, params, problems = where(query)
+    sql_where, params, problems = where(query, store)
     total = store.directory_count(ROWS_SQL, sql_where, params)
     if everything:
         limit, offset, page, pages = EXPORT_LIMIT, 0, 1, 1
@@ -380,7 +387,7 @@ def export_rows(store: Any, query: Query, step: Any = None) -> Iterator[dict[str
     """``run(store, query, everything=True)``'s rows, in its order, read a part at a time (an export writes each as
     it comes, never holding them all); ``step(done, total)`` before each part (how far an export made in the
     background got, D-169)."""
-    sql_where, params, _ = where(query)
+    sql_where, params, _ = where(query, store)
     ids = store.directory_ids(ROWS_SQL, sql_where, params, order_by(query), EXPORT_LIMIT)
     for start in range(0, len(ids), EXPORT_CHUNK):
         if step is not None:

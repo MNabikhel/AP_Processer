@@ -780,6 +780,7 @@ def test_tax_setup_policy_and_rules(client, busy):
                 "contains": ["", "freight", "", ""],
                 "gl_code": [gl, gl, gl, ""],
                 "cost_center": ["", "", "", ""],
+                "version": str(busy.rules_seen()),
             },
             headers=PAGE,
         ),

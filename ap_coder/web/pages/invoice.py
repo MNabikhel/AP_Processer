@@ -1354,6 +1354,8 @@ def _approve(request: Request, invoice_id: int, form: Any) -> JSONResponse:
     # after the question before saving: one question an invoice.
     surprise = None if asked or not lessons.asks_why(store) else lessons.surprise(
         store, ai, as_read(analysis.output, ai), reference)  # fmt: skip
+    if surprise:  # kept: the answer is taken for this question only, from this person only (B-2291)
+        store.ask_why(invoice_id, surprise["key"], surprise["line"], actor=me, login=login())
     forget_everyones_draft(request, invoice_id)
     vendor = analysis.coding.vendor_name.rstrip(".")
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
@@ -1422,29 +1424,44 @@ def _why_message(invoice_id: int, surprise: dict[str, Any]) -> dict[str, Any]:
 def why(request: Request, invoice_id: int, situation: str = Form(""), reason: str = Form(""),
         answer: str = Form("")) -> JSONResponse:  # fmt: skip
     """The answer to the question asked after an approval (D-218): kept as that lesson's reason (Learning shows it,
-    the AI reads it), or, a one-off, the line is forgotten from the coding memory as Learning's Forget does. The
-    question is worked out again from the approved invoice: only its own is answered."""
+    the AI reads it), or, a one-off, that line is forgotten from the coding memory as Learning's Forget does. The
+    answer belongs to the question that was asked (``Store.why_asked``, never the form): taken from the person who
+    made that approval, for the line it named, once, while the setting is on, and while the approved invoice still
+    asks it (worked out again). Anything else is refused and changes nothing (B-2291); an Admin forgets a line on
+    Learning."""
     from ap_coder.ai import lessons
     from ap_coder.core.schema import as_read
 
     store = get_store(request)
     inv = _invoice(store, invoice_id)
+    asked = store.why_asked(invoice_id) if inv["status"] in (APPROVED, PENDING) else None
+    if asked is None:
+        return refuse("No question is open about this invoice: nothing was changed.", 409)
+    if asked["asked_of"] != login():
+        name = asked["actor"] or "the person"
+        return refuse(f"That question was asked of {name}, who approved this invoice: only {name} can answer it. "
+                      "Nothing was changed.", 403)  # fmt: skip
+    if not lessons.asks_why(store):
+        return refuse("“Ask why after a surprising correction” is turned off (Settings → Review): nothing was "
+                      "changed.", 409)  # fmt: skip
+    if asked["answered_at"]:
+        return refuse("That question was answered already: nothing was changed.", 409)
     ai = inv.get("ai_output") or {}
-    found = None
-    if inv["status"] in (APPROVED, PENDING):
-        found = lessons.surprise(store, ai, as_read(inv.get("final_output") or {}, ai), _reference(store))
-    if found is None or found["key"] != situation:
+    found = lessons.surprise(store, ai, as_read(inv.get("final_output") or {}, ai), _reference(store))
+    if found is None or not situation == asked["situation"] == found["key"] or found["line"] != asked["line_number"]:
         return refuse("That question is no longer open: the invoice was changed since.", 409)
     typed = " ".join(answer.split())[:300]
+    kept = "" if reason == lessons.ONE_OFF else lessons.reason_kept(found, reason, typed)
+    if reason != lessons.ONE_OFF and not kept:
+        return refuse("Write a few words or pick a reason; Skip leaves it.")
+    if not store.answer_why(invoice_id, login()):  # two answers at once: the first has it
+        return refuse("That question was answered already: nothing was changed.", 409)
     if reason == lessons.ONE_OFF:
-        store.forget_one_off(invoice_id, found["pattern"], actor=reviewer(),
+        store.forget_one_off(invoice_id, found["line"], found["key"], actor=reviewer(),
                              detail={"line": found["line"], "now": found["now"], "was": found["was"],
                                      "reason": typed})  # fmt: skip
         return JSONResponse({"ok": True, "toast": {"text": "Kept as a one-off: AP Coder does not learn from that "
                                                    "line.", "tone": "ok"}})  # fmt: skip
-    kept = lessons.reason_kept(found, reason, typed)
-    if not kept:
-        return refuse("Write a few words or pick a reason; Skip leaves it.")
     if not store.explain_lesson(found["key"], kept, actor=reviewer(), invoice_id=invoice_id):
         return refuse("That lesson is no longer there: nothing was kept.", 404)
     return JSONResponse({"ok": True, "toast": {"text": "Thanks: the reason is kept with that lesson (What was "

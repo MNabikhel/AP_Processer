@@ -178,6 +178,35 @@ class LessonsMixin:
                 self._log(conn, "lesson_explained", invoice_id, actor, {"situation": situation, "reason": text})
             return cur.rowcount > 0
 
+    def ask_why(self, invoice_id: int, situation: str, line: Any, actor: str = "", login: str = "") -> None:
+        """Keep the question asked after an approval (D-218): the lesson it is about, the line it named and the
+        person it was asked of (``login``, as the approval recorded them). One an invoice: an approval made again
+        asks its own. It goes when the approval's learning is withdrawn (``_forget_learning``)."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM why_questions WHERE invoice_id = ?", (invoice_id,))
+            conn.execute(
+                "INSERT INTO why_questions (invoice_id, situation, line_number, asked_of, actor, asked_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (invoice_id, situation, line, login or "", actor or "", _now())
+            )  # fmt: skip
+
+    def why_asked(self, invoice_id: int) -> dict[str, Any] | None:
+        """The question kept for an invoice's approval (``ask_why``): {situation, line_number, asked_of, actor,
+        asked_at, answered_at (None while it is open)}; None when none was asked."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM why_questions WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        return dict(row) if row else None
+
+    def answer_why(self, invoice_id: int, login: str = "") -> bool:
+        """Close an invoice's open question for the person it was asked of: True for the one answer that gets it
+        (a second, or another person's, finds nothing to close)."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE why_questions SET answered_at = ? WHERE invoice_id = ? AND asked_of = ? "
+                "AND answered_at IS NULL",
+                (_now(), invoice_id, login or ""),
+            )
+            return cur.rowcount > 0
+
     def corrections(self, limit: int = 100) -> list[dict[str, Any]]:
         """What AP corrected, newest first, and whether AP Coder had it right the next time (the Learning page's
         Corrections): {invoice_id, invoice_number, vendor_name, field, pattern, proposed, value, at, reviewer, next,

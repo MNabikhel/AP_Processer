@@ -552,17 +552,22 @@ class LearningMixin:
                 self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids), "lessons": withdrawn})
             return cur.rowcount
 
-    def forget_one_off(self, invoice_id: int, pattern: str, actor: str | None = None,
+    def forget_one_off(self, invoice_id: int, line: Any, situation: str, actor: str | None = None,
                        detail: dict[str, Any] | None = None) -> int:  # fmt: skip
-        """A correction AP called a one-off (the question after a surprising correction, D-218): the invoice's lines
-        of that kind (``line_pattern``) leave the coding memory as Learning's Forget takes them out
-        (``delete_feedback``: what they taught the lessons is withdrawn with them), and the invoice's history says
-        so (``detail``: the line and its accounts). How many lines were forgotten."""
+        """A correction AP called a one-off (the question after a surprising correction, D-218): the line the
+        question named, and no other, leaves the coding memory as Learning's Forget takes it out
+        (``delete_feedback``: what it taught the lessons is withdrawn with it), and the invoice's history says so
+        (``detail``: the line and its accounts). With another line like it still in the memory the question's own
+        lesson (``situation``) loses this approval's correction all the same: it was this line's. How many lines
+        were forgotten."""
         with self._conn() as conn:
-            rows = conn.execute("SELECT id, description FROM feedback WHERE invoice_id = ?", (invoice_id,)).fetchall()
-        ids = [r["id"] for r in rows if line_pattern(r["description"]) == pattern]
+            rows = conn.execute("SELECT id FROM feedback WHERE invoice_id = ? AND line_number = ?",
+                                (invoice_id, line)).fetchall()  # fmt: skip
+        ids = [r["id"] for r in rows]
         forgotten = self.delete_feedback(ids, actor=actor) if ids else 0
-        self.log_event("lesson_one_off", invoice_id, actor, {**(detail or {}), "lines": forgotten})
+        with self._conn() as conn:
+            self._withdraw_lessons(conn, invoice_id, situation)
+            self._log(conn, "lesson_one_off", invoice_id, actor, {**(detail or {}), "lines": forgotten})
         return forgotten
 
     def metrics(self) -> dict[str, Any]:

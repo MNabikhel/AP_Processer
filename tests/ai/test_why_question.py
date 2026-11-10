@@ -171,12 +171,15 @@ def test_the_answer_is_kept_with_the_lesson_and_shown_on_what_was_learned(client
     assert lesson["explanation"] == "This supplier's lines like this go there: staff meals"
     assert lessons.reaches_ai(lesson)  # one correction with its reason: read with the supplier's next invoices
     assert "This supplier&#39;s lines like this go there: staff meals" in client.get("/learning?tab=lessons").text
+    # What is typed alone is kept as typed; a form naming another lesson than the one asked about is refused.
+    url, key = _asked(client.get(_approve(client, store, ids[1])["redirect"]).text).groups()
+    assert client.post(url, data={"situation": "other", "answer": "x"}, headers=PAGE).status_code == 409
+    assert client.post(f"/review/{ids[1]}/undo-approve", headers=PAGE).json()["ok"]
+    assert store.get_invoice(ids[1])["status"] == REVIEW
+    assert client.post(url, data={"situation": key, "answer": "x"}, headers=PAGE).status_code == 409  # not approved
+    url, key = _asked(client.get(_approve(client, store, ids[1])["redirect"]).text).groups()  # approved again: asked
     typed = client.post(url, data={"situation": key, "answer": "Catering goes to meals"}, headers=PAGE)
     assert typed.json()["ok"] and store.lesson(key)["explanation"] == "Catering goes to meals"
-    assert client.post(url, data={"situation": "other", "answer": "x"}, headers=PAGE).status_code == 409
-    assert client.post(f"/review/{ids[0]}/undo-approve", headers=PAGE).json()["ok"]
-    assert store.get_invoice(ids[0])["status"] == REVIEW
-    assert client.post(url, data={"situation": key, "answer": "x"}, headers=PAGE).status_code == 409  # not approved
 
 
 def test_a_one_off_keeps_the_correction_out_of_what_teaches(client_store):  # noqa: F811
@@ -245,3 +248,94 @@ def test_in_a_browser_the_question_is_answered_in_one_click_or_skipped(client_st
         before = store.lesson(key)["explanation"]
         asked.get_by_role("button", name="Skip").click()
         assert page.locator(".flash-why").count() == 0 and store.lesson(key)["explanation"] == before
+
+
+# --- Whose answer it is (B-2291) ----------------------------------------------------------------------------------
+
+
+def _memory(store, iid):
+    return sorted(r["line_number"] for r in store.feedback_rows() if r["invoice_id"] == iid)
+
+
+def _unchanged(store, iid, key, memory, explanation=""):
+    lesson = store.lesson(key)
+    return (_memory(store, iid) == memory and lesson["corrected"] == 1 and (lesson["explanation"] or "") == explanation
+            and store.events(iid, ["lesson_one_off"]) == [])  # fmt: skip
+
+
+def test_a_question_is_answered_once(client_store):  # noqa: F811
+    client, store, ids = client_store
+    url, key = _asked(client.get(_approve(client, store, ids[0])["redirect"]).text).groups()
+    memory = _memory(store, ids[0])
+    assert client.post(url, data={"situation": key, "answer": "staff meals"}, headers=PAGE).json()["ok"]
+    for again in ({"answer": "something else"}, {"reason": lessons.ONE_OFF}):
+        refused = client.post(url, data={"situation": key, **again}, headers=PAGE)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"] == "That question was answered already: nothing was changed."
+        assert _unchanged(store, ids[0], key, memory, "staff meals")
+
+
+def test_a_one_off_is_answered_once_too(client_store):  # noqa: F811
+    client, store, ids = client_store
+    url, key = _asked(client.get(_approve(client, store, ids[0])["redirect"]).text).groups()
+    assert client.post(url, data={"situation": key, "reason": lessons.ONE_OFF}, headers=PAGE).json()["ok"]
+    refused = client.post(url, data={"situation": key, "reason": lessons.ONE_OFF}, headers=PAGE)
+    assert refused.status_code == 409 and len(store.events(ids[0], ["lesson_one_off"])) == 1
+
+
+def test_with_the_setting_off_no_answer_is_taken(client_store):  # noqa: F811
+    client, store, ids = client_store
+    url, key = _asked(client.get(_approve(client, store, ids[0])["redirect"]).text).groups()
+    memory = _memory(store, ids[0])
+    store.set_setting(lessons.ASK, "0")
+    for answer in ({"reason": lessons.ONE_OFF}, {"answer": "staff meals"}):
+        refused = client.post(url, data={"situation": key, **answer}, headers=PAGE)
+        assert refused.status_code == 409, refused.text
+        assert "is turned off (Settings → Review): nothing was changed" in refused.json()["error"]
+        assert _unchanged(store, ids[0], key, memory)
+    store.set_setting(lessons.ASK, "1")  # on again: the question asked is still that person's to answer
+    assert client.post(url, data={"situation": key, "answer": "staff meals"}, headers=PAGE).json()["ok"]
+
+
+def test_a_question_that_was_never_asked_is_not_answered(client_store):  # noqa: F811
+    """The form is not trusted: the server keeps the question it asked (``Store.why_asked``)."""
+    from ap_coder.core.schema import as_read
+
+    client, store, ids = client_store
+    store.set_setting(lessons.ASK, "0")
+    assert _approve(client, store, ids[0])["ok"]  # the same correction, with the questions off: none asked
+    store.set_setting(lessons.ASK, "1")
+    inv = store.get_invoice(ids[0])
+    key = lessons.surprise(store, inv["ai_output"], as_read(inv["final_output"], inv["ai_output"]))["key"]
+    memory = _memory(store, ids[0])
+    assert store.why_asked(ids[0]) is None
+    for answer in ({"reason": lessons.ONE_OFF}, {"answer": "staff meals"}):
+        refused = client.post(f"/review/{ids[0]}/why", data={"situation": key, **answer}, headers=PAGE)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"] == "No question is open about this invoice: nothing was changed."
+        assert _unchanged(store, ids[0], key, memory)
+    # A question asked about one invoice is not another's, and a withdrawn approval's question is gone with it.
+    url, asked = _asked(client.get(_approve(client, store, ids[1])["redirect"]).text).groups()
+    assert asked == key and store.why_asked(ids[1])["line_number"] == 1
+    other = client.post(f"/review/{ids[0]}/why", data={"situation": asked, "answer": "x"}, headers=PAGE)
+    assert other.status_code == 409 and not store.lesson(key)["explanation"]
+    assert client.post(f"/review/{ids[1]}/undo-approve", headers=PAGE).json()["ok"]
+    assert store.why_asked(ids[1]) is None
+    assert client.post(url, data={"situation": asked, "reason": lessons.ONE_OFF}, headers=PAGE).status_code == 409
+
+
+def test_a_one_off_forgets_the_line_the_question_named_and_no_other(client_store, ground_truth):  # noqa: F811
+    client, store, _ = client_store
+    doc = copy.deepcopy(ground_truth)
+    doc["invoice_number"] = "NW-TWO-ALIKE"
+    doc["line_items"][1]["description"] = doc["line_items"][0]["description"]  # two lines of one kind
+    iid = store.add_invoice(store.path.parent.parent / "inv0.pdf", doc, {})
+    url, key = _asked(client.get(_approve(client, store, iid)["redirect"]).text).groups()
+    asked = store.why_asked(iid)
+    assert asked["line_number"] == doc["line_items"][0]["line_number"] and asked["situation"] == key
+    memory = _memory(store, iid)
+    assert len(memory) == len(doc["line_items"]) and store.lesson(key)["corrected"] == 1
+    assert client.post(url, data={"situation": key, "reason": lessons.ONE_OFF}, headers=PAGE).json()["ok"]
+    assert _memory(store, iid) == [n for n in memory if n != asked["line_number"]]  # the line like it is still there
+    assert store.lesson(key)["corrected"] == 0  # and that line's correction teaches nothing
+    assert store.events(iid, ["lesson_one_off"])[0]["detail"]["lines"] == 1

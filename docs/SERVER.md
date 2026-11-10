@@ -626,13 +626,15 @@ Linux, not Windows Server; AP Coder's release check (`.github/workflows/release.
 
 - **Every day, automatically**: a backup in `D:\APCoderData\backups`, at the time set on *Settings* → *Data &
   backups* (*Back up every day at*, 17:30 until another is saved; made at the next start when AP Coder was not
-  running then, and the page says so; D-218). Kept (D-187):
+  running then, and the page says so; D-218). On a server nobody chose that 17:30, and it is in working hours: the
+  page shows no time until an Admin saves one, and says that 17:30 applies until then. Save the time you want there,
+  or set the hours below. A time changed while AP Coder runs is followed within a minute. Kept (D-187):
   the newest 14 daily ones, then the newest of each of the last 8 weeks and of each of the last
   12 months that have one, so a mistake found at the month end or the year end can still be undone; a backup with a
   label (yours, an update's, a restore's) is always kept, and the newest complete one is never deleted.
   - **When, on a big server:** set `AP_BACKUP_HOURS=1-5` in the `.env` so the daily copy starts between 1 and 5 in
-    the morning, not during the working day; those hours then decide, and the time on the Settings page is not used
-    (the page says so). The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
+    the morning, not during the working day; those hours then decide, and the Settings page shows them, with where
+    they are set, in place of a time of day. The hours are the business time zone's (`time_zone` in `server.json`, step 12), else the
     server's clock. A year's database (300,000 invoices) is about 10 GB: the copy takes minutes of disk work. If the
     server was off during those hours, the backup is made as soon as the last one is 30 hours old, so no day is skipped
     (B-1671).
@@ -1790,7 +1792,7 @@ What it does, and what it leaves to a person:
 | A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
 | The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. |
 | `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
-| The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another. |
+| The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
 | The address | Prints what colleagues type, `https://AP-LAPTOP:8501`. |
 

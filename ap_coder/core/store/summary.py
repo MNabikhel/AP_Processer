@@ -50,6 +50,7 @@ from ._base import (
     VENDOR_LOGGED,
     _in_list,
 )
+from .dialect import columns
 from .reports import settle_for
 from .rules import RULES_SCHEMA, rule_rows
 
@@ -523,6 +524,8 @@ class SummaryMixin:
     def _summary_schema(conn: sqlite3.Connection) -> None:
         """The summary's tables, indexes and triggers (made on every start, like ``_SCHEMA``; the triggers as this
         version makes them, ``make_triggers``); its FTS5 index when this SQLite has FTS5."""
+        if "label" not in (columns(conn, "summary_rules") or {"label"}):  # D-217's first shape (B-2293): made again
+            conn.execute("DROP TABLE summary_rules")
         for sql in SUMMARY_SCHEMA:
             conn.execute(sql)
         make_triggers(conn)
@@ -639,7 +642,7 @@ class SummaryMixin:
         codes = _COLUMNS.index("i_codes")
         conn.executemany("INSERT INTO summary_codes (id, code, n, pos) VALUES (?, ?, ?, ?)",
                          [row for v in summary for row in _code_rows(v[0], v[codes])])  # fmt: skip
-        conn.executemany("INSERT INTO summary_rules (id, rule_id, n) VALUES (?, ?, ?)",
+        conn.executemany("INSERT INTO summary_rules (id, rule_id, n, label, gl_code, cost_center) VALUES (?,?,?,?,?,?)",
                          [row for r in rows for row in rule_rows(r["id"], r["doc"])])  # fmt: skip
         conn.executemany(
             "INSERT INTO summary_spend (invoice_id, part, gl_code, cost_center, amount, sizes, cents, amounts) "

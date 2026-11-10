@@ -5155,14 +5155,30 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     rule goes back to what it was before that entry, and the undo is an entry (so it can be undone). When the rule
     is not as the entry left it, the page says "changed again since", names the newer change in the question it
     asks, and only then overwrites (`overwrite=1`; without it the store refuses, `CHANGED_SINCE`). An entry whose
-    rule is already as it was before it has no Undo.
+    rule is already as it was before it has no Undo. An undo that would make a rule say the same as another is
+    refused (`TWICE`, B-2294; said on the page): two rules alike are one too many, and the next save dropped one
+    unasked. Not merged: which of the two numbers stays is a person's choice.
+  - **Several people, one list (B-2292):** a save writes the whole list, so a save made on older rules removed what
+    another person had just added. The page posts what it was drawn from (`version`: the history's last entry,
+    `Store.rules_seen`) with a save and with an undo; the store compares it inside its write (`_unseen`), so two
+    saves at the same moment cannot both pass. Changed since: nothing is written (`RulesChanged`), and the person
+    is sent back to the page (`?kept=`, kept an hour), told who changed what, with the rules as they are now and
+    their own changes still in the form (`rules.form_again`: a row left as their page showed it follows the newer
+    change, one they changed, cleared or added stays theirs). A request that names no page is refused (409).
+    *Add rule* reads and writes on one stamp.
   - **What a rule coded:** a line's `decided_by` already kept the rule's number and its words (D-212); nothing was
-    added to the line. `summary_rules` (invoice, rule, lines), filled with the invoices' summary from the coding as
-    approved, else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice
-    directory's `?rule=<number>` filter (`rules.RULE_FILTER`). `SUMMARY_RULES` is not raised (no rebuild of every
-    summary for a table that starts empty): an invoice is counted once it is coded or changed from the first start
-    of this version, the day kept as the setting `rule_use_since` and said on the page. Nothing is guessed for the
-    invoices before.
+    added to the line. `summary_rules` (invoice, rule, lines, and what the rule said: its words as the line kept
+    them, the line's own account and cost center), filled with the invoices' summary from the coding as approved,
+    else as coded, gives each rule's "N lines on M invoices" off a covering index, and the invoice directory's
+    `?rule=<number>` filter (`rules.rule_filter`). A number outlives what its rule says (B-2293): the count is of
+    the lines that say what the rule says now (its words, its GL account, its cost center when it has one); the
+    lines it coded while it said something else are said apart, "K lines on J invoices before it was changed
+    (when; it was ...)", from the history's last change, with their own link (`?rule=<number>&was=1`), and the
+    search says which it shows. Nothing is dated: a line says what coded it. `SUMMARY_RULES` is not raised (no
+    rebuild of every summary for a table that starts empty): an invoice is counted once it is coded or changed
+    from the first start of this version, the day kept as the setting `rule_use_since` and said on the page.
+    Nothing is guessed for the invoices before. (The table as this stage first made it, without what the rule
+    said, is dropped and made again empty at the next start: `_summary_schema`.)
   - **With a chart of accounts** the rule's account is one box holding `business unit.object.subsidiary`, read as
     the review screen's Account box is (`account_lines.posted`; joined and split only by `core/chart.py`). A rule
     added or changed is refused, and nothing saved, when the pair is not in the chart, takes no postings or is on a
@@ -5191,8 +5207,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     work (the laptop's own; on the server its background process, never a web worker), and it reads the time again
     once a minute, so a time saved on the page is followed with no restart. The free-space check, the second folder
     and the retention are `backup_now`'s and `drop_old`'s, unchanged.
+    - *A time changed while AP Coder runs (B-2295):* one moved to a time the clock already passed today is followed
+      at the watch's next read, within a minute (it waited for the hourly check, with the reason "asleep or busy"):
+      a new time that the clock showed more lately than the one before it has come (`DailyBackup._time_came`), and
+      `auto_backup` makes the day's backup when none was made since. The page saves the time through
+      `Store.save_backup_at`, which keeps when (`backup_at_changed`), so the reason says what happened: "made after
+      the time was changed to 14:00 at 15:00". A time moved later also makes one backup at the change, as the rule
+      (none since that time last passed) always did. The watch's first read counts from when the process began: a
+      start half a minute before the time does not wait a day for it.
+    - *On a company server (B-2296):* the page shows no time that nobody chose. With IT's hours it says them and
+      where they are set (`AP_BACKUP_HOURS`, the `.env`) in place of the box; without them and with no time saved,
+      the box is empty and the page says that 17:30, AP Coder's own time, applies until one is saved, and that it
+      is in working hours. What applies is unchanged: the 17:30 stays for a shared laptop that never saw the page.
     - *Not chosen:* a time that also governs a server whose IT set `AP_BACKUP_HOURS`: those hours were chosen on
-      purpose (B-1671), so they decide, the page shows the time greyed and says so. A Windows scheduled task for
+      purpose (B-1671), so they decide, and the page says so in place of the time. A Windows scheduled task for
       the backup: it needs AP Coder closed or a second process on the database, and administrator rights.
   - **`python -m ap_coder share`** (`ops/share.py`), the short way through docs/SERVER.md section 16. It checks,
     in order: an AP Coder already running on this data (shared: says the address; the owner's own window: asks to
@@ -5200,7 +5228,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     one made with this computer's `openssl`, as section 3 already allowed by hand); the first Admin (asked for at
     the console: the name on the owner's approvals, a username, a password); then writes `server.json`, allows the
     second backup folder chosen in laptop mode (`allowed_folders`, D-109: from the console, by the person who chose
-    it, and only while the data has no account yet; later `--allow-folder`), says the firewall rule and the address,
+    it, and only while the data has no account yet; later `--allow-folder`, which also works while AP Coder is being
+    shared, the list being read each time a folder is saved, B-2297), says the firewall rule and the address,
     and runs `serve --server` as the service's host does (`serve_command`, `serve_env`), in its window, with 2 web
     workers unless `server.json` says. `share --stop` asks that server to stop (`dashboard_stopped`).
     - *Never:* a start without sign-in or over plain HTTP (`insecure_http` in `server.json` is ignored here); a
@@ -5230,8 +5259,17 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
       AI (the coding memory already learned the account chosen).
     - *One-off:* the existing way a line is kept out of what teaches is Learning → Coding memory → Forget
       (`delete_feedback`, which withdraws what the line taught its lessons, B-1422). `forget_one_off` uses it for
-      the invoice's lines of that kind and writes `lesson_one_off` in the invoice's history. No second path: a
-      one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity page say it.
+      the line the question named, no other (a line like it on the same invoice stays; the question's lesson
+      loses this approval's correction all the same), and writes `lesson_one_off` in the invoice's history. No
+      second path: a one-off therefore leaves no row on the Lessons tab; the invoice's history and the Activity
+      page say it.
+    - *Whose answer it is (B-2291):* the answer belongs to the question that was asked. The approval keeps it
+      (`why_questions`, by `_SCHEMA`: the invoice, the lesson, the line, the person as the approval recorded them,
+      `core.login`); it goes with the approval's learning (a reopen, a rejection). `POST /review/{id}/why` takes an
+      answer only from that person, for that question, once, while the setting is on and the approved invoice
+      still asks it; another person gets 403 (an Admin too: Forget on Learning is the Admin's way), an answer to
+      no question, a second answer or the setting off 409, in plain words, and nothing changes. The form's
+      `situation` is only compared. On a laptop the one person is the computer's own login, as before.
     - *The setting:* Settings → Review, "Ask why after a surprising correction" (`why_surprise`), on until turned
       off. Off turns both questions off: "never asked" would not be true with the older question still asking.
   - (`ap_coder/core/store/backups.py`, `ap_coder/web/app.py`, `ap_coder/web/pages/settings.py`,
