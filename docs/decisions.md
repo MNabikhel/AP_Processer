@@ -5318,6 +5318,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     it, and the bar says so before approving. On one person's laptop there is nobody else: the approval asks for
     the reason, Activity records it, and the keying sheet says on that voucher "Tax ID differs from the supplier
     list: confirm before paying" (`pages/exports.tax_id_warnings`, asked of the stored coding and today's list).
+  - **Amended (10 Nov 2026): another GST/HST account of the same business is a warning, not a hold.** The nine
+    digits are the business (the legal entity registered with the CRA); the four digits after RT only say which
+    of its GST/HST accounts it is, and a branch or a division can have its own (RT0001, RT0002). An invoice
+    printing `123456789 RT0003` for a supplier listed as `123456789RT0002` was held like a stranger's number.
+    Now, when both are full RT accounts with the same nine digits and other digits after RT
+    (`core/keys.other_tax_account`), the finding is the warning VENDOR_TAX_ACCOUNT_DIFFERS: it names both numbers,
+    says there is nothing to fix and to look the number up on the CRA's GST/HST registry if in doubt. No "Approve
+    anyway", no reason, no second approval, no note on the keying sheet (`Store.tax_id_differs` is "" for it);
+    the same against the supplier's earlier approved invoices as against the list. Being a warning it still goes
+    to a person (bulk approval and touchless leave it). Other nine digits: the error and everything above,
+    unchanged. A side with only the nine digits still matches, and who a number selects (`same_tax_number`,
+    `supplier_of_tax_number`) is unchanged. QST and PST numbers are as they were. The note under the GST/HST box
+    says "…, another GST/HST account of the same business" (`vendors.expected_tax_numbers`).
+    (`ap_coder/core/keys.py`, `coding/vendors.py`, `core/store/vendor_master.py`, `ops/help.py`;
+    `tests/coding/test_vendors.py`, `tests/web/test_supplier_tax_id.py`)
+    - *Not chosen:* making `same_tax_number` say the two are the same: nothing would be said at all, and a number
+      would select a supplier by another account than its own.
   - **With D-221.** What the list gives is seen with the suppliers loaded (`core/store/loaded.py`: tax ID as
     written, currency, address, e-mail, business unit, read from `vendor_info` by supplier number; searched, in
     the CSV, not changed by hand). The list's load goes through `Store.import_vendor_master`, so a GST/HST number
@@ -5399,6 +5416,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     which says how many are loaded; the routes and their roles are unchanged (an Admin's in server mode), and so
     is `python -m ap_coder demo`. Import invoices still warns while the demo is loaded and none of your own
     invoices are (B-468), and points to Settings.
+    - **Amended (10 Nov 2026): a flag, never an order.** That warning said "Remove the demo invoices before you
+      import your own" and went away with the first invoice of your own, when the demo was still loaded. Import
+      invoices now says, for as long as any demo invoice is loaded (your own there or not): how many are loaded,
+      that demo invoices are in the review queue, the exports and what AP Coder learns beside your own, and where
+      they can be removed (the link to Settings → Data & backups for those who may; "An Admin can remove them"
+      for the others). A plain notice: nobody is told to remove them, and nothing is refused, removed or sent
+      elsewhere because they are loaded. `/demo/load` still refuses to add the samples beside invoices of your
+      own (D-137), and `/demo/remove` removes them only when asked, ticked.
+      (`ap_coder/web/templates/process.html`, every page's `demo_count`;
+      `tests/coding/test_guesses_and_learned_codes.py`)
   - *An older data folder* keeps showing every page (`first_run` leaves an existing database as it is), so after an
     update the person saw the old menu and wondered whether it had worked. A laptop's database on which the
     Screens choice was never saved shows a card on the queue page, once: what is new, "Use the simple screens" or

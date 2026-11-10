@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from ..chart import markers as _markers  # (how a skip word is found in a name: the chart's, for both, D-209)
-from ..keys import BUSINESS_NUMBER, norm_tax_number, same_tax_number
+from ..keys import BUSINESS_NUMBER, norm_tax_number, other_tax_account, same_tax_number
 from ..memory import _LEGAL_SUFFIXES, _normalise, vendor_key
 from ._base import _clean_code, _in_list, _now
 from .dialect import ROWID, like
@@ -612,14 +612,15 @@ class VendorMasterMixin:
 
     def tax_id_differs(self, coding: dict[str, Any]) -> str:
         """The vendor master's GST/HST number of the supplier an invoice is coded to, when the invoice shows another
-        one ("" when they are the same, or either has none): what ``VENDOR_TAX_NUMBER_CHANGED`` says of the vendor
-        list, asked of the stored coding (the approval, the keying sheet: D-219)."""
+        one ("" when they are the same or two GST/HST accounts of one business, or either has none): what
+        ``VENDOR_TAX_NUMBER_CHANGED`` says of the vendor list, asked of the stored coding (the approval, the keying
+        sheet: D-219)."""
         printed = coding.get("gst_hst_registration_number")
         vendor = self.find_vendor(coding.get("vendor_name"), printed)  # (a method of ``vendors``' part)
         listed = str((vendor or {}).get("expected_gst") or "").strip()
         if not vendor or not vendor.get("in_master") or not norm_tax_number(listed) or not norm_tax_number(printed):
             return ""
-        return "" if same_tax_number(printed, listed) else listed
+        return "" if same_tax_number(printed, listed) or other_tax_account(printed, listed) else listed
 
     def _master_numbers(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
         """({a GST/HST number as compared: the rowids of the master's vendors with it}, {a 9-digit Business Number:

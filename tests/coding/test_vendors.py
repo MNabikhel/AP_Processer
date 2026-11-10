@@ -116,6 +116,65 @@ def test_expected_gst_number_from_the_vendor_master_wins(tmp_path, ground_truth,
     assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "error"
 
 
+def test_another_gst_hst_account_of_the_same_business_is_a_warning(tmp_path, ground_truth, reference):
+    """D-219, amended: the nine digits are the business; the four after RT are which of its GST/HST accounts (a
+    branch or division can have its own). Another account of the same business is a warning, against the vendor's
+    earlier invoices as against the vendor list; other nine digits stay the error."""
+    store = Store(tmp_path / "ap.db")
+    _approved(store, _variant(ground_truth, "A-1", date="2026-06-01"), tmp_path, "a.pdf")  # prints 123456782 RT0001
+    codes, report = _codes(store, _variant(ground_truth, "A-2", gst="123456782 RT0002"), reference)
+    assert codes.get("VENDOR_TAX_ACCOUNT_DIFFERS") == "warning" and "VENDOR_TAX_NUMBER_CHANGED" not in codes
+    message = next(i.message for i in report.issues if i.code == "VENDOR_TAX_ACCOUNT_DIFFERS")
+    assert "123456782 RT0002" in message and "123456782 RT0001" in message and "this vendor's usual" in message
+    assert "same business number" in message and "CRA" in message and "confirm with the vendor" not in message
+    store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="123456782RT0003")
+    codes, report = _codes(store, _variant(ground_truth, "A-3", gst="123456782 RT0002"), reference)
+    assert codes.get("VENDOR_TAX_ACCOUNT_DIFFERS") == "warning" and "VENDOR_TAX_NUMBER_CHANGED" not in codes
+    message = next(i.message for i in report.issues if i.code == "VENDOR_TAX_ACCOUNT_DIFFERS")
+    assert "the vendor list's" in message and "123456782RT0003" in message
+    for same in ("123456782", "123456782 RT0003"):  # the nine digits alone, and the list's own account: no finding
+        codes, _ = _codes(store, _variant(ground_truth, "A-4", gst=same), reference)
+        assert not {"VENDOR_TAX_ACCOUNT_DIFFERS", "VENDOR_TAX_NUMBER_CHANGED"} & set(codes), same
+    codes, _ = _codes(store, _variant(ground_truth, "A-5", gst="987654321 RT0003"), reference)  # another business
+    assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "error" and "VENDOR_TAX_ACCOUNT_DIFFERS" not in codes
+
+
+@pytest.mark.parametrize(
+    "a, b, other",
+    [
+        ("123456789RT0001", "123456789 RT 0002", True),  # two GST/HST accounts of one business
+        ("123456789RT0002", "123456789rt0002", False),  # the same account
+        ("123456789", "123456789RT0002", False),  # a side with only the nine digits: the same registration
+        ("123456789RT0001", "987654321RT0002", False),  # another business
+        ("123456789RC0001", "123456789RT0001", False),  # a payroll account is no GST/HST account
+        ("", "123456789RT0001", False),
+    ],
+)
+def test_two_gst_hst_accounts_of_one_business_are_told_from_another_business(a, b, other):
+    from ap_coder.core.keys import other_tax_account
+
+    assert other_tax_account(a, b) is other and other_tax_account(b, a) is other
+
+
+def test_the_note_under_the_gst_hst_box_says_another_account_of_the_same_business(tmp_path, ground_truth):
+    from ap_coder.coding.vendors import expected_tax_numbers
+
+    store = Store(tmp_path / "ap.db")
+    store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="123456782RT0003")
+    field = "gst_hst_registration_number"
+    sister = InvoiceCoding.model_validate(_variant(ground_truth, "A-1", gst="123456782 RT0002"))
+    assert expected_tax_numbers(sister, store)[field] == (
+        "Vendor list: 123456782RT0003, another GST/HST account of the same business"
+    )
+    stranger = InvoiceCoding.model_validate(_variant(ground_truth, "A-2", gst="987654321 RT0002"))
+    assert expected_tax_numbers(stranger, store)[field] == "Vendor list: 123456782RT0003"
+    store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="")
+    _approved(store, _variant(ground_truth, "A-3", gst="123456782 RT0001"), tmp_path, "a.pdf")
+    assert expected_tax_numbers(sister, store)[field] == (
+        "Usual for this vendor: 123456782 RT0001, another GST/HST account of the same business"
+    )
+
+
 @pytest.mark.parametrize(
     "a, b, same",
     [
