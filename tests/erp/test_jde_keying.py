@@ -742,3 +742,38 @@ def test_a_supplier_put_on_hold_after_approval_is_not_ready_for_jd_edwards(tmp_p
                                by_erp_id=True)  # fmt: skip
     why = jde_check(store, [northwind["id"]])[1][northwind["id"]]
     assert "is on hold in JD Edwards (hold code Y" in " ".join(why)
+
+
+def test_pst_to_self_assess_on_a_gst_only_tax_area_is_listed_and_said_on_the_voucher(tmp_path):
+    """B-2343: a Saskatchewan supply charged the GST only is keyed with code B, which has JD Edwards accrue the PST
+    only on a tax area that carries it; on the prototype's GST-only area (shared with Alberta) it accrues nothing, yet
+    the Self-assessment report said "JD Edwards accrues this one (code B)", so nobody booked the PST. The report lists
+    it to self-assess and the voucher says so; what is keyed is the same."""
+    from ap_coder.coding import taxreturn
+    from ap_coder.core.store import Store
+    from tests.conftest import SAMPLES
+    from tests.erp.test_jde import SK
+    from tests.erp.test_jde import _invoice as jde_invoice
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    final = jde_invoice(SK)["final_output"]
+    final["tax_lines"] = [t for t in final["tax_lines"] if t["tax_type"] != "PST"]
+    final["tax_total"] = sum(t["tax_amount"] for t in final["tax_lines"])
+    final["grand_total"] = round(final["subtotal"] + final["tax_total"], 2)
+    for li in final["line_items"]:
+        li["taxes_applied"], li["tax_exempt"] = ["GST"], []
+    final = coded({k: v for k, v in final.items() if k != "gl_distribution"})["final_output"]
+    ids = []
+    for _ in range(2):
+        ids.append(store.add_invoice(SAMPLES / f"{SK}.pdf", final, {"requires_review": True}))
+        store.approve_invoice(ids[-1], final, "Pat Tester")
+    store.create_export_batch([ids[0]], jde_keying.FORMAT, actor="Pat Tester")
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    jde_settings.save(store, js)
+    day = dt.date.fromisoformat(final["invoice_date"])
+    items = {s.invoice_id: s for s in taxreturn.self_assessment(store, day, day)}
+    assert [(items[i].tax_type, items[i].note) for i in ids] == [("PST", ""), ("PST", "")]
+    (voucher,), held = jde_keying.vouchers([{"id": ids[0], "final_output": final}], js, lambda final: "40417")
+    assert held == [] and (voucher.tax_code, voucher.tax_area) == ("B", "CDNGST")
+    assert voucher.notes[-1].startswith(f"PST to self-assess: SK PST on {items[ids[0]].base:,.2f}. ")
+    assert "CDNGST" in voucher.notes[-1] and "Self-assessment report" in voucher.notes[-1]

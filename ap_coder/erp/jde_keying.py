@@ -34,6 +34,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
 from ..coding import banks
+from ..coding.taxreturn import self_assessed_base
 from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde_accounts, jde_formats, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
 from .exports import _sheet
@@ -220,6 +221,11 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
     if len(po) > jde_voucher.PO_WIDTH:
         notes.append(f"PO number {po} is longer than the {jde_voucher.PO_WIDTH} characters JD Edwards' purchase order "
                      "field holds: it cannot be typed there as it is.")  # fmt: skip
+    if jde_voucher.self_assessed_pst(v.final, settings):  # code B on an area with no PST: E1 accrues none (B-2343)
+        base = self_assessed_base(v.final, v.final.get("line_items") or [], "PST")
+        notes.append(f"PST to self-assess: {v.province} PST on {base:,.2f}. Tax area {v.tax_area} holds no PST, so "
+                     f"code {v.tax_code} has JD Edwards accrue none: book it from AP Coder's Self-assessment report, "
+                     "which lists it.")  # fmt: skip
     return warnings, notes
 
 
