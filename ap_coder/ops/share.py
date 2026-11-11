@@ -284,18 +284,27 @@ def stop(data: Path, s: service.ServerSettings, say: Say) -> int:
     return 0
 
 
-def serve(data: Path, s: service.ServerSettings, popen: Callable[..., Any] | None = None) -> int:
+def serve(data: Path, s: service.ServerSettings, popen: Callable[..., Any] | None = None, say: Say = print) -> int:
     """AP Coder as the server (``serve --server``, as the service's host starts it), in this window, until it ends:
-    the window closed, Ctrl+C, or ``share --stop``."""
+    the window closed, Ctrl+C, or ``share --stop``. Meanwhile Windows is asked not to put the laptop to sleep by
+    itself (B-2311): colleagues may be signed in while its owner is away from it."""
+    from .awake import stay_awake
+
     env = {**os.environ, **service.serve_env(s, data)}
     child = (popen or subprocess.Popen)(service.serve_command(s, sys.executable), env=env, cwd=str(PROJECT_DIR))
     if service.WINDOWS:
         service.backend().tie_to_host(child)  # it ends with this window, however that is closed
-    while True:
-        try:
-            return int(child.wait() or 0)
-        except KeyboardInterrupt:  # Ctrl+C reached it too: it is finishing what is under way
-            continue
+    with stay_awake(serving=True) as awake:
+        if awake:
+            say(
+                "While it serves, Windows does not put this laptop to sleep by itself (the screen may still turn "
+                "off); closing the lid or the power button still does. Once it stops, the laptop sleeps as before."
+            )
+        while True:
+            try:
+                return int(child.wait() or 0)
+            except KeyboardInterrupt:  # Ctrl+C reached it too: it is finishing what is under way
+                continue
 
 
 def prepare(data: Path, db: Path, say: Say, *, allow: str = "", ask: Callable[[str], str] | None = None,
@@ -372,4 +381,4 @@ def main(args: argparse.Namespace, say: Say = print) -> int:
         "while this window is open and the laptop is awake: closing the window, or python -m ap_coder share --stop, "
         "stops it."
     )
-    return serve(data, s)
+    return serve(data, s, say=say)

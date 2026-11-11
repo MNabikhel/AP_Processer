@@ -1795,6 +1795,7 @@ What it does, and what it leaves to a person:
 | The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
 | The address | Prints what colleagues type, `https://AP-LAPTOP:8501`. |
+| Sleep | While it serves, asks Windows not to put the laptop to sleep by itself (the screen may still turn off), and says so; once it stops, the laptop sleeps as its power settings say. Closing the lid or pressing the power button still puts it to sleep (step 8). |
 
 It needs no `setx`, no service and no second account: it runs as the owner, on the data folder AP Coder already
 uses, while the window is open and the laptop is awake. That is the price of the short way: nobody can sign in while
@@ -1867,7 +1868,8 @@ others are what `share` does.
    start, and the page says when the last one was made and why ("made at start: AP Coder was not running at
    17:30"): so leave the window open until that time, or press *Back up now* before closing it. After any restore,
    set the second folder again: a restore clears it, and the page says so.
-8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*;
+8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*
+   (`share` keeps the laptop from sleeping by itself while it serves, but not from the lid or the power button);
    Windows Update's restarts outside working hours. A laptop asleep answers nobody; awake again it goes on, and
    whoever was away longer than the session's idle time logs in again, their typed edits kept. LM Studio: started
    in the owner's session, or as the task of step 8.
@@ -1888,7 +1890,8 @@ accounts, so each laptop-mode start asks for that option, on purpose (D-211).
 **Tried on Windows by CI** (the job "share on Windows", `scripts/ci/share_end_to_end.py`, on GitHub's Windows
 Server runner, not Windows 11): installed, `share` makes the certificate with Git for Windows' `openssl` (not on the
 PATH) and the first Admin, and serves; a second browser signs in over HTTPS by the computer's name, trusting that
-certificate, with the authenticator's code, and approves an invoice; `share --stop`, `share` again, the data kept.
+certificate, with the authenticator's code, and approves an invoice; Windows lists `share` as keeping the system
+awake (`powercfg /requests`) until `share --stop`; `share` again, the data kept.
 
 **Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
 that `netsh` shows the firewall rule without administrator rights, that closing `share`'s window leaves no

@@ -9,10 +9,11 @@ it finds Git for Windows' own, as on a laptop) and the first Admin (``--admin-fr
 reads only the keyboard), and serves. Then, over HTTPS by this computer's name (``share.names()``), trusting that
 certificate and nothing else: the owner signs in (a new password, the authenticator app set up with the key the page
 shows) and adds a colleague on the Users page; the colleague signs in with the temporary password shown, opens the
-review queue and approves the invoice. ``share --stop`` stops it; ``share`` starts again on the same data, the
+review queue and approves the invoice. On Windows, ``powercfg /requests`` shows the share keeping the laptop awake.
+``share --stop`` stops it (and Windows lets the laptop sleep again); ``share`` starts again on the same data, the
 colleague signs in with a code and finds the invoice approved; ``share --stop`` again. Exit 0 when every step went
 as it should; on a failure the share's window (its log) is printed. Runs on Linux and macOS too (without the
-openssl step). Connects only to this computer.
+openssl and powercfg steps). Connects only to this computer.
 """
 
 from __future__ import annotations
@@ -132,6 +133,18 @@ def end(window: subprocess.Popen | None) -> None:
     window.wait(timeout=60)
 
 
+def awake_requests() -> str | None:
+    """What ``powercfg /requests`` lists under SYSTEM (None where it can't be asked: off Windows, or refused)."""
+    if not WINDOWS:
+        return None
+    done = subprocess.run(["powercfg", "/requests"], capture_output=True, text=True)
+    if done.returncode != 0:
+        print(f"(powercfg /requests could not be asked: {done.stdout.strip()} {done.stderr.strip()})")
+        return None
+    found = re.search(r"^SYSTEM:\s*$(.*?)^[A-Z]+:\s*$", done.stdout, re.S | re.M)
+    return found.group(1).strip() if found else ""
+
+
 # --- A browser of a colleague's PC ------------------------------------------------------------------------------------
 
 
@@ -241,6 +254,11 @@ def run(work: Path, port: int) -> None:
         wait_up(owner, window, log)
         said = log.read_text(encoding="utf-8")
         check(base in said, f"share did not tell colleagues {base}")
+        requests = awake_requests()
+        if requests is not None:
+            print(f"powercfg /requests, SYSTEM: {requests or '(none)'}")
+            check("python" in requests.lower(), "Windows was not asked to keep the laptop awake while it serves")
+            check("does not put this laptop to sleep" in said, "the window does not say the laptop is kept awake")
 
         step(f"the owner signs in over HTTPS by the name {name} and adds {COLLEAGUE} on the Users page")
         first_sign_in(owner, OWNER, FIRST)
@@ -258,6 +276,9 @@ def run(work: Path, port: int) -> None:
         step("share --stop")
         stop(env, window)
         check(status_of(data / "ap_coder.db", invoice_id) == "approved", "the invoice is not approved in the database")
+        requests = awake_requests()
+        if requests is not None:
+            check("python" not in requests.lower(), f"still kept awake after share --stop: {requests}")
 
         step("share again: the same data, the colleague signs in with a code")
         window = start(env, log)

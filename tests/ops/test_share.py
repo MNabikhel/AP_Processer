@@ -187,7 +187,7 @@ def test_share_serves_in_its_window_and_tells_colleagues_the_address(laptop, mon
         def wait(self):
             return 0
 
-    monkeypatch.setattr(share, "serve", lambda data, s: SERVE(data, s, popen=Child))  # (no server really starts)
+    monkeypatch.setattr(share, "serve", lambda data, s, say: SERVE(data, s, Child, say))  # (no server really starts)
     monkeypatch.setattr(service, "WINDOWS", False)
     assert cli.main(["share"]) == 0
     (cmd, env), said = started[0], capsys.readouterr().out
