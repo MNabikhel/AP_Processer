@@ -1,5 +1,6 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
+import json
 import re
 import shutil
 import subprocess
@@ -52,7 +53,7 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
                           "not looked_up_once and not where_there_is_no_workflow and not one_shard"
-                          " and not older_versions", str(copy)],
+                          " and not older_versions and not weighed_by", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -236,6 +237,52 @@ def test_every_test_runs_in_exactly_one_shard():
         assert all(i in part for i in items if i.nodeid.split("::")[0] in files)  # a file is never split
     with pytest.raises(pytest.UsageError):
         _shard(items, "4/3")
+
+
+def test_the_parts_are_weighed_by_the_tests_each_run_really_runs(tmp_path, monkeypatch):
+    """D-233: the split weighed every file by all its tests, also for the fast tier (which runs no slow test) and for
+    a run that leaves a test out (--deselect): a file of one 20-minute slow test filled a part that then ran nothing.
+    A file's weight is its measured time for the tests this run runs (tests/test_times.json: all, and not slow), and
+    tests/times.py works both out of a ``--junitxml`` report."""
+    from tests import conftest, times
+
+    class item:
+        def __init__(self, nodeid, slow=False):
+            self.nodeid, self.slow = nodeid, slow
+
+        def get_closest_marker(self, name):
+            return self.slow or None
+
+    report = tmp_path / "times.xml"
+    report.write_text(
+        '<testsuites><testsuite>'
+        '<testcase classname="tests.meta.test_ci_workflow" name="test_big" time="100.0"/>'
+        '<testcase classname="tests.meta.test_ci_workflow" name="test_small[a]" time="3.0"/>'
+        '<testcase classname="tests.meta.test_ci_workflow.TestGroup" name="test_inside" time="2.0"/>'
+        '<testcase classname="tests.conftest" name="test_in_a_browser_page" time="7.0"/>'
+        '<testcase classname="tests.webclient" name="test_quick" time="40.0"/>'
+        '<testcase classname="tests.pdfs" name="test_other" time="60.0"/>'
+        '<testcase classname="tests.times" name="test_alone" time="500.0"/>'
+        "</testsuite></testsuites>", encoding="utf-8")  # fmt: skip
+    slow = {"tests/meta/test_ci_workflow.py::test_big", "tests/times.py::test_alone"}
+    measured = times.times(report, slow)
+    assert measured == {"tests/conftest.py": [7.0, 0.0], "tests/meta/test_ci_workflow.py": [105.0, 5.0],
+                        "tests/pdfs.py": [60.0, 60.0], "tests/times.py": [500.0, 0.0],
+                        "tests/webclient.py": [40.0, 40.0]}  # fmt: skip
+    monkeypatch.setattr(conftest, "_TIMES", measured)
+    big, small = item("tests/meta/test_ci_workflow.py::test_big", slow=True), item("tests/meta/test_ci_workflow.py::t")
+    quick, other = item("tests/webclient.py::test_quick"), item("tests/pdfs.py::test_other")
+    alone = item("tests/times.py::test_alone", slow=True)
+    items = [big, small, quick, other, alone]
+    assert conftest._shard(items, "1/2") == {alone}  # all of it: 500 s against 105 + 60 + 40
+    # the fast tier runs no slow test: 60 s against 40 + 5 (a file's slow tests go where it goes: -m leaves them out)
+    assert conftest._shard(items, "1/2", fast=True) == {other}
+    assert conftest._shard(items, "2/2", fast=True) == {quick, small, big, alone}
+    # a test left out weighs nothing: 105 s against 60 + 40
+    assert conftest._shard(items, "1/2", left_out=("tests/times.py::test_alone",)) == {big, small}
+    whole = json.loads((Path(conftest.__file__).parent / "test_times.json").read_text(encoding="utf-8"))
+    assert all(len(pair) == 2 and pair[0] >= pair[1] >= 0 for pair in whole.values())
+    assert all((Path(conftest.__file__).parents[1] / path).is_file() for path in whole)  # no file that is gone
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):

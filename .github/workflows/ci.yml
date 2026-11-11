@@ -21,7 +21,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python }}${{ matrix.shard && format(', part {0}', matrix.shard) || '' }}${{ matrix.tier == 'fast' && ', fast tier' || '' }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30  # the slowest cell about 15 minutes in a passing run: a hang ends here, not after 6 hours
+    timeout-minutes: 30  # a part about half that in a passing run: a hang ends here, not after 6 hours
     strategy:
       fail-fast: false
       matrix:
@@ -29,8 +29,8 @@ jobs:
         # slower, on 3.12 (the Python APProcessor.bat installs first) and on the newest (3.14: the one the pilot
         # laptop has), both with the OCR engine, so the tests that read scans run on Windows (they skip without it;
         # its PP-OCRv4 models come inside the rapidocr package: nothing is downloaded); the fast tier on the other
-        # two. Each is split into parts of about 13 minutes run side by side (--shard, tests/conftest.py: whole files,
-        # by the times in tests/test_times.json), so the run ends when the slowest part does (D-233).
+        # two. Each is split into even parts run side by side (--shard, tests/conftest.py: whole files, by the times
+        # in tests/test_times.json), so the run ends when the slowest part does (D-233).
         include:
           - {os: ubuntu-latest, python: "3.11", shard: "1/2"}
           - {os: ubuntu-latest, python: "3.11", shard: "2/2"}
@@ -66,7 +66,7 @@ jobs:
         run: python -m pytest -q ${{ matrix.tier != 'fast' && '-m ""' || '' }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ${{ matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || '' }} --durations=15
 
   windows-sync-volume:
-    # The slowest test by far: 600,000 vouchers synced four times, about 20 minutes on Windows (a few on Ubuntu, where
+    # The slowest test by far: 600,000 vouchers synced four times, about 20 minutes on Windows (2 on Ubuntu, where
     # every pull request runs it in the tests above). On Windows it runs on main after each merge, and by hand
     # (workflow_dispatch), not in a pull request: it held the whole run back by 15 minutes (D-233).
     name: The JD Edwards sync at the company's size on Windows (Python ${{ matrix.python }}; main only)
