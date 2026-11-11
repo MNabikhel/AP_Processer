@@ -652,6 +652,36 @@ jobs:
           .venv\Scripts\python.exe scripts\ci\share_end_to_end.py --work "$env:RUNNER_TEMP\share"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  windows-first-day:
+    # D-225: the pilot tester's first day, docs/PROTOTYPE.md step by step, on the made-up company: installed with the
+    # installer, then APProcessor.bat (what the AP Coder shortcut runs) on a new data folder; the made-up company of
+    # section 2 in a second folder (demo --company, serve); the five JD Edwards files loaded on their page; pilot-score
+    # both ways, typed in scripts\terminal.bat; invoices copied into the invoices folder and chosen on Add invoices;
+    # one approved; the keying sheet downloaded; backup now and doctor. The logic is in scripts/ci/first_day.py (it
+    # runs on Linux too); on a failure it prints what the page said and AP Coder's window.
+    name: first day on Windows (docs/PROTOTYPE.md, the made-up company)
+    runs-on: windows-latest
+    timeout-minutes: 20  # the install about 3 minutes, the day a few: a hang ends here
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (non-interactive)
+        shell: cmd
+        env:
+          AP_ALLOW_INTERNET: "1"  # the installer sets up from PyPI here (no wheelhouse); the day itself runs offline
+        run: APProcessor.bat --installer --yes --no-update --skip-tests --no-start
+      - name: the first day, as docs/PROTOTYPE.md says it
+        shell: pwsh
+        run: |
+          .venv\Scripts\python.exe scripts\ci\first_day.py --work "$env:RUNNER_TEMP\first-day" --start launcher
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   macos-offline-bundle:
     # The tester's Mac: Python 3.14 and nothing else, no internet. Build the offline bundle for it (online),
     # unzip it to a fresh folder, hide every other Python, double-click APProcessor.command with the internet
