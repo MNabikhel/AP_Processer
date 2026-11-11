@@ -163,17 +163,23 @@ def browser(base: str, cert: Path) -> Client:
     return client
 
 
-def wait_up(client: Client, window: subprocess.Popen, log: Path) -> None:
+def wait_up(base: str, cert: Path, window: subprocess.Popen) -> None:
+    """Until the share answers a colleague's PC, seen by a browser not signed in (one that is goes past the sign-in)."""
+    client = browser(base, cert)
     deadline = time.monotonic() + UP_WAIT
     while time.monotonic() < deadline:
         check(window.poll() is None, f"share ended ({window.returncode}) before it answered")
+        # A colleague's PC is told only that it is up (D-101: the server's details go to its own console), so the
+        # sign-in is seen as a colleague sees it: the sign-in page with its password box.
         status, body, _ = client.request("GET", "/healthz", timeout=5)
-        if status == 200 and _json(body).get("server_mode"):
-            return
+        if status == 200 and _json(body).get("app") == "ap-coder":
+            status, body, _ = client.request("GET", "/login", timeout=5)
+            if status == 200 and b'type="password"' in body:
+                return
         time.sleep(1)
     try:  # why, in the words of the last try (the client keeps only that nothing answered)
         client.opener.open(f"{client.base}/healthz", timeout=5).close()
-        why = "it answered, but not as a server with sign-in"
+        why = "it answered, but showed no sign-in page"
     except Exception as exc:  # noqa: BLE001 - said, whatever it is
         why = f"{type(exc).__name__}: {exc}"
     raise Failed(f"share did not answer over HTTPS at {client.base} within {UP_WAIT:g} s ({why})")
@@ -257,7 +263,7 @@ def run(work: Path, port: int) -> None:
             time.sleep(0.5)
         check(cert.is_file(), "share made no certificate")
         owner = browser(base, cert)
-        wait_up(owner, window, log)
+        wait_up(base, cert, window)
         said = log.read_text(encoding="utf-8")
         check(base in said, f"share did not tell colleagues {base}")
         requests = awake_requests()
@@ -288,7 +294,7 @@ def run(work: Path, port: int) -> None:
 
         step("share again: the same data, the colleague signs in with a code")
         window = start(env, log)
-        wait_up(colleague, window, log)
+        wait_up(base, cert, window)
         answer = post(colleague, "/login", {"username": COLLEAGUE, "password": CHOSEN, "next": "/review"})
         check(str(answer.get("redirect", "")).startswith("/login/code"), f"no code asked: {answer}")
         post(colleague, "/login/code", {"code": code_for(secret, used)[0], "next": "/review"})
