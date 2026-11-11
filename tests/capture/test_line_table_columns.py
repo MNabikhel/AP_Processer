@@ -562,3 +562,47 @@ def test_the_suppliers_account_in_the_table_is_no_line_and_one_finding_names_its
     (said,) = [i for i in result.report.issues if i.code == "ACCOUNT_ROWS_LEFT_OUT"]
     assert said.severity == "info" and all(words in said.message and amount in said.message for words, amount in rows)
     assert "ACCOUNT_ROWS_LEFT_OUT" in CHECKS
+
+
+# --- A description wrapped onto lines above its amount (B-2374) ------------------------------------------------------
+
+WRAPPED = [(["Managed network services for the", "head office, monthly fee"], "1", "900.00", "900.00"),
+           (["Firewall licence"], "1", "250.00", "250.00"),
+           (["On-site support visits, two", "technicians, 6 hours each,", "travel included"], "12", "95.00",
+            "1,140.00"),
+           (["Cabling"], "1", "60.00", "60.00")]  # fmt: skip
+HST_WRAPPED = [("Subtotal", "$2,350.00"), ("HST 13%", "$305.50"), ("Total", "$2,655.50")]
+WHOLE = [(" ".join(lines), float(amount.replace(",", ""))) for lines, *_, amount in WRAPPED]
+
+
+def _wrapped_invoice(tmp_path, where: str):
+    """An invoice whose rows print their description on several lines, the row's numbers beside its first line
+    ("top"), its last ("bottom") or its middle one ("middle"): spreadsheets align a cell's text so."""
+    items = [*_top(f"W-{where}", ON), (50, 230, "Description"), (380, 230, "Qty", "r"), (470, 230, "Price", "r"),
+             (560, 230, "Amount", "r")]  # fmt: skip
+    y = 252
+    for lines, *numbers in WRAPPED:
+        items += [(50, y + 13 * k, text) for k, text in enumerate(lines)]
+        at = y + 13 * {"top": 0, "bottom": len(lines) - 1, "middle": (len(lines) - 1) // 2}[where]
+        items += [(x, at, value, "r") for x, value in zip((380, 470, 560), numbers, strict=True)]
+        y += 13 * len(lines) + 9
+    items += [(380, y + 20 + 16 * n, label) for n, (label, _) in enumerate(HST_WRAPPED)]
+    items += [(560, y + 20 + 16 * n, value, "r") for n, (_, value) in enumerate(HST_WRAPPED)]
+    return _pdf(tmp_path / f"W-{where}.pdf", items)
+
+
+@pytest.mark.parametrize("where", ["top", "bottom", "middle"])
+def test_a_description_wrapped_above_or_around_its_amount_stays_with_its_row(where, tmp_path):
+    """B-2374: a row whose numbers are printed beside the LAST line of its description (or the middle one) had the
+    lines above them read as the rest of the row before: "Firewall licence On-site support visits, two technicians,
+    6 hours each," at 250.00, "travel included" at 1,140.00, the first row's first line lost. A line of a
+    description goes with the row nearer it, by the gaps between the lines."""
+    read = read_line_items(layout.build_layout(_wrapped_invoice(tmp_path, where)))
+    assert [(li.description, li.amount) for li in read] == WHOLE
+
+
+@ocr
+@pytest.mark.parametrize("where", ["bottom", "middle"])
+def test_a_description_wrapped_above_its_amount_stays_with_its_row_on_a_scan(where, pipe, tmp_path):
+    result = pipe.process(_scan(_wrapped_invoice(tmp_path, where)), save=False)
+    assert [(li["description"], li["amount"]) for li in result.output["line_items"]] == WHOLE
