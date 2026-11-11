@@ -3,10 +3,12 @@
 The double-click finds a Python 3.11 or newer (3.12 first, then the other versions the offline bundle has
 packages for) and runs this file with it. It then:
 
-1. hands over to the newest AP Coder when this folder holds an older one than the current install (an old
-   shortcut or folder started by mistake: the data is never opened by older code; ``scripts/upgrade.py``);
+1. sets up and starts nothing when this folder holds an older AP Coder than the current install (an old folder or
+   ZIP started by mistake: it says to use the newer one's shortcut; the data is never opened by older code), and
+   asks before taking over from an older current install in another folder ("Update it to ...? [Y/n]", D-231);
 2. reuses ``.venv`` (it creates it only the first time, and again only when it is broken, or made with a Python
-   the offline bundle has no packages for while one it has is installed);
+   the offline bundle has no packages for while one it has is installed); from PyPI, only once the package site
+   answers (through this computer's proxy), so a blocked network leaves no half-made .venv;
 3. looks for an AP Coder already running: the same folder and version is only opened in the browser; an older
    version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database. Before
    anything else, a data folder that serves a team with sign-in (server mode) is never started here in laptop mode:
@@ -69,6 +71,7 @@ import platform
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -1375,22 +1378,50 @@ def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
     return [("info", f"Settings file: {', '.join(found)} no longer used (commented out in {env})")]
 
 
-def database_too_new(data: Path, version: str) -> SetupError | None:
-    """A database made by a newer AP Coder: this older version never opens it (nothing changed)."""
-    from ap_coder.core.store import SCHEMA_VERSION, database_schema
-
+def database_too_new(data: Path, version: str, early: bool = False) -> SetupError | None:
+    """A database made by a newer AP Coder: this older version never opens it (nothing changed). ``early``: asked in
+    the first phase, before anything is set up (B-2377), with sqlite alone: no packages yet to import the store with."""
     database = paths.env_path("AP_DB_PATH") or data / "ap_coder.db"
-    found = database_schema(database)
-    if not found or found <= SCHEMA_VERSION:
+    if early:
+        found = recorded_schema(database)
+        known = code_schema() if found else 0
+    else:
+        from ap_coder.core.store import SCHEMA_VERSION, database_schema
+
+        found, known = database_schema(database), SCHEMA_VERSION
+    if not found or found <= known:
         return None
     newest = paths.current_install()
     where = (f"its folder is {newest['folder']}" if newest and not paths.same_folder(newest["folder"], ROOT)
-             else "unzip the newest offline bundle and double-click its APProcessor")  # fmt: skip
+             else "unzip the newest AP Coder and double-click its APProcessor")  # fmt: skip
     return SetupError(
         f"Your database {database} was made by a newer AP Coder (database version {found}; AP Coder {version} knows "
-        f"up to version {SCHEMA_VERSION}): this older version does not open it, and nothing was changed.",
+        f"up to version {known}): this older version does not open it, and nothing was changed.",
         f"Start the newer AP Coder instead ({where}).",
     )
+
+
+def code_schema() -> int:
+    """The database version this folder's code knows (``SCHEMA_VERSION``), read from its source."""
+    text = (ROOT / "ap_coder" / "core" / "store" / "_base.py").read_text(encoding="utf-8")
+    return int(re.search(r"^SCHEMA_VERSION = (\d+)", text, re.MULTILINE).group(1))
+
+
+def recorded_schema(database: Path) -> int | None:
+    """The ``schema_version`` the database file records (None when it has none, or can't be read), read only, as a
+    file that does not change when it was closed cleanly: no ``-wal`` file is left beside it (B-2317)."""
+    if not database.is_file():
+        return None
+    how = "mode=ro" if database.with_name(database.name + "-wal").exists() else "mode=ro&immutable=1"
+    try:
+        conn = sqlite3.connect(f"{database.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    return int(row[0]) if row and str(row[0]).isdigit() else None
 
 
 def models_attempt() -> str:
@@ -1908,11 +1939,12 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
     return list(dict.fromkeys(p for p in [*ports, *defaults] if isinstance(p, int) and p > 0))
 
 
-def running_dashboard(rest: list[str], state: dict) -> int | None:
-    """The port of this folder's own AP Coder (this version), already running here, else None."""
+def running_dashboard(rest: list[str], state: dict, verdict: str = "same") -> int | None:
+    """The port of this folder's own AP Coder (this version), already running here, else None. ``verdict="newer"``:
+    a newer AP Coder's instead (``running.judge``)."""
     ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
-        if running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "same":
+        if running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == verdict:
             return server.port
     return None
 
@@ -2235,6 +2267,52 @@ def keep_open() -> None:
         pass
 
 
+def installed_already(args: argparse.Namespace, rest: list[str]) -> int | None:
+    """The first phase, before anything is set up: another AP Coder installed on this computer (the current install,
+    read from its folder, D-231). A newer one: this older folder sets up and starts nothing, and says to use the newer
+    one's shortcut, opening it when it runs; a database a newer AP Coder made stops it too. An older one: asked first
+    whether to update it (:func:`update_wanted`); No changes nothing. Returns the exit code, or None to go on."""
+    newer = upgrade.newer_install(ROOT)
+    if newer is not None:
+        upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
+        say(f"AP Coder {paths.describe(newer)} is installed in {newer['folder']}: use its shortcut. Nothing was set "
+            "up or started here.")  # fmt: skip
+        port = running_dashboard(rest, load_state(), verdict="newer")
+        if port is not None:
+            return open_running(port)
+        keep_open()
+        return 0
+    ident = identity()
+    too_new = database_too_new(paths.private_dir(), ident["version"], early=True)
+    if too_new is not None:
+        return failed(too_new)
+    older = upgrade.older_install(ROOT)
+    if older is None or update_wanted(args, older, ident):
+        return None
+    say(f"Nothing was changed: AP Coder {paths.describe(older)} in {older['folder']} stays as it is, and its "
+        "shortcut still opens it.")  # fmt: skip
+    return 0
+
+
+def update_wanted(args: argparse.Namespace, older: dict, ident: dict) -> bool:
+    """Whether this newer AP Coder takes over from ``older``, the one installed in another folder (it stops it if it
+    runs, records itself as the current install, points the shortcut here and later cleans the older one up): asked
+    in the window, Enter for yes. Not asked (yes, as before) with --yes, AP_NO_PAUSE=1 or nobody at the window (CI,
+    the installer's flags), nor for a demo, which takes nothing over (B-1510)."""
+    if args.yes or os.environ.get("AP_NO_PAUSE") or demo_start() or not getattr(sys.stdin, "isatty", lambda: False)():
+        return True
+    exact = paths.describe(older) == paths.describe(ident)  # (the same version, rebuilt the same day)
+    question = (f"AP Coder {paths.describe(older, exact)} is installed in {older['folder']}. Update it to "
+                f"{paths.describe(ident, exact)}? Your invoices and settings are kept (a backup is made first). "
+                "[Y/n] ")  # fmt: skip
+    try:
+        answer = input(question)
+    except EOFError:  # (nobody to answer after all: as with no terminal)
+        answer = ""
+    log(f"{question}{answer}")
+    return not answer.strip().lower().startswith("n")
+
+
 def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None:
     """The AP Coder this start updates (None when it is no update): this folder's own, when its version or packages
     changed since .venv was set up here (unzipped over it); else, in a new folder, the newest older install."""
@@ -2502,12 +2580,10 @@ def _main(argv: list[str] | None = None) -> int:
             if code is not None:
                 return code
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
-    if args.venv is None:  # the first phase: an older folder started by mistake opens the newest instead
-        newer = upgrade.newer_install(ROOT)
-        if newer is not None:
-            say(f"A newer AP Coder, {paths.describe(newer)}, is in {newer['folder']}: opening that one.")
-            upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
-            return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
+    if args.venv is None:  # the first phase: what is installed already decides, before anything is set up (D-231)
+        code = installed_already(args, rest)
+        if code is not None:
+            return code
     if not in_venv():
         return bootstrap(argv)
     if args.installer:

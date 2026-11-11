@@ -4,8 +4,9 @@ A new version is installed by unzipping its offline bundle anywhere (a new folde
 double-clicking APProcessor. The launcher (scripts/launch.py) then uses what is here to take over from the old one:
 
 * the record of installs (``~/.ap_coder/settings.json``, ``ap_coder/core/paths.py``): every AP Coder folder started on
-  this computer and the current one. An older folder started by mistake hands over to the newest (:func:`newer_install`,
-  :func:`hand_over`): the database is never opened by older code. An AP Coder 0.1 folder, which kept no record, is
+  this computer and the current one. An older folder started by mistake sets up and starts nothing, and says to use the
+  newest (:func:`newer_install`, D-231): the database is never opened by older code. A newer folder asks before it
+  takes over from the current install (:func:`older_install`). An AP Coder 0.1 folder, which kept no record, is
   found from the data folder it used (``<folder>/private``) and the desktop shortcut (:func:`legacy_installs`).
 * :func:`prune_stale`: unzipped over an older version, the files the older one had and this one does not (deleted
   modules and tests, old wheels) are removed: the bundle's manifest lists every file it holds.
@@ -33,7 +34,6 @@ import re
 import shutil
 import sqlite3
 import stat
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -217,25 +217,22 @@ def newer_install(root: Path = ROOT) -> dict | None:
     return theirs if paths.is_older(paths.install_identity(root), theirs) else None
 
 
-def venv_python(folder: Path) -> Path:
-    return folder / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+def older_install(root: Path = ROOT) -> dict | None:
+    """The current install, when it is another folder holding an older AP Coder than ``root`` (else None): the one a
+    start from ``root`` would take over, asked first (D-231). Read from the folders themselves, as newer_install."""
+    current = paths.current_install()
+    if current is None or paths.same_folder(current["folder"], root):
+        return None
+    folder = Path(current["folder"])
+    if not is_install(folder):
+        return None
+    theirs = paths.install_identity(folder)
+    return theirs if paths.is_older(theirs, paths.install_identity(root)) else None
 
 
 def base_python() -> str:
     """The Python this one was made from (outside any .venv): another folder's launcher runs with it."""
     return getattr(sys, "_base_executable", "") or sys.executable
-
-
-def hand_over(folder: Path, argv: list[str], held_env: str) -> int:
-    """Start AP Coder from ``folder`` (the newest install) with the same options, and wait for it."""
-    own = venv_python(folder)
-    python = str(own) if own.exists() else base_python()
-    env = {k: v for k, v in os.environ.items() if k != held_env}  # that folder takes its own lock
-    args = [a for a in argv if not a.startswith("--venv")]
-    try:
-        return subprocess.call([python, str(folder / "scripts" / "launch.py"), *args], cwd=folder, env=env)
-    except KeyboardInterrupt:
-        return 0
 
 
 def write_marker(root: Path, identity: dict) -> None:

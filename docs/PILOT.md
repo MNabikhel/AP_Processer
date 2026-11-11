@@ -455,7 +455,8 @@ itself (and makes its `.venv` again with it).
 | *Installing the packages stopped: Windows refused a file in .venv because another program has it in use* | Close every AP Coder window, wait a minute (the antivirus checks new files) and double-click again; it carries on where it stopped. If it keeps happening, IT lets the antivirus allow the `.venv` folder. |
 | *Your data could not all be moved from ... to ...* | A file of it is open (an old AP Coder window, Excel): close it and double-click again; the move picks up where it stopped. Nothing was lost. |
 | *... is still running: stopping it, so this version takes over* | An older AP Coder was open: the new one stops it and carries on. *Close the old AP Coder window, then start again*: it could not be stopped; close that window (it waits a minute for you). |
-| *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
+| *AP Coder ... is installed in ...: use its shortcut* | An older folder or ZIP was started: nothing was set up or started here (the newer one opens when it runs). Use the *AP Coder* shortcut. |
+| *AP Coder ... is installed in ... Update it to ...? [Y/n]* | A newer AP Coder was unzipped in another folder. Enter updates (your invoices and settings are kept); *n* changes nothing and the old shortcut still works. |
 | *Your database ... was made by a newer AP Coder* | An older version was started on newer data: nothing was changed. Start the newer AP Coder. |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
 | *Self-check FAILED* in the summary | AP Coder still runs. Run `python scripts\pilot_check.py` in `scripts\terminal.bat` and send the output. |

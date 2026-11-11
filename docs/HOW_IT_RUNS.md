@@ -214,10 +214,13 @@ double-clicking its `APProcessor`. Nothing is installed twice; the data is never
 `data_move` (while a move runs) and the reviewer's name. Written whole to a `.part` file, then replaced
 (`write_user_settings`).
 
-**Before anything** (`scripts/launch.py:_main`, phase 1): `scripts/upgrade.py:newer_install` — when the current
-install is another folder holding a newer version (read from that folder's `pyproject.toml` and
-`bundle_manifest.json`, not only the record), this older folder hands over to it (`hand_over`) and puts itself on
-record so the newest cleans it up.
+**Before anything** (`scripts/launch.py:installed_already`, phase 1, D-231): `scripts/upgrade.py:newer_install` —
+when the current install is another folder holding a newer version (read from that folder's `pyproject.toml` and
+`bundle_manifest.json`, not only the record), this older folder sets up and starts nothing: *AP Coder X is installed
+in ...: use its shortcut* (the newer one is opened when it runs), and it puts itself on record so the newest cleans
+it up. A database a newer AP Coder made stops it too (`database_too_new(early=True)`, sqlite alone). When the current
+install is an older one (`older_install`), the window asks *Update it to Y? ... [Y/n]* before anything is stopped,
+recorded or pointed here; No changes nothing. `--yes`, `AP_NO_PAUSE=1` or no terminal: no question, as before.
 
 **Already running** (`scripts/running.py:take_over`, at the start of `run`): candidate ports are the one asked for,
 this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder_server.json`. On each:

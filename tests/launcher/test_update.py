@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -84,23 +83,16 @@ def test_the_record_keeps_one_entry_per_folder_and_the_current_one(tmp_path):
     assert not list(paths.user_settings_path().parent.glob("*.part"))  # written whole, nothing left behind
 
 
-def test_an_older_folder_started_by_mistake_hands_over_to_the_newest(upgrade, tmp_path, monkeypatch):
+def test_the_current_install_is_found_newer_or_older_than_a_folder_started(upgrade, tmp_path):
+    """An older folder started by mistake finds the newer current install (it then sets up nothing); a newer one finds
+    the older current install (it asks before taking over, D-231)."""
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", "2026-09-01T10:00:00")
     new = make_install(tmp_path / "AP Coder 0.2", "0.2.0", "2026-10-11T09:00:00")
     paths.record_install(paths.install_identity(new))
-    assert upgrade.newer_install(old)["folder"] == str(new)
-    assert upgrade.newer_install(new) is None  # the newest itself
-    own = new / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    own.parent.mkdir(parents=True)
-    own.write_text("")
-    ran: list = []
-    monkeypatch.setenv("AP_LAUNCH_LOCK_HELD", "123")
-    monkeypatch.setattr(upgrade.subprocess, "call", lambda cmd, cwd, env: ran.append((cmd, cwd, env)) or 0)
-    assert upgrade.hand_over(new, ["--port", "8502", "--venv=reused"], "AP_LAUNCH_LOCK_HELD") == 0
-    ((cmd, cwd, env),) = ran
-    assert cmd[1:] == [str(new / "scripts" / "launch.py"), "--port", "8502"] and cwd == new
-    assert "AP_LAUNCH_LOCK_HELD" not in env  # the newest takes its own folder's lock
-    assert cmd[0] == str(own)  # its own .venv's Python
+    assert upgrade.newer_install(old)["folder"] == str(new) and upgrade.older_install(old) is None
+    assert upgrade.newer_install(new) is None and upgrade.older_install(new) is None  # the newest itself
+    paths.record_install(paths.install_identity(old))
+    assert upgrade.older_install(new)["folder"] == str(old) and upgrade.newer_install(new) is None
 
 
 def test_a_newer_install_that_is_gone_or_not_newer_is_not_handed_over_to(upgrade, tmp_path):
@@ -108,8 +100,11 @@ def test_a_newer_install_that_is_gone_or_not_newer_is_not_handed_over_to(upgrade
     same = make_install(tmp_path / "copy", "0.2.0", "2026-10-11T09:00:00")
     paths.record_install(paths.install_identity(same))
     assert upgrade.newer_install(here) is None  # the same version and build: this one starts
+    assert upgrade.older_install(here) is None  # (and is not asked about)
     paths.record_install({"folder": str(tmp_path / "deleted"), "version": "9.0.0"})
     assert upgrade.newer_install(here) is None
+    paths.record_install({"folder": str(tmp_path / "deleted"), "version": "0.0.1"})
+    assert upgrade.older_install(here) is None
 
 
 # --- Unzipped over an older version -----------------------------------------------------------------------------
