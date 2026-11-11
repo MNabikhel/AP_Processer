@@ -74,8 +74,10 @@ def child_env(data: Path, work: Path, port: int) -> dict[str, str]:
     """The share's environment: this data folder, nothing of the computer's own AP Coder; on Windows no openssl on the
     PATH (a laptop has Git for Windows' in Program Files, not on its PATH)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("AP_")}
+    # Unbuffered: its words reach the log as said (output to a file is block-buffered on Windows).
     env.update(AP_PRIVATE_DIR=str(data), AP_USER_SETTINGS=str(work / "user-settings.json"), AP_SERVER_PORT=str(port),
-               AP_NO_PAUSE="1", BROWSER="none", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")  # fmt: skip
+               AP_NO_PAUSE="1", BROWSER="none", PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+               PYTHONUNBUFFERED="1")  # fmt: skip
     if WINDOWS:
         kept = [p for p in env.get("PATH", "").split(os.pathsep) if p and not (Path(p) / "openssl.exe").is_file()]
         env["PATH"] = os.pathsep.join(kept)
@@ -264,7 +266,10 @@ def run(work: Path, port: int) -> None:
         check(cert.is_file(), "share made no certificate")
         owner = browser(base, cert)
         wait_up(base, cert, window)
-        said = log.read_text(encoding="utf-8")
+        said, until = "", time.monotonic() + 10
+        while base not in said and time.monotonic() < until:
+            said = log.read_text(encoding="utf-8")
+            time.sleep(0.5)
         check(base in said, f"share did not tell colleagues {base}")
         requests = awake_requests()
         if requests is not None:
