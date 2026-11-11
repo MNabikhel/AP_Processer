@@ -155,6 +155,26 @@ def test_a_laptop_still_makes_its_database_at_its_first_start(tmp_path, capsys):
     assert safety.doctor_checks(tmp_path, db, server=False) == []  # nothing to say on a laptop's own disk
 
 
+def test_a_laptop_whose_database_is_gone_while_its_backups_remain_is_told_how_to_get_it_back(tmp_path, capsys):
+    """It started as new with no word: the pilot tester saw an empty AP Coder, and nothing said the backups in the
+    folder still held the invoices. It still starts (the server alone refuses, D-188), with a warning."""
+    db = tmp_path / "ap_coder.db"
+    assert safety.serve_refusal(db, server=False) == "" and "WARNING" not in capsys.readouterr().err  # a new laptop
+    (tmp_path / "invoices").mkdir()
+    (tmp_path / "invoices" / "a.pdf").write_bytes(b"%PDF")  # (dropped there before the first start: no sign here)
+    assert safety.serve_refusal(db, server=False) == "" and "WARNING" not in capsys.readouterr().err
+    Store(db).backup_now("manual")
+    assert safety.serve_refusal(db, server=False) == "" and "WARNING" not in capsys.readouterr().err  # it is there
+    for path in tmp_path.glob("ap_coder.db*"):
+        path.unlink()
+    assert safety.serve_refusal(db, server=False) == ""
+    err = capsys.readouterr().err
+    assert err.startswith("WARNING: ") and f"The database {db} was not there" in err
+    assert f"1 backup in {tmp_path / 'backups'}" in err and "starts with a new, empty one" in err
+    assert "Settings → Data & backups" in err and "Restore this state" in err and "manager" not in err.lower()
+    assert not db.exists()  # (made by the start itself, as before)
+
+
 def test_a_fresh_server_starts_with_its_first_database(tmp_path):
     service.write_config(tmp_path, folder="C:\\APCoder\\APProcessor", insecure_http=True)
     (tmp_path / "logs").mkdir()

@@ -35,7 +35,7 @@ from .backup_files import Retention
 from .migrations import _answer_work
 from .postings import carry_postings, saved_postings
 from .summary import SUMMARY_TRIGGERS, make_triggers
-from .users import carry_accounts, saved_accounts
+from .users import add_columns, carry_accounts, saved_accounts
 
 # A daily backup, the ones pruned: ap_coder-YYYYMMDD-HHMMSS, and -2, -3 when another was made in the same second.
 # A labelled one (-manual, -before-restore, -before-update-...) is kept.
@@ -831,6 +831,32 @@ class BackupsMixin:
             with _RESTORING_LOCK:
                 _RESTORING.discard(key)
 
+    @staticmethod
+    def _rules_first(copy: Path, accounts: dict, keep_accounts: bool) -> str:
+        """A restore's rules for the accounts, the sessions and the second backup folder (``_restore_from``) applied
+        to its own copy of the backup, before the copy becomes the database: the files are copied for minutes after
+        that, and a restore stopped meanwhile (the power, a kill) must not leave an account turned off since the
+        backup on again, a session the backup knew, or its folder. The second backup folder the backup named."""
+        conn = sqlite3.connect(copy)
+        conn.row_factory = sqlite3.Row
+        try:
+            with conn:
+                tables = dialect.table_names(conn)
+                if keep_accounts:
+                    add_columns(conn)  # (an older backup's accounts table: every column of the accounts kept)
+                    carry_accounts(conn, accounts)
+                elif "sessions" in tables:
+                    conn.execute("DELETE FROM sessions")
+                if "settings" not in tables:
+                    return ""
+                named = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
+                conn.execute(
+                    "DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status', ?)", (BACKUP_STATUS,)
+                )
+        finally:
+            conn.close()
+        return str(named[0]).strip() if named else ""
+
     def _restore_from(self, backup: str | Path, *, keep_accounts: bool = False) -> Restored:
         """Put AP Coder back as it was at a backup: the database, and the files of the data folder as the backup lists
         them (``backup_files.restore_files``; a file there now and not then is moved aside). The current state is
@@ -851,6 +877,7 @@ class BackupsMixin:
             with self._conn() as conn:
                 accounts = saved_accounts(conn) if keep_accounts else {}
                 postings = saved_postings(conn)  # the JD Edwards vouchers: never forgotten by a restore (D-105)
+            restored_dir = self._rules_first(copy, accounts, keep_accounts)
             source = sqlite3.connect(copy)
             target = sqlite3.connect(self.path)
             try:
@@ -876,7 +903,6 @@ class BackupsMixin:
                 conn.execute("DELETE FROM sessions")  # no one stays logged in by a session the backup knew
             carry_postings(conn, self.path, postings)
             backup_files.repoint_invoices(conn, self.path.parent)  # restored onto a data folder at another path
-            restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
             conn.execute(
                 "DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status', ?)", (BACKUP_STATUS,)
             )
@@ -885,7 +911,7 @@ class BackupsMixin:
             conn.execute("INSERT INTO settings (key, value) VALUES ('summary_id', ?) ON CONFLICT(key) DO UPDATE SET "
                          "value = excluded.value", (uuid.uuid4().hex,))  # fmt: skip
             detail = {"file": backup.name, "safety_copy": safety.name, "files": files.words()}
-            if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
+            if copy_dir or restored_dir:
                 detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
             self._log(conn, "backup_restored", detail=detail)
         _forget_learning(self.path)  # the lessons and learning counts kept for the database as it was (B-786)

@@ -882,6 +882,42 @@ def test_a_restore_never_replaces_or_sets_aside_the_key_of_the_accounts_here(tmp
     assert store.check_code(boss, authenticator.code(secret, clock[0]), "10.0.0.5")["username"] == "boss"
 
 
+def test_a_restore_stopped_while_the_files_are_copied_leaves_no_account_or_session_of_the_backup(tmp_path, monkeypatch):
+    """The database was put in place, the files copied for minutes, and only then the accounts kept, the sessions
+    ended and the second backup folder cleared: a restore stopped in between (the power, a kill) left an account
+    turned off since the backup on again, its session live and the backup's folder set."""
+    from ap_coder.core.store import backup_files
+
+    store = Store(tmp_path / "data" / "ap_coder.db")
+    store.add_user("boss", "correct horse battery", role="admin")
+    leaver = store.add_user("leaver", "correct horse battery")
+    store.set_setting("backup_copy_dir", str(tmp_path / "share then"))
+    with store._conn() as conn:
+        conn.execute("INSERT INTO sessions (token_hash, user_id, created_at, last_seen) VALUES ('then', ?, 1, 1)",
+                     (leaver,))  # fmt: skip
+    backup = store.backup_now("manual")
+    store.deactivate_user(leaver, actor="boss")
+    store.set_setting("backup_copy_dir", "")
+
+    def stopped(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    real = backup_files.restore_files
+    monkeypatch.setattr(backup_files, "restore_files", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        store.restore_state(backup, keep_accounts=True)
+    after = Store(store.path)  # the next start
+    assert {u["username"]: bool(u["active"]) for u in after.list_users()} == {"boss": True, "leaver": False}
+    with after._conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    assert after.get_setting("backup_copy_dir") == ""
+    monkeypatch.setattr(backup_files, "restore_files", real)  # done again, whole: the same, the cleared folder said
+    after.restore_state(backup, keep_accounts=True)
+    (event,) = [e for e in after.events() if e["action"] == "backup_restored"]
+    assert "second backup folder cleared" in describe(event) and after.get_setting("backup_copy_dir") == ""
+    assert {u["username"]: bool(u["active"]) for u in after.list_users()} == {"boss": True, "leaver": False}
+
+
 def test_a_backup_that_would_fill_the_disk_is_not_started(tmp_path, monkeypatch):
     """A year's database on the company server is 7-9 GB: a daily copy started with less room than that filled the
     disk, and a full disk stops every write to the database, for everyone. The backup is refused before it starts,
@@ -993,6 +1029,31 @@ def test_the_server_keeps_14_days_then_one_a_week_for_8_weeks_and_one_a_month_fo
     assert (folder / "ap_coder-20250902-020000-manual.db").exists()
     assert not (folder / "ap_coder-20261023-020000.db").exists()
     assert not (folder / "ap_coder-20261023-020000.files.json").exists()  # a pruned one's list goes with it
+
+
+def test_backups_of_an_empty_database_never_push_out_the_last_one_that_holds_invoices(tmp_path, ground_truth):
+    """A laptop whose database file was lost started with a new, empty one: 14 days of its backups later, the last
+    backup that held the invoices was pruned. The newest backup that holds invoices is always kept."""
+    import datetime as dt
+
+    from ap_coder.core.store import backup_files
+
+    store, data = _data_folder(tmp_path, ground_truth)
+    made = store.auto_backup()
+    good = made.with_name("ap_coder-20200101-173000.db")  # (as if made then: the pruning goes by the names)
+    made.rename(good)
+    backup_files.list_path(made).rename(backup_files.list_path(good))
+    assert backup_files.read_list(good)["invoices"] == 1
+    del store
+    for path in data.glob("ap_coder.db*"):
+        path.unlink()
+    empty = Store(data / "ap_coder.db")
+    for day in range(1, 17):
+        assert empty.auto_backup(now=dt.datetime.now() + dt.timedelta(days=day), at=empty.backup_at(), started=True)
+    left = {p.name for p in empty.list_backups()}
+    assert good.name in left and backup_files.list_path(good).is_file() and len(left) == 15
+    empty.restore_state(good)
+    assert sum(empty.status_counts().values()) == 1 and (data / "invoices" / "a.pdf").is_file()
 
 
 def test_the_weeks_and_months_kept_are_those_that_have_a_backup(tmp_path):

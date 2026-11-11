@@ -145,10 +145,13 @@ def kept_dailies(dailies: list[Path], keep: Retention = RETENTION) -> set[Path]:
     """Of the daily backups ``dailies`` (one folder's, any order), those ``keep`` keeps: the newest ``daily``, and the
     newest ``daily`` complete ones (with their list of files), so a backup cut short or of an older AP Coder (the
     database alone) never pushes out a complete one (B-1558); and the newest complete one of each of the last
-    ``weekly`` weeks (ISO weeks) and ``monthly`` months that have one. The newest complete one is always kept."""
+    ``weekly`` weeks (ISO weeks) and ``monthly`` months that have one. The newest complete one is always kept, and
+    the newest that holds invoices: the backups of a database that holds none (its file lost, a new one made in its
+    place) never push out the last one the invoices can be restored from."""
     newest = sorted(dailies, key=lambda p: p.name, reverse=True)
     complete = [p for p in newest if list_path(p).is_file()]
     kept = set(newest[: keep.daily]) | set(complete[: keep.daily]) | set(complete[:1] or newest[:1])
+    kept |= set(next(([p] for p in complete if (read_list(p) or {}).get("invoices")), []))
     for count, period in ((keep.weekly, lambda d: d.isocalendar()[:2]), (keep.monthly, lambda d: (d.year, d.month))):
         seen: set[Any] = set()
         for backup in complete:  # newest first: the first of a period is its newest

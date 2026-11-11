@@ -336,3 +336,31 @@ def test_after_the_laptop_is_renamed_deleting_shares_certificate_makes_one_for_t
     said = Said()
     assert share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls)) is None
     assert "server.json names files that are not there" in said.all and len(calls) == 2
+
+
+@pytest.mark.parametrize("before", ["/Users/pat/APCoder/tls/", "C:\\Users\\pat\\APCoder\\tls\\"])
+def test_after_the_data_folder_moved_share_uses_its_own_certificate_where_the_folder_is_now(laptop, before):
+    """server.json keeps the whole paths of share's own two files. The data folder moved (a new laptop, another user
+    name, off OneDrive), they named the old place, and share said "server.json names files that are not there... take
+    certfile and keyfile out of server.json": a hand edit of JSON (as B-2313). Its own files are this folder's, made
+    again when they did not come with it, and server.json names them where they are; IT's own are still refused."""
+    data, db = laptop
+    calls = []
+    assert share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in(calls),
+                         ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
+    here = (str(data / "tls" / share.CERT_NAME), str(data / "tls" / share.KEY_NAME))
+    there = {"certfile": before + share.CERT_NAME, "keyfile": before + share.KEY_NAME}
+    service.write_config(data, **there)  # (as the folder came: written where it was before)
+    said = Said()
+    s = share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls))
+    assert s is not None and (s.certfile, s.keyfile) == here and len(calls) == 1, said.all
+    kept = service.read_config(data)
+    assert (kept["certfile"], kept["keyfile"]) == here
+    service.write_config(data, **there)
+    shutil.rmtree(data / "tls")  # (copied without them)
+    s = share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls))
+    assert s is not None and (s.certfile, s.keyfile) == here and len(calls) == 2, said.all
+    service.write_config(data, certfile=there["certfile"], keyfile=before + "it.key.pem")
+    said = Said()
+    assert share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls)) is None
+    assert "server.json names files that are not there" in said.all and len(calls) == 2
