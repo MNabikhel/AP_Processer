@@ -82,10 +82,11 @@ def _proposal(company, name: str) -> tuple[set[str], int]:
     return accounts, len(lines) - len(coded)
 
 
-def _eighth(company, third: str = "", decided: tuple[str, ...] = ()) -> tuple[jde_invoices.Invoice, int]:
+def _eighth(company, third: str = "", decided: tuple[str, ...] = (),
+            numbers: tuple[int, ...] = ()) -> tuple[jde_invoices.Invoice, int]:  # fmt: skip
     """An eighth invoice in review, like ``four_lines`` (four lines, three accounts), which AP Coder proposed with
     the account of every line as AP keys it (``third``: its third line on this account instead; ``decided``: what
-    decided each line's account, "" for nothing): (the invoice, its id)."""
+    decided each line's account, "" for nothing; ``numbers``: the lines' numbers): (the invoice, its id)."""
     invoice, like = company.invoices["four_lines"]
     output = json.loads(json.dumps(company.store.get_invoice(like)["ai_output"]))
     output.pop("gl_distribution", None)
@@ -96,6 +97,8 @@ def _eighth(company, third: str = "", decided: tuple[str, ...] = ()) -> tuple[jd
         li["predicted_cost_center"], li["predicted_gl_code"] = chart.split_account(account)
     for li, source in zip(output["line_items"], decided, strict=False):
         li["decided_by"] = {"source": source} if source else {}
+    for li, number in zip(output["line_items"], numbers, strict=False):
+        li["line_number"] = number
     return replace(invoice, number=EIGHTH), company.store.add_invoice(company.folder / "eighth.pdf", output, None)
 
 
@@ -278,6 +281,29 @@ def test_lines_are_paired_with_the_keyed_lines_by_amount_and_the_ones_that_canno
     none = 2 + base["left_out"][proposed_score.LINE_NONE]  # with the split line of the seven
     assert f"for 1, {proposed_score.LINE_EITHER}" in either[2]
     assert f"for {none}, {proposed_score.LINE_NONE}" in either[2]
+
+
+def test_lines_that_repeat_a_line_number_are_each_compared_with_their_own_proposal(chart_company):
+    """Lines numbered 1, 2, 2, 3 (an invoice can print a number twice): the first "2" was proposed on account a, the
+    second on a wrong account a person then corrected. Each line's proposal is its own, not the last "2"'s."""
+    a, _, b, c = (part.account for part in chart_company.invoices["four_lines"][0].parts)
+    wrong = next(x.string for x in chart_company.truth.suggestable() if x.string not in (a, b, c))
+    _, invoice_id = _eighth(chart_company, third=wrong, decided=("supplier", "", "rule", ""), numbers=(1, 2, 2, 3))
+    store = chart_company.store
+    final = json.loads(json.dumps(store.get_invoice(invoice_id)["ai_output"]))
+    final["line_items"][2]["predicted_cost_center"], final["line_items"][2]["predicted_gl_code"] = (
+        chart.split_account(b))  # fmt: skip
+    final["line_items"][2]["decided_by"] = {"source": "person"}
+    store.approve_invoice(invoice_id, final, "Pat Tester")
+
+    def eighth(proposed):
+        o = next(o for o in pilot_score.our_invoices(store, proposed=proposed) if o.invoice_number == EIGHTH)
+        return [line for line in o.lines if line["kind"] == "expense"]
+
+    approved = eighth(False)  # pilot-score: the approved lines, each beside what AP Coder proposed for it
+    assert [line["gl"] for line in approved] == [chart.split_account(x)[1] for x in (a, a, b, c)]
+    assert [line["proposed_gl"] for line in approved] == [chart.split_account(x)[1] for x in (a, a, wrong, c)]
+    assert [line["decided"] for line in eighth(True)] == ["supplier", "", "rule", ""]
 
 
 def test_the_object_and_subsidiary_right_on_another_business_unit_is_counted_apart(chart_company, tmp_path):

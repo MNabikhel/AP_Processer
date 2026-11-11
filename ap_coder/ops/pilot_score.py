@@ -39,7 +39,7 @@ from ..coding.vendors import norm_invoice_number
 from ..core import ui
 from ..core.chart import split_code
 from ..core.headers import match_columns
-from ..core.memory import vendor_key
+from ..core.memory import pair_lines, vendor_key
 from ..core.reference_data import UNASSIGNED
 from ..core.safe import csv_row, parse_amount
 from ..erp import jde_accounts, jde_settings, jde_voucher, jde_zfiles
@@ -449,12 +449,15 @@ def our_invoices(store: Any, settings: jde_settings.JdeSettings | None = None, p
             o.tax_area, o.tax_code = str(header[0].get("VLTXA1") or ""), str(header[0].get("VLEXR1") or "").upper()
         except Exception:  # noqa: BLE001 - an invoice JD Edwards would refuse: its tax treatment is not compared
             pass
-        as_proposed = {li.get("line_number"): li for li in (inv.get("ai_output") or {}).get("line_items") or []}
-        for e in distribution(final, treatments):
+        dist = distribution(final, treatments)
+        # each line beside AP Coder's own: by its number and which of the lines of that number it is (B-2325)
+        as_proposed = {id(e): li for li, e in pair_lines((inv.get("ai_output") or {}).get("line_items") or [],
+                                                         [e for e in dist if e.get("kind") == "expense"])}  # fmt: skip
+        for e in dist:
             recoverable = e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < CENT
             gl, cc = str(e.get("gl_code") or ""), str(e.get("cost_center") or "")
             cc = "" if cc.upper() == UNASSIGNED else cc
-            ai = as_proposed.get(e.get("line_number")) if e.get("kind") == "expense" else None
+            ai = as_proposed.get(id(e)) if e.get("kind") == "expense" else None
             p_gl = str((ai or {}).get("predicted_gl_code") or UNASSIGNED) if ai is not None else ""
             p_cc = str((ai or {}).get("predicted_cost_center") or "")
             p_cc = "" if p_cc.upper() == UNASSIGNED else p_cc
