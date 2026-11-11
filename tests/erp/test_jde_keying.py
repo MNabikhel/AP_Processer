@@ -228,7 +228,7 @@ def test_a_usd_voucher_and_a_credit_note():
     assert field(foreign, "Tax explanation code").value == "E"
     assert lines_and_check(foreign)[-1][2:] == [500, "500.00 + 0.00 = 500.00: balanced"]
     assert (field(minus, "Gross amount").value, field(minus, "Taxable amount").value) == (-252, -240)
-    assert field(minus, "Tax amount").value == -12 and field(minus, "Payment terms").value is None  # a credit: no terms
+    assert field(minus, "Tax amount").value == -12 and field(minus, "Payment terms").value == "none (a credit)"
     assert field(minus, "Due date").value == dt.datetime(2026, 10, 8)  # a credit: its own date
     assert lines_and_check(minus) == [
         [f"{HQ}.6420.2210", "Data lines", -240, "Credit for September"],
@@ -777,3 +777,14 @@ def test_pst_to_self_assess_on_a_gst_only_tax_area_is_listed_and_said_on_the_vou
     assert held == [] and (voucher.tax_code, voucher.tax_area) == ("B", "CDNGST")
     assert voucher.notes[-1].startswith(f"PST to self-assess: SK PST on {items[ids[0]].base:,.2f}. ")
     assert "CDNGST" in voucher.notes[-1] and "Self-assessment report" in voucher.notes[-1]
+
+
+def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
+    """B-2344: the batch files send a credit memo with no terms code (B-896), but the keying sheet showed the terms it
+    prints ("Net 30") to type. It says none, as the files send."""
+    printed = credit()
+    printed["final_output"]["payment_terms"] = "Net 30"
+    (block,) = blocks(workbook([printed])[jde_keying.SHEET])
+    assert field(block, "Payment terms").value == "none (a credit)"
+    head = jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]
+    assert head["VLPTC"] == ""

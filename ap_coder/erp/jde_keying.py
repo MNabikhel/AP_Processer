@@ -45,6 +45,7 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
+CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
 # voucher that would run over the page starts on the next one.
 ROWS_A_PAGE = 42
@@ -149,6 +150,9 @@ def vouchers(
                              v.gross / 100, v.currency, why))  # fmt: skip
             continue
         tax, taxable = jde_review.pay_item_tax(v, settings)
+        terms, _key, source = jde_voucher.terms_code(final, settings)
+        if source == jde_voucher.TERMS_CREDIT:  # a credit memo goes with no terms code, as the files send it (B-896)
+            terms = CREDIT_TERMS
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
         bank = None
@@ -164,7 +168,7 @@ def vouchers(
             invoice_date=jde_formats._date(final.get("invoice_date")),
             gl_date=jde_settings.gl_date_of(final, settings, on)[0],
             currency=v.currency, gross=v.gross / 100,
-            terms=jde_voucher.terms_code(final, settings)[0] or str(final.get("payment_terms") or "").strip(),
+            terms=terms or str(final.get("payment_terms") or "").strip(),
             remark=jde_remarks.voucher_remark(inv),
             due=jde_voucher.sent_due(final, inv) if settings.send_due_date else None,
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,

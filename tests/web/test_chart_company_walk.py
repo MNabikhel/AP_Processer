@@ -320,7 +320,7 @@ def test_the_ready_invoices_are_approved_and_the_keying_sheet_is_what_ap_keys(ch
         assert (field(block, "Invoice date").value, field(block, "G/L date").value) == (day, day), name
         assert (_money(block, "Gross amount"), field(block, "Currency").value) == (invoice.total, "CAD"), name
         credit = name == "credit_note"  # no terms: due the day it is dated
-        assert field(block, "Payment terms").value == (None if credit else company.payment_terms), name
+        assert field(block, "Payment terms").value == ("none (a credit)" if credit else company.payment_terms), name
         assert field(block, "Due date").value == day + dt.timedelta(days=0 if credit else jde_invoices.TERMS.days), name
         of = field(block, "Company")
         assert (of.value, of.data_type, of.number_format) == (company.number, "s", "@"), name
