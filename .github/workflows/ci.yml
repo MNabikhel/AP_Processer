@@ -339,8 +339,12 @@ jobs:
     # OCR models by itself, once. Then a newer ZIP of the same version is unzipped over it while it runs: the new start
     # stops the old dashboard (its window says a newer AP Coder took over), says "Updated AP Coder from <old build> to
     # <new build>", runs the self-check again and keeps the data.
-    name: GitHub's ZIP on Windows (unzipped, double-clicked, updated by a newer ZIP)
+    name: GitHub's ZIP on Windows (unzipped, double-clicked, updated by a newer ZIP, Python ${{ matrix.python }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
     timeout-minutes: 30
     env:
       AP_NO_PAUSE: "1"
@@ -349,7 +353,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Two GitHub ZIPs of this version, an older and a newer build
         shell: pwsh
         run: |
@@ -629,8 +633,12 @@ jobs:
     # computer's name, trusting that certificate, with the authenticator's code, and approves an invoice; share
     # --stop, share again: still serving, the data kept. The logic is in scripts/ci/share_end_to_end.py (it runs on
     # Linux too).
-    name: share on Windows (a colleague signs in over HTTPS, approves; stopped and started again)
+    name: share on Windows (a colleague signs in over HTTPS, approves; stopped and started again, Python ${{ matrix.python }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
     timeout-minutes: 20  # the install about 3 minutes, the share's run under one: a hang ends here
     env:
       AP_NO_PAUSE: "1"
@@ -640,7 +648,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Install (non-interactive)
         shell: cmd
         env:
@@ -659,8 +667,12 @@ jobs:
     # both ways, typed in scripts\terminal.bat; invoices copied into the invoices folder and chosen on Add invoices;
     # one approved; the keying sheet downloaded; backup now and doctor. The logic is in scripts/ci/first_day.py (it
     # runs on Linux too); on a failure it prints what the page said and AP Coder's window.
-    name: first day on Windows (docs/PROTOTYPE.md, the made-up company)
+    name: first day on Windows (docs/PROTOTYPE.md, the made-up company, Python ${{ matrix.python }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]  # 3.14: what a new laptop gets from python.org
     timeout-minutes: 20  # the install about 3 minutes, the day a few: a hang ends here
     env:
       AP_NO_PAUSE: "1"
@@ -670,7 +682,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Install (non-interactive)
         shell: cmd
         env:
