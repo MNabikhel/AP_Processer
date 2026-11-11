@@ -51,13 +51,16 @@ A laptop that ran an earlier AP Coder keeps its data folder (`%USERPROFILE%\APCo
 by itself, once, before the dashboard opens. With no invoices in it but the demo invoices: as a new installation,
 the demo invoices removed, the short menu and the keying sheet, said in one line in the black window. With invoices
 of your own: it asks *Use the short menu and set up JD Edwards keying (the keying sheet)? [Y/n]* (Enter for yes);
-your invoices and settings are kept either way, and JD Edwards settings already saved are never changed.
+your invoices and settings are kept either way, and JD Edwards settings already saved are never changed. A folder
+where the simple screens were chosen before they set up keying is set up the same way. If the set-up cannot be
+done, the black window says so in one line, AP Coder starts as it was, and the next double-click tries again.
 
 Answered No, the first time you open **To review** a card says what is new and asks once: **Use the simple
 screens** (which also sets up keying for JD Edwards) or **Keep every page**. Demo invoices still loaded: click
 *Demo invoices loaded* at the foot of the menu (or **Remove the N demo invoices only** on that card); only the demo
 invoices go, your own stay. As a last resort, to start clean: close AP Coder's black window, rename the data folder
-(`%USERPROFILE%\APCoder` to `APCoder-old`: nothing is deleted), then double-click again.
+(`%USERPROFILE%\APCoder` to `APCoder-old`: nothing is deleted), then double-click again (the window says the
+folder is not there any more and a new, empty one is made).
 
 ## 2. Look around with a made-up company first (optional, 5 minutes)
 
