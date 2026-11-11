@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -70,7 +71,7 @@ def _fake_pip(launch, monkeypatch, missing: list[str], self_problem: str = "", f
 def test_nothing_is_installed_when_everything_is_in_place(launch, monkeypatch):
     calls = _fake_pip(launch, monkeypatch, [])
     level, text, installed = launch.ensure_packages({})
-    assert (level, installed, calls) == ("ok", False, []) and text.startswith("Packages: all ")
+    assert (level, installed, calls) == ("ok", False, []) and text.endswith(" needed, all in place: nothing to install")
 
 
 def test_only_the_missing_package_is_installed(launch, monkeypatch):
@@ -78,6 +79,60 @@ def test_only_the_missing_package_is_installed(launch, monkeypatch):
     level, text, installed = launch.ensure_packages({})
     assert calls == [["openpyxl>=3.1"]]  # not the whole list, not ap_coder again
     assert level == "ok" and installed and "installed what was missing" in text
+
+
+UPGRADING = {"--upgrade", "-U", "--force-reinstall", "--ignore-installed", "-I", "--upgrade-strategy"}
+
+
+def test_a_package_already_at_the_version_needed_is_never_upgraded(launch, monkeypatch, capsys):
+    """D-231: what pyproject.toml asks for is checked against what is installed; only a package missing, or below its
+    minimum, is given to pip, and pip is never told to upgrade (or reinstall) anything: one already good enough, here
+    or among those a missing one needs, stays as it is. Said as "2 of 4 missing", then "4 needed, all in place"."""
+    installed = {"openpyxl": "3.0.10", "pandas": "2.2.0", "jinja2": "3.1.4"}  # openpyxl below 3.1; dotenv missing
+    wanted = ["openpyxl>=3.1", "pandas>=2.1", "jinja2>=3.1,<4", "python-dotenv>=1.0"]
+    monkeypatch.setattr(launch.check_deps, "requirements", lambda extras=(): list(wanted))
+    monkeypatch.setattr(launch, "index_problem", lambda: "")  # (the package site answers)
+    self_problem = {"text": ""}
+    monkeypatch.setattr(launch.check_deps, "self_problem", lambda: self_problem["text"])
+
+    def version(name):
+        if name not in installed:
+            raise launch.importlib.metadata.PackageNotFoundError(name)
+        return installed[name]
+
+    monkeypatch.setattr(launch.importlib.metadata, "version", version)
+    monkeypatch.setattr(launch, "pip_source", lambda: [])  # GitHub's ZIP: from PyPI
+    monkeypatch.setattr(launch, "refresh_registration", lambda: None)
+    commands: list[list[str]] = []
+
+    class Pip:
+        def __init__(self, cmd, **kwargs):
+            commands.append(list(cmd))
+            asked = [a for a in cmd[cmd.index("install") + 1 :] if not a.startswith(("-", "."))]
+            if "-e" in cmd:  # (AP Coder itself: pip installs what it needs that is not there)
+                asked = [r for r in wanted if launch.check_deps.requirement_name(r) not in installed]
+            installed.update({launch.check_deps.requirement_name(a): "9.0" for a in asked})
+            self_problem["text"] = ""
+            self.stdout = iter(["Successfully installed openpyxl-9.0 python-dotenv-9.0\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    level, text, done = launch.ensure_packages({})
+    assert len(commands) == 1 and commands[0][-2:] == ["openpyxl>=3.1", "python-dotenv>=1.0"]
+    assert not UPGRADING & set(commands[0]) and not any("pandas" in a or "jinja2" in a for a in commands[0])
+    said = capsys.readouterr().out
+    assert "Packages: 2 of 4 missing or too old: installing those (openpyxl, python-dotenv)" in said
+    assert (level, done, installed["pandas"], installed["jinja2"]) == ("ok", True, "2.2.0", "3.1.4")
+    commands.clear()
+    assert launch.ensure_packages({}) == ("ok", "Packages: 4 needed, all in place: nothing to install", False)
+    assert commands == []
+    installed.pop("python-dotenv")  # a first setup: AP Coder itself too, with the packages it needs
+    self_problem["text"] = "Missing: ap_coder (pip install -e .)"
+    launch.ensure_packages({})
+    assert commands[0][-2:] == ["-e", ".[ocr]"] and not UPGRADING & set(commands[0])
+    assert "Packages: 1 of 4 missing: installing those, with the packages they need in turn" in capsys.readouterr().out
 
 
 def test_first_install_is_the_editable_folder_with_the_ocr_add_on(launch, monkeypatch):
@@ -109,10 +164,11 @@ def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
     assert "wheelhouse folder has no fastapi for Python" in exc.value.hint and "3.12" in exc.value.hint
+    monkeypatch.setattr(launch, "index_problem", lambda: "")  # (the package site answers)
     _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"}, source=[])  # opted in: PyPI
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
-    assert "HTTPS_PROXY" in exc.value.hint
+    assert "files.pythonhosted.org" in exc.value.hint and "offline bundle" not in exc.value.hint  # (B-2376)
 
 
 def test_packages_come_only_from_the_wheelhouse_unless_the_internet_is_allowed(launch, tmp_path, monkeypatch):
@@ -200,7 +256,12 @@ def test_offline_without_wheelhouse_still_starts_when_the_core_is_there(launch, 
     assert "missing rapidocr" in text and "offline bundle" in text and "scanned invoices can't be read" in text
     monkeypatch.setattr(launch, "missing_packages", lambda extras: ([], "Missing: ap_coder (pip install -e .)"))
     level, text, _ = launch.ensure_packages({})
-    assert level == "ok" and text.startswith("Packages: all ") and "(" not in text and commands == []
+    assert (
+        level == "ok"
+        and text.endswith(" needed, all in place: nothing to install")
+        and "(" not in text
+        and commands == []
+    )
 
 
 # --- .venv: made once, remade only when broken ---------------------------------------------------------------
@@ -936,10 +997,67 @@ def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models
     assert {t for _u, t in downloads} == {fetch_models.FIRST_TIMEOUT}
     assert out.count("Downloading ") == 4  # ("Downloading the OCR models", and the first file only, from each)
     assert ("AP Coder couldn't reach www.modelscope.cn or its mirrors, huggingface.co and github.com (a firewall may "
-            "block them): ask IT, or use the offline bundle." in out) and out.count("couldn't reach") == 1  # fmt: skip
+            "block them): ask IT to allow them." in out) and out.count("couldn't reach") == 1  # fmt: skip
     downloads.clear()
     launch.ensure_models(first=False, state=state)  # a later start: one try at each, briefly
     assert [t for _u, t in downloads] == [fetch_models.LATER_TIMEOUT] * 3 and len({u for u, _t in downloads}) == 3
+
+
+def test_model_sites_a_company_network_blocks_are_named_for_it_and_scans_still_read_with_one_engine(
+    launch, no_models, monkeypatch, capsys
+):
+    """B-2375: set up from GitHub's ZIP on a company network that blocks the model sites, the window said "ask IT, or
+    use the offline bundle": a bundle the pilot tester never had. It names the sites for IT to allow, says scans are
+    read with one OCR engine meanwhile, and the start goes on (the readiness summary says one engine again)."""
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+
+    def blocked(url, timeout=None):
+        downloads.append(url)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", blocked)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)  # (never stops the start)
+    said = [line for line in capsys.readouterr().out.splitlines() if "couldn't reach" in line]
+    assert said == [
+        "AP Coder couldn't reach www.modelscope.cn or its mirrors, huggingface.co and github.com (a firewall may "
+        "block them): ask IT to allow them. AP Coder will try again next time it starts; scans are still read with "
+        "one engine meanwhile."
+    ]
+    assert state["models_failed"] and launch.one_engine(True) == (
+        "one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when it starts"
+    )
+
+
+def test_models_already_in_place_are_kept_and_only_a_missing_one_is_downloaded(launch, no_models, monkeypatch, capsys):
+    """D-231: the OCR models each start checks (their SHA-256 at a first setup) are never downloaded again; one that
+    is missing, or damaged, is the only one asked for."""
+    from ap_coder.ops import offline
+
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    monkeypatch.setattr(offline, "table_finder_path", lambda: Path("in place"))
+    files = {"det.onnx": b"detector", "rec.onnx": b"recogniser"}
+    models = tuple(
+        offline.ModelFile(name, f"https://www.modelscope.cn/{name}", hashlib.sha256(data).hexdigest())
+        for name, data in files.items()
+    )
+    monkeypatch.setattr(offline, "ocr_files", lambda: models)
+    folder = offline.model_dir()
+    (folder / "det.onnx").write_bytes(files["det.onnx"])
+    (folder / "rec.onnx").write_bytes(b"half a file")
+
+    def urlopen(url, timeout=None):
+        downloads.append(url)
+        return io.BytesIO(files[url.rsplit("/", 1)[-1]])
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    launch.ensure_models(first=True, state={})
+    assert downloads == ["https://www.modelscope.cn/rec.onnx"] and (folder / "rec.onnx").read_bytes() == b"recogniser"
+    assert "OCR models ready: 1 downloaded; 1 already in place." in capsys.readouterr().out
+    launch.ensure_models(first=True, state={})
+    assert downloads == ["https://www.modelscope.cn/rec.onnx"] and capsys.readouterr().out == ""
 
 
 @pytest.fixture
@@ -1119,7 +1237,7 @@ def test_the_launchers_table_finder_comes_from_its_mirror_when_its_site_never_an
     assert hosts == ["www.modelscope.cn"] * 3 + ["github.com"] * (1 if mirror == "answers" else 3)
     if mirror == "unreachable":
         assert ("AP Coder couldn't reach www.modelscope.cn or its mirror, github.com (a firewall may block them): ask "
-                "IT, or use the offline bundle. AP Coder will try again next time it starts; line items are still "
+                "IT to allow them. AP Coder will try again next time it starts; line items are still "
                 "read without it meanwhile.") in out  # fmt: skip
         return
     assert "  Got yolov8n_layout_general6.onnx from its mirror, github.com, checked against its SHA-256." in out
@@ -1328,6 +1446,7 @@ def test_the_first_setup_says_which_packages_it_downloads_from_where(launch, tmp
     monkeypatch.setattr(launch, "ROOT", tmp_path)
     monkeypatch.setattr(launch.fetch_models, "BUNDLE_MODELS", tmp_path / "models")
     monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(launch, "index_problem", lambda: "")  # (the package site answers)
     commands = _record_pip(launch, monkeypatch)
     monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1"], "x"))
     with pytest.raises(launch.SetupError):
@@ -1372,3 +1491,159 @@ def test_a_set_up_that_starts_nothing_makes_way_only_for_its_own_folder(launch, 
 
     monkeypatch.setattr(launch.running, "take_over", take_over)
     assert launch.make_way_for_venv(argv) is None and asked == [here_only]
+
+
+# --- A company network: the package site is asked first, through this computer's proxy (D-231) ------------------
+
+
+class _Answer:
+    """urlopen's answer, from the page at ``url`` (where a redirect ended)."""
+
+    def __init__(self, url):
+        self.url = url
+
+    def geturl(self):
+        return self.url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture
+def company_network(launch, tmp_path, monkeypatch):
+    """GitHub's ZIP on a network whose answer is ``site["answer"]`` (an exception: none), with this computer's own
+    proxy setting ``site["proxy"]`` (Windows' Internet Options, as urllib reads them) and no HTTPS_PROXY. Every address
+    asked, every ``python -m venv`` and every second phase started are recorded."""
+    import urllib.request
+
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    monkeypatch.setattr(launch.fetch_models, "BUNDLE_MODELS", tmp_path / "models")
+    for name in ("HTTPS_PROXY", "https_proxy", "AP_ALLOW_INTERNET"):
+        monkeypatch.delenv(name, raising=False)
+    site = {"answer": TimeoutError("timed out"), "proxy": "", "asked": [], "venv": [], "phase_2": []}
+
+    def urlopen(request, timeout=None):
+        site["asked"].append((getattr(request, "full_url", request), timeout))
+        if isinstance(site["answer"], Exception):
+            raise site["answer"]
+        return site["answer"]
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {"https": site["proxy"]} if site["proxy"] else {})
+    monkeypatch.setattr(launch, "venv_works", lambda: bool(site["venv"]))
+
+    def run(cmd, **kwargs):
+        site["venv"].append(cmd)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(launch.subprocess, "run", run)
+    monkeypatch.setattr(launch.subprocess, "call", lambda cmd, **kwargs: site["phase_2"].append(cmd) or 0)
+    return site
+
+
+def test_a_package_site_that_does_not_answer_stops_the_first_setup_before_its_venv_is_made(
+    launch, company_network, capsys
+):
+    """B-2376: from GitHub's ZIP on a company network that blocks pypi.org, the first setup made .venv, then pip tried
+    for minutes and stopped with "behind a company proxy: set HTTPS_PROXY" and "needs the offline bundle". The package
+    site is asked first, briefly: nothing is made, and the window says what to do in plain words."""
+    assert launch.bootstrap([]) == 1
+    assert company_network["venv"] == [] and company_network["phase_2"] == []  # no .venv, no second phase
+    assert [timeout for _url, timeout in company_network["asked"]] == [launch.INDEX_TIMEOUT]
+    assert launch.INDEX_TIMEOUT <= 10
+    out = capsys.readouterr().out
+    assert ("can't reach the package site, pypi.org, from this network (the connection timed out). Nothing was "
+            "installed.") in out  # fmt: skip
+    assert ("Connect this laptop once to another network (a phone's hotspot, or at home) for this one setup: it "
+            f"downloads {launch.FIRST_SETUP}. Or ask IT to allow pypi.org and files.pythonhosted.org (the packages) "
+            "and www.modelscope.cn (or its mirrors, huggingface.co and github.com: the OCR models). Then double-click "
+            "APProcessor.command again.") in out  # fmt: skip
+    assert "offline bundle" not in out and "HTTPS_PROXY" not in out  # (no wheelhouse here: none is named)
+    assert re.fullmatch(r"about \d+ MB, about \d+ minutes", launch.FIRST_SETUP)
+
+
+def test_a_package_site_that_answers_goes_on_to_make_the_venv(launch, company_network):
+    company_network["answer"] = _Answer("https://pypi.org/simple/pip/")
+    assert launch.bootstrap([]) == 0
+    assert len(company_network["venv"]) == 1 and len(company_network["phase_2"]) == 1
+    company_network["answer"] = _Answer("https://wifi.example/login")  # a network that asks to sign in first
+    company_network["venv"].clear()
+    assert launch.bootstrap([]) == 1 and company_network["venv"] == []
+
+
+def test_the_computers_proxy_is_given_to_pip_and_said_without_its_password(launch, company_network, monkeypatch,
+                                                                           capsys):  # fmt: skip
+    """pip is told this computer's proxy (Windows' setting, read from the registry by urllib) unless HTTPS_PROXY names
+    one; the window says the proxy's address only, never a user name or password in it."""
+    commands = _record_pip(launch, monkeypatch)
+    company_network["proxy"] = "http://jo:s3cret@proxy.corp.example:8080"
+    launch.pip_install(["openpyxl>=3.1"])
+    launch.pip_install(["pandas>=2.1"])
+    assert len(commands) == 2 and all(cmd[cmd.index("--proxy") + 1] == company_network["proxy"] for cmd in commands)
+    out = capsys.readouterr().out
+    assert out.count("Using this computer's proxy, proxy.corp.example:8080, for the downloads.") == 1
+    assert "s3cret" not in out and "jo:" not in out
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1"], ""))
+    with pytest.raises(launch.SetupError) as blocked:
+        launch.ensure_packages({})  # (the site does not answer, through the proxy either)
+    assert "from this network, through this computer's proxy proxy.corp.example:8080 (" in str(blocked.value)
+    assert "s3cret" not in str(blocked.value)
+    commands.clear()
+    monkeypatch.setenv("HTTPS_PROXY", "http://other.example:3128")  # pip reads it itself
+    launch.pip_install(["openpyxl>=3.1"])
+    assert "--proxy" not in commands[0]
+    commands.clear()
+    monkeypatch.delenv("HTTPS_PROXY")
+    monkeypatch.setattr(launch, "pip_source", lambda: WHEELHOUSE)  # the offline bundle: no proxy, no internet
+    launch.pip_install(["openpyxl>=3.1"])
+    assert "--proxy" not in commands[0]
+
+
+def test_a_venv_set_up_before_is_not_given_to_pip_when_the_package_site_does_not_answer(launch, company_network,
+                                                                                         monkeypatch):  # fmt: skip
+    """The second phase asks too, when pip would download AP Coder's core packages: a .venv left from an earlier try
+    is not handed to pip for minutes of retries. The OCR add-on alone is still tried (never a reason to stop)."""
+    calls = _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], "Missing: ap_coder (pip install -e .)", source=[])
+    with pytest.raises(launch.SetupError) as blocked:
+        launch.ensure_packages({})
+    assert calls == [] and "Nothing was installed" in str(blocked.value)
+    calls = _fake_pip(launch, monkeypatch, ["rapidocr>=3.4,<3.5"], source=[])
+    asked = len(company_network["asked"])
+    launch.ensure_packages({})
+    assert calls == [["rapidocr>=3.4,<3.5"]] and len(company_network["asked"]) == asked
+
+
+def test_the_ocr_models_are_downloaded_through_the_computers_proxy(launch, monkeypatch, tmp_path):
+    """D-231: the model downloads (urllib) go through the proxy this computer's settings name, as urllib reads them
+    (Windows: the registry), with no HTTPS_PROXY set: nothing to pass on, but pinned."""
+    import urllib.request
+
+    asked: list[str] = []
+
+    class Proxy(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server's name
+            asked.append(self.path)  # (a proxy is asked for the whole address)
+            self.send_response(200)
+            self.send_header("Content-Length", "5")
+            self.end_headers()
+            self.wfile.write(b"model")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for name in ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+        monkeypatch.setattr(urllib.request, "getproxies", lambda: {"http": f"http://127.0.0.1:{server.server_port}"})
+        monkeypatch.setattr(urllib.request, "_opener", None)  # (urlopen builds its opener again, reading them)
+        launch.fetch_models.download("http://models.invalid/det.onnx", tmp_path / "det.onnx", waits=())
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert asked == ["http://models.invalid/det.onnx"] and (tmp_path / "det.onnx").read_bytes() == b"model"

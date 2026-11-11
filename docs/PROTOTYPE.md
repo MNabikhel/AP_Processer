@@ -31,6 +31,11 @@ It learns from last year's voucher journal before the first invoice, and from ev
    dashboard in your browser. From GitHub's ZIP it downloads its packages and reading models once, and says so
    first; from the offline bundle it downloads nothing.
 
+   The first double-click checks what is there: packages already good enough are kept, only missing ones are
+   downloaded (about 230 MB). With another AP Coder installed it asks *Update it to ...? [Y/n]* first (No changes
+   nothing); an older ZIP sets up nothing. A company network that blocks the downloads: it stops before setting
+   anything up and says what to do (another network once, such as a phone's hotspot, or ask IT).
+
 Every day after that: start LM Studio (*Developer* → *Start server*), then double-click *AP Coder*. Keep the black
 window open: closing it stops AP Coder.
 

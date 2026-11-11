@@ -163,6 +163,27 @@ def test_bat_files_keep_their_settings_to_themselves(name):
         assert "setlocal" in code[: changes[0]], f"{name}: setlocal must come before {code[changes[0]]!r}"
 
 
+# --- What the setup never installs (D-231) ----------------------------------------------------------------------
+
+
+def test_the_setup_never_installs_lm_studio_or_its_models_and_python_only_when_there_is_none():
+    """LM Studio and its models are the pilot tester's own (docs/LM_STUDIO.md): the double-click and the installer only
+    ask whether a model is loaded, and download or install neither. The one install of another program is Python, by
+    winget, from APProcessor.bat when no Python 3.11 or newer is found (asked first)."""
+    files = ["APProcessor.bat", "APProcessor.command", "scripts/terminal.bat", "scripts/demo.bat"]
+    scripts = ("launch", "install", "first_run", "fetch_models", "upgrade", "check_deps", "running")
+    files += [f"scripts/{name}.py" for name in scripts]
+    text = "\n".join((ROOT / f).read_text(encoding="utf-8") for f in files).lower()
+    for sign in ("lms get", "lms load", "lms import", "lmstudio.ai", "elementlabs", "lm-studio", "brew install --cask"):
+        assert sign not in text, sign
+    bat = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
+    assert re.findall(r"winget install[^\r\n]*", text) == [
+        "winget install -e --id python.python.3.12 --scope user --accept-package-agreements --accept-source-agreements"
+    ]
+    assert bat.index("if not defined PY call :findpython") < bat.index("if not defined PY if defined AP_ONLINE call "
+                                                                       ":installpython")  # fmt: skip
+
+
 # --- The demo launcher ---------------------------------------------------------------------------------------------
 
 
