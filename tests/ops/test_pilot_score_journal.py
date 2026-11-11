@@ -85,6 +85,14 @@ def test_the_numbers_are_the_coding_benchs_measure_on_the_same_split(company, tm
     rows = _measured_as_the_bench_does(company.truth, tmp_path)
     report = company.report
     assert rows and report["all"] == measure.line_stats(rows)
+    # the pilot's gate, in its words: the same lines, counted by the helper ``pilot-score --proposed`` uses too
+    gate, s = report["gate"], report["all"]
+    assert gate == journal_score.gate(rows) and gate["left_out"] == {}
+    assert (gate["lines"], gate["coded_alone"], gate["right_when_alone"]) == (s["lines"], s["coded"], s["coded_right"])
+    assert gate["first_three"] == round(s["in_top3"] * s["lines"])
+    assert gate["first"] == round(s["first_right"] * s["lines"])
+    assert gate["left_first_three"] == report["offered"]
+    assert gate["left_to_a_person"] == report["offered"] + report["left"]
     assert report["sure_grid"] == [g for g in measure.sure_grid(rows) if g["lines"] in journal_score.GRID_LINES]
     assert {(g["share"], g["lines"]) for g in report["sure_grid"]} == {
         (share, n) for share in (0.8, 0.9, 0.95, 1.0) for n in (3, 5)}  # fmt: skip
@@ -119,6 +127,11 @@ def test_the_paragraph_can_be_read_out_and_says_it_is_an_upper_bound(company):
     assert f"{report['left']} it would have left to a person" in said
     text = (company.folder / journal_score.REPORT).read_text(encoding="utf-8")
     assert said in text and journal_score.UPPER_BOUND in text and "upper bound" in journal_score.UPPER_BOUND
+    gate = report["gate"]
+    assert (f"| Coded alone (no one picking the account) | {gate['coded_alone']} of {gate['lines']} " in text
+            and "| Right when coded alone (the account string keyed) |" in text
+            and "| Your account among the first three |" in text)  # fmt: skip
+    assert text.index("| Coded alone") < text.index("## What was scored")  # at the top
     for heading in ("## The score", "## By business unit", "## The suppliers with the most misses",
                     "## What the sure rule would do at other bars"):  # fmt: skip
         assert heading in text
@@ -141,6 +154,7 @@ def test_the_three_files_and_every_miss_a_row_with_both_accounts(company):
     assert sum(w["misses"] for w in worst) == len(missed)  # (the small company: fewer suppliers than are shown)
     figures = json.loads((company.folder / journal_score.FIGURES).read_text(encoding="utf-8"))
     assert figures["all"] == s and figures["counts"] == company.report["counts"]
+    assert figures["gate"] == company.report["gate"]
     names = {supplier.name[:26] for supplier in company.truth.suppliers}
     assert not any(name in json.dumps(figures) for name in names)
 
@@ -155,6 +169,7 @@ def test_the_command_says_the_paragraph_and_where_the_report_is(company, tmp_pat
     assert code == 0 and journal_score.paragraph(company.report) in said and journal_score.UPPER_BOUND in said
     assert str(out / journal_score.REPORT) in said and (out / journal_score.MISSES).exists()
     assert "First suggestion right: " in said and "business unit right: " in said
+    assert journal_score.gate_said(company.report["gate"]) in said and "Lines coded alone: " in said
     assert cli.main(["--db", str(company.store.path), "pilot-score", "--journal", "--out", str(out)]) == 0
 
 
@@ -193,7 +208,8 @@ def test_a_year_of_vouchers_is_scored_in_seconds(tmp_path):
     report, folder = journal_score.run(made.store, made.file)
     took = time.perf_counter() - began
     s = report["all"]
-    print(f"\npilot-score --journal on the made-up year: {took:.1f} s\n{journal_score.paragraph(report)}")
+    print(f"\npilot-score --journal on the made-up year: {took:.1f} s\n{journal_score.paragraph(report)}\n"
+          f"{journal_score.gate_said(report['gate'])}")  # fmt: skip
     assert s["lines"] > 1000 and s["coded"] + report["offered"] + report["left"] == s["lines"]
     assert len(report["worst_suppliers"]) == journal_score.SUPPLIERS_SHOWN
     assert took < 120, f"{took:.0f} s"

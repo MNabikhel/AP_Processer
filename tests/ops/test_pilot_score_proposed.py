@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from ap_coder.bench import jde_company, jde_exports, jde_invoices
 from ap_coder.core import chart
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.ops import pilot_score, proposed_score
+from ap_coder.ops import journal_score, pilot_score, proposed_score
 from ap_coder.ops.proposed_score import AMOUNTS, LEFT, RIGHT, UNIT, WRONG
 
 RATE = Decimal("1.37")  # the US-dollar voucher's
@@ -82,10 +82,10 @@ def _proposal(company, name: str) -> tuple[set[str], int]:
     return accounts, len(lines) - len(coded)
 
 
-def _eighth(company, third: str = "") -> tuple[jde_invoices.Invoice, int]:
+def _eighth(company, third: str = "", decided: tuple[str, ...] = ()) -> tuple[jde_invoices.Invoice, int]:
     """An eighth invoice in review, like ``four_lines`` (four lines, three accounts), which AP Coder proposed with
-    the account of every line as AP keys it (``third``: its third line on this account instead): (the invoice, its
-    id)."""
+    the account of every line as AP keys it (``third``: its third line on this account instead; ``decided``: what
+    decided each line's account, "" for nothing): (the invoice, its id)."""
     invoice, like = company.invoices["four_lines"]
     output = json.loads(json.dumps(company.store.get_invoice(like)["ai_output"]))
     output.pop("gl_distribution", None)
@@ -94,6 +94,8 @@ def _eighth(company, third: str = "") -> tuple[jde_invoices.Invoice, int]:
     accounts[2] = third or accounts[2]
     for li, account in zip(output["line_items"], accounts, strict=True):
         li["predicted_cost_center"], li["predicted_gl_code"] = chart.split_account(account)
+    for li, source in zip(output["line_items"], decided, strict=False):
+        li["decided_by"] = {"source": source} if source else {}
     return replace(invoice, number=EIGHTH), company.store.add_invoice(company.folder / "eighth.pdf", output, None)
 
 
@@ -194,6 +196,90 @@ def test_a_voucher_is_compared_by_account_whatever_its_lines(chart_company, tmp_
     assert f"on {report['vouchers'][WRONG]} an account is wrong" in proposed_score.paragraph(report)
 
 
+def test_the_line_figures_for_the_pilots_gate_are_what_each_line_was_proposed(chart_company, tmp_path):
+    """Line by line, in the gate's words: coded alone, right when coded alone, the keyed account first or among the
+    first three offered; worked out here from each invoice's own lines and what AP keys for each printed line."""
+    report, folder, _ = _run(chart_company, tmp_path)
+    expected = dict.fromkeys(("lines", "coded_alone", "compared", "compared_alone", "right_when_alone", "first",
+                              "first_three", "left_to_a_person", "left_first_three"), 0)  # fmt: skip
+    split = 0
+    for invoice, invoice_id in chart_company.invoices.values():
+        proposed = chart_company.store.get_invoice(invoice_id)["ai_output"]["line_items"]
+        for line, li in zip(invoice.lines, proposed, strict=True):
+            gl = li["predicted_gl_code"]
+            mine = "" if gl == UNASSIGNED else chart.join_account(li["predicted_cost_center"], gl)
+            alone = bool(mine) and (li.get("decided_by") or {}).get("source") not in (None, "model", "person")
+            offered = list(dict.fromkeys([mine] * bool(mine) + [c["account"] for c in li.get("candidates") or []]))
+            expected["lines"] += 1
+            expected["coded_alone"] += alone
+            keyed = {part.account for part in line.parts}
+            if len(keyed) > 1:  # AP split the line over two business units: no keyed line of its own
+                split += 1
+                continue
+            (account,) = keyed
+            expected["compared"] += 1
+            expected["compared_alone"] += alone
+            expected["right_when_alone"] += alone and mine == account
+            expected["first"] += offered[:1] == [account]
+            expected["first_three"] += account in offered[:3]
+            expected["left_to_a_person"] += not alone
+            expected["left_first_three"] += not alone and account in offered[:3]
+    gate = report["gate"]
+    assert gate == {**expected, "left_out": {proposed_score.LINE_NONE: split}}
+    assert split == 1 and 0 < gate["coded_alone"] < gate["lines"] == sum(len(i.lines) for i, _ in
+                                                                         chart_company.invoices.values())  # fmt: skip
+    # at the top of the report, in the JSON, and said (by the helper ``pilot-score --journal`` says its own with)
+    text = (folder / proposed_score.REPORT).read_text(encoding="utf-8")
+    assert text.index("| Coded alone (no one picking the account) |") < text.index("## The invoices")
+    for said in (f"| Lines | {gate['lines']} |", "| Right when coded alone (the account string keyed) |",
+                 "| Your account among the first three |", "| Left to a person: your account among the first three |",
+                 "1 line has no keyed line of its own to compare with, so it is counted in the lines and in coded "
+                 f"alone and left out of the other figures: for 1, {proposed_score.LINE_NONE}."):  # fmt: skip
+        assert said in text, said
+    assert json.loads((folder / proposed_score.FIGURES).read_text(encoding="utf-8"))["gate"] == gate
+    assert journal_score.gate_said(gate).startswith(f"Lines coded alone: {gate['coded_alone']} of {gate['lines']} (")
+
+
+def test_lines_are_paired_with_the_keyed_lines_by_amount_and_the_ones_that_cannot_be_are_said(chart_company,
+                                                                                              tmp_path):  # fmt: skip
+    """The eighth invoice (a 640.00, a 171.00, b 420.00, c 96.25): coded alone by the supplier's coding, a guess, coded
+    alone by a rule but to a wrong account, and a line with nothing deciding it."""
+    a, _, b, c = (part.account for part in chart_company.invoices["four_lines"][0].parts)
+    wrong = next(x.string for x in chart_company.truth.suggestable() if x.string not in (a, b, c))
+    base = _run(chart_company, tmp_path / "seven")[0]["gate"]
+    _eighth(chart_company, third=wrong, decided=("supplier", "model", "rule", ""))
+
+    def eighth(name, relined=None):
+        """(the eighth invoice's line figures, the lines it left out and why, the report)."""
+        report, folder, _ = _run(chart_company, tmp_path / name, _with_eighth(chart_company, relined))
+        gate = report["gate"]
+        added = {k: gate[k] - base[k] for k in gate if k not in ("left_out", "first_three")}
+        out = {why: n - base["left_out"].get(why, 0) for why, n in gate["left_out"].items()}
+        return added, {why: n for why, n in out.items() if n}, (folder / proposed_score.REPORT).read_text("utf-8")
+
+    as_keyed = {"lines": 4, "coded_alone": 2, "compared": 4, "compared_alone": 2, "right_when_alone": 1, "first": 3,
+                "left_to_a_person": 2, "left_first_three": 2}  # fmt: skip
+    assert eighth("keyed")[:2] == (as_keyed, {})
+    # AP keyed the two lines of account a as one: the two lines left, and the one keyed line left, on one account
+    as_one = eighth("one", lambda lines: [replace(lines[0], amount=lines[0].amount + lines[1].amount), *lines[2:]])
+    assert as_one[:2] == (as_keyed, {})
+    # AP split the 420.00 over two accounts: that line (the rule's, wrong) has no keyed line of its own
+    there = next(x.string for x in chart_company.truth.suggestable() if x.string not in (a, b, c, wrong))
+    split = eighth("split", lambda lines: [*lines[:2], replace(lines[2], amount=lines[2].amount - 120),
+                                           replace(lines[2], account=there, amount=Decimal(120)),
+                                           lines[3]])  # fmt: skip
+    assert split[:2] == ({**as_keyed, "compared": 3, "compared_alone": 1}, {proposed_score.LINE_NONE: 1})
+    # 171.00 keyed on a and on b: which is that line's cannot be told; nor what the 420.00 and the 96.25 became
+    either = eighth("either", lambda lines: [lines[0], lines[1], replace(lines[2], amount=lines[1].amount),
+                                             replace(lines[3], amount=lines[3].amount + 249)])  # fmt: skip
+    assert either[:2] == ({**as_keyed, "compared": 1, "compared_alone": 1, "right_when_alone": 1, "first": 1,
+                           "left_to_a_person": 0, "left_first_three": 0},
+                          {proposed_score.LINE_EITHER: 1, proposed_score.LINE_NONE: 2})  # fmt: skip
+    none = 2 + base["left_out"][proposed_score.LINE_NONE]  # with the split line of the seven
+    assert f"for 1, {proposed_score.LINE_EITHER}" in either[2]
+    assert f"for {none}, {proposed_score.LINE_NONE}" in either[2]
+
+
 def test_the_object_and_subsidiary_right_on_another_business_unit_is_counted_apart(chart_company, tmp_path):
     here, _, there = (part.account for part in chart_company.invoices["split_line"][0].parts)
     assert chart.split_account(here)[1] == chart.split_account(there)[1] and here != there
@@ -277,6 +363,8 @@ def test_the_command_scores_with_the_journal_loaded_here_and_says_the_paragraph(
     said = capsys.readouterr().out
     folder = chart_company.store.path.parent / pilot_score.FOLDER
     assert "Of 7 invoices read by AP Coder here" in said and str(folder / proposed_score.REPORT) in said
+    gate = json.loads((folder / proposed_score.FIGURES).read_text(encoding="utf-8"))["gate"]
+    assert journal_score.gate_said(gate) in said and "Lines coded alone: " in said
     figures = json.loads((folder / proposed_score.FIGURES).read_text(encoding="utf-8"))["invoices"]
     # scored against the journal AP Coder learns from: said, the score is not a fair test of these invoices
     assert (figures["scored"], figures["learned_from"]) == (7, 7)

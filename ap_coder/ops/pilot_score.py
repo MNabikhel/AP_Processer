@@ -37,6 +37,7 @@ from typing import Any
 from ..bench.scoring import values_match
 from ..coding.vendors import norm_invoice_number
 from ..core import ui
+from ..core.chart import split_code
 from ..core.headers import match_columns
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED
@@ -463,6 +464,11 @@ def our_invoices(store: Any, settings: jde_settings.JdeSettings | None = None, p
                 "recoverable_tax": recoverable, "gl": gl, "cc": cc, "account": _account(gl, cc, settings),
                 "proposed_gl": p_gl, "proposed_cc": p_cc,
                 "proposed_account": _account(p_gl, p_cc, settings) if p_gl and p_gl != UNASSIGNED else None,
+                # as proposed: what decided the account (its "source"; "" when nothing did) and the accounts offered
+                "decided": str(((ai or {}).get("decided_by") or {}).get("source") or ""),
+                "candidates": [_account(str(c.get("code") or ""), str(c.get("business_unit") or ""), settings)
+                               or (str(c.get("business_unit") or ""), *split_code(c.get("code")))
+                               for c in (ai or {}).get("candidates") or []],
             })  # fmt: skip
         out.append(o)
     return out

@@ -24,7 +24,7 @@ import datetime as dt
 import io
 import json
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -235,7 +235,7 @@ def summarize(rows: list[dict[str, Any]], counts: dict[str, Any], unit_names: di
     all_ = measure.line_stats(rows)
     left = [r for r in rows if not r["coded"]]
     return {
-        "counts": counts, "all": all_,
+        "counts": counts, "all": all_, "gate": gate(rows),
         "offered": sum(1 for r in left if r["in_top3"]), "left": sum(1 for r in left if not r["in_top3"]),
         "by_supplier_seen": _by(rows, "seen_before", {True: "supplier seen before", False: "supplier new"}),
         "by_voucher_lines": _by(rows, "one_line", {True: "one-line vouchers", False: "vouchers of two lines or more"}),
@@ -244,6 +244,70 @@ def summarize(rows: list[dict[str, Any]], counts: dict[str, Any], unit_names: di
         "worst_suppliers": [s for s in worst if s["misses"]][:SUPPLIERS_SHOWN],
         "sure_grid": [g for g in measure.sure_grid(rows) if g["lines"] in GRID_LINES],
     }  # fmt: skip
+
+
+# --- The pilot's gate: the line figures in its words (this score's and ``proposed_score``'s) ----------------------
+
+
+def gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The line figures the pilot's gate is read by, of a row for each line: AP Coder coded it alone ("coded", with no
+    one picking) and right ("coded_right": the account string keyed); the keyed account was its first suggestion
+    ("first_right"), among its first three ("in_top3"). A row with a "left_out" (why) has no keyed line of its own to
+    compare with: counted in the lines and in the lines coded alone, left out of the rest, and why is counted."""
+    compared = [r for r in rows if not r.get("left_out")]
+    alone, left = [r for r in compared if r["coded"]], [r for r in compared if not r["coded"]]
+    return {
+        "lines": len(rows), "coded_alone": sum(1 for r in rows if r["coded"]), "compared": len(compared),
+        "compared_alone": len(alone), "right_when_alone": sum(1 for r in alone if r["coded_right"]),
+        "first": sum(1 for r in compared if r["first_right"]), "first_three": sum(1 for r in compared if r["in_top3"]),
+        "left_to_a_person": len(left), "left_first_three": sum(1 for r in left if r["in_top3"]),
+        "left_out": dict(Counter(r["left_out"] for r in rows if r.get("left_out"))),
+    }  # fmt: skip
+
+
+def share_of(a: int, b: int) -> str:
+    """ "3 of 4 (75%)"; "-" of none."""
+    return "-" if not b else f"{a:,} of {b:,} ({100 * a / b:.0f}%)"
+
+
+def gate_left_out(g: dict[str, Any]) -> str:
+    """The lines left out of the gate's figures and why, said; "" when none is."""
+    out = sum(g["left_out"].values())
+    whys = "; ".join(f"for {n:,}, {why}" for why, n in sorted(g["left_out"].items(), key=lambda t: (-t[1], t[0])))
+    one = out == 1
+    return (f"{plural(out, 'line')} {'has' if one else 'have'} no keyed line of {'its' if one else 'their'} own to "
+            f"compare with, so {'it is' if one else 'they are'} counted in the lines and in coded alone and left out "
+            f"of the other figures: {whys}.") if out else ""  # fmt: skip
+
+
+def gate_table(g: dict[str, Any]) -> list[str]:
+    """The gate's figures as a short table, then the lines left out of them."""
+    left_out = gate_left_out(g)
+    return [
+        _table(["the lines", ""], [
+            ["Lines", f"{g['lines']:,}"],
+            ["Coded alone (no one picking the account)", share_of(g["coded_alone"], g["lines"])],
+            ["Right when coded alone (the account string keyed)",
+             share_of(g["right_when_alone"], g["compared_alone"])],
+            ["Your account first", share_of(g["first"], g["compared"])],
+            ["Your account among the first three", share_of(g["first_three"], g["compared"])],
+            ["Left to a person: your account among the first three",
+             share_of(g["left_first_three"], g["left_to_a_person"])],
+        ]),
+        "Your account: the account string keyed for the line (business unit, object and subsidiary). The first "
+        "three: the accounts AP Coder offered for it, the one it put in first.", "",
+        *([left_out, ""] if left_out else []),
+    ]  # fmt: skip
+
+
+def gate_said(g: dict[str, Any]) -> str:
+    """The gate's figures in one line, for the screen."""
+    said = (f"Lines coded alone: {share_of(g['coded_alone'], g['lines'])}; right when coded alone: "
+            f"{share_of(g['right_when_alone'], g['compared_alone'])}; your account among the first three: "
+            f"{share_of(g['first_three'], g['compared'])}, first: {share_of(g['first'], g['compared'])}; left to a "
+            f"person, your account among the first three: "
+            f"{share_of(g['left_first_three'], g['left_to_a_person'])}.")  # fmt: skip
+    return f"{said} {gate_left_out(g)}".strip()
 
 
 # --- The report -----------------------------------------------------------------------------------------------------
@@ -307,7 +371,7 @@ def render_markdown(report: dict[str, Any]) -> str:
               for name, s in report[part].items()]  # fmt: skip
     lines = [
         "# How AP Coder would have coded last year's vouchers", "",
-        paragraph(report), "", UPPER_BOUND, "",
+        paragraph(report), "", *gate_table(report["gate"]), UPPER_BOUND, "",
         f"Made {report.get('made', '')} from {report.get('source', 'the journal')}.", "",
         "## What was scored", "",
         f"- The journal: G/L dates {c['first_date']} to {c['last_date']}. Learned from: the "

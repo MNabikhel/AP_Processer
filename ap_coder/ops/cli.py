@@ -1096,10 +1096,12 @@ def _pilot_score_of_past_vouchers(args: argparse.Namespace) -> int:
         if args.proposed:
             report, folder = proposed_score.run(store, args.vouchers, args.journal or None, args.out,
                                                 implied_decimals=args.implied_decimals)  # fmt: skip
-            said, module = [proposed_score.paragraph(report)], proposed_score
+            said = [proposed_score.paragraph(report), journal_score.gate_said(report["gate"])]
+            module = proposed_score
         else:
             report, folder = journal_score.run(store, args.journal or None, args.out, hold_out=args.hold_out)
-            said = [journal_score.paragraph(report), journal_score.figures_said(report), journal_score.UPPER_BOUND]
+            said = [journal_score.paragraph(report), journal_score.gate_said(report["gate"]),
+                    journal_score.figures_said(report), journal_score.UPPER_BOUND]  # fmt: skip
             module = journal_score
     except ExportError as exc:
         print(str(exc), file=sys.stderr)
