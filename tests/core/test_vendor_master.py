@@ -727,3 +727,28 @@ def test_a_marked_supplier_imported_before_the_marker_was_read_is_stopped_at_the
     assert "pays by cheque" in store.get_vendor("old mill")["notes"]
     assert _said(store, "VENDOR_ON_HOLD", vendor_name="Old Mill DNU") and _said(store, "VENDOR_ON_HOLD",
                                                                               vendor_name="Old Mill")  # fmt: skip
+
+
+def test_a_gst_number_two_supplier_numbers_share_does_not_override_the_name_picked(tmp_path):
+    """B-2341: two supplier numbers of one business with one GST/HST number. The number was looked up before the name
+    and kept the first supplier number it was found with, so the reviewer's pick "LAKESIDE CATERING LTD #2004" (or a
+    remit-to name of its own) was sent under the first number. A name with its number, or one supplier's name, wins;
+    a number several suppliers share says none of them."""
+    store = Store(tmp_path / "a.db")
+    gst = "123456789RT0001"
+    store.import_vendor_master([{"vendor_name": "LAKESIDE CATERING LTD", "erp_id": "2003", "gst": gst},
+                                {"vendor_name": "LAKESIDE CATERING LTD", "erp_id": "2004", "gst": gst},
+                                {"vendor_name": "NORTH RIDGE SUPPLY INC", "erp_id": "3001", "gst": "987654321RT0001"},
+                                {"vendor_name": "NORTH RIDGE SUPPLY - REMIT CALGARY", "erp_id": "3002",
+                                 "gst": "987654321RT0001"}])  # fmt: skip
+    ids = store.vendor_ids()
+    for name, number, expected in (("LAKESIDE CATERING LTD #2004", gst, "2004"),
+                                   ("Lakeside Catering #2003", gst, "2003"),
+                                   ("LAKESIDE CATERING LTD", gst, ""),  # two numbers by the name and by the GST
+                                   ("NORTH RIDGE SUPPLY - REMIT CALGARY", "987654321 RT0001", "3002"),
+                                   ("NORTH RIDGE SUPPLY INC", "987654321", "3001"),
+                                   ("North Ridge Supplies", "987654321RT0001", "")):  # fmt: skip
+        assert master_vendor_id(ids, name, number) == expected, name
+    # a number one supplier has still finds it whatever the name reads
+    store.import_vendor_master([{"vendor_name": "Maple Leaf Coffee", "erp_id": "2020", "gst": "555666777RT0001"}])
+    assert master_vendor_id(store.vendor_ids(), "Maple Leaf Café Roasters", "555666777 RT 0001") == "2020"
