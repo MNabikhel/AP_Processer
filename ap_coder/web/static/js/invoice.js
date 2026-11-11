@@ -143,6 +143,7 @@ function goToNext(boxes, by = 1) {
 /* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
    (no dialog). Any edit between the two starts again. */
 let checkAsked = false;
+let leaving = null; // the box the focus leaves for what to check: its change as it is left is no edit (B-2362)
 function checkSaid() {
   const rows = gridRows();
   const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
@@ -160,12 +161,14 @@ function checkedOrAsked() {
   if (!boxes.length || checkAsked) return true;
   checkAsked = true;
   showBarState();
+  leaving = document.activeElement;
   goToNext(boxes.includes(document.activeElement) ? [document.activeElement] : boxes);
+  leaving = null;
   return false;
 }
 for (const type of ["input", "change"]) {
   document.addEventListener(type, (e) => {
-    if (!checkAsked || e.target.form !== form) return;
+    if (!checkAsked || e.target.form !== form || (type === "change" && e.target === leaving)) return;
     checkAsked = false;
     showBarState();
   });

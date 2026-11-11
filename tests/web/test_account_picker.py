@@ -186,6 +186,32 @@ def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_a
     assert not errors
 
 
+def test_after_picking_each_account_the_first_ctrl_enter_says_what_to_check_and_the_second_approves(
+    browser, chart_company
+):
+    """B-2362: on four_lines, accounts picked, the first Ctrl+Enter went to the first suggested remark and the change
+    of the Account box it left started the two steps again: three presses to approve."""
+    invoice, invoice_id = chart_company.invoices["four_lines"]
+    page, errors = _review(browser, chart_company, "four_lines")
+    store = chart_company.store
+    for n, part in enumerate(invoice.parts, 1):
+        page.click(f'[data-grid="lines"] [data-row]:nth-child({n}) input[data-account]')
+        page.keyboard.press("Control+a")
+        page.keyboard.type(part.account)
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+    page.wait_for_load_state("networkidle")
+    page.keyboard.press("Control+Enter")
+    page.wait_for_selector("[data-bar-check]:not([hidden])")
+    assert page.inner_text("[data-bar-check]").startswith("To check: ")
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+    assert page.evaluate("document.activeElement.matches('input[data-remark-box]')")
+    page.keyboard.press("Control+Enter")
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+    assert not errors
+
+
 REMARK = '[data-grid="lines"] [data-row]:nth-child(1) input[data-remark-box]'
 POSTED = '[data-grid="lines"] [data-row]:nth-child(1) input[name="line_remark"]'
 COUNT = '[data-grid="lines"] [data-row]:nth-child(1) [data-remark-count]'
