@@ -221,11 +221,23 @@ def missing_database(data: Path, db: Path) -> str:
             "--new-database, once.")  # fmt: skip
 
 
+def lost_database(data: Path, db: Path) -> str:
+    """What a laptop is told as it starts on ``db`` ("" = nothing): the file is missing while the data folder still
+    has backups. It starts all the same, with a new, empty database (the server alone refuses, D-188)."""
+    if db.exists() or not any((data / "backups").glob("ap_coder-*.db")):
+        return ""
+    signs = "; ".join(signs_of_a_database(data, db))
+    return (f"The database {db} was not there, though this data folder had one ({signs}). AP Coder starts with a new, "
+            "empty one and shows no invoices; what the backups hold is still there. To get your invoices back, open "
+            "Settings → Data & backups and press Restore this state beside the newest backup whose Holds column "
+            "shows them.")  # fmt: skip
+
+
 def serve_refusal(db: Path, server: bool, new_database: bool = False) -> str:
     """Why the dashboard must not start on ``db`` ("" = it may), checked as ``serve`` starts: its folder on a network
     share (the server refuses, a laptop is warned), a database missing where there was one (the server; made new
-    with ``new_database``), and a restore's marker left by one that never ended (removed, and said: the service's
-    log keeps what the dashboard prints)."""
+    with ``new_database``; a laptop whose backups remain starts, and is warned: ``lost_database``), and a restore's
+    marker left by one that never ended (removed, and said: the service's log keeps what the dashboard prints)."""
     from ..core.store.backups import clear_left_restore
 
     status, words = share_problem(db.parent, server)
@@ -234,6 +246,8 @@ def serve_refusal(db: Path, server: bool, new_database: bool = False) -> str:
     if words:
         print(f"WARNING: {words}", file=sys.stderr)
     missing = missing_database(db.parent, db) if server else ""
+    if not server and (lost := lost_database(db.parent, db)):
+        print(f"WARNING: {lost}", file=sys.stderr)
     if missing and not new_database:
         return missing
     if missing:  # made now: the service starts on it, also when this start stops later (no HTTPS on the console)

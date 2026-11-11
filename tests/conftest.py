@@ -71,17 +71,19 @@ def pytest_collection_modifyitems(config, items):
         if base in _SLOW or "in_a_browser" in item.name:
             item.add_marker(pytest.mark.slow)
     if config.getoption("shard"):
-        keep = _shard(items, config.getoption("shard"))
+        fast = "not slow" in (config.getoption("markexpr") or "")  # the fast tier: its parts weigh no slow test
+        keep = _shard(items, config.getoption("shard"), fast, tuple(config.getoption("deselect") or ()))
         config.hook.pytest_deselected(items=[item for item in items if item not in keep])
         items[:] = [item for item in items if item in keep]
 
 
-def _shard(items, spec: str) -> set:
-    """CI splits the slow Windows run over parallel jobs: whole files (their fixtures set up once) go to N groups of
-    about equal time, the heaviest first into the lightest group. A file's time is the one measured in
-    tests/test_times.json (a whole run on Linux; refresh it with ``--junitxml`` when the split grows uneven), else its
-    slow tests at ``SLOW_SECONDS`` each plus the rest at ``FAST_SECONDS``. Rough, but every test lands in exactly one
-    group."""
+def _shard(items, spec: str, fast: bool = False, left_out: tuple[str, ...] = ()) -> set:
+    """CI splits each run over parallel jobs: whole files (their fixtures set up once) go to N groups of about equal
+    time, the heaviest first into the lightest group. A file's time is the one measured in tests/test_times.json for
+    the tests this run runs (all of them, or with ``fast`` those not slow; a whole run on Linux: refresh it with
+    ``python -m tests.times`` when the split grows uneven), else its slow tests at ``SLOW_SECONDS`` each plus the rest
+    at ``FAST_SECONDS``. Tests the run leaves out (``fast``: the slow ones; ``left_out``: --deselect's) weigh
+    nothing. Rough, but every test lands in exactly one group."""
     k, n = (int(part) for part in spec.split("/"))
     if not 1 <= k <= n:
         raise pytest.UsageError(f"--shard {spec}: K must be 1 to N")
@@ -89,8 +91,9 @@ def _shard(items, spec: str) -> set:
     for item in items:
         path = item.nodeid.split("::", 1)[0]
         slow = item.get_closest_marker("slow") is not None
-        weight[path] = weight.get(path, 0.0) + (SLOW_SECONDS if slow else FAST_SECONDS)
-    weight.update({path: seconds for path, seconds in _TIMES.items() if path in weight})
+        run = not (fast and slow) and not (left_out and item.nodeid.startswith(left_out))
+        weight[path] = weight.get(path, 0.0) + (SLOW_SECONDS if slow else FAST_SECONDS) * run
+    weight.update({path: _TIMES[path][fast] for path in weight if path in _TIMES and weight[path]})
     groups = [0.0] * n
     mine = set()
     for path in sorted(weight, key=lambda p: (-weight[p], p)):

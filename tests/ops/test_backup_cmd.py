@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 
 from ap_coder.core.store import Store
 from ap_coder.ops import cli
@@ -56,11 +57,71 @@ def test_restore_asks_first_and_refuses_while_ap_coder_runs(tmp_path, ground_tru
     monkeypatch.setattr("builtins.input", lambda prompt="": "no")
     assert cli.main(["--db", str(store.path), "backup", "restore", made.name]) == 1
     assert "Nothing was changed" in capsys.readouterr().out
-    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": os.getpid(), "port": 8501}))
-    assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
+    with socket.create_server(("127.0.0.1", 0)) as dashboard:
+        (data / ".ap_coder_server.json").write_text(
+            json.dumps({"pid": os.getpid(), "port": dashboard.getsockname()[1]})
+        )
+        assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
     assert "AP Coder is running" in capsys.readouterr().err
     assert cli.main(["--db", str(store.path), "backup", "restore", "../ap_coder.db", "--yes"]) == 1
     assert "No backup" in capsys.readouterr().err
+
+
+def test_a_server_file_left_by_an_ap_coder_that_was_killed_does_not_refuse_the_restore(tmp_path, ground_truth, capsys):
+    """After a kill or a power cut, or in a folder copied from another computer, the server file names a process
+    number another program has now: the restore said "AP Coder is running" for good. Running is that process alive
+    and its port answering; and the refusal names the file to delete when AP Coder is in fact not running."""
+    store, data = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    store.set_setting("policy_notes", "since the backup")
+    restore = ["--db", str(store.path), "backup", "restore", made.name, "--yes"]
+    with socket.create_server(("127.0.0.1", 0)) as another:
+        port = another.getsockname()[1]
+        left = {"pid": os.getppid(), "port": port, "started": "2026-01-05T09:00:00"}  # (a program that is no AP Coder)
+        (data / ".ap_coder_server.json").write_text(json.dumps(left))
+        assert cli.main(restore) == 1  # something answers on its port: taken for running
+        err = capsys.readouterr().err
+        assert "AP Coder is running" in err and "Nothing was changed" in err
+        assert "not running" in err and str(data / ".ap_coder_server.json") in err
+        assert store.get_setting("policy_notes") == "since the backup"
+    assert cli.main(restore) == 0  # nothing listens on its port
+    assert "Restored" in capsys.readouterr().out and Store(store.path).get_setting("policy_notes") == ""
+
+
+def test_a_server_that_has_just_started_is_running_before_its_port_opens(tmp_path, ground_truth, capsys):
+    """The company server writes its file, then works its reports out for a few minutes before it opens its port."""
+    import datetime as dt
+
+    store, data = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    with socket.create_server(("127.0.0.1", 0)) as closed:
+        port = closed.getsockname()[1]
+    started = (dt.datetime.now() - dt.timedelta(seconds=60)).isoformat(timespec="seconds")
+    (data / ".ap_coder_server.json").write_text(json.dumps({"pid": os.getppid(), "port": port, "started": started}))
+    assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
+    assert "AP Coder is running" in capsys.readouterr().err
+
+
+def test_restore_over_a_database_that_cannot_be_opened_keeps_it_aside_and_goes_on(tmp_path, ground_truth, capsys):
+    """The case a restore is for: over a damaged database (a bad disk block) it ended in a traceback
+    (sqlite3.DatabaseError: database disk image is malformed)."""
+    store, data = _data(tmp_path, ground_truth)
+    store.set_setting("policy_notes", "as backed up")
+    made = store.backup_now("manual")
+    db = store.path
+    del store
+    for extra in ("-wal", "-shm"):
+        db.with_name(db.name + extra).unlink(missing_ok=True)
+    with open(db, "r+b") as f:
+        f.seek(4096 * 3)
+        f.write(os.urandom(4096 * 30))
+    damaged = db.read_bytes()
+    assert cli.main(["--db", str(db), "backup", "restore", made.name, "--yes"]) == 0
+    out = capsys.readouterr().out
+    (aside,) = (data / "backups").glob("damaged-*")
+    assert (aside / db.name).read_bytes() == damaged and str(aside) in out and "could not be opened" in out
+    after = Store(db)
+    assert after.get_setting("policy_notes") == "as backed up" and sum(after.status_counts().values()) == 1
 
 
 def test_the_guides_new_server_steps_restore_while_the_service_is_stopped():

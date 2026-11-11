@@ -718,16 +718,23 @@ def about_context(store: Store) -> dict[str, Any]:
 def save_shown(request: Request, show_jde: str = Form(""), developer: str = Form(""),
                screens: str = Form("")) -> JSONResponse:  # fmt: skip
     """What is shown (D-52): the JD Edwards E1 settings and export, the developer tools, and the screens (Simple:
-    the short menu; Everything: every page; not sent: as they are). Logged."""
+    the short menu; Everything: every page; not sent: as they are). Simple chosen on a laptop does what the queue's
+    card does (``use_simple``): JD Edwards keying set up too when no JD Edwards settings were saved. Logged."""
     store = get_store(request)
-    changed, keys = [], []
+    changed, keys, keyed = [], [], False
     if screens in (SIMPLE, EVERYTHING) and (screens == SIMPLE) != simple_screens(store):
-        store.set_setting(SCREENS, screens, actor=reviewer())
+        if screens == SIMPLE and not server_mode(request):
+            keyed = use_simple(store, actor=reviewer())
+        else:
+            store.set_setting(SCREENS, screens, actor=reviewer())
         changed.append("Simple screens" if screens == SIMPLE else "every screen shown")
+        if keyed:
+            changed.append("JD Edwards keying set up (the keying sheet)")
         keys.append(SCREENS)
     elif screens == EVERYTHING and not store.get_setting(SCREENS):
         store.set_setting(SCREENS, screens, actor=reviewer())  # chosen here: the queue's card asks no more (D-221)
-    switches = [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
+    # (keying just set up shows JD Edwards: the box, unticked when the page was drawn, does not hide it again)
+    switches = [] if keyed else [(SHOW_JDE, show_jde, "JD Edwards settings", jde_shown(store))]
     if not developer_env_on():  # set by AP_DEVELOPER_TOOLS: shown as on, never stored (B-527)
         switches.append((DEVELOPER_TOOLS, developer, "developer tools", developer_tools(store)))
     for key, value, words, was in switches:

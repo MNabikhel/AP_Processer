@@ -389,10 +389,11 @@ def test_a_settings_file_that_cannot_be_changed_never_stops_the_start(launch, mo
 
 def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeypatch, capsys):
     _quiet_setup(launch, monkeypatch)
+    stamp = paths.file_sha256(launch.ROOT / "ap_coder" / "BUILD")  # (the list is this code's own, B-2380)
     manifest = {
         "version": "0.2.0",
         "built": "2026-10-11T09:00:00",
-        "files": {"ap_coder/x.py": "0" * 64, "ap_coder/BUILD": "0" * 64, "scripts/launch.py": "0" * 64},
+        "files": {"ap_coder/x.py": "0" * 64, "ap_coder/BUILD": stamp, "scripts/launch.py": "0" * 64},
     }
     (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
     (launch.ROOT / "ap_coder" / "x.py").write_text("")
@@ -906,3 +907,48 @@ def test_an_older_folder_with_invoices_of_its_own_is_asked_once_in_the_window(la
     assert len(store.list_invoices()) == 1 + store.demo_count() and store.demo_count()  # every invoice kept
     launch.older_folder_setup(args)  # the next start: asked once at most
     assert len(asked) == (1 if how in ("yes", "no") else 0)
+
+
+def test_a_set_up_of_the_older_folder_that_fails_is_said_in_the_window_and_the_start_goes_on(
+    launch, monkeypatch, capsys, demo_db
+):
+    """The set-up failed (a full disk, the database busy) and only the log knew: the window said nothing, AP Coder
+    opened with every page and no JD Edwards, as if nothing had been tried. One line says it could not be done, that
+    it is tried again, and where the log is; the server still starts."""
+    from ap_coder.web import core
+
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+    _older_folder(demo_db, own_invoice=False)
+
+    def fails(db, ask=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(core, "older_folder_start", fails)
+    assert launch.run(*launch.parse([])) == 0 and started == [[]]
+    out = capsys.readouterr().out
+    assert "The set-up for JD Edwards keying could not be done, so AP Coder starts as it was." in out
+    assert "tried again at the next start" in out and f"The details are in {launch.log_path()}." in out
+    assert "disk full" in launch.log_path().read_text(encoding="utf-8")
+
+
+# --- The data folder on record is not there any more ----------------------------------------------------------------
+
+
+def test_a_data_folder_on_record_that_is_gone_is_said_when_a_new_one_is_made(launch, monkeypatch, tmp_path, capsys):
+    """The data folder moved, renamed or on a drive not plugged in: the launcher made a new, empty one in its place
+    without a word, and AP Coder opened as new, the invoices seemingly lost. It still makes it (renaming the folder is
+    the way to a clean start), and says which folder and how to get the invoices back. Never on a first install."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    home = tmp_path / "APCoder"
+    said: list[str] = []
+    assert launch.upgrade.settle_data_folder(launch.ROOT, said.append, default=home) == home  # a first install
+    assert said == [] and paths.read_user_settings()["data_dir"] == str(home)
+    home.mkdir()  # (which the launcher does at once)
+    assert launch.ensure_data_folder() == home and capsys.readouterr().out == ""  # there: nothing to say
+    home.rename(tmp_path / "APCoder-old")
+    assert launch.ensure_data_folder() == home and (home / "invoices").is_dir()
+    out = capsys.readouterr().out
+    assert f"The data folder {home} is not there any more, so a new, empty one is made." in out
+    assert "moved or renamed" in out and "close AP Coder" in out and "your invoices are back" in out
+    assert out.count("\n") == 1
+    assert launch.ensure_data_folder() == home and capsys.readouterr().out == ""  # said once

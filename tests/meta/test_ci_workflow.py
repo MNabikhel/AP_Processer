@@ -1,5 +1,6 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
+import json
 import re
 import shutil
 import subprocess
@@ -52,7 +53,7 @@ def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
     shutil.copy(__file__, copy / "test_ci_workflow.py")
     out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
                           "not looked_up_once and not where_there_is_no_workflow and not one_shard"
-                          " and not older_versions", str(copy)],
+                          " and not older_versions and not weighed_by", str(copy)],
                          cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert out.returncode == 0, out.stdout[-2000:]
 
@@ -107,10 +108,8 @@ def test_ci_runs_the_pilot_laptops_python_on_windows_with_ocr_and_the_launcher()
     APProcessor.bat on 3.12 and on 3.14, where 3.14 is the only Python the launcher finds."""
     jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
     cells = [c for c in jobs["tests"]["strategy"]["matrix"]["include"] if c["os"] == "windows-latest"]
-    whole = {c["python"] for c in cells if c.get("shard")}
-    assert whole == {"3.12", "3.14"}
-    assert {(c["python"], c.get("extras")) for c in cells if c.get("shard")} == {("3.12", "ocr,dev"),
-                                                                                  ("3.14", "ocr,dev")}  # fmt: skip
+    whole = [c for c in cells if c.get("tier") != "fast"]  # (the fast tier is split into parts too, D-233)
+    assert {(c["python"], c.get("extras")) for c in whole} == {("3.12", "ocr,dev"), ("3.14", "ocr,dev")}
     job = jobs["windows-pilot-launcher"]
     assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"] and job["strategy"]["fail-fast"] is False
     assert "Python ${{ matrix.python }}" in job["name"]  # each cell says which Python it is
@@ -192,6 +191,33 @@ def test_the_update_check_finds_the_schema_the_new_version_writes():
     assert old_versions.schema_of(Path(__file__).resolve().parents[2]) == str(SCHEMA_VERSION)
 
 
+@needs_ci
+def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on_main():
+    """D-233: each cell of the test matrix (an OS, a Python, the whole suite or the fast tier) is split into parts
+    K/N: every K from 1 to N is there once, or tests would run nowhere. The one test the Windows cells leave out
+    (the JD Edwards sync at the company's size, 20 minutes there) is run by windows-sync-volume, on both Windows
+    Pythons of the whole suite, whenever the run is not a pull request's; Ubuntu's cells leave nothing out."""
+    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    parts: dict[tuple, list[str]] = {}
+    for cell in jobs["tests"]["strategy"]["matrix"]["include"]:
+        parts.setdefault((cell["os"], cell["python"], cell.get("tier")), []).append(cell["shard"])
+    assert len(parts) == 8
+    for cell, shards in parts.items():
+        n = int(shards[0].split("/")[1])
+        assert sorted(shards) == [f"{k}/{n}" for k in range(1, n + 1)], cell
+    volume = workflow["env"]["SYNC_VOLUME"]
+    path, name = volume.split("::")
+    assert f"def {name}(" in (CI.parents[2] / path).read_text(encoding="utf-8")
+    run = next(step["run"] for step in jobs["tests"]["steps"] if step.get("name") == "Tests")
+    assert "matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || ''" in run
+    assert run.count("deselect") == 1 and " -k " not in run
+    job = jobs["windows-sync-volume"]
+    assert job["if"] == "github.event_name != 'pull_request'" and job["runs-on"] == "windows-latest"
+    assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"]
+    assert 'pytest -q -m "" ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]
+
+
 def test_every_test_runs_in_exactly_one_shard():
     """CI splits the Windows run with --shard K/N (tests/conftest.py): whole files, each in one part, none left out."""
     from tests.conftest import _shard
@@ -211,6 +237,52 @@ def test_every_test_runs_in_exactly_one_shard():
         assert all(i in part for i in items if i.nodeid.split("::")[0] in files)  # a file is never split
     with pytest.raises(pytest.UsageError):
         _shard(items, "4/3")
+
+
+def test_the_parts_are_weighed_by_the_tests_each_run_really_runs(tmp_path, monkeypatch):
+    """D-233: the split weighed every file by all its tests, also for the fast tier (which runs no slow test) and for
+    a run that leaves a test out (--deselect): a file of one 20-minute slow test filled a part that then ran nothing.
+    A file's weight is its measured time for the tests this run runs (tests/test_times.json: all, and not slow), and
+    tests/times.py works both out of a ``--junitxml`` report."""
+    from tests import conftest, times
+
+    class item:
+        def __init__(self, nodeid, slow=False):
+            self.nodeid, self.slow = nodeid, slow
+
+        def get_closest_marker(self, name):
+            return self.slow or None
+
+    report = tmp_path / "times.xml"
+    report.write_text(
+        '<testsuites><testsuite>'
+        '<testcase classname="tests.meta.test_ci_workflow" name="test_big" time="100.0"/>'
+        '<testcase classname="tests.meta.test_ci_workflow" name="test_small[a]" time="3.0"/>'
+        '<testcase classname="tests.meta.test_ci_workflow.TestGroup" name="test_inside" time="2.0"/>'
+        '<testcase classname="tests.conftest" name="test_in_a_browser_page" time="7.0"/>'
+        '<testcase classname="tests.webclient" name="test_quick" time="40.0"/>'
+        '<testcase classname="tests.pdfs" name="test_other" time="60.0"/>'
+        '<testcase classname="tests.times" name="test_alone" time="500.0"/>'
+        "</testsuite></testsuites>", encoding="utf-8")  # fmt: skip
+    slow = {"tests/meta/test_ci_workflow.py::test_big", "tests/times.py::test_alone"}
+    measured = times.times(report, slow)
+    assert measured == {"tests/conftest.py": [7.0, 0.0], "tests/meta/test_ci_workflow.py": [105.0, 5.0],
+                        "tests/pdfs.py": [60.0, 60.0], "tests/times.py": [500.0, 0.0],
+                        "tests/webclient.py": [40.0, 40.0]}  # fmt: skip
+    monkeypatch.setattr(conftest, "_TIMES", measured)
+    big, small = item("tests/meta/test_ci_workflow.py::test_big", slow=True), item("tests/meta/test_ci_workflow.py::t")
+    quick, other = item("tests/webclient.py::test_quick"), item("tests/pdfs.py::test_other")
+    alone = item("tests/times.py::test_alone", slow=True)
+    items = [big, small, quick, other, alone]
+    assert conftest._shard(items, "1/2") == {alone}  # all of it: 500 s against 105 + 60 + 40
+    # the fast tier runs no slow test: 60 s against 40 + 5 (a file's slow tests go where it goes: -m leaves them out)
+    assert conftest._shard(items, "1/2", fast=True) == {other}
+    assert conftest._shard(items, "2/2", fast=True) == {quick, small, big, alone}
+    # a test left out weighs nothing: 105 s against 60 + 40
+    assert conftest._shard(items, "1/2", left_out=("tests/times.py::test_alone",)) == {big, small}
+    whole = json.loads((Path(conftest.__file__).parent / "test_times.json").read_text(encoding="utf-8"))
+    assert all(len(pair) == 2 and pair[0] >= pair[1] >= 0 for pair in whole.values())
+    assert all((Path(conftest.__file__).parents[1] / path).is_file() for path in whole)  # no file that is gone
 
 
 def test_an_older_versions_test_file_left_in_tests_is_not_run(tmp_path):

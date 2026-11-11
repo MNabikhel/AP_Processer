@@ -331,6 +331,11 @@ def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
     listed = paths.bundle_manifest(root).get("files")
     if not isinstance(listed, dict) or not listed or (root / ".git").exists():
         return [], 0
+    # The list must be this code's own: GitHub's ZIP brings none, so copied over a bundle's folder the older bundle's
+    # list stayed and named none of the new modules (B-2380). Its stamp, else pyproject.toml, is the one listed.
+    stamp = next((n for n in (paths.BUILD_FILE.as_posix(), "pyproject.toml") if n in listed), None)
+    if stamp and paths.file_sha256(root / stamp) != listed[stamp]:
+        return [], 0
     keep = {name.replace("\\", "/") for name in listed}
     removed: list[str] = []
     freed = 0
@@ -466,7 +471,8 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
     recorded as the data folder, or found in this folder with none recorded) is moved to ``~/APCoder`` and recorded
     there, unless ``~/APCoder`` already holds data of its own (then it stays where it is, and that is said). An
     ``AP_PRIVATE_DIR`` set by hand is used as it is. A move that was interrupted is finished first; one that can't
-    be finished stops the start (:class:`DataMoveError`): AP Coder never runs on half the data."""
+    be finished stops the start (:class:`DataMoveError`): AP Coder never runs on half the data. A folder on record
+    that is no longer there is still returned (the caller makes it new: a clean start), and that is said."""
     if chosen := paths.env_path("AP_PRIVATE_DIR"):
         return chosen
     settings = paths.read_user_settings()
@@ -488,6 +494,9 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
                   if not paths.same_folder(e["folder"], root)]  # fmt: skip
         recorded = next((p for p in [legacy, *others] if has_data(p) and is_install(p.parent)), default)
         paths.write_user_settings(data_dir=str(recorded))
+    elif not recorded.exists():  # moved, renamed, on a drive not plugged in: AP Coder would open as new without a word
+        say(f"The data folder {recorded} is not there any more, so a new, empty one is made. If it was moved or "
+            "renamed: close AP Coder, put it back in place of the new one, and your invoices are back.")  # fmt: skip
     if recorded.name == "private" and is_install(recorded.parent) and has_data(recorded):
         if has_data(default) and not paths.same_folder(default, recorded):
             say(f"Note: your data is still in {recorded}, inside an AP Coder code folder, because {default} already "

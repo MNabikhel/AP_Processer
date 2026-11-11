@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gc
 import json
+import shutil
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,8 +25,12 @@ from typing import Any
 from ..core.store import Store, backup_files
 from ..core.store.users import sign_in_accounts
 from . import service
+from .offline import listening
 
 SERVER_FILE = service.SERVER_FILE  # written by the running dashboard
+# Seconds after its start a server may not answer on its port yet: the company server writes its file, then works its
+# reports out before it opens the port (web/server.py, ``prepare_reports``: 215 at most).
+STARTING = 300.0
 
 
 def add_parser(sub: Any) -> None:
@@ -37,13 +44,24 @@ def add_parser(sub: Any) -> None:
 
 
 def _running(data: Path) -> bool:
-    """An AP Coder dashboard (the service, or the laptop's) runs on this data folder."""
+    """An AP Coder dashboard (the service, or the laptop's) runs on this data folder: its server file names a live
+    process, and the file's port answers or the server has only just started (``STARTING``). A file left by one that
+    was killed (a power cut), or copied with the folder from another computer, names a process number another program
+    may have now: that alone is no AP Coder running."""
     try:
         found = json.loads((data / SERVER_FILE).read_text(encoding="utf-8"))
-        pid = int(found.get("pid") or 0) if isinstance(found, dict) else 0
-    except (OSError, ValueError, TypeError):
+        pid, port = int(found.get("pid") or 0), int(found.get("port") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
         return False
-    return service.process_alive(pid)
+    if not service.process_alive(pid):
+        return False
+    if 0 < port < 65536 and listening(port):
+        return True
+    try:
+        age = (dt.datetime.now() - dt.datetime.fromisoformat(str(found.get("started") or ""))).total_seconds()
+    except (ValueError, TypeError):  # (no time, or one with a time zone: not written by ``write_server_file``)
+        return False
+    return 0 <= age < STARTING
 
 
 def main(args: argparse.Namespace) -> int:
@@ -106,7 +124,9 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
     data = db.parent
     if _running(data):
         print(f"AP Coder is running on {data}: stop it first (on the server: python -m ap_coder service stop; on a "
-              "laptop, close its window), or restore from Settings → Data & backups. Nothing was changed.",
+              "laptop, close its window), or restore from Settings → Data & backups. Nothing was changed. If AP "
+              "Coder is in fact not running (it was ended without closing, or this folder was copied from another "
+              f"computer), delete the file {data / SERVER_FILE} and restore again.",
               file=sys.stderr)  # fmt: skip
         return 1
     server = service.is_server_here(data)
@@ -128,7 +148,19 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
             print("Nothing was changed.")
             return 1
     try:
-        done = Store(db).restore_state(backup, keep_accounts=server)
+        try:
+            store, damaged = Store(db), ""
+        except sqlite3.DatabaseError as exc:
+            if type(exc) is not sqlite3.DatabaseError:  # (locked, not readable: no damaged database)
+                raise
+            store, damaged = None, str(exc)
+        if store is None:  # (outside the except block: its connection is closed, so Windows lets the file move)
+            gc.collect()
+            aside = _set_aside(db)
+            print(f"The database here could not be opened ({damaged}): it was moved to {aside}, and the restore goes "
+                  "on as onto a data folder with no database.")  # fmt: skip
+            store = Store(db)
+        done = store.restore_state(backup, keep_accounts=server)
     except (ValueError, OSError) as exc:
         print(f"Not restored: {exc}.", file=sys.stderr)
         return 1
@@ -136,3 +168,14 @@ def _restore(backup: Path, db: Path, yes: bool) -> int:
     print(f"The state before was backed up as {done.safety.name}. A restore clears the second backup folder: set it "
           "again in Settings → Data & backups.")  # fmt: skip
     return 1 if done.files.missing or done.files.damaged else 0
+
+
+def _set_aside(db: Path) -> Path:
+    """A database that cannot be opened (damaged: SQLite's "malformed", "not a database") moved out of the way, with
+    its write-ahead log, into ``backups/damaged-<date>-<time>/``, never deleted. The folder."""
+    aside = db.parent / "backups" / f"damaged-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    aside.mkdir(parents=True, exist_ok=True)
+    for name in (db.name, db.name + "-wal", db.name + "-shm"):
+        if (db.parent / name).exists():
+            shutil.move(str(db.parent / name), str(aside / name))
+    return aside

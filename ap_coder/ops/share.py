@@ -18,7 +18,7 @@ import socket
 import subprocess
 import sys
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from ..core.paths import PROJECT_DIR, env_path, private_dir
@@ -72,12 +72,16 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
                 openssl: str | None = None) -> tuple[str, str] | None:  # fmt: skip
     """The certificate and its private key to serve with: server.json's, else the data folder's ``tls`` files, else
     one made now with this computer's openssl (also when server.json names those two files and they were deleted:
-    the way to a certificate for a laptop's new name, B-2313). None when there is none and none could be made: said,
-    with how."""
+    the way to a certificate for a laptop's new name, B-2313; or names them where the data folder was before it was
+    moved or copied, and they are not there: its own files are this folder's). None when there is none and none
+    could be made: said, with how."""
     folder = data / TLS_DIR
     cert, key = folder / CERT_NAME, folder / KEY_NAME
-    if (s.certfile or s.keyfile) and (Path(s.certfile), Path(s.keyfile)) != (cert, key):
-        missing = [f for f in (s.certfile, s.keyfile) if not f or not Path(f).is_file()]
+    named = (s.certfile, s.keyfile)
+    missing = [f for f in named if not f or not Path(f).is_file()]
+    # Its own two files as another folder's (with either separator: the folder may come from a Windows laptop).
+    own = [PureWindowsPath(f).parts[-2:] for f in named] == [(TLS_DIR, CERT_NAME), (TLS_DIR, KEY_NAME)]
+    if (s.certfile or s.keyfile) and (Path(s.certfile), Path(s.keyfile)) != (cert, key) and not (own and missing):
         if not missing:
             return s.certfile, s.keyfile
         say(

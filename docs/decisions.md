@@ -5705,3 +5705,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "offered in Settings → Data & backups only" for that card).
   - (`scripts/launch.py`, `web/core.py`, `web/pages/settings.py` `choose_screens`, `_screens_card.html`,
     `base.html`; docs/PROTOTYPE.md section 1)
+- **D-233** · **CI's tests run in more, even parts side by side; Windows' one 20-minute test runs on main, not in
+  a pull request** (`.github/workflows/ci.yml`, `tests/conftest.py`, `tests/times.py`; 11 Nov 2026).
+  - **Measured** (the run of pull request 123, 38 minutes, 386 job-minutes in 39 jobs): the slowest job, a Windows
+    part, took 34 minutes, 20 of them one test (`test_the_sync_at_the_companys_size`: 2 minutes on Ubuntu); each
+    Ubuntu cell ran the whole suite in one job of 26 to 31 minutes (the workflow said 5); the Windows fast tier 20 to
+    26. The parts were uneven because `tests/test_times.json` was from when the suite took 9 minutes and held 228 of
+    355 files. GitHub runs 20 jobs at once for this repository, so 386 job-minutes cannot end before 19.
+  - **The split:** Ubuntu's four Pythons in two parts each, Windows' whole suite (3.12, 3.14) in four, its fast tier
+    (3.11, 3.13) in two: 20 jobs for 12. A part's weight is the measured time of the tests that run really runs
+    (`_shard`: the fast tier weighs no slow test, a test left out by `--deselect` nothing), and
+    `python -m tests.times <junit.xml>` refreshes the times from a whole run (all, and not slow, per file).
+  - **On main only, on Windows:** the JD Edwards sync at the company's size (`windows-sync-volume`, both Windows
+    Pythons, after each merge and by hand). Ubuntu runs it in every pull request, on all four Pythons. Nothing else
+    moved and no test was removed: `tests/meta/test_ci_workflow.py` holds that every cell has all its parts and that
+    the test Windows leaves out runs in that job.
+  - **Not done, and why:** caching (pip's cache is on; an install takes about a minute of a 15-minute job); skipping
+    jobs by the files changed (the launcher and bundle jobs start the whole app, so almost any change touches them;
+    a change to the docs alone still needs the tests that read the docs); pytest-xdist (the suite is written to
+    run serially: not tried). To go lower the job-minutes must drop: the middle Pythons (Ubuntu 3.12 and 3.13,
+    Windows 3.13's fast tier) could run on main only, about 80 job-minutes, if the pilot tester asks for it.
