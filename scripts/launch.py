@@ -1053,6 +1053,16 @@ def missing_packages(extras: tuple[str, ...]) -> tuple[list[str], str]:
     return missing, check_deps.self_problem()
 
 
+def all_in_place(total: int) -> str:
+    return f"Packages: {total} needed, all in place: nothing to install"
+
+
+def missing_said(missing: list[str], total: int) -> str:
+    """ "Packages: 3 of 15 missing" ("missing or too old" when one is installed below the version this one needs)."""
+    old = any(check_deps.problem(r).startswith("Outdated") for r in missing)
+    return f"Packages: {len(missing)} of {total} missing{' or too old' if old else ''}"
+
+
 def is_ocr(requirement: str) -> bool:
     return check_deps.requirement_name(requirement) in OCR_PACKAGES
 
@@ -1094,7 +1104,7 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
         scans = " (scanned invoices can't be read without the OCR add-on)" if any(map(is_ocr, missing)) else ""
         return ("warn", f"Packages: core in place; missing {names(missing)}: it must come from the offline "
                         f"bundle's wheelhouse folder{scans}", False)  # fmt: skip
-    return "ok", f"Packages: all {total} in place", False  # (ap_coder itself runs from this folder: no need to say)
+    return "ok", all_in_place(total), False  # (ap_coder itself runs from this folder: no need to say)
 
 
 def cannot_set_up() -> SetupError | None:
@@ -1166,7 +1176,7 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     total = len(check_deps.requirements(extras=extras))
     missing, self_problem = missing_packages(extras)
     if not missing and not self_problem:
-        return "ok", f"Packages: all {total} in place", False
+        return "ok", all_in_place(total), False
     if not self_problem and all(is_ocr(r) for r in missing) and state.get("ocr_failed") == fingerprint():
         return "warn", "Packages: in place, without the OCR add-on (it could not be installed here)", False
 
@@ -1204,14 +1214,14 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         say_downloads("the Python packages it needs (a few hundred MB)", PACKAGE_SITE)
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
-        say(f"Installing AP Coder's packages: {len(missing)} missing, with the packages they need in turn. The first "
-            "time takes a few minutes.")  # fmt: skip
+        say(f"{missing_said(missing, total)}: installing those, with the packages they need in turn. The first time "
+            "takes a few minutes.")  # fmt: skip
         tries = [editable(extras)] + ([editable(plain)] if plain != extras else [])
     elif self_problem:
         say("Registering this AP Coder folder in .venv (nothing to download).")
         tries = [["--no-deps", *editable(())]]
     else:
-        say(f"Installing only what this version needs: {', '.join(missing)}")
+        say(f"{missing_said(missing, total)}: installing those ({names(missing)}); the others are left as they are.")
         core = [r for r in missing if not is_ocr(r)]
         tries = [missing] + ([core] if core and core != missing else [])
     for number, pip_args in enumerate(tries):

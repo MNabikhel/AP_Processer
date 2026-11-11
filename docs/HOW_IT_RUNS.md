@@ -181,7 +181,8 @@ code), so a newer build of the same version is an update too.
 1. **What is missing** (`missing_packages` → `scripts/check_deps.py:problem`, `self_problem`): each requirement of
    `pyproject.toml` (and the `ocr` extra) that is not installed or is older than asked, and whether `ap_coder`
    itself is installed (editable) *from this folder* (read from pip's `direct_url.json`, network shares included).
-   Nothing missing: "Packages: all N in place", nothing runs.
+   Nothing missing: "Packages: N needed, all in place: nothing to install", nothing runs; else "3 of N missing:
+   installing those", only those (never `--upgrade`: a package already good enough stays as it is, D-231).
 2. **Where from** (`pip_source`): the offline bundle's `wheelhouse/` with `--no-index --find-links` (never the
    internet). Without one: PyPI from the code alone (`setup_online`, unless `AP_ALLOW_INTERNET=0`) or with
    `AP_ALLOW_INTERNET=1`; else (a bundle missing its wheelhouse) nowhere (`without_wheelhouse`: AP Coder still

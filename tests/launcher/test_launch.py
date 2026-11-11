@@ -70,7 +70,7 @@ def _fake_pip(launch, monkeypatch, missing: list[str], self_problem: str = "", f
 def test_nothing_is_installed_when_everything_is_in_place(launch, monkeypatch):
     calls = _fake_pip(launch, monkeypatch, [])
     level, text, installed = launch.ensure_packages({})
-    assert (level, installed, calls) == ("ok", False, []) and text.startswith("Packages: all ")
+    assert (level, installed, calls) == ("ok", False, []) and text.endswith(" needed, all in place: nothing to install")
 
 
 def test_only_the_missing_package_is_installed(launch, monkeypatch):
@@ -78,6 +78,59 @@ def test_only_the_missing_package_is_installed(launch, monkeypatch):
     level, text, installed = launch.ensure_packages({})
     assert calls == [["openpyxl>=3.1"]]  # not the whole list, not ap_coder again
     assert level == "ok" and installed and "installed what was missing" in text
+
+
+UPGRADING = {"--upgrade", "-U", "--force-reinstall", "--ignore-installed", "-I", "--upgrade-strategy"}
+
+
+def test_a_package_already_at_the_version_needed_is_never_upgraded(launch, monkeypatch, capsys):
+    """D-231: what pyproject.toml asks for is checked against what is installed; only a package missing, or below its
+    minimum, is given to pip, and pip is never told to upgrade (or reinstall) anything: one already good enough, here
+    or among those a missing one needs, stays as it is. Said as "2 of 4 missing", then "4 needed, all in place"."""
+    installed = {"openpyxl": "3.0.10", "pandas": "2.2.0", "jinja2": "3.1.4"}  # openpyxl below 3.1; dotenv missing
+    wanted = ["openpyxl>=3.1", "pandas>=2.1", "jinja2>=3.1,<4", "python-dotenv>=1.0"]
+    monkeypatch.setattr(launch.check_deps, "requirements", lambda extras=(): list(wanted))
+    self_problem = {"text": ""}
+    monkeypatch.setattr(launch.check_deps, "self_problem", lambda: self_problem["text"])
+
+    def version(name):
+        if name not in installed:
+            raise launch.importlib.metadata.PackageNotFoundError(name)
+        return installed[name]
+
+    monkeypatch.setattr(launch.importlib.metadata, "version", version)
+    monkeypatch.setattr(launch, "pip_source", lambda: [])  # GitHub's ZIP: from PyPI
+    monkeypatch.setattr(launch, "refresh_registration", lambda: None)
+    commands: list[list[str]] = []
+
+    class Pip:
+        def __init__(self, cmd, **kwargs):
+            commands.append(list(cmd))
+            asked = [a for a in cmd[cmd.index("install") + 1 :] if not a.startswith(("-", "."))]
+            if "-e" in cmd:  # (AP Coder itself: pip installs what it needs that is not there)
+                asked = [r for r in wanted if launch.check_deps.requirement_name(r) not in installed]
+            installed.update({launch.check_deps.requirement_name(a): "9.0" for a in asked})
+            self_problem["text"] = ""
+            self.stdout = iter(["Successfully installed openpyxl-9.0 python-dotenv-9.0\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    level, text, done = launch.ensure_packages({})
+    assert len(commands) == 1 and commands[0][-2:] == ["openpyxl>=3.1", "python-dotenv>=1.0"]
+    assert not UPGRADING & set(commands[0]) and not any("pandas" in a or "jinja2" in a for a in commands[0])
+    said = capsys.readouterr().out
+    assert "Packages: 2 of 4 missing or too old: installing those (openpyxl, python-dotenv)" in said
+    assert (level, done, installed["pandas"], installed["jinja2"]) == ("ok", True, "2.2.0", "3.1.4")
+    commands.clear()
+    assert launch.ensure_packages({}) == ("ok", "Packages: 4 needed, all in place: nothing to install", False)
+    assert commands == []
+    installed.pop("python-dotenv")  # a first setup: AP Coder itself too, with the packages it needs
+    self_problem["text"] = "Missing: ap_coder (pip install -e .)"
+    launch.ensure_packages({})
+    assert commands[0][-2:] == ["-e", ".[ocr]"] and not UPGRADING & set(commands[0])
+    assert "Packages: 1 of 4 missing: installing those, with the packages they need in turn" in capsys.readouterr().out
 
 
 def test_first_install_is_the_editable_folder_with_the_ocr_add_on(launch, monkeypatch):
@@ -200,7 +253,12 @@ def test_offline_without_wheelhouse_still_starts_when_the_core_is_there(launch, 
     assert "missing rapidocr" in text and "offline bundle" in text and "scanned invoices can't be read" in text
     monkeypatch.setattr(launch, "missing_packages", lambda extras: ([], "Missing: ap_coder (pip install -e .)"))
     level, text, _ = launch.ensure_packages({})
-    assert level == "ok" and text.startswith("Packages: all ") and "(" not in text and commands == []
+    assert (
+        level == "ok"
+        and text.endswith(" needed, all in place: nothing to install")
+        and "(" not in text
+        and commands == []
+    )
 
 
 # --- .venv: made once, remade only when broken ---------------------------------------------------------------

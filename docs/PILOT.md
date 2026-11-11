@@ -134,7 +134,7 @@ Then it checks itself and prints a short summary before the browser opens:
 ```
 AP Coder readiness:
   [OK] Python 3.12.4
-  [OK] Packages: all 15 in place
+  [OK] Packages: 15 needed, all in place: nothing to install
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
