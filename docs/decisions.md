@@ -5577,3 +5577,29 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     once a journal), a new supplier's first 16 → 92 ms (the journal as a whole read once), then 8 → 12 ms.
   - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
     `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)
+- **D-230** · **A supplier's one account codes a line alone only when nothing on the line says otherwise: a line
+  that names another kind of account, or another business unit that has the account, is left for a person with
+  that account first** (with a JD Edwards chart loaded; 11 Nov 2026).
+  - **Why:** AP trusts a line coded alone. On the made-up year, of 231 suppliers sure of one account, every one
+    coded "Insurance premium", "Legal fees re contract review", "Office furniture - desk" to it (Coffee & Kitchen
+    Supplies for an office supplier), and 108 of 108 lines naming another unit by name or number to the usual unit.
+  - **Another kind** (`suggest._another_kind`, B-2370), after the meal, half-alike and whole-name guards: the line
+    is under 0.2 alike to everything known of the usual account (its name, AP's remarks, the lines approved to it)
+    and says a word of another offered account's name or category that none of those has, a word at most 6
+    accounts' names have ("Insurance", "Furniture", not "Fees" or "Office"), and is over 0.28 alike to that name
+    (more than one word in four: "Desk to desk delivery" stays the courier's). That account is first, its reason
+    "This supplier's lines usually go to ..., but this line reads like ...: check it". The older guards keep the
+    usual account first (their tests pin it); this one puts the other first, as the line says nothing of the usual.
+    Not caught: a line naming no account at all ("Advertising - newspaper" where the chart has none).
+  - **Another unit** (`suggest._unless_another_unit`, B-2371): before any line is coded alone, a business unit it
+    names (`supplier_prior.units_named`), or that the invoice's ship-to or "Attn:" names when the line names none,
+    other than the first's and having its account, leaves it with that unit's account first. A unit named only by
+    a word the line uses otherwise, on a unit without the account ("Desk to desk delivery", IT - Service Desk),
+    does not. A unit whose every word more than 3 units' names have is named by its whole name of two words or
+    more ("Finance & Accounting", B-2372); single words of that kind ("Facilities", "Procurement") still are not.
+  - **Measured** (`python -m ap_coder.bench coding --journal`, and `--approve`, the made-up year, 809 lines): every
+    line the same before and after (coded alone 14% and 25%, right 116/116 and 188/199): its invoices print
+    neither another kind nor another unit. The probes: the 231 sure suppliers coded those lines alone 231/231
+    before, 3 or 4 of 231 after ("Software licence renewal" 13: suppliers of that kind, or none offered for it);
+    lines naming another unit 108/108 (name) and 108/108 (number) before, 0 after.
+  - (`ap_coder/ai/suggest.py`, `supplier_prior.py` `names_with`, `units_named`)
