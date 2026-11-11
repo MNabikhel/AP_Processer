@@ -994,10 +994,67 @@ def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models
     assert {t for _u, t in downloads} == {fetch_models.FIRST_TIMEOUT}
     assert out.count("Downloading ") == 4  # ("Downloading the OCR models", and the first file only, from each)
     assert ("AP Coder couldn't reach www.modelscope.cn or its mirrors, huggingface.co and github.com (a firewall may "
-            "block them): ask IT, or use the offline bundle." in out) and out.count("couldn't reach") == 1  # fmt: skip
+            "block them): ask IT to allow them." in out) and out.count("couldn't reach") == 1  # fmt: skip
     downloads.clear()
     launch.ensure_models(first=False, state=state)  # a later start: one try at each, briefly
     assert [t for _u, t in downloads] == [fetch_models.LATER_TIMEOUT] * 3 and len({u for u, _t in downloads}) == 3
+
+
+def test_model_sites_a_company_network_blocks_are_named_for_it_and_scans_still_read_with_one_engine(
+    launch, no_models, monkeypatch, capsys
+):
+    """B-2375: set up from GitHub's ZIP on a company network that blocks the model sites, the window said "ask IT, or
+    use the offline bundle": a bundle the pilot tester never had. It names the sites for IT to allow, says scans are
+    read with one OCR engine meanwhile, and the start goes on (the readiness summary says one engine again)."""
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+
+    def blocked(url, timeout=None):
+        downloads.append(url)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", blocked)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)  # (never stops the start)
+    said = [line for line in capsys.readouterr().out.splitlines() if "couldn't reach" in line]
+    assert said == [
+        "AP Coder couldn't reach www.modelscope.cn or its mirrors, huggingface.co and github.com (a firewall may "
+        "block them): ask IT to allow them. AP Coder will try again next time it starts; scans are still read with "
+        "one engine meanwhile."
+    ]
+    assert state["models_failed"] and launch.one_engine(True) == (
+        "one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when it starts"
+    )
+
+
+def test_models_already_in_place_are_kept_and_only_a_missing_one_is_downloaded(launch, no_models, monkeypatch, capsys):
+    """D-231: the OCR models each start checks (their SHA-256 at a first setup) are never downloaded again; one that
+    is missing, or damaged, is the only one asked for."""
+    from ap_coder.ops import offline
+
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    monkeypatch.setattr(offline, "table_finder_path", lambda: Path("in place"))
+    files = {"det.onnx": b"detector", "rec.onnx": b"recogniser"}
+    models = tuple(
+        offline.ModelFile(name, f"https://www.modelscope.cn/{name}", hashlib.sha256(data).hexdigest())
+        for name, data in files.items()
+    )
+    monkeypatch.setattr(offline, "ocr_files", lambda: models)
+    folder = offline.model_dir()
+    (folder / "det.onnx").write_bytes(files["det.onnx"])
+    (folder / "rec.onnx").write_bytes(b"half a file")
+
+    def urlopen(url, timeout=None):
+        downloads.append(url)
+        return io.BytesIO(files[url.rsplit("/", 1)[-1]])
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    launch.ensure_models(first=True, state={})
+    assert downloads == ["https://www.modelscope.cn/rec.onnx"] and (folder / "rec.onnx").read_bytes() == b"recogniser"
+    assert "OCR models ready: 1 downloaded; 1 already in place." in capsys.readouterr().out
+    launch.ensure_models(first=True, state={})
+    assert downloads == ["https://www.modelscope.cn/rec.onnx"] and capsys.readouterr().out == ""
 
 
 @pytest.fixture
@@ -1177,7 +1234,7 @@ def test_the_launchers_table_finder_comes_from_its_mirror_when_its_site_never_an
     assert hosts == ["www.modelscope.cn"] * 3 + ["github.com"] * (1 if mirror == "answers" else 3)
     if mirror == "unreachable":
         assert ("AP Coder couldn't reach www.modelscope.cn or its mirror, github.com (a firewall may block them): ask "
-                "IT, or use the offline bundle. AP Coder will try again next time it starts; line items are still "
+                "IT to allow them. AP Coder will try again next time it starts; line items are still "
                 "read without it meanwhile.") in out  # fmt: skip
         return
     assert "  Got yolov8n_layout_general6.onnx from its mirror, github.com, checked against its SHA-256." in out

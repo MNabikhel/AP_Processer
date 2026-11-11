@@ -1405,10 +1405,10 @@ def ensure_models(first: bool, state: dict) -> None:
     finder_only = result.failed == [offline.TABLE_FINDER_NAME]
     what = "the table finder's model" if finder_only else "the OCR models"
     meanwhile = "line items are still read without it" if finder_only else "scans are still read with one engine"
-    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554)
+    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554); no bundle here to name (B-2375)
         them = "them" if len(result.unreachable) > 1 else "it"
-        say(f"AP Coder couldn't reach {fetch_models.sites(result.unreachable)} (a firewall may block {them}): ask IT, "
-            f"or use the offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
+        say(f"AP Coder couldn't reach {fetch_models.sites(result.unreachable)} (a firewall may block {them}): ask IT "
+            f"to allow {them}. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
         return
     why = result.reasons[0] if result.reasons else "the download didn't finish"
     where = f" from {fetch_models.sites(result.failed_hosts)}" if result.failed_hosts else ""
