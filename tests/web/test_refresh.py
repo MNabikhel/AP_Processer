@@ -20,7 +20,7 @@ import pytest
 
 from ap_coder.core.store import Store, reports, summary
 from ap_coder.web import refresh
-from tests.conftest import ROOT
+from tests.conftest import ROOT, until
 from tests.core.test_kept_answers import Shared, _approved, _bill, _invoice, _plain, _Processes, _vendor_rows
 
 ADD = "INSERT INTO vendors (vendor_key, display_name, updated_at) VALUES (?, 'A vendor', '2026-01-05T09:00:00')"
@@ -608,7 +608,8 @@ def test_the_background_process_keeps_the_vendors_totals_it_works_out_again_for_
         while (not worker._lease_held(reports.REFRESHER) or worker.next_want() is not None) and time.monotonic() < ends:
             time.sleep(0.05)
         time.sleep(2 * refresh.POLL)  # (its start: the totals asked lately, worked out again)
-        assert worker.next_want() is None
+        # (waited for, not a fixed second: on a busy Windows runner it was asked and not yet worked out, B-2393)
+        assert until(lambda: worker.next_want() is None, 20)
         process("worker 2")
         worked = []
         real = worker._vendor_totals
