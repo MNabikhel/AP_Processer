@@ -74,7 +74,7 @@ from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from typing import Any
 
-from ..coding.vendors import norm_invoice_number
+from ..coding.vendors import held_index, hold_reason, norm_invoice_number
 from ..core.memory import vendor_key
 from .jde_accounts import VendorLookup, resolve_an8
 from .jde_formats import _negative, _norm
@@ -117,19 +117,19 @@ UNCONFIRMED = (
 def prior_records(store: Any, exclude_ids: Iterable[int] = (),
                   invoices: list[dict[str, Any]] | None = None) -> dict[str, list[dict[str, Any]]]:  # fmt: skip
     """What is already out (read-only): invoices in live export batches (not ``exclude_ids``) and the
-    imported ERP invoice register. With ``invoices``: only what has one of their invoice numbers (as compared), all
-    ``duplicate_problems`` reads of it for them, picked by SQLite (D-156): not the year's exports and the whole
-    register read for a day's batch."""
+    imported ERP invoice register; and the vendors on hold now ("held", ``validate``: B-2340). With ``invoices``:
+    only what has one of their invoice numbers (as compared), all ``duplicate_problems`` reads of it for them, picked
+    by SQLite (D-156): not the year's exports and the whole register read for a day's batch."""
     exclude = set(exclude_ids)
     if invoices is None:
         exported = [r for r in store.search_rows(exported=True) if r["id"] not in exclude]
-        return {"exported": exported, "register": store.erp_register()}
+        return {"exported": exported, "register": store.erp_register(), "held": store.held_vendors()}
     numbers = sorted({norm_invoice_number((inv.get("final_output") or {}).get("invoice_number")) for inv in invoices}
                      - {""})  # fmt: skip
     picked = store.search_rows(where="number_key IN (SELECT value FROM json_each(?))", params=(json.dumps(numbers),),
                                exported=True) if numbers else []  # fmt: skip
     exported = [r for r in picked if r["id"] not in exclude]
-    return {"exported": exported, "register": store.erp_register(numbers)}
+    return {"exported": exported, "register": store.erp_register(numbers), "held": store.held_vendors()}
 
 
 def duplicate_problems(
@@ -193,13 +193,17 @@ def validate(
     prior: Mapping[str, list[dict[str, Any]]] | None = None, *, prepared: list[tuple[str, _Voucher]] | None = None,
 ) -> dict[int, list[str]]:  # fmt: skip
     """{invoice id: blocking problems} for the invoices that cannot go out (the others are fine). ``prepared``: the
-    invoices' vouchers already prepared (``_vouchers``)."""
+    invoices' vouchers already prepared (``_vouchers``). A voucher whose vendor is on hold now (``prior``'s "held",
+    here or in JD Edwards) is held too: approved before the hold, it is not typed or loaded (B-2340)."""
     out: dict[int, list[str]] = {}
     if prepared is None:
         prepared = _vouchers(invoices, settings, vendor_lookup)
-    for inv, (_an8, v) in zip(invoices, prepared, strict=True):
+    held = held_index((prior or {}).get("held") or [])
+    for inv, (an8, v) in zip(invoices, prepared, strict=True):
         if v.problems:
             out[int(inv.get("id") or 0)] = _accounts_once(v)
+        if why := hold_reason(held, inv.get("vendor_key"), an8):
+            out.setdefault(int(inv.get("id") or 0), []).append(why)
     for inv_id, msgs in duplicate_problems(invoices, settings, vendor_lookup, prior).items():
         out.setdefault(inv_id, []).extend(msgs)
     return out

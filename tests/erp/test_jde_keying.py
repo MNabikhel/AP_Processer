@@ -718,3 +718,27 @@ def test_the_header_block_carries_the_bank_account_once_bank_accounts_are_entere
     other["final_output"]["pay_from_account"] = "100.1112.PAY"
     _, second = blocks(workbook([paid, other], bank_accounts=accounts)[jde_keying.SHEET])
     assert field(second, "G/L bank account").value == "100.1112.PAY"  # no cash GL account: the code as keyed
+
+
+def test_a_supplier_put_on_hold_after_approval_is_not_ready_for_jd_edwards(tmp_path, cost_centers_demo_template):
+    """B-2340: an approved invoice whose supplier was put on hold since (in AP Coder's vendor list, or by a hold code
+    in JD Edwards' supplier master) still went on a keying sheet or a JD Edwards batch as ready: only the API looked
+    at the hold. It is now not ready, with the hold's reason, in both formats."""
+    from ap_coder.web.pages.exports import jde_check
+    from tests.webclient import post
+
+    store, client, northwind, _chinook = demo(tmp_path, cost_centers_demo_template)
+    vendor = store.get_vendor(store.get_invoice(northwind["id"])["vendor_key"])
+    store.save_vendor(vendor["vendor_key"], vendor["display_name"], "on_hold", notes="bank details changed")
+    for files in (True, False):
+        why = jde_check(store, [northwind["id"]], files=files)[1][northwind["id"]]
+        assert "is on hold in AP Coder's vendor list (bank details changed)" in " ".join(why)
+    assert "on hold in AP Coder&#39;s vendor list" in client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    answer = post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]})
+    assert answer.status_code == 400 and store.export_batches() == []
+    # Off hold here, held by its hold payment code in JD Edwards' supplier master (by its supplier number).
+    store.save_vendor(vendor["vendor_key"], vendor["display_name"], "active")
+    store.import_vendor_master([{"vendor_name": vendor["display_name"], "erp_id": "10023", "hold": "Y"}],
+                               by_erp_id=True)  # fmt: skip
+    why = jde_check(store, [northwind["id"]])[1][northwind["id"]]
+    assert "is on hold in JD Edwards (hold code Y" in " ".join(why)
