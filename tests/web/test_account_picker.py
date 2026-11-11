@@ -234,3 +234,38 @@ def test_the_suggested_remark_follows_the_account_picked(browser, chart_company)
     wait_until(page, lambda: page.input_value(REMARK) == usual.text)
     assert page.input_value(REMARK) == usual.text and page.input_value(POSTED) == ""
     assert page.input_value(FIRST) == account and not errors
+
+
+@pytest.mark.parametrize("how", ["tax code chosen", "account picked, then a click away"])
+def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before(browser, chart_company, how):
+    """B-2360: after Approve the next invoice opens with the banner's Undo; Ctrl+Z there, once a tax code was chosen
+    or an account picked, undid the approval of the invoice before and went back to it."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, first = chart_company.store, chart_company.invoices["one_line"][1]
+    page.click("[data-approve]")
+    page.wait_for_url(lambda url: f"/review/{first}" not in url, timeout=10000)
+    page.wait_for_selector("#flashes form.flash-undo")
+    page.wait_for_load_state("networkidle")
+    after = page.url
+    if how == "tax code chosen":
+        select = '[data-grid="lines"] [data-row]:nth-child(1) select[name="line_tax_code"]'
+        codes = page.eval_on_selector_all(f"{select} option", "els => els.map((e) => e.value)")
+        page.select_option(select, codes[-1])
+        page.focus(select)
+    else:
+        shown = int(after.split("/review/")[1].split("?")[0])
+        invoice = next(inv for inv, number in chart_company.invoices.values() if number == shown)
+        page.click(FIRST)
+        page.keyboard.press("Control+a")
+        page.keyboard.type(invoice.parts[0].account)
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+        page.evaluate("document.activeElement.blur()")  # a click away
+    page.wait_for_load_state("networkidle")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(1000)
+    assert store.get_invoice(first)["status"] != REVIEW and page.url == after  # the approval stays; the page too
+    page.click("#flashes form.flash-undo button")  # the banner's own Undo still undoes it
+    page.wait_for_url(lambda url: f"/review/{first}" in url, timeout=10000)
+    assert store.get_invoice(first)["status"] == REVIEW
+    assert not errors

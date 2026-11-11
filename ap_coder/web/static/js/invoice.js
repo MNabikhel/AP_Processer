@@ -2015,6 +2015,7 @@ function dropUndo() {
 /** Say what was done, with Undo: ``msg`` a message ({text, tone}) or its text. */
 function offerUndo(msg, snap) {
   dropUndo();
+  editedHere = true;
   const message = typeof msg === "string" ? { text: msg, tone: "info", icon: "undo" } : { ...msg };
   undoState = { snap };
   message.action = { label: "Undo", icon: "undo", title: "Put it back as it was (Ctrl+Z)", run: undo };
@@ -2808,6 +2809,12 @@ if (form && !readOnly) {
 /** The boxes typed in since the page opened: in one of them Ctrl+Z is the box's own (B-992). */
 const typedIn = new WeakSet();
 document.addEventListener("input", (e) => typedIn.add(e.target), { capture: true });
+/** Something on this invoice was edited since it opened: Ctrl+Z is no longer the banner's Undo of the invoice approved
+    before (B-2360); the banner's own button still is. */
+let editedHere = false;
+for (const type of ["input", "change"]) {
+  document.addEventListener(type, (e) => e.target.form === form && (editedHere = true), { capture: true });
+}
 
 document.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
@@ -2827,7 +2834,7 @@ document.addEventListener("keydown", (e) => {
     if (fresh || !(typing(e.target) && e.target.tagName !== "SELECT")) {
       e.preventDefault();
       // nothing edited here since: the approval just made, as the banner's Undo (B-823)
-      const banner = document.querySelector("#flashes form.flash-undo");
+      const banner = !editedHere && document.querySelector("#flashes form.flash-undo");
       if (banner) banner.requestSubmit();
       else toast({ text: "Nothing to undo.", tone: "info", icon: "undo" }, 2500);
     }
