@@ -365,7 +365,7 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
            sort: str = Form(""), limit: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
-    """Not ours, or not to be paid. It can be reopened later."""
+    """Not ours, or not to be paid. It can be reopened later, with the edits made before, as after Park (B-2361)."""
     store = get_store(request)
     _invoice(store, invoice_id)
     after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort, "limit": limit}), next_id,
@@ -374,7 +374,6 @@ def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str 
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError:
         return changed_meanwhile(request, invoice_id)
-    forget_everyones_draft(request, invoice_id)
     return done(request, after, flash_message(f"Invoice #{invoice_id} rejected.", "ok", icon="block"))
 
 

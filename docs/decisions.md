@@ -4986,7 +4986,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Filled** in `finalise_coding` (`fill_remarks`), so on every read and every check of the review screen: a
     line's suggestion follows its account; a remark a person typed (`remark_from` "person") is never replaced. The
     form's field is `line_remark`, one a line (`invoice_view.LINE_REMARK`): posted, it is a person's once it is not
-    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again.
+    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again (a box a person
+    emptied: replaced by D-229).
   - **Only where remarks are used:** a chart of accounts is imported, or JD Edwards is in use with its remarks as
     typed. Any other install stores its invoices as before (`same_behaviour.py`: the same).
   - **Too long:** a typed remark is kept whole; over 30 characters is the check `REMARK_LONG`, which says what would
@@ -5605,3 +5606,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     is one a data folder, and `backup restore` reads it to refuse under a running one. The server's own start is
     refused by its port, as before.
   - (`ap_coder/web/app.py`, `scripts/running.py`, `scripts/launch.py`, `ap_coder/ops/safety.py`, `ops/cli.py`)
+- **D-229** · **A Remark box a person empties stays empty: no remark, the person's choice, kept through the check and
+  the approval** (the review screen with a chart loaded; 11 Nov 2026; replaces D-213's "blank asks for the
+  suggestion again" for a box emptied on the screen).
+  - **Why:** A remark cleared came back as the suggestion at the next check, so a line could never be approved with
+    no remark: the person's edit was undone without a word.
+  - **What:** the row's hidden `line_remark` posts `remark.CLEARED` (a space) once the box is emptied; `remark.typed`
+    reads it as ("", "person"), and `fill_remarks` keeps a person's empty remark as it keeps a typed one (typed
+    exactly as suggested, it is still the suggestion). A form that posts the cell blank (the bulk grid, a page of
+    before) still asks for the suggestion. Stored, the empty remark is left out and `remark_from` says "person".
+  - (`ap_coder/coding/remark.py` `CLEARED`, `typed`, `fill_remarks`; `web/account_lines.py` `remark_view`
+    `posted`; `web/templates/_invoice_lines.html`; `web/static/js/invoice.js` `REMARK_CLEARED`)

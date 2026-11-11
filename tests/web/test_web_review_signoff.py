@@ -427,7 +427,7 @@ def test_a_draft_outlives_a_restart_and_goes_with_the_approval(client, store):
     answer = again.post("/review/bulk-approve", data={"ids": [invoice_id]}, headers=PAGE).json()
     assert store.get_invoice(invoice_id)["status"] == REVIEW and answer
     again.post(f"/review/{invoice_id}/reject", data={"reason": "not ours"}, headers=PAGE)
-    assert store.invoice_drafts() == []  # rejected: its draft is gone with it
+    assert [kept[0] for kept in store.invoice_drafts()] == [invoice_id]  # rejected: kept for a reopen (B-2361)
 
 
 def test_undo_of_a_rejected_invoice_gives_the_real_reason(client, store):

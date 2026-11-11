@@ -35,6 +35,7 @@ from ..core.reference_data import UNASSIGNED, ReferenceData
 
 REMARK_MOST = 30  # characters of a remark JD Edwards keeps (F0911 GLEXR, the pay item's RPRMK)
 SUPPLIER, INVOICE, ACCOUNT, PERSON = "supplier", "invoice", "account", "person"  # ``schema.REMARK_SOURCES``
+CLEARED = " "  # the review screen's remark cell of a box a person emptied: no remark, theirs (B-2363, D-229)
 MOST = 0.5  # (b): a supplier's one shape is its usual remark when it is on more than this share of its lines
 
 _EN = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -329,10 +330,10 @@ def account_of(line: Any) -> str:
 def typed(posted: Any, before: Mapping[str, Any] | None = None) -> tuple[str, str]:
     """(the remark, where it is from) of a line whose remark cell the review screen posted, ``before`` being the
     line as the screen had it: left as it was, it is what it was; anything else is a person's (``PERSON``); blank
-    asks for the suggestion again."""
+    asks for the suggestion again, and ``CLEARED`` (the box emptied) is a person's empty remark (D-229)."""
     text = one_line(posted)
     if not text:
-        return "", ""
+        return ("", PERSON) if posted == CLEARED else ("", "")
     if before and text == one_line(before.get("remark")):
         return text, str(before.get("remark_from") or "")
     return text, PERSON
@@ -353,9 +354,10 @@ def fill_remarks(coding: Any, store: Any, reference: ReferenceData, wanted: bool
     """Give each line of ``coding`` its remark (``LineItem.remark`` and ``remark_from``): the one suggested for the
     account it is coded to now, so a line whose account changes gets that account's; a line with no account gets
     the invoice's wording. A part of a split line with no remark of the supplier's for its own account takes the
-    line's remark as the first part has it. A remark a person typed (``remark_from`` "person") is never replaced;
-    typed exactly as suggested, it is the suggestion. Only where remarks are used (``wanted``, default: a chart of
-    accounts is imported, or the remarks go to JD Edwards as typed): any other install stores its invoices as before."""
+    line's remark as the first part has it. A remark a person typed (``remark_from`` "person"), or emptied, is never
+    replaced; typed exactly as suggested, it is the suggestion. Only where remarks are used (``wanted``, default: a
+    chart of accounts is imported, or the remarks go to JD Edwards as typed): any other install stores its invoices
+    as before."""
     if wanted is None:
         wanted = reference.pairs is not None or remarks_typed(store)
     if not wanted:
@@ -370,7 +372,7 @@ def fill_remarks(coding: Any, store: Any, reference: ReferenceData, wanted: bool
             # (typed on the first part, it is no person's remark here: this part follows the first)
             source = INVOICE if first.remark_from == PERSON else first.remark_from
             found = Suggestion(one_line(first.remark), "the remark of the line's first part", source)
-        if line.remark_from == PERSON and one_line(line.remark) not in ("", found.text):
+        if line.remark_from == PERSON and one_line(line.remark) != found.text:
             continue
         line.remark, line.remark_from = found.text, found.source
 

@@ -23,7 +23,7 @@ from ap_coder.core.store import APPROVED, REVIEW
 from ap_coder.erp import jde_formats, jde_keying, jde_settings, jde_voucher, jde_zfiles
 from tests.erp.test_jde_keying import LINES, blocks, field, said
 from tests.review_page import ReviewPage
-from tests.webclient import PAGE, follow, post
+from tests.webclient import PAGE, client_for, follow, post
 
 NEW_NUMBER = "99001"  # the new supplier's JD Edwards address number, once it is set up
 TAX_WORDS = {"quebec": "GST + QST", "usd_new_supplier": "No tax charged"}  # each line's tax code as shown; else GST
@@ -292,6 +292,30 @@ def test_a_reserved_subsidiary_typed_by_hand_is_a_warning_and_may_be_approved(ch
     assert "is not offered for invoices" in page.findings["ACCOUNT_RESERVED"] and not page.not_ready
     assert page.approve()["ok"]
     assert chart_company.store.get_invoice(page.id)["status"] == APPROVED
+
+
+@pytest.mark.parametrize(("reopen", "restarted"), [("restore", False), ("reopen", False), ("reopen", True)])
+def test_an_invoice_rejected_by_mistake_reopens_with_the_accounts_typed(
+    chart_company, chart_company_client, reopen, restarted
+):
+    """B-2361: Reject then Reopen (the screen's, or the queue's on the Failed / rejected tab) threw away every account
+    typed on the fifteen lines, while Park keeps the edits and the screen says a rejected invoice can be reopened; and
+    AP Coder started again in between read back the drafts of the invoices in review only."""
+    client = chart_company_client
+    invoice, invoice_id = chart_company.invoices["fifteen_lines"]
+    page = ReviewPage(client, invoice_id)
+    for n, part in enumerate(invoice.parts, 1):
+        page.set_account(n, part.account)
+    page.check()
+    typed = [row.account for row in page.lines]
+    assert all(typed)
+    follow(client, post(client, f"/review/{invoice_id}/reject", {"reason": ""}))
+    if restarted:
+        client = page.client = client_for(chart_company.store)
+        assert client.get("/review?tab=other").status_code == 200  # the queue first, where the reopen is
+    follow(client, post(client, f"/review/{invoice_id}/{reopen}"))
+    assert chart_company.store.get_invoice(invoice_id)["status"] == REVIEW
+    assert [row.account for row in page.open().lines] == typed
 
 
 # --- approving, the keying sheet and the batch files ---------------------------------------------------------------
