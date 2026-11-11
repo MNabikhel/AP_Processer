@@ -5685,3 +5685,23 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - (`scripts/launch.py` `_ensure_packages`, `missing_said`, `unreachable_index`, `system_proxy`, `pip_install`,
     `installed_already`, `update_wanted`, `database_too_new`; `scripts/upgrade.py` `older_install`; docs/PROTOTYPE.md
     section 1)
+- **D-232** · **A data folder an earlier AP Coder made is set up the department's way at the start, once; the demo
+  invoices are one click away while they are loaded** (the launcher, the queue's screens card; 11 Nov 2026).
+  - **Why:** the pilot tester installed GitHub's ZIP on a laptop whose `~/APCoder` held an earlier AP Coder's demo
+    invoices: it opened as an old install (every page, the demo in the queue and on Exports, no JD Edwards), and only
+    a new data folder got the Simple screens and `use_prototype`. In their words: the double-click should do it, no
+    folder to delete.
+  - **At the start** (`launch.older_folder_setup` before the server, `web.core.older_folder_start`; never the
+    company server's folder, nor a demo's): a folder whose screens were never chosen. No invoices but the demo's (or
+    none): as a new folder, without a question: the demo invoices removed (`remove_demo`, with what it loaded), the
+    Simple screens and JD Edwards keying, said in one line. Invoices of its own: asked once in the window as the
+    update question is (`[Y/n]`, Enter for yes); yes is the card's "Use the simple screens", no is recorded and the
+    card asks as before. With --yes, AP_NO_PAUSE=1 or nobody at the window (CI): not asked, the card asks. Recorded
+    in the setting `pilot_setup` ("done" or "declined"): once. A failure is logged and the start goes on.
+  - **Never touched:** JD Edwards settings someone saved (`use_simple` sets keying up only when none are; B-2378),
+    real invoices, lessons, GL accounts or anything typed; the demo's sample setup is put back per tax type (B-2379).
+  - **The demo invoices:** "Demo invoices loaded" at the rail's foot links to Settings → Data & backups' card, and
+    the screens card offers "Remove the N demo invoices only" (asked first), saying only they go (replaces D-221's
+    "offered in Settings → Data & backups only" for that card).
+  - (`scripts/launch.py`, `web/core.py`, `web/pages/settings.py` `choose_screens`, `_screens_card.html`,
+    `base.html`; docs/PROTOTYPE.md section 1)

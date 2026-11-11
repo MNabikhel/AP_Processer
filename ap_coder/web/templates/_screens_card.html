@@ -1,5 +1,7 @@
 {# The queue page's card for a data folder an earlier AP Coder made (core.screens_to_choose, D-221): what is new, and
-   which screens to show. Either button saves the choice, so it shows once. Needs: choose_screens. #}
+   which screens to show. Either button saves the choice, so it shows once. "Use the simple screens" also sets up
+   JD Edwards keying when none is saved (core.use_simple, B-2378). While demo invoices are loaded, it offers to remove
+   them, and only them (D-232). Needs: choose_screens, keying_to_set_up, demo_count. #}
 {% if choose_screens %}
 <section class="card stack" id="choose-screens">
   <h4><span class="ms" aria-hidden="true">new_releases</span> AP Coder was updated: choose your screens</h4>
@@ -20,6 +22,18 @@
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">menu</span>Keep every page</button>
     </form>
   </div>
+  {% if keying_to_set_up %}<p>“Use the simple screens” also sets up keying for JD Edwards (the keying sheet).</p>{% endif %}
   <p class="muted">Either choice can be changed later: Settings → About → Screens.</p>
+  {% if demo_count and can("/demo/remove") %}
+  <form method="post" action="/demo/remove" class="row" data-busy="Removing the demo invoices…"
+        data-confirm="Remove the {{ demo_count | plural('demo invoice') }}? Only the demo invoices go: your own invoices and settings stay.">
+    <input type="hidden" name="sure" value="1">
+    <input type="hidden" name="back" value="/review">
+    <span>The {{ demo_count | plural("demo invoice") }} of the earlier AP Coder are still in the queue and on Exports.</span>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Remove the {{ demo_count | plural("demo invoice") }} only</button>
+  </form>
+  <p class="muted">Only the demo invoices go, with the sample purchase orders and vendors loaded with them and what was
+    learned from them: your own invoices, GL accounts, vendors and settings stay.</p>
+  {% endif %}
 </section>
 {% endif %}

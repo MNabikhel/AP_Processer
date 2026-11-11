@@ -442,6 +442,7 @@ def test_demo_invoices_load_and_remove(client, store):
     section = _demo_section(client)
     assert "<b>10 demo invoices loaded.</b>" in section and "Yes, remove the demo invoices" in section
     assert 'action="/demo/remove"' in section and "/demo/load" not in section
+    store.set_setting("screens", "everything")  # (an older folder's screens card offers their removal too: D-232)
     for page in ("/review", "/process"):  # the pages keep to their work: no card to load or remove them
         text = client.get(page).text
         assert "/demo/remove" not in text and "/demo/load" not in text, page

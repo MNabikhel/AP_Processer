@@ -25,7 +25,9 @@ packages for) and runs this file with it. It then:
    Mac: an "AP Coder.command" launcher), rewritten whenever the current install changes;
 8. prints a short readiness summary with the self-check (``scripts/pilot_check.py``) the first time and after
    every update; once it passed, the older installs' ``.venv``, models and folders are cleaned up;
-9. starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up.
+9. sets a data folder an earlier AP Coder made up the department's way, once (the short menu, JD Edwards keying;
+   the demo invoices removed from a folder that holds no others; asked first when it holds invoices of its own,
+   D-232), then starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up.
 
 Offline: this is an enterprise build. AP Coder itself (the dashboard and everything it runs) never connects to
 the internet. Its setup gets the packages and OCR models from one of two places:
@@ -2504,7 +2506,39 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     print_summary(lines)
     if args.no_start:
         return 0
+    older_folder_setup(args)
     return start_dashboard(rest, state)
+
+
+def older_folder_setup(args: argparse.Namespace) -> None:
+    """A data folder an earlier AP Coder made, set up the department's way once, before the server starts (D-232,
+    ``web.core.older_folder_start``): one with only the demo invoices, or none, at once, said in one line; one with
+    invoices of its own only once asked in the window (Enter for yes). Not asked with --yes, AP_NO_PAUSE=1 or nobody
+    at the window (CI): the queue's card asks, as before. Never the company server's, nor a demo's (scripts/demo.bat).
+    A failure is logged and never stops the start."""
+    database = paths.env_path("AP_DB_PATH") or paths.default_db_path()
+    if server_mode() or demo_start() or not database.is_file():
+        return
+    asked = not (args.yes or os.environ.get("AP_NO_PAUSE") or not getattr(sys.stdin, "isatty", lambda: False)())
+    try:
+        from ap_coder.web.core import older_folder_start
+
+        said = older_folder_start(database, yes_answered if asked else None)
+    except Exception as exc:  # noqa: BLE001 - the dashboard still starts: its queue's card asks instead
+        log(f"Setting up the older data folder failed: {exc!r}")
+        return
+    if said:
+        say(said)
+
+
+def yes_answered(question: str) -> bool:
+    """``question`` asked in the window: Enter (or anything but no) is yes."""
+    try:
+        answer = input(question)
+    except EOFError:  # (nobody to answer after all)
+        answer = ""
+    log(f"{question}{answer}")
+    return not answer.strip().lower().startswith("n")
 
 
 def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:

@@ -842,3 +842,67 @@ def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, m
     monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
     (launch.ROOT / "AP Coder.lnk").write_text("")
     assert Path(launch.old_shortcut_folder()) == Path("/Users/José/Données/AP Coder 0.1")  # "\\" on Windows
+
+
+# --- A data folder an earlier AP Coder made: set up the department's way before the server starts (D-232) ----------
+
+
+def _older_folder(demo_db, own_invoice: bool) -> Path:
+    from ap_coder.core.store import Store
+    from tests.webclient import add_clean
+
+    db = paths.default_db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(demo_db, db)
+    if own_invoice:
+        add_clean(Store(db), invoice_number="REAL-0001")
+    return db
+
+
+def test_an_older_folder_with_only_the_demo_invoices_is_set_up_at_the_start_and_said(launch, monkeypatch, capsys,
+                                                                                     demo_db):  # fmt: skip
+    """The pilot tester double-clicked GitHub's ZIP on a laptop whose data folder held an earlier AP Coder's demo
+    invoices: every page, the demo in the queue, no JD Edwards. Now set up as a new folder before the server starts,
+    in one line, with no question (CI too: nobody at the window)."""
+    from ap_coder.core.store import Store
+    from ap_coder.web import core
+
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+    db = _older_folder(demo_db, own_invoice=False)
+    assert launch.run(*launch.parse([])) == 0 and started == [[]]
+    out = capsys.readouterr().out
+    assert "Set up for JD Edwards keying: the short menu, the keying sheet; the demo invoices removed." in out
+    store = Store(db)
+    assert store.demo_count() == 0 and core.simple_screens(store) and store.get_setting("export_format") == "jde_keying"
+
+
+@pytest.mark.parametrize("how", ["yes", "no", "--yes", "AP_NO_PAUSE", "no terminal", "server", "demo"])
+def test_an_older_folder_with_invoices_of_its_own_is_asked_once_in_the_window(launch, monkeypatch, capsys, demo_db,
+                                                                              how):  # fmt: skip
+    """Its own invoices there: asked as the update question is, Enter for yes. --yes, AP_NO_PAUSE=1 or nobody at the
+    window: not asked, the queue's card asks, as before; the company server's folder and a demo's are left alone."""
+    from ap_coder.core.store import Store
+    from ap_coder.web import core
+
+    db = _older_folder(demo_db, own_invoice=True)
+    asked: list[str] = []
+    monkeypatch.setattr(launch, "input", lambda question: asked.append(question) or ("n" if how == "no" else ""),
+                        raising=False)  # fmt: skip
+    monkeypatch.delenv("AP_NO_PAUSE", raising=False)
+    monkeypatch.setattr(launch.sys, "stdin", SimpleNamespace(isatty=lambda: how != "no terminal"))
+    if how == "AP_NO_PAUSE":
+        monkeypatch.setenv("AP_NO_PAUSE", "1")
+    elif how == "server":
+        monkeypatch.setenv("AP_SERVER_MODE", "1")
+    elif how == "demo":
+        monkeypatch.setenv("AP_DEMO", "1")
+    args = launch.parse(["--yes"] if how == "--yes" else [])[0]
+    launch.older_folder_setup(args)
+    out = capsys.readouterr().out
+    assert asked == ([core.ASK_SIMPLE] if how in ("yes", "no") else [])
+    store = Store(db)
+    assert core.simple_screens(store) == (how == "yes") and ("Set up for JD Edwards keying" in out) == (how == "yes")
+    assert store.get_setting(core.PILOT_SETUP) == {"yes": "done", "no": "declined"}.get(how, "")
+    assert len(store.list_invoices()) == 1 + store.demo_count() and store.demo_count()  # every invoice kept
+    launch.older_folder_setup(args)  # the next start: asked once at most
+    assert len(asked) == (1 if how in ("yes", "no") else 0)

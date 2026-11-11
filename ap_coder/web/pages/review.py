@@ -57,6 +57,7 @@ from ap_coder.web.core import (
     get_settings,
     get_store,
     invoice_dir,
+    keying_to_set_up,
     local_url,
     login,
     money,
@@ -501,6 +502,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     context["bulk_job"] = bulk_notice(store)  # the person's bulk approval under way, or ended since (D-185)
     context["choose_screens"] = screens_to_choose(request, store)  # an older data folder: asked once (D-221)
+    context["keying_to_set_up"] = keying_to_set_up(store)  # what its "Use the simple screens" sets up too (B-2378)
     if tab == "review":
         from ap_coder.web.pages.invoice_drafts import open_elsewhere
 
@@ -577,6 +579,7 @@ def _getting_started(request: Request, store: Store, counts: dict[str, int]) -> 
         ring_label=f"{done_steps}/{needed}",
         waiting=counts.get(REVIEW, 0) if reference_or_none(store) is None else 0,
         choose_screens=screens_to_choose(request, store),
+        keying_to_set_up=keying_to_set_up(store),
     )  # fmt: skip
 
 
