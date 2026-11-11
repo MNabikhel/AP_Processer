@@ -73,6 +73,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -557,6 +560,10 @@ def bootstrap(argv: list[str]) -> int:
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
+    if (rebuild or not VENV_PY.exists()) and pip_source() == []:  # from PyPI: is it reached? (before .venv, B-2376)
+        blocked = unreachable_index()
+        if blocked is not None:
+            return failed(blocked)
     if rebuild:  # an old window may still run from that .venv (Windows can't delete it then): stopped first (B-556)
         code = make_way_for_venv(argv)
         if code is not None:
@@ -679,6 +686,71 @@ def pip_source() -> list[str] | None:
     if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
     return [] if setup_online() else None
+
+
+# Asked before pip downloads from PyPI (D-231): a small page of its index, briefly. A company network that blocks it
+# is said in plain words before anything is made, instead of pip retrying for minutes after .venv was made.
+PACKAGE_INDEX = "https://pypi.org/simple/pip/"
+INDEX_TIMEOUT = 10.0  # seconds
+# What a first setup from GitHub's ZIP downloads (11 Nov 2026, Windows, Python 3.14: the packages 181 MB, the OCR
+# models and the table finder 47 MB), and about how long it takes on a phone's hotspot, installing included.
+FIRST_SETUP = "about 230 MB, about 10 minutes"
+MODEL_HOSTS = "www.modelscope.cn (or its mirrors, huggingface.co and github.com: the OCR models)"
+
+
+def system_proxy() -> str:
+    """The proxy this computer's own settings name for HTTPS (Windows: Internet Options, which urllib reads from the
+    registry; a Mac: its network settings), "" when there is none or HTTPS_PROXY is set (pip reads that one itself).
+    urllib uses it on its own (the check of the package site, the OCR models' downloads); pip is given it (D-231)."""
+    if os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"):
+        return ""
+    return urllib.request.getproxies().get("https", "")
+
+
+def shown_proxy(proxy: str) -> str:
+    """The proxy as the window says it: its address only, never a user name or password written in it."""
+    parts = urllib.parse.urlsplit(proxy if "://" in proxy else f"http://{proxy}")
+    return f"{parts.hostname}:{parts.port}" if parts.port else str(parts.hostname or "the proxy")
+
+
+def index_problem() -> str:
+    """ "" when the package site (pypi.org) answers within INDEX_TIMEOUT seconds, through this computer's proxy when
+    it has one; else why not, in a few plain words (the error itself goes to the log)."""
+    try:
+        request = urllib.request.Request(PACKAGE_INDEX, method="HEAD")
+        with urllib.request.urlopen(request, timeout=INDEX_TIMEOUT) as answer:  # noqa: S310 - https, a fixed address
+            if urllib.parse.urlsplit(answer.geturl()).hostname == "pypi.org":
+                return ""
+            log(f"(The package site: {PACKAGE_INDEX} ended at {answer.geturl()})")
+            return "another page answered instead: a network that asks to sign in first?"
+    except Exception as exc:  # noqa: BLE001 - said plainly, the details in the log
+        log(f"(The package site, {PACKAGE_INDEX}: {type(exc).__name__}: {exc})")
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 407:
+            return "the company proxy asks for a sign-in"
+        if "tunnel connection failed" in str(exc).lower():
+            return "the company proxy refused it"
+        return fetch_models.plain_reason(exc)
+
+
+def unreachable_index() -> SetupError | None:
+    """Before pip downloads from PyPI: None when the package site answers; else what to do, said before anything is
+    installed (in the first phase, before .venv is made: none is left half set up)."""
+    why = index_problem()
+    if not why:
+        return None
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or system_proxy()
+    through = f", through this computer's proxy {shown_proxy(proxy)}" if proxy else ""
+    return SetupError(f"The setup can't reach the package site, pypi.org, from this network{through} ({why}). "
+                      "Nothing was installed.", network_advice())  # fmt: skip
+
+
+def network_advice() -> str:
+    """What to do on a network that blocks the downloads of a first setup from GitHub's ZIP (no bundle named: there
+    is none here)."""
+    again = "APProcessor.bat" if WINDOWS else "APProcessor.command"
+    return (f"Connect this laptop once to another network (a phone's hotspot, or at home) for this one setup: it "
+            f"downloads {FIRST_SETUP}. Or ask IT to allow pypi.org and files.pythonhosted.org (the packages) and "
+            f"{MODEL_HOSTS}. Then double-click {again} again.")  # fmt: skip
 
 
 # The packages with compiled code AP Coder can't run without: their wheels say which computers and Pythons the
@@ -839,6 +911,7 @@ def pip_env(source: list[str]) -> dict[str, str]:
 # How many of AP Coder's own requirements the pip run under way installs (_ensure_packages): pip installs what those
 # need too, so the count it ends with is larger, and says so.
 _wanted = {"count": 0}
+_proxy_said: list[str] = []  # this computer's proxy, once said in the window
 
 
 def pip_install(args: list[str]) -> bool:
@@ -849,8 +922,12 @@ def pip_install(args: list[str]) -> bool:
     if source is None:
         say("    Nothing installed: this offline build installs packages only from the bundle's wheelhouse folder.")
         return False
+    proxy = "" if source else system_proxy()  # (from PyPI: through this computer's proxy, said once, D-231)
+    if proxy and not _proxy_said:
+        _proxy_said.append(proxy)
+        say(f"Using this computer's proxy, {shown_proxy(proxy)}, for the downloads.")
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
-           *source, *args]  # fmt: skip
+           *source, *(["--proxy", proxy] if proxy else []), *args]  # fmt: skip
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
                             errors="replace", env=pip_env(source))  # fmt: skip
     assert proc.stdout is not None
@@ -1077,10 +1154,8 @@ def names(requirements: list[str]) -> str:
 
 def install_hint(source: list[str], left: list[str]) -> str:
     """What to do when pip could not install ``left``: from the wheelhouse, or (opted in) from PyPI."""
-    if not source:
-        return ("Check the internet connection (behind a company proxy: set HTTPS_PROXY=http://proxy:port in this "
-                "window), close any other AP Coder window, then start AP Coder again. A computer with no internet "
-                "needs the offline bundle instead (docs/GETTING_STARTED.md).")  # fmt: skip
+    if not source:  # (no wheelhouse here: none is named, D-231)
+        return f"Close any other AP Coder window. If it stops here again: {network_advice()}"
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     what = names(left) or "AP Coder itself"
     return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer. "
@@ -1211,6 +1286,10 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     elif misfit:
         say(f"{misfit}. Installing from the internet (PyPI) instead: {INTERNET_ENV}=1 allows it.")
     else:  # the opt-in, or the code alone (GitHub's ZIP): said plainly before anything is downloaded (D-94)
+        if self_problem or not all(map(is_ocr, missing)):  # (the OCR add-on alone is tried: never a reason to stop)
+            blocked = unreachable_index()  # (a .venv left from an earlier try: not pip's minutes of retries, B-2376)
+            if blocked is not None:
+                raise blocked
         say_downloads("the Python packages it needs (a few hundred MB)", PACKAGE_SITE)
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:

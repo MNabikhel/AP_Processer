@@ -361,6 +361,7 @@ def test_launch_py_looks_where_python_org_and_homebrew_put_314(tmp_path, monkeyp
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
     module = load_script("launch", "ap_script_launch_python")
+    monkeypatch.setattr(module, "index_problem", lambda: "")  # (the package site answers: never asked from a test)
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module, "VENV", tmp_path / ".venv")
     monkeypatch.setattr(module, "VENV_PY", tmp_path / ".venv" / "bin" / "python")
