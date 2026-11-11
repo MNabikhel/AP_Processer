@@ -10,6 +10,7 @@ from ap_coder.ai.supplier_prior import prior_for, rank, remark_shape
 from ap_coder.bench.jde_invoices import printed_name
 from ap_coder.core.caches import size_of
 from ap_coder.core.chart import split_account
+from tests import books
 from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
 
 JANITOR = f"{MAIN}.7340.3307"
@@ -356,6 +357,25 @@ def test_a_line_that_names_another_business_unit_is_not_coded_alone_to_the_suppl
         f"unit {pairs.name_of(other)}: check it.")  # fmt: skip
     assert _account(own) == usual  # (the line names the usual unit: the invoice's address is not read for it)
     assert _account(_coded(chart_company, vendor, plain).line_items[0]) == usual
+
+
+def test_a_business_unit_whose_every_word_other_units_names_have_is_named_by_its_whole_name(store, monkeypatch):
+    """B-2372: "Finance & Accounting" where four units are a Finance & Accounting (98 of the made-up year's 124 units
+    are so) was never named by a line: only the words of a unit's name that few units' names have were read. A line
+    with every word of such a unit's name names it, so a line of a supplier sure of one unit is not coded alone
+    there; a unit whose whole name is part of another's named on the line is not named."""
+    regions = {"0031061030": "Finance & Accounting", "0031061032": "Prairie Finance & Accounting",
+               "0031061034": "Coastal Finance & Accounting", "0031061036": "Northern Finance & Accounting"}  # fmt: skip
+    for code, name in regions.items():
+        monkeypatch.setitem(books.UNITS, code, (name, "ACT"))
+    monkeypatch.setitem(books.ACCOUNTS, "7420.4207", ("Courier - Domestic", (MAIN, FACILITIES, *regions)))
+    reference = load_chart(store)
+    assert sp.units_named(reference, "Courier charges - Finance & Accounting") == {"0031061030": 2}
+    assert sp.units_named(reference, "Courier charges - Prairie Finance & Accounting") == {"0031061032": 1}
+    _vendor(store, "RAPIDWAY COURIER CANADA LTD.", 3001)
+    load_journal(store, monthly(3001, "RAPIDWAY COURIER CANADA LT", COURIER, "{month} courier charges", 12))
+    line = _line_of(store, reference, "Rapidway Courier Canada Ltd.", "Courier charges - Finance & Accounting")
+    assert line.predicted_gl_code == "UNASSIGNED" and line.candidates[0]["account"] == "0031061030.7420.4207"
 
 
 def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_ordinary_lines(chart_company, tmp_path):
