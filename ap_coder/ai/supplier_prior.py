@@ -47,12 +47,12 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.caches import MB, Bounded
-from ..core.chart import clean, code_of, join_account
+from ..core.chart import clean, code_of, join_account, split_code
 from ..core.memory import ACCEPTED, CODED, CORRECTED, _fold, _normalise, vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import decided
 from ..core.store.journal import supplier_key
-from .line_match import keys, similarity
+from .line_match import PREFIX, Index, keys, similarity, word_match
 
 JOURNAL_WEIGHT = 1.0  # a coding line of last year's journal (or of imported past coding, or approved in bulk)
 APPROVAL_WEIGHT = 3.0  # a line a person approved in AP Coder as it was proposed
@@ -70,6 +70,11 @@ REMARKS_KEPT = 3  # shapes of remark kept for an account, the commonest
 TEXTS_KEPT = 24  # different remarks (and approved lines) of an account a new line is compared with
 SAID_ALIKE = 0.2  # a likeness from which the words are named in the reason
 DISTINCT = 3  # a word the names of more accounts (or business units) than this have says little of any one of them
+UNIT_WORD_LINES = 2  # lines of one business unit a word of the supplier's remarks is on, to tell the unit (D-226)...
+# ...and a word of the journal's remarks for this share of its GL codes, and as many as this at least (the made-up
+# year's 121 codes: a thing's words 1 to 5, an office's 45 and more).
+UNIT_WORD_SHARE, UNIT_WORD_CODES = 0.1, 3
+UNIT_NUMBER_DIGITS = 5  # a business unit's number printed on a line, leading zeros aside, has this many digits at least
 
 _MONTHS = (
     "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|"
@@ -148,6 +153,11 @@ class Prior:
     latest_approved_on: str = ""
     word_lines: Mapping[str, Mapping[str, int]] = field(default_factory=dict)  # a word -> {account: lines with it}
     word_weight: Mapping[str, float] = field(default_factory=dict)  # a word several accounts share counts for less
+    # A word of AP's remarks for the supplier that only one of its business units' lines have, on ``UNIT_WORD_LINES``
+    # lines at least ("4410 Alder" on Facilities alone): what tells a unit apart when the line says it (D-226).
+    unit_words: Mapping[str, str] = field(default_factory=dict)
+    # A supplier the journal does not have: the journal as a whole, what it is offered from (``from_book``, D-226).
+    book: Book | None = field(default=None, compare=False, repr=False)
 
     def __bool__(self) -> bool:
         return bool(self.accounts)
@@ -458,8 +468,9 @@ def _use(pair: tuple[str, str], u: _Count, weight: float) -> AccountUse:
 
 
 def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[str, Any]],
-           approved: dict[str, Any]) -> Prior:  # fmt: skip
-    """The prior from a supplier's journal lines and the vendor's lessons counted."""
+           approved: dict[str, Any], offices: frozenset[str] = frozenset()) -> Prior:  # fmt: skip
+    """The prior from a supplier's journal lines and the vendor's lessons counted; ``offices``: the journal's words
+    that say for whom (``_offices``), for ``Prior.unit_words``."""
     counted = _Counted()
     counted.journal(lines)
     counted.approved(approved)
@@ -474,6 +485,7 @@ def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[st
             units.setdefault(a.code, Counter())[a.business_unit] += a.lines
     vouchers = counted.vouchers
     return Prior(
+        unit_words=_unit_words(counted.uses, offices) if len({a.business_unit for a in accounts}) > 1 else {},
         journal=True, supplier_number=number, supplier_name=name, found_by=found_by, note=note,
         accounts=tuple(accounts), lines=sum(a.lines for a in accounts),
         journal_lines=sum(a.journal_lines for a in accounts), approved=sum(a.approved for a in accounts),
@@ -486,13 +498,27 @@ def _built(number: str, name: str, found_by: str, note: str, lines: list[dict[st
     )  # fmt: skip
 
 
+def _unit_words(uses: Mapping[tuple[str, str], _Count], offices: frozenset[str]) -> dict[str, str]:
+    """{a word of AP's remarks: the one business unit of the supplier whose lines have it}, on ``UNIT_WORD_LINES``
+    lines at least, and one of the ``offices``: it says for whom, not what was bought. ``Prior.unit_words``."""
+    on: dict[str, Counter[str]] = {}
+    for (unit, _), use in uses.items():
+        for shape, lines in (use.shapes + use.kept).items():
+            for word in keys(shape):
+                on.setdefault(word, Counter())[unit] += lines
+    return {word: unit for word, units in on.items()
+            if len(units) == 1 and (unit := next(iter(units))) and units[unit] >= UNIT_WORD_LINES
+            and word in offices}  # fmt: skip
+
+
 def prior_for(store: Any, vendor: Any, always: bool = False) -> Prior:
     """The prior of the supplier ``vendor`` is: the vendor list's row of an invoice's vendor (``Store.find_vendor``),
     or the name the invoice prints. ``EMPTY`` when no journal is loaded, unless ``always`` (the caller codes to whole
     account strings: a chart of accounts was imported): then it is counted from the vendor's approved lines alone,
     and ``Prior.journal`` is False. A supplier the journal does not have still has a prior once lines of it were
     approved here; ``Prior.found_by`` and ``note`` say how it was looked for. Kept in this process until the
-    journal, the vendor's lessons or the vendor list change. Shared: read it, don't change it."""
+    journal, the vendor's lessons or the vendor list change. Shared: read it, don't change it. A supplier the
+    journal does not have carries the journal as a whole (``Prior.book``, D-226), kept with the priors."""
     name, key, number = _vendor(store, vendor)
     if not key:
         return EMPTY
@@ -505,11 +531,15 @@ def prior_for(store: Any, vendor: Any, always: bool = False) -> Prior:
         if not names and not always:  # every journal was taken out again
             return EMPTY
         lines, found_by, note = _journal_lines(store, names, name, number) if names else ([], "", "")
+        offices = _offices(store, stamp[0]) if names else frozenset()
         return replace(_built(str(lines[-1]["supplier_number"]).strip() if lines else "",
                               str(lines[-1]["supplier_name"]) if lines else "", found_by, note, lines,
-                              store.approved_coding(key)), journal=bool(names))  # fmt: skip
+                              store.approved_coding(key), offices), journal=bool(names))  # fmt: skip
 
-    return _kept(("prior", str(store.path), key, number, "" if number else _plain(name), always), stamp, make)
+    prior = _kept(("prior", str(store.path), key, number, "" if number else _plain(name), always), stamp, make)
+    if prior.journal and not prior:  # a supplier the journal does not have: offered from the journal as a whole
+        return replace(prior, book=_book(store, stamp[0]))
+    return prior
 
 
 # --- Ranking a line ----------------------------------------------------------------------------------------------
@@ -590,24 +620,212 @@ def reads_like(reference: ReferenceData, line_text: str) -> list[str]:
     return [code for _, code in sorted(found, key=lambda f: -f[0])]
 
 
+_NUMBER = re.compile(r"(?<![\w.,/-])0*(\d+)(?![\w.,/]|-\d)")  # a number on its own, its leading zeros aside
+UNIT_NUMBER = 10  # what a unit's number printed counts for in ``units_named``: more than every word of a name
+
+
 def units_named(reference: ReferenceData, line_text: str) -> dict[str, int]:
     """{a business unit a line names: how many words of its name the line has}: the line has every word of the
     unit's name, the words more than ``DISTINCT`` business units' names have aside ("Smartphone device balance - IT
     - Data Centre" names IT - Data Centre; "Prairie" is Prairie Administration where four units are an
-    Administration). Of the business units with an account offered; none with no chart imported."""
+    Administration); or the unit's number, leading zeros aside, of ``UNIT_NUMBER_DIGITS`` digits at least ("Cost
+    centre 21061028" names 0021061028; it counts ``UNIT_NUMBER``, D-226). Of the business units with an account
+    offered; none with no chart imported."""
     pairs = reference.pairs
     if pairs is None:
         return {}
 
-    def read() -> dict[str, frozenset[str]]:
-        names = {unit: keys(pairs.name_of(unit)) for unit in pairs.business_units()}
+    def read() -> tuple[dict[str, frozenset[str]], dict[str, str]]:
+        units = pairs.business_units()
+        names = {unit: keys(pairs.name_of(unit)) for unit in units}
         common = Counter(word for found in names.values() for word in found)
         told = {unit: frozenset(w for w in found if common[w] <= DISTINCT) for unit, found in names.items()}
-        return {unit: words for unit, words in told.items() if words}
+        numbers = {unit.lstrip("0"): unit for unit in units if len(unit.lstrip("0")) >= UNIT_NUMBER_DIGITS}
+        return {unit: words for unit, words in told.items() if words}, numbers
 
     line = keys(line_text)
-    told = _kept(("units", id(pairs)), weakref.ref(pairs), read)
-    return {unit: len(words) for unit, words in told.items() if words <= line}
+    told, numbers = _kept(("units", id(pairs)), weakref.ref(pairs), read)
+    found = {unit: len(words) for unit, words in told.items() if words <= line}
+    for number in _NUMBER.findall(line_text) if numbers else ():
+        if number in numbers:
+            found[numbers[number]] = UNIT_NUMBER
+    return found
+
+
+def unit_words_said(prior: Prior | None, reference: ReferenceData, text: str) -> dict[str, list[str]]:
+    """{a business unit of the supplier: the words of ``text`` that AP's remarks for its lines alone have}
+    (``Prior.unit_words``: "4410 Alder", the office a remark ends with), but a word of an account's name of the GL
+    account list (it says what was bought, not for whom). None with no chart imported."""
+    if prior is None or not prior.unit_words or reference.pairs is None:
+        return {}
+    found: dict[str, list[str]] = {}
+    for word in sorted(keys(text)):
+        unit = prior.unit_words.get(word)
+        if unit is not None and word not in _named_words(reference):
+            found.setdefault(unit, []).append(word)
+    return found
+
+
+def _named_words(reference: ReferenceData) -> frozenset[str]:
+    """Every word of the names (and categories) of the GL account list, worked out once for a list."""
+    table = reference.chart_of_accounts
+
+    def read() -> frozenset[str]:
+        return frozenset(word for _, listed in _listed_names(reference).values() for word in keys(listed))
+
+    return _kept(("name words", id(table)), weakref.ref(table), read)
+
+
+# --- A supplier the journal does not have: the journal as a whole (D-226) -----------------------------------------
+
+BOOK_ALIKE = 0.2  # another supplier's remark this alike to a line (``line_match.similarity``) is evidence for it
+NAMED_MOST = 12  # a word of the vendor's name more of the journal's suppliers' names have says nothing of what it sells
+W_VENDOR = 1.5  # ``from_book``: times the share of the code in the lines of the suppliers named alike
+BOOK_OFFERED = 8  # GL codes ``from_book`` offers at most...
+BOOK_LEAST = 0.3  # ...of this score at least (by the name alone: a fifth of the lines of the suppliers named alike)
+
+
+@dataclass(frozen=True)
+class Book:
+    """Last year's journal as a whole, for a supplier it does not have: each different shape of remark AP wrote and
+    the GL code it went to (``index``, by words: a word that went to several codes counts for less), with its lines
+    and its suppliers; the words of the suppliers' names, each with the share of each GL code in each of those
+    suppliers' lines; and the business units of each GL code."""
+
+    index: Index
+    lines: tuple[int, ...]  # of each entry of ``index``...
+    suppliers: tuple[int, ...]
+    examples: tuple[str, ...]  # ...and a remark of it as written
+    named: Mapping[str, tuple[Mapping[str, float], ...]]  # a word of suppliers' names -> each one's {code: share}
+    by_letter: Mapping[str, tuple[str, ...]]  # the words of ``named`` by their first letter
+    units_of: Mapping[str, tuple[str, ...]]  # a GL code -> the business units its lines went to, the most first
+
+
+def _book(store: Any, journal_stamp: int) -> Book:
+    """The ``Book`` of ``store``'s journal, read when a supplier it does not have is coded and kept with the priors
+    while ``journal_stamp`` holds (the made-up year's 7,500 lines: 0.1 s, 1.5 MB)."""
+
+    def read() -> Book:
+        entries: dict[tuple[frozenset[str], str], list[Any]] = {}  # (words, code) -> [lines, suppliers, a remark]
+        coded: dict[str, Counter[str]] = {}  # a supplier -> {code: lines}
+        units_of: dict[str, Counter[str]] = {}
+        for row in store.journal_remarks():
+            code, lines = code_of(row["object"], row["subsidiary"]), int(row["lines"])
+            coded.setdefault(row["supplier_key"], Counter())[code] += lines
+            units_of.setdefault(code, Counter())[clean(row["business_unit"])] += lines
+            if words := keys(remark_shape(row["remark"])):
+                entry = entries.setdefault((words, code), [0, set(), str(row["remark"]).strip()])
+                entry[0] += lines
+                entry[1].add(row["supplier_key"])
+        named: dict[str, list[Mapping[str, float]]] = {}
+        for supplier, name in {r["supplier_key"]: r["supplier_name"] for r in store.journal_supplier_names()}.items():
+            if supplier in coded:
+                total = sum(coded[supplier].values())
+                shares = {code: n / total for code, n in coded[supplier].items()}
+                for word in keys(vendor_key(name)):
+                    named.setdefault(word, []).append(shares)
+        letters: dict[str, list[str]] = {}
+        for word in named:
+            letters.setdefault(word[0], []).append(word)
+        found = list(entries.items())
+        return Book(
+            index=Index([words for (words, _), _ in found], [code for (_, code), _ in found]),
+            lines=tuple(e[0] for _, e in found), suppliers=tuple(len(e[1]) for _, e in found),
+            examples=tuple(e[2] for _, e in found), named={w: tuple(v) for w, v in named.items()},
+            by_letter={k: tuple(v) for k, v in letters.items()},
+            units_of={code: tuple(u for u, _ in c.most_common()) for code, c in units_of.items()},
+        )  # fmt: skip
+
+    return _kept(("book", str(store.path)), journal_stamp, read)
+
+
+def _offices(store: Any, journal_stamp: int) -> frozenset[str]:
+    """The words of the journal's remarks that went to ``UNIT_WORD_SHARE`` of its GL codes and ``UNIT_WORD_CODES``
+    at least: they say for whom a purchase was ("alder" of "4410 Alder"), not what it was ("filter" of "filter
+    change" goes with one code), for ``Prior.unit_words``. Kept while ``journal_stamp`` holds."""
+
+    def read() -> frozenset[str]:
+        codes: dict[str, set[str]] = {}
+        every = set()
+        for row in store.journal_remarks():
+            code = code_of(row["object"], row["subsidiary"])
+            every.add(code)
+            for word in keys(remark_shape(row["remark"])):
+                codes.setdefault(word, set()).add(code)
+        least = max(UNIT_WORD_CODES, UNIT_WORD_SHARE * len(every))
+        return frozenset(word for word, found in codes.items() if len(found) >= least)
+
+    return _kept(("offices", str(store.path)), journal_stamp, read)
+
+
+@dataclass(frozen=True)
+class BookCandidate:
+    """A GL code ``from_book`` offers, the business units to offer it on (the likeliest first) and why."""
+
+    code: str
+    units: tuple[str, ...]
+    score: float
+    reasons: list[str]
+
+
+def from_book(book: Book, line_text: str, vendor_name: str, reference: ReferenceData) -> list[BookCandidate]:
+    """The GL codes the journal as a whole has for a line of a supplier it does not have, the likeliest first,
+    ``BOOK_OFFERED`` at most: by how alike the line is to a remark AP wrote for other suppliers' lines (``W_REMARK``
+    times the likeness, of ``BOOK_ALIKE`` at least) and to the code's name (``W_NAME``), and by the codes of the
+    suppliers whose names have a word of the vendor's ("Courier", "Janitorial": ``W_VENDOR`` times the code's share
+    of their lines, as far as they sell one kind of thing; a word more than ``NAMED_MOST`` suppliers' names have says
+    nothing); ``BOOK_LEAST`` at least. Its business units: those the code's lines went to, the most lines first
+    (``complete_pair`` offers the first that may be posted to, as a guess when there are several). Only a code of
+    the GL account list a line may be offered (``ReferenceData.line_accounts``)."""
+    line = keys(line_text)
+    remarked: dict[str, tuple[float, int, int]] = {}  # code -> (likeness, lines, the entry most alike)
+    for i, sim in book.index.similar(line, BOOK_ALIKE) if line else ():
+        code = book.index.accounts[i]
+        if (sim, book.lines[i]) > remarked.get(code, (0.0, 0, -1))[:2]:
+            remarked[code] = (sim, book.lines[i], i)
+    by_name: dict[str, tuple[float, str, int, int]] = {}  # code -> (share, the word, suppliers on it, of)
+    for word in sorted(keys(vendor_key(vendor_name))):
+        suppliers = [shares for w in book.by_letter.get(word[0], ()) if word_match(word, w) >= PREFIX
+                     for shares in book.named[w]]  # fmt: skip
+        if not suppliers or len(suppliers) > NAMED_MOST:
+            continue
+        # As far as those suppliers sell one kind of thing: of n, k whose lines went most to one object, (k - 1) / n
+        # ("Courier": 5 of 5 on postage and courier, 0.8; a place's name two unlike suppliers share, 0; one, 0).
+        kinds = Counter(_object_most(shares) for shares in suppliers)
+        agree = (kinds.most_common(1)[0][1] - 1) / len(suppliers)
+        codes: Counter[str] = Counter()
+        for shares in suppliers:
+            codes.update(shares)
+        for code, total in codes.items():
+            share = agree * total / len(suppliers)
+            if share > by_name.get(code, (0.0,))[0]:
+                by_name[code] = (share, word, sum(1 for s in suppliers if code in s), len(suppliers))
+    valid = frozenset(reference.line_accounts())
+    scored = []
+    for code in sorted({*remarked, *by_name} & valid):
+        sim, _, i = remarked.get(code, (0.0, 0, -1))
+        share, word, have, of = by_name.get(code, (0.0, "", 0, 0))
+        reasons = []
+        if i >= 0:
+            lines, others = book.lines[i], book.suppliers[i]
+            reasons.append(f"AP wrote “{book.examples[i]}” for {lines} line{'s' * (lines != 1)} of {others} other "
+                           f"supplier{'s' * (others != 1)} last year")  # fmt: skip
+        if share:
+            reasons.append(f"{have} of the {of} suppliers named “{word}” had lines on it last year")
+        name = similarity(line, name_words(reference, "", code)) if line else 0.0
+        score = W_REMARK * sim + W_NAME * name + W_VENDOR * share
+        if score >= BOOK_LEAST:
+            scored.append(BookCandidate(code, book.units_of.get(code, ()), score, reasons))
+    scored.sort(key=lambda c: -c.score)
+    return scored[:BOOK_OFFERED]
+
+
+def _object_most(shares: Mapping[str, float]) -> str:
+    """The object account a supplier's lines went to most, of its {GL code: share}."""
+    objects: Counter[str] = Counter()
+    for code, share in shares.items():
+        objects[split_code(code)[0]] += share
+    return objects.most_common(1)[0][0]
 
 
 def _shared(line: frozenset[str], words: frozenset[str]) -> list[str]:

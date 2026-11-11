@@ -5,10 +5,11 @@ import datetime as dt
 import pytest
 
 from ap_coder.ai import supplier_prior as sp
-from ap_coder.ai.offline_coder import code_from_capture
+from ap_coder.ai.offline_coder import addressed_to, code_from_capture
 from ap_coder.ai.supplier_prior import prior_for, rank, remark_shape
 from ap_coder.bench.jde_invoices import printed_name
 from ap_coder.core.caches import size_of
+from ap_coder.core.chart import split_account
 from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
 
 JANITOR = f"{MAIN}.7340.3307"
@@ -344,3 +345,126 @@ def test_the_business_unit_a_line_names_puts_the_suppliers_account_on_it_first(c
     unit = chart_company.store.reference_data().pairs.name_of(lines[0]["candidates"][0]["business_unit"])
     assert lines[0]["description"].endswith(f" - {unit}")
     assert lines[0]["candidates"][0]["reason"].startswith(f"the line names the business unit {unit}; ")
+
+
+# --- the supplier billed to thirteen business units, and a supplier never seen (D-226) ----------------------------
+
+NEW_SUPPLIER = "A new supplier: not in last year's journal: pick the account."
+
+
+def _windrow(chart_company):
+    """(the name its invoices print, its accounts) of the supplier of the fifteen-line invoice: one object.subsidiary
+    on thirteen business units."""
+    supplier = chart_company.invoices["fifteen_lines"][0].supplier
+    return printed_name(supplier.name), list(supplier.accounts)
+
+
+def _unit_name(chart_company, account):
+    return chart_company.store.reference_data().pairs.name_of(split_account(account)[0])
+
+
+def _named_by_name(chart_company, accounts):
+    """The accounts whose business unit's name names that unit (``units_named``)."""
+    reference = chart_company.store.reference_data()
+    return [a for a in accounts if split_account(a)[0] in sp.units_named(reference, _unit_name(chart_company, a))]
+
+
+def test_a_line_left_keeps_every_business_unit_the_supplier_used_its_account_on(chart_company):
+    """B-2335: a line of the telephone supplier that names no business unit kept five of its thirteen accounts: a
+    person keying another unit found it in no list of the line. It keeps all thirteen; still none is coded."""
+    vendor, accounts = _windrow(chart_company)
+    line = _coded(chart_company, vendor, "Smartphone device balance").line_items[0]
+    assert _account(line) == "" and line.decided_by == {}
+    assert sorted(c["account"] for c in line.candidates) == sorted(accounts)
+    assert line.candidates[0]["account"] == prior_for(chart_company.store, vendor).accounts[0].account
+
+
+def test_a_line_that_prints_a_business_units_number_puts_the_suppliers_account_on_it_first(chart_company):
+    """B-2336: "Smartphone device balance - cost centre 21061016" (the unit's number, its leading zeros aside) was
+    offered the most used unit's account first: only a unit's name was read. Its number names it too."""
+    vendor, accounts = _windrow(chart_company)
+    for account in (accounts[-1], accounts[-2]):
+        unit = split_account(account)[0]
+        line = _coded(chart_company, vendor, f"Smartphone device balance - cost centre {unit.lstrip('0')}")
+        first = line.line_items[0].candidates[0]
+        assert _account(line.line_items[0]) == "" and first["account"] == account
+        assert first["reason"].startswith(f"the line names the business unit {_unit_name(chart_company, account)}; ")
+    # A quantity is no unit's number.
+    line = _coded(chart_company, vendor, "Wireless voice & data plan - 24 subscribers").line_items[0]
+    assert not line.candidates[0]["reason"].startswith("the line names")
+
+
+def test_the_invoices_ship_to_or_attention_line_puts_the_suppliers_account_on_the_unit_it_names_first(chart_company):
+    """B-2337: an invoice printed "Ship to: ... Attn: <a department>", and each line that names no unit was offered
+    the most used unit's account first. A line that names none goes by what the invoice is addressed to; a line
+    that names its own unit keeps it; the bill-to (AP's own address) names nothing."""
+    store = chart_company.store
+    vendor, accounts = _windrow(chart_company)
+    attention, own = _named_by_name(chart_company, accounts[1:])[:2]
+    text = (
+        f"{vendor}\nBill to: Maple Ridge Holdings Ltd.\nAttn: Accounts Payable\n410 Elm Street\n"
+        f"Ship to: Maple Ridge Holdings Ltd.\nAttn: {_unit_name(chart_company, attention)}\n410 Elm Street\n"
+    )
+    read = captured(
+        vendor, "Smartphone device balance", f"Roaming and airtime usage - {_unit_name(chart_company, own)}"
+    )
+    coding = code_from_capture(read, store.reference_data(), store.feedback_rows(), store, text=text).coding
+    first, second = coding.line_items
+    assert (_account(first), _account(second)) == ("", "")
+    assert first.candidates[0]["account"] == attention and first.candidates[0]["reason"].startswith(
+        f"the invoice's ship-to or attention names the business unit {_unit_name(chart_company, attention)}; "
+    )
+    assert second.candidates[0]["account"] == own
+    assert addressed_to(text) == (f"Ship to: Maple Ridge Holdings Ltd.\nAttn: {_unit_name(chart_company, attention)}"
+                                  "\n410 Elm Street")  # fmt: skip
+
+
+def test_an_office_only_one_units_remarks_name_puts_the_suppliers_account_on_that_unit_first(chart_company):
+    """B-2338: AP ends a remark with the office a purchase is for ("cell phones 77 Kingfisher"), and the supplier's
+    lines for that office all went to one business unit, yet a line printing the office was offered the most used
+    unit's account first. A word only one unit's remarks have, which the journal writes with every kind of purchase
+    (an office, not a thing), names that unit; a word of what was bought does not."""
+    store = chart_company.store
+    vendor, accounts = _windrow(chart_company)
+    office = accounts[-1]
+    number, printed = store.find_vendor(vendor)["erp_id"], vendor.upper()[:26]
+    others = [a.string for a in chart_company.truth.suggestable()][:8]
+    load_journal(store, [
+        (number, printed, dt.date(2025, 11, 3), [(office, 80, "cell phones 77 Kingfisher")]),
+        (number, printed, dt.date(2025, 12, 3), [(office, 80, "cell phones 77 Kingfisher")]),
+        (98815, "TERN OFFICE SERVICES", dt.date(2025, 12, 5), [(a, 10, "misc purchase 77 Kingfisher") for a in others]),
+    ], name="more.csv")  # fmt: skip
+    prior = prior_for(store, store.find_vendor(vendor))
+    assert prior.unit_words.get("kingfisher") == split_account(office)[0] and "phone" not in prior.unit_words
+    line = _coded(chart_company, vendor, "Smartphone device balance - 77 Kingfisher").line_items[0]
+    assert _account(line) == "" and line.candidates[0]["account"] == office
+    assert line.candidates[0]["reason"].startswith(
+        f"the line says “kingfisher”, as AP's remarks for this supplier's lines on {_unit_name(chart_company, office)} "
+        "alone did; "
+    )
+
+
+def test_a_new_suppliers_line_is_offered_the_accounts_the_journal_has_for_its_words_and_its_name(chart_company):
+    """B-2339: a supplier in neither the supplier master nor last year's journal was offered only the accounts whose
+    name has a word of the line: Courier - Domestic for "Customs courier - entry 4471", though the department's
+    remarks say "customs courier" of Courier - Cross Border, and nothing for "Ground shipment waybill" from a
+    courier, though the suppliers named "Courier" all went to postage and courier. Its lines are offered what the
+    journal as a whole has for their words and for the vendor's name, saying so; none is coded."""
+    store = chart_company.store
+    _, cross_border = _courier(chart_company)
+    domestic = f"{split_account(cross_border)[0]}.7420.4207"
+    load_journal(store, [(98825, "NORTHGATE COURIER LTD.", dt.date(2025, 12, 1), [(domestic, 40, "waybills")]),
+                         (98825, "NORTHGATE COURIER LTD.", dt.date(2025, 12, 8), [(domestic, 40, "waybills")])],
+                 name="couriers.csv")  # fmt: skip
+    lines = _coded(chart_company, "Blue Heron Courier Inc.", "Customs courier - entry 4471",
+                   "Ground shipment waybill 77812", "SaaS seats x 3 - annual").line_items  # fmt: skip
+    assert [_account(line) for line in lines] == ["", "", ""]
+    assert all(line.reasoning_justification == NEW_SUPPLIER and not line.decided_by for line in lines)
+    customs, ground, saas = lines
+    assert customs.candidates[0]["account"] == cross_border and customs.candidates[0]["source"] == "others"
+    assert customs.candidates[0]["reason"].startswith("AP wrote “")
+    assert {c["account"] for c in ground.candidates[:2]} == {cross_border, domestic}
+    assert "suppliers named “courier” had lines on it last year" in ground.candidates[0]["reason"]
+    # Near no remark and no account's name: what suppliers named alike went to, by the name alone.
+    assert {c["account"] for c in saas.candidates} == {cross_border, domestic}
+    assert all(c["reason"].startswith("1 of the 2 suppliers named “courier”") for c in saas.candidates)

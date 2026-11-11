@@ -347,3 +347,16 @@ def test_server_mode_itself_starts_on_its_own_data(laptop, started):
     service.write_config(data, port=8599)
     assert cli.main(["--db", str(db), "serve", "--server", "--insecure-http", "--port", "8599"]) == 0
     assert len(started) == 1
+
+
+def test_looking_for_a_team_server_on_a_new_data_folder_makes_no_database(tmp_path):
+    """B-2317: the check before a laptop-mode start (D-211) opened the database to count its sign-in accounts, and
+    SQLite made an empty file where there was none: the first start then took the new data folder for an old one
+    and never gave it the Simple screens and the JD Edwards settings (web/core.first_run)."""
+    from ap_coder.web.core import EVERYTHING, SCREENS, SIMPLE, first_run
+
+    db = tmp_path / "ap_coder.db"
+    assert safety.team_server(tmp_path, db) is None
+    assert not db.exists()
+    store = first_run(db, server=False)
+    assert store.get_setting(SCREENS, EVERYTHING) == SIMPLE

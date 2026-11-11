@@ -68,8 +68,10 @@ from .supplier_prior import (
     Prior,
     account_name,
     alike,
+    from_book,
     name_words,
     reads_like,
+    unit_words_said,
     units_named,
 )
 from .supplier_prior import rank as rank_prior
@@ -710,6 +712,7 @@ TIER = {"vendor": 3, "supplier": 2, "others": 1, "usual": 1, "master": 1, "words
 # alike to anything known of the supplier's own), reads like the other account: left for a person (B-2228).
 ANOTHER_ALIKE = 0.5
 MEALS_OFFERED = 3  # meals accounts offered for a line that reads as a meal on such a supplier's invoice
+BOOK_SCORE = 0.1  # a new supplier's account from the journal as a whole: its score (``from_book``, 0 to 6.5) times this
 
 
 def by_pairs(reference: ReferenceData, prior: Prior | None = None) -> bool:
@@ -783,7 +786,7 @@ def _placed(reference: ReferenceData, code: str, unit: str, units: list[str], so
 
 def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]], reference: ReferenceData,
                limit: int = 20, default_gl: str = "", key: str | None = None, prior: Prior | None = None,
-               units: Iterable[str] = ()) -> list[Candidate]:  # fmt: skip
+               units: Iterable[str] = (), addressed: str = "") -> list[Candidate]:  # fmt: skip
     """Up to ``limit`` account strings for one invoice line, the likeliest first, from every source: this vendor's
     approved lines like it, the supplier's coding (``prior``: ``supplier_prior.prior_for``), other vendors' lines
     like it, the vendor master's default (``default_gl``) and the words of the accounts' names. Each is a pair
@@ -791,7 +794,11 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
     to: never a reserved subsidiary, a business unit that is closed or marked DO NOT USE, or an account that takes
     no postings. The first says whether it may code the line with no one picking (``Candidate.auto``): this vendor's
     own approved lines as before, or the supplier's one account (``Prior.sure``) when no approved line of the vendor
-    like this one went elsewhere; never a guess of the business unit.
+    like this one went elsewhere; never a guess of the business unit. A supplier last year's journal does not have
+    is offered, with a chart imported, the accounts the journal as a whole has for the line's words and the vendor's
+    name (``supplier_prior.from_book``, D-226), as other vendors' lines: never coded by them. A line left for a
+    person has the supplier's accounts on the business unit it (or else the invoice's ship-to and attention lines,
+    ``addressed``) names first (``_named_unit_first``).
 
     With no chart imported and no journal loaded these are ``suggest_gl``'s own, uncut: the GL code and the past
     line's cost center."""
@@ -830,6 +837,10 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
     for s in found:
         offer(TIER.get(s.source, 0), _placed(reference, s.gl_code, _unit(s.cost_center), used, s.source, s.score,
                                              s.reasons, check=s.check))  # fmt: skip
+    if prior is not None and prior.book is not None and reference.pairs is not None:  # a new supplier (D-226)
+        for b in from_book(prior.book, description, vendor_name, reference):
+            offer(TIER["others"], _placed(reference, b.code, "", list(b.units), "others", BOOK_SCORE * b.score,
+                                          b.reasons))  # fmt: skip
     ordered = [c for _, c in sorted(offered.values(), key=lambda found: (-found[0], -found[1].score))]
     if ordered:
         ordered[0].auto = _sure(ordered[0], offered, found, prior, description)
@@ -837,7 +848,7 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
             ordered = _unless_another_kind(description, ordered, prior, reference, used)
         if not ordered[0].auto and not ordered[0].check:
             own = {c.account for tier, c in offered.values() if tier >= TIER["supplier"]}
-            ordered = _named_unit_first(description, ordered, own, reference)
+            ordered = _named_unit_first(description, ordered, own, reference, prior, addressed)
     return ordered[:limit]
 
 
@@ -845,21 +856,32 @@ def _unit(cost_center: str) -> str:
     return "" if cost_center in ("", UNASSIGNED) else cost_center
 
 
-def _named_unit_first(description: str, ordered: list[Candidate], own: set[str],
-                      reference: ReferenceData) -> list[Candidate]:  # fmt: skip
+def _named_unit_first(description: str, ordered: list[Candidate], own: set[str], reference: ReferenceData,
+                      prior: Prior | None = None, addressed: str = "") -> list[Candidate]:  # fmt: skip
     """``ordered``, the accounts offered for a line left for a person, with the supplier's (``own``: those of this
     vendor's approved lines and of the supplier's coding) on a business unit the line names first, each saying so
     (B-2253): "Smartphone device balance - IT - Data Centre" is the supplier's telephone account on IT - Data
-    Centre, whichever of its thirteen business units had most lines. The unit whose name has most words first; the
+    Centre, whichever of its thirteen business units had most lines. A line names a unit by its name or its number
+    (``supplier_prior.units_named``), or by a word only AP's remarks for the supplier's lines on that unit have
+    ("4410 Alder", ``supplier_prior.unit_words_said``, D-226); a line that names none of the supplier's units goes by
+    what the invoice is ``addressed`` to (its ship-to and attention lines). The unit named most strongly first; the
     rest as they were. It only orders: no line is coded by it."""
-    named = units_named(reference, description)
-    first = [c for c in ordered if c.account in own and c.business_unit in named]
+    for text, said in ((description, "the line"), (addressed, "the invoice's ship-to or attention")):
+        named = {unit: (n, f"{said} names the business unit {reference.pairs.name_of(unit)}")
+                 for unit, n in units_named(reference, text).items()} if text else {}  # fmt: skip
+        for unit, words in unit_words_said(prior, reference, text).items() if text else ():
+            quoted = ", ".join(f"“{w}”" for w in words)
+            named.setdefault(unit, (len(words), f"{said} says {quoted}, as AP's remarks for this supplier's lines on "
+                                                f"{reference.pairs.name_of(unit) or unit} alone did"))  # fmt: skip
+        first = [c for c in ordered if c.account in own and c.business_unit in named]
+        if first:
+            break
     if not first:
         return ordered
     for c in first:
-        c.reasons.insert(0, f"the line names the business unit {reference.pairs.name_of(c.business_unit)}")
+        c.reasons.insert(0, named[c.business_unit][1])
         c.reason = "; ".join(c.reasons)
-    first.sort(key=lambda c: -named[c.business_unit])
+    first.sort(key=lambda c: -named[c.business_unit][0])
     return [*first, *(c for c in ordered if not any(c is f for f in first))]
 
 

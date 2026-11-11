@@ -39,6 +39,7 @@ def test_the_quick_run_scores_the_held_out_lines_by_kind_of_vendor(tmp_path):
     assert one["first_right"] == 1.0 and one["coded"] > 0 and one["coded_right"] == one["coded"]
     assert everything["coded_right"] == everything["coded"]  # nothing coded alone is wrong on this journal
     assert everything["in_top3"] > 0.6 and summary["by_kind"][cj.NEW]["coded"] == 0
+    assert everything["kept"] >= everything["in_top3"]  # (the accounts a line left keeps: the first three and more)
     assert summary["ms_a_line_after"] < 50  # (0.9 ms measured)
     grid = {(g["share"], g["lines"]): g for g in summary["sure_grid"]}
     assert grid[(0.9, 3)]["wrong"] == 0 and grid[(0.8, 2)]["coded"] >= grid[(0.9, 3)]["coded"]

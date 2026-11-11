@@ -256,6 +256,20 @@ Two commands answer it before anyone relies on AP Coder. Both run on this laptop
 (not its learning, not the journal loaded) and write their report into `pilot_score` in the data folder. Run them
 in the black window's folder, with AP Coder's Python (as `python -m ap_coder doctor`).
 
+Both reports open with the same short table of line figures, in the words of the pilot's gate, also said on the
+screen and kept in the report's `.json` (`gate`):
+
+| the lines | what it counts |
+| --- | --- |
+| Lines | every coding line scored |
+| Coded alone | AP Coder put the account in with no one picking (not its guess, not a person's pick) |
+| Right when coded alone | of those, the account string keyed: business unit, object and subsidiary |
+| Your account first / among the first three | the keyed account was the first account it offered, or one of the first three (the one it put in first) |
+| Left to a person: your account among the first three | the same, for the lines it left to a person |
+
+A line with no keyed line of its own to compare with (only with real invoices, below) is counted in *Lines* and
+*Coded alone*, left out of the other figures, and the report says how many and why.
+
 **1. From last year's journal alone (no invoices needed, a few seconds):**
 
 ```
@@ -304,6 +318,11 @@ one of:
 - *a line left to a person, no account wrong* (AP Coder was not sure, and said so);
 - *object and subsidiary right, a business unit wrong*;
 - *an account wrong*.
+
+The line figures at the top pair each invoice line with a keyed line of the same amount, when the keyed lines of
+that amount are all on one account; the lines left go with the keyed lines left when those are all on one account (AP
+keyed several lines as one). A line still unpaired (AP split it over two business units, keyed lines of its amount on
+two accounts, amounts that differ) is left out of them, and counted with why.
 
 It also compares the invoice number, dates, gross amount and currency with the voucher list, and the GST it would
 recover with the journal's tax line. `proposed_score_misses.csv` shows both sides of every voucher not wholly right;

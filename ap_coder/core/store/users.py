@@ -280,7 +280,7 @@ def sign_in_accounts(db: Path) -> int:
     be read. Asked before a laptop-mode start opens it (D-211): no Store is opened on it (that would migrate it), and
     one closed cleanly (no write-ahead log) is read as a file that does not change, so that no ``-wal`` file is left
     beside it (the update reads that file's time as the database's last use: ``scripts/upgrade.py``)."""
-    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "immutable=1"
+    how = "mode=ro" if db.with_name(db.name + "-wal").exists() else "mode=ro&immutable=1"  # (ro: none made, B-2317)
     try:
         conn = sqlite3.connect(f"{db.resolve().as_uri()}?{how}", uri=True, timeout=5)
         try:

@@ -1,7 +1,8 @@
 """What the supplier prior reads (``ai/supplier_prior.py``, D-212): how a supplier's lines were coded, counted. The
 journal's own lines come from ``journal.journal_lines_for``; here are the reads it has no method for: the names the
 journal prints its suppliers under (to find a vendor with no supplier number), the vendor list's rows that go by one
-name, and a vendor's approved lines counted by account (never every row: the biggest vendor has 50,000).
+name, a vendor's approved lines counted by account (never every row: the biggest vendor has 50,000), and the
+journal's remarks counted by supplier and account (what a supplier it does not have is offered from, D-226).
 
 ``prior_stamp`` tells whether what was worked out from these is still right. Nothing here writes.
 """
@@ -30,6 +31,10 @@ _REMARKS = """SELECT final_gl, COALESCE(final_cc, '') AS final_cc, final_remark,
 _NAMES = """SELECT supplier_key, MAX(supplier_number) AS supplier_number, supplier_name, COUNT(*) AS vouchers
     FROM journal_vouchers WHERE counted = 1 AND supplier_key != '' GROUP BY supplier_key, supplier_name
     ORDER BY supplier_key, supplier_name"""
+_REMARKED = """SELECT v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark, COUNT(*) AS lines
+    FROM journal_vouchers v JOIN journal_lines l ON l.voucher_id = v.id
+    WHERE v.counted = 1 AND v.affiliate = 0 AND v.balanced = 1 AND l.kind = 'coding'
+    GROUP BY v.supplier_key, l.business_unit, l.object, l.subsidiary, l.remark"""
 
 
 class PriorMixin:
@@ -49,6 +54,13 @@ class PriorMixin:
         a row for each name a number was printed with. Vouchers with no supplier number are left out."""
         with self._conn() as conn:
             return fetch_rows(conn, _NAMES)
+
+    def journal_remarks(self) -> list[dict[str, Any]]:
+        """The journal's coding lines counted by supplier, account and remark, as ``journal_lines_for`` reads them
+        (an affiliate's voucher and one that does not balance left out): {"supplier_key", "business_unit",
+        "object", "subsidiary", "remark", "lines"}. A year of 25,000 lines is a few thousand rows."""
+        with self._conn() as conn:
+            return fetch_rows(conn, _REMARKED)
 
     def vendors_named(self, key: str) -> list[dict[str, Any]]:
         """The vendor list's rows that go by one name: the vendor under ``key`` and those kept under "<key> #<ERP

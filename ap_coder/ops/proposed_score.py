@@ -11,7 +11,11 @@ or approved) is scored on what AP Coder proposed before a person changed anythin
    the invoice's recovered tax; still two (and not coded alike): listed as "could be either", not scored;
 3. the coding BY ACCOUNT, not line by line (``pilot_score.by_account``): AP Coder's amounts added up per account
    string against the journal's coding lines added up per account. One verdict a voucher (``VERDICTS``);
-4. the header fields as ``pilot-score`` compares them, and the journal's tax line against the invoice's recovered
+4. then line by line, for the pilot's gate (``journal_score.gate``): each invoice line paired with a keyed coding line
+   (``keyed_lines``), and whether AP Coder coded it alone (``LineItem.decided_by``), right, and offered the keyed
+   account first or among its first three (``LineItem.candidates``). A line that cannot be paired is counted and
+   why is said;
+5. the header fields as ``pilot-score`` compares them, and the journal's tax line against the invoice's recovered
    tax.
 
 A voucher scored that is in the journal loaded here is counted and said: AP Coder learns from that journal, so it may
@@ -39,7 +43,8 @@ from ..core.ui import plural
 from ..erp import jde_settings
 from ..erp import journal as jr
 from . import pilot_score as ps
-from .journal_score import account_of, the_journal
+from .journal_score import account_of, gate, gate_table, the_journal
+from .journal_score import share_of as _of
 
 REPORT, MISSES, FIGURES = "proposed_score.md", "proposed_score_misses.csv", "proposed_score.json"
 RIGHT, AMOUNTS, LEFT, UNIT, WRONG = (
@@ -56,6 +61,10 @@ NO_VOUCHER, NO_JOURNAL, EITHER = (
     "no voucher of the voucher list", "its voucher is not in the journal", "could be either of two journal vouchers",
 )  # fmt: skip
 FOREIGN_CENTS = 0.05  # a foreign voucher's amounts, turned into dollars at the voucher's own rate, may round apart
+# Why an invoice line is left out of the line figures: no keyed line of its own to compare it with (``keyed_lines``)
+LINE_EITHER = "keyed lines of its amount are on different accounts"
+LINE_NONE = "no keyed line has its amount (AP added lines together or split one when keying, or the amounts differ)"
+NOT_ALONE = ("model", "person")  # what decided a line's account when it was not coded alone: a guess, a person
 MISS_COLUMNS = ["ap_coder_id", "supplier", "supplier_number", "invoice_number", "jde_document", "what", "ap_coder",
                 "keyed", "note"]  # fmt: skip
 
@@ -121,6 +130,50 @@ def journal_voucher(p: ps.Posted, free: list[jr.Voucher], recovered: float | Non
     return fits[0], ""
 
 
+def _string(account: tuple[str, str, str]) -> str:
+    unit, obj, sub = account
+    return chart.join_account(unit, chart.code_of(obj, sub))
+
+
+def keyed_lines(o: ps.Ours, voucher: jr.Voucher, rate: float = 1.0,
+                cents: float = ps.CENT) -> list[tuple[dict[str, Any], str, str]]:  # fmt: skip
+    """(each line of the invoice, the account string keyed for it, else "" and why there is none: ``LINE_EITHER``,
+    ``LINE_NONE``). A line is paired with a keyed coding line of its amount (``rate``: a foreign voucher's, as
+    ``proposed_accounts``) when the keyed lines of that amount are all on one account; then the lines left with the
+    keyed lines left, when those are all on one account (lines AP keyed as one). The tax lines take part, not
+    returned."""
+    ours = [line for line in o.lines if not line["recoverable_tax"]]
+    free = [(account_of(line), line.amount) for line in voucher.lines if line.kind == jr.CODING]
+
+    def fits(line: dict[str, Any]) -> list[tuple[str, float]]:
+        return [k for k in free if abs(k[1] - round(line["amount"] * rate, 2)) <= cents]
+
+    found: dict[int, tuple[str, str]] = {}
+    for n, line in enumerate(ours):
+        same = fits(line)
+        if same and len({account for account, _ in same}) == 1:
+            free.remove(same[0])
+            found[n] = (same[0][0], "")
+    rest = {account for account, _ in free}
+    for n, line in enumerate(ours):
+        if n not in found:
+            either = len({account for account, _ in fits(line)}) > 1
+            found[n] = (next(iter(rest)), "") if len(rest) == 1 else ("", LINE_EITHER if either else LINE_NONE)
+    return [(line, *found[n]) for n, line in enumerate(ours) if line["kind"] == "expense"]
+
+
+def line_row(line: dict[str, Any], keyed: str, why: str) -> dict[str, Any]:
+    """One invoice line as ``journal_score.gate`` counts it: coded alone (what decided its account, as proposed, is
+    neither a guess nor a person, nor nothing) and right; the keyed account first or among the first three of the
+    accounts offered (its own account, then its ``candidates``)."""
+    coded = bool(line["gl"]) and line["gl"].upper() != UNASSIGNED
+    mine = _string(line["account"] or (line["cc"], *chart.split_code(line["gl"]))) if coded else ""
+    alone = coded and line["decided"] not in ("", *NOT_ALONE)
+    offered = list(dict.fromkeys([*([mine] if mine else []), *(_string(c) for c in line["candidates"])]))
+    return {"coded": alone, "left_out": why, "coded_right": alone and not why and mine == keyed,
+            "first_right": not why and offered[:1] == [keyed], "in_top3": not why and keyed in offered[:3]}  # fmt: skip
+
+
 # --- The score ------------------------------------------------------------------------------------------------------
 
 
@@ -132,6 +185,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
     header = {name: {"n": 0, "right": 0} for name in ps.HEADER_FIELDS if name != "tax_total"}
     tax = {"n": 0, "right": 0}
     lines = {"coded": 0, "right": 0, "unit_wrong": 0, "wrong": 0, "left": 0}
+    rows: list[dict[str, Any]] = []  # a row for each invoice line, for the gate (``line_row``)
     vouchers = dict.fromkeys(VERDICTS, 0)
     suppliers: dict[str, dict[str, Any]] = {}
     units: dict[str, dict[str, Any]] = {}
@@ -176,6 +230,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
             tax["right"] += 1
         else:
             miss(o, p, "Recovered tax (the journal's tax line)", recovered, voucher.tax)
+        rows += [line_row(*one) for one in keyed_lines(o, voucher, rate, FOREIGN_CENTS if foreign else ps.CENT)]
         codes = {chart.split_account(account)[1] for account in keyed}
         for line in o.lines:
             if line["recoverable_tax"]:
@@ -204,7 +259,7 @@ def score(ours: list[ps.Ours], posted: list[ps.Posted], journal: jr.Journal, dom
             "matched_by_amount": sum(1 for *_, how in pairs if how != "supplier and invoice number"),
             "scored": scored, "not_scored": len(unmatched),
         },
-        "vouchers": vouchers, "lines": lines, "header": header, "tax": tax,
+        "gate": gate(rows), "vouchers": vouchers, "lines": lines, "header": header, "tax": tax,
         "by_supplier": sorted(suppliers.values(), key=lambda s: (s["right"] - s["vouchers"], -s["vouchers"])),
         "by_unit": [{"unit": unit, **u} for unit, u in sorted(units.items(), key=lambda t: (-t[1]["accounts"], t[0]))],
         "misses": misses, "unmatched": unmatched, "notes": list(notes or []), "matched_vouchers": matched,
@@ -235,14 +290,11 @@ def paragraph(report: dict[str, Any]) -> str:
     return said
 
 
-def _of(a: int, b: int) -> str:
-    return "-" if not b else f"{a:,} of {b:,} ({100 * a / b:.0f}%)"
-
-
 def render_markdown(report: dict[str, Any]) -> str:
     inv, lines, tax = report["invoices"], report["lines"], report["tax"]
     out = [
         "# What AP Coder proposed against what was keyed", "", paragraph(report), "",
+        *gate_table(report["gate"]),
         f"Made {report.get('made', '')} from {report.get('source', 'the voucher list and the journal')}.", "",
         "## The invoices", "",
         f"- Invoices here, in review or approved: {inv['ap_coder']:,}. Found in the voucher list: "
@@ -308,7 +360,8 @@ def misses_csv(report: dict[str, Any]) -> bytes:
 
 def figures(report: dict[str, Any]) -> dict[str, Any]:
     """The figures with no supplier's name or amount in them."""
-    return {key: report[key] for key in ("made", "invoices", "vouchers", "lines", "header", "tax") if key in report}
+    keys = ("made", "invoices", "gate", "vouchers", "lines", "header", "tax")
+    return {key: report[key] for key in keys if key in report}
 
 
 def run(store: Any, vouchers: str | Path, journal: str | Path | None = None, out: str | Path | None = None, *,
