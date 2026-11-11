@@ -107,10 +107,8 @@ def test_ci_runs_the_pilot_laptops_python_on_windows_with_ocr_and_the_launcher()
     APProcessor.bat on 3.12 and on 3.14, where 3.14 is the only Python the launcher finds."""
     jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
     cells = [c for c in jobs["tests"]["strategy"]["matrix"]["include"] if c["os"] == "windows-latest"]
-    whole = {c["python"] for c in cells if c.get("shard")}
-    assert whole == {"3.12", "3.14"}
-    assert {(c["python"], c.get("extras")) for c in cells if c.get("shard")} == {("3.12", "ocr,dev"),
-                                                                                  ("3.14", "ocr,dev")}  # fmt: skip
+    whole = [c for c in cells if c.get("tier") != "fast"]  # (the fast tier is split into parts too, D-233)
+    assert {(c["python"], c.get("extras")) for c in whole} == {("3.12", "ocr,dev"), ("3.14", "ocr,dev")}
     job = jobs["windows-pilot-launcher"]
     assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"] and job["strategy"]["fail-fast"] is False
     assert "Python ${{ matrix.python }}" in job["name"]  # each cell says which Python it is
@@ -190,6 +188,33 @@ def test_the_update_check_finds_the_schema_the_new_version_writes():
     from ap_coder.core.store import SCHEMA_VERSION
 
     assert old_versions.schema_of(Path(__file__).resolve().parents[2]) == str(SCHEMA_VERSION)
+
+
+@needs_ci
+def test_every_cells_parts_are_all_there_and_the_test_windows_leaves_out_runs_on_main():
+    """D-233: each cell of the test matrix (an OS, a Python, the whole suite or the fast tier) is split into parts
+    K/N: every K from 1 to N is there once, or tests would run nowhere. The one test the Windows cells leave out
+    (the JD Edwards sync at the company's size, 20 minutes there) is run by windows-sync-volume, on both Windows
+    Pythons of the whole suite, whenever the run is not a pull request's; Ubuntu's cells leave nothing out."""
+    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    parts: dict[tuple, list[str]] = {}
+    for cell in jobs["tests"]["strategy"]["matrix"]["include"]:
+        parts.setdefault((cell["os"], cell["python"], cell.get("tier")), []).append(cell["shard"])
+    assert len(parts) == 8
+    for cell, shards in parts.items():
+        n = int(shards[0].split("/")[1])
+        assert sorted(shards) == [f"{k}/{n}" for k in range(1, n + 1)], cell
+    volume = workflow["env"]["SYNC_VOLUME"]
+    path, name = volume.split("::")
+    assert f"def {name}(" in (CI.parents[2] / path).read_text(encoding="utf-8")
+    run = next(step["run"] for step in jobs["tests"]["steps"] if step.get("name") == "Tests")
+    assert "matrix.os == 'windows-latest' && format('--deselect {0}', env.SYNC_VOLUME) || ''" in run
+    assert run.count("deselect") == 1 and " -k " not in run
+    job = jobs["windows-sync-volume"]
+    assert job["if"] == "github.event_name != 'pull_request'" and job["runs-on"] == "windows-latest"
+    assert job["strategy"]["matrix"]["python"] == ["3.12", "3.14"]
+    assert 'pytest -q -m "" ${{ env.SYNC_VOLUME }}' in job["steps"][-1]["run"]
 
 
 def test_every_test_runs_in_exactly_one_shard():
