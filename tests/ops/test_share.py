@@ -108,6 +108,20 @@ def test_after_share_a_plain_start_still_refuses_this_data_without_sign_in(lapto
     assert "was not started without sign-in" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("installed", [False, True])
+def test_after_share_the_refusal_names_share_where_no_service_is_installed(laptop, monkeypatch, installed):
+    """B-2352: after ``share``, the shortcut's start was refused with "python -m ap_coder service start", and a
+    shared laptop has no service. Where none is installed, it names ``share``, typed in scripts\\terminal.bat."""
+    data, db = laptop
+    monkeypatch.setattr(service, "installed", lambda s: installed)
+    assert share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in([]),
+                         ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
+    _why, to_do = safety.team_server(data, db).refusal()
+    assert ("service start" in to_do) is installed
+    assert ("Start it again with python -m ap_coder share, typed in scripts\\terminal.bat" in to_do) is not installed
+    assert "--without-sign-in" in to_do
+
+
 def test_with_no_console_to_ask_on_the_first_admin_is_said_with_its_command(laptop, monkeypatch):
     data, db = laptop
     monkeypatch.setattr(share.sys, "stdin", types.SimpleNamespace(isatty=lambda: False))
