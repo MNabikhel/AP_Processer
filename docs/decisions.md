@@ -5586,4 +5586,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     is, said with its data folder, and this one starts on the next free port. One it would stop (older, another
     build) is still stopped: its code is about to be replaced. One that does not say its data (older than this) is
     judged as before. Rejected: stopping it (it is the tester's own other window, on data no one else uses).
-  - (`ap_coder/web/app.py`, `scripts/running.py`, `scripts/launch.py`)
+  - *`serve` by hand, in laptop mode, on a data folder an AP Coder serves now* (its server file names a live process
+    that answers as it on the file's port, `safety.open_here`) is refused, with its address (B-2351): the server file
+    is one a data folder, and `backup restore` reads it to refuse under a running one. The server's own start is
+    refused by its port, as before.
+  - (`ap_coder/web/app.py`, `scripts/running.py`, `scripts/launch.py`, `ap_coder/ops/safety.py`, `ops/cli.py`)

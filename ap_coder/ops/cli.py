@@ -444,7 +444,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return server.run_background(Store(Path(args.db)))
     if args.capture_work:  # one of its capture processes, which read the import queue (D-168)
         return server.run_capture(Store(Path(args.db)))
-    from .safety import serve_refusal, team_server
+    from .safety import open_here, serve_refusal, team_server
 
     refused = serve_refusal(Path(args.db), server_mode(), args.new_database)  # its folder checked first (D-188)
     if refused:
@@ -460,6 +460,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 server.open_in_browser(team.address)
             return 2
         print(team.on_purpose(), file=sys.stderr)
+    # Nor a second time on one data folder: it would take over the first one's server file (B-2351).
+    here = "" if server_mode() else open_here(private_dir())
+    if here:
+        print(f"AP Coder is already open on this data folder ({private_dir()}) at {here}: it was not started a second "
+              "time. Use it in your browser there: two AP Coders never use the same data at once. To open other data "
+              "(the made-up company), set AP_PRIVATE_DIR to its folder first.", file=sys.stderr)  # fmt: skip
+        if not args.no_browser:
+            server.open_in_browser(here)
+        return 2
 
     certfile = args.certfile or os.environ.get(server.CERT_ENV) or None
     keyfile = args.keyfile or os.environ.get(server.KEY_ENV) or None

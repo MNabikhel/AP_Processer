@@ -17,6 +17,9 @@
   server.json is there), is not started in laptop mode, by the launcher's double-click or ``serve`` by hand: stopped
   for the night or not. Laptop mode again on the same data is ``serve --without-sign-in``, on purpose, and only while
   the server is stopped.
+* **One laptop-mode AP Coder a data folder** (B-2351). ``serve`` typed by hand while the shortcut's AP Coder runs on
+  the same data folder (``open_here``: its server file names a live process, which answers on its port) is refused,
+  with where it is open: it would overwrite that one's server file, and ``backup restore`` then go ahead under it.
 
 Standard library only (the store is asked for the accounts where its packages are installed); nothing is asked of the
 network (the dashboard of this computer is asked whether it runs).
@@ -355,3 +358,21 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
     name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
     address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
     return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key)
+
+
+def open_here(data: Path) -> str:
+    """The address of the AP Coder that serves the data folder ``data`` now ("" when none does): its server file
+    names a live process other than this one, and the dashboard on the file's port answers as that process (a file
+    left by one that was killed, its number since given to another program, is no AP Coder)."""
+    from . import service
+    from .offline import listening
+
+    try:
+        record = json.loads((data / service.SERVER_FILE).read_text(encoding="utf-8"))
+        pid, port = int(record.get("pid") or 0), int(record.get("port") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+    if pid == os.getpid() or not 0 < port < 65536 or not service.process_alive(pid) or not listening(port):
+        return ""
+    answer = service.dashboard_answer(data, service.ServerSettings(port=port))
+    return f"{answer[0]}://127.0.0.1:{port}" if answer and answer[1].get("pid") == pid else ""
