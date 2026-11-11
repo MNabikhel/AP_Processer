@@ -131,10 +131,10 @@ def command(env: dict[str, str], *args: str, typed_first: str = "") -> str:
         done = subprocess.run(["cmd", "/c", str(ROOT / "scripts" / "terminal.bat")], cwd=str(ROOT), env=env,
                               input=typed, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=COMMAND_WAIT)  # fmt: skip
-        said = done.stdout + done.stderr
-        mark = re.search(rf"^{EXIT_MARK}(-?\d+)\s*$", said, re.M)
+        # The mark is in what the terminal printed (stdout); what AP Coder says on stderr is kept whole.
+        mark = re.search(rf"^{EXIT_MARK}(-?\d+)\s*$", done.stdout, re.M)
         code = int(mark.group(1)) if mark else None
-        said = said[: mark.start()] if mark else said
+        said = (done.stdout[: mark.start()] if mark else done.stdout) + done.stderr
     else:
         done = subprocess.run([python(), "-m", "ap_coder", *args], cwd=str(ROOT), env=env, capture_output=True,
                               text=True, encoding="utf-8", errors="replace", timeout=COMMAND_WAIT)  # fmt: skip
