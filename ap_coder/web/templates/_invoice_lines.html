@@ -115,7 +115,7 @@
      until a person has been in the box. What is posted is the hidden cell: blank while it is the suggestion, so it
      follows the line's account; the text once a person typed one (invoice.js). Never cut: past 30 it is to fix. #}
   <td class="c-desc c-remark"><input type="text" form="inv" data-remark-box value="{{ r.text }}" class="{{ 'is-suggested' if r.text and not r.typed else '' }}{{ ' is-over' if r.over else '' }}" autocomplete="off" aria-label="{{ line_label(row, 'Remark') }}" aria-describedby="rcap-{{ key }}"{% if r.why and not r.typed %} title="{{ r.why }}"{% endif %}>
-    <input type="hidden" name="line_remark" value="{{ r.text if r.typed else '' }}" form="inv"></td>
+    <input type="hidden" name="line_remark" value="{{ r.posted }}" form="inv"></td>
   {% set guess = "Worked out from the tax charged: several sets of lines add up, check it" if row.tax_guess else "" %}
   {% set mark = (g.tax_marks or {}).get(row.line_number) or guess %}
   {% set code = row.tax_code if row.tax_code is defined else g.tax_default %}

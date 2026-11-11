@@ -469,12 +469,12 @@ def test_the_suggested_remark_follows_the_account_and_a_typed_one_stays(chart_co
     page = _page(chart_company, chart_company_client, "one_line")
     before = _remark_boxes(page.text)[0][0]
     (row,) = page.check()["lines"]
-    assert row["remark_box"] == {"text": before, "typed": False, "why": row["remark_box"]["why"]}
+    assert row["remark_box"] == {"text": before, "typed": False, "posted": "", "why": row["remark_box"]["why"]}
     assert row["remark_box"]["why"].startswith("Suggested")
     typed = "KT parcels 3-1-204"
     form = {**page.form, LINE_REMARK: [typed]}
     (row,) = chart_company_client.post(f"/review/{page.id}/check", data=form, headers=PAGE).json()["lines"]
-    assert row["remark_box"] == {"text": typed, "typed": True, "why": ""}
+    assert row["remark_box"] == {"text": typed, "typed": True, "posted": typed, "why": ""}
     page.open()  # the draft kept it: drawn as a person's, posted as typed
     assert _remark_boxes(page.text)[0] == (typed, "") and page.form[LINE_REMARK] == [typed]
     assert page.approve()["ok"]

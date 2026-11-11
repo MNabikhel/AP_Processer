@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from ap_coder.ai.supplier_prior import prior_for
-from ap_coder.coding.remark import PERSON, REMARK_MOST, one_line
+from ap_coder.coding.remark import CLEARED, PERSON, REMARK_MOST, one_line
 from ap_coder.coding.review import codes_to_pick, is_blank
 from ap_coder.coding.taxmath import INSIDE, OWN_LINE, READ, InvoiceTaxes, LineTaxes
 from ap_coder.core import chart
@@ -30,8 +30,8 @@ NO_ACCOUNT = "No account yet: type its number or words, or pick one"
 GUESS = "The account is AP Coder's guess, not learned yet: check it"
 OFFERED_MOST = 3  # business units offered for an account its line's business unit does not have
 _PARTS = re.compile(r"[\d.\s]+")  # an account's parts pasted with spaces or tabs between them
-NO_REMARK: dict[str, Any] = {"text": "", "typed": False, "why": "", "note": "", "count": 0, "over": False,
-                             "printed": ""}  # fmt: skip
+NO_REMARK: dict[str, Any] = {"text": "", "typed": False, "posted": "", "why": "", "note": "", "count": 0,
+                             "over": False, "printed": ""}  # fmt: skip
 EMPTY: dict[str, Any] = {"text": "", "state": "", "name": "", "unit": "", "why": "", "note": "", "candidates": [],
                          "listed": [], "taxes": None, "remark": NO_REMARK}  # fmt: skip
 # Where a suggested remark comes from (``LineItem.remark_from``), said on its box.
@@ -206,15 +206,18 @@ def _view(reference: ReferenceData, row: dict[str, Any], before: dict[str, Any],
 
 def remark_view(row: dict[str, Any], coded: dict[str, Any] | None, issue: Any = None) -> dict[str, Any]:
     """A line's Remark box (D-213): the remark of the coding on screen (``coded``: the suggestion follows the line's
-    account), else the draft row's; ``typed``: a person's, which no suggestion replaces; ``note``: the finding's
+    account), else the draft row's; ``typed``: a person's, which no suggestion replaces; ``posted``: what its hidden
+    cell posts (a suggestion none, a box a person emptied ``remark.CLEARED``, D-229); ``note``: the finding's
     words when it is longer than JD Edwards keeps (``issue``, REMARK_LONG); ``printed``: the line as the invoice
     prints it, for under the box."""
     line = coded if coded is not None else row
     text = one_line(line.get("remark"))
     source = str(line.get("remark_from") or "")
-    return {"text": text, "typed": source == PERSON, "why": REMARK_WHY.get(source, ""),
-            "note": _sentence(issue.message) if issue is not None else "", "count": len(text),
-            "over": len(text) > REMARK_MOST, "printed": one_line(row.get("description"))}  # fmt: skip
+    typed = source == PERSON
+    return {"text": text, "typed": typed, "posted": (text or CLEARED) if typed else "",
+            "why": REMARK_WHY.get(source, ""), "note": _sentence(issue.message) if issue is not None else "",
+            "count": len(text), "over": len(text) > REMARK_MOST,
+            "printed": one_line(row.get("description"))}  # fmt: skip
 
 
 def row_views(reference: ReferenceData, lines: list[dict[str, Any]], proposed: list[dict[str, Any]],

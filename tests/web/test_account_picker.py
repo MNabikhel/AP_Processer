@@ -262,6 +262,28 @@ def test_the_suggested_remark_follows_the_account_picked(browser, chart_company)
     assert page.input_value(FIRST) == account and not errors
 
 
+def test_a_remark_cleared_stays_empty_through_the_check_and_is_approved_as_the_persons(browser, chart_company):
+    """B-2363: a Remark box emptied came back with the suggestion at the next check, so a voucher line could never be
+    approved with no remark."""
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    page, errors = _review(browser, chart_company, "one_line")
+    assert page.input_value(REMARK)
+    page.click(REMARK)
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Delete")
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(800)  # the check after the edit has answered
+    assert page.input_value(REMARK) == "" and page.inner_text(COUNT) == "0 / 30"
+    page.reload()  # the draft kept: still empty
+    page.wait_for_load_state("networkidle")
+    assert page.input_value(REMARK) == "" and "is-suggested" not in page.get_attribute(REMARK, "class")
+    page.click("[data-approve]")
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    (line,) = store.get_invoice(invoice_id)["final_output"]["line_items"]
+    assert (line.get("remark", ""), line.get("remark_from")) == ("", "person")  # (an empty remark is left out)
+    assert not errors
+
+
 @pytest.mark.parametrize("how", ["tax code chosen", "account picked, then a click away"])
 def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before(browser, chart_company, how):
     """B-2360: after Approve the next invoice opens with the banner's Undo; Ctrl+Z there, once a tax code was chosen
