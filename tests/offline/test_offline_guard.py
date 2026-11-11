@@ -147,6 +147,8 @@ TOUCHPOINTS = {
     "never run by the launcher",
     "scripts/ci/server_update_downtime.py": "CI's timing of server-update: asks AP Coder's own /healthz on 127.0.0.1 "
     "(no proxy); never run by the launcher",
+    "scripts/ci/share_end_to_end.py": "CI's run of share: urllib to the AP Coder it started, by this computer's own "
+    "name (no proxy, no redirect followed); never run by the launcher",
 }
 _NETWORK = re.compile(
     r"^\s*(?:import|from)\s+(?:urllib\.request|urllib\.error|http\.client|socket|requests|httpx|webbrowser|aiohttp|"

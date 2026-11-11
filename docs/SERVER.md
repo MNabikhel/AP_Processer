@@ -1790,7 +1790,7 @@ What it does, and what it leaves to a person:
 | What sharing needs | What `share` does |
 |---|---|
 | A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
-| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. |
+| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. A scripted set-up gives the three on its input, one a line: `share --admin-from-stdin` (Windows' password question reads only the keyboard). |
 | `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
 | The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
@@ -1885,11 +1885,14 @@ others are what `share` does.
 the system's environment variables, and start with `APProcessor.bat --without-sign-in`: the data has sign-in
 accounts, so each laptop-mode start asks for that option, on purpose (D-211).
 
+**Tried on Windows by CI** (the job "share on Windows", `scripts/ci/share_end_to_end.py`, on GitHub's Windows
+Server runner, not Windows 11): installed, `share` makes the certificate with Git for Windows' `openssl` (not on the
+PATH) and the first Admin, and serves; a second browser signs in over HTTPS by the computer's name, trusting that
+certificate, with the authenticator's code, and approves an invoice; `share --stop`, `share` again, the data kept.
+
 **Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
-`share` itself (it was run on Linux: the certificate made, the first Admin, the server answering with sign-in, a
-plain start refused, `share --stop`): that it finds Git for Windows' `openssl`, that `netsh` shows the firewall rule
-without administrator rights, that closing its window leaves no `python.exe` of AP Coder in Task Manager, and what
-Windows' own firewall question does when it is cancelled;
+that `netsh` shows the firewall rule without administrator rights, that closing `share`'s window leaves no
+`python.exe` of AP Coder in Task Manager, and what Windows' own firewall question does when it is cancelled;
 `service install` and `service status` there, and the task coming back after a Windows Update restart with nobody
 logged on; the hand-started window; the firewall rule's profile on the office Wi-Fi and the dock, and that the port
 is closed on a home network; that colleagues' PCs find the laptop by its name; the lid, sleep and the dock.

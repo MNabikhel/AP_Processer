@@ -331,6 +331,9 @@ def add_parser(sub: Any) -> None:
     one.add_argument("--allow-folder", default="", metavar="FOLDER",
                      help="Let Admins choose this folder for the backups' second copy, on Settings (also while AP "
                      "Coder is being shared: no restart)")  # fmt: skip
+    p.add_argument("--admin-from-stdin", action="store_true",
+                   help="A scripted set-up: read the first Admin's name, username and password from standard input, "
+                   "one a line, instead of asking (never the password as an argument)")  # fmt: skip
 
 
 def main(args: argparse.Namespace, say: Say = print) -> int:
@@ -347,7 +350,11 @@ def main(args: argparse.Namespace, say: Say = print) -> int:
             say(f"Backups: {args.allow_folder.strip()} is not allowed yet: run this again once that window is closed.")
         if code is not None:
             return code
-        s = prepare(data, db, say, allow=args.allow_folder)
+        ask = password = None
+        if args.admin_from_stdin:  # (Windows' password prompt reads the keyboard, never a pipe)
+            ask = lambda prompt: sys.stdin.readline().strip()  # noqa: E731
+            password = lambda username, name: sys.stdin.readline().rstrip("\r\n")  # noqa: E731
+        s = prepare(data, db, say, allow=args.allow_folder, ask=ask, password=password)
     except service.SettingsError as exc:
         say(str(exc))
         return 1

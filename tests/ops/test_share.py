@@ -258,3 +258,22 @@ def test_allow_folder_allows_the_folder_while_ap_coder_is_shared_and_says_so(lap
         assert service.folder_refusal(other, data, server=True)
     finally:
         httpd.shutdown()
+
+
+def test_a_scripted_set_up_gives_the_first_admin_on_standard_input(laptop, monkeypatch, capsys):
+    """``share --admin-from-stdin`` (a scripted set-up, CI's Windows job): the first Admin's name, username and
+    password are read from standard input, one a line, where the console's questions would need a person (Windows'
+    password prompt reads the keyboard, never a pipe)."""
+    import io
+
+    data, db = laptop
+    (data / "tls").mkdir()
+    for name in (share.CERT_NAME, share.KEY_NAME):
+        (data / "tls" / name).write_text("PEM", encoding="utf-8")
+    monkeypatch.setattr(share, "firewall_note", lambda port: "")
+    monkeypatch.setattr(share, "serve", lambda data, s, **kwargs: 0)
+    monkeypatch.setattr(share.sys, "stdin", io.StringIO(f"Pat Lee\n\n{GOOD}\n"))
+    assert cli.main(["share", "--admin-from-stdin"]) == 0
+    (user,) = Store(db).list_users()
+    assert (user["username"], user["display_name"], user["role"]) == ("pat.lee", "Pat Lee", "admin")
+    assert "Added pat.lee (Admin)" in capsys.readouterr().out

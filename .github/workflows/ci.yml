@@ -622,6 +622,36 @@ jobs:
         shell: pwsh
         run: python scripts/ci/server_update_downtime.py cleanup --work "$env:RUNNER_TEMP\downtime"
 
+  windows-share:
+    # D-224: "my Windows laptop serves the AP team" (python -m ap_coder share, docs/SERVER.md section 16) as a person
+    # does it: installed with the installer, then share makes its certificate with Git for Windows' openssl (taken
+    # off the PATH, as on a laptop) and the first Admin, and serves; a second browser signs in over HTTPS by this
+    # computer's name, trusting that certificate, with the authenticator's code, and approves an invoice; share
+    # --stop, share again: still serving, the data kept. The logic is in scripts/ci/share_end_to_end.py (it runs on
+    # Linux too).
+    name: share on Windows (a colleague signs in over HTTPS, approves; stopped and started again)
+    runs-on: windows-latest
+    timeout-minutes: 20  # the install about 3 minutes, the share's run under one: a hang ends here
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (non-interactive)
+        shell: cmd
+        env:
+          AP_ALLOW_INTERNET: "1"  # the installer sets up from PyPI here (no wheelhouse); share itself runs offline
+        run: APProcessor.bat --installer --yes --no-update --skip-tests --no-start
+      - name: share, a colleague signs in and approves, share --stop, share again
+        shell: pwsh
+        run: |
+          .venv\Scripts\python.exe scripts\ci\share_end_to_end.py --work "$env:RUNNER_TEMP\share"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   macos-offline-bundle:
     # The tester's Mac: Python 3.14 and nothing else, no internet. Build the offline bundle for it (online),
     # unzip it to a fresh folder, hide every other Python, double-click APProcessor.command with the internet
