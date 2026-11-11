@@ -533,6 +533,7 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     print("  Update later:     unzip the new bundle anywhere and double-click its APProcessor (nothing is duplicated)")
     interactive = sys.stdin.isatty()  # never start a server when no one is there to stop it
     if not args.no_start and not args.yes and interactive and c.yes("Start AP Coder now?"):
+        launch.older_folder_setup(args)  # (as the double-click's start: a data folder an earlier AP Coder made)
         return launch.start_dashboard([], state)
     return 0
 

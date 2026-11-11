@@ -736,14 +736,15 @@ def keying_to_set_up(store: Store) -> bool:
 def use_simple(store: Store, actor: str | None = None) -> bool:
     """The Simple screens chosen on an older data folder: the short menu, and the department's JD Edwards set-up
     (``use_prototype``, as a new folder's) when no JD Edwards settings were saved; saved ones are never touched
-    (B-2378). True when JD Edwards keying was set up."""
-    store.set_setting(SCREENS, SIMPLE, actor=actor)
-    if not keying_to_set_up(store):
-        return False
-    from ap_coder.erp import jde_prototype
+    (B-2378). True when JD Edwards keying was set up. The screens are saved last: a set-up that fails leaves the
+    choice unmade, so the card and the next start still offer it."""
+    keyed = keying_to_set_up(store)
+    if keyed:
+        from ap_coder.erp import jde_prototype
 
-    jde_prototype.use_prototype(store, actor)
-    return True
+        jde_prototype.use_prototype(store, actor)
+    store.set_setting(SCREENS, SIMPLE, actor=actor)
+    return keyed
 
 
 PILOT_SETUP = "pilot_setup"  # an older laptop data folder set up at a start (D-232): "done", or "declined"
@@ -758,11 +759,13 @@ def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> st
     Edwards keying (``use_simple``), no question. Holding invoices of its own: ``ask`` (the question ``ASK_SIMPLE``,
     True for yes) decides; yes does what the queue's card's "Use the simple screens" does, no is recorded (the card
     still asks); no ``ask`` (nobody at the window), nothing is done or recorded. A folder whose screens were chosen
-    already is left as it is. Returns what to say ("" for nothing)."""
+    already is left as it is, but one: Simple chosen with JD Edwards keying never set up (chosen before that set it
+    up, B-2382) is set up as one whose screens were never chosen. Returns what to say ("" for nothing)."""
     if not db.is_file():
         return ""  # a new data folder: ``first_run`` sets it up
     store = Store(db)
-    if store.get_setting(SCREENS) or store.get_setting(PILOT_SETUP):
+    screens = store.get_setting(SCREENS)
+    if store.get_setting(PILOT_SETUP) or (screens and (screens != SIMPLE or not keying_to_set_up(store))):
         return ""
     demo = store.demo_count()
     removed = 0
@@ -772,10 +775,13 @@ def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> st
         if not ask(ASK_SIMPLE):
             store.set_setting(PILOT_SETUP, "declined")
             return ""
-    elif demo:
+    else:
+        from ap_coder.erp.jde_settings import EXPORT_FORMAT
         from ap_coder.ops.demo import remove_demo
 
-        removed = remove_demo(store)
+        removed = remove_demo(store) if demo else 0
+        if store.get_setting(EXPORT_FORMAT) and not store.export_batches():
+            store.set_setting(EXPORT_FORMAT, "")  # a removed batch's format is no one's choice (B-2383)
     keyed = use_simple(store)
     store.set_setting(PILOT_SETUP, "done")
     store.log_event("settings_changed", detail={"keys": [SCREENS, PILOT_SETUP]})

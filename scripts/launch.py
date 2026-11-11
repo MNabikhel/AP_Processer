@@ -1293,6 +1293,11 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     else:  # the opt-in, or the code alone (GitHub's ZIP): said plainly before anything is downloaded (D-94)
         if self_problem or not all(map(is_ocr, missing)):  # (the OCR add-on alone is tried: never a reason to stop)
             blocked = unreachable_index()  # (a .venv left from an earlier try: not pip's minutes of retries, B-2376)
+            if blocked is not None and not missing:
+                # Only this folder to register again (it was moved or renamed): every package is there and AP Coder
+                # runs from its own folder, so the start goes on; a later start registers it (B-2381).
+                log(f"Not registered in .venv, the package site can't be reached ({self_problem}): started anyway.")
+                return "ok", all_in_place(total), False
             if blocked is not None:
                 raise blocked
         say_downloads("the Python packages it needs (a few hundred MB)", PACKAGE_SITE)
@@ -2515,7 +2520,7 @@ def older_folder_setup(args: argparse.Namespace) -> None:
     ``web.core.older_folder_start``): one with only the demo invoices, or none, at once, said in one line; one with
     invoices of its own only once asked in the window (Enter for yes). Not asked with --yes, AP_NO_PAUSE=1 or nobody
     at the window (CI): the queue's card asks, as before. Never the company server's, nor a demo's (scripts/demo.bat).
-    A failure is logged and never stops the start."""
+    A failure is logged, said in one line and never stops the start."""
     database = paths.env_path("AP_DB_PATH") or paths.default_db_path()
     if server_mode() or demo_start() or not database.is_file():
         return
@@ -2526,6 +2531,9 @@ def older_folder_setup(args: argparse.Namespace) -> None:
         said = older_folder_start(database, yes_answered if asked else None)
     except Exception as exc:  # noqa: BLE001 - the dashboard still starts: its queue's card asks instead
         log(f"Setting up the older data folder failed: {exc!r}")
+        say("The set-up for JD Edwards keying could not be done, so AP Coder starts as it was. It is tried again "
+            "at the next start (the card on To review, if it shows, does it too). The details are in "
+            f"{log_path()}.")  # fmt: skip
         return
     if said:
         say(said)

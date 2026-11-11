@@ -1455,6 +1455,26 @@ def test_the_first_setup_says_which_packages_it_downloads_from_where(launch, tmp
     _says_the_downloads(capsys.readouterr().out, "pypi.org")
 
 
+def test_a_moved_folder_with_every_package_starts_when_the_package_site_cant_be_reached(launch, tmp_path, monkeypatch):
+    """B-2381: set up from GitHub's ZIP, then the folder renamed or moved (off OneDrive, as its own note advises):
+    every package is still in .venv, only this folder is to be registered there again. On the company network that
+    blocks pypi.org the start stopped with "can't reach the package site... Nothing was installed", though nothing
+    was to download and AP Coder runs from its own folder. It starts; the folder is registered at a later start.
+    With a package missing it still stops, before pip is run (B-2376)."""
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    monkeypatch.setattr(launch.fetch_models, "BUNDLE_MODELS", tmp_path / "models")
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(launch, "index_problem", lambda: "no answer")
+    commands = _record_pip(launch, monkeypatch)
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: ([], "registered for another folder"))
+    level, words, installed = launch.ensure_packages({})
+    assert (level, installed, commands) == ("ok", False, []) and "in place" in words
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1"], "x"))
+    with pytest.raises(launch.SetupError, match="package site"):
+        launch.ensure_packages({})
+    assert commands == []
+
+
 def test_the_first_setup_says_which_models_it_downloads_from_where(launch, no_models, monkeypatch, capsys):
     fetch_models, downloads = no_models
     monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP

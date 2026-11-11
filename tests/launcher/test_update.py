@@ -181,6 +181,23 @@ def test_nothing_is_pruned_without_a_file_list_or_in_a_checkout(upgrade, tmp_pat
     assert upgrade.prune_stale(checkout) == ([], 0) and (checkout / "ap_coder" / "new_module.py").exists()
 
 
+def test_githubs_zip_copied_over_a_bundles_folder_loses_none_of_its_own_files(upgrade, tmp_path):
+    """B-2380: GitHub's ZIP has no bundle_manifest.json, so copied over a folder an offline bundle was unzipped into,
+    the older bundle's file list stayed and the next start removed every file of the new code it did not name (new
+    modules: the start then stopped on an ImportError, each time). The list is only followed when it is this code's:
+    its stamp (ap_coder/BUILD, else pyproject.toml) is the one listed."""
+    folder = make_install(tmp_path / "AP Coder", "0.2.0", files=True, extra=("ap_coder/BUILD",))
+    new = ["ap_coder/erp/new_module.py", "scripts/new_tool.py", "tests/test_new.py"]
+    for rel in ["ap_coder/BUILD", "ap_coder/__init__.py", *new]:  # the newer code, copied over; the list stays
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_text("# the newer version\n")
+    assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).is_file() for rel in new)
+    older = make_install(tmp_path / "older", "0.2.0", files=True)  # a bundle from before the stamp: pyproject.toml
+    (older / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.3.0"\n')
+    (older / "ap_coder" / "new_module.py").write_text("# the newer version\n")
+    assert upgrade.prune_stale(older) == ([], 0) and (older / "ap_coder" / "new_module.py").is_file()
+
+
 def test_a_wheelhouse_this_bundle_did_not_unzip_here_is_never_pruned(upgrade, tmp_path):
     """The tester copied an older bundle's wheelhouse next to the new code: the start deleted every wheel in it as
     "left by the older version", so instead of the one plain message (built for Windows, Python 3.11/3.12) pip

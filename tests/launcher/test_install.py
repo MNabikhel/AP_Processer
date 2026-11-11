@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -285,3 +286,28 @@ def test_the_check_runs_when_something_changed_else_its_result_is_said(monkeypat
     state["self_check"] = {"ok": False, "at": "x", "result": "FAILED"}
     install.run_checks(c, args, Path("nowhere/.env"), changed=False)
     assert ran == [1, 1]  # not passed yet: run again
+
+
+def test_start_ap_coder_now_sets_up_an_older_data_folder_first_as_the_double_click_does(tmp_path, monkeypatch):
+    """The installer's "Start AP Coder now?" started the dashboard on a data folder an earlier AP Coder made without
+    setting it up for JD Edwards keying (D-232): that came only with the next double-click. It does it first now."""
+    data = tmp_path / "data"
+    steps = {"check_python": None, "update_code": None, "make_way": "", "bring_up_to_date": False,
+             "ensure_venv_and_packages": False, "choose_data_dir": data, "configure_settings": data / ".env",
+             "create_shortcut": None, "fetch_models": None, "run_checks": None}  # fmt: skip
+    for name, result in steps.items():
+        monkeypatch.setattr(install, name, lambda *a, result=result, **k: result)
+    ident = {"version": "0.2.0", "build": "b", "fingerprint": "f", "commit": "c"}
+    launcher = {"database_too_new": None, "settle_settings": [], "load_state": {}, "save_state": None,
+                "ensure_packages": ("ok", "Packages: all in place", False), "identity": ident, "older_installs": [],
+                "legacy_folders": [], "readiness": [], "print_summary": None}  # fmt: skip
+    for name, result in launcher.items():
+        monkeypatch.setattr(install.launch, name, lambda *a, result=result, **k: result)
+    monkeypatch.setattr(install.paths, "record_install", lambda ident, **k: None)
+    monkeypatch.setattr(install.upgrade, "write_marker", lambda root, ident: None)
+    monkeypatch.setattr(install.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(install.Console, "yes", lambda self, question, default=True: question == "Start AP Coder now?")
+    did: list[object] = []
+    monkeypatch.setattr(install.launch, "older_folder_setup", lambda args: did.append(("older folder", args.yes)))
+    monkeypatch.setattr(install.launch, "start_dashboard", lambda rest, state: did.append("started") or 0)
+    assert install.main([]) == 0 and did == [("older folder", False), "started"]

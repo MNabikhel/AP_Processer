@@ -8,13 +8,17 @@ import re
 import shutil
 from pathlib import Path
 
+import pytest
+from fastapi.testclient import TestClient
+
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.erp import jde_prototype, jde_settings
 from ap_coder.web import core
 from ap_coder.web.app import create_app
+from ap_coder.web.identity import SESSION_COOKIE
 from ap_coder.web.pages import settings as settings_page
 from tests.browser import browser_on
-from tests.webclient import PAGE, add_clean, client_for, web_settings
+from tests.webclient import PAGE, add_clean, client_for, enrol, web_settings
 
 SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules",
                "GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings", "Help"]  # fmt: skip
@@ -228,6 +232,43 @@ def test_the_simple_screens_chosen_on_the_card_set_up_jd_edwards_keying_unless_i
     )
 
 
+def test_simple_chosen_on_settings_about_sets_up_jd_edwards_keying_as_the_card_does(tmp_path):
+    """Simple chosen on Settings → About → Screens gave an older laptop folder the short menu alone, where the queue's
+    card sets up JD Edwards keying too: one choice, two results. On a laptop it now does what the card does
+    (``use_simple``) and its "Saved:" words say so, never over JD Edwards settings someone saved; the company
+    server's About tab saves the screens alone, as before."""
+    store = _old_folder(tmp_path / "a")
+    client = client_for(store)
+    answer = client.post("/settings/about/show", data={"screens": core.SIMPLE}, headers=PAGE).json()  # (JDE unticked)
+    assert "Saved: Simple screens, JD Edwards keying set up (the keying sheet)." in client.get(answer["redirect"]).text
+    assert core.simple_screens(store) and jde_settings.in_use(store)  # (not hidden again by the box left unticked)
+    assert jde_settings.load(store) == jde_prototype.prototype_settings()
+    assert store.get_setting(jde_settings.EXPORT_FORMAT) == "jde_keying"
+    assert store.tax_treatments()["QST"].treatment == "expense_to_line"
+
+    saved = _old_folder(tmp_path / "b")
+    theirs = jde_settings.JdeSettings(company="00070", user="PAT")
+    jde_settings.save(saved, theirs)
+    jde_settings.show(saved, False)
+    client = client_for(saved)
+    answer = client.post("/settings/about/show", data={"screens": core.SIMPLE}, headers=PAGE).json()
+    assert "Saved: Simple screens." in client.get(answer["redirect"]).text
+    assert core.simple_screens(saved) and jde_settings.load(saved) == theirs and not jde_settings.in_use(saved)
+    assert saved.get_setting(jde_settings.EXPORT_FORMAT) == ""
+
+    server = _old_folder(tmp_path / "c")
+    admin = server.add_user("pat", "correct horse battery", role="admin", display_name="Pat")
+    with server._conn() as conn:
+        conn.execute("UPDATE users SET must_change = 0 WHERE id = ?", (admin,))
+    enrol(server, admin)
+    app = create_app(web_settings(), server, start_reader=False, server=True)
+    client = TestClient(app, base_url="http://localhost", client=("10.0.0.5", 50000))
+    cookie = {**PAGE, "Cookie": f"{SESSION_COOKIE}={server.start_session(admin)}"}
+    answer = client.post("/settings/about/show", data={"screens": core.SIMPLE}, headers=cookie).json()
+    assert answer["ok"] and core.simple_screens(server)
+    assert not server.get_setting(jde_settings.SETTING_KEY) and server.get_setting(jde_settings.EXPORT_FORMAT) == ""
+
+
 def test_while_demo_invoices_are_loaded_the_rail_and_the_card_lead_to_removing_only_them(tmp_path, demo_db):
     """D-232: an older data folder with the demo invoices in it opened with "Demo invoices loaded" at the rail's foot
     and nothing to click; their removal was on Settings → Data & backups only. The rail's words lead there, and the
@@ -321,6 +362,79 @@ def test_an_older_folder_with_invoices_of_its_own_is_asked_once_and_each_answer_
             assert store.get_setting(core.PILOT_SETUP) == ("declined" if answer is False else ""), answer
             assert CARD in client_for(store).get("/review").text, answer
         assert core.older_folder_start(db, ask) == "" and len(asked) == (0 if answer is None else 1), answer
+
+
+def test_an_older_demo_folder_whose_export_page_was_used_opens_on_the_keying_sheet_too(tmp_path, demo_db):
+    """B-2383: the earlier AP Coder saved the format of every batch made (the demo's, tried once: Excel). The start
+    removed the demo and its batch and said "the keying sheet", but the page that hands vouchers over still opened on
+    the Excel workbook: the format was kept as one "chosen there before". With no batch left it is no choice of
+    anyone's: the page opens on the keying sheet, as a new folder's. A folder with invoices of its own keeps its."""
+    db = _copy_of(demo_db, tmp_path / "old")
+    Store(db).set_setting(jde_settings.EXPORT_FORMAT, "xlsx")
+    assert core.older_folder_start(db) == f"{SET_UP}; the demo invoices removed."
+    _set_up_for_keying(Store(db))
+    own = Store(_copy_of(demo_db, tmp_path / "own"))
+    add_clean(own, invoice_number="REAL-0001")
+    own.set_setting(jde_settings.EXPORT_FORMAT, "xlsx")
+    assert core.older_folder_start(own.path, lambda question: True)
+    assert own.get_setting(jde_settings.EXPORT_FORMAT) == "xlsx" and core.simple_screens(own)
+
+
+def test_a_folder_whose_simple_screens_never_got_jd_edwards_keying_is_finished_at_the_next_start(
+    tmp_path, demo_db, monkeypatch
+):
+    """Simple chosen before it set up JD Edwards keying (the card before B-2378, Settings → About), or a set-up that
+    stopped half way: the short menu, no JD Edwards, and no start ever looked at the folder again. The next start
+    treats it as a folder whose screens were never chosen: with invoices of its own it asks once (the keying changes
+    how the QST is coded), with none or the demo's it sets the keying up; screens saved as Everything, a set-up
+    recorded already and JD Edwards settings someone saved stay as they are."""
+    db = _copy_of(demo_db, tmp_path / "simple")
+    real = add_clean(Store(db), invoice_number="REAL-0001")
+    Store(db).set_setting(core.SCREENS, core.SIMPLE)
+    demo = Store(db).demo_count()
+    assert core.older_folder_start(db) == "" and core.keying_to_set_up(Store(db))  # nobody at the window: not yet
+    asked: list[str] = []
+    said = core.older_folder_start(db, lambda question: asked.append(question) or True)
+    assert said == "Set up for JD Edwards keying: the short menu, the keying sheet."
+    store = Store(db)
+    assert asked == [core.ASK_SIMPLE] and store.demo_count() == demo
+    assert real in {i["id"] for i in store.list_invoices()}
+    _set_up_for_keying(store)
+    assert core.older_folder_start(db, asked.append) == "" and len(asked) == 1  # once
+    only_demo = _copy_of(demo_db, tmp_path / "only-demo")
+    Store(only_demo).set_setting(core.SCREENS, core.SIMPLE)
+    assert "the keying sheet; the demo invoices removed." in core.older_folder_start(only_demo)  # no question
+    _set_up_for_keying(Store(only_demo))
+
+    for name, settings in (("everything", {core.SCREENS: core.EVERYTHING}),
+                           ("declined", {core.SCREENS: core.SIMPLE, core.PILOT_SETUP: "declined"})):  # fmt: skip
+        left = Store(_copy_of(demo_db, tmp_path / name))
+        for key, value in settings.items():
+            left.set_setting(key, value)
+        assert core.older_folder_start(left.path, asked.append) == "" and len(asked) == 1, name
+        assert not left.get_setting(jde_settings.SETTING_KEY) and left.demo_count(), name
+        assert left.get_setting(core.PILOT_SETUP) == settings.get(core.PILOT_SETUP, ""), name
+    theirs = jde_settings.JdeSettings(company="00070", user="PAT")
+    kept = Store(_copy_of(demo_db, tmp_path / "theirs"))
+    jde_settings.save(kept, theirs)
+    kept.set_setting(core.SCREENS, core.SIMPLE)
+    assert core.older_folder_start(kept.path) == "" and jde_settings.load(kept) == theirs
+    assert kept.get_setting(core.PILOT_SETUP) == ""
+
+    # A set-up that fails half way leaves the folder as it was, so the next start (or the card) does all of it.
+    half = _copy_of(demo_db, tmp_path / "half")
+
+    def fails(store, actor=None):
+        raise OSError("disk full")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(jde_prototype, "use_prototype", fails)
+        with pytest.raises(OSError):
+            core.older_folder_start(half)
+    assert not Store(half).get_setting(core.SCREENS) and not Store(half).get_setting(core.PILOT_SETUP)
+    assert CARD in client_for(Store(half)).get("/review").text
+    assert core.older_folder_start(half) == f"{SET_UP}."  # (the demo invoices went on the first try)
+    _set_up_for_keying(Store(half))
 
 
 def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):
