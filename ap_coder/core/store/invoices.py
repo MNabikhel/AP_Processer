@@ -435,8 +435,8 @@ class InvoicesMixin:
     # --- The review screen's drafts: edits not approved yet (D-86) ---------------------------------------------------
     # One row per invoice and person ("" this computer, else a colleague's key on the office network:
     # web/pages/invoice_drafts.py), so the edits outlive a restart, as the screen says. Dropped on approval,
-    # rejection, Start over. A draft a review screen's own check dropped names that screen a short while (the
-    # ``ephemeral`` row "draft-dropped:<invoice id>" of the person, D-184).
+    # deletion, Start over (kept on a rejection, for a reopen: B-2361). A draft a review screen's own check dropped
+    # names that screen a short while (the ``ephemeral`` row "draft-dropped:<invoice id>" of the person, D-184).
 
     def save_invoice_draft(self, invoice_id: int, person: str, draft: dict[str, Any] | None, *, screen: str = "",
                            seconds: float = 0, expect: Callable[[dict[str, Any] | None], bool] | None = None
@@ -488,13 +488,13 @@ class InvoicesMixin:
         return draft if isinstance(draft, dict) else None
 
     def invoice_drafts(self) -> list[tuple[int, str, dict[str, Any]]]:
-        """(invoice id, person, draft) of every invoice still in the review queue; a draft that can't be read is left
-        out."""
+        """(invoice id, person, draft) of every invoice still in the review queue, or parked or rejected (its edits back
+        when it is resumed or reopened, B-2361); a draft that can't be read is left out."""
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT d.invoice_id, d.person, d.draft FROM invoice_drafts d JOIN invoices i ON i.id = d.invoice_id "
-                "WHERE i.status = ? ORDER BY d.updated_at",
-                (REVIEW,),
+                "WHERE i.status IN (?, ?, ?) ORDER BY d.updated_at",
+                (REVIEW, PARKED, REJECTED),
             ).fetchall()
         out = []
         for r in rows:

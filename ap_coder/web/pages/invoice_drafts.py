@@ -115,7 +115,8 @@ def forget_draft(request: Request, invoice_id: int) -> None:
 
 
 def forget_everyones_draft(request: Request, invoice_id: int) -> None:
-    """Drop everyone's edits of an invoice that was approved, rejected, deleted or reopened: they no longer apply."""
+    """Drop everyone's edits of an invoice that was approved, deleted or reopened after its approval: they no longer
+    apply (a rejected one keeps them for a reopen, B-2361)."""
     for drafts in _all_drafts(request):
         drafts.pop(invoice_id, None)
     get_store(request).drop_invoice_drafts(invoice_id)

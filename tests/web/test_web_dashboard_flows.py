@@ -260,14 +260,13 @@ def test_bulk_approve_keeps_an_earlier_approvers_corrections(client, store):
     assert inv["final_output"]["line_items"][0]["predicted_gl_code"] == "1510"
 
 
-def test_a_rejected_invoice_reopens_without_the_edits_dropped_at_rejection(client, store):
+def test_a_rejected_invoice_reopens_with_the_edits_made_before_its_rejection(client, store):
     invoice_id = add_clean(store)
     check(client, invoice_id, form_of(store, invoice_id, invoice_number="TYPO-123"))
     assert 'value="TYPO-123"' in client.get(f"/review/{invoice_id}").text  # kept while it is open
     follow(client, post(client, f"/review/{invoice_id}/reject", {"reason": "not our invoice"}))
     follow(client, post(client, f"/review/{invoice_id}/reopen"))  # Failed / rejected tab: rejected by mistake
-    page = client.get(f"/review/{invoice_id}").text
-    assert "TYPO-123" not in page and 'value="NW-2026-0912"' in page
+    assert 'value="TYPO-123"' in client.get(f"/review/{invoice_id}").text  # as after Park (B-2361)
 
 
 def test_restoring_a_backup_forgets_the_edits_of_invoices_it_removes(client, store):
