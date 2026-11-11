@@ -639,6 +639,37 @@ def test_an_earlier_export_known_only_by_its_gst_number_is_a_duplicate(tmp_path)
     assert problems == {2: [f"already exported: AP Coder #{first_id} in batch {batch}"]}
 
 
+def test_a_voucher_in_jd_edwards_for_one_of_two_suppliers_of_a_name_is_found_by_its_supplier_number(tmp_path):
+    """B-2342: JD Edwards' voucher list keeps each voucher's supplier number, but the batch's duplicate check read
+    the register by name only, and a name two supplier numbers share gives neither: an invoice picked as "LAKESIDE
+    CATERING LTD #2004" that JD Edwards already has under 2004 went out again. Where both sides have a supplier
+    number it decides; the other supplier of the name with the same invoice number is no duplicate."""
+    from ap_coder.coding.vendors import master_columns, master_rows
+    from ap_coder.erp import registers
+
+    store = Store(tmp_path / "ap.db")
+    suppliers = [{"Address Number": "2003", "Alpha Name": "LAKESIDE CATERING LTD"},
+                 {"Address Number": "2004", "Alpha Name": "LAKESIDE CATERING LTD"}]  # fmt: skip
+    store.import_vendor_master(master_rows(suppliers, master_columns(list(suppliers[0]))))
+    names = {v["erp_id"]: v["display_name"] for v in store.master_vendors()}
+
+    def voucher(document, an8, number):
+        return {"Document Number": document, "Doc Type": "PV", "Doc Co": "00210", "Pay Item": "001",
+                "Supplier Number": an8, "Supplier Number Desc": "LAKESIDE CATERING LTD", "Invoice Number": number,
+                "Gross Amount": "525.00", "Invoice Date": "2026-11-02", "G/L Date": "2026-11-02"}  # fmt: skip
+
+    items = [voucher("40001", "2004", "LC-7781"), voucher("40002", "2003", "LC-9000")]
+    store.import_erp_vouchers(registers.vouchers_from_pay_items(items, registers.voucher_columns(list(items[0])),
+                                                                names)[0])  # fmt: skip
+    invoices = [{"id": n, "final_output": {"vendor_name": "LAKESIDE CATERING LTD #2004", "invoice_number": number,
+                                           "grand_total": 525.0, "invoice_date": "2026-11-02"}}
+                for n, number in ((1, "LC-7781"), (2, "LC-9000"))]  # fmt: skip
+    settings, ids = jde_settings.JdeSettings(), store.vendor_ids()
+    assert jde.duplicate_problems(invoices, settings, ids, jde.prior_records(store, invoices=invoices)) == {
+        1: ["already in the ERP (invoice LC-7781, dated 2026-11-02)"]
+    }
+
+
 def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}

@@ -178,7 +178,8 @@ def duplicate_problems(
                 break
         for r in register.get((number, credit), []):
             key = r.get("vendor_key") or vendor_key(r.get("vendor_name") or "")
-            if same(who, (an8_of(r), key)):  # (the register has no GST/HST number: by name)
+            an8 = str(r.get("an8") or "").strip()  # JD Edwards' voucher list's supplier number (B-2342)
+            if (who[0] == an8) if (who[0] and an8) else same(who, (an8_of(r), key)):  # (no GST/HST number: by name)
                 when = f", dated {r['invoice_date']}" if r.get("invoice_date") else ""
                 msgs.append(f"already in the ERP (invoice {r.get('invoice_number')}{when})")
                 break
