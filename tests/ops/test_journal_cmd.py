@@ -258,3 +258,31 @@ def test_a_year_of_vouchers_from_the_console(tmp_path, capsys):
                                     "learn from.")  # fmt: skip
     store = _store(tmp_path)
     assert len(store.journal_suppliers()) == len({v.supplier for v in truth.vouchers})
+
+
+def test_a_journal_saved_again_through_excel_is_refused_in_plain_words(tmp_path, capsys, truth):
+    """B-2346: opened and saved in Excel, an account cell with one dot reads as a number, so "0021061010.2110" becomes
+    "21061010.211": the trade payable object was worked out as 211 and the vouchers loaded as if whole. A business
+    unit or object cut short of the chart's codes, or of the file's own, refuses the file; the file as JD Edwards
+    wrote it loads."""
+    rows = jde_exports.journal_rows(truth)
+    cut = 0
+    for row in rows:
+        cell = row[AT["account"]] if len(row) > AT["account"] else ""
+        if cell.count(".") == 1 and cell.replace(".", "").strip().isdigit():
+            row[AT["account"]], cut = repr(float(cell)).removesuffix(".0"), cut + 1
+    assert cut
+    text = io.StringIO(newline="")
+    csv.writer(text, lineterminator="\r\n").writerows(rows)
+    path = tmp_path / "saved.csv"
+    path.write_bytes(text.getvalue().encode("utf-8-sig"))
+    words = "this file was saved through Excel and lost its leading zeros: export it again from JD Edwards"
+    for chart in (False, True):
+        if chart:
+            chart_cmd.import_files(_store(tmp_path), jde_exports.chart_xlsx(truth),
+                                   jde_exports.business_units_xlsx(truth))  # fmt: skip
+        code, out, _ = _run(tmp_path, capsys, "import", path)
+        assert code == 1 and out.splitlines()[-1].startswith("Not loaded: This file was saved through Excel"), out
+        assert words.lower() in out.lower() and _store(tmp_path).journal_files() == []
+    code, out, _ = _run(tmp_path, capsys, "import", _file(tmp_path, truth))
+    assert code == 0 and out.splitlines()[-1].startswith("Loaded R09321.csv")

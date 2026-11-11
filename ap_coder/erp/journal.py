@@ -394,6 +394,24 @@ def looks_like_journal(data: bytes) -> bool:
     return named or _positions(rows)[1] is not None
 
 
+def cut_by_excel(journal: Journal, units: Iterable[str] = (), objects: Iterable[str] = ()) -> list[str]:
+    """The account strings of ``journal`` a save through Excel cut short, in order (B-2346): an account cell with one
+    dot reads to Excel as a number, so "0021061010.2110" became "21061010.211". ``units``, ``objects``: the chart's
+    business units and objects (none without a chart). Such a line's business unit is one of the chart's or the
+    file's own without its leading zeros, or shorter than every one of the chart's; or its object is shorter than
+    every one of the chart's, or one of them without its last zeros."""
+    lines = [line for voucher in journal.vouchers for line in voucher.lines]
+    units, objects = {clean(u) for u in units} - {""}, {clean(o) for o in objects} - {""}
+    padded = {u.lstrip("0"): u for u in {*units, *(line.business_unit for line in lines)} if u.startswith("0")}
+    trailing = {o.rstrip("0"): o for o in objects if o.endswith("0")}
+    shortest_unit, shortest_object = min(map(len, units), default=0), min(map(len, objects), default=0)
+    cut = [line.account for line in lines
+           if not line.subsidiary and (line.business_unit in padded or len(line.business_unit) < shortest_unit
+                                       or len(line.object) < shortest_object
+                                       or (line.object not in objects and line.object in trailing))]  # fmt: skip
+    return list(dict.fromkeys(cut))
+
+
 def coding_lines(
     journal: Journal, *, include_affiliates: bool = False, include_unbalanced: bool = False
 ) -> list[CodingLine]:
