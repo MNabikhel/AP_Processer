@@ -433,7 +433,9 @@ def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_cl
     assert "--without-sign-in" in d.launch.server_command(8501, ["--without-sign-in"])  # (serve is told, and warns)
     # A set-up that starts nothing (the server's own, and server-update's) is never refused.
     assert d.launch.main(["--no-start", "--yes"]) == 0 and len(d.went_on) == 2
-    # The last guard, for a start that comes another way (the installer's "Start AP Coder now?").
+    # The last guard, for a start that comes another way (the installer's "Start AP Coder now?"). No service is
+    # installed here: asked of Windows by a schtasks process, which the stand-in below would take for a dashboard.
+    monkeypatch.setattr("ap_coder.ops.service.installed", lambda *a, **k: False)
     monkeypatch.setattr(d.launch.subprocess, "Popen", lambda *a, **k: pytest.fail("a dashboard started"))
     assert d.launch.start_dashboard([], {}) == 1
     assert "it was not started without sign-in" in capsys.readouterr().out
