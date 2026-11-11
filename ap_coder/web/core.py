@@ -726,6 +726,26 @@ def first_run(db: Path, *, server: bool) -> Store:
     return store
 
 
+def keying_to_set_up(store: Store) -> bool:
+    """Whether JD Edwards keying is still to be set up the department's way: no JD Edwards settings saved yet."""
+    from ap_coder.erp import jde_settings
+
+    return not store.get_setting(jde_settings.SETTING_KEY)
+
+
+def use_simple(store: Store, actor: str | None = None) -> bool:
+    """The Simple screens chosen on an older data folder: the short menu, and the department's JD Edwards set-up
+    (``use_prototype``, as a new folder's) when no JD Edwards settings were saved; saved ones are never touched
+    (B-2378). True when JD Edwards keying was set up."""
+    store.set_setting(SCREENS, SIMPLE, actor=actor)
+    if not keying_to_set_up(store):
+        return False
+    from ap_coder.erp import jde_prototype
+
+    jde_prototype.use_prototype(store, actor)
+    return True
+
+
 def developer_env_on() -> bool:
     """AP_DEVELOPER_TOOLS read one way everywhere: 1, true or yes is on; 0, false, no or nothing is off (B-527)."""
     return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes")

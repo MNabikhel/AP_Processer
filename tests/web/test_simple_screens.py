@@ -190,6 +190,43 @@ def test_keeping_every_page_is_saved_too_so_the_card_never_returns(tmp_path, dem
     assert full.get_setting(core.SCREENS) == core.EVERYTHING and CARD not in client.get("/review").text
 
 
+KEYING = "also sets up keying for JD Edwards (the keying sheet)"
+
+
+def test_the_simple_screens_chosen_on_the_card_set_up_jd_edwards_keying_unless_it_was_set_up(tmp_path):
+    """B-2378: "Use the simple screens" on an older data folder gave the short menu, but not the department's JD
+    Edwards set-up a new folder gets (``use_prototype``): no JD Edwards, no keying sheet, the QST recovered. It does
+    now, said on the card, and never over JD Edwards settings someone saved; "Keep every page" changes nothing."""
+    store = _old_folder(tmp_path / "a")
+    client = client_for(store)
+    assert KEYING in client.get("/review").text.split(CARD, 1)[1].split("</section>", 1)[0]
+    answer = client.post("/settings/about/screens", data={"screens": core.SIMPLE}, headers=PAGE).json()
+    assert answer["ok"] and "keying sheet" in client.get(answer["redirect"]).text
+    assert jde_settings.load(store) == jde_prototype.prototype_settings() and jde_settings.in_use(store)
+    assert store.get_setting(jde_settings.EXPORT_FORMAT) == "jde_keying"
+    assert store.tax_treatments()["QST"].treatment == "expense_to_line"
+
+    saved = _old_folder(tmp_path / "b")
+    theirs = jde_settings.JdeSettings(company="00070", user="PAT")
+    jde_settings.save(saved, theirs)
+    jde_settings.show(saved, False)
+    client = client_for(saved)
+    assert KEYING not in client.get("/review").text  # (the card still asks: their settings are not mentioned)
+    assert client.post("/settings/about/screens", data={"screens": core.SIMPLE}, headers=PAGE).json()["ok"]
+    assert core.simple_screens(saved) and jde_settings.load(saved) == theirs and not jde_settings.in_use(saved)
+    assert saved.get_setting(jde_settings.EXPORT_FORMAT) == "" and saved.tax_treatments()["QST"].treatment != (
+        "expense_to_line"
+    )
+
+    kept = _old_folder(tmp_path / "c")
+    answer = client_for(kept).post("/settings/about/screens", data={"screens": core.EVERYTHING}, headers=PAGE)
+    assert answer.json()["ok"]
+    assert not kept.get_setting(jde_settings.SETTING_KEY) and kept.get_setting(core.SHOW_JDE, "unset") == "unset"
+    assert kept.get_setting(jde_settings.EXPORT_FORMAT) == "" and kept.tax_treatments()["QST"].treatment != (
+        "expense_to_line"
+    )
+
+
 def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):
     new = core.first_run(tmp_path / "new" / "ap_coder.db", server=False)
     assert CARD not in client_for(new).get("/review").text

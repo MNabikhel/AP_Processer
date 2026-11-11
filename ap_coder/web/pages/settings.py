@@ -69,6 +69,7 @@ from ap_coder.web.core import (
     reviewer,
     server_mode,
     simple_screens,
+    use_simple,
 )
 
 router = page_router()  # each plain handler: one connection a request
@@ -747,9 +748,17 @@ def choose_screens(request: Request, screens: str = Form("")) -> JSONResponse:
     if screens not in (SIMPLE, EVERYTHING):
         return refuse("Choose the simple screens or every page.")
     store = get_store(request)
-    store.set_setting(SCREENS, screens, actor=reviewer())
+    keyed = False
+    if screens == SIMPLE:
+        keyed = use_simple(store, actor=reviewer())
+    else:
+        store.set_setting(SCREENS, screens, actor=reviewer())
     store.log_event("settings_changed", actor=reviewer(), detail={"keys": [SCREENS]})
-    said = "The simple screens are on: the short menu." if screens == SIMPLE else "Every page stays in the menu."
+    said = "Every page stays in the menu."
+    if screens == SIMPLE:
+        said = "The simple screens are on: the short menu" + (
+            ", and JD Edwards keying is set up (the keying sheet)." if keyed else "."
+        )
     return done(request, "/review", f"{said} To change it later: Settings → About → Screens.")
 
 

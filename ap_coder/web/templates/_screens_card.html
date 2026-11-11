@@ -1,5 +1,6 @@
 {# The queue page's card for a data folder an earlier AP Coder made (core.screens_to_choose, D-221): what is new, and
-   which screens to show. Either button saves the choice, so it shows once. Needs: choose_screens. #}
+   which screens to show. Either button saves the choice, so it shows once. "Use the simple screens" also sets up
+   JD Edwards keying when none is saved (core.use_simple, B-2378). Needs: choose_screens, keying_to_set_up. #}
 {% if choose_screens %}
 <section class="card stack" id="choose-screens">
   <h4><span class="ms" aria-hidden="true">new_releases</span> AP Coder was updated: choose your screens</h4>
@@ -20,6 +21,7 @@
       <button class="btn" type="submit"><span class="ms" aria-hidden="true">menu</span>Keep every page</button>
     </form>
   </div>
+  {% if keying_to_set_up %}<p>“Use the simple screens” also sets up keying for JD Edwards (the keying sheet).</p>{% endif %}
   <p class="muted">Either choice can be changed later: Settings → About → Screens.</p>
 </section>
 {% endif %}
