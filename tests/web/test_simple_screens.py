@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from pathlib import Path
 
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.erp import jde_prototype, jde_settings
@@ -251,6 +252,75 @@ def test_while_demo_invoices_are_loaded_the_rail_and_the_card_lead_to_removing_o
     page = client.get(answer.json()["redirect"]).text
     assert f"Removed {demo} demo invoices" in page and "Demo invoices loaded" not in page
     assert "/demo/remove" not in page and CARD in page  # (the screens are still to choose)
+
+
+# --- A data folder an earlier AP Coder made, at a start (the launcher, before it serves: D-232) ----------------------
+
+SET_UP = "Set up for JD Edwards keying: the short menu, the keying sheet"
+
+
+def _copy_of(demo_db, folder) -> Path:
+    target = folder / "ap_coder.db"
+    target.parent.mkdir(parents=True)
+    shutil.copy(demo_db, target)
+    return target
+
+
+def _set_up_for_keying(store: Store) -> None:
+    assert core.simple_screens(store) and store.get_setting(core.PILOT_SETUP) == "done"
+    assert jde_settings.load(store) == jde_prototype.prototype_settings() and jde_settings.in_use(store)
+    assert store.get_setting(jde_settings.EXPORT_FORMAT) == "jde_keying"
+    page = client_for(store).get("/review").text
+    assert CARD not in page and _labels(_rail(page)) == SIMPLE_MENU
+
+
+def test_an_older_folder_holding_only_the_demo_invoices_is_set_up_as_a_new_one_without_a_question(tmp_path, demo_db):
+    """The pilot tester's laptop: AP Coder from GitHub's ZIP opened an earlier one's data folder, the demo invoices in
+    it, with every page and no JD Edwards. A folder with no invoices but the demo's (or none) starts as a new one: the
+    demo invoices removed, the short menu and the keying sheet, said in one line, once; nothing is asked."""
+    db = _copy_of(demo_db, tmp_path / "old")
+    assert Store(db).demo_count() and not Store(db).get_setting(core.SCREENS)
+    asked: list[str] = []
+    assert core.older_folder_start(db, asked.append) == f"{SET_UP}; the demo invoices removed."
+    store = Store(db)
+    assert asked == [] and store.demo_count() == 0 and store.list_invoices() == []
+    assert store.list_accounts("gl_accounts") == []  # (the demo's sample accounts went with it: none was typed)
+    _set_up_for_keying(store)
+    assert "Demo invoices loaded" not in client_for(store).get("/review").text
+    assert core.older_folder_start(db, asked.append) == "" and asked == []  # once
+
+    empty = tmp_path / "empty" / "ap_coder.db"
+    theirs = jde_settings.JdeSettings(company="00070", user="PAT")
+    jde_settings.save(Store(empty), theirs)  # JD Edwards settings someone saved: kept as they are
+    said = core.older_folder_start(empty)
+    assert said == "Set up for JD Edwards keying: the short menu, your JD Edwards settings kept as they are."
+    assert core.simple_screens(Store(empty)) and jde_settings.load(Store(empty)) == theirs
+    new = tmp_path / "new" / "ap_coder.db"
+    assert core.older_folder_start(new) == "" and not new.exists()  # a new folder is first_run's
+
+
+def test_an_older_folder_with_invoices_of_its_own_is_asked_once_and_each_answer_does_what_it_says(tmp_path, demo_db):
+    """Its own invoices there: asked once at the start (Enter for yes). Yes is the card's "Use the simple screens";
+    no is recorded and the card still asks; nobody to ask (``ask`` None: --yes, AP_NO_PAUSE, no window) leaves it to
+    the card, as before. Every invoice is kept, the demo's too (the rail leads to their removal)."""
+    for answer in (True, False, None):
+        db = _copy_of(demo_db, tmp_path / str(answer))
+        real = add_clean(Store(db), invoice_number="REAL-0001")
+        demo = Store(db).demo_count()
+        asked: list[str] = []
+        ask = None if answer is None else (lambda q, answer=answer, asked=asked: asked.append(q) or answer)
+        assert core.older_folder_start(db, ask) == (f"{SET_UP}." if answer else ""), answer
+        assert asked == ([] if answer is None else [core.ASK_SIMPLE]), answer
+        assert "Your invoices and settings are kept. [Y/n]" in core.ASK_SIMPLE
+        store = Store(db)
+        assert real in {i["id"] for i in store.list_invoices()} and store.demo_count() == demo, answer
+        if answer:
+            _set_up_for_keying(store)
+        else:
+            assert not core.simple_screens(store) and not store.get_setting(jde_settings.SETTING_KEY), answer
+            assert store.get_setting(core.PILOT_SETUP) == ("declined" if answer is False else ""), answer
+            assert CARD in client_for(store).get("/review").text, answer
+        assert core.older_folder_start(db, ask) == "" and len(asked) == (0 if answer is None else 1), answer
 
 
 def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):

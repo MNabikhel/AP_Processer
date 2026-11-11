@@ -746,6 +746,45 @@ def use_simple(store: Store, actor: str | None = None) -> bool:
     return True
 
 
+PILOT_SETUP = "pilot_setup"  # an older laptop data folder set up at a start (D-232): "done", or "declined"
+ASK_SIMPLE = ("Use the short menu and set up JD Edwards keying (the keying sheet)? Your invoices and settings are "
+              "kept. [Y/n] ")  # fmt: skip
+
+
+def older_folder_start(db: Path, ask: Callable[[str], bool] | None = None) -> str:
+    """A laptop's data folder an earlier AP Coder made, set up the department's way at a start, once (D-232; the
+    launcher, before it serves; never the company server's). Holding no invoices but the demo's (or none): as a new
+    folder, the demo invoices removed (``remove_demo``: what it loaded with them too), the Simple screens and JD
+    Edwards keying (``use_simple``), no question. Holding invoices of its own: ``ask`` (the question ``ASK_SIMPLE``,
+    True for yes) decides; yes does what the queue's card's "Use the simple screens" does, no is recorded (the card
+    still asks); no ``ask`` (nobody at the window), nothing is done or recorded. A folder whose screens were chosen
+    already is left as it is. Returns what to say ("" for nothing)."""
+    if not db.is_file():
+        return ""  # a new data folder: ``first_run`` sets it up
+    store = Store(db)
+    if store.get_setting(SCREENS) or store.get_setting(PILOT_SETUP):
+        return ""
+    demo = store.demo_count()
+    removed = 0
+    if sum(store.status_counts().values()) > demo:  # invoices of its own
+        if ask is None:
+            return ""
+        if not ask(ASK_SIMPLE):
+            store.set_setting(PILOT_SETUP, "declined")
+            return ""
+    elif demo:
+        from ap_coder.ops.demo import remove_demo
+
+        removed = remove_demo(store)
+    keyed = use_simple(store)
+    store.set_setting(PILOT_SETUP, "done")
+    store.log_event("settings_changed", detail={"keys": [SCREENS, PILOT_SETUP]})
+    said = "Set up for JD Edwards keying: the short menu, " + (
+        "the keying sheet" if keyed else "your JD Edwards settings kept as they are"
+    )
+    return said + ("; the demo invoices removed." if removed else ".")
+
+
 def developer_env_on() -> bool:
     """AP_DEVELOPER_TOOLS read one way everywhere: 1, true or yes is on; 0, false, no or nothing is off (B-527)."""
     return os.environ.get(DEVELOPER_ENV, "").strip().lower() in ("1", "true", "yes")

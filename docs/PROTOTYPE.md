@@ -47,9 +47,17 @@ AP Coder's commands (`python -m ap_coder ...`, in sections 2, 4 and 6) are typed
 double-click it in AP Coder's folder for a command prompt there with AP Coder's own Python. A plain command prompt's
 `python` is not AP Coder's and does not have its packages.
 
-A laptop that ran an earlier AP Coder keeps its data folder, and with it the long menu. The first time you open
-**To review** after the update, a card says what is new and asks once: **Use the simple screens** or **Keep every
-page**. Either way it does not come back.
+A laptop that ran an earlier AP Coder keeps its data folder (`%USERPROFILE%\APCoder`). The double-click sets it up
+by itself, once, before the dashboard opens. With no invoices in it but the demo invoices: as a new installation,
+the demo invoices removed, the short menu and the keying sheet, said in one line in the black window. With invoices
+of your own: it asks *Use the short menu and set up JD Edwards keying (the keying sheet)? [Y/n]* (Enter for yes);
+your invoices and settings are kept either way, and JD Edwards settings already saved are never changed.
+
+Answered No, the first time you open **To review** a card says what is new and asks once: **Use the simple
+screens** (which also sets up keying for JD Edwards) or **Keep every page**. Demo invoices still loaded: click
+*Demo invoices loaded* at the foot of the menu (or **Remove the N demo invoices only** on that card); only the demo
+invoices go, your own stay. As a last resort, to start clean: close AP Coder's black window, rename the data folder
+(`%USERPROFILE%\APCoder` to `APCoder-old`: nothing is deleted), then double-click again.
 
 ## 2. Look around with a made-up company first (optional, 5 minutes)
 
