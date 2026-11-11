@@ -334,7 +334,8 @@ def section_3(client: Client, exports: Path) -> None:
     first = page(client, "/jde-files")
     top = card(first, "checklist") if 'id="checklist"' in first else plain(first)
     says(first, "What is loaded", "Chart of accounts", "Business units", "Suppliers", "Last year's coding",
-         "Vouchers already in JD Edwards")  # fmt: skip
+         "Vouchers already in JD Edwards", "Load the chart", "Load the business units", "Read the suppliers",
+         "Read the journal", "Read the voucher list")  # fmt: skip
     check(top.count("Not yet") >= 5, f"the top of the page does not tick off what is loaded: {top[:600]}")
 
     for path, name in (("/jde-files/chart", jde_exports.CHART_FILE), ("/jde-files/units", jde_exports.UNITS_FILE)):
@@ -346,6 +347,7 @@ def section_3(client: Client, exports: Path) -> None:
         shown = page(client, send(client, f"/jde-files/{box}/upload", [exports / name])["redirect"])
         summary = card(shown, f"{box}-summary")
         check(name in summary and "nothing is loaded yet" in summary, f"{name} is not shown first: {summary[:500]}")
+        check(re.search(r"Load th(?:ese|is) \w+", summary), f"the summary of {name} has no Load button: {summary}")
         seen(f"{name}, shown first: {summary.split('nothing is loaded yet.', 1)[-1].strip()[:220]}")
         token = re.search(rf'action="/jde-files/{box}/load".*?name="token" value="([^"]+)"', shown, re.S)
         check(token, f"the summary of {name} has no Load button")
@@ -372,7 +374,8 @@ def section_3_settings(client: Client, truth: Any) -> None:
     company_ = truth.company
     files = page(client, "/jde-files")
     says(files, "The chart's settings", "Accounts never offered",
-         "Words in a name that retire a business unit or a supplier", "Home business unit")  # fmt: skip
+         "Words in a name that retire a business unit or a supplier", "Home business unit", "Save the settings",
+         "as meals accounts")  # fmt: skip
     never = ", ".join(f"*.{sub}" for sub in company_.reserved_subsidiaries)
     answer = submit(client, files, "/jde-files/chart/settings", never_offered=never,
                     home_business_unit=company_.main_business_unit)  # fmt: skip
@@ -402,7 +405,8 @@ def section_3_settings(client: Client, truth: Any) -> None:
     seen(f"Settings -> Review -> Your province: {jde_invoices.HOME_PROVINCE}, saved")
 
     bank = page(client, "/accounts?tab=bank")
-    says(bank, "Bank accounts", "Type each account as you key it in JD Edwards", "Description", "Currency", "Default")
+    says(bank, "Type each account as you key it in JD Edwards", "Description", "Currency", "Default",
+         "Save bank accounts")  # fmt: skip
     parsed = forms(bank)
     owner = next((k for k, f in parsed.forms.items() if f["action"] == "/accounts/bank/save"), None)
     check(owner, "the Bank accounts tab has no grid to type in")

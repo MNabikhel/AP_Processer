@@ -35,8 +35,12 @@ Every day after that: start LM Studio (*Developer* → *Start server*), then dou
 window open: closing it stops AP Coder.
 
 A new installation shows the short menu ("Simple screens"): **To review**, **Add invoices**, **To key into JDE**,
-**Find an invoice**, **What was learned**, and under **Setup**: GL accounts & tax, JD Edwards files, Vendors,
-Activity, Settings. **Settings → About → Screens** shows every page again.
+**Find an invoice**, **What was learned**, **Rules**, and under **Setup**: GL accounts & tax, JD Edwards files,
+Vendors, Activity, Settings; then Help. **Settings → About → Screens** (*Everything*) shows every page again.
+
+AP Coder's commands (`python -m ap_coder ...`, in sections 2, 4 and 6) are typed in **`scripts\terminal.bat`**:
+double-click it in AP Coder's folder for a command prompt there with AP Coder's own Python. A plain command prompt's
+`python` is not AP Coder's and does not have its packages.
 
 A laptop that ran an earlier AP Coder keeps its data folder, and with it the long menu. The first time you open
 **To review** after the update, a card says what is new and asks once: **Use the simple screens** or **Keep every
@@ -52,14 +56,16 @@ python -m ap_coder demo --company
 python -m ap_coder serve
 ```
 
-Run these in the black window's folder, with AP Coder's Python (as `python -m ap_coder doctor`). It loads a made-up
-chart, suppliers, last year's journal and seven invoices to review. Delete `C:\APCoder\try` when you are done; your
-own data folder (`C:\Users\<you>\APCoder`) is never touched.
+Type these in `scripts\terminal.bat`. `demo --company` loads a made-up chart, suppliers, last year's journal and
+seven invoices to review; `serve` opens them in the browser (on the next free port while your own AP Coder is open:
+the window says "AP Coder is running at ..."). When you are done, press Ctrl+C in that window, close it (it still
+points at the made-up company) and delete `C:\APCoder\try`. Your own data folder (`C:\Users\<you>\APCoder`) is never
+touched.
 
 ## 3. Load your JD Edwards files (once, about 15 minutes)
 
 **Setup → JD Edwards files** takes five exports, each exactly as JD Edwards gives it: no column to rename, no row to
-delete. The top of the page ticks off what is loaded.
+delete. The top of the page (*What is loaded*) ticks off what is loaded.
 
 | # | File | What it gives AP Coder | From JD Edwards |
 |---|---|---|---|
@@ -69,8 +75,11 @@ delete. The top of the page ticks off what is loaded.
 | 4 | Last year's coding (CSV) | what each supplier's lines were coded to, and their remarks | the Transaction Journal, saved as CSV |
 | 5 | Vouchers already in JD Edwards (Excel) | the duplicate check, and the voucher and batch numbers | supplier ledger inquiry |
 
-Each upload shows what it found (how many rows, which columns it read as what) before anything is kept. Loading a
-newer file later replaces the older one; what you typed in AP Coder is set aside, not lost.
+The chart (**Load the chart**) and the business units (**Load the business units**) are loaded at once and say what
+they read. The other three (**Read the suppliers**, **Read the journal**, **Read the voucher list**) first show what
+they found (how many rows, which columns were read as what) with nothing kept yet; the **Load** button under it keeps
+them. A newer chart, business unit list or voucher list replaces the older one, a newer supplier list adds the new
+suppliers and updates the others, and what you changed by hand is kept (below).
 
 Box 3 takes both supplier exports and tells them apart by their column names. Each row goes to the supplier of its
 number, so loading one never removes what only the other gives. The vendor information list lists the suppliers of
@@ -79,7 +88,7 @@ how many tax IDs are business numbers. A tax ID that is a word (CHARITABLE, GOVE
 (a US EIN) is kept as written and compared with nothing.
 
 **See what is loaded.** Once a file is loaded, *What is loaded* at the top links to its rows: a table with a search
-box, filters, a count and *Download as CSV* (codes keep their leading zeros). In the chart, the business units and
+box, filters, a count and *Download ... as CSV* (codes keep their leading zeros). In the chart, the business units and
 the suppliers, **Change** beside a row lets you correct it: an account's description, whether it can be posted to
 and its meals tick; a business unit's name and status; a supplier's name, hold, note, tax numbers and terms. What
 you change is kept when you load a newer file (the page shows what the file says beside it), and every change is in
@@ -92,48 +101,66 @@ Under the chart, **The chart's settings** has three boxes worth a look:
 - *Words in a name that retire a business unit or a supplier* (for example DO NOT USE);
 - *Home business unit*: where a line goes when nothing says otherwise.
 
-Then **Setup → GL accounts & tax → Sales tax accounts**: check the province and the tax accounts. A new
-installation is already set the usual way for keying by hand: the GST/HST that is recovered goes on the voucher's
-pay item (tax explanation code V), and PST or QST that is not recovered stays in the line's expense. A chart does
-not say which accounts are meals accounts, so the top of the JD Edwards files page has a **Meals accounts** line that
-names the accounts that read like meals and ticks them with one click: until one is ticked, the GST/HST of a meal is
-claimed in full, not by half.
+Then **Save the settings** under them. Two things the files do not say are offered on the page, each with one click:
+
+- a chart does not say which accounts are meals accounts, so the top of the page has a **Meals accounts** line that
+  names the accounts that read like meals; **Mark these ... as meals accounts** ticks them. Until one is ticked, the
+  GST/HST of a meal is claimed in full, not by half;
+- once the business units are loaded, **Use company ...** under them makes the company they belong to JD Edwards'
+  company number, which every voucher and the keying sheet carry.
+
+**Setup → GL accounts & tax → Sales tax accounts** needs nothing for keying by hand: a new installation is already
+set the usual way, GST and HST *Recoverable*, PST and QST *Not recoverable: add to each expense line's GL*. The
+GST/HST that is recovered goes on the voucher's pay item (tax explanation code V) and JD Edwards posts it itself, so
+it needs no GL account here; PST or QST stays in the line's expense. Then set **Settings → Review → Your province**
+(where goods are delivered to you): the tax check uses it for an invoice that prints no ship-to or bill-to.
 
 **Bank accounts (optional).** JD Edwards' voucher entry takes a G/L bank account. To have each voucher carry
 one, type your bank accounts on **Setup → GL accounts & tax → Bank accounts**: the account as you key it in
-JD Edwards, a description, its currency, and a tick on the default of each currency. *Remove* takes one off the
-list. Where people sign in, an Approver or an Admin does this; a Clerk sees the list and picks from it. With no
-bank account entered, nothing changes and nothing asks for one.
+JD Edwards, a description, its currency, and a tick on the default of each currency, then **Save bank accounts**.
+*Remove* takes one off the list. Where people sign in, an Approver or an Admin does this; a Clerk sees the list and
+picks from it. With no bank account entered, nothing changes and nothing asks for one.
 
 ## 4. See how it would have coded last year (5 minutes)
 
-Before relying on it, score it against what was really keyed. Both commands run on this laptop only and change
-nothing in AP Coder; the reports go to `pilot_score` in the data folder.
+Before relying on it, score it against what was really keyed. Both commands are typed in `scripts\terminal.bat` (a
+new window, not the made-up company's of section 2), run on this laptop only and change nothing in AP Coder; the
+reports go to `pilot_score` in the data folder.
 
 ```
 python -m ap_coder pilot-score --journal --hold-out 2
 ```
 
 AP Coder forgets the journal's last 2 months, learns from the months before, codes the last 2 months' lines from
-their supplier and remark alone, and compares with the account that was keyed. The first paragraph of
-`journal_score.md` is the answer, for example: "Of 1,149 lines, AP Coder would have coded 227 by itself, all of
-them the way they were keyed; for another 734 the keyed account was among its first three suggestions; 188 it would
-have left to a person."
+their supplier and remark alone, and compares with the account that was keyed. It says the answer, also the first
+paragraph of `journal_score.md`, for example: "Of 1,149 lines keyed in November and December 2024 (785 vouchers), AP
+Coder would have coded 227 by itself, all of them the way they were keyed; for another 734 the keyed account was
+among its first three suggestions; 188 it would have left to a person without the keyed account among them."
 
 The number to trust it by is *of those coded by itself, how many were right*: it should be close to all of them.
-[PILOT.md](PILOT.md), "How well would it have coded last year?", explains every figure, and the second command,
-which scores real invoices (about 50 past PDFs) against the vouchers keyed for them.
+
+The second command scores real invoices: copy about 50 past PDFs into the invoices folder and process them (section
+5, step 1; nobody needs to approve them), then give it JD Edwards' voucher list and journal of the same period:
+
+```
+python -m ap_coder pilot-score --proposed --vouchers HEADERS.xlsx --journal R09321.csv
+```
+
+Its answer starts "Of 50 invoices read by AP Coder here ...": how many it found in the voucher list and the journal,
+and how what it proposed compares with what was keyed; `proposed_score.md` has each voucher. [PILOT.md](PILOT.md),
+"How well would it have coded last year?", explains every figure of both.
 
 ## 5. A day with it
 
-1. **Add invoices:** choose the files, or drop them into the invoices folder the page names, then **Process**.
-   A page of text takes a few seconds; a scan or a phone picture takes longer (the page reader looks at each page).
+1. **Add invoices:** **Choose files**, then **Process uploaded invoices**; or copy them into the invoices folder
+   (**Open folder** on the page opens it), where the page lists them, then **Process N files**. A page of text takes
+   a few seconds; a scan or a phone picture takes longer (the page reader looks at each page).
 2. **To review:** each row says in words the first thing to fix. Open one: the invoice is on the left, its lines
    on the right.
    - **Account:** one box a line holds the whole string. A line AP Coder is sure of arrives filled, with why
-     ("14 of this supplier's 15 lines"). A line it is not sure of is left empty with up to three
-     accounts offered: pick one, or type a number or a word of the account's name. A string the chart does not have
-     is refused, never replaced.
+     ("this supplier's usual account: 14 of 15 lines last year"). A line it is not sure of is left empty with up to
+     three accounts offered: pick one, or type a number or a word of the account's name. A string the chart does not
+     have is refused, never replaced.
    - **Remark:** suggested from the supplier's past remarks, 30 characters at most, yours to change.
    - **Tax:** every line says which tax it carries and how much, each tax its own amount ("read" when the invoice
      prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice
@@ -152,13 +179,13 @@ which scores real invoices (about 50 past PDFs) against the vouchers keyed for t
      last paid from, else the default of the invoice's currency; pick another from the list. An invoice in a
      currency no bank account is in gets a warning and is not held.
    - **Approve** (Ctrl+Enter). An invoice whose accounts are all guesses asks for a reason first.
-3. **To key into JDE:** **Export** puts the approved invoices on a **keying sheet**: one block a voucher, the
-   header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax
+3. **To key into JDE:** with *JD Edwards keying sheet* chosen (a new installation opens on it), **Export N
+   invoices** puts the approved invoices on a **keying sheet** and **Download batch N** gives it (Excel): one block a
+   voucher, the header fields JD Edwards asks for (supplier number, invoice number, dates, currency, gross amount, tax
    explanation code, tax rate/area, tax amount, taxable amount, and the G/L bank account once bank accounts are
-   entered), then one row a line (account, amount, remark). Print
-   it or keep it
-   beside JD Edwards and key from it. An invoice that is not ready is listed with why and is not put on the sheet.
-   The same page makes the JD Edwards batch files, for when the JDE team can load one.
+   entered), then one row a line (account, amount, remark). Print it or keep it beside JD Edwards and key from it.
+   An invoice that is not ready is listed with why and is not put on the sheet. The same page makes the JD Edwards
+   batch files (*JD Edwards E1 (Z-tables)*), for when the JDE team can load one.
 
 What AP Coder leaves to a person, always with a reason: a supplier it does not know, a line it cannot code with
 confidence, an invoice whose numbers do not add up, two tax areas on one invoice, a possible duplicate, a document
@@ -168,16 +195,17 @@ that may not be an invoice, pages it could not read.
 
 - Your data (invoices, the database, daily backups) is in the data folder, `C:\Users\<you>\APCoder`. An update of
   AP Coder keeps it.
-- A backup is made each day AP Coder starts. **Settings → Data & backups** makes one (**Back up now**), lists them
-  and restores one; a second folder (a network drive, a USB disk) can keep a copy. `python -m ap_coder backup now`
-  does the same.
+- A backup is made once a day, at 17:30 while AP Coder is open, or at its next start when it was closed then
+  (**Settings → Data & backups** changes the time). That page also makes one (**Back up now**), lists them and
+  restores one; a second folder (a network drive, a USB disk) can keep a copy. `python -m ap_coder backup now` makes
+  one too.
 - **Setup → Activity** lists who did what.
 - `python -m ap_coder doctor` checks the installation and says what is missing in plain words.
 
 ## What a prototype does not do yet
 
 - **Several people.** This page is one person on one laptop. The same laptop can serve a few colleagues with
-  sign-in during working hours: `python -m ap_coder share` in the AP Coder folder checks what is missing, says each
+  sign-in during working hours: `python -m ap_coder share` in `scripts\terminal.bat` checks what is missing, says each
   next step (the certificate, your own Admin account, the firewall rule), then serves until you close its window;
   the day's backup is made at the time set on *Settings* → *Data & backups* (17:30 unless you change it), so leave
   the window open until then or press *Back up now* first. Two steps are not yours alone: the firewall rule needs
