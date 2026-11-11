@@ -73,11 +73,20 @@ def other_tax_account(a: Any, b: Any) -> bool:
 
 
 def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
-    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by its GST/HST number
-    however much of it either side keeps (``same_tax_number``: the master's 9-digit Business Number for the invoice's
-    full account, or the master's full account for 9 digits), else by name. The number first: two suppliers whose
-    names read the same ("… Inc." and "… Limited") have their own numbers (B-930). "" when the master doesn't know it.
-    The supplier key (``Store.supplier_key_for``) and the export files both use this, so they agree."""
+    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by a name that is one
+    supplier's (kept under it, or with its supplier number: "LAKESIDE CATERING LTD #2004", the reviewer's pick among
+    several), else by its GST/HST number however much of it either side keeps (``same_tax_number``: the master's
+    9-digit Business Number for the invoice's full account, or the master's full account for 9 digits), else by the
+    name's other rules (``VendorIds.number_of``). Two suppliers whose names read the same ("… Inc." and "… Limited")
+    are no one supplier's name, so their own numbers tell them (B-930); a GST/HST number several supplier numbers
+    share is in none of ``ids`` (B-2341). "" when the master doesn't know it. The supplier key
+    (``Store.supplier_key_for``) and the export files both use this, so they agree."""
+    found = ids.get(vendor_key(vendor_name or ""))
+    number_of = getattr(ids, "number_of", None)
+    if not found and number_of is not None and _WITH_NUMBER.search(vendor_name or ""):
+        found = number_of(vendor_name)
+    if found:
+        return found
     if gst_number:
         number = norm_tax_number(gst_number)
         bn = number[:9] if number[:9].isdigit() else ""
@@ -86,12 +95,14 @@ def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: A
         )
         if found:
             return found
-    found = ids.get(vendor_key(vendor_name or ""))
-    if not found and (number_of := getattr(ids, "number_of", None)) is not None:
-        # a name no vendor is kept under as written: by the rule the checks find its vendor by (a name with its
-        # supplier number, a retired supplier's marker, a person written the other way round: B-2162)
+    if number_of is not None:
+        # a name no vendor is kept under as written: by the rule the checks find its vendor by (a retired supplier's
+        # marker, a person written the other way round: B-2162)
         found = number_of(vendor_name)
     return found or ""
+
+
+_WITH_NUMBER = re.compile(r"#\s*\d")  # a name with a supplier number ("LAKESIDE CATERING LTD #2004": B-2161)
 
 
 ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")

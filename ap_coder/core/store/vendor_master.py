@@ -561,12 +561,16 @@ class VendorMasterMixin:
                                        "FROM vendors")  # fmt: skip
         rows = [(v["vendor_key"], v["erp_id"], v["expected_gst"]) for v in vendors if v["erp_id"]]
         ids = {r[0]: r[1] for r in rows}
+        by_tax: dict[str, set[str]] = {}
         for r in rows:
             number = norm_tax_number(r[2])
             if sum(c.isdigit() for c in number) >= 9:
-                ids.setdefault(f"gst:{number}", r[1])
+                by_tax.setdefault(f"gst:{number}", set()).add(r[1])
                 if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
-                    ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
+                    by_tax.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", set()).add(r[1])
+        # A GST/HST number several supplier numbers share (a business's remit-to or branch suppliers) says none of
+        # them: the name does (B-2341).
+        ids.update({tax: next(iter(found)) for tax, found in by_tax.items() if len(found) == 1})
         # A name several supplier numbers in use go by gives none of them: only the name with its number does
         # (``VendorIds.number_of``, B-2161).
         named: dict[str, list[dict[str, Any]]] = {}

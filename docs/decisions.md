@@ -5577,6 +5577,20 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     once a journal), a new supplier's first 16 → 92 ms (the journal as a whole read once), then 8 → 12 ms.
   - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
     `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)
+- **D-227** · **A tax area holds a PST only when that province's supplies alone go to it; code B on any other area
+  accrues nothing, so the PST stays on the Self-assessment report and the keying sheet says so** (11 Nov 2026).
+  - **Why:** The prototype keys a BC, SK or MB supply charged the GST only with code B on its GST-only area
+    (`CDNGST`, shared with Alberta and the territories), where JD Edwards accrues no PST, while the report said
+    "JD Edwards accrues this one (code B)": nobody booked the PST (B-2343). AP Coder does not know what an area
+    holds (F4008 is JD Edwards'), only which provinces Settings → JD Edwards E1 sends to it: an area several
+    provinces share holds only the tax they have in common, the GST (their PSTs differ, Alberta has none).
+  - **What is keyed is unchanged** (code B, the area as set); the voucher gets the note "PST to self-assess: ...".
+    An Admin who gives BC an area of its own that is GST-only still gets "JD Edwards accrues": the area's name says
+    nothing, so it is the JD Edwards team's to set BC's area to one with the PST. Rejected: a setting per area
+    ("holds PST"), one more thing to get wrong on the first day; changing the code to E on a GST-only area (it
+    changes what is keyed, and an area with the PST later would need it back).
+  - (`erp/jde_voucher.py` `accrues_use_tax`, `self_assessed_pst`, `_holds_pst`; `erp/jde_keying.py` `_said`;
+    `coding/taxreturn.py` `_jde_accruing`)
 - **D-228** · **A running AP Coder is told apart by the data folder it serves: one serving another data folder is
   never opened for this one** (laptop mode; 11 Nov 2026).
   - *`/healthz` says its data folder* ("data", resolved), to this computer only, beside "user" (B-168): another

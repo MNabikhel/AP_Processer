@@ -10,7 +10,7 @@ import openpyxl
 
 from ap_coder.coding.tax import TaxTreatment
 from ap_coder.core.memory import vendor_key
-from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_settings, jde_zfiles
+from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_review, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import _setup
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
@@ -228,7 +228,7 @@ def test_a_usd_voucher_and_a_credit_note():
     assert field(foreign, "Tax explanation code").value == "E"
     assert lines_and_check(foreign)[-1][2:] == [500, "500.00 + 0.00 = 500.00: balanced"]
     assert (field(minus, "Gross amount").value, field(minus, "Taxable amount").value) == (-252, -240)
-    assert field(minus, "Tax amount").value == -12 and field(minus, "Payment terms").value is None  # a credit: no terms
+    assert field(minus, "Tax amount").value == -12 and field(minus, "Payment terms").value == "none (a credit)"
     assert field(minus, "Due date").value == dt.datetime(2026, 10, 8)  # a credit: its own date
     assert lines_and_check(minus) == [
         [f"{HQ}.6420.2210", "Data lines", -240, "Credit for September"],
@@ -718,3 +718,101 @@ def test_the_header_block_carries_the_bank_account_once_bank_accounts_are_entere
     other["final_output"]["pay_from_account"] = "100.1112.PAY"
     _, second = blocks(workbook([paid, other], bank_accounts=accounts)[jde_keying.SHEET])
     assert field(second, "G/L bank account").value == "100.1112.PAY"  # no cash GL account: the code as keyed
+
+
+def test_a_supplier_put_on_hold_after_approval_is_not_ready_for_jd_edwards(tmp_path, cost_centers_demo_template):
+    """B-2340: an approved invoice whose supplier was put on hold since (in AP Coder's vendor list, or by a hold code
+    in JD Edwards' supplier master) still went on a keying sheet or a JD Edwards batch as ready: only the API looked
+    at the hold. It is now not ready, with the hold's reason, in both formats."""
+    from ap_coder.web.pages.exports import jde_check
+    from tests.webclient import post
+
+    store, client, northwind, _chinook = demo(tmp_path, cost_centers_demo_template)
+    vendor = store.get_vendor(store.get_invoice(northwind["id"])["vendor_key"])
+    store.save_vendor(vendor["vendor_key"], vendor["display_name"], "on_hold", notes="bank details changed")
+    for files in (True, False):
+        why = jde_check(store, [northwind["id"]], files=files)[1][northwind["id"]]
+        assert "is on hold in AP Coder's vendor list (bank details changed)" in " ".join(why)
+    assert "on hold in AP Coder&#39;s vendor list" in client.get(f"/exports?fmt={jde_keying.FORMAT}").text
+    answer = post(client, "/exports/create", {"fmt": jde_keying.FORMAT, "ids": [northwind["id"]]})
+    assert answer.status_code == 400 and store.export_batches() == []
+    # Off hold here, held by its hold payment code in JD Edwards' supplier master (by its supplier number).
+    store.save_vendor(vendor["vendor_key"], vendor["display_name"], "active")
+    store.import_vendor_master([{"vendor_name": vendor["display_name"], "erp_id": "10023", "hold": "Y"}],
+                               by_erp_id=True)  # fmt: skip
+    why = jde_check(store, [northwind["id"]])[1][northwind["id"]]
+    assert "is on hold in JD Edwards (hold code Y" in " ".join(why)
+
+
+def test_pst_to_self_assess_on_a_gst_only_tax_area_is_listed_and_said_on_the_voucher(tmp_path):
+    """B-2343: a Saskatchewan supply charged the GST only is keyed with code B, which has JD Edwards accrue the PST
+    only on a tax area that carries it; on the prototype's GST-only area (shared with Alberta) it accrues nothing, yet
+    the Self-assessment report said "JD Edwards accrues this one (code B)", so nobody booked the PST. The report lists
+    it to self-assess and the voucher says so; what is keyed is the same."""
+    from ap_coder.coding import taxreturn
+    from ap_coder.core.store import Store
+    from tests.conftest import SAMPLES
+    from tests.erp.test_jde import SK
+    from tests.erp.test_jde import _invoice as jde_invoice
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    final = jde_invoice(SK)["final_output"]
+    final["tax_lines"] = [t for t in final["tax_lines"] if t["tax_type"] != "PST"]
+    final["tax_total"] = sum(t["tax_amount"] for t in final["tax_lines"])
+    final["grand_total"] = round(final["subtotal"] + final["tax_total"], 2)
+    for li in final["line_items"]:
+        li["taxes_applied"], li["tax_exempt"] = ["GST"], []
+    final = coded({k: v for k, v in final.items() if k != "gl_distribution"})["final_output"]
+    ids = []
+    for _ in range(2):
+        ids.append(store.add_invoice(SAMPLES / f"{SK}.pdf", final, {"requires_review": True}))
+        store.approve_invoice(ids[-1], final, "Pat Tester")
+    store.create_export_batch([ids[0]], jde_keying.FORMAT, actor="Pat Tester")
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    jde_settings.save(store, js)
+    day = dt.date.fromisoformat(final["invoice_date"])
+    items = {s.invoice_id: s for s in taxreturn.self_assessment(store, day, day)}
+    assert [(items[i].tax_type, items[i].note) for i in ids] == [("PST", ""), ("PST", "")]
+    (voucher,), held = jde_keying.vouchers([{"id": ids[0], "final_output": final}], js, lambda final: "40417")
+    assert held == [] and (voucher.tax_code, voucher.tax_area) == ("B", "CDNGST")
+    assert voucher.notes[-1].startswith(f"PST to self-assess: SK PST on {items[ids[0]].base:,.2f}. ")
+    assert "CDNGST" in voucher.notes[-1] and "Self-assessment report" in voucher.notes[-1]
+
+
+def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
+    """B-2344: the batch files send a credit memo with no terms code (B-896), but the keying sheet showed the terms it
+    prints ("Net 30") to type. It says none, as the files send."""
+    printed = credit()
+    printed["final_output"]["payment_terms"] = "Net 30"
+    (block,) = blocks(workbook([printed])[jde_keying.SHEET])
+    assert field(block, "Payment terms").value == "none (a credit)"
+    head = jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]
+    assert head["VLPTC"] == ""
+
+
+def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():
+    """B-2345: the tax area follows the ship-to, while the tax charged can be another province's: an Alberta supplier
+    charging the GST only on goods shipped to Ontario went to ONHST with 5% tax (and an Ontario supplier's HST on a
+    supply in Alberta to the GST-only area) with nothing said, where JD Edwards works the tax out at the area's rate.
+    A warning on the review screen and a note on the voucher; the voucher is still ready."""
+    from ap_coder.ops.help import CHECKS
+
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    gst = coded(doc([line(1, 1000.0, "6420.2210", ["GST"], cc=HQ)], [tl("GST", "", 0.05, 1000.0, 50.0)],
+                    prov="AB", ship_to_province="ON", vendor_name="Prairie Office Supply Ltd."))  # fmt: skip
+    hst = coded(doc([line(1, 1000.0, "6420.2210", ["HST"], cc=HQ)], [tl("HST", "ON", 0.13, 1000.0, 130.0)],
+                    prov="ON", ship_to_province="AB", vendor_name="Prairie Office Supply Ltd."), inv_id=2)  # fmt: skip
+    ready, held = jde_keying.vouchers([gst, hst], js, lookup)
+    assert held == [] and [(v.tax_area, v.tax) for v in ready] == [("ONHST", 50.0), ("CDNGST", 130.0)]
+    first, second = (v.notes[-1] for v in ready)
+    assert first.startswith("Tax area ONHST is for a supply in ON, where HST is charged, but this invoice charges "
+                            "GST (50.00)")  # fmt: skip
+    assert second.startswith("Tax area CDNGST is for a supply in AB, where GST is charged, but this invoice charges "
+                             "HST (130.00)")  # fmt: skip
+    for inv in (gst, hst):
+        found = [(sev, code) for sev, code, _m, _l in jde_review.voucher_findings(inv["final_output"], js, "40417")]
+        assert found == [("warning", "JDE_TAX_AREA_MISMATCH")]
+    assert "JDE_TAX_AREA_MISMATCH" in CHECKS
+    (plain,) = jde_keying.vouchers([one_line()], js, lookup)[0]  # Alberta's GST on a supply in Alberta: nothing said
+    assert not any(n.startswith("Tax area") for n in plain.notes)
+    assert jde_review.voucher_findings(one_line()["final_output"], js, "40417") == []
