@@ -112,7 +112,8 @@ def start(env: dict[str, str], log: Path, *extra: str, given: str = "") -> subpr
 
 def stop(env: dict[str, str], window: subprocess.Popen) -> None:
     done = subprocess.run([sys.executable, "-m", "ap_coder", "share", "--stop"], cwd=str(ROOT), env=env,
-                          capture_output=True, text=True, timeout=STOP_WAIT)  # fmt: skip
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=STOP_WAIT)  # fmt: skip
     print(done.stdout.strip())
     check(done.returncode == 0 and "Stopped" in done.stdout, f"share --stop ended {done.returncode}: {done.stderr}")
     try:
@@ -137,7 +138,7 @@ def awake_requests() -> str | None:
     """What ``powercfg /requests`` lists under SYSTEM (None where it can't be asked: off Windows, or refused)."""
     if not WINDOWS:
         return None
-    done = subprocess.run(["powercfg", "/requests"], capture_output=True, text=True)
+    done = subprocess.run(["powercfg", "/requests"], capture_output=True, text=True, errors="replace")
     if done.returncode != 0:
         print(f"(powercfg /requests could not be asked: {done.stdout.strip()} {done.stderr.strip()})")
         return None
@@ -170,7 +171,12 @@ def wait_up(client: Client, window: subprocess.Popen, log: Path) -> None:
         if status == 200 and _json(body).get("server_mode"):
             return
         time.sleep(1)
-    raise Failed(f"share did not answer over HTTPS at {client.base} within {UP_WAIT:g} s")
+    try:  # why, in the words of the last try (the client keeps only that nothing answered)
+        client.opener.open(f"{client.base}/healthz", timeout=5).close()
+        why = "it answered, but not as a server with sign-in"
+    except Exception as exc:  # noqa: BLE001 - said, whatever it is
+        why = f"{type(exc).__name__}: {exc}"
+    raise Failed(f"share did not answer over HTTPS at {client.base} within {UP_WAIT:g} s ({why})")
 
 
 def post(client: Client, path: str, fields: object) -> dict:
