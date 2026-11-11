@@ -201,6 +201,7 @@ that may not be an invoice, pages it could not read.
   (**Settings → Data & backups** changes the time). That page also makes one (**Back up now**), lists them and
   restores one; a second folder (a network drive, a USB disk) can keep a copy. `python -m ap_coder backup now` makes
   one too.
+- A restore clears the second backup folder: set it again on **Settings → Data & backups** after one.
 - **Setup → Activity** lists who did what.
 - `python -m ap_coder doctor` checks the installation and says what is missing in plain words.
 
@@ -212,7 +213,9 @@ that may not be an invoice, pages it could not read.
   the day's backup is made at the time set on *Settings* → *Data & backups* (17:30 unless you change it), so leave
   the window open until then or press *Back up now* first. Two steps are not yours alone: the firewall rule needs
   administrator rights, and the Windows licence is IT's to confirm ([SERVER.md](SERVER.md), "From one person's
-  laptop to a few people on the same laptop").
+  laptop to a few people on the same laptop"). Once `share` has made your Admin account, the *AP Coder* shortcut no
+  longer opens this data without sign-in: start it with `share` (after an update, double-click `APProcessor.bat`
+  once to set it up, then `share`).
 - **Purchase orders, statements, month-end and the other pages** are hidden in Simple screens, not removed.
 - **Posting into JD Edwards by itself.** Vouchers are keyed from the sheet, or loaded as a batch file by the JDE
   team.

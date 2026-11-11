@@ -1866,13 +1866,19 @@ def open_running(port: int) -> int:
     return 0
 
 
-def team_server_instead(rest: list[str]) -> int | None:
+SHARED_LAPTOP = -1  # team_server_instead's "set up, but start nothing: it is started with share" (B-2353)
+
+
+def team_server_instead(rest: list[str], set_up: bool = False) -> int | None:
     """The data folder is one a server-mode AP Coder serves with sign-in, or was set up to serve
     (``ap_coder/ops/safety.py:team_server``: it answers now, over HTTPS or HTTP; or, stopped, its database has sign-in
     accounts or its server.json is there): this start never opens it in laptop mode, with no sign-in (D-211). Running:
     the team's address is opened in the browser, whatever this start's own mode. Stopped: said, with how to start it,
     unless the start asks for laptop mode again by name (``--without-sign-in``, which ``serve`` is given and warns
-    of). Returns the exit code, or None when this start goes on (a laptop's own data; the server's own start)."""
+    of). Returns the exit code, or None when this start goes on (a laptop's own data; the server's own start).
+    ``set_up``: on a laptop shared with ``share`` (stopped, no service installed) it returns ``SHARED_LAPTOP``: this
+    folder is set up all the same (an update unzipped there: scripts\\terminal.bat, where ``share`` is typed, needs
+    it), and the start then says to start it with ``share`` (:func:`started_with_share`)."""
     from ap_coder.ops.safety import WITHOUT_SIGN_IN, team_server
 
     team = team_server(paths.private_dir(), paths.default_db_path())
@@ -1881,6 +1887,8 @@ def team_server_instead(rest: list[str]) -> int | None:
     why, to_do = team.refusal(WITHOUT_SIGN_IN in rest)
     if not why:
         return None
+    if not team.running and set_up and not team.service:
+        return SHARED_LAPTOP
     if not team.running:
         again = "APProcessor.bat" if WINDOWS else "./APProcessor.command"
         return failed(SetupError(why, f"{to_do} (or {again} {WITHOUT_SIGN_IN})."))
@@ -1889,6 +1897,19 @@ def team_server_instead(rest: list[str]) -> int | None:
         say(f"{to_do}.")
     say(f"Opening {team.address} in your browser. Nothing was started; this window can be closed.")
     open_browser(team.address)
+    return 0
+
+
+def started_with_share() -> int:
+    """How a double-click on a laptop shared with ``share`` ends, once this folder is set up: started with ``share``,
+    never here without sign-in (B-2353). The window stays open on it."""
+    from ap_coder.ops.safety import team_server
+
+    why, to_do = team_server(paths.private_dir(), paths.default_db_path()).refusal()
+    say()
+    line("ok", f"AP Coder is set up. {why}")
+    say(f"  What to do: {to_do}.")
+    keep_open()
     return 0
 
 
@@ -2371,11 +2392,15 @@ def _main(argv: list[str] | None = None) -> int:
                                  f"({ROOT}) that it deletes later.", "Close this window, right-click the ZIP, choose "
                                  "Extract All (e.g. to C:\\APCoder), then double-click APProcessor.bat in the "
                                  "extracted folder."))  # fmt: skip
+    shared = False  # a laptop shared with share: set up, started with share (B-2353)
     if not args.no_start and not args.installer:  # (the installer: asked as it starts one)
         # Before anything is set up, or stopped to make way (D-211). In both phases: the first, in a new folder,
         # has no packages yet to read the accounts with.
-        code = team_server_instead(rest)
-        if code is not None:
+        code = team_server_instead(rest, set_up=True)
+        shared = code == SHARED_LAPTOP
+        if shared:
+            args.no_start = True
+        elif code is not None:
             return code
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
@@ -2401,7 +2426,8 @@ def _main(argv: list[str] | None = None) -> int:
 
         forwarded = [a for a in argv if a != "--installer" and not a.startswith("--venv")]
         return install.main(forwarded, venv=args.venv)
-    return run(args, rest)
+    code = run(args, rest)
+    return started_with_share() if shared and code == 0 else code
 
 
 if __name__ == "__main__":
