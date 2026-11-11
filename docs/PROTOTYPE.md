@@ -160,7 +160,9 @@ and how what it proposed compares with what was keyed; `proposed_score.md` has e
    - **Account:** one box a line holds the whole string. A line AP Coder is sure of arrives filled, with why
      ("this supplier's usual account: 14 of 15 lines last year"). A line it is not sure of is left empty with up to
      three accounts offered: pick one, or type a number or a word of the account's name. A string the chart does not
-     have is refused, never replaced.
+     have is refused, never replaced. The Account box's list has every account kept for the line: for a supplier
+     billed to many business units, each unit its lines went to, the one the line or the invoice's ship-to or "Attn:"
+     names first. A supplier not in last year's journal is offered the accounts other suppliers' lines like it went to.
    - **Remark:** suggested from the supplier's past remarks, 30 characters at most, yours to change.
    - **Tax:** every line says which tax it carries and how much, each tax its own amount ("read" when the invoice
      prints it on the line). A line taxed differently from the rest is marked. A sum that does not match the invoice

@@ -168,7 +168,8 @@ CACHES: dict[str, Kept] = {
     "ap_coder.core.store._base:_VENDOR_LESSONS": Kept(8 * MB, "Bounded; VENDOR_LESSONS_KEPT vendors"),
     "ap_coder.ai.supplier_prior:_KEPT": Kept(6 * MB, "Bounded; the supplier priors (D-212: 4.6 KB a supplier, the "
                                                      "950 of a year's journal 5 MB), the journal's names and each "
-                                                     "chart's account names (0.3 MB)"),
+                                                     "chart's account names (0.3 MB), and the journal as a whole "
+                                                     "while a new supplier is coded (D-226: the made-up year 1.5 MB)"),
     "ap_coder.coding.po:_KEPT": Kept(24 * MB, "Bounded (PO_KEPT_MOST); POs of PO_KEPT_FROM invoices or more (the "
                                               "300,000 seed's one, 3,382 invoices of 8 lines: 22.5 MB)"),
     "ap_coder.coding.po:_MATCHED": Kept(6 * MB, "Bounded (MATCHED_MOST); the matches of the POs read at each ask"),
