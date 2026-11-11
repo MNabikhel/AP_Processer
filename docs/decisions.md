@@ -5518,3 +5518,47 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Sized for the owner's laptop (B-2312):* 2 capture processes when `server.json` and `AP_CAPTURE_PROCESSES` name
     none, as 2 web workers (D-218); the load smoke's 10 people run on 2 workers.
   - (`ap_coder/ops/share.py`, `ap_coder/ops/awake.py`, `.github/workflows/ci.yml`, docs/SERVER.md section 16)
+- **D-226** · **A line left for a person goes by the business unit it, or the invoice, names, and keeps every unit
+  the supplier used its account on; a supplier never seen is offered what the journal as a whole has for its words
+  and its name, never coded by it** (with a JD Edwards chart loaded; 11 Nov 2026).
+  - **Why:** On the made-up company the supplier billed to many business units kept 5 of its 13 accounts with a line,
+    and the unit was read only from a unit's whole name on the line (B-2253); a supplier not in last year's journal
+    was offered only the accounts whose name has a word of the line, the first right on 12% of its lines.
+  - **The unit named** (`suggest._named_unit_first`, which only orders): the unit's name (B-2253), its number of 5
+    digits or more, leading zeros aside (B-2336), or a word only one unit's remarks of the supplier have, on 2 lines
+    or more, that the journal writes for a tenth of its GL codes or more: an office ("Kingfisher" of "cell phones 77
+    Kingfisher"), not a thing ("filter" of "filter change" goes with one code; `Prior.unit_words`, B-2338). Where the
+    line names none of the supplier's units, the invoice's ship-to block and "Attn:" lines (never the bill-to's or a
+    remit-to's: `offline_coder.addressed_to`, B-2337). Rejected: any word of one unit's remarks alone, whatever it
+    says: on the made-up year "filter", "renewal" and "planning" each named a unit, and six lines of seen suppliers
+    moved.
+  - **Enough kept** (`offline_coder.kept_offered`, B-2335): with a chart, a line left keeps its first 5 and the
+    supplier's own accounts on the GL codes of those, `CANDIDATES_MOST` (15) in all; the screen still shows three
+    buttons, the Account box's list has them all. Without a chart, 5 as before.
+  - **A supplier never seen** (`supplier_prior.from_book`, B-2339): the journal as a whole (`Book`, built once a
+    journal, ~0.1 s for the made-up year's 7,500 lines, kept apart from the priors) offers up to 8 GL codes: 3 x the
+    likeness to a remark AP wrote for other suppliers (0.2 at least), 2 x to the code's name, 1.5 x the code's share
+    of the lines of the suppliers whose names have a word of the vendor's ("Courier"), as far as those suppliers sell
+    one kind of thing (of n, k on one object: (k - 1) / n, so one supplier or two unlike ones sharing a place's name
+    count nothing; a word of more than 12 suppliers' names says nothing). Each on the business units its lines went
+    to, the most used first, a guess when several may be posted to. Offered as other vendors' lines ("others"):
+    `_sure` never codes from them; the vendor master's default and other vendors' approved lines keep their place.
+    Only with a chart loaded: a journal without one offers as before (same_behaviour: approve, pipeline same).
+  - **Measured** (`python -m ap_coder.bench coding --journal`, the made-up year, 809 held-out lines; "kept": coded
+    right or among the accounts the line keeps, a column added for this), before → after:
+
+    | lines | coded alone, right | first right | in the first 3 | kept |
+    |---|---:|---:|---:|---:|
+    | all (809) | 14%, 116/116 → same | 52% → 53% | 79% → 80% | 83% → 85% |
+    | several, by who ordered (434) | 7%, 29/29 → same | 44% → 44% | 76% → 76% | 81% → 83% |
+    | never seen (24) | 0% → 0% | 12% → 46% | 12% → 46% | 12% → 46% |
+    | with `--approve`: all | 25%, 188/199 → same | 53% → 54% | 79% → 80% | 82% → 86% |
+    | `--approve`: by who ordered | 13%, 45/55 → same | 43% → 43% | 75% → 75% | 78% → 82% |
+    | `--approve`: never seen | 8%, 1/2 → same | 21% → 50% | 21% → 54% | 21% → 54% |
+
+    The bench's invoices print no unit, so who ordered stays 44% first: nothing on them says which department. On
+    the fifteen-line invoice, which names each line's unit, every line now keeps all 13 accounts. Speed: 0.9 ms a
+    line after a vendor's first invoice, as before (1.6 → 1.8 ms on its first); coding the busiest supplier's 15
+    lines 46 → 43 ms warm, 103 → 171 ms in a new process (the journal read once); a new supplier's 5 lines 9 → 12 ms.
+  - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
+    `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)

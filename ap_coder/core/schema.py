@@ -355,7 +355,8 @@ class TaxLine(BaseModel):
 # approved lines; the supplier's coding (last year's journal and its approvals); other vendors' lines like it; the
 # words of an account's name; the chat model (a guess); a person on the review screen.
 DECIDED_SOURCES = ("rule", "vendor", "supplier", "others", "words", "model", "person")
-CANDIDATES_KEPT = 5  # accounts kept with a line left for a person
+CANDIDATES_KEPT = 5  # accounts kept with a line left for a person...
+CANDIDATES_MOST = 15  # ...and with a chart imported, the supplier's other business units of those, in all (D-226)
 # Where a line's remark came from (``LineItem.remark_from``, D-213): the supplier's usual remark, the invoice's own
 # line, the account's name, or a person who typed it.
 REMARK_SOURCES = ("supplier", "invoice", "account", "person")
@@ -391,7 +392,8 @@ class LineItem(BaseModel):
     # left out of what is stored, so an invoice without it is stored as it always was. ``taxmath.line_taxes`` reads it.
     taxes_read: dict[str, float] | None = None
     reasoning_justification: str = ""
-    # The accounts offered for a line left for a person, the likeliest first, ``CANDIDATES_KEPT`` at most (D-212):
+    # The accounts offered for a line left for a person, the likeliest first, ``CANDIDATES_KEPT`` at most (with a
+    # chart, ``CANDIDATES_MOST``; D-212, D-226):
     # each {"account": the whole string, "business_unit", "code", "name", "reason": why, in plain words, "source":
     # where it came from; with the supplier's counts also "lines", "of" and "share"; "guess": True when nothing said
     # which business unit}. Left out of the stored coding when there are none.
@@ -412,7 +414,7 @@ class LineItem(BaseModel):
     @field_validator("candidates")
     @classmethod
     def _few_candidates(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return value[:CANDIDATES_KEPT]
+        return value[:CANDIDATES_MOST]
 
     @field_validator("decided_by")
     @classmethod

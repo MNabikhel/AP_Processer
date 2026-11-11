@@ -19,7 +19,8 @@ name are one vendor, as the vendor list keeps them: the made-up company has more
 * *never seen*: no voucher of the vendor in the months loaded.
 
 For each: the lines coded with no one picking and how many of those are right, the first candidate right, the right
-account among the first three, and the first candidate's ``object.subsidiary`` and business unit each on their own.
+account among the first three, the right account kept with the line (coded, or among the accounts a line left keeps
+for a person to pick, D-226), and the first candidate's ``object.subsidiary`` and business unit each on their own.
 ``--approve`` then has AP approve each held-out invoice with its true accounts as it comes, so the next one of the
 vendor is coded with them: how fast the vendor's own approvals take over from last year's journal.
 """
@@ -57,6 +58,7 @@ SIZES = {"quick": "tenth", "full": "year"}
 REVIEWER = "AP clerk (benchmark)"
 # The sure rule tried at other bars (``sure_grid``): the share one account has, and the lines the supplier has.
 GRID_SHARES, GRID_LINES = (0.8, 0.9, 0.95, 1.0), (2, 3, 5)
+SHARES = ("coded", "first_right", "in_top3", "kept", "code_right", "unit_right")  # a line's scores, as shares
 
 
 _WORDING = invoice_wording()
@@ -191,6 +193,8 @@ def _scored(line: Any, posted: jde_company.CodingLine, li: Any, top: list[Any]) 
         "text": line.text, "truth": posted.account, "coded": coded, "proposed": proposed,
         "coded_right": coded and proposed == posted.account, "top": accounts,
         "first_right": accounts[:1] == [posted.account], "in_top3": posted.account in accounts[:3],
+        # coded right, or the account among those the line keeps for a person to pick (``LineItem.candidates``)
+        "kept": (coded and proposed == posted.account) or posted.account in [c.get("account") for c in li.candidates],
         "code_right": first is not None and first.code == code,
         "unit_right": first is not None and first.business_unit == unit,
         "why": li.reasoning_justification, "source": (li.decided_by or {}).get("source", ""),
@@ -265,12 +269,13 @@ def line_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(rows)
     count = Counter()
     for r in rows:
-        count.update(k for k in ("coded", "coded_right", "first_right", "in_top3", "code_right", "unit_right") if r[k])
-    share = {k: (count[k] / n if n else 0.0) for k in ("coded", "first_right", "in_top3", "code_right", "unit_right")}
+        count.update(k for k in (*SHARES, "coded_right") if r[k])
+    share = {k: (count[k] / n if n else 0.0) for k in SHARES}
     return {"lines": n, "suppliers": len({r["supplier"] for r in rows}), "coded": count["coded"],
             "coded_right": count["coded_right"], "coded_share": share["coded"],
             "coded_right_share": count["coded_right"] / count["coded"] if count["coded"] else 0.0,
-            "first_right": share["first_right"], "in_top3": share["in_top3"], "code_right": share["code_right"],
+            "first_right": share["first_right"], "in_top3": share["in_top3"], "kept": share["kept"],
+            "code_right": share["code_right"],
             "unit_right": share["unit_right"]}  # fmt: skip
 
 
@@ -315,12 +320,12 @@ def _pct(x: float) -> str:
 def table(report: dict[str, Any]) -> str:
     """The scores by kind of vendor, as a markdown table."""
     head = ["Held-out lines", "lines (suppliers)", "coded alone", "of those right", "first candidate right",
-            "in the first 3", "object.subsidiary right", "business unit right"]  # fmt: skip
+            "in the first 3", "kept with the line", "object.subsidiary right", "business unit right"]  # fmt: skip
     body = []
     for name, s in [*report["summary"]["by_kind"].items(), ("all", report["summary"]["all"])]:
         body.append([name, f"{s['lines']} ({s['suppliers']})", _pct(s["coded_share"]),
                      f"{_pct(s['coded_right_share'])} ({s['coded_right']}/{s['coded']})" if s["coded"] else "-",
-                     _pct(s["first_right"]), _pct(s["in_top3"]), _pct(s["code_right"]),
+                     _pct(s["first_right"]), _pct(s["in_top3"]), _pct(s["kept"]), _pct(s["code_right"]),
                      _pct(s["unit_right"])])  # fmt: skip
     return _table(head, body)
 

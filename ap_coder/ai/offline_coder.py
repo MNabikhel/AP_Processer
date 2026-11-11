@@ -37,7 +37,7 @@ from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
 from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
-from ..core.schema import CANDIDATES_KEPT, PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
+from ..core.schema import CANDIDATES_KEPT, CANDIDATES_MOST, PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .extraction import ExtractionResult
 from .inference import CHAT_SUGGESTED, MODEL_SUGGESTED, CodingResult
 from .suggest import by_pairs, candidates, why_left
@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
 OFFERED = 20  # accounts worked out for a line (``suggest.candidates``): the chat model chooses among them
+OWN = ("vendor", "supplier")  # the sources of a supplier's own accounts (``kept_offered``)
 # A line an older version coded from a weak match (an account's name, the vendor's default): never approved without a
 # person. This version leaves such a line blank (B-463); invoices already in the queue may still carry it.
 WEAK_MATCH = "A weak match, for a person to confirm"
@@ -192,6 +193,26 @@ _REMIT_LABEL = re.compile(
     r"\bveuillez\s+(?:remettre|payer)\b|\bfaire\s+(?:le|votre)\s+ch[eè]que\b"
 )
 REMIT_BLOCK_LINES = 4
+
+
+_ATTENTION = re.compile(r"(?i)^\W*(?:attn|attention|(?:à|a)\s+l\W?\s*attention\s+de)\b")
+
+
+def addressed_to(text: str) -> str:
+    """The lines of the page that say who an invoice is for: the address after a "Ship to" label
+    (``ADDRESS_BLOCK_LINES`` at most, up to the next label) and each "Attn:" / "Attention:" line but one in the
+    bill-to or a remit-to (AP's own: "Attn: Accounts Payable"). What names the business unit a line left for a
+    person goes to when the line names none (``suggest.candidates``, D-226)."""
+    out, ship, other = [], -1, -1  # (the last line of the ship-to block, and of a bill-to or remit-to)
+    for n, line in enumerate(text.splitlines()):
+        if _SHIP_LABEL.search(line):
+            out.append(line)
+            ship, other = n + ADDRESS_BLOCK_LINES, -1
+        elif _CUSTOMER_LABEL.search(line) or _REMIT_LABEL.search(line):
+            ship, other = -1, n + ADDRESS_BLOCK_LINES
+        elif n <= ship or (n > other and _ATTENTION.search(line)):
+            out.append(line)
+    return "\n".join(out)
 
 
 def addresses(text: str) -> tuple[str, str, str]:
@@ -500,7 +521,7 @@ def credited_invoice(text: str) -> str:
 class _Evidence:
     """What an invoice's lines are coded from: the vendor, AP's approvals and the accounts; with a journal loaded
     the supplier's coding (``prior``); with a chart of accounts the cost centers the vendor's approved lines used
-    (``units``)."""
+    (``units``) and the invoice's ship-to and attention lines (``addressed``: ``addressed_to``)."""
 
     vendor: str
     feedback: list[dict[str, Any]]
@@ -509,6 +530,7 @@ class _Evidence:
     key: str
     prior: Prior | None = None
     units: tuple[str, ...] = ()
+    addressed: str = ""
 
 
 def supplier_evidence(store: Any, vendor: Any, key: str,
@@ -525,6 +547,20 @@ def supplier_evidence(store: Any, vendor: Any, key: str,
     return prior, tuple(sorted(store.vendor_lessons(name, key).cost_centers))
 
 
+def kept_offered(found: list[Candidate], reference: ReferenceData) -> list[Candidate]:
+    """The accounts a line left for a person keeps (``LineItem.candidates``) of those offered, ``found``: the first
+    ``CANDIDATES_KEPT``; with a chart of accounts imported, also the supplier's own (its coding, this vendor's lines)
+    on the GL codes of those, on its other business units, ``CANDIDATES_MOST`` in all (D-226): who ordered decides,
+    and each unit the supplier's lines went to is there to pick (the made-up company's telephone supplier has one
+    code on thirteen)."""
+    kept = found[:CANDIDATES_KEPT]
+    if reference.pairs is None:
+        return kept
+    codes = {c.code for c in kept if c.source in OWN}
+    more = [c for c in found[CANDIDATES_KEPT:] if c.code in codes and c.source in OWN]
+    return kept + more[: CANDIDATES_MOST - len(kept)]
+
+
 def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evidence, printed: str,
                 hints: dict[int, str], offered: dict[int, list[Candidate]]) -> LineItem:  # fmt: skip
     """One line of the invoice: coded when the evidence is strong enough (``Candidate.auto``), else left for a
@@ -534,7 +570,7 @@ def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evid
     description, quantity, unit_price, amount = reading
     reference = ev.reference
     found = candidates(description, ev.vendor, ev.feedback, reference, OFFERED, ev.default_gl, ev.key, ev.prior,
-                       ev.units)  # fmt: skip
+                       ev.units, ev.addressed)  # fmt: skip
     top = found[0] if found else None
     # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
     best = top if top is not None and top.auto else None
@@ -551,7 +587,7 @@ def _coded_line(number: int, reading: tuple[str, float, float, float], ev: _Evid
         why = f"{why}; {RENAMED} (read “{printed}”)"
     kept = [] if best is not None else [
         {**c.kept(), "name": c.name or account_name(reference, c.business_unit, c.code)}
-        for c in found[:CANDIDATES_KEPT]
+        for c in kept_offered(found, reference)
     ]  # fmt: skip
     return LineItem(
         line_number=number,
@@ -685,7 +721,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         flags.append("")
         subtotal = round(subtotal + tip[1], 2)
     prior, units = supplier_evidence(store, found or vendor, key, reference)
-    evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units)
+    evidence = _Evidence(vendor, feedback, reference, default_gl, key, prior, units, addressed_to(text))
     hints: dict[int, str] = {}
     offered: dict[int, list[Candidate]] = {}
     lines = [_coded_line(number, reading, evidence, printed_as[number - 1] if number <= len(printed_as) else "",
