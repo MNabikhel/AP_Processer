@@ -158,7 +158,7 @@ jobs:
           $out = cmd /c "APProcessor.bat --installer --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
           Write-Host $out
           if ($out -match 'First run') { throw 'venv was not reused (it set up again)' }
-          if ($out -notmatch 'all \d+ in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
+          if ($out -notmatch '\d+ needed, all in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
           $count = (Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk').Count
           if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
       - name: Sample invoices read right inside the installed environment
@@ -326,7 +326,7 @@ jobs:
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
           if ($out -match 'First run|Collecting|Installing|Running the self-check|Downloading the OCR models') { throw 'the later start set something up again' }
           # (.venv reused: nothing set up again, above. The window no longer names .venv: B-240's plain wording.)
-          foreach ($m in @("Python $([regex]::Escape($env:PILOT_PYTHON))\.\d+", 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
+          foreach ($m in @("Python $([regex]::Escape($env:PILOT_PYTHON))\.\d+", 'AP Coder readiness:', 'Packages: \d+ needed, all in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
           }
           $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
