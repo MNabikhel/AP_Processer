@@ -676,6 +676,17 @@ def _named_words(reference: ReferenceData) -> frozenset[str]:
     return _kept(("name words", id(table)), weakref.ref(table), read)
 
 
+def names_with(reference: ReferenceData) -> Mapping[str, int]:
+    """{a word of the names (and categories) of the GL account list: how many accounts' have it}, worked out once for
+    a list: "Furniture" one, "Fees" most of the professional fees."""
+    table = reference.chart_of_accounts
+
+    def read() -> Mapping[str, int]:
+        return Counter(word for _, listed in _listed_names(reference).values() for word in keys(listed))
+
+    return _kept(("names with", id(table)), weakref.ref(table), read)
+
+
 # --- A supplier the journal does not have: the journal as a whole (D-226) -----------------------------------------
 
 BOOK_ALIKE = 0.2  # another supplier's remark this alike to a line (``line_match.similarity``) is evidence for it

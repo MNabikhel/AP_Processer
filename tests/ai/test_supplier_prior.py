@@ -303,6 +303,24 @@ def test_a_line_that_names_another_account_of_the_chart_is_not_coded_to_the_supp
         assert line.reasoning_justification.startswith("8 of this supplier's 8 lines last year")
 
 
+def test_a_line_alike_to_nothing_of_the_suppliers_account_and_to_another_accounts_name_is_left(chart_company):
+    """B-2370: an insurance premium, a desk and a software licence on the courier's invoice were coded alone to its
+    one account, with no finding: none of them says every word of another account's name, nor is half alike to one.
+    A line alike to nothing known of the supplier's account that says a word of another offered account's name the
+    supplier's has not, and is that alike to it, is left for a person with that account first."""
+    vendor, courier = _courier(chart_company)
+    kinds = {"Insurance premium - cargo policy": "Insurance", "Office furniture - desk": "Furniture",
+             "Software licence renewal": "Software"}  # fmt: skip
+    for line in _coded(chart_company, vendor, *kinds).line_items:
+        assert _account(line) == "", line.description
+        first = line.candidates[0]
+        assert kinds[line.description] in first["name"], line.description
+        assert courier in [c["account"] for c in line.candidates[1:4]], line.description
+        assert line.reasoning_justification == (
+            f"This supplier's lines usually go to {courier}, but this line reads like {first['name']} "
+            f"({first['account']}): check it.")  # fmt: skip
+
+
 def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_ordinary_lines(chart_company, tmp_path):
     """B-2252: one lunch approved to Meals on the courier's invoice, and every later line of the supplier arrived
     empty ("69% / 31%: pick the account"), "Courier service airport" too: a person's pick weighs 5. It is evidence
