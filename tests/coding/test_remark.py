@@ -133,6 +133,23 @@ def test_the_period_is_the_one_a_line_names_else_the_invoice_dates(description, 
     assert period_of(line("Janitorial service"), {"invoice_date": None}) is None
 
 
+@pytest.mark.parametrize(
+    "description, date, period",
+    [
+        ("Q4 maintenance", "2026-01-10", (2025, 12, 4)),  # last year's, as "December" is
+        ("Q3 audit fieldwork", "2026-01-10", (2025, 9, 3)),
+        ("Q2 retainer", "2026-01-10", (2026, 6, 2)),
+        ("Q1 retainer", "2026-12-15", (2027, 3, 1)),  # next year's
+        ("Q4 retainer", "2026-11-02", (2026, 11, 4)),  # this one: the invoice's month
+    ],
+)
+def test_a_quarter_with_no_year_is_the_one_nearest_the_invoice_date(description, date, period):
+    """B-2373: "Q4" with no year on an invoice of 10 January 2026 was Q4 2026, eleven months ahead: a month with no
+    year was put in the nearest year, a quarter in the invoice's."""
+    invoice = {"invoice_date": date, "line_items": [line(description)]}
+    assert period_of(invoice["line_items"][0], invoice) == period
+
+
 # --- The rules ---------------------------------------------------------------------------------------------------
 
 
