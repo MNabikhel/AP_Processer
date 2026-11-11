@@ -187,7 +187,7 @@ def test_share_serves_in_its_window_and_tells_colleagues_the_address(laptop, mon
         def wait(self):
             return 0
 
-    monkeypatch.setattr(share, "serve", lambda data, s: SERVE(data, s, popen=Child))  # (no server really starts)
+    monkeypatch.setattr(share, "serve", lambda data, s, say: SERVE(data, s, Child, say))  # (no server really starts)
     monkeypatch.setattr(service, "WINDOWS", False)
     assert cli.main(["share"]) == 0
     (cmd, env), said = started[0], capsys.readouterr().out
@@ -258,3 +258,67 @@ def test_allow_folder_allows_the_folder_while_ap_coder_is_shared_and_says_so(lap
         assert service.folder_refusal(other, data, server=True)
     finally:
         httpd.shutdown()
+
+
+def test_a_scripted_set_up_gives_the_first_admin_on_standard_input(laptop, monkeypatch, capsys):
+    """``share --admin-from-stdin`` (a scripted set-up, CI's Windows job): the first Admin's name, username and
+    password are read from standard input, one a line, where the console's questions would need a person (Windows'
+    password prompt reads the keyboard, never a pipe)."""
+    import io
+
+    data, db = laptop
+    (data / "tls").mkdir()
+    for name in (share.CERT_NAME, share.KEY_NAME):
+        (data / "tls" / name).write_text("PEM", encoding="utf-8")
+    monkeypatch.setattr(share, "firewall_note", lambda port: "")
+    monkeypatch.setattr(share, "serve", lambda data, s, **kwargs: 0)
+    monkeypatch.setattr(share.sys, "stdin", io.StringIO(f"Pat Lee\n\n{GOOD}\n"))
+    assert cli.main(["share", "--admin-from-stdin"]) == 0
+    (user,) = Store(db).list_users()
+    assert (user["username"], user["display_name"], user["role"]) == ("pat.lee", "Pat Lee", "admin")
+    assert "Added pat.lee (Admin)" in capsys.readouterr().out
+
+
+def test_on_the_owners_laptop_share_starts_two_capture_processes_unless_told_otherwise(laptop, monkeypatch):
+    """B-2312: ``share`` serves from a laptop its owner works on all day, but its capture processes were sized as the
+    company server's (the cores less two: 18 on a 20-core laptop, about 700 MB each). It starts two, as it starts two
+    web workers; server.json's ``capture_processes`` or AP_CAPTURE_PROCESSES still decide when they say."""
+    data, db = laptop
+    monkeypatch.delenv("AP_CAPTURE_PROCESSES", raising=False)
+    Store(db).add_user("pat", GOOD, role="admin")
+
+    def shared():
+        s = share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in([]))
+        return s.capture_processes, service.serve_env(s, data).get("AP_CAPTURE_PROCESSES")
+
+    assert shared() == (share.CAPTURE_PROCESSES, "2")
+    service.write_config(data, capture_processes=5)
+    assert shared() == (5, "5")
+    monkeypatch.setenv("AP_CAPTURE_PROCESSES", "3")
+    assert shared() == (3, "3")
+
+
+def test_after_the_laptop_is_renamed_deleting_shares_certificate_makes_one_for_the_new_name(laptop, monkeypatch):
+    """B-2313: the certificate names the laptop as it was called (an address is never in it, so a new IP changes
+    nothing). Renamed, colleagues are told the new name, which that certificate does not cover. The way to a new one
+    is to delete the two files ``share`` made and run it again, but server.json named them by then, and share refused
+    ("server.json names files that are not there"), leaving the owner to edit server.json. It makes new ones for the
+    new name; certificate files of IT's own, named in server.json and missing, are still refused."""
+    data, db = laptop
+    calls = []
+    assert share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in(calls),
+                         ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
+    cert = share.certificate_command("openssl", data / "tls")
+    assert "subjectAltName=DNS:AP-LAPTOP" in cert and not any("IP:" in part for part in cert)
+    monkeypatch.setattr(share, "names", lambda: ["AP-LAPTOP-2"])
+    for name in (share.CERT_NAME, share.KEY_NAME):
+        (data / "tls" / name).unlink()
+    said = Said()
+    s = share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls))
+    assert s is not None and s.certfile == str(data / "tls" / share.CERT_NAME) and len(calls) == 2, said.all
+    assert "subjectAltName=DNS:AP-LAPTOP-2" in calls[1] and "Made a certificate for this computer's name" in said.all
+    assert share.address(s) == "https://AP-LAPTOP-2:8501"
+    service.write_config(data, certfile=str(data / "it.pem"), keyfile=str(data / "it.key.pem"))
+    said = Said()
+    assert share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls)) is None
+    assert "server.json names files that are not there" in said.all and len(calls) == 2

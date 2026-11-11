@@ -5499,3 +5499,22 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     their old order (the handlers would lose their decorators: no longer a move).
   - (`ap_coder/web/invoice_*.py`, `ap_coder/web/pages/invoice*.py`; their importers in `ap_coder/web/pages/`,
     `web/server.py`, `bench/coding.py` and the tests)
+- **D-224** · **One laptop serving about 10 colleagues (`share`) is run end to end on Windows in CI, kept awake
+  while it serves, and sized for its owner's own work** (11 Nov 2026).
+  - *CI's job "share on Windows"* (`windows-share`, `scripts/ci/share_end_to_end.py`, which runs on Linux too):
+    installed with the installer; `share` makes its certificate with Git for Windows' `openssl`, taken off the PATH
+    as on a laptop, and the first Admin, and serves; a second browser signs in over HTTPS by the computer's name
+    (`share.names()`), trusting that certificate and nothing else, sets up the authenticator with the key the page
+    shows, adds a colleague, who signs in with the temporary password shown and approves an invoice; `powercfg
+    /requests` lists the share as keeping the system awake, and no longer after `share --stop`; `share` again on
+    the same data, the colleague signs in with a code and finds it approved.
+  - *The first Admin, scripted:* `share --admin-from-stdin` reads the name, username and password from standard
+    input, one a line. Windows' password prompt (`getpass`) reads only the keyboard, so a pipe could not feed it; a
+    password is never an argument (it would stay in the history). Rejected: an environment variable holding it.
+  - *Awake while serving (B-2311):* `share.serve` holds `awake.stay_awake(serving=True)` around the wait for its
+    server, on its own thread (the request is that thread's own: `stay_awake` counts per thread, and two threads
+    each give back their own); `serving` asks also with `AP_SERVER_MODE` set, where the company server's sleep
+    settings stay IT's. The system only: the screen may turn off; the lid and the power button still sleep.
+  - *Sized for the owner's laptop (B-2312):* 2 capture processes when `server.json` and `AP_CAPTURE_PROCESSES` name
+    none, as 2 web workers (D-218); the load smoke's 10 people run on 2 workers.
+  - (`ap_coder/ops/share.py`, `ap_coder/ops/awake.py`, `.github/workflows/ci.yml`, docs/SERVER.md section 16)

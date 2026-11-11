@@ -22,9 +22,28 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+QUIET, QUIET_WAIT = 0.3, 5.0  # seconds: a server quiet this long has nothing under way; waited for at most this
+
+
+def quiet(server: Any, seconds: float = QUIET, wait: float = QUIET_WAIT) -> None:
+    """Until the uvicorn ``server`` has answered every request it got and none came for ``seconds`` (at most
+    ``wait``): a page that left as its test ended may still send its unsaved edit with ``keepalive``, and Chromium
+    never answers the closing of a browser context asked while such a request is under way (B-2314)."""
+    deadline = time.monotonic() + wait
+    seen, since = -1, time.monotonic()
+    while time.monotonic() < deadline:
+        state = server.server_state
+        if state.tasks or state.total_requests != seen:
+            seen, since = state.total_requests, time.monotonic()
+        elif time.monotonic() - since >= seconds:
+            return
+        time.sleep(0.02)
+
+
 @contextlib.contextmanager
-def served(app: Any) -> Iterator[str]:
-    """``app`` served by uvicorn on a free port of this computer, in a thread, while the block runs: its base URL."""
+def served(app: Any) -> Iterator[tuple[Any, str]]:
+    """``app`` served by uvicorn on a free port of this computer, in a thread, while the block runs: (the server,
+    its base URL)."""
     import uvicorn
 
     port = free_port()
@@ -35,7 +54,7 @@ def served(app: Any) -> Iterator[str]:
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.02)
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield server, f"http://127.0.0.1:{port}"
     finally:
         server.should_exit = True
         thread.join(5)
@@ -43,11 +62,13 @@ def served(app: Any) -> Iterator[str]:
 
 @contextlib.contextmanager
 def browser_on(chromium: Any, app: Any) -> Iterator[tuple[Any, str]]:
-    """(``chromium``, the base URL of ``app`` served for this test); the pages the test opened are closed after it."""
-    with served(app) as base:
+    """(``chromium``, the base URL of ``app`` served for this test); the pages the test opened are closed after it,
+    once its server is quiet (``quiet``)."""
+    with served(app) as (server, base):
         try:
             yield chromium, base
         finally:
+            quiet(server)
             for context in list(chromium.contexts):
                 context.close()
 

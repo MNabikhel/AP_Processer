@@ -25,7 +25,8 @@ guides, the bug log (BUGS.md) and decisions (decisions.md), their older entries 
   confirming the coding `managers.py` (D-138; their email `coding/manager_mail.py`, page `web/pages/manager.py`).
   Who the reviewer is: `web/identity.py`. Server mode: `web/roles.py` (every route needs a rule,
   `tests/web/test_roles.py`), `web/access.py`, `web/pages/login.py`; service and updates `ops/service.py`,
-  `ops/server_update.py`.
+  `ops/server_update.py`; the owner's laptop serving a few colleagues `ops/share.py` (D-224; Windows CI
+  `scripts/ci/share_end_to_end.py`).
 - With a JD Edwards chart of accounts loaded (D-209 to D-214; the one-laptop guide: `docs/PROTOTYPE.md`): a line's
   account string `business unit.object.subsidiary` is joined and split only in `core/chart.py` (`AccountPairs`: which
   pairs exist and can be posted to); the chart's tables `core/store/chart.py`, its reader `core/chart_file.py`; last

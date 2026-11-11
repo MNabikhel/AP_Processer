@@ -152,3 +152,29 @@ def test_a_file_read_from_the_import_queue_and_a_page_read_are_read_awake():
     assert "with stay_awake()" in inspect.getsource(page_worker._read_one)
     assert "with stay_awake():" in inspect.getsource(page_worker._test)
     assert "stay_awake" not in inspect.getsource(page_worker.BackgroundReader.run)  # (asked while idle: never asleep)
+
+
+def test_a_laptop_sharing_ap_coder_stays_awake_until_the_share_ends(windows, monkeypatch, tmp_path):
+    """B-2311: a laptop serving colleagues (``share``) was asked to stay awake only while it read a file, so Windows
+    put it to sleep after its idle minutes whenever its owner stepped away, and nobody could sign in. The share's own
+    window asks for as long as it serves (the screen may still turn off), also with AP_SERVER_MODE set on the laptop
+    (the hand-made steps of docs/SERVER.md section 16), gives it back when the server ends, and says so."""
+    from ap_coder.ops import service, share
+
+    monkeypatch.setenv("AP_SERVER_MODE", "1")
+    monkeypatch.setattr(service, "WINDOWS", False)  # (no job object for the stand-in server)
+    during = []
+
+    class Server:
+        def __init__(self, cmd, **kwargs):
+            pass
+
+        def wait(self):
+            during.extend(windows)
+            return 0
+
+    said = []
+    s = service.ServerSettings(certfile="c.pem", keyfile="k.pem", workers=2)
+    assert share.serve(tmp_path, s, popen=Server, say=said.append) == 0
+    assert during == [CONTINUOUS | SYSTEM] and windows == [CONTINUOUS | SYSTEM, CONTINUOUS]
+    assert "does not put this laptop to sleep" in " ".join(said) and "screen" in " ".join(said)

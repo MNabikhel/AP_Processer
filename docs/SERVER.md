@@ -1790,17 +1790,50 @@ What it does, and what it leaves to a person:
 | What sharing needs | What `share` does |
 |---|---|
 | A certificate (step 3 below) | Uses `server.json`'s, else `tls\apcoder.pem` and `tls\apcoder.key.pem` in the data folder, else makes that self-signed one for the laptop's name when the laptop has `openssl` (Git for Windows brings it). Without `openssl` it says so, with the command: **this step cannot be made simpler**, Windows has no tool of its own that writes the two files, and installing Git needs administrator rights on most company laptops. |
-| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. |
+| The first Admin (step 6) | Asks for the owner's name (the one on their approvals), a username and a password, and makes the account. A scripted set-up gives the three on its input, one a line: `share --admin-from-stdin` (Windows' password question reads only the keyboard). |
 | `server.json` (step 4) | Writes the certificate's two files and the port, once the first Admin is there. From then on a double-click on AP Coder's own shortcut refuses to open this data without sign-in (D-211). |
 | The second backup folder (step 7) | The first time, allows the folder chosen in laptop mode; later `share --allow-folder "<folder>"` allows another, also while AP Coder is being shared (no restart). |
 | The firewall (step 5) | **Never changes it**: the rule needs administrator rights. It looks whether the rule "AP Coder" is there and, when it is not, prints the command to run once in an administrator Command Prompt (ask IT without those rights). It starts all the same: the owner can sign in on the laptop. |
 | The address | Prints what colleagues type, `https://AP-LAPTOP:8501`. |
+| Sleep | While it serves, asks Windows not to put the laptop to sleep by itself (the screen may still turn off), and says so; once it stops, the laptop sleeps as its power settings say. Closing the lid or pressing the power button still puts it to sleep (step 8). |
 
 It needs no `setx`, no service and no second account: it runs as the owner, on the data folder AP Coder already
 uses, while the window is open and the laptop is awake. That is the price of the short way: nobody can sign in while
 the owner is logged off, and nothing starts it again after a restart (the service of step 4 does both). It always
 serves over HTTPS with sign-in: `--insecure-http` is not its to start. Steps 1, 5, 8 and 9 below still apply; the
 others are what `share` does.
+
+It is sized for a laptop its owner works on while it serves: 2 web workers (enough for about 10 people) and 2
+processes reading imported files (about 700 MB each while they read scans), not the company server's one per core.
+`workers` and `capture_processes` in `server.json` (or the variable `AP_CAPTURE_PROCESSES`) give other numbers.
+
+**What each colleague does the first time:**
+
+1. Open the address `share` printed, `https://AP-LAPTOP:8501`, in Edge or Chrome. It is the laptop's name, not its
+   IP address: the address changes between the Wi-Fi and the dock, the name and the certificate don't.
+2. The browser warns "Your connection isn't private": the laptop made its own certificate, and nobody their PC
+   trusts signed it. Either press *Advanced*, then *Continue to AP-LAPTOP (unsafe)* (the warning comes back in each
+   new browser session), or trust the certificate once and it never warns:
+   - the owner sends them `apcoder.pem` from the data folder's `tls` folder (never `apcoder.key.pem`, the other
+     file there);
+   - they double-click it, then *Install Certificate…*, *Current User*, *Place all certificates in the following
+     store*, *Browse…*, *Trusted Root Certification Authorities*, *Next*, *Finish*, and *Yes* to Windows' warning
+     (the thumbprint it shows is the *Cert Hash(sha1)* that `certutil -dump apcoder.pem` shows on the laptop);
+   - they close every Edge or Chrome window and open the address again.
+
+   Where the company does not let people add a certificate, IT can push `apcoder.pem` to everyone's PCs (Group
+   Policy or Intune, as a trusted root), or give the laptop a certificate from the company's CA (section 3). These
+   steps were not tried on Windows 11 for this guide: try them on one colleague's PC first.
+3. Sign in with the username and the temporary password the owner gave them in person, choose their own password,
+   and scan the QR code with an authenticator app on their phone. From then on: the password, then the app's
+   6-digit code.
+
+**If the laptop's name changes** (IT renames it, or it is replaced), its certificate still names the old one, and
+browsers refuse the new address. Stop sharing (`share --stop`), delete `apcoder.pem` and `apcoder.key.pem` from the
+data folder's `tls` folder, and run `share` again: it makes a certificate for the new name and prints the new
+address. Send colleagues the new address, and the new `apcoder.pem` to those who trusted the old one (step 2). Don't
+delete those files for any other reason: a browser that trusted the old certificate refuses a new one for the same
+name with no way past it (section 3, *825 days*) until the new one is trusted too.
 
 **The ten steps, by hand:**
 
@@ -1867,13 +1900,14 @@ others are what `share` does.
    start, and the page says when the last one was made and why ("made at start: AP Coder was not running at
    17:30"): so leave the window open until that time, or press *Back up now* before closing it. After any restore,
    set the second folder again: a restore clears it, and the page says so.
-8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*;
+8. **Power**: plugged in; in Windows' power settings sleep *Never*, hibernation off, closing the lid *Do nothing*
+   (`share` keeps the laptop from sleeping by itself while it serves, but not from the lid or the power button);
    Windows Update's restarts outside working hours. A laptop asleep answers nobody; awake again it goes on, and
    whoever was away longer than the session's idle time logs in again, their typed edits kept. LM Studio: started
    in the owner's session, or as the task of step 8.
 9. **Colleagues** open `https://AP-LAPTOP:8501` (the name, not an address) and accept the certificate's warning, or
-   trust the certificate first (section 3). Try from one colleague's PC, on the Wi-Fi and on the dock, before telling
-   the others.
+   trust the certificate first (*What each colleague does the first time*, above). Try from one colleague's PC, on
+   the Wi-Fi and on the dock, before telling the others.
 10. **Later, a server of its own**: install AP Coder there with the service not started, restore the newest backup
     from the second folder before any `users add`, start the service, and set again the `.env`, the allowed folders
     and the second backup folder (step 9, *A new server*). Everyone signs in there with the same password and the same
@@ -1885,11 +1919,15 @@ others are what `share` does.
 the system's environment variables, and start with `APProcessor.bat --without-sign-in`: the data has sign-in
 accounts, so each laptop-mode start asks for that option, on purpose (D-211).
 
+**Tried on Windows by CI** (the job "share on Windows", `scripts/ci/share_end_to_end.py`, on GitHub's Windows
+Server runner, not Windows 11): installed, `share` makes the certificate with Git for Windows' `openssl` (not on the
+PATH) and the first Admin, and serves; a second browser signs in over HTTPS by the computer's name, trusting that
+certificate, with the authenticator's code, and approves an invoice; Windows lists `share` as keeping the system
+awake (`powercfg /requests`) until `share --stop`; `share` again, the data kept.
+
 **Not tried on Windows 11 for this guide** (do each once on the laptop before colleagues rely on it):
-`share` itself (it was run on Linux: the certificate made, the first Admin, the server answering with sign-in, a
-plain start refused, `share --stop`): that it finds Git for Windows' `openssl`, that `netsh` shows the firewall rule
-without administrator rights, that closing its window leaves no `python.exe` of AP Coder in Task Manager, and what
-Windows' own firewall question does when it is cancelled;
+that `netsh` shows the firewall rule without administrator rights, that closing `share`'s window leaves no
+`python.exe` of AP Coder in Task Manager, and what Windows' own firewall question does when it is cancelled;
 `service install` and `service status` there, and the task coming back after a Windows Update restart with nobody
 logged on; the hand-started window; the firewall rule's profile on the office Wi-Fi and the dock, and that the port
 is closed on a home network; that colleagues' PCs find the laptop by its name; the lid, sleep and the dock.

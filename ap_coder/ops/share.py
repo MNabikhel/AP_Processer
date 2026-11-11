@@ -28,6 +28,7 @@ TLS_DIR = "tls"  # in the data folder, as docs/SERVER.md section 3 has it
 CERT_NAME, KEY_NAME = "apcoder.pem", "apcoder.key.pem"
 CERT_DAYS = 825
 WORKERS = 2  # web workers when server.json names none: a few people, on a laptop that also reads the invoices
+CAPTURE_PROCESSES = 2  # processes reading the imports when nothing names a number: the laptop is its owner's too
 RULE = "AP Coder"  # the firewall rule's name in docs/SERVER.md
 GUIDE = "docs/SERVER.md section 16"
 # Where Git for Windows keeps the openssl it brings, when it is not on the PATH.
@@ -70,8 +71,12 @@ def certificate_command(openssl: str, folder: Path) -> list[str]:
 def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[..., Any] = service.run_command,
                 openssl: str | None = None) -> tuple[str, str] | None:  # fmt: skip
     """The certificate and its private key to serve with: server.json's, else the data folder's ``tls`` files, else
-    one made now with this computer's openssl. None when there is none and none could be made: said, with how."""
-    if s.certfile or s.keyfile:
+    one made now with this computer's openssl (also when server.json names those two files and they were deleted:
+    the way to a certificate for a laptop's new name, B-2313). None when there is none and none could be made: said,
+    with how."""
+    folder = data / TLS_DIR
+    cert, key = folder / CERT_NAME, folder / KEY_NAME
+    if (s.certfile or s.keyfile) and (Path(s.certfile), Path(s.keyfile)) != (cert, key):
         missing = [f for f in (s.certfile, s.keyfile) if not f or not Path(f).is_file()]
         if not missing:
             return s.certfile, s.keyfile
@@ -81,8 +86,6 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
             + f"). Put them back, or take certfile and keyfile out of {service.config_path(data)} and run this again."
         )
         return None
-    folder = data / TLS_DIR
-    cert, key = folder / CERT_NAME, folder / KEY_NAME
     if cert.is_file() and key.is_file():
         return str(cert), str(key)
     openssl = find_openssl() if openssl is None else openssl
@@ -108,8 +111,8 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
     say(
         f"Made a certificate for this computer's name ({', '.join(names())}), good for {CERT_DAYS} days: {cert}. "
         "Nobody signed it, so each colleague's browser warns (“Your connection isn't private”) in each new browser "
-        "session: Advanced, then Continue. docs/SERVER.md section 3 says how to trust it on their PCs, so that it "
-        "no longer warns, and when to ask IT for a real one."
+        f"session: Advanced, then Continue. {GUIDE} says how to trust it on their PCs, so that it no longer warns "
+        "(give them this file, never the key file beside it), and what to do if this laptop's name changes."
     )
     return str(cert), str(key)
 
@@ -284,18 +287,27 @@ def stop(data: Path, s: service.ServerSettings, say: Say) -> int:
     return 0
 
 
-def serve(data: Path, s: service.ServerSettings, popen: Callable[..., Any] | None = None) -> int:
+def serve(data: Path, s: service.ServerSettings, popen: Callable[..., Any] | None = None, say: Say = print) -> int:
     """AP Coder as the server (``serve --server``, as the service's host starts it), in this window, until it ends:
-    the window closed, Ctrl+C, or ``share --stop``."""
+    the window closed, Ctrl+C, or ``share --stop``. Meanwhile Windows is asked not to put the laptop to sleep by
+    itself (B-2311): colleagues may be signed in while its owner is away from it."""
+    from .awake import stay_awake
+
     env = {**os.environ, **service.serve_env(s, data)}
     child = (popen or subprocess.Popen)(service.serve_command(s, sys.executable), env=env, cwd=str(PROJECT_DIR))
     if service.WINDOWS:
         service.backend().tie_to_host(child)  # it ends with this window, however that is closed
-    while True:
-        try:
-            return int(child.wait() or 0)
-        except KeyboardInterrupt:  # Ctrl+C reached it too: it is finishing what is under way
-            continue
+    with stay_awake(serving=True) as awake:
+        if awake:
+            say(
+                "While it serves, Windows does not put this laptop to sleep by itself (the screen may still turn "
+                "off); closing the lid or the power button still does. Once it stops, the laptop sleeps as before."
+            )
+        while True:
+            try:
+                return int(child.wait() or 0)
+            except KeyboardInterrupt:  # Ctrl+C reached it too: it is finishing what is under way
+                continue
 
 
 def prepare(data: Path, db: Path, say: Say, *, allow: str = "", ask: Callable[[str], str] | None = None,
@@ -319,7 +331,9 @@ def prepare(data: Path, db: Path, say: Say, *, allow: str = "", ask: Callable[[s
     backup_folder(data, db, first, say, allow)
     # Always with sign-in over HTTPS: a first test's --insecure-http is not this command's to start.
     s = dataclasses.replace(service.settings(data), insecure_http=False)
-    return dataclasses.replace(s, workers=s.workers or WORKERS)
+    return dataclasses.replace(
+        s, workers=s.workers or WORKERS, capture_processes=s.capture_processes or CAPTURE_PROCESSES
+    )
 
 
 def add_parser(sub: Any) -> None:
@@ -331,6 +345,9 @@ def add_parser(sub: Any) -> None:
     one.add_argument("--allow-folder", default="", metavar="FOLDER",
                      help="Let Admins choose this folder for the backups' second copy, on Settings (also while AP "
                      "Coder is being shared: no restart)")  # fmt: skip
+    p.add_argument("--admin-from-stdin", action="store_true",
+                   help="A scripted set-up: read the first Admin's name, username and password from standard input, "
+                   "one a line, instead of asking (never the password as an argument)")  # fmt: skip
 
 
 def main(args: argparse.Namespace, say: Say = print) -> int:
@@ -347,7 +364,11 @@ def main(args: argparse.Namespace, say: Say = print) -> int:
             say(f"Backups: {args.allow_folder.strip()} is not allowed yet: run this again once that window is closed.")
         if code is not None:
             return code
-        s = prepare(data, db, say, allow=args.allow_folder)
+        ask = password = None
+        if args.admin_from_stdin:  # (Windows' password prompt reads the keyboard, never a pipe)
+            ask = lambda prompt: sys.stdin.readline().strip()  # noqa: E731
+            password = lambda username, name: sys.stdin.readline().rstrip("\r\n")  # noqa: E731
+        s = prepare(data, db, say, allow=args.allow_folder, ask=ask, password=password)
     except service.SettingsError as exc:
         say(str(exc))
         return 1
@@ -365,4 +386,4 @@ def main(args: argparse.Namespace, say: Say = print) -> int:
         "while this window is open and the laptop is awake: closing the window, or python -m ap_coder share --stop, "
         "stops it."
     )
-    return serve(data, s)
+    return serve(data, s, say=say)

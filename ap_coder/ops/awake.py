@@ -5,7 +5,8 @@ it: the page reader's first self-test takes 10 to 20 minutes, an import of scans
 thread reading it asks Windows to stay awake (``SetThreadExecutionState``), and gives that back as soon as it is read:
 AP Coder waiting for work never keeps the laptop awake. The display may still turn off, and closing the lid or the
 power button still puts it to sleep. Nothing is asked on a Mac or Linux, nor on the company server, whose sleep
-settings are IT's (docs/SERVER.md).
+settings are IT's (docs/SERVER.md), but by a laptop shared with colleagues (``share``): its window asks for as long as
+it serves (``serving``).
 """
 
 from __future__ import annotations
@@ -25,14 +26,15 @@ _held = threading.local()  # ``blocks``: how many ``stay_awake`` blocks this thr
 
 
 @contextlib.contextmanager
-def stay_awake() -> Iterator[bool]:
+def stay_awake(serving: bool = False) -> Iterator[bool]:
     """While the block runs, a laptop on Windows is asked not to go to sleep by itself; given back as the block ends,
     by the thread that asked (the request is the thread's own). Yields whether it is asked: never on another system,
-    nor on the company server, nor when Windows refuses (the reading goes on all the same). A block inside another
-    on the same thread asks nothing and gives nothing back: the outer block's request stands until that one ends.
-    Two threads each ask and give back their own; Windows stays awake until both have."""
+    nor on the company server (but ``serving``: a laptop that serves colleagues, ``share``), nor when Windows refuses
+    (the work goes on all the same). A block inside another on the same thread asks nothing and gives nothing back:
+    the outer block's request stands until that one ends. Two threads each ask and give back their own; Windows
+    stays awake until both have."""
     inside = getattr(_held, "blocks", 0)
-    asked = bool(inside) or (sys.platform == "win32" and not server_mode()
+    asked = bool(inside) or (sys.platform == "win32" and (serving or not server_mode())
                              and _ask(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))  # fmt: skip
     _held.blocks = inside + asked
     try:
