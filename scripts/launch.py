@@ -1823,7 +1823,7 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     """The port of this folder's own AP Coder (this version), already running here, else None."""
     ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
-        if running.judge(server, ROOT, ident["version"], ident["code"]) == "same":
+        if running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "same":
             return server.port
     return None
 

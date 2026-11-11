@@ -114,6 +114,21 @@ def test_another_accounts_ap_coder_is_never_opened_nor_stopped(running, server, 
     assert running.take_over(tmp_path / "B", "0.2.0", [], data, say=lambda m: None) == ("open", port)
 
 
+@pytest.mark.parametrize("theirs", ["0.2.0", "0.3.0"])
+def test_an_ap_coder_open_on_another_data_folder_is_never_opened_for_this_one(running, server, tmp_path, theirs):
+    """B-2350: the guide's made-up company (AP_PRIVATE_DIR=...\\try), left running from the same folder and version,
+    was "opened" by the double-click of the tester's own data: the folder and version were compared, never the data.
+    It is left serving its own data, said, and this start goes on (on the next free port)."""
+    state, port, data = server
+    state["version"], state["health"] = theirs, {"data": str(tmp_path / "try")}
+    said: list[str] = []
+    assert running.take_over(tmp_path / "B", "0.2.0", [port], data, say=said.append) == ("clear", None)
+    assert state["shutdowns"] == [] and running.listening(port)
+    assert len(said) == 1 and str(tmp_path / "try") in said[0] and f"port {port}" in said[0]
+    state["health"] = {"data": str(data)}  # its own data: opened, as before
+    assert running.take_over(tmp_path / "B", "0.2.0", [], data, say=said.append)[1] == port
+
+
 def test_nothing_running_is_clear(running, tmp_path):
     assert running.take_over(tmp_path, "0.2.0", [9], tmp_path, say=lambda m: None) == ("clear", None)
 

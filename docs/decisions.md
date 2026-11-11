@@ -5577,3 +5577,13 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     once a journal), a new supplier's first 16 → 92 ms (the journal as a whole read once), then 8 → 12 ms.
   - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
     `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)
+- **D-228** · **A running AP Coder is told apart by the data folder it serves: one serving another data folder is
+  never opened for this one** (laptop mode; 11 Nov 2026).
+  - *`/healthz` says its data folder* ("data", resolved), to this computer only, beside "user" (B-168): another
+    computer, and past the server's console, still get only {"ok", "app"} (D-101).
+  - *The launcher* (`scripts/running.py` `judge`): an AP Coder it would open (this folder and version, or a newer
+    one) that serves another data folder, e.g. the guide's made-up company left running, is "elsewhere": left as it
+    is, said with its data folder, and this one starts on the next free port. One it would stop (older, another
+    build) is still stopped: its code is about to be replaced. One that does not say its data (older than this) is
+    judged as before. Rejected: stopping it (it is the tester's own other window, on data no one else uses).
+  - (`ap_coder/web/app.py`, `scripts/running.py`, `scripts/launch.py`)

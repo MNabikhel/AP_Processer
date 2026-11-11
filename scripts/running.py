@@ -9,9 +9,10 @@ How a running AP Coder is found:
 
 * AP Coder 0.2 and later (``python -m ap_coder serve``) write ``<data folder>/.ap_coder_server.json`` (pid, port,
   folder, version, token, user, started) and answer ``GET /healthz`` with ``{"ok", "app": "ap-coder", "version",
-  "folder", "pid", "port", "user"}`` ("user": the computer account, to this computer only; another account's is
-  never opened nor stopped); ``POST /shutdown`` with the header ``X-AP-Coder-Token`` (the token from that file)
-  stops one.
+  "folder", "pid", "port", "user", "data"}`` ("user": the computer account, to this computer only; another account's
+  is never opened nor stopped; "data": the data folder it serves, to this computer only: one serving another data
+  folder, such as the guide's made-up company, is never opened for this one); ``POST /shutdown`` with the header
+  ``X-AP-Coder-Token`` (the token from that file) stops one.
 * AP Coder 0.1 (the Streamlit dashboard) only serves its font, ``/app/static/InterVariable.woff2``: it is stopped
   through its process, found as the owner of its port whose command line runs ``streamlit run`` on AP Coder's
   dashboard.
@@ -70,6 +71,7 @@ class Server:
     legacy: bool = False  # AP Coder 0.1's Streamlit dashboard: no /healthz, stopped through its process
     user: str = ""  # the computer account running it ("": not said, by an older AP Coder)
     build: str = ""  # the commit of the code it runs ("": not said, by AP Coder 0.2)
+    data: str = ""  # the data folder it serves ("": not said, by an older AP Coder)
 
     def name(self) -> str:
         version = "0.1 (the Streamlit dashboard)" if self.legacy else (self.version or "of an unknown version")
@@ -150,7 +152,8 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
             token = str(record.get("token") or "") if own else ""
             user = str(info.get("user") or (record.get("user") if own else "") or "")
             found.append(Server(port, str(info.get("version") or ""), str(info.get("folder") or ""), pid, token,
-                                user=user, build=str(info.get("build") or "")))  # fmt: skip
+                                user=user, build=str(info.get("build") or ""),
+                                data=str(info.get("data") or "")))  # fmt: skip
         elif legacy_dashboard(port):
             pid = port_owner(port)
             folder = folder_in_command(command_line(pid)) if pid else ""
@@ -166,21 +169,27 @@ def this_user() -> str:
         return ""
 
 
-def judge(server: Server | Worker, root: Path, version: str, build: str = "") -> str:
+def judge(server: Server | Worker, root: Path, version: str, build: str = "", data: Path | None = None) -> str:
     """``same`` (this folder and version: open it), ``newer`` (open it, never stop it), ``older`` (stop it: an
     older version, the same one from another folder, or this folder's from before its code changed: another build,
-    a newer ZIP of the same version unzipped over it) or ``other`` (another computer account's, e.g. a second
-    Windows user sharing this folder: never opened, it would act under their name, nor stopped under them)."""
+    a newer ZIP of the same version unzipped over it), ``other`` (another computer account's, e.g. a second
+    Windows user sharing this folder: never opened, it would act under their name, nor stopped under them) or
+    ``elsewhere`` (one that would be opened, but it serves another data folder than ``data``, e.g. the guide's
+    made-up company left running: left serving it, and this one starts beside it, B-2350)."""
     user, me = getattr(server, "user", ""), this_user()
     if user and me and user.casefold() != me.casefold():  # (Windows account names ignore case)
         return "other"
     if server.legacy:
         return "older"
+    serves = getattr(server, "data", "")
+    elsewhere = bool(serves and data is not None and not same_folder(serves, data))
     if version_key(server.version) > version_key(version):
-        return "newer"
+        return "elsewhere" if elsewhere else "newer"
     if same_folder(server.folder, root) and server.version == version:
         theirs = getattr(server, "build", "")
-        return "older" if build and theirs and theirs != build else "same"
+        if build and theirs and theirs != build:
+            return "older"
+        return "elsewhere" if elsewhere else "same"
     return "older"
 
 
@@ -461,9 +470,13 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
     for server in find(ports, data):
         if here_only and not same_folder(server.folder, root):
             continue
-        verdict = judge(server, root, version, build)
+        verdict = judge(server, root, version, build, data)
         if verdict == "other":
             return "other", server.port
+        if verdict == "elsewhere":
+            say(f"{server.name()} is open on another data folder, {server.data} (port {server.port}): it is left as "
+                "it is, and this AP Coder starts on the next free port.")  # fmt: skip
+            continue
         if verdict in ("same", "newer"):
             return ("open" if verdict == "same" else "newer"), server.port
         say(f"{server.name()} is still running (port {server.port}): stopping it, so this version takes over.")
