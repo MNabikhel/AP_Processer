@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -404,23 +405,145 @@ def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeyp
 # --- An older folder started by mistake ---------------------------------------------------------------------------
 
 
-def test_an_older_folder_started_by_mistake_opens_the_newest(launch, monkeypatch, tmp_path, capsys):
-    newest = tmp_path / "AP Coder 0.3"
-    (newest / "ap_coder").mkdir(parents=True)
-    (newest / "scripts").mkdir()
-    (newest / "scripts" / "launch.py").write_text("")
-    (newest / "pyproject.toml").write_text('[project]\nversion = "0.3.0"\n')
-    paths.record_install(paths.install_identity(newest))
+def _install(folder: Path, version: str, current: bool = True) -> Path:
+    """Another AP Coder ``version`` in ``folder``, recorded as installed (the current one by default)."""
+    (folder / "ap_coder").mkdir(parents=True)
+    (folder / "scripts").mkdir()
+    (folder / "scripts" / "launch.py").write_text("")
+    (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
+    paths.record_install(paths.install_identity(folder), current=current)
+    return folder
+
+
+def _first_phase(launch, monkeypatch) -> dict:
+    """The double-click's first phase, up to where it would set up (``bootstrap``) or take over (``take_over``)."""
+    reached: dict = {"bootstrap": [], "take_over": [], "asked": []}
     monkeypatch.setattr(launch, "take_lock", lambda: True)
-    monkeypatch.setattr(launch, "bootstrap", lambda argv: pytest.fail("set up the older folder"))
-    handed: list = []
-    monkeypatch.setattr(launch.upgrade, "hand_over", lambda folder, argv, env: handed.append((folder, argv)) or 0)
+    monkeypatch.setattr(launch, "in_venv", lambda: False)
+    monkeypatch.setattr(launch, "bootstrap", lambda argv: reached["bootstrap"].append(argv) or 0)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: reached["take_over"].append(a) or ("clear", None))
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [])
+    monkeypatch.setattr(launch, "keep_open", lambda: None)
+    monkeypatch.delenv("AP_NO_PAUSE", raising=False)
+    monkeypatch.setattr(launch.sys, "stdin", SimpleNamespace(isatty=lambda: True))  # someone at the window
+    return reached
+
+
+def _answers(launch, monkeypatch, reached: dict, answer: str) -> None:
+    def ask(question):
+        reached["asked"].append(question)
+        return answer
+
+    monkeypatch.setattr(launch, "input", ask, raising=False)
+
+
+def test_an_older_folder_started_by_mistake_sets_up_and_starts_nothing(launch, monkeypatch, tmp_path, capsys):
+    """D-231: a ZIP or bundle older than the AP Coder installed (unzipped again, an old folder double-clicked) sets up
+    nothing and starts nothing: it says which one is installed, and where, to use its shortcut."""
+    newest = _install(tmp_path / "AP Coder 0.3", "0.3.0")
+    reached = _first_phase(launch, monkeypatch)
     assert launch.main(["--port", "8502"]) == 0
-    assert handed == [(newest, ["--port", "8502"])]
-    assert f"A newer AP Coder, 0.3.0, is in {newest}: opening that one" in capsys.readouterr().out
+    assert reached == {"bootstrap": [], "take_over": [], "asked": []}
+    out = capsys.readouterr().out
+    assert f"AP Coder 0.3.0 is installed in {newest}: use its shortcut. Nothing was set up or started here." in out
     # This older folder (an older bundle unzipped again by mistake) is on record: the newest cleans it up.
     assert paths.current_install()["folder"] == str(newest)
     assert any(paths.same_folder(e["folder"], launch.ROOT) for e in paths.installs())
+
+
+def test_an_older_folder_started_by_mistake_opens_the_newest_when_it_runs(launch, monkeypatch, tmp_path, capsys):
+    newest = _install(tmp_path / "AP Coder 0.3", "0.3.0")
+    _first_phase(launch, monkeypatch)
+    server = SimpleNamespace(port=8503, folder=str(newest))
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [server])
+    monkeypatch.setattr(launch.running, "judge", lambda srv, root, version, build="", data=None: "newer")
+    opened: list[str] = []
+    monkeypatch.setattr(launch, "open_browser", opened.append)
+    assert launch.main([]) == 0 and opened == ["http://127.0.0.1:8503"]
+    out = capsys.readouterr().out
+    assert f"AP Coder 0.3.0 is installed in {newest}: use its shortcut." in out and "Nothing new was started" in out
+
+
+def test_a_database_a_newer_ap_coder_made_stops_before_anything_is_set_up(launch, monkeypatch, tmp_path, capsys):
+    """B-2377: a ZIP older than the data folder's database (the newer AP Coder's folder deleted, or never recorded)
+    made .venv and downloaded its packages, a few hundred MB, before saying it does not open that database. It is
+    asked first, with sqlite alone (no packages yet), and nothing is set up."""
+    import sqlite3
+
+    reached = _first_phase(launch, monkeypatch)
+    store = launch.ROOT / "ap_coder" / "core" / "store"
+    store.mkdir(parents=True)
+    (store / "_base.py").write_text(f"SCHEMA_VERSION = {SCHEMA_VERSION}  # this folder's code\n")
+    data = tmp_path / "private"  # AP_PRIVATE_DIR (tests/conftest.py)
+    data.mkdir()
+    conn = sqlite3.connect(data / "ap_coder.db")
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO settings VALUES ('schema_version', ?)", (str(SCHEMA_VERSION + 1),))
+    conn.commit()
+    conn.close()
+    assert launch.main([]) == 1 and reached["bootstrap"] == []
+    out = capsys.readouterr().out
+    assert f"was made by a newer AP Coder (database version {SCHEMA_VERSION + 1}; AP Coder 0.2.0 knows" in out
+    assert "nothing was changed" in out and not (data / "ap_coder.db-wal").exists()
+
+
+# --- A newer AP Coder than the one installed: asked first (D-231) ---------------------------------------------------
+
+
+def test_a_newer_ap_coder_asks_before_it_takes_over_and_no_changes_nothing(launch, monkeypatch, tmp_path, capsys):
+    """D-231: double-clicked in a new folder, a newer AP Coder asks before it takes over from the one installed (which
+    it would stop, record as replaced, point the shortcut away from and clean up). No: nothing changes, the older one
+    and its shortcut stay as they are."""
+    older = _install(tmp_path / "AP Coder 0.1", "0.1.0")
+    settings = paths.user_settings_path().read_bytes()
+    reached = _first_phase(launch, monkeypatch)
+    _answers(launch, monkeypatch, reached, "n")
+    assert launch.main([]) == 0
+    assert reached["asked"] == [
+        f"AP Coder 0.1.0 is installed in {older}. Update it to 0.2.0 (build b2b2b2b, 2026-10-11)? Your invoices and "
+        "settings are kept (a backup is made first). [Y/n] "
+    ]
+    assert reached["bootstrap"] == [] and reached["take_over"] == []
+    assert paths.user_settings_path().read_bytes() == settings and paths.current_install()["folder"] == str(older)
+    assert (f"Nothing was changed: AP Coder 0.1.0 in {older} stays as it is, and its shortcut still opens it."
+            in capsys.readouterr().out)  # fmt: skip
+
+
+@pytest.mark.parametrize("answer", ["", "y", "Yes"])
+def test_a_newer_ap_coder_goes_on_when_the_update_is_wanted(launch, monkeypatch, tmp_path, answer):
+    _install(tmp_path / "AP Coder 0.1", "0.1.0")
+    reached = _first_phase(launch, monkeypatch)
+    _answers(launch, monkeypatch, reached, answer)
+    assert launch.main(["--port", "8502"]) == 0
+    assert len(reached["asked"]) == 1 and reached["bootstrap"] == [["--port", "8502"]]
+
+
+@pytest.mark.parametrize("how", ["--yes", "AP_NO_PAUSE", "no terminal", "demo"])
+def test_a_newer_ap_coder_takes_over_without_asking_when_nobody_is_asked(launch, monkeypatch, tmp_path, how):
+    """--yes, AP_NO_PAUSE=1 or nobody at the window (CI, the installer's own flags): as before, no question. A demo
+    (scripts/demo.bat) never takes the install over (B-1510): nothing to ask."""
+    _install(tmp_path / "AP Coder 0.1", "0.1.0")
+    reached = _first_phase(launch, monkeypatch)
+    _answers(launch, monkeypatch, reached, "n")
+    if how == "AP_NO_PAUSE":
+        monkeypatch.setenv("AP_NO_PAUSE", "1")
+    elif how == "no terminal":
+        monkeypatch.setattr(launch.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    elif how == "demo":
+        monkeypatch.setenv("AP_DEMO", "1")
+    assert launch.main(["--yes"] if how == "--yes" else []) == 0
+    assert reached["asked"] == [] and len(reached["bootstrap"]) == 1
+
+
+def test_the_same_build_installed_elsewhere_or_this_folder_itself_is_not_asked_about(launch, monkeypatch, tmp_path):
+    reached = _first_phase(launch, monkeypatch)
+    _answers(launch, monkeypatch, reached, "n")
+    paths.record_install(launch.identity())  # this very folder is the current install: an update unzipped over it
+    assert launch.main([]) == 0 and reached["asked"] == [] and len(reached["bootstrap"]) == 1
+    copy = tmp_path / "copy"  # a copy of this build in another folder
+    shutil.copytree(launch.ROOT, copy, ignore=shutil.ignore_patterns(".venv"))
+    paths.record_install(paths.install_identity(copy))
+    assert launch.main([]) == 0 and reached["asked"] == [] and len(reached["bootstrap"]) == 2
 
 
 # --- The server -----------------------------------------------------------------------------------------------------

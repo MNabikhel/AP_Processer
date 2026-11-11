@@ -3,10 +3,12 @@
 The double-click finds a Python 3.11 or newer (3.12 first, then the other versions the offline bundle has
 packages for) and runs this file with it. It then:
 
-1. hands over to the newest AP Coder when this folder holds an older one than the current install (an old
-   shortcut or folder started by mistake: the data is never opened by older code; ``scripts/upgrade.py``);
+1. sets up and starts nothing when this folder holds an older AP Coder than the current install (an old folder or
+   ZIP started by mistake: it says to use the newer one's shortcut; the data is never opened by older code), and
+   asks before taking over from an older current install in another folder ("Update it to ...? [Y/n]", D-231);
 2. reuses ``.venv`` (it creates it only the first time, and again only when it is broken, or made with a Python
-   the offline bundle has no packages for while one it has is installed);
+   the offline bundle has no packages for while one it has is installed); from PyPI, only once the package site
+   answers (through this computer's proxy), so a blocked network leaves no half-made .venv;
 3. looks for an AP Coder already running: the same folder and version is only opened in the browser; an older
    version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database. Before
    anything else, a data folder that serves a team with sign-in (server mode) is never started here in laptop mode:
@@ -69,10 +71,14 @@ import platform
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -557,6 +563,10 @@ def bootstrap(argv: list[str]) -> int:
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
+    if (rebuild or not VENV_PY.exists()) and pip_source() == []:  # from PyPI: is it reached? (before .venv, B-2376)
+        blocked = unreachable_index()
+        if blocked is not None:
+            return failed(blocked)
     if rebuild:  # an old window may still run from that .venv (Windows can't delete it then): stopped first (B-556)
         code = make_way_for_venv(argv)
         if code is not None:
@@ -679,6 +689,71 @@ def pip_source() -> list[str] | None:
     if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
     return [] if setup_online() else None
+
+
+# Asked before pip downloads from PyPI (D-231): a small page of its index, briefly. A company network that blocks it
+# is said in plain words before anything is made, instead of pip retrying for minutes after .venv was made.
+PACKAGE_INDEX = "https://pypi.org/simple/pip/"
+INDEX_TIMEOUT = 10.0  # seconds
+# What a first setup from GitHub's ZIP downloads (11 Nov 2026, Windows, Python 3.14: the packages 181 MB, the OCR
+# models and the table finder 47 MB), and about how long it takes on a phone's hotspot, installing included.
+FIRST_SETUP = "about 230 MB, about 10 minutes"
+MODEL_HOSTS = "www.modelscope.cn (or its mirrors, huggingface.co and github.com: the OCR models)"
+
+
+def system_proxy() -> str:
+    """The proxy this computer's own settings name for HTTPS (Windows: Internet Options, which urllib reads from the
+    registry; a Mac: its network settings), "" when there is none or HTTPS_PROXY is set (pip reads that one itself).
+    urllib uses it on its own (the check of the package site, the OCR models' downloads); pip is given it (D-231)."""
+    if os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"):
+        return ""
+    return urllib.request.getproxies().get("https", "")
+
+
+def shown_proxy(proxy: str) -> str:
+    """The proxy as the window says it: its address only, never a user name or password written in it."""
+    parts = urllib.parse.urlsplit(proxy if "://" in proxy else f"http://{proxy}")
+    return f"{parts.hostname}:{parts.port}" if parts.port else str(parts.hostname or "the proxy")
+
+
+def index_problem() -> str:
+    """ "" when the package site (pypi.org) answers within INDEX_TIMEOUT seconds, through this computer's proxy when
+    it has one; else why not, in a few plain words (the error itself goes to the log)."""
+    try:
+        request = urllib.request.Request(PACKAGE_INDEX, method="HEAD")
+        with urllib.request.urlopen(request, timeout=INDEX_TIMEOUT) as answer:  # noqa: S310 - https, a fixed address
+            if urllib.parse.urlsplit(answer.geturl()).hostname == "pypi.org":
+                return ""
+            log(f"(The package site: {PACKAGE_INDEX} ended at {answer.geturl()})")
+            return "another page answered instead: a network that asks to sign in first?"
+    except Exception as exc:  # noqa: BLE001 - said plainly, the details in the log
+        log(f"(The package site, {PACKAGE_INDEX}: {type(exc).__name__}: {exc})")
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 407:
+            return "the company proxy asks for a sign-in"
+        if "tunnel connection failed" in str(exc).lower():
+            return "the company proxy refused it"
+        return fetch_models.plain_reason(exc)
+
+
+def unreachable_index() -> SetupError | None:
+    """Before pip downloads from PyPI: None when the package site answers; else what to do, said before anything is
+    installed (in the first phase, before .venv is made: none is left half set up)."""
+    why = index_problem()
+    if not why:
+        return None
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or system_proxy()
+    through = f", through this computer's proxy {shown_proxy(proxy)}" if proxy else ""
+    return SetupError(f"The setup can't reach the package site, pypi.org, from this network{through} ({why}). "
+                      "Nothing was installed.", network_advice())  # fmt: skip
+
+
+def network_advice() -> str:
+    """What to do on a network that blocks the downloads of a first setup from GitHub's ZIP (no bundle named: there
+    is none here)."""
+    again = "APProcessor.bat" if WINDOWS else "APProcessor.command"
+    return (f"Connect this laptop once to another network (a phone's hotspot, or at home) for this one setup: it "
+            f"downloads {FIRST_SETUP}. Or ask IT to allow pypi.org and files.pythonhosted.org (the packages) and "
+            f"{MODEL_HOSTS}. Then double-click {again} again.")  # fmt: skip
 
 
 # The packages with compiled code AP Coder can't run without: their wheels say which computers and Pythons the
@@ -839,6 +914,7 @@ def pip_env(source: list[str]) -> dict[str, str]:
 # How many of AP Coder's own requirements the pip run under way installs (_ensure_packages): pip installs what those
 # need too, so the count it ends with is larger, and says so.
 _wanted = {"count": 0}
+_proxy_said: list[str] = []  # this computer's proxy, once said in the window
 
 
 def pip_install(args: list[str]) -> bool:
@@ -849,8 +925,12 @@ def pip_install(args: list[str]) -> bool:
     if source is None:
         say("    Nothing installed: this offline build installs packages only from the bundle's wheelhouse folder.")
         return False
+    proxy = "" if source else system_proxy()  # (from PyPI: through this computer's proxy, said once, D-231)
+    if proxy and not _proxy_said:
+        _proxy_said.append(proxy)
+        say(f"Using this computer's proxy, {shown_proxy(proxy)}, for the downloads.")
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
-           *source, *args]  # fmt: skip
+           *source, *(["--proxy", proxy] if proxy else []), *args]  # fmt: skip
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
                             errors="replace", env=pip_env(source))  # fmt: skip
     assert proc.stdout is not None
@@ -1053,6 +1133,16 @@ def missing_packages(extras: tuple[str, ...]) -> tuple[list[str], str]:
     return missing, check_deps.self_problem()
 
 
+def all_in_place(total: int) -> str:
+    return f"Packages: {total} needed, all in place: nothing to install"
+
+
+def missing_said(missing: list[str], total: int) -> str:
+    """ "Packages: 3 of 15 missing" ("missing or too old" when one is installed below the version this one needs)."""
+    old = any(check_deps.problem(r).startswith("Outdated") for r in missing)
+    return f"Packages: {len(missing)} of {total} missing{' or too old' if old else ''}"
+
+
 def is_ocr(requirement: str) -> bool:
     return check_deps.requirement_name(requirement) in OCR_PACKAGES
 
@@ -1067,10 +1157,8 @@ def names(requirements: list[str]) -> str:
 
 def install_hint(source: list[str], left: list[str]) -> str:
     """What to do when pip could not install ``left``: from the wheelhouse, or (opted in) from PyPI."""
-    if not source:
-        return ("Check the internet connection (behind a company proxy: set HTTPS_PROXY=http://proxy:port in this "
-                "window), close any other AP Coder window, then start AP Coder again. A computer with no internet "
-                "needs the offline bundle instead (docs/GETTING_STARTED.md).")  # fmt: skip
+    if not source:  # (no wheelhouse here: none is named, D-231)
+        return f"Close any other AP Coder window. If it stops here again: {network_advice()}"
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     what = names(left) or "AP Coder itself"
     return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer. "
@@ -1094,7 +1182,7 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
         scans = " (scanned invoices can't be read without the OCR add-on)" if any(map(is_ocr, missing)) else ""
         return ("warn", f"Packages: core in place; missing {names(missing)}: it must come from the offline "
                         f"bundle's wheelhouse folder{scans}", False)  # fmt: skip
-    return "ok", f"Packages: all {total} in place", False  # (ap_coder itself runs from this folder: no need to say)
+    return "ok", all_in_place(total), False  # (ap_coder itself runs from this folder: no need to say)
 
 
 def cannot_set_up() -> SetupError | None:
@@ -1166,7 +1254,7 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     total = len(check_deps.requirements(extras=extras))
     missing, self_problem = missing_packages(extras)
     if not missing and not self_problem:
-        return "ok", f"Packages: all {total} in place", False
+        return "ok", all_in_place(total), False
     if not self_problem and all(is_ocr(r) for r in missing) and state.get("ocr_failed") == fingerprint():
         return "warn", "Packages: in place, without the OCR add-on (it could not be installed here)", False
 
@@ -1201,17 +1289,21 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     elif misfit:
         say(f"{misfit}. Installing from the internet (PyPI) instead: {INTERNET_ENV}=1 allows it.")
     else:  # the opt-in, or the code alone (GitHub's ZIP): said plainly before anything is downloaded (D-94)
+        if self_problem or not all(map(is_ocr, missing)):  # (the OCR add-on alone is tried: never a reason to stop)
+            blocked = unreachable_index()  # (a .venv left from an earlier try: not pip's minutes of retries, B-2376)
+            if blocked is not None:
+                raise blocked
         say_downloads("the Python packages it needs (a few hundred MB)", PACKAGE_SITE)
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
-        say(f"Installing AP Coder's packages: {len(missing)} missing, with the packages they need in turn. The first "
-            "time takes a few minutes.")  # fmt: skip
+        say(f"{missing_said(missing, total)}: installing those, with the packages they need in turn. The first time "
+            "takes a few minutes.")  # fmt: skip
         tries = [editable(extras)] + ([editable(plain)] if plain != extras else [])
     elif self_problem:
         say("Registering this AP Coder folder in .venv (nothing to download).")
         tries = [["--no-deps", *editable(())]]
     else:
-        say(f"Installing only what this version needs: {', '.join(missing)}")
+        say(f"{missing_said(missing, total)}: installing those ({names(missing)}); the others are left as they are.")
         core = [r for r in missing if not is_ocr(r)]
         tries = [missing] + ([core] if core and core != missing else [])
     for number, pip_args in enumerate(tries):
@@ -1286,22 +1378,50 @@ def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
     return [("info", f"Settings file: {', '.join(found)} no longer used (commented out in {env})")]
 
 
-def database_too_new(data: Path, version: str) -> SetupError | None:
-    """A database made by a newer AP Coder: this older version never opens it (nothing changed)."""
-    from ap_coder.core.store import SCHEMA_VERSION, database_schema
-
+def database_too_new(data: Path, version: str, early: bool = False) -> SetupError | None:
+    """A database made by a newer AP Coder: this older version never opens it (nothing changed). ``early``: asked in
+    the first phase, before anything is set up (B-2377), with sqlite alone: no packages yet to import the store with."""
     database = paths.env_path("AP_DB_PATH") or data / "ap_coder.db"
-    found = database_schema(database)
-    if not found or found <= SCHEMA_VERSION:
+    if early:
+        found = recorded_schema(database)
+        known = code_schema() if found else 0
+    else:
+        from ap_coder.core.store import SCHEMA_VERSION, database_schema
+
+        found, known = database_schema(database), SCHEMA_VERSION
+    if not found or found <= known:
         return None
     newest = paths.current_install()
     where = (f"its folder is {newest['folder']}" if newest and not paths.same_folder(newest["folder"], ROOT)
-             else "unzip the newest offline bundle and double-click its APProcessor")  # fmt: skip
+             else "unzip the newest AP Coder and double-click its APProcessor")  # fmt: skip
     return SetupError(
         f"Your database {database} was made by a newer AP Coder (database version {found}; AP Coder {version} knows "
-        f"up to version {SCHEMA_VERSION}): this older version does not open it, and nothing was changed.",
+        f"up to version {known}): this older version does not open it, and nothing was changed.",
         f"Start the newer AP Coder instead ({where}).",
     )
+
+
+def code_schema() -> int:
+    """The database version this folder's code knows (``SCHEMA_VERSION``), read from its source."""
+    text = (ROOT / "ap_coder" / "core" / "store" / "_base.py").read_text(encoding="utf-8")
+    return int(re.search(r"^SCHEMA_VERSION = (\d+)", text, re.MULTILINE).group(1))
+
+
+def recorded_schema(database: Path) -> int | None:
+    """The ``schema_version`` the database file records (None when it has none, or can't be read), read only, as a
+    file that does not change when it was closed cleanly: no ``-wal`` file is left beside it (B-2317)."""
+    if not database.is_file():
+        return None
+    how = "mode=ro" if database.with_name(database.name + "-wal").exists() else "mode=ro&immutable=1"
+    try:
+        conn = sqlite3.connect(f"{database.resolve().as_uri()}?{how}", uri=True, timeout=5)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    return int(row[0]) if row and str(row[0]).isdigit() else None
 
 
 def models_attempt() -> str:
@@ -1395,10 +1515,10 @@ def ensure_models(first: bool, state: dict) -> None:
     finder_only = result.failed == [offline.TABLE_FINDER_NAME]
     what = "the table finder's model" if finder_only else "the OCR models"
     meanwhile = "line items are still read without it" if finder_only else "scans are still read with one engine"
-    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554)
+    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554); no bundle here to name (B-2375)
         them = "them" if len(result.unreachable) > 1 else "it"
-        say(f"AP Coder couldn't reach {fetch_models.sites(result.unreachable)} (a firewall may block {them}): ask IT, "
-            f"or use the offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
+        say(f"AP Coder couldn't reach {fetch_models.sites(result.unreachable)} (a firewall may block {them}): ask IT "
+            f"to allow {them}. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
         return
     why = result.reasons[0] if result.reasons else "the download didn't finish"
     where = f" from {fetch_models.sites(result.failed_hosts)}" if result.failed_hosts else ""
@@ -1819,11 +1939,12 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
     return list(dict.fromkeys(p for p in [*ports, *defaults] if isinstance(p, int) and p > 0))
 
 
-def running_dashboard(rest: list[str], state: dict) -> int | None:
-    """The port of this folder's own AP Coder (this version), already running here, else None."""
+def running_dashboard(rest: list[str], state: dict, verdict: str = "same") -> int | None:
+    """The port of this folder's own AP Coder (this version), already running here, else None. ``verdict="newer"``:
+    a newer AP Coder's instead (``running.judge``)."""
     ident = identity()
     for server in running.find(candidate_ports(rest, state), paths.private_dir()):
-        if running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == "same":
+        if running.judge(server, ROOT, ident["version"], ident["code"], paths.private_dir()) == verdict:
             return server.port
     return None
 
@@ -2146,6 +2267,52 @@ def keep_open() -> None:
         pass
 
 
+def installed_already(args: argparse.Namespace, rest: list[str]) -> int | None:
+    """The first phase, before anything is set up: another AP Coder installed on this computer (the current install,
+    read from its folder, D-231). A newer one: this older folder sets up and starts nothing, and says to use the newer
+    one's shortcut, opening it when it runs; a database a newer AP Coder made stops it too. An older one: asked first
+    whether to update it (:func:`update_wanted`); No changes nothing. Returns the exit code, or None to go on."""
+    newer = upgrade.newer_install(ROOT)
+    if newer is not None:
+        upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
+        say(f"AP Coder {paths.describe(newer)} is installed in {newer['folder']}: use its shortcut. Nothing was set "
+            "up or started here.")  # fmt: skip
+        port = running_dashboard(rest, load_state(), verdict="newer")
+        if port is not None:
+            return open_running(port)
+        keep_open()
+        return 0
+    ident = identity()
+    too_new = database_too_new(paths.private_dir(), ident["version"], early=True)
+    if too_new is not None:
+        return failed(too_new)
+    older = upgrade.older_install(ROOT)
+    if older is None or update_wanted(args, older, ident):
+        return None
+    say(f"Nothing was changed: AP Coder {paths.describe(older)} in {older['folder']} stays as it is, and its "
+        "shortcut still opens it.")  # fmt: skip
+    return 0
+
+
+def update_wanted(args: argparse.Namespace, older: dict, ident: dict) -> bool:
+    """Whether this newer AP Coder takes over from ``older``, the one installed in another folder (it stops it if it
+    runs, records itself as the current install, points the shortcut here and later cleans the older one up): asked
+    in the window, Enter for yes. Not asked (yes, as before) with --yes, AP_NO_PAUSE=1 or nobody at the window (CI,
+    the installer's flags), nor for a demo, which takes nothing over (B-1510)."""
+    if args.yes or os.environ.get("AP_NO_PAUSE") or demo_start() or not getattr(sys.stdin, "isatty", lambda: False)():
+        return True
+    exact = paths.describe(older) == paths.describe(ident)  # (the same version, rebuilt the same day)
+    question = (f"AP Coder {paths.describe(older, exact)} is installed in {older['folder']}. Update it to "
+                f"{paths.describe(ident, exact)}? Your invoices and settings are kept (a backup is made first). "
+                "[Y/n] ")  # fmt: skip
+    try:
+        answer = input(question)
+    except EOFError:  # (nobody to answer after all: as with no terminal)
+        answer = ""
+    log(f"{question}{answer}")
+    return not answer.strip().lower().startswith("n")
+
+
 def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None:
     """The AP Coder this start updates (None when it is no update): this folder's own, when its version or packages
     changed since .venv was set up here (unzipped over it); else, in a new folder, the newest older install."""
@@ -2413,12 +2580,10 @@ def _main(argv: list[str] | None = None) -> int:
             if code is not None:
                 return code
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
-    if args.venv is None:  # the first phase: an older folder started by mistake opens the newest instead
-        newer = upgrade.newer_install(ROOT)
-        if newer is not None:
-            say(f"A newer AP Coder, {paths.describe(newer)}, is in {newer['folder']}: opening that one.")
-            upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
-            return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
+    if args.venv is None:  # the first phase: what is installed already decides, before anything is set up (D-231)
+        code = installed_already(args, rest)
+        if code is not None:
+            return code
     if not in_venv():
         return bootstrap(argv)
     if args.installer:

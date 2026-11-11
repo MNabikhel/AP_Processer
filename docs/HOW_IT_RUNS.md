@@ -181,7 +181,8 @@ code), so a newer build of the same version is an update too.
 1. **What is missing** (`missing_packages` → `scripts/check_deps.py:problem`, `self_problem`): each requirement of
    `pyproject.toml` (and the `ocr` extra) that is not installed or is older than asked, and whether `ap_coder`
    itself is installed (editable) *from this folder* (read from pip's `direct_url.json`, network shares included).
-   Nothing missing: "Packages: all N in place", nothing runs.
+   Nothing missing: "Packages: N needed, all in place: nothing to install", nothing runs; else "3 of N missing:
+   installing those", only those (never `--upgrade`: a package already good enough stays as it is, D-231).
 2. **Where from** (`pip_source`): the offline bundle's `wheelhouse/` with `--no-index --find-links` (never the
    internet). Without one: PyPI from the code alone (`setup_online`, unless `AP_ALLOW_INTERNET=0`) or with
    `AP_ALLOW_INTERNET=1`; else (a bundle missing its wheelhouse) nowhere (`without_wheelhouse`: AP Coder still
@@ -213,10 +214,13 @@ double-clicking its `APProcessor`. Nothing is installed twice; the data is never
 `data_move` (while a move runs) and the reviewer's name. Written whole to a `.part` file, then replaced
 (`write_user_settings`).
 
-**Before anything** (`scripts/launch.py:_main`, phase 1): `scripts/upgrade.py:newer_install` — when the current
-install is another folder holding a newer version (read from that folder's `pyproject.toml` and
-`bundle_manifest.json`, not only the record), this older folder hands over to it (`hand_over`) and puts itself on
-record so the newest cleans it up.
+**Before anything** (`scripts/launch.py:installed_already`, phase 1, D-231): `scripts/upgrade.py:newer_install` —
+when the current install is another folder holding a newer version (read from that folder's `pyproject.toml` and
+`bundle_manifest.json`, not only the record), this older folder sets up and starts nothing: *AP Coder X is installed
+in ...: use its shortcut* (the newer one is opened when it runs), and it puts itself on record so the newest cleans
+it up. A database a newer AP Coder made stops it too (`database_too_new(early=True)`, sqlite alone). When the current
+install is an older one (`older_install`), the window asks *Update it to Y? ... [Y/n]* before anything is stopped,
+recorded or pointed here; No changes nothing. `--yes`, `AP_NO_PAUSE=1` or no terminal: no question, as before.
 
 **Already running** (`scripts/running.py:take_over`, at the start of `run`): candidate ports are the one asked for,
 this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder_server.json`. On each:

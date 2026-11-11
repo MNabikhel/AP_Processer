@@ -37,6 +37,7 @@ def _code(folder: Path, version: str = "0.3.0", stamp: str | None = STAMP_A) -> 
 @pytest.fixture
 def launch(tmp_path, monkeypatch):
     module = load_script("launch", "ap_script_launch_build")
+    monkeypatch.setattr(module, "index_problem", lambda: "")  # (the package site answers: never asked from a test)
     here = _code(tmp_path / "AP Coder")
     (here / "APProcessor.bat").write_text("")
     (here / "APProcessor.command").write_text("")
