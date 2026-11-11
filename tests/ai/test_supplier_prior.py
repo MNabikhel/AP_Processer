@@ -321,6 +321,43 @@ def test_a_line_alike_to_nothing_of_the_suppliers_account_and_to_another_account
             f"({first['account']}): check it.")  # fmt: skip
 
 
+def test_a_line_that_names_another_business_unit_is_not_coded_alone_to_the_suppliers_unit(chart_company):
+    """B-2371: a supplier's lines all went to one account string, and a line naming another business unit that has
+    the account, by its name or its number, or an invoice addressed to that unit, was still coded alone to the usual
+    unit: what a line names was read only for lines left for a person. Such a line is left, that unit's account
+    first; a line that names the usual unit, or none, is coded."""
+    store = chart_company.store
+    reference = store.reference_data()
+    pairs = reference.pairs
+
+    def another_unit(row):  # (the supplier's one account, another unit its name names that has the account)
+        sure = prior_for(store, row).sure()
+        unit, code = split_account(sure.account) if sure else ("", "")
+        named = [bu for bu in pairs.bus_of(code) if bu != unit and bu in sp.units_named(reference, pairs.name_of(bu))]
+        return (sure.account, named[0]) if named else None
+
+    vendor, (usual, other) = next(
+        (r["display_name"], found) for r in store.master_vendors() if (found := another_unit(r))
+    )
+    unit, code = split_account(usual)
+    named, plain = f"{other}.{code}", prior_for(store, vendor).accounts[0].remarks[0].example
+    texts = (f"{plain} - {pairs.name_of(other)}", f"{plain} cost centre {int(other)}")
+    for line in _coded(chart_company, vendor, *texts).line_items:
+        assert _account(line) == "" and line.candidates[0]["account"] == named, line.description
+        assert line.reasoning_justification == (
+            f"This supplier's lines usually go to {usual}, but the line names the business unit "
+            f"{pairs.name_of(other)}: check it.")  # fmt: skip
+    text = f"{vendor}\nShip to: Maple Ridge Holdings Ltd.\nAttn: {pairs.name_of(other)}\n410 Elm Street\n"
+    read = captured(vendor, plain, f"{plain} cost centre {int(unit)}")
+    addressed, own = code_from_capture(read, reference, store.feedback_rows(), store, text=text).coding.line_items
+    assert _account(addressed) == "" and addressed.candidates[0]["account"] == named
+    assert addressed.reasoning_justification == (
+        f"This supplier's lines usually go to {usual}, but the invoice's ship-to or attention names the business "
+        f"unit {pairs.name_of(other)}: check it.")  # fmt: skip
+    assert _account(own) == usual  # (the line names the usual unit: the invoice's address is not read for it)
+    assert _account(_coded(chart_company, vendor, plain).line_items[0]) == usual
+
+
 def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_ordinary_lines(chart_company, tmp_path):
     """B-2252: one lunch approved to Meals on the courier's invoice, and every later line of the supplier arrived
     empty ("69% / 31%: pick the account"), "Courier service airport" too: a person's pick weighs 5. It is evidence

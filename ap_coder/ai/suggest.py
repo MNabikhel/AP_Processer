@@ -854,6 +854,8 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
         ordered[0].auto = _sure(ordered[0], offered, found, prior, description)
         if ordered[0].auto and offered[ordered[0].account][0] == TIER["supplier"]:
             ordered = _unless_another_kind(description, ordered, prior, reference, used)
+        if ordered[0].auto:
+            ordered = _unless_another_unit(description, ordered, reference, used, addressed)
         if not ordered[0].auto and not ordered[0].check:
             own = {c.account for tier, c in offered.values() if tier >= TIER["supplier"]}
             ordered = _named_unit_first(description, ordered, own, reference, prior, addressed)
@@ -891,6 +893,37 @@ def _named_unit_first(description: str, ordered: list[Candidate], own: set[str],
         c.reason = "; ".join(c.reasons)
     first.sort(key=lambda c: -named[c.business_unit][0])
     return [*first, *(c for c in ordered if not any(c is f for f in first))]
+
+
+def _unless_another_unit(description: str, ordered: list[Candidate], reference: ReferenceData, units: list[str],
+                         addressed: str = "") -> list[Candidate]:  # fmt: skip
+    """``ordered``, whose first is about to code the line with no one picking: as it is, unless the line names
+    another business unit than the first's that has its account (``supplier_prior.units_named``: the unit's name or
+    its number), or names none and the invoice's ship-to or attention lines (``addressed``) do (B-2371). Then the
+    line is left for a person, the account on the unit named most strongly first, its ``check`` saying why. A line
+    that names the first's own unit is coded, whatever the invoice is addressed to; so is one that names a unit only
+    with a word of another kind ("Desk to desk delivery" and IT - Service Desk, which has no courier account)."""
+    top = ordered[0]
+    named, said = units_named(reference, description), "the line"
+    if not named and addressed:
+        named, said = units_named(reference, addressed), "the invoice's ship-to or attention"
+    if not named or top.business_unit in named:
+        return ordered
+    for unit in sorted(named, key=lambda u: (-named[u], u)):
+        there = next((c for c in ordered if c.business_unit == unit and c.code == top.code), None)
+        there = there or _placed(reference, top.code, unit, units, top.source, top.score, list(top.reasons))
+        if there is not None and there.business_unit == unit and not there.guess:
+            break
+    else:
+        return ordered
+    top.auto = False
+    name = reference.pairs.name_of(unit)
+    there.reasons.insert(0, f"{said} names the business unit {name}")
+    there.reason = "; ".join(there.reasons)
+    there.check = (
+        f"This supplier's lines usually go to {top.account}, but {said} names the business unit {name}: check it"
+    )
+    return [there, *(c for c in ordered if c is not there)]
 
 
 def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list[Suggestion],
