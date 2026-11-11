@@ -10,6 +10,7 @@ from ap_coder.ai.supplier_prior import prior_for, rank, remark_shape
 from ap_coder.bench.jde_invoices import printed_name
 from ap_coder.core.caches import size_of
 from ap_coder.core.chart import split_account
+from tests import books
 from tests.books import FACILITIES, MAIN, approve, captured, load_chart, load_journal, monthly
 
 JANITOR = f"{MAIN}.7340.3307"
@@ -301,6 +302,80 @@ def test_a_line_that_names_another_account_of_the_chart_is_not_coded_to_the_supp
     for line in _coded(chart_company, vendor, *own, number="INV-2").line_items:
         assert _account(line) == courier, line.description
         assert line.reasoning_justification.startswith("8 of this supplier's 8 lines last year")
+
+
+def test_a_line_alike_to_nothing_of_the_suppliers_account_and_to_another_accounts_name_is_left(chart_company):
+    """B-2370: an insurance premium, a desk and a software licence on the courier's invoice were coded alone to its
+    one account, with no finding: none of them says every word of another account's name, nor is half alike to one.
+    A line alike to nothing known of the supplier's account that says a word of another offered account's name the
+    supplier's has not, and is that alike to it, is left for a person with that account first."""
+    vendor, courier = _courier(chart_company)
+    kinds = {"Insurance premium - cargo policy": "Insurance", "Office furniture - desk": "Furniture",
+             "Software licence renewal": "Software"}  # fmt: skip
+    for line in _coded(chart_company, vendor, *kinds).line_items:
+        assert _account(line) == "", line.description
+        first = line.candidates[0]
+        assert kinds[line.description] in first["name"], line.description
+        assert courier in [c["account"] for c in line.candidates[1:4]], line.description
+        assert line.reasoning_justification == (
+            f"This supplier's lines usually go to {courier}, but this line reads like {first['name']} "
+            f"({first['account']}): check it.")  # fmt: skip
+
+
+def test_a_line_that_names_another_business_unit_is_not_coded_alone_to_the_suppliers_unit(chart_company):
+    """B-2371: a supplier's lines all went to one account string, and a line naming another business unit that has
+    the account, by its name or its number, or an invoice addressed to that unit, was still coded alone to the usual
+    unit: what a line names was read only for lines left for a person. Such a line is left, that unit's account
+    first; a line that names the usual unit, or none, is coded."""
+    store = chart_company.store
+    reference = store.reference_data()
+    pairs = reference.pairs
+
+    def another_unit(row):  # (the supplier's one account, another unit its name names that has the account)
+        sure = prior_for(store, row).sure()
+        unit, code = split_account(sure.account) if sure else ("", "")
+        named = [bu for bu in pairs.bus_of(code) if bu != unit and bu in sp.units_named(reference, pairs.name_of(bu))]
+        return (sure.account, named[0]) if named else None
+
+    vendor, (usual, other) = next(
+        (r["display_name"], found) for r in store.master_vendors() if (found := another_unit(r))
+    )
+    unit, code = split_account(usual)
+    named, plain = f"{other}.{code}", prior_for(store, vendor).accounts[0].remarks[0].example
+    texts = (f"{plain} - {pairs.name_of(other)}", f"{plain} cost centre {int(other)}")
+    for line in _coded(chart_company, vendor, *texts).line_items:
+        assert _account(line) == "" and line.candidates[0]["account"] == named, line.description
+        assert line.reasoning_justification == (
+            f"This supplier's lines usually go to {usual}, but the line names the business unit "
+            f"{pairs.name_of(other)}: check it.")  # fmt: skip
+    text = f"{vendor}\nShip to: Maple Ridge Holdings Ltd.\nAttn: {pairs.name_of(other)}\n410 Elm Street\n"
+    read = captured(vendor, plain, f"{plain} cost centre {int(unit)}")
+    addressed, own = code_from_capture(read, reference, store.feedback_rows(), store, text=text).coding.line_items
+    assert _account(addressed) == "" and addressed.candidates[0]["account"] == named
+    assert addressed.reasoning_justification == (
+        f"This supplier's lines usually go to {usual}, but the invoice's ship-to or attention names the business "
+        f"unit {pairs.name_of(other)}: check it.")  # fmt: skip
+    assert _account(own) == usual  # (the line names the usual unit: the invoice's address is not read for it)
+    assert _account(_coded(chart_company, vendor, plain).line_items[0]) == usual
+
+
+def test_a_business_unit_whose_every_word_other_units_names_have_is_named_by_its_whole_name(store, monkeypatch):
+    """B-2372: "Finance & Accounting" where four units are a Finance & Accounting (98 of the made-up year's 124 units
+    are so) was never named by a line: only the words of a unit's name that few units' names have were read. A line
+    with every word of such a unit's name names it, so a line of a supplier sure of one unit is not coded alone
+    there; a unit whose whole name is part of another's named on the line is not named."""
+    regions = {"0031061030": "Finance & Accounting", "0031061032": "Prairie Finance & Accounting",
+               "0031061034": "Coastal Finance & Accounting", "0031061036": "Northern Finance & Accounting"}  # fmt: skip
+    for code, name in regions.items():
+        monkeypatch.setitem(books.UNITS, code, (name, "ACT"))
+    monkeypatch.setitem(books.ACCOUNTS, "7420.4207", ("Courier - Domestic", (MAIN, FACILITIES, *regions)))
+    reference = load_chart(store)
+    assert sp.units_named(reference, "Courier charges - Finance & Accounting") == {"0031061030": 2}
+    assert sp.units_named(reference, "Courier charges - Prairie Finance & Accounting") == {"0031061032": 1}
+    _vendor(store, "RAPIDWAY COURIER CANADA LTD.", 3001)
+    load_journal(store, monthly(3001, "RAPIDWAY COURIER CANADA LT", COURIER, "{month} courier charges", 12))
+    line = _line_of(store, reference, "Rapidway Courier Canada Ltd.", "Courier charges - Finance & Accounting")
+    assert line.predicted_gl_code == "UNASSIGNED" and line.candidates[0]["account"] == "0031061030.7420.4207"
 
 
 def test_a_line_coded_by_hand_to_another_account_says_nothing_of_the_suppliers_ordinary_lines(chart_company, tmp_path):

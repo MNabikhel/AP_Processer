@@ -149,17 +149,25 @@ def _date(value: Any) -> dt.date | None:
 
 def _named(text: str, on: dt.date | None) -> tuple[int | None, int | None, int | None]:
     """(year, month, quarter) a line's words name, each None when they name none. A month with no year is the one
-    nearest the invoice date ("December" on a January invoice is last year's)."""
+    nearest the invoice date ("December" on a January invoice is last year's), so is a quarter (by its middle month:
+    "Q4" on a January invoice is last year's, B-2373)."""
     year = month = quarter = None
     for found in _LINE_MONTH.finditer(text):  # (of "January to March 2026", the last one)
         month = _MONTH_OF[_fold(found["dated"] or found["alone"])][0]
         year = int(found["y4"]) if found["y4"] else 2000 + int(found["y2"]) if found["y2"] else None
     if month and year is None and on is not None:
-        year = on.year - 1 if month > on.month + 6 else on.year + 1 if month < on.month - 6 else on.year
+        year = _nearest(month, on)
     q = _LINE_QUARTER.search(text)
     if q:
         quarter, year = int(q[1]), int(q[2]) if q[2] else year
+        if year is None and on is not None:
+            year = _nearest(3 * quarter - 1, on)
     return year, month, quarter
+
+
+def _nearest(month: int, on: dt.date) -> int:
+    """The year of month ``month`` nearest the date ``on``."""
+    return on.year - 1 if month > on.month + 6 else on.year + 1 if month < on.month - 6 else on.year
 
 
 def period_of(line: Any, invoice: Any) -> Period | None:
