@@ -296,3 +296,29 @@ def test_on_the_owners_laptop_share_starts_two_capture_processes_unless_told_oth
     assert shared() == (5, "5")
     monkeypatch.setenv("AP_CAPTURE_PROCESSES", "3")
     assert shared() == (3, "3")
+
+
+def test_after_the_laptop_is_renamed_deleting_shares_certificate_makes_one_for_the_new_name(laptop, monkeypatch):
+    """B-2313: the certificate names the laptop as it was called (an address is never in it, so a new IP changes
+    nothing). Renamed, colleagues are told the new name, which that certificate does not cover. The way to a new one
+    is to delete the two files ``share`` made and run it again, but server.json named them by then, and share refused
+    ("server.json names files that are not there"), leaving the owner to edit server.json. It makes new ones for the
+    new name; certificate files of IT's own, named in server.json and missing, are still refused."""
+    data, db = laptop
+    calls = []
+    assert share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in(calls),
+                         ask=answers("Pat Lee", "pat"), password=lambda username, name: GOOD) is not None  # fmt: skip
+    cert = share.certificate_command("openssl", data / "tls")
+    assert "subjectAltName=DNS:AP-LAPTOP" in cert and not any("IP:" in part for part in cert)
+    monkeypatch.setattr(share, "names", lambda: ["AP-LAPTOP-2"])
+    for name in (share.CERT_NAME, share.KEY_NAME):
+        (data / "tls" / name).unlink()
+    said = Said()
+    s = share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls))
+    assert s is not None and s.certfile == str(data / "tls" / share.CERT_NAME) and len(calls) == 2, said.all
+    assert "subjectAltName=DNS:AP-LAPTOP-2" in calls[1] and "Made a certificate for this computer's name" in said.all
+    assert share.address(s) == "https://AP-LAPTOP-2:8501"
+    service.write_config(data, certfile=str(data / "it.pem"), keyfile=str(data / "it.key.pem"))
+    said = Said()
+    assert share.prepare(data, db, said, openssl="openssl", run=openssl_stand_in(calls)) is None
+    assert "server.json names files that are not there" in said.all and len(calls) == 2

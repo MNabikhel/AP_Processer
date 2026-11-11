@@ -1807,6 +1807,34 @@ It is sized for a laptop its owner works on while it serves: 2 web workers (enou
 processes reading imported files (about 700 MB each while they read scans), not the company server's one per core.
 `workers` and `capture_processes` in `server.json` (or the variable `AP_CAPTURE_PROCESSES`) give other numbers.
 
+**What each colleague does the first time:**
+
+1. Open the address `share` printed, `https://AP-LAPTOP:8501`, in Edge or Chrome. It is the laptop's name, not its
+   IP address: the address changes between the Wi-Fi and the dock, the name and the certificate don't.
+2. The browser warns "Your connection isn't private": the laptop made its own certificate, and nobody their PC
+   trusts signed it. Either press *Advanced*, then *Continue to AP-LAPTOP (unsafe)* (the warning comes back in each
+   new browser session), or trust the certificate once and it never warns:
+   - the owner sends them `apcoder.pem` from the data folder's `tls` folder (never `apcoder.key.pem`, the other
+     file there);
+   - they double-click it, then *Install Certificate…*, *Current User*, *Place all certificates in the following
+     store*, *Browse…*, *Trusted Root Certification Authorities*, *Next*, *Finish*, and *Yes* to Windows' warning
+     (the thumbprint it shows is the *Cert Hash(sha1)* that `certutil -dump apcoder.pem` shows on the laptop);
+   - they close every Edge or Chrome window and open the address again.
+
+   Where the company does not let people add a certificate, IT can push `apcoder.pem` to everyone's PCs (Group
+   Policy or Intune, as a trusted root), or give the laptop a certificate from the company's CA (section 3). These
+   steps were not tried on Windows 11 for this guide: try them on one colleague's PC first.
+3. Sign in with the username and the temporary password the owner gave them in person, choose their own password,
+   and scan the QR code with an authenticator app on their phone. From then on: the password, then the app's
+   6-digit code.
+
+**If the laptop's name changes** (IT renames it, or it is replaced), its certificate still names the old one, and
+browsers refuse the new address. Stop sharing (`share --stop`), delete `apcoder.pem` and `apcoder.key.pem` from the
+data folder's `tls` folder, and run `share` again: it makes a certificate for the new name and prints the new
+address. Send colleagues the new address, and the new `apcoder.pem` to those who trusted the old one (step 2). Don't
+delete those files for any other reason: a browser that trusted the old certificate refuses a new one for the same
+name with no way past it (section 3, *825 days*) until the new one is trusted too.
+
 **The ten steps, by hand:**
 
 1. **Close laptop mode cleanly.** Finish or approve what is open on a review screen, press *Settings* → *Data &
@@ -1878,8 +1906,8 @@ processes reading imported files (about 700 MB each while they read scans), not 
    whoever was away longer than the session's idle time logs in again, their typed edits kept. LM Studio: started
    in the owner's session, or as the task of step 8.
 9. **Colleagues** open `https://AP-LAPTOP:8501` (the name, not an address) and accept the certificate's warning, or
-   trust the certificate first (section 3). Try from one colleague's PC, on the Wi-Fi and on the dock, before telling
-   the others.
+   trust the certificate first (*What each colleague does the first time*, above). Try from one colleague's PC, on
+   the Wi-Fi and on the dock, before telling the others.
 10. **Later, a server of its own**: install AP Coder there with the service not started, restore the newest backup
     from the second folder before any `users add`, start the service, and set again the `.env`, the allowed folders
     and the second backup folder (step 9, *A new server*). Everyone signs in there with the same password and the same

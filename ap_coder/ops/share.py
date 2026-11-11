@@ -71,8 +71,12 @@ def certificate_command(openssl: str, folder: Path) -> list[str]:
 def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[..., Any] = service.run_command,
                 openssl: str | None = None) -> tuple[str, str] | None:  # fmt: skip
     """The certificate and its private key to serve with: server.json's, else the data folder's ``tls`` files, else
-    one made now with this computer's openssl. None when there is none and none could be made: said, with how."""
-    if s.certfile or s.keyfile:
+    one made now with this computer's openssl (also when server.json names those two files and they were deleted:
+    the way to a certificate for a laptop's new name, B-2313). None when there is none and none could be made: said,
+    with how."""
+    folder = data / TLS_DIR
+    cert, key = folder / CERT_NAME, folder / KEY_NAME
+    if (s.certfile or s.keyfile) and (Path(s.certfile), Path(s.keyfile)) != (cert, key):
         missing = [f for f in (s.certfile, s.keyfile) if not f or not Path(f).is_file()]
         if not missing:
             return s.certfile, s.keyfile
@@ -82,8 +86,6 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
             + f"). Put them back, or take certfile and keyfile out of {service.config_path(data)} and run this again."
         )
         return None
-    folder = data / TLS_DIR
-    cert, key = folder / CERT_NAME, folder / KEY_NAME
     if cert.is_file() and key.is_file():
         return str(cert), str(key)
     openssl = find_openssl() if openssl is None else openssl
@@ -109,8 +111,8 @@ def certificate(data: Path, s: service.ServerSettings, say: Say, run: Callable[.
     say(
         f"Made a certificate for this computer's name ({', '.join(names())}), good for {CERT_DAYS} days: {cert}. "
         "Nobody signed it, so each colleague's browser warns (“Your connection isn't private”) in each new browser "
-        "session: Advanced, then Continue. docs/SERVER.md section 3 says how to trust it on their PCs, so that it "
-        "no longer warns, and when to ask IT for a real one."
+        f"session: Advanced, then Continue. {GUIDE} says how to trust it on their PCs, so that it no longer warns "
+        "(give them this file, never the key file beside it), and what to do if this laptop's name changes."
     )
     return str(cert), str(key)
 
