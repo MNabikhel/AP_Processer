@@ -13,6 +13,7 @@ from .jde_formats import _date, _units
 from .jde_settings import (
     AMOUNT_TAX,
     GL_DATE_EXPORT,
+    HST_PROVINCES,
     JdeSettings,
     gl_date_of,
     moved_note,
@@ -93,6 +94,8 @@ def voucher_findings(output: dict[str, Any], settings: JdeSettings, an8: str) ->
             out.append((ERROR, "JDE_VOUCHER", f"JD Edwards: {problem}", line))
     if said := not_recovered(v):  # a GST/HST the Tax setup keeps in the expense: meant, or a slip (B-2150)
         out.append((WARNING, "JDE_TAX_NOT_RECOVERED", f"JD Edwards: {said}", None))
+    if said := area_mismatch(v, settings):  # the area of the ship-to, another province's tax charged (B-2345)
+        out.append((WARNING, "JDE_TAX_AREA_MISMATCH", f"JD Edwards: {said}", None))
     if v.gl_moved and v.gl_day:  # posted in the open period: the person sees it before approving (D-182)
         out.append((WARNING, "JDE_GL_DATE_MOVED", f"JD Edwards: {moved_note(v.gl_day, v.gl_moved)}", None))
     no_code = terms_unmapped(output, settings)
@@ -130,6 +133,24 @@ def not_recovered(v: _Voucher) -> str:
     return (f"the {names} ({amount:,.2f}) is not recovered: GL accounts & tax keeps it in the expense, so the "
             "voucher claims no input tax credit for it. If that is not meant, set it to recoverable in GL accounts "
             "& tax (or ask the pilot tester), then save the invoice again")  # fmt: skip
+
+
+def area_mismatch(v: _Voucher, settings: JdeSettings) -> str:
+    """What to say of a voucher whose tax area, which follows the place of supply (the ship-to first), is a province's
+    whose federal tax is not the one charged ("" otherwise): an Alberta supplier's GST on goods shipped to Ontario
+    goes to Ontario's HST area with 5% tax. JD Edwards works the tax out at the area's rate, so it is said, not held:
+    the supplier may have charged the wrong tax, or the ship-to may be wrong (B-2345)."""
+    if settings.tax_on_gl or not v.tax_area or v.tax_code in ("E", settings.exempt_code.strip().upper()):
+        return ""
+    types = {t["tax_type"] for t in v.charged} & {"GST", "HST"}
+    due = "HST" if v.province in HST_PROVINCES else "GST"
+    if len(types) != 1 or due in types:
+        return ""
+    (other,) = types
+    amount = sum(_units(t.get("tax_amount"), v.decimals) for t in v.charged if t["tax_type"] == other) / 100
+    return (f"tax area {v.tax_area} is for a supply in {v.province}, where {due} is charged, but this invoice charges "
+            f"{other} ({amount:,.2f}): JD Edwards may work the tax out at the area's rate and find it different. Check "
+            "the ship-to and the tax charged before typing it (or ask the pilot tester)")  # fmt: skip
 
 
 def pay_item_tax(v: _Voucher, settings: JdeSettings) -> tuple[int | None, int | None]:

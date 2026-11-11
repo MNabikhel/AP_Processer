@@ -230,6 +230,8 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
         notes.append(f"PST to self-assess: {v.province} PST on {base:,.2f}. Tax area {v.tax_area} holds no PST, so "
                      f"code {v.tax_code} has JD Edwards accrue none: book it from AP Coder's Self-assessment report, "
                      "which lists it.")  # fmt: skip
+    if said := jde_review.area_mismatch(v, settings):  # the ship-to's area, another province's tax (B-2345)
+        notes.append(f"{said[0].upper()}{said[1:]}.")
     return warnings, notes
 
 

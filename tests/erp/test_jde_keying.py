@@ -10,7 +10,7 @@ import openpyxl
 
 from ap_coder.coding.tax import TaxTreatment
 from ap_coder.core.memory import vendor_key
-from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_settings, jde_zfiles
+from ap_coder.erp import exports, jde_formats, jde_keying, jde_prototype, jde_review, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import _setup
 from tests.erp.test_jde_gl_mode import coded, doc, line, tl
@@ -788,3 +788,31 @@ def test_a_credit_note_that_prints_payment_terms_is_keyed_with_none():
     assert field(block, "Payment terms").value == "none (a credit)"
     head = jde_zfiles.voucher_rows(printed, "40417", settings())[0][0]
     assert head["VLPTC"] == ""
+
+
+def test_a_tax_area_of_another_province_than_the_tax_charged_is_said_and_holds_nothing():
+    """B-2345: the tax area follows the ship-to, while the tax charged can be another province's: an Alberta supplier
+    charging the GST only on goods shipped to Ontario went to ONHST with 5% tax (and an Ontario supplier's HST on a
+    supply in Alberta to the GST-only area) with nothing said, where JD Edwards works the tax out at the area's rate.
+    A warning on the review screen and a note on the voucher; the voucher is still ready."""
+    from ap_coder.ops.help import CHECKS
+
+    js = jde_prototype.prototype_settings(jde_settings.JdeSettings(company="00210"))
+    gst = coded(doc([line(1, 1000.0, "6420.2210", ["GST"], cc=HQ)], [tl("GST", "", 0.05, 1000.0, 50.0)],
+                    prov="AB", ship_to_province="ON", vendor_name="Prairie Office Supply Ltd."))  # fmt: skip
+    hst = coded(doc([line(1, 1000.0, "6420.2210", ["HST"], cc=HQ)], [tl("HST", "ON", 0.13, 1000.0, 130.0)],
+                    prov="ON", ship_to_province="AB", vendor_name="Prairie Office Supply Ltd."), inv_id=2)  # fmt: skip
+    ready, held = jde_keying.vouchers([gst, hst], js, lookup)
+    assert held == [] and [(v.tax_area, v.tax) for v in ready] == [("ONHST", 50.0), ("CDNGST", 130.0)]
+    first, second = (v.notes[-1] for v in ready)
+    assert first.startswith("Tax area ONHST is for a supply in ON, where HST is charged, but this invoice charges "
+                            "GST (50.00)")  # fmt: skip
+    assert second.startswith("Tax area CDNGST is for a supply in AB, where GST is charged, but this invoice charges "
+                             "HST (130.00)")  # fmt: skip
+    for inv in (gst, hst):
+        found = [(sev, code) for sev, code, _m, _l in jde_review.voucher_findings(inv["final_output"], js, "40417")]
+        assert found == [("warning", "JDE_TAX_AREA_MISMATCH")]
+    assert "JDE_TAX_AREA_MISMATCH" in CHECKS
+    (plain,) = jde_keying.vouchers([one_line()], js, lookup)[0]  # Alberta's GST on a supply in Alberta: nothing said
+    assert not any(n.startswith("Tax area") for n in plain.notes)
+    assert jde_review.voucher_findings(one_line()["final_output"], js, "40417") == []
