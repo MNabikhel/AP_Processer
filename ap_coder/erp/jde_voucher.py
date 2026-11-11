@@ -205,12 +205,33 @@ def pst_owed(final: dict[str, Any]) -> str:
 
 
 def accrues_use_tax(final: dict[str, Any], settings: JdeSettings) -> bool:
-    """True when this invoice goes to JD Edwards with the self-assessed code (B): E1 accrues the PST (use tax)
-    itself, so the Self-assessment report must not have it booked again (B-716, B-722)."""
+    """True when this invoice goes to JD Edwards with the self-assessed code (B) on a tax area that holds the PST: E1
+    accrues the PST (use tax) itself, so the Self-assessment report must not have it booked again (B-716, B-722).
+    Code B on an area that does not hold it accrues nothing: the report lists it (``self_assessed_pst``, B-2343)."""
+    return _code_b(final, settings) is True
+
+
+def self_assessed_pst(final: dict[str, Any], settings: JdeSettings) -> bool:
+    """True when this invoice goes with the self-assessed code (B) on a tax area that holds no PST (the prototype's
+    GST-only area, D-210): JD Edwards accrues none, the PST is AP's to self-assess (B-2343)."""
+    return _code_b(final, settings) is False
+
+
+def _code_b(final: dict[str, Any], settings: JdeSettings) -> bool | None:
+    """With the self-assessed code (B), whether its tax area holds the PST; None: not code B."""
     if settings.tax_on_gl:  # no code B: the Self-assessment report has the PST (D-93)
-        return False
-    code = _tax_area_code(final, settings)[3]
-    return bool(code) and code == settings.self_assessed_code.strip().upper()
+        return None
+    _charged, province, area, code = _tax_area_code(final, settings)
+    if not code or code != settings.self_assessed_code.strip().upper():
+        return None
+    return _holds_pst(province, area, settings)
+
+
+def _holds_pst(province: str, area: str, settings: JdeSettings) -> bool:
+    """Whether a PST province's tax area holds its PST: an area that province's supplies alone go to. One shared with
+    other provinces (the prototype's GST-only area for AB, BC, MB, SK...) holds only the tax they have in common, the
+    GST: their PSTs differ, Alberta has none (D-227)."""
+    return bool(area) and all(row.tax_area.strip() != area for p, row in settings.tax_map.items() if p != province)
 
 
 PO_WIDTH = 8  # VLPO

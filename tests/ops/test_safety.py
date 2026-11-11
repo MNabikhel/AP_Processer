@@ -360,3 +360,47 @@ def test_looking_for_a_team_server_on_a_new_data_folder_makes_no_database(tmp_pa
     assert not db.exists()
     store = first_run(db, server=False)
     assert store.get_setting(SCREENS, EVERYTHING) == SIMPLE
+
+
+# --- One laptop-mode AP Coder a data folder (B-2351) ------------------------------------------------------------------
+
+LAPTOP_STAND_IN = """
+import http.server, json, os
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        body = json.dumps({"ok": True, "app": "ap-coder", "pid": os.getpid(), "server_mode": False}).encode()
+        self.send_response(200 if self.path == "/healthz" else 404)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+"""
+
+
+def test_a_second_laptop_mode_serve_on_the_same_data_is_refused(laptop, started, capsys):
+    """B-2351: ``python -m ap_coder serve`` typed in scripts\\terminal.bat while the shortcut's AP Coder ran started on
+    the next port against the same database, overwrote the server file, then removed it as it stopped: the first one
+    ran unseen, and ``backup restore`` went ahead under it. Refused, and said where it is open."""
+    import subprocess
+    import sys
+
+    from ap_coder.ops import backup_cmd
+
+    data, db = laptop
+    first = subprocess.Popen([sys.executable, "-c", LAPTOP_STAND_IN], stdout=subprocess.PIPE, text=True)
+    try:
+        port = int(first.stdout.readline())
+        record = json.dumps({"pid": first.pid, "port": port, "token": "the-first-ones"})
+        (data / ".ap_coder_server.json").write_text(record)
+        assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 2 and started == []
+        said = capsys.readouterr().err
+        assert f"AP Coder is already open on this data folder ({data}) at http://127.0.0.1:{port}" in said
+        assert (data / ".ap_coder_server.json").read_text() == record and backup_cmd._running(data)
+    finally:
+        first.kill()
+        first.wait(10)
+    # left by one that was killed: no longer refused
+    assert cli.main(["--db", str(db), "serve", "--port", "8599", "--no-browser"]) == 0 and len(started) == 1

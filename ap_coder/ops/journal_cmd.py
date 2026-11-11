@@ -181,6 +181,13 @@ def _state(store: Store, digest: str, journal: jr.Journal, objects: dict[str, tu
                            "add. To load it again, with other objects for instance, forget it first.")  # fmt: skip
     if not journal.vouchers:
         return REFUSED, "No voucher could be read from this file."
+    pairs = store.account_pairs()
+    units, codes = (pairs.business_units(), pairs.offered_codes()) if pairs is not None else ((), ())
+    cut = jr.cut_by_excel(journal, units, {chart.split_code(code)[0] for code in codes})
+    if cut:  # saved again through Excel, which reads "0021061010.2110" as a number (B-2346)
+        return REFUSED, ("This file was saved through Excel and lost its leading zeros: export it again from JD "
+                         "Edwards and load that file without opening it in Excel. "
+                         f"{plural(len(cut), 'account')} cut short: {_first(cut)}.")  # fmt: skip
     if not _trade_lines(journal, objects):
         named = f" ({', '.join(objects['trade'])})" if objects["trade"] else ""
         return REFUSED, (f"No line of this file has a trade payable object{named}, so JD Edwards' own lines would be "

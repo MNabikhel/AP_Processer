@@ -19,8 +19,11 @@ REMARK_WIDTH = 30  # VLRMK
 def line_remark(line: Mapping[str, Any]) -> str:
     """The remark of a G/L line as JD Edwards holds it (30 characters): the line's own remark (suggested or typed,
     D-213; ``remark.fit``: the whole words that fit), else the line's description cut at 30. The batch files and
-    the keying sheet (``jde_keying``) both ask here."""
-    return fit(line.get("remark"))[0] or _text(line.get("description"), REMARK_WIDTH)
+    the keying sheet (``jde_keying``) both ask here. A remark the person emptied on purpose stays empty (D-229)."""
+    remark = fit(line.get("remark"))[0]
+    if remark or line.get("remark_from") == "person":
+        return remark
+    return _text(line.get("description"), REMARK_WIDTH)
 
 
 def voucher_remark(invoice: Mapping[str, Any]) -> str:

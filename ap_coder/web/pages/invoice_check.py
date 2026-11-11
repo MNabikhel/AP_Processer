@@ -74,7 +74,7 @@ def _line_views(grid: dict[str, Any]) -> list[dict[str, str]] | None:
              "candidates": a["listed"],
              "tax": str(mod.acct_tax(a)), "keyed": str(mod.acct_keyed(a)),
              "remark": str(mod.acct_remark(a["remark"])),
-             "remark_box": {k: a["remark"][k] for k in ("text", "typed", "why")},
+             "remark_box": {k: a["remark"][k] for k in ("text", "typed", "posted", "why")},
              "has_keyed": bool(a["taxes"] and a["taxes"]["keyed"])}
             for a in (row["acct"] for row in grid["lines"])]  # fmt: skip
 

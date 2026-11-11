@@ -34,6 +34,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
 from ..coding import banks
+from ..coding.taxreturn import self_assessed_base
 from ..core.safe import neutralise_sheet, xlsx_row
 from . import jde_accounts, jde_formats, jde_remarks, jde_review, jde_settings, jde_voucher, jde_zfiles
 from .exports import _sheet
@@ -44,6 +45,7 @@ SHEET, NOT_READY = "Keying sheet", "Not ready"
 LINE_COLUMNS = ["Account number", "Account description", "Amount", "Explanation -Remark-"]
 WIDTHS = [26, 36, 16, 36]
 NOTE_WIDTH = 84  # characters of a note's row: the three columns beside its label
+CREDIT_TERMS = "none (a credit)"  # a credit memo's Payment terms: none is typed, as the files send none (B-896)
 # Rows of a printed page under the column names (upright Letter or A4 at full size; fewer than fit, to be safe): a
 # voucher that would run over the page starts on the next one.
 ROWS_A_PAGE = 42
@@ -148,6 +150,9 @@ def vouchers(
                              v.gross / 100, v.currency, why))  # fmt: skip
             continue
         tax, taxable = jde_review.pay_item_tax(v, settings)
+        terms, _key, source = jde_voucher.terms_code(final, settings)
+        if source == jde_voucher.TERMS_CREDIT:  # a credit memo goes with no terms code, as the files send it (B-896)
+            terms = CREDIT_TERMS
         warnings, notes = _said(v, settings, tax is not None, fx_rates)
         warnings = [*((warned or {}).get(v.inv_id) or []), *warnings]
         bank = None
@@ -163,7 +168,7 @@ def vouchers(
             invoice_date=jde_formats._date(final.get("invoice_date")),
             gl_date=jde_settings.gl_date_of(final, settings, on)[0],
             currency=v.currency, gross=v.gross / 100,
-            terms=jde_voucher.terms_code(final, settings)[0] or str(final.get("payment_terms") or "").strip(),
+            terms=terms or str(final.get("payment_terms") or "").strip(),
             remark=jde_remarks.voucher_remark(inv),
             due=jde_voucher.sent_due(final, inv) if settings.send_due_date else None,
             po_number=str(final.get("po_number") or "").strip(), tax_code=v.tax_code, tax_area=v.tax_area,
@@ -220,6 +225,13 @@ def _said(v: jde_voucher._Voucher, settings: jde_settings.JdeSettings, taxed: bo
     if len(po) > jde_voucher.PO_WIDTH:
         notes.append(f"PO number {po} is longer than the {jde_voucher.PO_WIDTH} characters JD Edwards' purchase order "
                      "field holds: it cannot be typed there as it is.")  # fmt: skip
+    if jde_voucher.self_assessed_pst(v.final, settings):  # code B on an area with no PST: E1 accrues none (B-2343)
+        base = self_assessed_base(v.final, v.final.get("line_items") or [], "PST")
+        notes.append(f"PST to self-assess: {v.province} PST on {base:,.2f}. Tax area {v.tax_area} holds no PST, so "
+                     f"code {v.tax_code} has JD Edwards accrue none: book it from AP Coder's Self-assessment report, "
+                     "which lists it.")  # fmt: skip
+    if said := jde_review.area_mismatch(v, settings):  # the ship-to's area, another province's tax (B-2345)
+        notes.append(f"{said[0].upper()}{said[1:]}.")
     return warnings, notes
 
 

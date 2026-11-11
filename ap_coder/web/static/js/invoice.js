@@ -143,6 +143,7 @@ function goToNext(boxes, by = 1) {
 /* Approving with something to check: the first Ctrl+Enter says what in the bar and goes to it, the second approves
    (no dialog). Any edit between the two starts again. */
 let checkAsked = false;
+let leaving = null; // the box the focus leaves for what to check: its change as it is left is no edit (B-2362)
 function checkSaid() {
   const rows = gridRows();
   const guesses = rows.filter((row) => row.classList.contains("is-check")).map(lineNo);
@@ -160,12 +161,14 @@ function checkedOrAsked() {
   if (!boxes.length || checkAsked) return true;
   checkAsked = true;
   showBarState();
+  leaving = document.activeElement;
   goToNext(boxes.includes(document.activeElement) ? [document.activeElement] : boxes);
+  leaving = null;
   return false;
 }
 for (const type of ["input", "change"]) {
   document.addEventListener(type, (e) => {
-    if (!checkAsked || e.target.form !== form) return;
+    if (!checkAsked || e.target.form !== form || (type === "change" && e.target === leaving)) return;
     checkAsked = false;
     showBarState();
   });
@@ -235,9 +238,11 @@ function accountText(gl, cc) {
 
 /* ---------- The remark keyed with a line (D-213): 30 characters in JD Edwards, never cut without a word ----------
    The box shows the remark; what is posted is the row's hidden line_remark: blank while the box holds AP Coder's
-   suggestion (the server then suggests again for the account the line has now), the text once a person typed one.
-   A suggestion is marked (a dashed edge) until someone has been in its box. */
+   suggestion (the server then suggests again for the account the line has now), the text once a person typed one,
+   REMARK_CLEARED once a person emptied the box (no remark, theirs: D-229). A suggestion is marked (a dashed edge)
+   until someone has been in its box. */
 const REMARK_MOST = 30; // coding/remark.py REMARK_MOST
+const REMARK_CLEARED = " "; // coding/remark.py CLEARED
 
 function remarkBox(row) {
   return row?.querySelector?.("input[data-remark-box]") || null;
@@ -263,7 +268,7 @@ function applyRemark(row, said) {
   if (!box || !posted || !said) return;
   if (said.typed) {
     if (!posted.value) {  // a row drawn again (Undo): its box shows the remark it posts
-      posted.value = said.text;
+      posted.value = said.posted;
       box.value = said.text;
     }
     box.classList.remove("is-suggested");
@@ -281,7 +286,8 @@ document.addEventListener("input", (e) => {
   if (!e.target.matches?.("input[data-remark-box]")) return;
   const row = rowOf(e.target);
   const posted = row?.querySelector('[name="line_remark"]');
-  if (posted) posted.value = e.target.value; // a person's remark now: posted as typed
+  // a person's remark now: posted as typed, or as emptied
+  if (posted) posted.value = e.target.value.trim() ? e.target.value : REMARK_CLEARED;
   e.target.classList.remove("is-suggested");
   e.target.removeAttribute("title");
   showRemarkCount(row);
@@ -1974,7 +1980,7 @@ function makeRow(which, state, after = null) {
   }
   tr.querySelectorAll("input[type=checkbox]").forEach((c) => (c.checked = (state.taxes || []).includes(c.value)));
   if (remarkBox(tr)) {  // a person's remark shows at once; a suggestion comes with the next check
-    remarkBox(tr).value = tr.querySelector('[name="line_remark"]')?.value || "";
+    remarkBox(tr).value = (tr.querySelector('[name="line_remark"]')?.value || "").trim();
     showRemarkCount(tr);
   }
   const cell = tr.querySelector(".c-gl");
@@ -2015,6 +2021,7 @@ function dropUndo() {
 /** Say what was done, with Undo: ``msg`` a message ({text, tone}) or its text. */
 function offerUndo(msg, snap) {
   dropUndo();
+  editedHere = true;
   const message = typeof msg === "string" ? { text: msg, tone: "info", icon: "undo" } : { ...msg };
   undoState = { snap };
   message.action = { label: "Undo", icon: "undo", title: "Put it back as it was (Ctrl+Z)", run: undo };
@@ -2808,6 +2815,12 @@ if (form && !readOnly) {
 /** The boxes typed in since the page opened: in one of them Ctrl+Z is the box's own (B-992). */
 const typedIn = new WeakSet();
 document.addEventListener("input", (e) => typedIn.add(e.target), { capture: true });
+/** Something on this invoice was edited since it opened: Ctrl+Z is no longer the banner's Undo of the invoice approved
+    before (B-2360); the banner's own button still is. */
+let editedHere = false;
+for (const type of ["input", "change"]) {
+  document.addEventListener(type, (e) => e.target.form === form && (editedHere = true), { capture: true });
+}
 
 document.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.target.closest?.("dialog, [role=dialog]")) return;
@@ -2827,7 +2840,7 @@ document.addEventListener("keydown", (e) => {
     if (fresh || !(typing(e.target) && e.target.tagName !== "SELECT")) {
       e.preventDefault();
       // nothing edited here since: the approval just made, as the banner's Undo (B-823)
-      const banner = document.querySelector("#flashes form.flash-undo");
+      const banner = !editedHere && document.querySelector("#flashes form.flash-undo");
       if (banner) banner.requestSubmit();
       else toast({ text: "Nothing to undo.", tone: "info", icon: "undo" }, 2500);
     }

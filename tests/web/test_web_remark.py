@@ -139,3 +139,12 @@ def test_a_remark_over_30_characters_keeps_approve_closed_while_remarks_go_to_jd
         jde_remarks.line_remark(store.get_invoice(page.id)["final_output"]["line_items"][0])
         == "coffee supplies for the 3rd"
     )
+
+
+def test_a_remark_the_person_cleared_is_keyed_empty_not_the_description():
+    """B-2364: a remark emptied on purpose (D-229) stayed empty on the screen but the keying sheet and the batch
+    files keyed the line's description cut at 30 in its place (``jde_remarks.line_remark``)."""
+    cleared = {"description": "Courier waybills week 12", "remark": "", "remark_from": "person"}
+    assert jde_remarks.line_remark(cleared) == ""
+    never_given = {"description": "Courier waybills week 12", "remark": ""}
+    assert jde_remarks.line_remark(never_given) == "Courier waybills week 12"

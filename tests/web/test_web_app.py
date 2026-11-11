@@ -444,6 +444,15 @@ def test_healthz_and_the_server_file_say_which_account_runs_it(store):
     assert info["user"] == getpass.getuser()
 
 
+def test_healthz_says_which_data_folder_it_serves_to_this_computer_only(store, tmp_path):
+    """B-2350: the launcher's double-click opened an AP Coder serving another data folder (the guide's made-up
+    company, left running): /healthz said the code folder and version, never the data. To this computer only."""
+    _app, local = _launcher_client(store)
+    assert Path(local.get("/healthz").json()["data"]) == (tmp_path / "private").resolve()
+    _app, colleague = _launcher_client(store, client=("192.168.1.30", 50000))
+    assert "data" not in colleague.get("/healthz").json()
+
+
 def test_the_server_file_describes_the_running_server(tmp_path):
     path = server.write_server_file(8611, "tok")
     assert path == tmp_path / "private" / ".ap_coder_server.json"

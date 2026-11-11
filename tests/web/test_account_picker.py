@@ -186,6 +186,32 @@ def test_with_something_to_check_the_first_ctrl_enter_says_what_and_the_second_a
     assert not errors
 
 
+def test_after_picking_each_account_the_first_ctrl_enter_says_what_to_check_and_the_second_approves(
+    browser, chart_company
+):
+    """B-2362: on four_lines, accounts picked, the first Ctrl+Enter went to the first suggested remark and the change
+    of the Account box it left started the two steps again: three presses to approve."""
+    invoice, invoice_id = chart_company.invoices["four_lines"]
+    page, errors = _review(browser, chart_company, "four_lines")
+    store = chart_company.store
+    for n, part in enumerate(invoice.parts, 1):
+        page.click(f'[data-grid="lines"] [data-row]:nth-child({n}) input[data-account]')
+        page.keyboard.press("Control+a")
+        page.keyboard.type(part.account)
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+    page.wait_for_load_state("networkidle")
+    page.keyboard.press("Control+Enter")
+    page.wait_for_selector("[data-bar-check]:not([hidden])")
+    assert page.inner_text("[data-bar-check]").startswith("To check: ")
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+    assert page.evaluate("document.activeElement.matches('input[data-remark-box]')")
+    page.keyboard.press("Control+Enter")
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+    assert not errors
+
+
 REMARK = '[data-grid="lines"] [data-row]:nth-child(1) input[data-remark-box]'
 POSTED = '[data-grid="lines"] [data-row]:nth-child(1) input[name="line_remark"]'
 COUNT = '[data-grid="lines"] [data-row]:nth-child(1) [data-remark-count]'
@@ -234,3 +260,60 @@ def test_the_suggested_remark_follows_the_account_picked(browser, chart_company)
     wait_until(page, lambda: page.input_value(REMARK) == usual.text)
     assert page.input_value(REMARK) == usual.text and page.input_value(POSTED) == ""
     assert page.input_value(FIRST) == account and not errors
+
+
+def test_a_remark_cleared_stays_empty_through_the_check_and_is_approved_as_the_persons(browser, chart_company):
+    """B-2363: a Remark box emptied came back with the suggestion at the next check, so a voucher line could never be
+    approved with no remark."""
+    store, invoice_id = chart_company.store, chart_company.invoices["one_line"][1]
+    page, errors = _review(browser, chart_company, "one_line")
+    assert page.input_value(REMARK)
+    page.click(REMARK)
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Delete")
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(800)  # the check after the edit has answered
+    assert page.input_value(REMARK) == "" and page.inner_text(COUNT) == "0 / 30"
+    page.reload()  # the draft kept: still empty
+    page.wait_for_load_state("networkidle")
+    assert page.input_value(REMARK) == "" and "is-suggested" not in page.get_attribute(REMARK, "class")
+    page.click("[data-approve]")
+    wait_until(page, lambda: store.get_invoice(invoice_id)["status"] == APPROVED, 10)
+    (line,) = store.get_invoice(invoice_id)["final_output"]["line_items"]
+    assert (line.get("remark", ""), line.get("remark_from")) == ("", "person")  # (an empty remark is left out)
+    assert not errors
+
+
+@pytest.mark.parametrize("how", ["tax code chosen", "account picked, then a click away"])
+def test_ctrl_z_on_the_next_invoice_once_edited_never_undoes_the_approval_before(browser, chart_company, how):
+    """B-2360: after Approve the next invoice opens with the banner's Undo; Ctrl+Z there, once a tax code was chosen
+    or an account picked, undid the approval of the invoice before and went back to it."""
+    page, errors = _review(browser, chart_company, "one_line")
+    store, first = chart_company.store, chart_company.invoices["one_line"][1]
+    page.click("[data-approve]")
+    page.wait_for_url(lambda url: f"/review/{first}" not in url, timeout=10000)
+    page.wait_for_selector("#flashes form.flash-undo")
+    page.wait_for_load_state("networkidle")
+    after = page.url
+    if how == "tax code chosen":
+        select = '[data-grid="lines"] [data-row]:nth-child(1) select[name="line_tax_code"]'
+        codes = page.eval_on_selector_all(f"{select} option", "els => els.map((e) => e.value)")
+        page.select_option(select, codes[-1])
+        page.focus(select)
+    else:
+        shown = int(after.split("/review/")[1].split("?")[0])
+        invoice = next(inv for inv, number in chart_company.invoices.values() if number == shown)
+        page.click(FIRST)
+        page.keyboard.press("Control+a")
+        page.keyboard.type(invoice.parts[0].account)
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+        page.evaluate("document.activeElement.blur()")  # a click away
+    page.wait_for_load_state("networkidle")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(1000)
+    assert store.get_invoice(first)["status"] != REVIEW and page.url == after  # the approval stays; the page too
+    page.click("#flashes form.flash-undo button")  # the banner's own Undo still undoes it
+    page.wait_for_url(lambda url: f"/review/{first}" in url, timeout=10000)
+    assert store.get_invoice(first)["status"] == REVIEW
+    assert not errors

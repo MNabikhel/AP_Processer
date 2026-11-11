@@ -382,13 +382,14 @@ def test_a_double_click_beside_the_teams_server_opens_it_and_starts_nothing(doub
     assert "it was not started a second time" in out and not d.launch._held  # (no set-up lock taken either)
 
 
-def test_a_double_click_never_opens_a_stopped_team_servers_data_without_sign_in(double_click, capsys):
+def test_a_double_click_never_opens_a_stopped_team_servers_data_without_sign_in(double_click, capsys, monkeypatch):
     """B-2119: with the server stopped for the night nothing answers, and the double-click must still not open the
     team's data with no sign-in: told by the sign-in accounts in its database (or its server.json), not by the port."""
     from ap_coder.core.store import Store
     from ap_coder.ops import service
 
     d = double_click
+    monkeypatch.setattr(service, "installed", lambda s: True)  # the server's service, stopped (a shared laptop: below)
     Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
     assert d.launch.main([]) == 1 and d.went_on == [] and d.opened == []
     out = capsys.readouterr().out
@@ -401,6 +402,28 @@ def test_a_double_click_never_opens_a_stopped_team_servers_data_without_sign_in(
     assert "server.json" in capsys.readouterr().out
 
 
+def test_on_a_laptop_shared_with_share_a_double_click_sets_up_and_says_to_start_it_with_share(
+    double_click, capsys, monkeypatch
+):
+    """B-2353: an update unzipped on a laptop shared with ``share`` was refused before anything was set up, and
+    scripts\\terminal.bat, where ``share`` is typed, needs the set-up first: the tester was stuck. It sets up, starts
+    nothing, and says to start it with ``share``."""
+    from ap_coder.core.store import Store
+    from ap_coder.ops import service
+
+    d = double_click
+    monkeypatch.setattr(service, "installed", lambda s: False)
+    set_up: list[bool] = []
+    monkeypatch.setattr(d.launch, "run", lambda args, rest: set_up.append(args.no_start) or 0)
+    Store(d.db).add_user("jsmith", "correct horse battery staple 42", role="admin")
+    service.write_config(d.data, port=8501, certfile="tls/apcoder.pem", keyfile="tls/apcoder.key.pem")
+    assert d.launch.main([]) == 0 and set_up == [True] and d.opened == []
+    out = capsys.readouterr().out
+    assert "AP Coder is set up" in out and "it was not started without sign-in" in out
+    assert "Start it again with python -m ap_coder share, typed in scripts\\terminal.bat" in out
+    assert "service start" not in out
+
+
 def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_click, monkeypatch, capsys):
     from ap_coder.core.store import Store
 
@@ -410,7 +433,9 @@ def test_laptop_mode_again_on_a_team_servers_data_is_asked_for_by_name(double_cl
     assert "--without-sign-in" in d.launch.server_command(8501, ["--without-sign-in"])  # (serve is told, and warns)
     # A set-up that starts nothing (the server's own, and server-update's) is never refused.
     assert d.launch.main(["--no-start", "--yes"]) == 0 and len(d.went_on) == 2
-    # The last guard, for a start that comes another way (the installer's "Start AP Coder now?").
+    # The last guard, for a start that comes another way (the installer's "Start AP Coder now?"). No service is
+    # installed here: asked of Windows by a schtasks process, which the stand-in below would take for a dashboard.
+    monkeypatch.setattr("ap_coder.ops.service.installed", lambda *a, **k: False)
     monkeypatch.setattr(d.launch.subprocess, "Popen", lambda *a, **k: pytest.fail("a dashboard started"))
     assert d.launch.start_dashboard([], {}) == 1
     assert "it was not started without sign-in" in capsys.readouterr().out

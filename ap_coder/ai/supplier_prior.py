@@ -628,24 +628,28 @@ def units_named(reference: ReferenceData, line_text: str) -> dict[str, int]:
     """{a business unit a line names: how many words of its name the line has}: the line has every word of the
     unit's name, the words more than ``DISTINCT`` business units' names have aside ("Smartphone device balance - IT
     - Data Centre" names IT - Data Centre; "Prairie" is Prairie Administration where four units are an
-    Administration); or the unit's number, leading zeros aside, of ``UNIT_NUMBER_DIGITS`` digits at least ("Cost
-    centre 21061028" names 0021061028; it counts ``UNIT_NUMBER``, D-226). Of the business units with an account
-    offered; none with no chart imported."""
+    Administration), or of a name of two words or more every word of which that many have ("Finance & Accounting"
+    where four units are a Finance & Accounting, B-2372); or the unit's number, leading zeros aside, of
+    ``UNIT_NUMBER_DIGITS`` digits at least ("Cost centre 21061028" names 0021061028; it counts ``UNIT_NUMBER``,
+    D-226). A unit whose name is part of another's named ("Finance & Accounting" of "Prairie Finance &
+    Accounting") is not named. Of the business units with an account offered; none with no chart imported."""
     pairs = reference.pairs
     if pairs is None:
         return {}
 
-    def read() -> tuple[dict[str, frozenset[str]], dict[str, str]]:
+    def read() -> tuple[dict[str, frozenset[str]], dict[str, str], dict[str, frozenset[str]]]:
         units = pairs.business_units()
         names = {unit: keys(pairs.name_of(unit)) for unit in units}
         common = Counter(word for found in names.values() for word in found)
         told = {unit: frozenset(w for w in found if common[w] <= DISTINCT) for unit, found in names.items()}
+        told = {unit: words or (names[unit] if len(names[unit]) > 1 else words) for unit, words in told.items()}
         numbers = {unit.lstrip("0"): unit for unit in units if len(unit.lstrip("0")) >= UNIT_NUMBER_DIGITS}
-        return {unit: words for unit, words in told.items() if words}, numbers
+        return {unit: words for unit, words in told.items() if words}, numbers, names
 
     line = keys(line_text)
-    told, numbers = _kept(("units", id(pairs)), weakref.ref(pairs), read)
+    told, numbers, names = _kept(("units", id(pairs)), weakref.ref(pairs), read)
     found = {unit: len(words) for unit, words in told.items() if words <= line}
+    found = {unit: n for unit, n in found.items() if not any(names[unit] < names[other] for other in found)}
     for number in _NUMBER.findall(line_text) if numbers else ():
         if number in numbers:
             found[numbers[number]] = UNIT_NUMBER
@@ -674,6 +678,17 @@ def _named_words(reference: ReferenceData) -> frozenset[str]:
         return frozenset(word for _, listed in _listed_names(reference).values() for word in keys(listed))
 
     return _kept(("name words", id(table)), weakref.ref(table), read)
+
+
+def names_with(reference: ReferenceData) -> Mapping[str, int]:
+    """{a word of the names (and categories) of the GL account list: how many accounts' have it}, worked out once for
+    a list: "Furniture" one, "Fees" most of the professional fees."""
+    table = reference.chart_of_accounts
+
+    def read() -> Mapping[str, int]:
+        return Counter(word for _, listed in _listed_names(reference).values() for word in keys(listed))
+
+    return _kept(("names with", id(table)), weakref.ref(table), read)
 
 
 # --- A supplier the journal does not have: the journal as a whole (D-226) -----------------------------------------

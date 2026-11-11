@@ -64,12 +64,14 @@ from .supplier_prior import (
     SAID_ALIKE,
     SURE_LINES,
     SURE_SHARE,
+    AccountUse,
     Candidate,
     Prior,
     account_name,
     alike,
     from_book,
     name_words,
+    names_with,
     reads_like,
     unit_words_said,
     units_named,
@@ -711,6 +713,12 @@ TIER = {"vendor": 3, "supplier": 2, "others": 1, "usual": 1, "master": 1, "words
 # A line of a supplier whose lines all go to one account, this alike to the NAME of another account offered (and not
 # alike to anything known of the supplier's own), reads like the other account: left for a person (B-2228).
 ANOTHER_ALIKE = 0.5
+# Or it says a word of another offered account's name or category that nothing known of the supplier's account has,
+# one at most ``KIND_NAMES`` accounts have ("Insurance", not "Fees"), and is this alike to that name, more than to
+# the supplier's: it names that kind of account, put first (B-2370, D-230). Over a quarter: one word of four in
+# all is not enough ("Desk to desk delivery" is the courier's, not Stationery & Desk Supplies).
+KIND_ALIKE = 0.28
+KIND_NAMES = 6
 MEALS_OFFERED = 3  # meals accounts offered for a line that reads as a meal on such a supplier's invoice
 BOOK_SCORE = 0.1  # a new supplier's account from the journal as a whole: its score (``from_book``, 0 to 6.5) times this
 
@@ -846,6 +854,8 @@ def candidates(description: str, vendor_name: str, feedback: list[dict[str, Any]
         ordered[0].auto = _sure(ordered[0], offered, found, prior, description)
         if ordered[0].auto and offered[ordered[0].account][0] == TIER["supplier"]:
             ordered = _unless_another_kind(description, ordered, prior, reference, used)
+        if ordered[0].auto:
+            ordered = _unless_another_unit(description, ordered, reference, used, addressed)
         if not ordered[0].auto and not ordered[0].check:
             own = {c.account for tier, c in offered.values() if tier >= TIER["supplier"]}
             ordered = _named_unit_first(description, ordered, own, reference, prior, addressed)
@@ -883,6 +893,37 @@ def _named_unit_first(description: str, ordered: list[Candidate], own: set[str],
         c.reason = "; ".join(c.reasons)
     first.sort(key=lambda c: -named[c.business_unit][0])
     return [*first, *(c for c in ordered if not any(c is f for f in first))]
+
+
+def _unless_another_unit(description: str, ordered: list[Candidate], reference: ReferenceData, units: list[str],
+                         addressed: str = "") -> list[Candidate]:  # fmt: skip
+    """``ordered``, whose first is about to code the line with no one picking: as it is, unless the line names
+    another business unit than the first's that has its account (``supplier_prior.units_named``: the unit's name or
+    its number), or names none and the invoice's ship-to or attention lines (``addressed``) do (B-2371). Then the
+    line is left for a person, the account on the unit named most strongly first, its ``check`` saying why. A line
+    that names the first's own unit is coded, whatever the invoice is addressed to; so is one that names a unit only
+    with a word of another kind ("Desk to desk delivery" and IT - Service Desk, which has no courier account)."""
+    top = ordered[0]
+    named, said = units_named(reference, description), "the line"
+    if not named and addressed:
+        named, said = units_named(reference, addressed), "the invoice's ship-to or attention"
+    if not named or top.business_unit in named:
+        return ordered
+    for unit in sorted(named, key=lambda u: (-named[u], u)):
+        there = next((c for c in ordered if c.business_unit == unit and c.code == top.code), None)
+        there = there or _placed(reference, top.code, unit, units, top.source, top.score, list(top.reasons))
+        if there is not None and there.business_unit == unit and not there.guess:
+            break
+    else:
+        return ordered
+    top.auto = False
+    name = reference.pairs.name_of(unit)
+    there.reasons.insert(0, f"{said} names the business unit {name}")
+    there.reason = "; ".join(there.reasons)
+    there.check = (
+        f"This supplier's lines usually go to {top.account}, but {said} names the business unit {name}: check it"
+    )
+    return [there, *(c for c in ordered if c is not there)]
 
 
 def _sure(top: Candidate, offered: dict[str, tuple[int, Candidate]], found: list[Suggestion],
@@ -929,13 +970,15 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
     (``_MEAL_WORDS``) while the supplier's account is no meals account and neither its name nor AP's remarks for it
     read as one, or it is ``ANOTHER_ALIKE`` to the name of another account offered, or it says the name of another
     account of the chart, offered or not (``supplier_prior.reads_like``: a laptop, a hotel, consulting on a
-    courier's invoice, B-2251). A supplier's own words that say nothing of any account ("waybill 77812") are no
-    other kind: the line is coded."""
+    courier's invoice, B-2251), or it names the kind of another account offered (``_another_kind``: an insurance
+    premium, a desk on a courier's invoice, B-2370): then that account is first, its ``check`` saying why. A
+    supplier's own words that say nothing of any account ("waybill 77812") are no other kind: the line is coded."""
     top, usual = ordered[0], prior.accounts[0]
-    if alike(prior, usual, description, reference) >= SAID_ALIKE:
+    likeness = alike(prior, usual, description, reference)
+    if likeness >= SAID_ALIKE:
         return ordered
     line, rest = keys(description), ordered[1:]
-    said, others = "", []
+    said, others, kind = "", [], None
     meals = frozenset(getattr(getattr(reference, "tax", None), "meals_gl_codes", None) or ())
     known = " ".join([top.name or account_name(reference, top.business_unit, top.code),
                       *(r.example for r in usual.remarks)])  # fmt: skip
@@ -945,13 +988,40 @@ def _unless_another_kind(description: str, ordered: list[Candidate], prior: Prio
         other = max(rest, key=lambda c: similarity(line, name_words(reference, c.business_unit, c.code)), default=None)
         if other is None or similarity(line, name_words(reference, other.business_unit, other.code)) < ANOTHER_ALIKE:
             other = _named_account(description, top, rest, reference, units)
+        if other is None:
+            other = kind = _another_kind(line, likeness, top, usual, rest, reference)
         if other is not None:
             said, others = f"{other.name or 'account'} ({other.account})", [other]
     if not said:
         return ordered
     top.auto = False
-    top.check = f"This supplier's lines usually go to {top.account}, but this line reads like {said}: check it"
+    first = kind or top
+    first.check = f"This supplier's lines usually go to {top.account}, but this line reads like {said}: check it"
+    if kind is not None:
+        return [kind, top, *(c for c in rest if c is not kind)]
     return [top, *others, *(c for c in rest if not any(c is o for o in others))]
+
+
+def _another_kind(line: frozenset[str], likeness: float, top: Candidate, usual: AccountUse, offered: list[Candidate],
+                  reference: ReferenceData) -> Candidate | None:  # fmt: skip
+    """The account ``offered`` whose kind a line not alike to the supplier's account names (``likeness``: how alike
+    it is to that account), or None: the line says a word of its name or category that neither the name of the
+    supplier's account nor AP's remarks or the lines approved to it have, a word at most ``KIND_NAMES`` accounts'
+    have, and it is ``KIND_ALIKE`` alike to that name, more than to the supplier's account. "Insurance premium -
+    cargo policy" names an insurance account on a courier's invoice; "Ergonomic office chair" says only the "office"
+    of many names, and is the courier's. The most alike first, then the one whose word fewer accounts have."""
+    have = name_words(reference, top.business_unit, top.code).union(*usual.remark_keys, *usual.line_keys)
+    counts = names_with(reference)
+    best, most = None, (0.0, 0)
+    for c in offered:
+        words = name_words(reference, c.business_unit, c.code)
+        telling = [counts.get(w, 0) for w in line & words - have if counts.get(w, 0) <= KIND_NAMES]
+        score = similarity(line, words)
+        if c.code == top.code or not telling or score < KIND_ALIKE or score <= likeness:
+            continue
+        if (score, -min(telling)) > most:
+            best, most = c, (score, -min(telling))
+    return best
 
 
 def _named_account(description: str, top: Candidate, offered: list[Candidate], reference: ReferenceData,

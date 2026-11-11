@@ -4986,7 +4986,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Filled** in `finalise_coding` (`fill_remarks`), so on every read and every check of the review screen: a
     line's suggestion follows its account; a remark a person typed (`remark_from` "person") is never replaced. The
     form's field is `line_remark`, one a line (`invoice_view.LINE_REMARK`): posted, it is a person's once it is not
-    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again.
+    what the line had; not posted, each line keeps its remark. Blank asks for the suggestion again (a box a person
+    emptied: replaced by D-229).
   - **Only where remarks are used:** a chart of accounts is imported, or JD Edwards is in use with its remarks as
     typed. Any other install stores its invoices as before (`same_behaviour.py`: the same).
   - **Too long:** a typed remark is kept whole; over 30 characters is the check `REMARK_LONG`, which says what would
@@ -5577,3 +5578,68 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     once a journal), a new supplier's first 16 → 92 ms (the journal as a whole read once), then 8 → 12 ms.
   - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
     `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)
+- **D-227** · **A tax area holds a PST only when that province's supplies alone go to it; code B on any other area
+  accrues nothing, so the PST stays on the Self-assessment report and the keying sheet says so** (11 Nov 2026).
+  - **Why:** The prototype keys a BC, SK or MB supply charged the GST only with code B on its GST-only area
+    (`CDNGST`, shared with Alberta and the territories), where JD Edwards accrues no PST, while the report said
+    "JD Edwards accrues this one (code B)": nobody booked the PST (B-2343). AP Coder does not know what an area
+    holds (F4008 is JD Edwards'), only which provinces Settings → JD Edwards E1 sends to it: an area several
+    provinces share holds only the tax they have in common, the GST (their PSTs differ, Alberta has none).
+  - **What is keyed is unchanged** (code B, the area as set); the voucher gets the note "PST to self-assess: ...".
+    An Admin who gives BC an area of its own that is GST-only still gets "JD Edwards accrues": the area's name says
+    nothing, so it is the JD Edwards team's to set BC's area to one with the PST. Rejected: a setting per area
+    ("holds PST"), one more thing to get wrong on the first day; changing the code to E on a GST-only area (it
+    changes what is keyed, and an area with the PST later would need it back).
+  - (`erp/jde_voucher.py` `accrues_use_tax`, `self_assessed_pst`, `_holds_pst`; `erp/jde_keying.py` `_said`;
+    `coding/taxreturn.py` `_jde_accruing`)
+- **D-228** · **A running AP Coder is told apart by the data folder it serves: one serving another data folder is
+  never opened for this one** (laptop mode; 11 Nov 2026).
+  - *`/healthz` says its data folder* ("data", resolved), to this computer only, beside "user" (B-168): another
+    computer, and past the server's console, still get only {"ok", "app"} (D-101).
+  - *The launcher* (`scripts/running.py` `judge`): an AP Coder it would open (this folder and version, or a newer
+    one) that serves another data folder, e.g. the guide's made-up company left running, is "elsewhere": left as it
+    is, said with its data folder, and this one starts on the next free port. One it would stop (older, another
+    build) is still stopped: its code is about to be replaced. One that does not say its data (older than this) is
+    judged as before. Rejected: stopping it (it is the tester's own other window, on data no one else uses).
+  - *`serve` by hand, in laptop mode, on a data folder an AP Coder serves now* (its server file names a live process
+    that answers as it on the file's port, `safety.open_here`) is refused, with its address (B-2351): the server file
+    is one a data folder, and `backup restore` reads it to refuse under a running one. The server's own start is
+    refused by its port, as before.
+  - (`ap_coder/web/app.py`, `scripts/running.py`, `scripts/launch.py`, `ap_coder/ops/safety.py`, `ops/cli.py`)
+- **D-229** · **A Remark box a person empties stays empty: no remark, the person's choice, kept through the check and
+  the approval** (the review screen with a chart loaded; 11 Nov 2026; replaces D-213's "blank asks for the
+  suggestion again" for a box emptied on the screen).
+  - **Why:** A remark cleared came back as the suggestion at the next check, so a line could never be approved with
+    no remark: the person's edit was undone without a word.
+  - **What:** the row's hidden `line_remark` posts `remark.CLEARED` (a space) once the box is emptied; `remark.typed`
+    reads it as ("", "person"), and `fill_remarks` keeps a person's empty remark as it keeps a typed one (typed
+    exactly as suggested, it is still the suggestion). A form that posts the cell blank (the bulk grid, a page of
+    before) still asks for the suggestion. Stored, the empty remark is left out and `remark_from` says "person".
+  - (`ap_coder/coding/remark.py` `CLEARED`, `typed`, `fill_remarks`; `web/account_lines.py` `remark_view`
+    `posted`; `web/templates/_invoice_lines.html`; `web/static/js/invoice.js` `REMARK_CLEARED`)
+- **D-230** · **A supplier's one account codes a line alone only when nothing on the line says otherwise: a line
+  that names another kind of account, or another business unit that has the account, is left for a person with
+  that account first** (with a JD Edwards chart loaded; 11 Nov 2026).
+  - **Why:** AP trusts a line coded alone. On the made-up year, of 231 suppliers sure of one account, every one
+    coded "Insurance premium", "Legal fees re contract review", "Office furniture - desk" to it (Coffee & Kitchen
+    Supplies for an office supplier), and 108 of 108 lines naming another unit by name or number to the usual unit.
+  - **Another kind** (`suggest._another_kind`, B-2370), after the meal, half-alike and whole-name guards: the line
+    is under 0.2 alike to everything known of the usual account (its name, AP's remarks, the lines approved to it)
+    and says a word of another offered account's name or category that none of those has, a word at most 6
+    accounts' names have ("Insurance", "Furniture", not "Fees" or "Office"), and is over 0.28 alike to that name
+    (more than one word in four: "Desk to desk delivery" stays the courier's). That account is first, its reason
+    "This supplier's lines usually go to ..., but this line reads like ...: check it". The older guards keep the
+    usual account first (their tests pin it); this one puts the other first, as the line says nothing of the usual.
+    Not caught: a line naming no account at all ("Advertising - newspaper" where the chart has none).
+  - **Another unit** (`suggest._unless_another_unit`, B-2371): before any line is coded alone, a business unit it
+    names (`supplier_prior.units_named`), or that the invoice's ship-to or "Attn:" names when the line names none,
+    other than the first's and having its account, leaves it with that unit's account first. A unit named only by
+    a word the line uses otherwise, on a unit without the account ("Desk to desk delivery", IT - Service Desk),
+    does not. A unit whose every word more than 3 units' names have is named by its whole name of two words or
+    more ("Finance & Accounting", B-2372); single words of that kind ("Facilities", "Procurement") still are not.
+  - **Measured** (`python -m ap_coder.bench coding --journal`, and `--approve`, the made-up year, 809 lines): every
+    line the same before and after (coded alone 14% and 25%, right 116/116 and 188/199): its invoices print
+    neither another kind nor another unit. The probes: the 231 sure suppliers coded those lines alone 231/231
+    before, 3 or 4 of 231 after ("Software licence renewal" 13: suppliers of that kind, or none offered for it);
+    lines naming another unit 108/108 (name) and 108/108 (number) before, 0 after.
+  - (`ap_coder/ai/suggest.py`, `supplier_prior.py` `names_with`, `units_named`)

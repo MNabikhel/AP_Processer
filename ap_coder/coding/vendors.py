@@ -588,8 +588,8 @@ def _not_in_master(store: Store, coding: InvoiceCoding) -> tuple[str, str, str]:
             f"has its own supplier number: {'; '.join(said)}")  # fmt: skip
 
 
-def _held_index(held: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
-    """The vendors on hold by vendor key and by ERP ID (its digits, as an AN8 is compared)."""
+def held_index(held: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+    """The vendors on hold (``Store.held_vendors``) by vendor key and by ERP ID (its digits, as an AN8 is compared)."""
     by_id = {str(v.get("erp_id") or "").strip().lstrip("0"): v for v in held if str(v.get("erp_id") or "").strip()}
     return {"key": {v["vendor_key"]: v for v in held}, "id": by_id}
 
@@ -599,7 +599,12 @@ def voucher_hold(store: Store, vendor_key: Any, an8: Any) -> str:
     its vendor is on hold in AP Coder's vendor list, or in JD Edwards as the last supplier sync left it (R3, D-182);
     "" when not. Asked just before each voucher goes, from the vendors on hold indexed once until the vendor list
     changes (not a read of every one per voucher)."""
-    index = store.summary_memo("held_index", lambda: _held_index(store.held_vendors()), topic="", changes="vendors")
+    index = store.summary_memo("held_index", lambda: held_index(store.held_vendors()), topic="", changes="vendors")
+    return hold_reason(index, vendor_key, an8)
+
+
+def hold_reason(index: dict[str, dict[str, dict[str, Any]]], vendor_key: Any, an8: Any) -> str:
+    """``voucher_hold`` from the vendors on hold as ``held_index`` gives them."""
     for vendor in (index["key"].get(str(vendor_key or "")), index["id"].get(str(an8 or "").strip().lstrip("0"))):
         if not vendor:
             continue

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -847,7 +847,13 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
     items: list[LineReading] = []
     money: list[bool] = []
     last: tuple[LineReading, float] | None = None  # the line item last read on this page, and its bottom
+    above = _wrapped_above(ordered, picked, cols)
+    hanging: list[Line] = []  # the lines of the description of the next row, printed above its amount
     for k, segs in enumerate(ordered):
+        if k in above:
+            hanging += segs
+            last = None
+            continue
         if _no_line(segs):
             words = [plain(s.text).strip() for s in segs]
             carried = any(_CARRIED.match(p) for p in words)
@@ -891,7 +897,10 @@ def _lines_under(head_row: list[Line], cols: dict[str, Box], ordered: list[list[
             fit = _qty_times_price(segs, nums, amt_seg, amount)
             if fit:
                 qty, price = fit
-        row_box = union_all([s.box for s in segs])
+        if hanging:
+            desc = " ".join([*(s.text for s in hanging), desc.strip()])
+        row_box = union_all([s.box for s in [*hanging, *segs]])
+        hanging = []
         score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
         items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score,
                                  tax_flags=" ".join(" ".join(s.text.split()) for s in flags),
@@ -1265,16 +1274,74 @@ def _wrapped(segs: list[Line], cols: dict[str, Box], bottom: float) -> bool:
     within ``WRAP_GAP`` text heights."""
     if not segs:
         return False
+    return min(s.box.y0 for s in segs) - bottom <= WRAP_GAP * _height(segs) and _in_description(segs, cols)
+
+
+def _height(segs: list[Line]) -> float:
+    return max(statistics.median(s.box.height for s in segs), 0.004)
+
+
+def _in_description(segs: list[Line], cols: dict[str, Box]) -> bool:
+    """A row's words all sit in the description's column, and none is an amount printed as money or a total's
+    label (``_wrapped``)."""
     head = cols.get("description")
     left = head.x0 - 0.03 if head is not None else 0.0
     right = min((b.x0 for b in cols.values() if head is None or b.x0 > head.x1), default=1.0)
-    height = max(statistics.median(s.box.height for s in segs), 0.004)
     return (
-        min(s.box.y0 for s in segs) - bottom <= WRAP_GAP * height
-        and all(s.box.x0 >= left and s.box.x1 <= right + 0.005 for s in segs)
+        all(s.box.x0 >= left and s.box.x1 <= right + 0.005 for s in segs)
         and not any(_printed_as_money(s.text[a:b]) for s in segs for _v, a, b in _amounts_in(s.text))
         and not any(rx.match(plain(s.text).strip()) for s in segs for f in _TOTAL_LABELS for rx, _ in _LABELS[f])
     )
+
+
+WRAP_NEARER = 0.5  # a wrapped line goes with the row under it when the gap above is this many text heights wider
+
+
+def _wrapped_above(ordered: list[list[Line]], picked: Mapping[int, Any], cols: dict[str, Box]) -> set[int]:
+    """The rows with no amount (``picked``: the rows with one) that begin the description of the row under them:
+    its numbers are printed beside the last line of its description, or a middle one (a spreadsheet's cell aligned
+    at the bottom or in the middle). Of the rows between two lines that ``_wrapped`` would join to the line above,
+    those under the widest gap between them, when it is ``WRAP_NEARER`` text heights wider than the gap down to the
+    next line: a row's lines are closer to each other than to the next row's. When some are, the page prints so:
+    the rows above its first line (or after a row that is no line) go with the line under them too. Each within
+    ``WRAP_GAP`` text heights of the next and in the description's column."""
+
+    def top(k: int) -> float:
+        return min(s.box.y0 for s in ordered[k])
+
+    def bottom(k: int) -> float:
+        return max(s.box.y1 for s in ordered[k])
+
+    above: set[int] = set()
+    leading: list[int] = []  # rows with no line above them: of a page whose rows print so, the next line's
+    k = 0
+    while k < len(ordered):
+        start = k
+        while k < len(ordered) and k not in picked and ordered[k] and not _no_line(ordered[k]):
+            k += 1
+        run = list(range(start, k))
+        if not run or k >= len(ordered) or k not in picked:
+            k += 1
+            continue
+        gaps = [top(r + 1) - bottom(r) for r in run]  # (from each row down to the next, the last to the line)
+        if not all(g <= WRAP_GAP * _height(ordered[r]) and _in_description(ordered[r], cols)
+                   for r, g in zip(run, gaps, strict=True)):  # fmt: skip
+            continue
+        if start == 0 or start - 1 not in picked:
+            leading += run
+            continue
+        line_bottom = bottom(start - 1)
+        for r in run:  # (each joined to the line above, as ``_lines_under`` does)
+            if not _wrapped(ordered[r], cols, line_bottom):
+                break
+            line_bottom = bottom(r)
+        else:
+            gaps.insert(0, top(start) - bottom(start - 1))
+            widest = max(range(len(run)), key=lambda j: (gaps[j], j))
+            height = statistics.median(_height(ordered[r]) for r in run)
+            if gaps[widest] >= gaps[-1] + WRAP_NEARER * height:
+                above.update(run[widest:])
+    return above | set(leading) if above else above
 
 
 _RUNNING = re.compile(

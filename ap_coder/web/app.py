@@ -4,8 +4,8 @@ Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES`` (or `
 pages:
 
 * ``GET /healthz``: {"ok", "app", "version", "build", "folder", "pid", "port", "server_mode"} for the launcher (no
-  secrets); to this computer, also "user" (the account running it); to another computer, or past the server's own
-  console, only {"ok", "app"}.
+  secrets); to this computer, also "user" (the account running it) and "data" (the data folder it serves); to another
+  computer, or past the server's own console, only {"ok", "app"}.
 * ``GET /readyz``: for IT's monitor (D-187, ``ops/health.py``): 200 when ready, 503 when not, with what was checked;
   on the server only to its console and the monitors server.json names.
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
@@ -538,6 +538,7 @@ def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
     network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER  # shared on the office network
 
     console_only = server  # the server: /healthz tells only its own console where it runs (D-101)
+    data = str(paths.private_dir().resolve())  # the data folder it serves (its server file is there)
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, Any]:
@@ -561,6 +562,7 @@ def _add_status_routes(app: FastAPI, *, address: str, server: bool) -> None:
         }
         if is_this_computer(request.client.host if request.client else ""):  # (never said to the network)
             found["user"] = os_user()  # another account's double-click must not open this one (B-168)
+            found["data"] = data  # nor one serving another data folder (the guide's made-up company: B-2350)
         return found
 
     readiness = health.Kept()  # one answer every few seconds in this process, however many monitors ask

@@ -17,6 +17,9 @@
   server.json is there), is not started in laptop mode, by the launcher's double-click or ``serve`` by hand: stopped
   for the night or not. Laptop mode again on the same data is ``serve --without-sign-in``, on purpose, and only while
   the server is stopped.
+* **One laptop-mode AP Coder a data folder** (B-2351). ``serve`` typed by hand while the shortcut's AP Coder runs on
+  the same data folder (``open_here``: its server file names a live process, which answers on its port) is refused,
+  with where it is open: it would overwrite that one's server file, and ``backup restore`` then go ahead under it.
 
 Standard library only (the store is asked for the accounts where its packages are installed); nothing is asked of the
 network (the dashboard of this computer is asked whether it runs).
@@ -284,6 +287,7 @@ class TeamServer:
     accounts: int  # the sign-in accounts in its database
     settings: str  # its server.json ("": none)
     key: bool = False  # the sign-in codes' key is in the data folder: someone set up their authenticator app
+    service: bool = True  # this computer's service is installed (False: a laptop shared with ``share``, D-218)
 
     @property
     def signs(self) -> str:
@@ -309,11 +313,13 @@ class TeamServer:
         if on_purpose:
             return "", ""
         at = f", then sign in at {self.address}" if self.address else ""
+        start = "Start the server again (python -m ap_coder service start, or the way it is started here)"
+        if not self.service:  # a laptop shared with ``share`` (D-218)
+            start = "Start it again with python -m ap_coder share, typed in scripts\\terminal.bat"
         return (f"AP Coder on this computer is set up to serve your team, with sign-in ({self.signs}), and its server "
                 "is stopped now: it was not started without sign-in.",
-                f"Start the server again (python -m ap_coder service start, or the way it is started here){at}. To "
-                "open this data in laptop mode again on purpose, with no sign-in for whoever uses this computer: "
-                f"python -m ap_coder serve {WITHOUT_SIGN_IN}")  # fmt: skip
+                f"{start}{at}. To open this data in laptop mode again on purpose, with no sign-in for whoever uses "
+                f"this computer: python -m ap_coder serve {WITHOUT_SIGN_IN}")  # fmt: skip
 
     def on_purpose(self) -> str:
         """What a laptop-mode start says once ``--without-sign-in`` let it open this data."""
@@ -354,4 +360,23 @@ def team_server(data: Path, db: Path) -> TeamServer | None:
         scheme, port = "http" if settings.insecure_http else "https", settings.port
     name = settings.allowed_hosts[0] if settings and settings.allowed_hosts else socket.gethostname()
     address = f"{scheme}://{name or '127.0.0.1'}:{port}" if scheme else ""
-    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key)
+    installed = running or service.installed(settings or service.ServerSettings())  # (asked only once stopped)
+    return TeamServer(running, address, accounts, str(marker) if marker.is_file() else "", key, installed)
+
+
+def open_here(data: Path) -> str:
+    """The address of the AP Coder that serves the data folder ``data`` now ("" when none does): its server file
+    names a live process other than this one, and the dashboard on the file's port answers as that process (a file
+    left by one that was killed, its number since given to another program, is no AP Coder)."""
+    from . import service
+    from .offline import listening
+
+    try:
+        record = json.loads((data / service.SERVER_FILE).read_text(encoding="utf-8"))
+        pid, port = int(record.get("pid") or 0), int(record.get("port") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+    if pid == os.getpid() or not 0 < port < 65536 or not service.process_alive(pid) or not listening(port):
+        return ""
+    answer = service.dashboard_answer(data, service.ServerSettings(port=port))
+    return f"{answer[0]}://127.0.0.1:{port}" if answer and answer[1].get("pid") == pid else ""

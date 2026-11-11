@@ -199,11 +199,11 @@ class RegisterMixin:
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
     def erp_register(self, numbers: list[str] | None = None) -> list[dict[str, Any]]:
-        """Every invoice in the imported ERP register; with ``numbers``, those with one of these invoice numbers (as
-        compared: ``norm_invoice_number``), in the same order."""
-        sql = (
-            "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies FROM erp_invoices"
-        )
+        """Every invoice in the imported ERP register, with its supplier number when JD Edwards' voucher list gave one
+        (``an8``, "" otherwise); with ``numbers``, those with one of these invoice numbers (as compared:
+        ``norm_invoice_number``), in the same order."""
+        sql = ("SELECT vendor_key, vendor_name, an8, invoice_number, number_key, invoice_date, total, copies "
+               "FROM erp_invoices")  # fmt: skip
         with self._conn() as conn:
             if numbers is None:
                 return [dict(r) for r in conn.execute(sql)]

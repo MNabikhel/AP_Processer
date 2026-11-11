@@ -73,13 +73,14 @@ def test_rows_are_read_from_the_words_inside_the_table_only():
 
 
 def test_a_tilted_scan_is_read_straightened():
-    """At this tilt a row's description sits most of a row away from its amount: read as printed, the rows pair the
-    wrong words; straightened (the OCR's own text lines give the tilt), each row is whole."""
+    """At this tilt a row's description sits most of a row away from its amount: read as printed, the rows paired the
+    wrong words ("Gadget B" at 100.00, B-2374: each description is now taken as one printed above its amount, which
+    goes with the row it is nearer); straightened (the OCR's own text lines give the tilt), each row is whole."""
     skew = 0.03
     tilted = [Word(w.text, Box(1, w.box.x0, w.box.y0 + skew * (w.box.cx - 0.5), w.box.x1,
                                w.box.y1 + skew * (w.box.cx - 0.5)), 1.0, "ocr") for w in _words(*TABLE)]  # fmt: skip
     as_printed = read_line_items(_layout(tilted, 0.0, "ocr"))
-    assert [li.description for li in as_printed] != ["Widget A", "Gadget B"]
+    assert [(li.description, li.amount) for li in as_printed] == [("Widget A", 100.0), ("Gadget B", 50.0)]
     read = read_line_items(_layout(tilted, skew, "ocr"))
     assert [(li.description, li.amount) for li in read] == [("Widget A", 100.0), ("Gadget B", 50.0)]
     row = read[0].boxes[0]  # on the page as printed (tilted), not the straightened one

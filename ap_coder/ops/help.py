@@ -129,6 +129,16 @@ CHECKS: dict[str, CheckHelp] = {
         "with its account in GL accounts & tax (the pilot tester does), then save the invoice again so its posting "
         "is worked out anew.",
     ),
+    "JDE_TAX_AREA_MISMATCH": CheckHelp(
+        ERP, "Tax area of another province than the tax charged",
+        "The voucher's tax area follows where the goods or services are supplied (the ship-to first), but the tax "
+        "the invoice charges is another province's: GST only on goods shipped to Ontario (an HST area), or HST on a "
+        "supply in Alberta (a GST area). JD Edwards works the tax out at the area's rate, so it may find the tax "
+        "amount different. The voucher is not held back.",
+        "Check the ship-to on the invoice and the tax the supplier charged. If the ship-to is wrong, correct it. If "
+        "the supplier charged the wrong tax, ask for a corrected invoice, or approve as usual and tell the pilot "
+        "tester, who settles the tax area with whoever sets up JD Edwards.",
+    ),
     "JDE_MEALS_PO": CheckHelp(
         ERP, "Meals on a PO-matched JD Edwards voucher",
         "A PO-matched voucher gets its G/L lines from the receipts in JD Edwards, not from AP Coder, so the half of "

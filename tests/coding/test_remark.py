@@ -133,6 +133,23 @@ def test_the_period_is_the_one_a_line_names_else_the_invoice_dates(description, 
     assert period_of(line("Janitorial service"), {"invoice_date": None}) is None
 
 
+@pytest.mark.parametrize(
+    "description, date, period",
+    [
+        ("Q4 maintenance", "2026-01-10", (2025, 12, 4)),  # last year's, as "December" is
+        ("Q3 audit fieldwork", "2026-01-10", (2025, 9, 3)),
+        ("Q2 retainer", "2026-01-10", (2026, 6, 2)),
+        ("Q1 retainer", "2026-12-15", (2027, 3, 1)),  # next year's
+        ("Q4 retainer", "2026-11-02", (2026, 11, 4)),  # this one: the invoice's month
+    ],
+)
+def test_a_quarter_with_no_year_is_the_one_nearest_the_invoice_date(description, date, period):
+    """B-2373: "Q4" with no year on an invoice of 10 January 2026 was Q4 2026, eleven months ahead: a month with no
+    year was put in the nearest year, a quarter in the invoice's."""
+    invoice = {"invoice_date": date, "line_items": [line(description)]}
+    assert period_of(invoice["line_items"][0], invoice) == period
+
+
 # --- The rules ---------------------------------------------------------------------------------------------------
 
 
@@ -245,13 +262,13 @@ def test_each_line_gets_its_accounts_remark_and_a_persons_is_never_replaced(book
     first.predicted_gl_code = "7340.3307"
     rk.fill_remarks(coding, store, reference)
     assert (first.remark, first.remark_from) == ("PM windows 3-1-204", "person")
-    # a remark typed exactly as suggested is the suggestion, and a person's remark cleared asks for it again.
+    # a remark typed exactly as suggested is the suggestion, and a person's remark cleared stays empty (D-229).
     first.remark = "Jan janitorial 410 Elm"
     rk.fill_remarks(coding, store, reference)
     assert first.remark_from == "supplier"
-    first.remark, first.remark_from = " ", "person"
+    first.remark, first.remark_from = "", "person"
     rk.fill_remarks(coding, store, reference)
-    assert (first.remark, first.remark_from) == ("Jan janitorial 410 Elm", "supplier")
+    assert (first.remark, first.remark_from) == ("", "person")
 
 
 def test_an_install_with_no_chart_stores_its_invoices_as_before_unless_remarks_go_to_jd_edwards(
@@ -339,6 +356,7 @@ def test_the_grids_remark_is_a_persons_once_it_is_not_the_one_proposed(ground_tr
     assert _rebuilt(ground_truth, proposed, remark=["May janitorial 410 Elm"] + [""] * (n - 1),
                     remark_from=["person"] + [""] * (n - 1))[0] == ("May janitorial 410 Elm", "person")  # fmt: skip
     assert rk.typed("x" * 40, {"remark": "old"}) == ("x" * 40, "person")  # kept whole: the check says it is long
+    assert rk.typed(rk.CLEARED, {"remark": "old"}) == ("", "person")  # the box emptied: no remark, a person's (D-229)
 
 
 # --- Learned on approval -----------------------------------------------------------------------------------------
