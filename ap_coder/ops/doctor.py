@@ -119,10 +119,12 @@ def run_checks(
     online: bool = False,
     llm_checks: bool = True,
     bundled: bool = False,
+    erp_posts: frozenset[str] = frozenset(),
 ) -> list[Check]:
     """Every check, in order. ``llm_checks=False`` leaves out the two that ask LM Studio (the chat model and the page
     reader): the launcher's summary has its own lines for them, from one question to LM Studio. ``bundled``: the
-    reference data is the sample bundled in data/, nothing imported yet (said on its lines, B-1194)."""
+    reference data is the sample bundled in data/, nothing imported yet (said on its lines, B-1194). ``erp_posts``:
+    the recovered taxes JD Edwards posts itself from the pay item (``taxes_jde_posts``): they need no GL account."""
     checks: list[Check] = []
 
     def add(area: str, status: str, detail: str) -> None:
@@ -135,7 +137,7 @@ def run_checks(
     # --- Configuration ----------------------------------------------------------
     provider = _configuration_checks(settings, add, llm_checks)
     # --- Reference data -----------------------------------------------------------
-    reference = _reference_checks(settings, load_reference, add, bundled)
+    reference = _reference_checks(settings, load_reference, add, bundled, erp_posts)
 
     # --- Live connectivity ------------------------------------------------------------
     if not online:
@@ -233,7 +235,8 @@ def _configuration_checks(settings: Settings, add: Callable[[str, str, str], Non
 
 
 def _reference_checks(settings: Settings, load_reference: Callable[[], ReferenceData],
-                      add: Callable[[str, str, str], None], bundled: bool) -> ReferenceData | None:  # fmt: skip
+                      add: Callable[[str, str, str], None], bundled: bool,
+                      erp_posts: frozenset[str] = frozenset()) -> ReferenceData | None:  # fmt: skip
     """The GL accounts, cost centers, tax set-up, policy notes and the prompt they make; the reference data."""
     eng = settings.engine
     reference: ReferenceData | None = None
@@ -273,6 +276,9 @@ def _reference_checks(settings: Settings, load_reference: Callable[[], Reference
             t = reference.tax.treatment(tax_type)
             if not t.needs_gl:
                 add(f"tax {tax_type}", PASS, f"{t.treatment} (added to each expense line's GL)")
+            elif not t.gl_code and tax_type in erp_posts:
+                add(f"tax {tax_type}", PASS, f"{t.treatment} on the voucher's pay item: JD Edwards posts it itself, no "
+                    "GL account needed")  # fmt: skip
             elif not t.gl_code:
                 add(
                     f"tax {tax_type}", WARN, f"{t.treatment} but no GL account mapped yet (invoices with it will error)"
@@ -325,6 +331,26 @@ def _live_checks(settings: Settings, provider: str, reference: ReferenceData | N
         add(*_aoai_dry_run(settings, reference))
     else:
         add("AOAI connectivity", SKIP, "endpoint or reference data missing")
+
+
+def taxes_jde_posts(store: Any) -> frozenset[str]:
+    """The recovered taxes JD Edwards posts itself from the voucher's pay item whatever the province (JD Edwards in
+    use, the tax not coded to G/L lines, every province's tax explanation code recovering it): no sales-tax GL account
+    of AP Coder's is posted to for them (B-2259, B-2315)."""
+    from ..coding.tax import PROVINCES
+    from ..erp import jde_settings
+    from ..erp.jde_voucher import RECOVERABLE_BY_CODE
+
+    if not jde_settings.in_use(store):
+        return frozenset()
+    settings = jde_settings.load(store)
+    if settings.tax_on_gl:
+        return frozenset()
+    posts = frozenset(TAX_TYPES)
+    for province in PROVINCES:
+        area = settings.tax_map.get(province)
+        posts &= RECOVERABLE_BY_CODE.get(area.code.strip().upper() if area else "", frozenset())
+    return posts
 
 
 def store_checks(store: Any, server: bool) -> list[Check]:

@@ -178,3 +178,33 @@ def test_the_hub_leaves_out_ap_s_reasons_and_tests_and_sample_setups_say_who(tmp
         assert jde_ais.connection_test(store, actor="jane")["ok"]
     (tested,) = store.events(actions=["jde_api_tested"])
     assert tested["actor"] == "jane", json.dumps(tested)
+
+
+def test_the_doctor_asks_no_gst_account_of_a_laptop_that_keys_the_gst_on_the_pay_item(tmp_path, monkeypatch, capsys):
+    """B-2315: on a laptop's new data folder (JD Edwards' keying set up, docs/PROTOTYPE.md) the doctor warned "tax GST
+    recoverable but no GL account mapped yet (invoices with it will error)": the GST/HST goes on the voucher's pay item
+    and JD Edwards posts it itself, so no GL account is asked for and no invoice errors (B-2259)."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.erp import jde_settings
+    from ap_coder.ops import chart_cmd, cli
+    from ap_coder.web.core import first_run
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db = data / "ap_coder.db"
+    store = first_run(db, server=False)
+    jde_exports.write_all(tmp_path / "jde")  # the made-up company's chart and business units, loaded as on the page
+    chart_cmd.import_files(store, tmp_path / "jde" / jde_exports.CHART_FILE, tmp_path / "jde" / jde_exports.UNITS_FILE)
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    args = ["--env-file", str(tmp_path / "none.env"), "--db", str(db), "doctor"]
+    cli.main(args)
+    out = capsys.readouterr().out
+    for tax in ("GST", "HST"):
+        line = next(line for line in out.splitlines() if line.startswith("[") and f"tax {tax} " in line)
+        assert line.startswith("[PASS]") and "JD Edwards posts it" in line and "will error" not in line, line
+
+    settings = jde_settings.load(store)  # the tax coded to G/L lines: then the account is needed, as before
+    settings.amount_mode = jde_settings.AMOUNT_GL
+    jde_settings.save(store, settings)
+    cli.main(args)
+    assert "[WARN] tax GST" in capsys.readouterr().out

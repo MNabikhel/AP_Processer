@@ -165,6 +165,17 @@ def test_ci_runs_github_zip_as_the_pilot_tester_does():
         assert needed in text, needed
 
 
+@needs_ci
+def test_ci_runs_the_prototype_guides_first_day_on_windows_through_the_launcher():
+    """D-225: docs/PROTOTYPE.md is the pilot tester's guide on a Windows laptop. A job follows it there, set up by the
+    installer and started as the AP Coder shortcut starts it (APProcessor.bat), its steps in scripts/ci/first_day.py."""
+    job = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]["windows-first-day"]
+    assert job["runs-on"].startswith("windows") and 0 < int(job["timeout-minutes"]) <= 20
+    text = "\n".join(str(step.get("run") or "") for step in job["steps"])
+    assert "APProcessor.bat --installer --yes" in text
+    assert "scripts\\ci\\first_day.py" in text and "--start launcher" in text
+
+
 def test_the_update_check_finds_the_schema_the_new_version_writes():
     """old_versions.py reads the new version's SCHEMA_VERSION from its source: the store became a package (D-69) and
     the check read a file that is no longer there (B-831)."""

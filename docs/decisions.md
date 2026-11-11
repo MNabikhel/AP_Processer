@@ -5518,3 +5518,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - *Sized for the owner's laptop (B-2312):* 2 capture processes when `server.json` and `AP_CAPTURE_PROCESSES` name
     none, as 2 web workers (D-218); the load smoke's 10 people run on 2 workers.
   - (`ap_coder/ops/share.py`, `ap_coder/ops/awake.py`, `.github/workflows/ci.yml`, docs/SERVER.md section 16)
+- **D-225** · **The pilot tester's guide (docs/PROTOTYPE.md) is followed step by step in CI, on Windows as the
+  laptop has it** (11 Nov 2026).
+  - *CI's job "first day on Windows"* (`windows-first-day`, `scripts/ci/first_day.py`, which runs on Linux too):
+    installed with the installer, then started as the *AP Coder* shortcut starts it (`APProcessor.bat`, a new data
+    folder, no download allowed, no AI model answering), on the made-up company only (`bench/jde_company`,
+    `jde_exports`, `jde_invoices`): each section of the guide in its order, through the pages and buttons a person
+    uses (over HTTP, as `share_end_to_end.py`: no browser, so it takes minutes), checking the words the guide says
+    the page shows and the files it says are made. Its commands are typed into `scripts\terminal.bat`, its input
+    piped, since that is where the guide sends the tester.
+  - *A change to the guide changes the script*; a page whose words change fails the job until the guide and the
+    script say them again. Rejected: a browser test of the guide (the browser tests cover the screens; this covers
+    the path and its words), and starting from `demo --company` (it does by itself what the tester does by hand).
+  - (`scripts/ci/first_day.py`, `.github/workflows/ci.yml`, `tests/meta/test_ci_workflow.py`, docs/PROTOTYPE.md)

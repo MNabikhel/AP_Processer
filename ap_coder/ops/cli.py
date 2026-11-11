@@ -385,13 +385,26 @@ def _add_server_ops(sub: Any) -> None:
     share.add_parser(sub)  # one laptop serving a few colleagues, with sign-in (D-218)
 
 
+def _taxes_jde_posts(args: argparse.Namespace) -> frozenset[str]:
+    """The taxes JD Edwards posts itself here (``doctor.taxes_jde_posts``); none when there is no database yet, or it
+    cannot be opened (the doctor says so on its own line)."""
+    from .doctor import taxes_jde_posts
+
+    db = Path(getattr(args, "db", None) or default_db_path())
+    try:
+        return taxes_jde_posts(Store(db)) if db.exists() else frozenset()
+    except Exception:  # noqa: BLE001 - a damaged database: reported by the doctor's database line
+        return frozenset()
+
+
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     from .doctor import as_the_server
     from .service import is_server_here
 
     if is_server_here(private_dir()):  # from a console on the company server: its model servers as its dashboard's
         settings = as_the_server(settings, private_dir())
-    checks = run_checks(settings, lambda: _load_reference(args), online=args.online, bundled=bundled_reference(args))
+    checks = run_checks(settings, lambda: _load_reference(args), online=args.online, bundled=bundled_reference(args),
+                        erp_posts=_taxes_jde_posts(args))  # fmt: skip
     try:
         source = reference_source(args)
     except Exception as exc:  # noqa: BLE001 - a damaged database file: the doctor reports it, it never crashes

@@ -92,6 +92,18 @@ def test_settings_about_switches_between_simple_and_everything(client, store):
     assert 'id="nav-more"' in client.get("/review").text
 
 
+def test_settings_about_names_the_short_menus_pages_as_the_menu_shows_them(client, store):
+    """B-2316: Settings → About said the Simple screens were "To review, Add invoices, To key into JDE, Find an
+    invoice, What was learned, then Setup and Help", without Rules (in the short menu since D-217), and counted
+    Activity, which is under Setup there, among the pages only Everything shows."""
+    page = client.get("/settings/about").text
+    simple, everything = (" ".join(re.sub(r"<[^>]+>", " ", part).split()) for part in
+                          page.split('value="simple"', 1)[1].split('value="everything"', 1))  # fmt: skip
+    everything = everything.split("</label>", 1)[0].lower()
+    assert all(name in simple for name in SIMPLE_MENU[:6]), simple
+    assert not any(name.lower() in everything for name in SIMPLE_MENU if name not in ("Settings", "Help")), everything
+
+
 def test_simple_screens_leave_the_manager_out_of_park(demo_db, tmp_path):
     target = tmp_path / "demo" / "ap_coder.db"
     target.parent.mkdir(parents=True)
