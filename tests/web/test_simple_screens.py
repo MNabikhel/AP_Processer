@@ -13,7 +13,7 @@ from ap_coder.web import core
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import settings as settings_page
 from tests.browser import browser_on
-from tests.webclient import PAGE, client_for, web_settings
+from tests.webclient import PAGE, add_clean, client_for, web_settings
 
 SIMPLE_MENU = ["To review", "Add invoices", "To key into JDE", "Find an invoice", "What was learned", "Rules",
                "GL accounts & tax", "JD Edwards files", "Vendors", "Activity", "Settings", "Help"]  # fmt: skip
@@ -225,6 +225,32 @@ def test_the_simple_screens_chosen_on_the_card_set_up_jd_edwards_keying_unless_i
     assert kept.get_setting(jde_settings.EXPORT_FORMAT) == "" and kept.tax_treatments()["QST"].treatment != (
         "expense_to_line"
     )
+
+
+def test_while_demo_invoices_are_loaded_the_rail_and_the_card_lead_to_removing_only_them(tmp_path, demo_db):
+    """D-232: an older data folder with the demo invoices in it opened with "Demo invoices loaded" at the rail's foot
+    and nothing to click; their removal was on Settings → Data & backups only. The rail's words lead there, and the
+    queue's screens card offers it too, saying only the demo invoices go. Your own invoices and vendors stay."""
+    target = tmp_path / "old" / "ap_coder.db"
+    target.parent.mkdir(parents=True)
+    shutil.copy(demo_db, target)
+    store = core.first_run(target, server=False)
+    demo = store.demo_count()
+    real = add_clean(store, invoice_number="REAL-0001")
+    store.import_vendor_master([{"vendor_name": "Real Supplier Ltd.", "erp_id": "70001"}], only_new=True)
+    client = client_for(store)
+    page = client.get("/review").text
+    assert re.search(r'<a [^>]*href="/settings/data#demo"[^>]*>.*?Demo invoices loaded', _rail(page), re.S)
+    card = page.split(CARD, 1)[1].split("</section>", 1)[0]
+    assert f"Remove the {demo} demo invoices only" in card and "your own invoices" in card
+    form = card.split('action="/demo/remove"', 1)[1].split("</form>", 1)[0]
+    answer = client.post("/demo/remove", data=dict(re.findall(r'name="(\w+)" value="([^"]*)"', form)), headers=PAGE)
+    assert answer.json()["redirect"].startswith("/review?flash=")
+    assert store.demo_count() == 0 and [i["id"] for i in store.list_invoices()] == [real]
+    assert "Real Supplier Ltd." in {v["display_name"] for v in store.master_vendors()}
+    page = client.get(answer.json()["redirect"]).text
+    assert f"Removed {demo} demo invoices" in page and "Demo invoices loaded" not in page
+    assert "/demo/remove" not in page and CARD in page  # (the screens are still to choose)
 
 
 def test_a_new_data_folder_and_the_company_server_are_never_asked(tmp_path):

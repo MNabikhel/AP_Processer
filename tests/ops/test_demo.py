@@ -51,3 +51,23 @@ def test_demo_command(tmp_path, capsys):
     assert "to review" in capsys.readouterr().err
     assert cli.main(["--db", str(db), "demo", "--remove"]) == 0
     assert Store(db).list_invoices() == []
+
+
+def test_removing_the_demo_after_jde_keying_was_set_up_puts_back_the_sample_tax_accounts_it_loaded(tmp_path):
+    """B-2379: JD Edwards keying set up while the demo was loaded (the QST then added to the expense line) left the
+    whole sample tax setup behind when the demo was removed: the GST and HST to sample account 2310, an account
+    removed with the sample GL accounts. Each tax type the demo left as it was is put back; the QST, changed since,
+    stays."""
+    from ap_coder.erp import jde_prototype
+
+    store = Store(tmp_path / "ap.db")
+    before = store.tax_treatments()
+    load_demo(store)
+    assert store.tax_treatments()["GST"].gl_code == "2310" and store.list_accounts("gl_accounts")
+    jde_prototype.use_prototype(store)
+    remove_demo(store)
+    after = store.tax_treatments()
+    assert store.list_accounts("gl_accounts") == [] and store.demo_count() == 0
+    others = ("GST", "HST", "PST", "OTHER")
+    assert {t: after[t] for t in others} == {t: before[t] for t in others}
+    assert (after["QST"].treatment, after["QST"].gl_code) == ("expense_to_line", "")

@@ -47,7 +47,7 @@
         {% for item in rail.pinned %}{{ nav_link(item) }}{% endfor %}
       </nav>
       <div class="rail-foot">
-        {% if demo_count %}<div class="rail-demo">{{ ui.pill("Demo invoices loaded", "gray", "science") }}</div>{% endif %}
+        {% if demo_count %}<div class="rail-demo">{% if can("/demo/remove") and can("/settings/data", "GET") %}<a href="/settings/data#demo" title="Remove the demo invoices: Settings → Data &amp; backups">{{ ui.pill("Demo invoices loaded", "gray", "science") }}</a>{% else %}{{ ui.pill("Demo invoices loaded", "gray", "science") }}{% endif %}</div>{% endif %}
         {% if server_mode %}
         <div class="apc-env"{% if is_admin %} title="{{ data_folder }}"{% endif %}>{{ ui.status("Offline · Data stays on this server", "ok") }}</div>
         {% else %}

@@ -170,8 +170,8 @@ def _put_back_setup(store: Store) -> None:
     for table in ("gl_accounts", "cost_centers"):
         if now[table] == after[table]:
             store.save_accounts(table, before[table])
-    if now["tax"] == after["tax"]:
-        for tax_type, (treatment, gl_code) in before["tax"].items():
+    for tax_type, (treatment, gl_code) in before["tax"].items():  # each tax type on its own (B-2379)
+        if now["tax"].get(tax_type) == after["tax"].get(tax_type):
             store.set_tax_treatment(tax_type, treatment, gl_code)
     if now["policy_notes"] == after["policy_notes"]:
         store.set_setting("policy_notes", before["policy_notes"])
