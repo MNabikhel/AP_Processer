@@ -5536,7 +5536,8 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     supplier's own accounts on the GL codes of those, `CANDIDATES_MOST` (15) in all; the screen still shows three
     buttons, the Account box's list has them all. Without a chart, 5 as before.
   - **A supplier never seen** (`supplier_prior.from_book`, B-2339): the journal as a whole (`Book`, built once a
-    journal, ~0.1 s for the made-up year's 7,500 lines, kept apart from the priors) offers up to 8 GL codes: 3 x the
+    journal when a new supplier is coded, ~0.1 s and 1.5 MB for the made-up year's 7,500 lines, kept in the priors'
+    6 MB: a web worker's caches stay within their budget) offers up to 8 GL codes: 3 x the
     likeness to a remark AP wrote for other suppliers (0.2 at least), 2 x to the code's name, 1.5 x the code's share
     of the lines of the suppliers whose names have a word of the vendor's ("Courier"), as far as those suppliers sell
     one kind of thing (of n, k on one object: (k - 1) / n, so one supplier or two unlike ones sharing a place's name
@@ -5557,8 +5558,9 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     | `--approve`: never seen | 8%, 1/2 → same | 21% → 50% | 21% → 54% | 21% → 54% |
 
     The bench's invoices print no unit, so who ordered stays 44% first: nothing on them says which department. On
-    the fifteen-line invoice, which names each line's unit, every line now keeps all 13 accounts. Speed: 0.9 ms a
-    line after a vendor's first invoice, as before (1.6 → 1.8 ms on its first); coding the busiest supplier's 15
-    lines 46 → 43 ms warm, 103 → 171 ms in a new process (the journal read once); a new supplier's 5 lines 9 → 12 ms.
+    the fifteen-line invoice, which names each line's unit, every line now keeps all 13 accounts. Speed (the made-up
+    year, three runs each): a line 0.93 → 0.95 ms after a vendor's first invoice, 1.74 → 1.84 ms on it; the busiest
+    supplier's 15 lines 44 → 47 ms; the first invoice in a new process 86 → 163 ms (the journal's office words read
+    once a journal), a new supplier's first 16 → 92 ms (the journal as a whole read once), then 8 → 12 ms.
   - (`ap_coder/ai/supplier_prior.py`, `suggest.py`, `offline_coder.py`, `core/store/prior.py` `journal_remarks`,
     `core/schema.py` `CANDIDATES_MOST`, `bench/coding_journal.py`)
