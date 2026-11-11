@@ -277,3 +277,22 @@ def test_a_scripted_set_up_gives_the_first_admin_on_standard_input(laptop, monke
     (user,) = Store(db).list_users()
     assert (user["username"], user["display_name"], user["role"]) == ("pat.lee", "Pat Lee", "admin")
     assert "Added pat.lee (Admin)" in capsys.readouterr().out
+
+
+def test_on_the_owners_laptop_share_starts_two_capture_processes_unless_told_otherwise(laptop, monkeypatch):
+    """B-2312: ``share`` serves from a laptop its owner works on all day, but its capture processes were sized as the
+    company server's (the cores less two: 18 on a 20-core laptop, about 700 MB each). It starts two, as it starts two
+    web workers; server.json's ``capture_processes`` or AP_CAPTURE_PROCESSES still decide when they say."""
+    data, db = laptop
+    monkeypatch.delenv("AP_CAPTURE_PROCESSES", raising=False)
+    Store(db).add_user("pat", GOOD, role="admin")
+
+    def shared():
+        s = share.prepare(data, db, Said(), openssl="openssl", run=openssl_stand_in([]))
+        return s.capture_processes, service.serve_env(s, data).get("AP_CAPTURE_PROCESSES")
+
+    assert shared() == (share.CAPTURE_PROCESSES, "2")
+    service.write_config(data, capture_processes=5)
+    assert shared() == (5, "5")
+    monkeypatch.setenv("AP_CAPTURE_PROCESSES", "3")
+    assert shared() == (3, "3")

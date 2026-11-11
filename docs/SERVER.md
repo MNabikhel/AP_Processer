@@ -1803,6 +1803,10 @@ the owner is logged off, and nothing starts it again after a restart (the servic
 serves over HTTPS with sign-in: `--insecure-http` is not its to start. Steps 1, 5, 8 and 9 below still apply; the
 others are what `share` does.
 
+It is sized for a laptop its owner works on while it serves: 2 web workers (enough for about 10 people) and 2
+processes reading imported files (about 700 MB each while they read scans), not the company server's one per core.
+`workers` and `capture_processes` in `server.json` (or the variable `AP_CAPTURE_PROCESSES`) give other numbers.
+
 **The ten steps, by hand:**
 
 1. **Close laptop mode cleanly.** Finish or approve what is open on a review screen, press *Settings* → *Data &

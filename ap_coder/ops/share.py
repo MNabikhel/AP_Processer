@@ -28,6 +28,7 @@ TLS_DIR = "tls"  # in the data folder, as docs/SERVER.md section 3 has it
 CERT_NAME, KEY_NAME = "apcoder.pem", "apcoder.key.pem"
 CERT_DAYS = 825
 WORKERS = 2  # web workers when server.json names none: a few people, on a laptop that also reads the invoices
+CAPTURE_PROCESSES = 2  # processes reading the imports when nothing names a number: the laptop is its owner's too
 RULE = "AP Coder"  # the firewall rule's name in docs/SERVER.md
 GUIDE = "docs/SERVER.md section 16"
 # Where Git for Windows keeps the openssl it brings, when it is not on the PATH.
@@ -328,7 +329,9 @@ def prepare(data: Path, db: Path, say: Say, *, allow: str = "", ask: Callable[[s
     backup_folder(data, db, first, say, allow)
     # Always with sign-in over HTTPS: a first test's --insecure-http is not this command's to start.
     s = dataclasses.replace(service.settings(data), insecure_http=False)
-    return dataclasses.replace(s, workers=s.workers or WORKERS)
+    return dataclasses.replace(
+        s, workers=s.workers or WORKERS, capture_processes=s.capture_processes or CAPTURE_PROCESSES
+    )
 
 
 def add_parser(sub: Any) -> None:
