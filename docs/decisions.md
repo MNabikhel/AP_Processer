@@ -5643,3 +5643,45 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     before, 3 or 4 of 231 after ("Software licence renewal" 13: suppliers of that kind, or none offered for it);
     lines naming another unit 108/108 (name) and 108/108 (number) before, 0 after.
   - (`ap_coder/ai/suggest.py`, `supplier_prior.py` `names_with`, `units_named`)
+- **D-231** · **The first setup from GitHub's ZIP checks what is there before it installs anything, and a newer AP
+  Coder asks before it takes over from the one installed** (the launcher; 11 Nov 2026).
+  - **Why:** the pilot tester's laptop: a company Windows 11 laptop on the company Wi-Fi (maybe a proxy, maybe
+    blocked sites), Python 3.14 from python.org and LM Studio with its models already there, maybe an older AP
+    Coder. In their words: check whether what is installed is enough and install nothing more then; a newer one
+    installed needs nothing; an older one: ask whether to update.
+  - **Packages:** only a requirement missing, or below the minimum pyproject.toml asks for (`check_deps.problem`), is
+    given to pip, and pip is never told `--upgrade` or `--force-reinstall`: one already good enough stays as it is.
+    Said "Packages: 15 needed, all in place: nothing to install" or "3 of 15 missing: installing those". The system
+    Python's own packages are not reused (no `--system-site-packages`): AP Coder would run on versions never tested
+    with it, which change whenever the system is updated, and a fresh Python rarely has these packages anyway.
+  - **Reading models:** `fetch_models` keeps each file whose SHA-256 is the pinned one and downloads only the missing
+    or damaged ones. Blocked: scans are read with one OCR engine, said, and the window names the sites for IT
+    ("ask IT to allow them", B-2375). LM Studio, its models and Python are never installed by the setup (Python only
+    by APProcessor.bat's winget offer, asked, when none is found); a test pins it.
+  - **A company network:** before pip downloads from PyPI (the first phase, before .venv is made; the second when
+    AP Coder's core packages are missing) `https://pypi.org/simple/pip/` must answer within 10 s and end on pypi.org
+    (not a sign-in page). Not reached: nothing is made, and the window says to connect once to another network (a
+    phone's hotspot, or at home) for this setup, about 230 MB and 10 minutes (measured: Windows, Python 3.14, 181 MB
+    of packages, 47 MB of models), or to ask IT to allow pypi.org, files.pythonhosted.org and www.modelscope.cn (or
+    its mirrors huggingface.co and github.com); an offline bundle is named only where a wheelhouse is (B-2376).
+  - **The proxy:** this computer's own (`urllib.request.getproxies()`: Windows' Internet Options from the registry,
+    a Mac's network settings) is given to pip as `--proxy` unless HTTPS_PROXY is set, and said once as its address
+    only, never a user name or password. pip's own requests reads the same settings when nothing names a proxy; the
+    flag makes it one thing, said in the window and used by the check alike. The check and the model downloads
+    (urllib) use it on their own (pinned). Not handled: a proxy set by an automatic configuration script (PAC, WPAD)
+    or one that signs in with the Windows account (NTLM): IT sets HTTPS_PROXY, or another network is used once.
+  - **Another AP Coder installed** (`paths.current_install()`, read from its folder: version and build), asked in
+    the first phase before anything is set up (`installed_already`). Older than it (this ZIP), or the data folder's
+    database newer (`database_too_new(early=True)`, sqlite alone, read only, B-2377): nothing is set up or started,
+    "AP Coder X is installed in F: use its shortcut", and it is opened when it runs; this replaces the hand-over that
+    started the newer one from the older folder (`upgrade.hand_over`, gone). The same build, or builds that can't
+    be ordered: as before. Newer: "AP Coder X is installed in F. Update it to Y? Your invoices and settings are kept
+    (a backup is made first). [Y/n]". Taking over stops its dashboard (`running.take_over`), records this folder as
+    the current install, points the shortcut here and cleans the older one up after the self-check: all after the
+    question, so No changes nothing and its shortcut still works. The backup is the Store's own before it migrates a
+    database of an older schema (`_before_migrating`); one of the same schema is not changed. Not asked, as before:
+    `--yes`, AP_NO_PAUSE=1, no terminal (CI, the installer's flags), a demo (AP_DEMO=1). Unzipped over the current
+    install's own folder, its files are already replaced: "Updated AP Coder from X to Y", as before.
+  - (`scripts/launch.py` `_ensure_packages`, `missing_said`, `unreachable_index`, `system_proxy`, `pip_install`,
+    `installed_already`, `update_wanted`, `database_too_new`; `scripts/upgrade.py` `older_install`; docs/PROTOTYPE.md
+    section 1)
