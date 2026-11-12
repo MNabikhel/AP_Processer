@@ -7,7 +7,7 @@ import os
 import shutil
 import socket
 
-from ap_coder.core.store import Store
+from ap_coder.core.store import SCHEMA_VERSION, Store
 from ap_coder.ops import cli
 
 
@@ -187,3 +187,15 @@ def test_restore_on_a_laptop_with_sign_in_keeps_its_admin(tmp_path, ground_truth
     store.add_first_admin("correct horse battery", "Pat Lee")
     assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 0
     assert Store(store.path).get_setting("sign_in") == "laptop" and Store(store.path).user_count() == 1
+
+
+def test_restore_onto_a_database_a_newer_ap_coder_made_says_so_in_one_line_not_a_traceback(
+    tmp_path, ground_truth, capsys
+):
+    store, _data_dir = _data(tmp_path, ground_truth)
+    made = store.backup_now("manual")
+    store.set_setting("schema_version", str(SCHEMA_VERSION + 5))
+    assert cli.main(["--db", str(store.path), "backup", "restore", made.name, "--yes"]) == 1
+    assert "made by a newer AP Coder" in capsys.readouterr().err
+    assert cli.main(["--db", str(store.path), "backup", "now"]) == 1
+    assert "Start the newer AP Coder instead" in capsys.readouterr().err

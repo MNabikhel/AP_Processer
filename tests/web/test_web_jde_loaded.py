@@ -31,6 +31,21 @@ def _count(page: str) -> str:
     return page.split('id="loaded-count">', 1)[1].split("</span>", 1)[0]
 
 
+def test_the_search_and_its_download_ignore_accents_and_the_case_of_any_letter(store):
+    store.import_vendor_master([
+        {"vendor_name": "HYDRO-QUÉBEC", "erp_id": "0410010", "gst": "100000000RT0001", "terms": "N30"},
+        {"vendor_name": "Énergir inc.", "erp_id": "0410011", "gst": "", "terms": "N30"},
+        {"vendor_name": "Cafe Brulerie", "erp_id": "0410012", "gst": "", "terms": "N30"},
+    ])  # fmt: skip
+    for typed, names in [("quebec", ["HYDRO-QUÉBEC"]), ("québec", ["HYDRO-QUÉBEC"]), ("QUEBEC", ["HYDRO-QUÉBEC"]),
+                         ("énergir", ["Énergir inc."]), ("ENERGIR", ["Énergir inc."]), ("café", ["Cafe Brulerie"]),
+                         ("hydro 0410010", ["HYDRO-QUÉBEC"]), ("québec énergir", [])]:  # fmt: skip
+        found = store.loaded_page("suppliers", q=typed)
+        assert [row["display_name"] for row in found["rows"]] == names, typed
+        assert [row["display_name"] for batch in store.loaded_batches("suppliers", q=typed) for row in batch] == names
+    assert store.loaded_page("suppliers", q="qu_bec")["count"] == 0  # (_ is still looked for as it is)
+
+
 def test_each_of_the_five_lists_opens_from_what_is_loaded(chart_company_client, chart_company):
     client, store = chart_company_client, chart_company.store
     home = client.get("/jde-files").text
