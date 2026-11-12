@@ -670,6 +670,21 @@ def test_a_voucher_in_jd_edwards_for_one_of_two_suppliers_of_a_name_is_found_by_
     }
 
 
+def test_a_voucher_in_jd_edwards_is_found_when_the_supplier_number_was_typed_with_a_leading_zero():
+    """B-2510: the duplicate check compared JD Edwards' supplier number with ours as text: an override typed
+    "02004" missed the voucher list's "2004" (and the name is not asked when both sides have a number), so a voucher
+    JD Edwards already has went out again. The hold check and the API's compare the numbers without leading zeros."""
+    final = {"vendor_name": "LAKESIDE CATERING LTD", "invoice_number": "LC-7781", "grand_total": 525.0,
+             "invoice_date": "2026-11-02"}  # fmt: skip
+    register = [{"invoice_number": "LC-7781", "total": 525.0, "an8": "2004", "vendor_name": "LAKESIDE CATERING",
+                 "invoice_date": "2026-11-02"}]  # fmt: skip
+    for typed in ("2004", "02004"):
+        settings = jde_settings.JdeSettings(an8_overrides={vendor_key(final["vendor_name"]): typed})
+        assert jde.duplicate_problems([{"id": 1, "final_output": final}], settings, None, {"register": register}) == {
+            1: ["already in the ERP (invoice LC-7781, dated 2026-11-02)"]
+        }, typed
+
+
 def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}
