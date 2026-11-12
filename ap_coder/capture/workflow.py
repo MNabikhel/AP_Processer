@@ -36,6 +36,7 @@ from .supplier import (
     confirmed_values,
     judged_stats,
     learn,
+    others_coded,
     outcome_rows,
     should_auto_approve,
     touchless_gates,
@@ -314,11 +315,10 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     from ..ai.offline_coder import guessed as is_guess
     from ..coding.validation import GUESS_SOURCES
 
-    lines = [(n, li, (li.get("decided_by") or {}).get("source")) for n, li in
-             enumerate((output or {}).get("line_items") or [], 1)]  # fmt: skip
-    others = [li.get("line_number") or n for n, li, source in lines if source == "others"]
-    guessed = sum(1 for _, li, source in lines if source != "others" and
+    lines = (output or {}).get("line_items") or []
+    guessed = sum(1 for li in lines if (source := (li.get("decided_by") or {}).get("source")) != "others" and
                   (source in GUESS_SOURCES or is_guess(li.get("reasoning_justification"))))  # fmt: skip
+    others = others_coded(lines)
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,

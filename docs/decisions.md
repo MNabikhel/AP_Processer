@@ -5817,15 +5817,21 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     "Coffee pods"); `bench coding --quick` and `learn --quick` did not move. Revisit if a pilot's queue fills with
     such holds: a tighter rule (only the name proper's words) was tried and missed the laptop.
 - **D-241** · **A line coded from other vendors' approvals always goes to a person** (`capture/workflow.py`
-  `invoice_gates`, `capture/supplier.py` `touchless_gates`; 12 Nov 2026). The user chose this.
+  `invoice_gates`, `capture/supplier.py` `touchless_gates`, `others_coded`; bulk approval and the queue's Ready,
+  `coding/bulk.py`, `web/pages/review.py`; 12 Nov 2026). The user chose this, as a safety rule.
   - **Why:** in the coding bench (`coding --quick`) the lines other vendors' approvals coded are 87.5% precise (8
     lines, 1 wrong) against 98.6% for the vendor's own (210 lines, 3 wrong); yet an invoice with one such line beside
-    the vendor's own could be approved touchless, nobody looking at it (B-2530).
+    the vendor's own could be approved touchless, nobody looking at it, or in one click in bulk (B-2530). The 87.5%
+    comes from 8 lines: in the full coding bench other vendors' approvals coded 82 lines with 2 wrong (97.6%), and
+    none of the 322 fully coded invoices from #20 on had such a line. So the touchless cost is near zero, but the
+    evidence for the change is thin: the user chose it as a safety rule.
   - **What:** the touchless gate reads each line's `decided_by`: a source in `validation.GUESS_SOURCES` ("model",
     "words", "others") always sends the invoice to a person, as a reasoning that says guess still does (invoices from
     older versions). "Others" lines are named in the reason ("line 2 was coded from other vendors' approvals, not
-    this vendor's"); Settings → Automation lists "An account not learned from this vendor". No check code: the
-    line's own words on the review screen already say where its account came from.
+    this vendor's"), each number once. Bulk approval and the queue's Ready leave such an invoice for a person too,
+    saying the same, from the coding's `decided_by` (the queue reads it from the invoices' summary, `q_others`).
+    Settings → Automation lists "An account not learned from this vendor". No check code: the line's own words on
+    the review screen already say where its account came from.
 - **D-242** · **A statement of open items does not list the invoices already exported as "Not on statement"**
   (`erp/statements.py` `reconcile`'s `open_items`, the tick box on the Statements page; 12 Nov 2026).
   - **Why:** many vendors send only what is unpaid. Every invoice AP Coder exported in the statement's period (an

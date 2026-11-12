@@ -41,21 +41,21 @@ def test_the_first_thing_to_fix_in_order():
         },
     ]
     output = {"line_items": lines}
-    assert first_to_fix((pick, "", 1, 1, False), issues, output, "") == (
+    assert first_to_fix((pick, "", 1, 1, False, ""), issues, output, "") == (
         "Subtotal + tax = 105.00 but the total is 150.00 (and 2 more)"
     )
-    assert first_to_fix((pick, "", 0, 1, False), issues[:2], output, "") == (
+    assert first_to_fix((pick, "", 0, 1, False, ""), issues[:2], output, "") == (
         "Line 4: this supplier's 9 lines last year went to 3 accounts: pick the account (and 1 more)"
     )
-    assert first_to_fix((pick, "", 0, 0, False), [], {"line_items": [{"line_number": 4}]}, "") == pick
-    assert first_to_fix(("", "Pick the account to pay from", 0, 1, False), issues[:1], output, "") == (
+    assert first_to_fix((pick, "", 0, 0, False, ""), [], {"line_items": [{"line_number": 4}]}, "") == pick
+    assert first_to_fix(("", "Pick the account to pay from", 0, 1, False, ""), issues[:1], output, "") == (
         "Pick the account to pay from (and 1 more)"
     )
-    assert first_to_fix(("", "", 0, 1, False), issues[:1], output, "") == "No tax was charged: check it"
-    assert first_to_fix(("", "", 0, 0, True), [], output, "Confidence under 85%") == "Confidence under 85%"
+    assert first_to_fix(("", "", 0, 1, False, ""), issues[:1], output, "") == "No tax was charged: check it"
+    assert first_to_fix(("", "", 0, 0, True, ""), [], output, "Confidence under 85%") == "Confidence under 85%"
     # A document that may not be an invoice says so before anything else there is to fix.
     other = {"severity": "warning", "code": "NOT_AN_INVOICE", "message": 'this may not be an invoice: its title is '
              '"Statement of account"'}  # fmt: skip
-    assert first_to_fix((pick, "", 1, 2, False), [*issues, other], output, "") == (
+    assert first_to_fix((pick, "", 1, 2, False, ""), [*issues, other], output, "") == (
         'This may not be an invoice: its title is "Statement of account" (and 3 more)'
     )

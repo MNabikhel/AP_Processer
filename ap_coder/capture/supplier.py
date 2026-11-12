@@ -1623,10 +1623,26 @@ def touchless_gates(
         reasons.append(f"{n} line{'' if n == 1 else 's'} coded by the local model or from a weak match, not from "
                        "AP's approvals")  # fmt: skip
     if lines_from_others:
-        *first, last = [str(n) for n in lines_from_others]
-        which = f"lines {', '.join(first)} and {last} were" if first else f"line {last} was"
-        reasons.append(f"{which} coded from other vendors' approvals, not this vendor's")
+        reasons.append(others_reason(lines_from_others))
     return reasons
+
+
+def others_coded(line_items: Iterable[dict[str, Any]] | None) -> list[Any]:
+    """The numbers of the lines of a coding (``line_items`` as stored) whose account other vendors' approvals decided
+    (``decided_by`` "others", D-241): each number once, in the lines' order (a line without one: its position)."""
+    numbers = [li.get("line_number") or n for n, li in enumerate(line_items or [], 1)
+               if (li.get("decided_by") or {}).get("source") == "others"]  # fmt: skip
+    return list(dict.fromkeys(numbers))
+
+
+def others_reason(numbers: Sequence[Any]) -> str:
+    """Why an invoice with the lines ``numbers`` (``others_coded``) goes to a person: touchless processing, the queue
+    and bulk approval say it alike ("" for none)."""
+    if not numbers:
+        return ""
+    *first, last = [str(n) for n in numbers]
+    which = f"lines {', '.join(first)} and {last} were" if first else f"line {last} was"
+    return f"{which} coded from other vendors' approvals, not this vendor's"
 
 
 def should_auto_approve(
