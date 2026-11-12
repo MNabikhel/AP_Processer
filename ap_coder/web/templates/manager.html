@@ -51,7 +51,7 @@
       <thead><tr><th class="r">Line</th><th>Description</th><th>GL account</th><th>Cost center</th><th class="r">Amount</th></tr></thead>
       <tbody>
         {% for li in req.lines %}
-        <tr{% if li.cost_center in req.cost_centers and manager_view %} class="mine"{% endif %}>
+        <tr{% if li.cost_center in own_centers and manager_view %} class="mine"{% endif %}>
           <td class="r">{{ li.line }}</td><td class="w">{{ li.description }}</td><td>{{ li.gl_code or "—" }}</td>
           <td>{{ li.cost_center or "—" }}</td><td class="r">{{ li.amount | money }}</td>
         </tr>

@@ -51,6 +51,7 @@ from ap_coder.web.core import (
     accuracy_note,
     approved_today,
     by_currency,
+    can,
     done,
     first_name,
     flash_message,
@@ -364,17 +365,17 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float, reas
     return rows
 
 
-def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """What needs doing today beyond the queue itself, as (text, tone) chips (none when all is calm)."""
+def today_pills(store: Store, invoices: list[dict[str, Any]], may_second: bool = True) -> list[tuple[str, str]]:
+    """What needs doing today beyond the queue itself, as (text, tone) chips (none when all is calm). The second
+    approvals waiting are counted only when this person ``may_second`` (may give one, B-2524)."""
     today = dt.date.today().isoformat()
     soon = (dt.date.today() + dt.timedelta(days=DUE_SOON_DAYS)).isoformat()
-    me = reviewer().strip().lower()
     # Credit notes are not paid, so they are never past due (as on the queue rows).
     active = [i for i in invoices if i["status"] in (REVIEW, PARKED, PENDING) and (i["grand_total"] or 0) > 0]
     overdue = sum(1 for i in active if i["due_date"] and i["due_date"] < today)
     due_soon = sum(1 for i in active if i["due_date"] and today <= i["due_date"] <= soon)
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
-    second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
+    second = _seconds_for_me(store, invoices) if may_second else 0
     to_export = store.ready_to_export_count()  # counted, not read: a year of approvals not exported yet
     # the recurring vendors, from every vendor's invoice dates (0.95 s at 100,000 invoices): only shown, so worked out
     # again at most every LATE_SETTLE seconds under a stream of uploads and rejections, once for every process, and
@@ -395,6 +396,19 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
          + ", ".join(late[:2]) + ("…" if len(late) > 2 else ""), "gray") if late else None,
     ]  # fmt: skip
     return [p for p in pills if p]
+
+
+def _seconds_for_me(store: Store, invoices: list[dict[str, Any]]) -> int:
+    """How many of ``invoices`` wait for a second approval this person may give: the first one was another's, the
+    accounts compared as the approval compares them (``same_approver``)."""
+    waiting = [i for i in invoices if i["status"] == PENDING]
+    firsts = store.latest_events("approved", [i["id"] for i in waiting])  # one query, not one per invoice
+    me, my_login = reviewer(), login()
+
+    def first_login(inv: dict[str, Any]) -> str:
+        return ((firsts.get(inv["id"]) or {}).get("detail") or {}).get("login") or ""
+
+    return sum(1 for i in waiting if not same_approver(i["reviewer"], first_login(i), me, my_login))
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
@@ -498,7 +512,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
                                "unnamed": unnamed,
                                "kpis": kpis(store, pending, flagged, awaiting, settings),
-                               "today": today_pills(store, invoices),
+                               "today": today_pills(store, invoices, can(request, "/review/1/final-approve")),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     context["bulk_job"] = bulk_notice(store)  # the person's bulk approval under way, or ended since (D-185)
     context["choose_screens"] = screens_to_choose(request, store)  # an older data folder: asked once (D-221)

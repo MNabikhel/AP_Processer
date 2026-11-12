@@ -398,6 +398,25 @@ def _taxes_jde_posts(args: argparse.Namespace) -> frozenset[str]:
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
+    checks, source = doctor_checks(args, settings)
+    if getattr(args, "json", False):  # (a caller of its own may give none)
+        from .doctor import as_json
+
+        print(as_json(checks, source))
+        return exit_code(checks)
+    print(doctor_report(checks, source))
+    return exit_code(checks)
+
+
+def doctor_report(checks: list[Check], source: str) -> str:
+    """The doctor's report as it is printed, and pasted from Help → Report a problem."""
+    return format_checks(checks).replace("\n\n", f"\n\nreference data source: {source}\n\n", 1)
+
+
+def doctor_checks(args: argparse.Namespace, settings: Settings) -> tuple[list[Check], str]:
+    """The doctor's checks and where its reference data comes from: for ``python -m ap_coder doctor`` and for Help →
+    Report a problem's setup report alike (B-2526), the database's own lines and the taxes JD Edwards posts
+    included."""
     from .doctor import as_the_server
     from .service import is_server_here
 
@@ -419,14 +438,7 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
         server = is_server_here(private_dir())
         if db.exists() or server:  # a laptop not set up yet has no database: nothing to look at
             checks.extend(store_checks(Store(db), server))
-    if getattr(args, "json", False):  # (a caller of its own may give none)
-        from .doctor import as_json
-
-        print(as_json(checks, source))
-        return exit_code(checks)
-    report = format_checks(checks)
-    print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
-    return exit_code(checks)
+    return checks, source
 
 
 def cmd_serve(args: argparse.Namespace) -> int:

@@ -4,6 +4,8 @@ activity."""
 
 from __future__ import annotations
 
+import re
+
 from ap_coder.erp import exports, jde, jde_accounts, jde_settings, jde_zfiles
 from tests.conftest import copy_database
 from tests.erp.test_jde import AN8, ON, _files, _invoice
@@ -208,3 +210,94 @@ def test_the_doctor_asks_no_gst_account_of_a_laptop_that_keys_the_gst_on_the_pay
     jde_settings.save(store, settings)
     cli.main(args)
     assert "[WARN] tax GST" in capsys.readouterr().out
+
+
+def _server_accounts(store):
+    from ap_coder.ops.doctor import store_checks
+
+    return next(c for c in store_checks(store, server=True) if c.area == "server accounts")
+
+
+def test_the_doctor_fails_a_server_whose_authenticator_key_is_gone(store):
+    """B-2525: "server accounts PASS" while every authenticator code is refused: the key that opens them is gone."""
+    from ap_coder.core import authenticator
+    from ap_coder.ops.doctor import FAIL, PASS
+    from tests.webclient import enrol
+
+    uid = store.add_user("boss", "a long admin password 1", role="admin", must_change=False)
+    enrol(store, uid)
+    assert _server_accounts(store).status == PASS
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    line = _server_accounts(store)
+    assert line.status == FAIL and authenticator.KEY_FILE in line.detail, line
+
+
+def test_with_the_key_gone_the_doctor_counts_only_the_active_accounts_with_an_app(store):
+    """B-2525: with the key gone, the doctor said "nobody can log in" though an Admin without an app still can (a new
+    key is made when they set one up): an account turned off counted, and one active Clerk with an app was all."""
+    from ap_coder.core import authenticator
+    from ap_coder.ops.doctor import FAIL, PASS, WARN
+    from tests.webclient import enrol
+
+    boss = store.add_user("boss", "a long admin password 1", role="admin", must_change=False)
+    for name in ("carl", "dana"):
+        enrol(store, store.add_user(name, "a long clerk password 1", role="clerk", must_change=False))
+    store.deactivate_user(store.find_user("carl")["id"])
+    store.deactivate_user(store.find_user("dana")["id"])
+    (store.path.parent / authenticator.KEY_FILE).unlink()
+    assert _server_accounts(store).status == PASS  # the two with an app are turned off
+    with store._conn() as conn:
+        conn.execute("UPDATE users SET active = 1 WHERE username = 'dana'")
+    line = _server_accounts(store)
+    assert line.status == WARN and "dana" in line.detail and "carl" not in line.detail and "boss" not in line.detail
+    with store._conn() as conn:  # the Admin's app set up too: no Admin can log in
+        conn.execute("UPDATE users SET totp_on = 1 WHERE id = ?", (boss,))
+    line = _server_accounts(store)
+    assert line.status == FAIL and authenticator.KEY_FILE in line.detail, line
+
+
+def test_the_doctor_fails_a_server_whose_only_admin_can_no_longer_log_in(store, monkeypatch):
+    """B-2525: "server accounts PASS" while the only Admin's temporary password is past its 3 days."""
+    import time
+
+    from ap_coder.core.store import users
+    from ap_coder.ops.doctor import FAIL, PASS
+
+    store.add_user("boss", "a long admin password 1", role="admin")  # as `users add --admin`: temporary
+    store.add_user("carl", "a long clerk password 1", role="clerk", must_change=False)
+    assert _server_accounts(store).status == PASS
+    later = time.time() + users.TEMPORARY_SECONDS + 60
+    monkeypatch.setattr(users.time, "time", lambda: later)
+    line = _server_accounts(store)
+    assert line.status == FAIL and "python -m ap_coder users reset boss" in line.detail, line
+
+
+def test_the_web_setup_report_says_what_the_doctor_says_of_the_taxes_jde_posts(tmp_path, monkeypatch, capsys):
+    """B-2526: Help → Report a problem's setup report still warned "tax GST ... no GL account mapped yet (invoices with
+    it will error)" where `python -m ap_coder doctor` passes it: the page made its own report, without what JD Edwards
+    posts itself and without the database's own lines."""
+    from ap_coder.bench import jde_exports
+    from ap_coder.ops import chart_cmd, cli
+    from ap_coder.web.core import first_run
+    from ap_coder.web.pages import help as help_page
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db = data / "ap_coder.db"
+    store = first_run(db, server=False)
+    jde_exports.write_all(tmp_path / "jde")
+    chart_cmd.import_files(store, tmp_path / "jde" / jde_exports.CHART_FILE, tmp_path / "jde" / jde_exports.UNITS_FILE)
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(data))
+    monkeypatch.setenv("AP_ENV_FILE", str(tmp_path / "none.env"))
+    cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(db), "doctor"])
+    doctor = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[")]
+    help_page.forget_setup_report()
+    report = help_page.setup_report(store)
+    gst = next(line for line in report.splitlines() if "tax GST " in line)
+    assert "will error" not in gst and "JD Edwards posts it" in gst, gst
+    assert "finance hub feed" in report and "reference data source:" in report
+
+    def areas(lines):
+        return [re.split(r"\s{2,}", line, maxsplit=1)[0].split("] ", 1)[1] for line in lines if line.startswith("[")]
+
+    assert areas(report.splitlines()) == areas(doctor)  # the same checks, in the same order

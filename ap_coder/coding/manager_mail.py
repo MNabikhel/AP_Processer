@@ -34,14 +34,14 @@ def subject(inv: dict[str, Any], request_id: int) -> str:
     return f"Please confirm the cost allocation: {vendor} invoice {number}{amount} [AP-{request_id}]"
 
 
-def _rows(req: dict[str, Any], currency: str) -> list[tuple[str, str, str, str, str, bool]]:
-    mine = set(req.get("cost_centers") or [])
+def _rows(req: dict[str, Any], currency: str, mine: set[str]) -> list[tuple[str, str, str, str, str, bool]]:
     return [(str(li["line"]), li["description"], li["gl_code"] or "-", li["cost_center"] or "-",
              _money(li["amount"], currency), li["cost_center"] in mine) for li in req.get("lines") or []]  # fmt: skip
 
 
-def bodies(inv: dict[str, Any], req: dict[str, Any], signature: str = "") -> tuple[str, str]:
-    """(plain text, HTML) of the email."""
+def bodies(inv: dict[str, Any], req: dict[str, Any], signature: str = "",
+           mine: set[str] = frozenset()) -> tuple[str, str]:  # fmt: skip
+    """(plain text, HTML) of the email, the lines of the manager's own cost centers (``mine``) marked."""
     currency = inv.get("currency") or ""
     who = req.get("manager_name") or ""
     facts = [("Vendor", inv.get("vendor_name") or "?"), ("Invoice", inv.get("invoice_number") or "?"),
@@ -50,7 +50,7 @@ def bodies(inv: dict[str, Any], req: dict[str, Any], signature: str = "") -> tup
     note = (req.get("note") or "").strip()
     ask = ("Please reply CONFIRMED if this is right, or tell us what to change (the GL account, the cost center or "
            "the amount of a line). The invoice is attached.")  # fmt: skip
-    rows = _rows(req, currency)
+    rows = _rows(req, currency, mine)
     intro = "Accounts payable would like you to confirm how this invoice is coded before it is approved."
     text = [f"Hello {who}," if who else "Hello,", "", intro, ""]
     text += [f"{k}: {v}" for k, v in facts] + [""]
@@ -84,13 +84,15 @@ def bodies(inv: dict[str, Any], req: dict[str, Any], signature: str = "") -> tup
     return "\n".join(text) + "\n", page
 
 
-def request_email(inv: dict[str, Any], req: dict[str, Any], file: Path | None, signature: str = "") -> bytes:
-    """The email as an .eml file (Outlook and Mail open it as a draft to send)."""
+def request_email(inv: dict[str, Any], req: dict[str, Any], file: Path | None, signature: str = "",
+                  mine: set[str] = frozenset()) -> bytes:  # fmt: skip
+    """The email as an .eml file (Outlook and Mail open it as a draft to send); ``mine``: the manager's own cost
+    centers (``Store.managers_cost_centers``)."""
     msg = EmailMessage(policy=SMTP)
     msg["To"] = req.get("manager_email") or ""
     msg["Subject"] = subject(inv, int(req.get("id") or 0))
     msg["X-Unsent"] = "1"  # Outlook opens it as a new message to send, not as one received
-    text, page = bodies(inv, req, signature)
+    text, page = bodies(inv, req, signature, mine)
     if file is not None and file.is_file() and file.stat().st_size > MAX_ATTACHMENT:
         text += "\n(The invoice is too large to attach: it is in AP Coder.)\n"
         file = None

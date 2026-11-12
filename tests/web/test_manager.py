@@ -308,3 +308,99 @@ def test_read_only_sees_the_coding_sent_but_no_link_it_cannot_open(server, store
     assert page.status_code == 200 and "Coding sent to Bob" in page.text and f"/manager/{rid}" not in page.text
     assert client.get(f"/manager/{rid}", headers=_as(ro)).status_code == 403
     assert f"/manager/{rid}" in client.get(f"/review/{iid}", headers=_as(tokens["clerk"])).text
+
+
+def _split_form(store):
+    """An invoice of two lines or more coded to CC-200 (its first line) and CC-300 (the others), and its form."""
+
+    def lines(i):
+        inv = store.get_invoice(i["id"])
+        return (inv["final_output"] or inv["ai_output"] or {}).get("line_items") or []
+
+    iid = next(i["id"] for i in store.list_invoices(REVIEW) if len(lines(i)) >= 2)
+    gl = next(a["code"] for a in store.list_accounts("gl_accounts"))
+    with store._conn() as conn:
+        for code in ("CC-200", "CC-300"):
+            conn.execute(
+                "INSERT OR IGNORE INTO cost_centers (code, description, created_at) VALUES (?, '', '')", (code,)
+            )
+
+    def coded(rows):
+        return [{**r, "predicted_gl_code": gl, "predicted_cost_center": "CC-200" if n == 0 else "CC-300"}
+                for n, r in enumerate(rows)]  # fmt: skip
+
+    return iid, form_of(store, iid, coded)
+
+
+def test_remembering_the_manager_does_not_take_another_managers_cost_center(store):
+    """B-2523: "Remember them as the manager of these cost centers" made the person picked the manager of every cost
+    center on the invoice, another manager's too, without a word."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-200"], "Ann Site", "ann@example.com", "AP")
+    store.set_cost_center_manager(["CC-300"], "Bob Plant", "bob@example.com", "AP")
+    form = {**form, "manager_name": "Ann Site", "manager_email": "ann.site@example.com", "remember_manager": "1"}
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()
+    assert answer["ok"], answer
+    assert store.waiting_manager_request(iid)["cost_centers"] == ["CC-200", "CC-300"]
+    known = store.cost_center_managers()
+    assert known["CC-300"] == {"name": "Bob Plant", "email": "bob@example.com"}, known
+    assert known["CC-200"] == {"name": "Ann Site", "email": "ann.site@example.com"}  # the same manager: kept up to date
+    assert "CC-300 keeps its manager, Bob Plant" in client.get(answer["redirect"]).text
+
+
+def test_a_cost_center_whose_manager_left_is_given_the_new_one(store):
+    """B-2523: with Remember ticked, a cost center whose manager left kept them: sending to the new manager changed
+    nothing, and the next invoice suggested the one who left. The manager the screen suggested is replaced; another
+    manager's cost center is kept, and the message says how to change it."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-200"], "Bob Left", "bob@example.com", "AP")
+    store.set_cost_center_manager(["CC-300"], "Dan Other", "dan@example.com", "AP")
+    # as the screen sends it: CC-200's manager suggested, the new one typed over it, the box ticked
+    form = {**form, "manager_name": "Carol New", "manager_email": "carol@example.com", "remember_manager": "1",
+            "manager_suggested": "Bob Left"}  # fmt: skip
+    answer = client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()
+    assert answer["ok"], answer
+    known = store.cost_center_managers()
+    assert known["CC-200"] == {"name": "Carol New", "email": "carol@example.com"}, known
+    assert known["CC-300"] == {"name": "Dan Other", "email": "dan@example.com"}, known
+    said = client.get(answer["redirect"]).text
+    assert "CC-300 keeps its manager, Dan Other" in said and "send one of its invoices to the new manager" in said
+
+
+def test_the_review_screen_sends_the_manager_it_suggested(store):
+    """B-2523: what the Remember box replaces is the manager the screen suggested, sent with the form."""
+    client = client_for(store)
+    iid = _first(store)
+    for row in store.list_accounts("cost_centers"):
+        store.set_cost_center_manager([row["code"]], "Bob Left", "bob@example.com", "AP")
+    page = client.get(f"/review/{iid}").text
+    assert re.search(r'<input type="text" name="manager_name"[^>]*value="Bob Left"', page)
+    assert re.search(r'<input type="hidden" name="manager_suggested" form="inv" value="Bob Left">', page)
+
+
+def test_the_manager_sees_only_their_own_cost_centers_marked(server, store):
+    """B-2527: a Manager answering for CC-200 saw the CC-300 lines of the same invoice marked as theirs too."""
+    client, tokens, bob_id = server
+    iid, form = _split_form(store)
+    sent = client.post(f"/review/{iid}/manager", data={**form, "manager_user": str(bob_id)},
+                       headers=_as(tokens["clerk"]))  # fmt: skip
+    assert sent.json()["ok"], sent.text
+    rid = store.waiting_manager_request(iid)["id"]
+    page = client.get(f"/manager/{rid}", headers=_as(tokens["bob"])).text
+    marked = re.findall(r'<tr class="mine">.*?</tr>', page, re.S)
+    assert marked and all("CC-200" in row and "CC-300" not in row for row in marked), marked
+
+
+def test_the_request_email_marks_only_the_cost_centers_remembered_for_that_manager(store):
+    """B-2527: on the laptop, the email marked every cost center of the invoice as the manager's."""
+    client = client_for(store)
+    iid, form = _split_form(store)
+    store.set_cost_center_manager(["CC-300"], "Bob Plant", "bob@example.com", "AP")
+    form = {**form, "manager_name": "Ann Site", "manager_email": "ann@example.com", "remember_manager": "1"}
+    assert client.post(f"/review/{iid}/manager", data=form, headers=PAGE).json()["ok"]
+    rid = store.waiting_manager_request(iid)["id"]
+    msg = message_from_bytes(client.get(f"/manager/{rid}/email.eml").content, policy=default)
+    marked = re.findall(r'<tr style="background:#fff4e0">.*?</tr>', msg.get_body(("html",)).get_content(), re.S)
+    assert marked and all("CC-200" in row and "CC-300" not in row for row in marked), marked

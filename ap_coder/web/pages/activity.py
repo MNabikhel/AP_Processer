@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
-from ap_coder.core.store import Store
+from ap_coder.core.store import Store, fold_text
 from ap_coder.erp import controls, insights
 from ap_coder.web.access import is_admin
 from ap_coder.web.core import address_day, get_store, page_router, render, server_mode
@@ -86,19 +86,23 @@ def timeline_items(events: list[dict[str, Any]], with_invoice: bool = True) -> l
 
 
 def searchable(event: dict[str, Any]) -> str:
+    """The event's words as the page shows them, accents and case aside (``fold_text``, as the invoice directory
+    compares them: B-2528)."""
     detail = event["detail"] or {}
     what = ACTIONS.get(event["action"], ("", "", event["action"]))[2]  # "Approved": the word the log shows
-    return " ".join([what, describe(event), str(detail.get("vendor") or ""), str(detail.get("invoice_number") or ""),
-                     str(event["invoice_id"] or ""), invoice_label(event), event["actor"] or ""]).lower()  # fmt: skip
+    return fold_text(" ".join([what, describe(event), str(detail.get("vendor") or ""),
+                               str(detail.get("invoice_number") or ""), str(event["invoice_id"] or ""),
+                               invoice_label(event), event["actor"] or ""]))  # fmt: skip
 
 
 def filter_events(store: Store, group: str, person: str, query: str, *, hidden: Iterable[str] = (),
                   before: int | None = None, limit: int | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
     """Every event (not only the newest few thousand, B-1597) of ``group`` ("All" or a key of GROUPS), by ``person``
-    ("Everyone" or a name), whose text holds ``query`` (any case), but none of the ``hidden`` actions; newest first,
-    older than event ``before``, ``limit`` at most. SQLite picks them by group and person; the words are looked for
-    in each as the page shows it (``searchable``). A search that matches nothing is simply none."""
-    query = (query or "").strip().lower()
+    ("Everyone" or a name), whose text holds ``query`` (any case, accents aside), but none of the ``hidden``
+    actions; newest first, older than event ``before``, ``limit`` at most. SQLite picks them by group and person; the
+    words are looked for in each as the page shows it (``searchable``). A search that matches nothing is simply
+    none."""
+    query = fold_text((query or "").strip())
     return store.find_events(actions=GROUPS.get(group), hidden=hidden,
                              actor=None if person in ("", "Everyone") else person, before=before, limit=limit,
                              matches=(lambda e: query in searchable(e)) if query else None)  # fmt: skip

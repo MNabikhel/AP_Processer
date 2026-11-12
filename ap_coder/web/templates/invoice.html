@@ -462,6 +462,8 @@
         <label class="field">Manager<input type="text" name="manager_name" form="inv" maxlength="120" value="{{ manager.suggested.name if manager and manager.suggested else '' }}" placeholder="first and last name"></label>
         <label class="field">Their email (for the request email)<input type="email" name="manager_email" form="inv" maxlength="200" value="{{ manager.suggested.email if manager and manager.suggested else '' }}" placeholder="name@company.com"></label>
         <label class="check"><input type="checkbox" name="remember_manager" value="1" form="inv" checked> Remember them as the manager of these cost centers</label>
+        {# the manager suggested: Remember replaces them where they were (one who left), never another's (B-2523) #}
+        <input type="hidden" name="manager_suggested" form="inv" value="{{ manager.suggested.name if manager and manager.suggested else '' }}">
         {% endif %}
         <label class="field">Note (optional)<input type="text" name="manager_note" form="inv" maxlength="2000" placeholder="e.g. new vendor for the site"></label>
         <button class="btn" type="submit" form="inv" formaction="/review/{{ inv.id }}/manager" formnovalidate><span class="ms" aria-hidden="true">forward_to_inbox</span>Send to manager</button>

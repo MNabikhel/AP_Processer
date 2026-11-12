@@ -355,14 +355,18 @@ def _send_to_manager(request: Request, invoice_id: int, form: Any) -> JSONRespon
     except ValueError:
         return changed_meanwhile(request, invoice_id)
     centers = store.manager_request(rid)["cost_centers"]
+    kept = {}  # never another manager's cost center (B-2523)
     if form.get("remember_manager") and centers and user_id is None:
-        store.set_cost_center_manager(centers, name, email, reviewer())
+        kept = store.remember_cost_center_manager(centers, name, email, reviewer(),
+                                                  replaces=str(form.get("manager_suggested") or ""))  # fmt: skip
     if user_id is not None:
         said = f"Sent to {name}: it waits in their Manager confirmations and comes back to the queue when they answer."
         return done(request, after, flash_message(said, "ok", icon="forward_to_inbox"))
+    others = "".join(f" {code} keeps its manager, {who}: to change it, send one of its invoices to the new manager."
+                     for code, who in kept.items())  # fmt: skip
     return done(request, f"/manager/{rid}", flash_message(
         f"Parked, waiting for {name}. Download the request email below and send it; record the answer here when it "
-        "comes.", "ok", icon="forward_to_inbox"))  # fmt: skip
+        f"comes.{others}", "ok", icon="forward_to_inbox"))  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/reject")
