@@ -142,3 +142,16 @@ def test_an_inferred_tax_line_follows_the_place_of_supply_changed():
     assert [t["province"] for t in changed.taxes] == ["", "MB", "ON"]  # RST 7% in Manitoba; HST is not levied there
     same = Draft.from_form(Form(ship_to_province="", invoice_date="2026-05-01"), base)
     assert [t["province"] for t in same.taxes] == ["", "ON", "ON"]  # nothing changed: left as it is
+
+
+def test_a_ship_to_printed_after_the_items_is_still_read():
+    """B-2493: once the line items' heading was read, a ship-to printed under them and only naming its province
+    ("Ship to: Site 4, Montreal, Quebec" after the table) was no longer read, and the place of supply fell back to
+    the supplier's province: each label starts its own block again."""
+    from ap_coder.ai.offline_coder import addresses
+
+    text = (
+        "Acme Supply Ltd.\n123 Bank St, Ottawa, ON K1P 1J9\nDescription Qty Amount\nWidgets 2 10.00\nTotal 10.00\n"
+        "Ship to:\nSite 4\nMontreal, Quebec\n"
+    )
+    assert addresses(text)[1] == "QC"

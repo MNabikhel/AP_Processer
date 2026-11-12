@@ -2130,7 +2130,12 @@ def lock_holders_data() -> str:
 
 def release_lock() -> None:
     while _held:
-        _held.pop().close()  # closing the file releases the lock (msvcrt and flock alike)
+        handle = _held.pop()
+        try:
+            handle.truncate(0)  # no holder said once it lets go (B-2508)
+        except Exception:  # noqa: BLE001 - never stops the start
+            pass
+        handle.close()  # closing the file releases the lock (msvcrt and flock alike)
 
 
 def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: float = 2.0) -> int | None:

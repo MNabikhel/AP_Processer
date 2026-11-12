@@ -212,3 +212,16 @@ def test_a_line_takes_the_invoice_of_its_own_date_before_an_older_one_exported(a
                 _doc(1, "1001", "2025-10-05", older, batch=1)]  # fmt: skip
     rec = stm.reconcile(records, cols, invoices)
     assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5
+
+
+def test_a_line_whose_date_reads_both_ways_takes_the_invoice_of_either_reading_first():
+    """B-2510: on a statement whose every date reads both ways ("05/10/2026"), last year's exported #1001 took the
+    line of this year's #1001, which was then listed "Not on statement": a date not yet read fits an invoice of
+    either reading."""
+    cols = {"number": "No", "date": "Date", "amount": "Amount"}
+    records = [{"No": "1001", "Date": "05/10/2026", "Amount": "60.00"},
+               {"No": "1002", "Date": "09/10/2026", "Amount": "5.00"}]  # fmt: skip
+    invoices = [_doc(9, "1002", "2026-10-09", 5.0), _doc(5, "1001", "2026-10-05", 100.0, "review"),
+                _doc(1, "1001", "2025-10-05", 80.0, batch=1)]  # fmt: skip
+    rec = stm.reconcile(records, cols, invoices)
+    assert next(li.invoice_id for li in rec.lines if li.number == "1001") == 5

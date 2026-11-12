@@ -248,10 +248,10 @@ def addresses(text: str) -> tuple[str, str, str]:
         if _REMIT_LABEL.search(line):
             remit_until = n + REMIT_BLOCK_LINES
         elif _SHIP_LABEL.search(line):
-            after_label = True
+            after_label, table = True, False  # its own block, even under the line items (B-2493)
             pending.append(("ship", n))
         elif _CUSTOMER_LABEL.search(line):
-            after_label = True
+            after_label, table = True, False
             pending.append(("bill", n))
         table = table or bool(_TABLE_HEADING.match(line))
         pending = [(kind, at) for kind, at in pending if n - at <= ADDRESS_BLOCK_LINES]

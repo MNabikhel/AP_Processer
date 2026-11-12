@@ -1719,3 +1719,13 @@ def test_the_ocr_models_are_downloaded_through_the_computers_proxy(launch, monke
         server.shutdown()
         server.server_close()
     assert asked == ["http://models.invalid/det.onnx"] and (tmp_path / "det.onnx").read_bytes() == b"model"
+
+
+def test_the_lock_file_says_no_holder_once_its_start_has_let_go(lock, tmp_path, monkeypatch):
+    """B-2508: the lock file kept the last holder's data folder after it let go, so a later start whose holder wrote
+    none (an older AP Coder, or the moment before its line) read the earlier one's and could stop as if beside it."""
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "demo"))
+    assert lock.take_lock()
+    assert lock.lock_holders_data().endswith("demo")
+    lock.release_lock()
+    assert lock.lock_holders_data() == ""

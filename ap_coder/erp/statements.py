@@ -226,6 +226,9 @@ def _of_the_line(inv: dict[str, Any], date: str, period: tuple[str, str] | None)
     """How an invoice with a statement line's number fits the line: dated as the line is, then in the statement's
     period (#1001 of this year before #1001 of last year, exported or not)."""
     on = str(inv.get("invoice_date") or "")
+    if _EITHER_WAY.fullmatch(date):  # not read yet ("05/10/2026"): either reading fits
+        readings = {read_date(date, True), read_date(date, False)}
+        return on not in readings, not (period and period[0] <= on <= period[1])
     return on != date, not (period and period[0] <= on <= period[1])
 
 
