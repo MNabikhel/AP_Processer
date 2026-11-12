@@ -1,7 +1,8 @@
 """Sales-tax return support: the GST/HST and QST paid to vendors that can be claimed back for a period.
 
-* Input tax credits (ITCs): GST and HST on approved invoices dated in the period, where the tax setup
-  treats the tax as recoverable
+* Input tax credits (ITCs): GST and HST on approved invoices dated in the period, where it was posted recoverable
+  (to the tax account, not into the lines) when the invoice was approved; as the tax setup treats it today for an
+  invoice whose posting lines were not kept (D-239)
 * Input tax refunds (ITRs): the same for Quebec's QST
 * Claims at risk: tax claimed on an invoice of $100 or more ($30 before April 21, 2021) that shows no valid GST/HST
   (or QST) registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
@@ -226,8 +227,8 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         f = _json(found["t_facts"]) if r["status"] == APPROVED else None
         if f is None:  # approved without the reviewer's coding: nothing to claim
             continue
-        for tax_type, amount, not_claimed, rate, province_text, number, issue in f["lines"]:
-            if not recoverable(tax_type):
+        for tax_type, amount, not_claimed, rate, province_text, number, issue, posted in f["lines"]:
+            if not (recoverable(tax_type) if posted is None else posted):  # as posted (D-239)
                 continue
             issues = [issue] if issue and abs(f["total"]) >= document_threshold(date) else []
             issues += f["err"]
@@ -262,9 +263,10 @@ def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str,
     """What ``build`` needs of an approved invoice (``row``: its columns, the JSON ones decoded; ``approval``: its
     latest ``approved`` event), whatever the tax setup: kept in the invoices' summary (D-110). Each tax line that may
     be claimed: (tax type, the amount claimed, the meals' half not claimed, rate, province printed, registration
-    number, its issue)."""
+    number, its issue, whether it was posted recoverable: None when no posting lines were kept)."""
     doc = row["final_output"]
     meals = meals_by_tax_line(doc)
+    posted = posted_recoverable(doc)
     lines = []
     for position, tl in enumerate(doc.get("tax_lines") or []):
         tax_type = str(tl.get("tax_type") or "").upper()
@@ -275,7 +277,7 @@ def tax_facts(row: dict[str, Any], approval: dict[str, Any] | None) -> dict[str,
         number, issue = _registration_issue(tax_type, doc)
         rate = tl.get("rate") or 0
         lines.append([tax_type, round(amount - not_claimed, 2), not_claimed, _float_or(rate), tl.get("province"),
-                      number, issue])  # fmt: skip
+                      number, issue, None if posted is None else posted.get(position)])  # fmt: skip
     return {"cur": str(doc.get("currency") or "CAD").upper(), "total": float(doc.get("grand_total") or 0),
             "vendor": str(doc.get("vendor_name") or ""), "number": str(doc.get("invoice_number") or ""),
             "err": charged_in_error(row, approval), "lines": lines, "supply": supply_inputs(doc)}  # fmt: skip
@@ -359,6 +361,34 @@ def meals_by_tax_line(doc: dict[str, Any]) -> dict[int, float]:
         except (TypeError, ValueError):
             continue
     return {**held, **out}
+
+
+def posted_recoverable(doc: dict[str, Any]) -> dict[int, bool] | None:
+    """{tax line position: whether it was posted recoverable} by the invoice's stored GL distribution, as
+    ``tax.build_gl_distribution`` made it when the invoice was approved (D-239): each tax line posted to a tax account
+    has a tax entry of its own, in order, recoverable or not; one expensed into the lines has none, nor one wholly on
+    meals (recoverable: its meals lines keep it). None when no distribution was kept (coded by an older version)."""
+    entries = [e for e in doc.get("gl_distribution") or [] if isinstance(e, dict)]
+    if not entries:
+        return None
+    taxes = [e for e in entries if e.get("kind") == "tax"]
+    meals = meals_by_tax_line(doc)
+    out: dict[int, bool] = {}
+    for position, tl in enumerate(doc.get("tax_lines") or []):
+        rate = _float_or(tl.get("rate") or 0)
+        if not isinstance(rate, float):
+            continue
+        place = f" {tl['province']}" if tl.get("province") else ""
+        label = f"{tl.get('tax_type')}{place} {rate * 100:.6g}% ("  # the tax entry's description begins so
+        entry = next((e for e in taxes if e.get("tax_line") == position), None)
+        if entry is None and taxes and str(taxes[0].get("description") or "").startswith(label):
+            entry = taxes[0]
+        if entry is None:
+            out[position] = position in meals
+            continue
+        taxes.remove(entry)
+        out[position] = not _float_or(entry.get("non_recoverable_tax") or 0)
+    return out
 
 
 def _charged(tax_line: dict[str, Any]) -> bool:

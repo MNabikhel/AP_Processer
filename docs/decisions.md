@@ -5778,3 +5778,12 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Cost, measured:** the chart's load 15.0 s → 15.2 s (about 1%). The interval matters only while two threads
     want the lock at once; the OCR engine and SQLite let go of it while they work. It is process-wide: revisit if a
     measured slowdown of reading (`python -m ap_coder.bench speed`) is traced to it.
+- **D-239** · **The Sales tax report claims each tax line as it was posted, not as the tax setup treats it today**
+  (`coding/taxreturn.py` `posted_recoverable`, kept in the invoices' summary by `tax_facts`; 12 Nov 2026).
+  - **Why:** the claim follows the books. A QST expensed into the lines when the invoice was approved and exported is
+    in the expense accounts, not the ITR account: claiming it once the setup is changed to recoverable claims tax
+    never booked as recoverable (and the reverse drops tax that was). The approved invoice's GL distribution, kept
+    with it (D-90), says per tax line which it was.
+  - **Fallback:** an invoice coded by an older version, with no distribution kept, is claimed by today's setup, as
+    its posting lines are built with it (`exports.distribution`). A setup change still shows on the report as the
+    taxes not recoverable today.
