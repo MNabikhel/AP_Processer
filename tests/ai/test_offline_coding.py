@@ -201,14 +201,16 @@ def _taught(store, tmp_path, reference, vendor, gl, texts):
 
 def test_the_vendors_usual_account_does_not_code_a_line_of_another_kind(tmp_path, reference):
     """B-2520: on plain lists, a vendor whose four different lines AP all coded to one account (its usual) had every
-    new line coded there alone: software or legal advice on a cleaning company's invoice went to Cleaning. The usual
-    account's guard of the chart's path (B-2228, B-2251) now holds a line that says another account's name, or a
-    telling word of its name proper (``suggest._own_name``: not the details its description goes on with)."""
+    new line coded there alone: a laptop, software or legal advice on a cleaning company's invoice went to Cleaning.
+    The usual account's guard of the chart's path (B-2228, B-2251) now holds a line that says another account's name
+    or a telling word of its description, said by its name proper (``suggest._own_name``); the candidates keep their
+    whole names."""
     store = Store(tmp_path / "s.db")
     _taught(store, tmp_path, reference, "Brightway Janitorial Ltd.", "6230", [
         "Nightly janitorial service", "Window washing exterior", "Carpet shampoo boardroom",
         "Waste bin liners replacement"])  # fmt: skip
-    for text, said in (("Annual software subscription renewal", "Software Subscriptions (6020)"),
+    for text, said in (("Dell Latitude 5540 laptop", "Computer Equipment (1500)"),
+                       ("Annual software subscription renewal", "Software Subscriptions (6020)"),
                        ("Legal advice on lease", "Professional Fees - Legal (6100)")):  # fmt: skip
         line = _plain_line(store, reference, "B-9", text).line_items[0]
         assert line.predicted_gl_code == UNASSIGNED, f"{text!r} coded alone to {line.predicted_gl_code} (cleaning)"
@@ -220,9 +222,10 @@ def test_the_vendors_usual_account_does_not_code_a_line_of_another_kind(tmp_path
 
 
 def test_the_vendors_usual_account_still_codes_its_own_kind_of_line(tmp_path, reference):
-    """B-2520: one word of another account's description details is no other kind: a cleaning company's paper
-    towels, toilet paper, water damage cleanup and delivery charge, an office supplier's water bottles, coffee pods,
-    delivery charge and desk chair are still coded to the vendor's usual account."""
+    """B-2520, D-240: a line with a telling word of another account's description is held for a person, even an
+    ordinary one (a cleaning company's paper towels: "Office Supplies - paper; ..."; its water damage cleanup,
+    "Utilities - electricity; gas; water"); the user chose flagging over fewer holds. A line with no word of another
+    account is still coded to the vendor's usual account."""
     store = Store(tmp_path / "s.db")
     cleaning, office = "Brightway Janitorial Ltd.", "Northwind Office Supply Ltd."
     _taught(store, tmp_path, reference, cleaning, "6230", [
@@ -230,15 +233,17 @@ def test_the_vendors_usual_account_still_codes_its_own_kind_of_line(tmp_path, re
         "Waste bin liners replacement"])  # fmt: skip
     _taught(store, tmp_path, reference, office, "6000", [
         "Copy paper case of 10", "Toner cartridge HP 26A", "Stapler heavy duty", "Pens blue box of 12"])  # fmt: skip
-    for vendor, gl, texts in (
-        (cleaning, "6230", ["Paper towels case", "Garbage bags 50 ct", "Toilet paper jumbo rolls", "Mop heads",
-                            "Water damage cleanup", "Delivery charge", "Floor stripping and waxing"]),
-        (office, "6000", ["Printer paper letter", "Coffee pods", "Water bottles 24pk", "Delivery charge",
-                          "Garbage bags", "Desk chair"]),
+    for vendor, gl, coded, held in (
+        (cleaning, "6230", ["Garbage bags 50 ct", "Floor cleaner 4L", "Mop heads", "Hand soap refill",
+                            "Floor stripping and waxing"],
+         ["Paper towels case", "Toilet paper jumbo rolls", "Water damage cleanup", "Delivery charge"]),
+        (office, "6000", ["Printer paper letter", "Garbage bags", "Desk chair"],
+         ["Water bottles 24pk", "Delivery charge", "Coffee pods", "Monitor stand", "Cleaning wipes"]),
     ):  # fmt: skip
-        for n, text in enumerate(texts):
+        for n, text in enumerate(coded + held):
             line = _plain_line(store, reference, f"X-{n}", text, vendor).line_items[0]
-            assert line.predicted_gl_code == gl, f"{text!r}: {line.reasoning_justification}"
+            assert line.predicted_gl_code == (gl if text in coded else UNASSIGNED), (
+                f"{text!r}: {line.reasoning_justification}")  # fmt: skip
 
 
 def test_a_cost_center_no_longer_in_the_list_is_not_proposed(tmp_path, reference):

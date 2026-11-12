@@ -5801,3 +5801,14 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     (no supplier number), and a row whose GST/HST number belongs to another Business Number (a rename keeps its
     own). VENDOR_NEW still skips a vendor in the master: the master vouches for the name, and the old name's
     approvals are the supplier's.
+- **D-240** · **On plain lists, a line of another kind than the vendor's usual account goes to a person, even when
+  it is an ordinary one** (`ai/suggest.py` `_unless_another_kind`, `listed`; 12 Nov 2026).
+  - **Why:** with plain GL lists a vendor's usual account coded every new line alone (B-2520). The list's
+    descriptions go on with details ("Office Supplies - paper; toner; stationery; printer ink"), so one word of them
+    cannot tell a laptop on a cleaning company's invoice from its paper towels. The user chose flagging over fewer
+    holds: a line with a telling word of another account's description (or its name, or a meal) is held for a
+    person, said by the account's name proper ("Computer Equipment (1500)"); a line with no word of another account
+    ("Mop heads", "Garbage bags") is still coded alone.
+  - **Cost:** some ordinary lines are held too ("Paper towels case", "Water damage cleanup", "Delivery charge",
+    "Coffee pods"); `bench coding --quick` and `learn --quick` did not move. Revisit if a pilot's queue fills with
+    such holds: a tighter rule (only the name proper's words) was tried and missed the laptop.
