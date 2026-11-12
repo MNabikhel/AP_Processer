@@ -736,10 +736,9 @@ class UsersMixin:
     def _locked(self, conn: Any, key: str, ip: str, now: float, console: bool) -> str:
         """Why logins are paused for ``key`` (a username, or ``UNKNOWN`` and its hash) now ("" when they are not):
         from ``ip`` (``LOCKED``), or from ``ip`` whatever the username (``LOCKED``), or for ``key`` from anywhere
-        (``ACCOUNT_PAUSED``). The server's own console is never paused by the network's tries: not by address, and
-        the account-wide pause counts its own tries only (D-243; a forwarder on the server comes in from there). An
-        address ``key`` logged in from lately is paused for it by its own tries only: neither a shared address paused
-        by others' tries nor an account-wide pause by tries elsewhere keeps a person out of their own office (D-109)."""
+        (``ACCOUNT_PAUSED``); the console never by address, account-wide by its own tries only (D-243: a forwarder
+        comes in from there). An address ``key`` logged in from lately is paused by its own tries only: others'
+        tries never keep a person out of their own office (D-109)."""
         found = conn.execute("SELECT MAX(user_locked_until) FROM login_attempts WHERE username = ? AND ip = ?",
                              (key, ip))  # fmt: skip
         if (found.fetchone()[0] or 0) > now:
