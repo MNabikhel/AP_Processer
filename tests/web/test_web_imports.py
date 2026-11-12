@@ -682,3 +682,26 @@ def test_the_invoices_already_in_the_erp_are_named_as_their_list_is_when_loaded(
     html, token = _upload(client, "erp_register", PAGES["erp_register"][5])
     page = client.get(_import(client, "erp_register", token, html).json()["redirect"]).text
     assert "Invoices already in your ERP: 1 invoice on the list now." in page and "known." not in page
+
+
+def test_a_needed_column_named_twice_is_picked_by_the_person_and_that_one_is_loaded(client, store):
+    """B-2469: GL accounts with "Code" twice (a junk column first) said in green "found by its name" and loaded the
+    junk column; so did a vendor list with "Vendor Name" twice; the choices offered pandas' "Code.1". The page says
+    which name is there twice, picks none of them, offers each as the file names it and which ("Code (2nd)"), and the
+    one picked is the one loaded."""
+    for key, header, junk, real in (("gl_accounts", "Code", "ZZZ", "6010"),
+                                    ("vendor_master", "Vendor Name", "ZZZ", "Acme Ltd")):  # fmt: skip
+        field = SPECS[key].required[0].field
+        html, token = _upload(client, key, [[header, "Description", header], [junk, "IT Hardware", real]])
+        assert "Every column" not in html and f"Named twice in this file: “{header}”" in html, key
+        assert _offered(html)[field] == "" and " data-imp-go disabled" in html, key
+        picker = re.search(rf'<select name="col_{field}">(.*?)</select>', html, re.S).group(1)
+        options = {label: value for value, label in re.findall(r'<option value="([^"]*)">([^<]*)</option>', picker)}
+        assert {f"{header} (1st)", f"{header} (2nd)"} <= set(options) and f"{header}.1" not in options, options
+        _url, url, _name, token_field, _page, _rows, _held = PAGES[key]
+        refused = post(client, url, {token_field: token, f"col_{field}": ""})
+        assert refused.status_code == 400, key
+        loaded = post(client, url, {token_field: token, f"col_{field}": options[f"{header} (2nd)"]})
+        assert loaded.status_code == 200 and loaded.json()["ok"], loaded.text
+    assert [a["code"] for a in store.list_accounts("gl_accounts") if a["code"] in ("ZZZ", "6010")] == ["6010"]
+    assert [v["display_name"] for v in store.master_vendors()] == ["Acme Ltd"]

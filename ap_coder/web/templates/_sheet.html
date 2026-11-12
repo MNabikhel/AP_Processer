@@ -28,7 +28,7 @@
   <label class="field">{{ f.label }}{% if f.need %} <span class="imp-tag">needed</span>{% elif f.one_of %} <span class="imp-tag" title="Needed: {{ s.one_of.label }}">one of {{ s.one_of.fields | length }} needed</span>{% endif %}
     <select name="col_{{ f.key }}">
       <option value="">(none)</option>
-      {% for c in s.columns %}<option value="{{ c }}"{% if c == f.value %} selected{% endif %}>{{ c }}</option>{% endfor %}
+      {% for c, shown in s.options %}<option value="{{ c }}"{% if c == f.value %} selected{% endif %}>{{ shown }}</option>{% endfor %}
     </select>
   </label>
   {% endfor %}
