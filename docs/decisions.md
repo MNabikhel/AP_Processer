@@ -5812,6 +5812,16 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
   - **Cost:** some ordinary lines are held too ("Paper towels case", "Water damage cleanup", "Delivery charge",
     "Coffee pods"); `bench coding --quick` and `learn --quick` did not move. Revisit if a pilot's queue fills with
     such holds: a tighter rule (only the name proper's words) was tried and missed the laptop.
+- **D-241** · **A line coded from other vendors' approvals always goes to a person** (`capture/workflow.py`
+  `invoice_gates`, `capture/supplier.py` `touchless_gates`; 12 Nov 2026). The user chose this.
+  - **Why:** in the coding bench (`coding --quick`) the lines other vendors' approvals coded are 87.5% precise (8
+    lines, 1 wrong) against 98.6% for the vendor's own (210 lines, 3 wrong); yet an invoice with one such line beside
+    the vendor's own could be approved touchless, nobody looking at it (B-2530).
+  - **What:** the touchless gate reads each line's `decided_by`: a source in `validation.GUESS_SOURCES` ("model",
+    "words", "others") always sends the invoice to a person, as a reasoning that says guess still does (invoices from
+    older versions). "Others" lines are named in the reason ("line 2 was coded from other vendors' approvals, not
+    this vendor's"); Settings → Automation lists "An account not learned from this vendor". No check code: the
+    line's own words on the review screen already say where its account came from.
 - **D-242** · **A statement of open items does not list the invoices already exported as "Not on statement"**
   (`erp/statements.py` `reconcile`'s `open_items`, the tick box on the Statements page; 12 Nov 2026).
   - **Why:** many vendors send only what is unpaid. Every invoice AP Coder exported in the statement's period (an
@@ -5823,13 +5833,3 @@ choice that is reversed keeps its line, marked "replaced by D-NN".
     CSV and Choose another file. Not remembered per vendor: the Statements page keeps nothing per vendor today
     (the statement itself is held an hour, never stored), and a table for one tick box would be more than it is
     worth. An exported invoice an undone batch released counts as not exported (its batch is cleared).
-- **D-241** · **A line coded from other vendors' approvals always goes to a person** (`capture/workflow.py`
-  `invoice_gates`, `capture/supplier.py` `touchless_gates`; 12 Nov 2026). The user chose this.
-  - **Why:** in the coding bench (`coding --quick`) the lines other vendors' approvals coded are 87.5% precise (8
-    lines, 1 wrong) against 98.6% for the vendor's own (210 lines, 3 wrong); yet an invoice with one such line beside
-    the vendor's own could be approved touchless, nobody looking at it (B-2530).
-  - **What:** the touchless gate reads each line's `decided_by`: a source in `validation.GUESS_SOURCES` ("model",
-    "words", "others") always sends the invoice to a person, as a reasoning that says guess still does (invoices from
-    older versions). "Others" lines are named in the reason ("line 2 was coded from other vendors' approvals, not
-    this vendor's"); Settings → Automation lists "An account not learned from this vendor". No check code: the
-    line's own words on the review screen already say where its account came from.
