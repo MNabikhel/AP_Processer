@@ -1218,10 +1218,11 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
         print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
         return 0
     if args.company:
-        from ..core.store.sign_in import SIGN_IN
+        from ..core.store.sign_in import OFF, SIGN_IN
         from .demo import COMPANY_FOLDER, load_company
 
-        if store.user_count() or store.get_setting(SIGN_IN):  # it turns sign-in off: never a laptop's nor a team's
+        # It turns sign-in off: never a laptop's own nor a team's (off already: its own, or a demo's).
+        if store.user_count() or store.get_setting(SIGN_IN) not in ("", OFF):
             print("Not loaded: the made-up company is loaded into a new data folder only (set AP_PRIVATE_DIR to a new "
                   "folder first): this one has sign-in accounts, or its sign-in is set.", file=sys.stderr)  # fmt: skip
             return 1

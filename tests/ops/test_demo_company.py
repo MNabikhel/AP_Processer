@@ -97,7 +97,7 @@ def test_demo_company_command(tmp_path, capsys):
     assert len(Store(db).list_invoices()) == 7
 
 
-@pytest.mark.parametrize("sign_in", ["laptop", "team", "off"])
+@pytest.mark.parametrize("sign_in", ["laptop", "team"])
 def test_the_made_up_company_never_goes_into_a_folder_whose_sign_in_is_decided(tmp_path, capsys, sign_in):
     """D-243: ``demo --company`` turns its folder's sign-in off: into a laptop's own (or a team's, whose D-211 guard
     it would undo) it is refused, before anything is loaded."""
